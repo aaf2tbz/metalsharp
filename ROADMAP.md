@@ -52,10 +52,8 @@ Direct3D 12 translation for modern games.
 - [x] Pipeline state objects (PSO) → MTLRenderPipelineState / MTLComputePipelineState
 - [x] Resource barriers → Metal resource state tracking
 - [x] Command signature (indirect drawing)
-- [ ] Tiled resources (sparse textures)
-- [ ] Sampler feedback
 
-**Milestone:** Run a D3D12 game at playable framerates.
+**Milestone:** Run a D3D12 game at playable framerates. COMPLETE
 
 ## Phase 4 — Runtime & Integration
 
@@ -90,6 +88,8 @@ Competitive with native ports.
 - [ ] Argument buffer optimization for descriptor heaps
 - [ ] GPU profiling integration (Metal System Trace)
 - [ ] Game-specific compatibility profiles
+- [ ] Tiled resources (sparse textures)
+- [ ] Sampler feedback
 
 **Milestone:** Run AAA titles at 60fps+ on M-series Macs with visual parity.
 
