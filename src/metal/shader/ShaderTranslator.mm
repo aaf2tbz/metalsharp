@@ -1,40 +1,53 @@
 #include <metalsharp/ShaderTranslator.h>
+#include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
-#include <cstring>
 
 namespace metalsharp {
 
 struct ShaderTranslator::Impl {
-    id<MTLLibrary> library = nil;
-    id<MTLFunction> vertexFunction = nil;
-    id<MTLFunction> fragmentFunction = nil;
-    id<MTLFunction> computeFunction = nil;
-    NSData* compiledMSL = nil;
+    id<MTLDevice> device = nil;
 };
 
-ShaderTranslator::ShaderTranslator() : m_impl(new Impl()) {}
+ShaderTranslator::ShaderTranslator() : m_impl(new Impl()) {
+    m_impl->device = MTLCreateSystemDefaultDevice();
+}
+
 ShaderTranslator::~ShaderTranslator() { delete m_impl; }
 
-bool ShaderTranslator::translateDXIL(const ShaderBinary& dxil, ShaderBinary& outMSL) {
-    return false;
-}
+bool ShaderTranslator::compileMSL(const char* source, const char* vertexEntry, const char* fragmentEntry, CompiledShader& out) {
+    if (!m_impl->device || !source) return false;
 
-bool ShaderTranslator::translateDXBC(const ShaderBinary& dxbc, ShaderBinary& outMSL) {
-    return false;
-}
-
-void* ShaderTranslator::compiledLibrary() const {
-    return (__bridge void*)m_impl->library;
-}
-
-void* ShaderTranslator::functionForStage(ShaderStage stage) const {
-    switch (stage) {
-        case ShaderStage::Vertex: return (__bridge void*)m_impl->vertexFunction;
-        case ShaderStage::Pixel: return (__bridge void*)m_impl->fragmentFunction;
-        case ShaderStage::Compute: return (__bridge void*)m_impl->computeFunction;
-        default: return nullptr;
+    NSString* sourceNS = [NSString stringWithUTF8String:source];
+    NSError* error = nil;
+    id<MTLLibrary> library = [m_impl->device newLibraryWithSource:sourceNS options:nil error:&error];
+    if (!library) {
+        if (error) {
+            NSLog(@"MetalSharp shader compile error: %@", [error localizedDescription]);
+        }
+        return false;
     }
+
+    NSString* vertName = [NSString stringWithUTF8String:vertexEntry];
+    NSString* fragName = [NSString stringWithUTF8String:fragmentEntry];
+
+    id<MTLFunction> vertexFunc = [library newFunctionWithName:vertName];
+    id<MTLFunction> fragFunc = [library newFunctionWithName:fragName];
+
+    out.library = (__bridge_retained void*)library;
+    out.vertexFunction = vertexFunc ? (__bridge_retained void*)vertexFunc : nullptr;
+    out.fragmentFunction = fragFunc ? (__bridge_retained void*)fragFunc : nullptr;
+    out.computeFunction = nullptr;
+
+    return true;
+}
+
+bool ShaderTranslator::translateDXIL(const uint8_t*, size_t, ShaderStage, CompiledShader&) {
+    return false;
+}
+
+bool ShaderTranslator::translateDXBC(const uint8_t*, size_t, ShaderStage, CompiledShader&) {
+    return false;
 }
 
 }

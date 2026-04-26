@@ -15,10 +15,11 @@ enum class ShaderStage {
     Domain,
 };
 
-struct ShaderBinary {
-    const uint8_t* data;
-    size_t size;
-    ShaderStage stage;
+struct CompiledShader {
+    void* library;
+    void* vertexFunction;
+    void* fragmentFunction;
+    void* computeFunction;
 };
 
 class ShaderTranslator {
@@ -26,11 +27,9 @@ public:
     ShaderTranslator();
     ~ShaderTranslator();
 
-    bool translateDXIL(const ShaderBinary& dxil, ShaderBinary& outMSL);
-    bool translateDXBC(const ShaderBinary& dxbc, ShaderBinary& outMSL);
-
-    void* compiledLibrary() const;
-    void* functionForStage(ShaderStage stage) const;
+    bool compileMSL(const char* source, const char* vertexEntry, const char* fragmentEntry, CompiledShader& out);
+    bool translateDXIL(const uint8_t* data, size_t size, ShaderStage stage, CompiledShader& out);
+    bool translateDXBC(const uint8_t* data, size_t size, ShaderStage stage, CompiledShader& out);
 
     ShaderTranslator(const ShaderTranslator&) = delete;
     ShaderTranslator& operator=(const ShaderTranslator&) = delete;

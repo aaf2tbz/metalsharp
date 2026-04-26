@@ -45,7 +45,7 @@ target_compile_options(metalsharp_core PRIVATE -fobjc-arc)
 
 add_library(metalsharp_d3d11 SHARED
     src/d3d/d3d11/D3D11Device.cpp
-    src/d3d/d3d11/D3D11DeviceContext.cpp
+    src/d3d/d3d11/D3D11DeviceContext.mm
     src/d3d/d3d11/D3D11Texture2D.cpp
     src/d3d/d3d11/D3D11Buffer.cpp
     src/d3d/d3d11/D3D11RenderTargetView.cpp

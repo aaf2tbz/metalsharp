@@ -1,6 +1,7 @@
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/FormatTranslation.h>
+#include <metalsharp/PipelineState.h>
 #include <cstring>
 
 namespace metalsharp {
@@ -67,6 +68,7 @@ HRESULT D3D11Device::CreateBuffer(const D3D11_BUFFER_DESC* pDesc, const D3D11_SU
         STDMETHOD(GetType)(UINT*) override { return E_NOTIMPL; }
         STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
         STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
+        void* __metalBufferPtr() const override { return metalBuffer ? metalBuffer->nativeBuffer() : nullptr; }
     };
 
     auto* buf = new D3D11BufferImpl();
@@ -121,12 +123,10 @@ HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3
 HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11VertexShader** ppVertexShader) {
     if (!pShaderBytecode || !ppVertexShader) return E_INVALIDARG;
 
-    ShaderBinary dxil{reinterpret_cast<const uint8_t*>(pShaderBytecode), BytecodeLength, ShaderStage::Vertex};
-    ShaderBinary msl;
-    if (!m_shaderTranslator->translateDXBC(dxil, msl)) return E_FAIL;
-
     struct VertexShaderImpl : public ID3D11VertexShader {
         ULONG refCount = 1;
+        void* metalVertexFunction = nullptr;
+
         HRESULT QueryInterface(REFIID riid, void** ppv) override {
             if (!ppv) return E_POINTER;
             if (riid == __uuidof(IUnknown) || riid == __uuidof(ID3D11VertexShader)) {
@@ -140,9 +140,19 @@ HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T Byte
         STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
+        void* __metalVertexFunction() const override { return metalVertexFunction; }
     };
 
-    *ppVertexShader = new VertexShaderImpl();
+    CompiledShader compiled;
+    if (!m_shaderTranslator->compileMSL(
+            reinterpret_cast<const char*>(pShaderBytecode),
+            "vertexShader", "fragmentShader", compiled)) {
+        return E_FAIL;
+    }
+
+    auto* vs = new VertexShaderImpl();
+    vs->metalVertexFunction = compiled.vertexFunction;
+    *ppVertexShader = vs;
     return S_OK;
 }
 
@@ -151,6 +161,8 @@ HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T Bytec
 
     struct PixelShaderImpl : public ID3D11PixelShader {
         ULONG refCount = 1;
+        void* metalFragmentFunction = nullptr;
+
         HRESULT QueryInterface(REFIID riid, void** ppv) override {
             if (!ppv) return E_POINTER;
             if (riid == __uuidof(IUnknown) || riid == __uuidof(ID3D11PixelShader)) {
@@ -164,9 +176,19 @@ HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T Bytec
         STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
+        void* __metalFragmentFunction() const override { return metalFragmentFunction; }
     };
 
-    *ppPixelShader = new PixelShaderImpl();
+    CompiledShader compiled;
+    if (!m_shaderTranslator->compileMSL(
+            reinterpret_cast<const char*>(pShaderBytecode),
+            "vertexShader", "fragmentShader", compiled)) {
+        return E_FAIL;
+    }
+
+    auto* ps = new PixelShaderImpl();
+    ps->metalFragmentFunction = compiled.fragmentFunction;
+    *ppPixelShader = ps;
     return S_OK;
 }
 
