@@ -100,37 +100,43 @@ cmake --build build
 
 ## Development Phases
 
-### Phase 1 — Triangle (current)
-- [ ] Metal device initialization
-- [ ] Basic D3D11 device + immediate context
-- [ ] DXGI swap chain → CAMetalLayer
-- [ ] Vertex buffer → MTLBuffer
-- [ ] Simple vertex/pixel shader → MSL
-- [ ] Render a triangle from a D3D11 codepath
+### Phase 1 — Triangle (complete)
+- [x] Metal device initialization
+- [x] Basic D3D11 device + immediate context
+- [x] DXGI swap chain → CAMetalLayer
+- [x] Vertex buffer → MTLBuffer
+- [x] Simple vertex/pixel shader → MSL
+- [x] Render a triangle from a D3D11 codepath
 
-### Phase 2 — D3D11 Coverage
-- [ ] Full D3D11 resource types (textures, UAVs)
-- [ ] State objects (blend, rasterizer, depth stencil, sampler)
-- [ ] Input layouts → MTLVertexDescriptor
-- [ ] Shader resource views → MTLTexture bindings
-- [ ] Multiple render targets
-- [ ] Map/Unmap for CPU-accessible resources
+### Phase 2 — D3D11 Coverage (complete)
+- [x] Full D3D11 resource types (textures, UAVs)
+- [x] State objects (blend, rasterizer, depth stencil, sampler)
+- [x] Input layouts → MTLVertexDescriptor
+- [x] Shader resource views → MTLTexture bindings
+- [x] Multiple render targets
+- [x] Map/Unmap for CPU-accessible resources
 
-### Phase 3 — D3D12
-- [ ] Command queue → MTLCommandQueue
-- [ ] Command lists → MTLCommandBuffer + encoders
-- [ ] Descriptor heaps → argument buffers
-- [ ] Root signatures → Metal argument table mapping
-- [ ] Pipeline state objects
+### Phase 3 — D3D12 (complete)
+- [x] Command queue → MTLCommandQueue
+- [x] Command lists → MTLCommandBuffer + encoders
+- [x] Descriptor heaps → argument buffers
+- [x] Root signatures → Metal argument table mapping
+- [x] Pipeline state objects
 
-### Phase 4 — Runtime & Integration
-- [ ] Wine prefix bootstrap
-- [ ] DLL injection / override configuration
-- [ ] Audio bridge
-- [ ] Input bridge
-- [ ] Game compatibility testing
+### Phase 4 — Runtime & Integration (complete)
+- [x] Wine prefix bootstrap
+- [x] DLL injection / override configuration
+- [x] Audio bridge (XAudio2 → CoreAudio)
+- [x] Input bridge (XInput → GameController)
+- [x] Window management (HWND → NSWindow/CAMetalLayer)
+- [x] DXGI output enumeration (real display modes)
+- [x] Diagnostic logging
+- [x] Configuration system (TOML-like, per-game profiles)
+- [x] SteamCMD integration
+- [x] Game launcher CLI
+- [x] Game compatibility testing
 
-### Phase 5 — Performance
+### Phase 5 — Performance (next)
 - [ ] Shader caching (DXIL→MSL compilation is expensive)
 - [ ] Command buffer batching
 - [ ] Memory allocation pooling

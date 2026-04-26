@@ -34,6 +34,8 @@ add_library(metalsharp_core STATIC
     src/metal/Texture.mm
     src/metal/Sampler.mm
     src/metal/Framebuffer.mm
+    src/runtime/Logger.cpp
+    src/runtime/PEHook.cpp
 )
 target_include_directories(metalsharp_core PUBLIC include)
 target_link_libraries(metalsharp_core PUBLIC
@@ -85,7 +87,7 @@ set_target_properties(metalsharp_d3d12 PROPERTIES OUTPUT_NAME "d3d12" PREFIX "")
 add_library(metalsharp_dxgi SHARED
     src/dxgi/DXGIFactory.cpp
     src/dxgi/DXGIAdapter.cpp
-    src/dxgi/DXGIOutput.cpp
+    src/dxgi/DXGIOutput.mm
     src/dxgi/DXGISwapChain.mm
     src/dxgi/EntryPoint.cpp
 )
@@ -107,7 +109,6 @@ set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX
 
 add_library(metalsharp_input SHARED
     src/input/XInputEngine.cpp
-    src/input/GameControllerBridge.cpp
     src/input/GameControllerBridge.mm
     src/input/EntryPoint.cpp
 )
@@ -120,6 +121,7 @@ add_executable(metalsharp_launcher
     tools/launcher/WinePrefix.cpp
     tools/launcher/WinePrefix.mm
     tools/launcher/Config.cpp
+    tools/launcher/SteamIntegration.cpp
 )
 target_link_libraries(metalsharp_launcher PRIVATE metalsharp_core ${FOUNDATION_FRAMEWORK})
 

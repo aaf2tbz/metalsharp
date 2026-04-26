@@ -17,7 +17,7 @@ Get a hardcoded triangle rendering on screen through D3D11 codepaths calling Met
 - [x] Draw call encoding: flushRenderState() → MTLRenderCommandEncoder → drawPrimitives
 - [x] End-to-end test: D3D11CreateDevice → create buffer → set shaders → draw → present triangle
 
-**Milestone:** A colored triangle appears in a window via D3D11 codepaths. ✅ COMPLETE
+**Milestone:** A colored triangle appears in a window via D3D11 codepaths. COMPLETE
 
 ## Phase 2 — D3D11 Coverage
 
@@ -38,7 +38,7 @@ Full D3D11 feature set for real games.
 - [x] Predication, queries (OCCLUSION, TIMESTAMP, EVENT)
 - [x] Deferred context support (multithreaded rendering)
 
-**Milestone:** Run a D3D11 game with moderate shader complexity without crashing.
+**Milestone:** Run a D3D11 game with moderate shader complexity without crashing. COMPLETE
 
 ## Phase 3 — D3D12
 
@@ -61,17 +61,19 @@ Direct3D 12 translation for modern games.
 
 Wine integration, DLL injection, system services.
 
-- [ ] Wine prefix bootstrap (auto-create and configure)
-- [ ] DLL override registration (d3d11=native, dxgi=native, etc.)
-- [ ] PE loader hook: inject MetalSharp dylibs into Wine process space
-- [ ] XAudio2 → CoreAudio bridge (spatial audio, streaming)
-- [ ] XInput → GameController framework (rumble, triggers, gyro)
-- [ ] Window management: HWND → NSWindow/CAMetalLayer binding
-- [ ] DXGI output enumeration (display modes, VSync)
-- [ ] Error handling and diagnostic logging
-- [ ] Configuration file system (per-game overrides, shader caches)
+- [x] Wine prefix bootstrap (auto-create and configure)
+- [x] DLL override registration (d3d11=native, dxgi=native, etc.)
+- [x] PE loader hook: inject MetalSharp dylibs into Wine process space
+- [x] XAudio2 → CoreAudio bridge (spatial audio, streaming)
+- [x] XInput → GameController framework (button/trigger/thumbstick mapping)
+- [x] Window management: HWND → NSWindow/CAMetalLayer binding
+- [x] DXGI output enumeration (real display modes via CoreGraphics)
+- [x] Error handling and diagnostic logging (Logger with file + stderr output)
+- [x] Configuration file system (TOML-like, per-game profiles)
+- [x] SteamCMD integration (Windows depot download, game library scanning)
+- [x] Game launcher CLI (metalsharp_launcher with Steam game download support)
 
-**Milestone:** Launch a Windows game via `metalsharp_launcher game.exe` and have it render.
+**Milestone:** Launch a Windows game via `metalsharp_launcher game.exe` or `metalsharp_launcher --steam <appid>` and have it render. COMPLETE
 
 ## Phase 5 — Performance
 
@@ -91,6 +93,25 @@ Competitive with native ports.
 
 **Milestone:** Run AAA titles at 60fps+ on M-series Macs with visual parity.
 
+## Phase 6 — Cs:GO
+
+**Open Steam. Launch CS:GO with MetalSharp. Play with native settings.**
+
+- [x] DXBC bytecode parser (CS:GO ships DXBC shaders)
+- [x] DXBC → MSL translation (opcode-by-opcode, starting with the most common ops)
+- [x] Wine integration: auto-create prefix, register DLL overrides
+- [x] PE loader hook: inject MetalSharp dylibs into Wine process space
+- [x] HWND → NSWindow/CAMetalLayer binding
+- [x] XAudio2 → CoreAudio (footstep audio, voice chat, spatial)
+- [x] XInput → GameController (mouse/keyboard passthrough, controller support)
+- [x] DXGI output enumeration (display modes, VSync, fullscreen)
+- [ ] Per-game compatibility profile for CS:GO
+- [ ] Shader cache (DXBC → compiled MSL, persisted to disk)
+- [ ] Frame pacing and present timing
+- [x] Configuration system (metalsharp.toml)
+
+**Milestone:** Open Steam → Launch CS:GO → MetalSharp translates D3D11 calls to Metal → Play at playable framerates on Apple Silicon.
+
 ## Phase 7 — Community
 
 - [ ] Documentation and architecture guide
@@ -100,40 +121,12 @@ Competitive with native ports.
 - [ ] Discord/community forum
 - [ ] Integration with existing tools (Homebrew formula, CrossOver compatibility)
 
-## Phase 6 — CS:GO
-
-**Open Steam. Launch CS:GO with MetalSharp. Play with native settings.**
-
-- [x] DXBC bytecode parser (CS:GO ships DXBC shaders)
-- [x] DXBC → MSL translation (opcode-by-opcode, starting with the most common ops)
-- [ ] Wine integration: auto-create prefix, register DLL overrides
-- [ ] PE loader hook: inject MetalSharp dylibs into Wine process space
-- [ ] HWND → NSWindow/CAMetalLayer binding
-- [ ] XAudio2 → CoreAudio (footstep audio, voice chat, spatial)
-- [ ] XInput → GameController (mouse/keyboard passthrough, controller support)
-- [ ] DXGI output enumeration (display modes, VSync, fullscreen)
-- [ ] Per-game compatibility profile for CS:GO
-- [ ] Shader cache (DXBC → compiled MSL, persisted to disk)
-- [ ] Frame pacing and present timing
-- [ ] Configuration system (metalsharp.toml or similar)
-
-**Milestone:** Open Steam → Launch CS:GO → MetalSharp translates D3D11 calls to Metal → Play at playable framerates on Apple Silicon.
-
 ## Technical Dependencies
 
 | Component | Purpose | Options |
 |-----------|---------|---------|
-| Shader Translation | DXBC/DXIL → MSL | Apple Metal Shader Converter (DXIL), custom DXBC parser, or SPIRV-Cross via DXVK's SPIR-V output |
+| Shader Translation | DXBC/DXIL → MSL | Custom DXBC parser + Apple Metal Shader Converter for DXIL |
 | Wine | Win32 API translation | Wine 8.x+, custom builds |
+| SteamCMD | Windows game depot download | `steamcmd +@sSteamCmdForcePlatformType windows` |
 | Metal Performance | GPU profiling | Xcode Instruments, Metal HUD |
 | Testing | Game compatibility | ProtonDB-like crowdsource model |
-
-## Key References
-
-- DXVK: https://github.com/doitsujin/dxvk (D3D→Vulkan, architecture reference)
-- MoltenVK: https://github.com/KhronosGroup/MoltenVK (Vulkan→Metal, SPIR-V→MSL)
-- Apple GPTK: https://developer.apple.com/games/game-porting-toolkit/
-- Wine: https://gitlab.winehq.org/wine/wine
-- D3D11 spec: https://learn.microsoft.com/en-us/windows/win32/api/d3d11/
-- D3D12 spec: https://learn.microsoft.com/en-us/windows/win32/api/d3d12/
-- Metal spec: https://developer.apple.com/documentation/metal

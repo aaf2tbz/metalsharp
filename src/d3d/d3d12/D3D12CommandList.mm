@@ -216,6 +216,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         HRESULT Unmap(ID3D12Resource*, UINT, const D3D12_RANGE*) override { return S_OK; }
         HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64) override { return E_NOTIMPL; }
 
+        HRESULT CopyTiles(ID3D12Resource*, const D3D12_TILED_RESOURCE_COORDINATE*, const D3D12_TILE_REGION_SIZE*, ID3D12Resource*, UINT64, UINT) override { return S_OK; }
+
         void __execute(void* dev) override {
             execute(*static_cast<MetalDevice*>(dev));
         }

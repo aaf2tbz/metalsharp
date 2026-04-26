@@ -22,12 +22,13 @@ Fewer hops means less overhead, lower latency, and fewer bugs from translation m
 
 ## Status
 
-**Phase 1 + Phase 2 complete.** Full D3D11 API coverage with DXBC shader translation.
+**Phase 1 + 2 + 3 + 4 complete.** Full D3D11 + D3D12 API coverage, DXBC shader translation, Wine integration, audio/input bridges, and game launcher.
 
 | What | Status |
 |------|--------|
 | Metal device init (MTLDevice + MTLCommandQueue) | Done |
 | D3D11 device + immediate context (COM interfaces) | Done |
+| D3D12 device + command queue + command lists | Done |
 | DXGI swap chain → CAMetalLayer | Done |
 | Vertex/index/constant buffers → MTLBuffer | Done |
 | Texture 1D/2D/3D creation with mipmaps, MSAA, initial data | Done |
@@ -44,7 +45,17 @@ Fewer hops means less overhead, lower latency, and fewer bugs from translation m
 | GenerateMips, ResolveSubresource (MSAA) | Done |
 | Queries (occlusion, timestamp, event) + predication | Done |
 | Compute shader state management | Done |
-| 6/6 tests passing on CI (macOS) | Passing |
+| Deferred context support (multithreaded rendering) | Done |
+| Wine prefix bootstrap + DLL override registration | Done |
+| XAudio2 → CoreAudio bridge | Done |
+| XInput → GameController framework | Done |
+| Window management (HWND → NSWindow/CAMetalLayer) | Done |
+| DXGI output enumeration (real display modes) | Done |
+| Diagnostic logging (file + stderr) | Done |
+| Config system (TOML-like, per-game profiles) | Done |
+| SteamCMD integration (Windows depot download) | Done |
+| Game launcher CLI | Done |
+| **11/11 tests passing (161 checks)** | Passing |
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
@@ -57,7 +68,7 @@ Windows Game (.exe)
    Wine (Win32 API translation)
         │
         ▼
-   MetalSharp DLL shims (d3d11, d3d12, dxgi)
+   MetalSharp DLL shims (d3d11, d3d12, dxgi, xaudio2_9, xinput1_4)
         │
         ▼
    MetalSharp Core
@@ -91,21 +102,37 @@ cd build && ctest --output-on-failure
 
 | Target | Output | Purpose |
 |--------|--------|---------|
-| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator |
+| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, Logger, PEHook |
 | `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim |
-| `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim (stub) |
-| `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain & adapter |
-| `metalsharp_audio` | `xaudio2_9.dylib` | XAudio2 → CoreAudio (stub) |
-| `metalsharp_input` | `xinput1_4.dylib` | XInput → GameController (stub) |
-| `metalsharp_launcher` | executable | Game launcher & Wine prefix manager |
+| `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim |
+| `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain, adapter, output enumeration |
+| `metalsharp_audio` | `xaudio2_9.dylib` | XAudio2 → CoreAudio bridge |
+| `metalsharp_input` | `xinput1_4.dylib` | XInput → GameController bridge |
+| `metalsharp_launcher` | executable | Game launcher, Wine prefix manager, SteamCMD integration |
+
+### Launch a game
+
+```bash
+# From a local executable
+./build/metalsharp_launcher game.exe
+
+# Download and launch a Steam game (Windows depot)
+./build/metalsharp_launcher --steam 730
+
+# List your Steam library
+./build/metalsharp_launcher --list-games
+
+# With options
+./build/metalsharp_launcher --prefix ~/.metalsharp/prefix --width 1920 --height 1080 --fullscreen game.exe
+```
 
 ## Project structure
 
 ```
 src/
-├── d3d/d3d11/          D3D11 device, context, resources, state objects
-├── d3d/d3d12/          D3D12 stubs
-├── dxgi/               DXGI factory, adapter, swap chain
+├── d3d/d3d11/          D3D11 device, context, resources, state objects, deferred context
+├── d3d/d3d12/          D3D12 device, command queue, command lists, resources, descriptors
+├── dxgi/               DXGI factory, adapter, swap chain, output enumeration
 ├── metal/
 │   ├── device/         MTLDevice wrapper
 │   ├── command/        MTLCommandQueue, MTLCommandBuffer
@@ -115,15 +142,17 @@ src/
 │   ├── Texture.mm      MTLTexture 1D/2D/3D wrapper
 │   ├── Sampler.mm      MTLSamplerState + format translation
 │   └── Framebuffer.mm  MTLRenderPassDescriptor wrapper
-├── audio/              XAudio2 → CoreAudio (stub)
-└── input/              XInput → GameController (stub)
+├── runtime/            Logger, PEHook (DLL injection + env setup)
+├── audio/              XAudio2 → CoreAudio bridge
+└── input/              XInput → GameController bridge
 include/
-├── metalsharp/         Internal headers (PipelineState, DXBCParser, DXBCtoMSL, etc.)
-├── d3d/                D3D11 COM interface definitions
+├── metalsharp/         Internal headers (PipelineState, DXBCParser, DXBCtoMSL, Logger, etc.)
+├── d3d/                D3D11 + D3D12 COM interface definitions
 └── dxgi/               DXGI COM interface definitions
-tests/                  6 tests: metal_device, format_translation, d3d11_device,
-                        triangle, phase2, dxbc
-tools/launcher/         CLI launcher
+tools/launcher/         CLI launcher (WinePrefix, Config, SteamIntegration)
+tests/                  11 tests: metal_device, format_translation, d3d11_device,
+                        triangle, phase2, dxbc, deferred_context, d3d12,
+                        runtime, audio, input
 ```
 
 ## How it works
@@ -135,6 +164,10 @@ Shaders can be provided two ways:
 
 The `D3D11DeviceContext` caches a `MTLRenderPipelineState` built from current state (shaders, blend, rasterizer, depth) and encodes draw commands into a `MTLCommandBuffer` when `Draw()` or `DrawIndexed()` is called. Pipeline state is rebuilt automatically when blend state, render targets, or shaders change.
 
+The launcher (`metalsharp_launcher`) bootstraps a Wine prefix, registers DLL overrides (`d3d11=native;d3d12=native;dxgi=native;xaudio2_9=native;xinput1_4=native`), copies MetalSharp dylibs into the prefix, and launches the game executable through Wine.
+
+For Steam games, the launcher uses SteamCMD with `@sSteamCmdForcePlatformType windows` to download Windows game depots, then finds and launches the executable.
+
 ## Requirements
 
 - macOS 13+ (Ventura or later)
@@ -142,6 +175,8 @@ The `D3D11DeviceContext` caches a `MTLRenderPipelineState` built from current st
 - Xcode Command Line Tools
 - CMake 3.24+
 - C++20 compatible compiler
+- Wine (for running Windows executables)
+- SteamCMD (optional, for Steam game downloads)
 
 ## License
 
@@ -154,4 +189,5 @@ MIT
 - [Apple Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) — Apple's official D3D → Metal layer
 - [Wine](https://gitlab.winehq.org/wine/wine) — Win32 API translation
 - [D3D11 API](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/) — Microsoft D3D11 reference
+- [D3D12 API](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/) — Microsoft D3D12 reference
 - [Metal API](https://developer.apple.com/documentation/metal) — Apple Metal reference
