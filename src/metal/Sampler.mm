@@ -119,7 +119,7 @@ bool MetalSampler::init(MetalDevice& device, uint32_t filter, uint32_t addressU,
     desc.sAddressMode = translateAddressMode(addressU);
     desc.tAddressMode = translateAddressMode(addressV);
     desc.rAddressMode = translateAddressMode(addressW);
-    desc.lodBias = mipLodBias;
+
     desc.maxAnisotropy = maxAnisotropy > 1 ? maxAnisotropy : 1;
 
     if (filter >= 0x80) {

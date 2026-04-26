@@ -24,8 +24,7 @@ add_library(metalsharp_core STATIC
     src/metal/command/CommandBuffer.mm
     src/metal/pipeline/PipelineState.cpp
     src/metal/pipeline/PipelineState.mm
-    src/metal/pipeline/RenderPipeline.cpp
-    src/metal/pipeline/RenderPipeline.mm
+
     src/metal/pipeline/ComputePipeline.cpp
     src/metal/pipeline/ComputePipeline.mm
     src/metal/shader/ShaderTranslator.mm

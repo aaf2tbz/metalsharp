@@ -12,6 +12,36 @@ struct PipelineState::Impl {
 PipelineState::PipelineState() : m_impl(new Impl()) {}
 PipelineState::~PipelineState() { delete m_impl; }
 
+static MTLBlendFactor translateBlendFactor(uint32_t d3dFactor) {
+    switch (d3dFactor) {
+        case 1: return MTLBlendFactorZero;
+        case 2: return MTLBlendFactorOne;
+        case 3: return MTLBlendFactorSourceColor;
+        case 4: return MTLBlendFactorOneMinusSourceColor;
+        case 5: return MTLBlendFactorSourceAlpha;
+        case 6: return MTLBlendFactorOneMinusSourceAlpha;
+        case 7: return MTLBlendFactorDestinationAlpha;
+        case 8: return MTLBlendFactorOneMinusDestinationAlpha;
+        case 9: return MTLBlendFactorDestinationColor;
+        case 10: return MTLBlendFactorOneMinusDestinationColor;
+        case 11: return MTLBlendFactorSourceAlphaSaturated;
+        case 14: return MTLBlendFactorBlendColor;
+        case 15: return MTLBlendFactorOneMinusBlendColor;
+        default: return MTLBlendFactorOne;
+    }
+}
+
+static MTLBlendOperation translateBlendOp(uint32_t d3dOp) {
+    switch (d3dOp) {
+        case 1: return MTLBlendOperationAdd;
+        case 2: return MTLBlendOperationSubtract;
+        case 3: return MTLBlendOperationReverseSubtract;
+        case 4: return MTLBlendOperationMin;
+        case 5: return MTLBlendOperationMax;
+        default: return MTLBlendOperationAdd;
+    }
+}
+
 bool PipelineState::init(MetalDevice& device, const PipelineStateDesc& desc) {
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
 
@@ -24,15 +54,20 @@ bool PipelineState::init(MetalDevice& device, const PipelineStateDesc& desc) {
         pipelineDesc.fragmentFunction = (__bridge id<MTLFunction>)desc.fragmentFunction;
     }
 
-    pipelineDesc.colorAttachments[0].pixelFormat = (MTLPixelFormat)desc.colorPixelFormat;
-    if (desc.blendEnabled) {
-        pipelineDesc.colorAttachments[0].blendingEnabled = YES;
-        pipelineDesc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-        pipelineDesc.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-        pipelineDesc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-        pipelineDesc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
-        pipelineDesc.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-        pipelineDesc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+    for (uint32_t i = 0; i < desc.numColorAttachments && i < MAX_RENDER_TARGETS; ++i) {
+        if (desc.colorPixelFormats[i] == 0) continue;
+        pipelineDesc.colorAttachments[i].pixelFormat = (MTLPixelFormat)desc.colorPixelFormats[i];
+        pipelineDesc.colorAttachments[i].writeMask = (MTLColorWriteMask)desc.renderTargetWriteMask[i];
+
+        if (desc.blendEnabled[i]) {
+            pipelineDesc.colorAttachments[i].blendingEnabled = YES;
+            pipelineDesc.colorAttachments[i].sourceRGBBlendFactor = translateBlendFactor(desc.srcBlend[i]);
+            pipelineDesc.colorAttachments[i].destinationRGBBlendFactor = translateBlendFactor(desc.destBlend[i]);
+            pipelineDesc.colorAttachments[i].rgbBlendOperation = translateBlendOp(desc.blendOp[i]);
+            pipelineDesc.colorAttachments[i].sourceAlphaBlendFactor = translateBlendFactor(desc.srcBlendAlpha[i]);
+            pipelineDesc.colorAttachments[i].destinationAlphaBlendFactor = translateBlendFactor(desc.destBlendAlpha[i]);
+            pipelineDesc.colorAttachments[i].alphaBlendOperation = translateBlendOp(desc.blendOpAlpha[i]);
+        }
     }
 
     if (desc.depthPixelFormat != 0) {
