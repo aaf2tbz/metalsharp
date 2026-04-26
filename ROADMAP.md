@@ -89,14 +89,33 @@ Competitive with native ports.
 
 **Milestone:** Run AAA titles at 60fps+ on M-series Macs with visual parity.
 
-## Phase 6 — Community
+## Phase 7 — Community
 
 - [ ] Documentation and architecture guide
 - [ ] Compatibility database (per-game testing results)
-- [ ] CI/CD pipeline (build + test on GitHub Actions)
-- [ ] Contribution guidelines
+- [x] CI/CD pipeline (build + test on GitHub Actions)
+- [x] Contribution guidelines (CONTRIBUTING.md)
 - [ ] Discord/community forum
 - [ ] Integration with existing tools (Homebrew formula, CrossOver compatibility)
+
+## Phase 6 — CS:GO
+
+**Open Steam. Launch CS:GO with MetalSharp. Play with native settings.**
+
+- [ ] DXBC bytecode parser (CS:GO ships DXBC shaders)
+- [ ] DXBC → MSL translation (opcode-by-opcode, starting with the most common ops)
+- [ ] Wine integration: auto-create prefix, register DLL overrides
+- [ ] PE loader hook: inject MetalSharp dylibs into Wine process space
+- [ ] HWND → NSWindow/CAMetalLayer binding
+- [ ] XAudio2 → CoreAudio (footstep audio, voice chat, spatial)
+- [ ] XInput → GameController (mouse/keyboard passthrough, controller support)
+- [ ] DXGI output enumeration (display modes, VSync, fullscreen)
+- [ ] Per-game compatibility profile for CS:GO
+- [ ] Shader cache (DXBC → compiled MSL, persisted to disk)
+- [ ] Frame pacing and present timing
+- [ ] Configuration system (metalsharp.toml or similar)
+
+**Milestone:** Open Steam → Launch CS:GO → MetalSharp translates D3D11 calls to Metal → Play at playable framerates on Apple Silicon.
 
 ## Technical Dependencies
 
