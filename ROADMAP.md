@@ -23,8 +23,8 @@ Get a hardcoded triangle rendering on screen through D3D11 codepaths calling Met
 
 Full D3D11 feature set for real games.
 
-- [ ] Shader translator: DXBC bytecode parsing and HLSL→MSL translation
-- [ ] All D3D11 resource types (textures, UAVs, structured buffers)
+- [x] Shader translator: DXBC bytecode parsing and HLSL→MSL translation
+- [x] All D3D11 resource types (textures, UAVs, structured buffers)
 - [x] State objects (blend, rasterizer, depth stencil, sampler) → Metal equivalents
 - [x] Shader resource views → MTLTexture bindings
 - [x] Multiple render targets (8 color attachments, per-RT blend state)

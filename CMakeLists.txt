@@ -28,6 +28,8 @@ add_library(metalsharp_core STATIC
     src/metal/pipeline/ComputePipeline.cpp
     src/metal/pipeline/ComputePipeline.mm
     src/metal/shader/ShaderTranslator.mm
+    src/metal/shader/DXBCParser.cpp
+    src/metal/shader/DXBCtoMSL.cpp
     src/metal/Buffer.mm
     src/metal/Texture.mm
     src/metal/Sampler.mm
