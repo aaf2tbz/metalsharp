@@ -104,8 +104,8 @@ Competitive with native ports.
 
 **Open Steam. Launch CS:GO with MetalSharp. Play with native settings.**
 
-- [ ] DXBC bytecode parser (CS:GO ships DXBC shaders)
-- [ ] DXBC → MSL translation (opcode-by-opcode, starting with the most common ops)
+- [x] DXBC bytecode parser (CS:GO ships DXBC shaders)
+- [x] DXBC → MSL translation (opcode-by-opcode, starting with the most common ops)
 - [ ] Wine integration: auto-create prefix, register DLL overrides
 - [ ] PE loader hook: inject MetalSharp dylibs into Wine process space
 - [ ] HWND → NSWindow/CAMetalLayer binding
