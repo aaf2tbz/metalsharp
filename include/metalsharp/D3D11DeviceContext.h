@@ -70,6 +70,12 @@ public:
     STDMETHOD(GenerateMips)(ID3D11ShaderResourceView* pShaderResourceView) override;
     STDMETHOD(CopyResource)(ID3D11Resource* pDstResource, ID3D11Resource* pSrcResource) override;
     STDMETHOD(UpdateSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, const void* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) override;
+    STDMETHOD(CopySubresourceRegion)(ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const void* pSrcBox) override;
+    STDMETHOD(ResolveSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, ID3D11Resource* pSrcResource, UINT SrcSubresource, DXGI_FORMAT Format) override;
+    STDMETHOD(Begin)(ID3D11Query* pQuery) override;
+    STDMETHOD(End)(ID3D11Query* pQuery) override;
+    STDMETHOD(GetData)(ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) override;
+    STDMETHOD(SetPredication)(ID3D11Predicate* pPredicate, INT PredicateValue) override;
 
 private:
     void ensurePipeline();

@@ -31,6 +31,8 @@ public:
     STDMETHOD(CreateRasterizerState)(const void* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) override;
     STDMETHOD(CreateDepthStencilState)(const void* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) override;
     STDMETHOD(CreateBlendState)(const void* pBlendStateDesc, ID3D11BlendState** ppBlendState) override;
+    STDMETHOD(CreateQuery)(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) override;
+    STDMETHOD(CreatePredicate)(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) override;
     STDMETHOD_(void, GetImmediateContext)(ID3D11DeviceContext** ppImmediateContext) override;
     STDMETHOD(GetDeviceFeatureLevel)(UINT* pFeatureLevel) override;
 
