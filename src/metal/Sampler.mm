@@ -1,5 +1,6 @@
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/FormatTranslation.h>
+#include <d3d/D3D11.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
 
@@ -73,6 +74,83 @@ bool dxgiFormatIsCompressed(DXGITranslation format) {
             return true;
         default: return false;
     }
+}
+
+struct MetalSampler::Impl {
+    id<MTLSamplerState> sampler = nil;
+};
+
+MetalSampler::MetalSampler() : m_impl(new Impl()) {}
+MetalSampler::~MetalSampler() { delete m_impl; }
+
+static MTLSamplerAddressMode translateAddressMode(UINT mode) {
+    switch (mode) {
+        case 1: return MTLSamplerAddressModeRepeat;
+        case 2: return MTLSamplerAddressModeMirrorRepeat;
+        case 3: return MTLSamplerAddressModeClampToEdge;
+        case 4: return MTLSamplerAddressModeClampToZero;
+        case 5: return MTLSamplerAddressModeMirrorClampToEdge;
+        default: return MTLSamplerAddressModeClampToEdge;
+    }
+}
+
+static MTLSamplerMinMagFilter translateMinMagFilter(UINT filter) {
+    bool isPoint = (filter == D3D11_FILTER_MIN_MAG_MIP_POINT ||
+                    filter == D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR ||
+                    filter == D3D11_FILTER_COMPARISON_MIN_MAG_MIP_POINT);
+    return isPoint ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+}
+
+static MTLSamplerMipFilter translateMipFilter(UINT filter) {
+    bool isPoint = (filter == D3D11_FILTER_MIN_MAG_MIP_POINT ||
+                    filter == D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT ||
+                    filter == D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT ||
+                    filter == D3D11_FILTER_COMPARISON_MIN_MAG_MIP_POINT);
+    return isPoint ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterLinear;
+}
+
+bool MetalSampler::init(MetalDevice& device, uint32_t filter, uint32_t addressU, uint32_t addressV, uint32_t addressW, float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc) {
+    id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
+
+    MTLSamplerDescriptor* desc = [[MTLSamplerDescriptor alloc] init];
+    desc.minFilter = translateMinMagFilter(filter);
+    desc.magFilter = translateMinMagFilter(filter);
+    desc.mipFilter = translateMipFilter(filter);
+    desc.sAddressMode = translateAddressMode(addressU);
+    desc.tAddressMode = translateAddressMode(addressV);
+    desc.rAddressMode = translateAddressMode(addressW);
+    desc.lodBias = mipLodBias;
+    desc.maxAnisotropy = maxAnisotropy > 1 ? maxAnisotropy : 1;
+
+    if (filter >= 0x80) {
+        desc.compareFunction = MTLCompareFunctionAlways;
+        switch (comparisonFunc) {
+            case 1: desc.compareFunction = MTLCompareFunctionNever; break;
+            case 2: desc.compareFunction = MTLCompareFunctionLess; break;
+            case 3: desc.compareFunction = MTLCompareFunctionEqual; break;
+            case 4: desc.compareFunction = MTLCompareFunctionLessEqual; break;
+            case 5: desc.compareFunction = MTLCompareFunctionGreater; break;
+            case 6: desc.compareFunction = MTLCompareFunctionNotEqual; break;
+            case 7: desc.compareFunction = MTLCompareFunctionGreaterEqual; break;
+            case 8: desc.compareFunction = MTLCompareFunctionAlways; break;
+        }
+    }
+
+    m_impl->sampler = [mtlDevice newSamplerStateWithDescriptor:desc];
+    return m_impl->sampler != nil;
+}
+
+MetalSampler* MetalSampler::create(MetalDevice& device, uint32_t filter, uint32_t addressU, uint32_t addressV, uint32_t addressW, float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc) {
+    auto* s = new MetalSampler();
+    if (!s->init(device, filter, addressU, addressV, addressW, mipLodBias, maxAnisotropy, comparisonFunc)) {
+        delete s;
+        return nullptr;
+    }
+    return s;
+}
+
+void* MetalSampler::nativeSamplerState() const {
+    return (__bridge void*)m_impl->sampler;
 }
 
 }

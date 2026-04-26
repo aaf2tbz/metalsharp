@@ -34,7 +34,7 @@ class MIDL_INTERFACE("2411e7e1-12ac-4ccf-bd14-9798e8534dc0")
 IDXGIFactory1 : public IDXGIFactory {
 public:
     STDMETHOD(EnumAdapters1)(UINT Adapter, IDXGIAdapter** ppAdapter) PURE;
-    STDMETHOD_(BOOL, IsCurrent)() PURE;
+    STDMETHOD_(INT, IsCurrent)() PURE;
 };
 
 class MIDL_INTERFACE("790a45f7-0d42-4876-983a-0a55c2762d7f")
@@ -74,7 +74,7 @@ public:
     STDMETHOD(GetDisplayModeList)(DXGI_FORMAT EnumFormat, UINT Flags, UINT* pNumModes, DXGI_MODE_DESC* pDesc) PURE;
     STDMETHOD(FindClosestMatchingMode)(const DXGI_MODE_DESC* pModeToMatch, DXGI_MODE_DESC* pClosestMatch, IUnknown* pConcernedDevice) PURE;
     STDMETHOD(WaitForVBlank)() PURE;
-    STDMETHOD(TakeOwnership)(IUnknown* pDevice, BOOL Exclusive) PURE;
+    STDMETHOD(TakeOwnership)(IUnknown* pDevice, INT Exclusive) PURE;
     STDMETHOD_(void, ReleaseOwnership)() PURE;
     STDMETHOD(GetGammaControlCapabilities)(void* pGammaCaps) PURE;
     STDMETHOD(SetGammaControl)(const void* pArray) PURE;
@@ -89,8 +89,8 @@ IDXGISwapChain : public IDXGIObject {
 public:
     STDMETHOD(Present)(UINT SyncInterval, UINT Flags) PURE;
     STDMETHOD(GetBuffer)(UINT Buffer, const GUID& riid, void** ppSurface) PURE;
-    STDMETHOD(SetFullscreenState)(BOOL Fullscreen, IDXGIOutput* pTarget) PURE;
-    STDMETHOD(GetFullscreenState)(BOOL* pFullscreen, IDXGIOutput** ppTarget) PURE;
+    STDMETHOD(SetFullscreenState)(INT Fullscreen, IDXGIOutput* pTarget) PURE;
+    STDMETHOD(GetFullscreenState)(INT* pFullscreen, IDXGIOutput** ppTarget) PURE;
     STDMETHOD(GetDesc)(void* pDesc) PURE;
     STDMETHOD(ResizeBuffers)(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) PURE;
     STDMETHOD(ResizeTarget)(const DXGI_MODE_DESC* pNewTargetParameters) PURE;
