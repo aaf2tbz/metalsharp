@@ -25,15 +25,17 @@ Full D3D11 feature set for real games.
 
 - [ ] Shader translator: DXBC bytecode parsing and HLSL→MSL translation
 - [ ] All D3D11 resource types (textures, UAVs, structured buffers)
-- [ ] State objects (blend, rasterizer, depth stencil, sampler) → Metal equivalents
-- [ ] Shader resource views → MTLTexture bindings
-- [ ] Multiple render targets
-- [ ] Map/Unmap for CPU-accessible resources (staging buffers)
-- [ ] Dynamic constant buffer uploads
-- [ ] Texture loading and subresource updates
-- [ ] GenerateMips implementation
-- [ ] CopyResource, ResolveSubresource
-- [ ] Predication, queries (OCCLUSION, TIMESTAMP)
+- [x] State objects (blend, rasterizer, depth stencil, sampler) → Metal equivalents
+- [x] Shader resource views → MTLTexture bindings
+- [x] Multiple render targets (8 color attachments, per-RT blend state)
+- [x] Map/Unmap for CPU-accessible resources (staging buffers)
+- [x] Dynamic constant buffer uploads
+- [x] Texture loading and subresource updates (UpdateSubresource with replaceRegion)
+- [x] GenerateMips implementation
+- [x] CopyResource (texture-to-texture + buffer-to-buffer)
+- [x] CopySubresourceRegion
+- [x] ResolveSubresource (MSAA resolve)
+- [x] Predication, queries (OCCLUSION, TIMESTAMP, EVENT)
 - [ ] Deferred context support (multithreaded rendering)
 
 **Milestone:** Run a D3D11 game with moderate shader complexity without crashing.

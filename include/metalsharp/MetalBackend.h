@@ -66,16 +66,20 @@ private:
 
 class MetalTexture {
 public:
-    static MetalTexture* create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage);
+    static MetalTexture* create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels = 1, uint32_t sampleCount = 1);
     ~MetalTexture();
 
     void* nativeTexture() const;
     uint32_t width() const;
     uint32_t height() const;
+    uint32_t mipLevels() const;
+    uint32_t sampleCount() const;
+
+    void uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t width, uint32_t height);
 
 private:
     MetalTexture();
-    bool init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage);
+    bool init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels, uint32_t sampleCount);
 
     struct Impl;
     Impl* m_impl;

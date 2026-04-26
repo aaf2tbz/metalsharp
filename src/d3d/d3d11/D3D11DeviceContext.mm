@@ -436,7 +436,37 @@ HRESULT D3D11DeviceContext::Unmap(ID3D11Resource*, UINT) {
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView*) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) {
+    if (!pShaderResourceView) return S_OK;
+    void* texPtr = pShaderResourceView->__metalTexturePtr();
+    if (!texPtr) return S_OK;
+
+    id<MTLTexture> tex = (__bridge id<MTLTexture>)texPtr;
+    if (tex.mipmapLevelCount <= 1) return S_OK;
+
+    auto& metalDev = m_device.metalDevice();
+    id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+    id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+
+    for (NSUInteger level = 1; level < tex.mipmapLevelCount; ++level) {
+        NSUInteger srcW = tex.width >> (level - 1);
+        NSUInteger srcH = tex.height >> (level - 1);
+        NSUInteger dstW = tex.width >> level;
+        NSUInteger dstH = tex.height >> level;
+        if (srcW == 0) srcW = 1;
+        if (srcH == 0) srcH = 1;
+        if (dstW == 0) dstW = 1;
+        if (dstH == 0) dstH = 1;
+
+        [blit generateMipmapsForTexture:tex];
+        break;
+    }
+
+    [blit endEncoding];
+    [cmdBuffer commit];
+    return S_OK;
+}
 
 HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* pSrc) {
     if (!pDst || !pSrc) return E_INVALIDARG;
@@ -446,11 +476,34 @@ HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* p
     if (dstBuf && srcBuf) {
         id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
         id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
+        memcpy([dst contents], [src contents], [src length] < [dst length] ? [src length] : [dst length]);
+        return S_OK;
+    }
+
+    void* dstTex = pDst->__metalTexturePtr();
+    void* srcTex = pSrc->__metalTexturePtr();
+    if (dstTex && srcTex) {
         auto& metalDev = m_device.metalDevice();
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
         id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
-        [cmdBuffer enqueue];
-        memcpy([dst contents], [src contents], [src length] < [dst length] ? [src length] : [dst length]);
+        id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+
+        id<MTLTexture> dst = (__bridge id<MTLTexture>)dstTex;
+        id<MTLTexture> src = (__bridge id<MTLTexture>)srcTex;
+
+        for (NSUInteger level = 0; level < src.mipmapLevelCount && level < dst.mipmapLevelCount; ++level) {
+            [blit copyFromTexture:src
+                      sourceSlice:0
+                      sourceLevel:level
+                     sourceOrigin:MTLOriginMake(0, 0, 0)
+                       sourceSize:MTLSizeMake(src.width >> level, src.height >> level, 1)
+                        toTexture:dst
+                 destinationSlice:0
+                 destinationLevel:level
+                destinationOrigin:MTLOriginMake(0, 0, 0)];
+        }
+
+        [blit endEncoding];
         [cmdBuffer commit];
         return S_OK;
     }
@@ -489,6 +542,124 @@ HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubr
     }
 
     return E_NOTIMPL;
+}
+
+HRESULT D3D11DeviceContext::CopySubresourceRegion(ID3D11Resource* pDst, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrc, UINT SrcSubresource, const void* pSrcBox) {
+    if (!pDst || !pSrc) return E_INVALIDARG;
+
+    void* dstTex = pDst->__metalTexturePtr();
+    void* srcTex = pSrc->__metalTexturePtr();
+    if (dstTex && srcTex) {
+        auto& metalDev = m_device.metalDevice();
+        id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+        id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+
+        id<MTLTexture> dst = (__bridge id<MTLTexture>)dstTex;
+        id<MTLTexture> src = (__bridge id<MTLTexture>)srcTex;
+
+        MTLSize srcSize;
+        MTLOrigin srcOrigin;
+        if (pSrcBox) {
+            const UINT* box = static_cast<const UINT*>(pSrcBox);
+            srcOrigin = MTLOriginMake(box[0], box[1], box[2]);
+            srcSize = MTLSizeMake(box[3] - box[0], box[4] - box[1], box[5] - box[2]);
+        } else {
+            srcOrigin = MTLOriginMake(0, 0, 0);
+            srcSize = MTLSizeMake(src.width, src.height, 1);
+        }
+
+        [blit copyFromTexture:src
+                  sourceSlice:0
+                  sourceLevel:SrcSubresource
+                 sourceOrigin:srcOrigin
+                   sourceSize:srcSize
+                    toTexture:dst
+             destinationSlice:0
+             destinationLevel:DstSubresource
+            destinationOrigin:MTLOriginMake(DstX, DstY, DstZ)];
+
+        [blit endEncoding];
+        [cmdBuffer commit];
+        return S_OK;
+    }
+
+    void* dstBuf = pDst->__metalBufferPtr();
+    void* srcBuf = pSrc->__metalBufferPtr();
+    if (dstBuf && srcBuf) {
+        id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
+        id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
+        memcpy([dst contents], [src contents], [src length] < [dst length] ? [src length] : [dst length]);
+        return S_OK;
+    }
+
+    return E_NOTIMPL;
+}
+
+HRESULT D3D11DeviceContext::ResolveSubresource(ID3D11Resource* pDst, UINT DstSubresource, ID3D11Resource* pSrc, UINT SrcSubresource, DXGI_FORMAT Format) {
+    if (!pDst || !pSrc) return E_INVALIDARG;
+
+    void* dstTex = pDst->__metalTexturePtr();
+    void* srcTex = pSrc->__metalTexturePtr();
+    if (dstTex && srcTex) {
+        auto& metalDev = m_device.metalDevice();
+        id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+        id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmdBuffer blitCommandEncoder];
+
+        id<MTLTexture> dst = (__bridge id<MTLTexture>)dstTex;
+        id<MTLTexture> src = (__bridge id<MTLTexture>)srcTex;
+
+        [blit generateMipmapsForTexture:dst];
+
+        [blit copyFromTexture:src
+                  sourceSlice:0
+                  sourceLevel:SrcSubresource
+                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake(src.width, src.height, 1)
+                    toTexture:dst
+             destinationSlice:0
+             destinationLevel:DstSubresource
+            destinationOrigin:MTLOriginMake(0, 0, 0)];
+
+        [blit endEncoding];
+        [cmdBuffer commit];
+        return S_OK;
+    }
+
+    return E_NOTIMPL;
+}
+
+HRESULT D3D11DeviceContext::Begin(ID3D11Query* pQuery) {
+    if (!pQuery) return S_OK;
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::End(ID3D11Query* pQuery) {
+    if (!pQuery) return S_OK;
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::GetData(ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) {
+    if (!pQuery) return S_OK;
+
+    UINT queryType = pQuery->__getQueryType();
+    if (pData && DataSize >= sizeof(UINT64)) {
+        UINT64* result = static_cast<UINT64*>(pData);
+        if (queryType == D3D11_QUERY_OCCLUSION) {
+            *result = 1;
+        } else if (queryType == D3D11_QUERY_TIMESTAMP) {
+            *result = 0;
+        } else if (queryType == D3D11_QUERY_EVENT) {
+            *result = 1;
+        }
+    }
+
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::SetPredication(ID3D11Predicate* pPredicate, INT PredicateValue) {
+    return S_OK;
 }
 
 }

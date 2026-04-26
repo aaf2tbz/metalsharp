@@ -87,12 +87,20 @@ HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3
     uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
     uint32_t usage = 0;
     if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_VERTEX_BUFFER) usage |= 0x2;
-    if (pDesc->BindFlags & D3D11_BIND_INDEX_BUFFER) usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
     if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
 
-    MetalTexture* tex = MetalTexture::create2D(*m_metalDevice, pDesc->Width, pDesc->Height, metalFmt, usage);
+    uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
+    uint32_t sampleCount = pDesc->SampleDesc.Count > 0 ? pDesc->SampleDesc.Count : 1;
+
+    MetalTexture* tex = MetalTexture::create2D(*m_metalDevice, pDesc->Width, pDesc->Height, metalFmt, usage, mipLevels, sampleCount);
     if (!tex) return E_OUTOFMEMORY;
+
+    if (pInitialData) {
+        tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, pDesc->Height);
+    }
 
     struct Impl : public ID3D11Texture2D {
         MS_COM_BODY()
@@ -325,6 +333,33 @@ HRESULT D3D11Device::CreateBlendState(const void* pBlendStateDesc, ID3D11BlendSt
     auto* impl = new Impl();
     impl->desc = *desc;
     *ppBlendState = impl;
+    return S_OK;
+}
+
+HRESULT D3D11Device::CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) {
+    if (!pQueryDesc || !ppQuery) return E_INVALIDARG;
+
+    struct Impl : public ID3D11Query {
+        MS_COM_BODY()
+        D3D11_QUERY_DESC desc;
+        void GetDesc(D3D11_QUERY_DESC* p) override { if(p) *p = desc; }
+        UINT __getQueryType() const override { return desc.Query; }
+    };
+
+    auto* impl = new Impl();
+    impl->desc = *pQueryDesc;
+    *ppQuery = impl;
+    return S_OK;
+}
+
+HRESULT D3D11Device::CreatePredicate(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) {
+    if (!pPredicateDesc || !ppPredicate) return E_INVALIDARG;
+
+    struct Impl : public ID3D11Predicate {
+        MS_COM_BODY()
+    };
+
+    *ppPredicate = new Impl();
     return S_OK;
 }
 

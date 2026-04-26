@@ -31,6 +31,8 @@ class ID3D11RasterizerState;
 class ID3D11DepthStencilState;
 class ID3D11BlendState;
 class ID3D11UnorderedAccessView;
+class ID3D11Query;
+class ID3D11Predicate;
 
 constexpr UINT D3D11_BIND_VERTEX_BUFFER    = 0x1;
 constexpr UINT D3D11_BIND_INDEX_BUFFER     = 0x2;
@@ -127,13 +129,18 @@ struct D3D11_SUBRESOURCE_DATA {
     UINT SysMemSlicePitch;
 };
 
+struct DXGI_SAMPLE_DESC {
+    UINT Count;
+    UINT Quality;
+};
+
 struct D3D11_TEXTURE2D_DESC {
     UINT Width;
     UINT Height;
     UINT MipLevels;
     UINT ArraySize;
     DXGI_FORMAT Format;
-    UINT SampleDesc;
+    DXGI_SAMPLE_DESC SampleDesc;
     UINT Usage;
     UINT BindFlags;
     UINT CPUAccessFlags;
@@ -457,6 +464,30 @@ public:
     virtual INT __getAlphaToCoverageEnable() const { return FALSE; }
 };
 
+constexpr UINT D3D11_QUERY_EVENT                   = 0;
+constexpr UINT D3D11_QUERY_OCCLUSION               = 1;
+constexpr UINT D3D11_QUERY_TIMESTAMP               = 2;
+constexpr UINT D3D11_QUERY_TIMESTAMP_DISJOINT      = 3;
+constexpr UINT D3D11_QUERY_PIPELINE_STATISTICS     = 4;
+constexpr UINT D3D11_QUERY_OCCLUSION_PREDICATE     = 5;
+constexpr UINT D3D11_QUERY_SO_STATISTICS           = 6;
+constexpr UINT D3D11_QUERY_SO_OVERFLOW_PREDICATE   = 7;
+
+struct D3D11_QUERY_DESC {
+    UINT Query;
+    UINT MiscFlags;
+};
+
+class ID3D11Query : public ID3D11DeviceChild {
+public:
+    virtual void GetDesc(D3D11_QUERY_DESC* pDesc) = 0;
+    virtual void* __metalBufferPtr() const { return nullptr; }
+    virtual UINT __getQueryType() const { return D3D11_QUERY_EVENT; }
+};
+
+class ID3D11Predicate : public ID3D11DeviceChild {
+};
+
 class MIDL_INTERFACE("aec81fb3-4e01-4dfe-a0a3-d0a9757d886b")
 ID3D11DeviceContext : public ID3D11DeviceChild {
 public:
@@ -507,6 +538,12 @@ public:
     STDMETHOD(GenerateMips)(THIS_ ID3D11ShaderResourceView* pShaderResourceView) PURE;
     STDMETHOD(CopyResource)(THIS_ ID3D11Resource* pDstResource, ID3D11Resource* pSrcResource) PURE;
     STDMETHOD(UpdateSubresource)(THIS_ ID3D11Resource* pDstResource, UINT DstSubresource, const void* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) PURE;
+    STDMETHOD(CopySubresourceRegion)(THIS_ ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const void* pSrcBox) PURE;
+    STDMETHOD(ResolveSubresource)(THIS_ ID3D11Resource* pDstResource, UINT DstSubresource, ID3D11Resource* pSrcResource, UINT SrcSubresource, DXGI_FORMAT Format) PURE;
+    STDMETHOD(Begin)(THIS_ ID3D11Query* pQuery) PURE;
+    STDMETHOD(End)(THIS_ ID3D11Query* pQuery) PURE;
+    STDMETHOD(GetData)(THIS_ ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) PURE;
+    STDMETHOD(SetPredication)(THIS_ ID3D11Predicate* pPredicate, INT PredicateValue) PURE;
 };
 
 typedef struct {
@@ -534,9 +571,8 @@ public:
     STDMETHOD(CreateRasterizerState)(THIS_ const void* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) PURE;
     STDMETHOD(CreateDepthStencilState)(THIS_ const void* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) PURE;
     STDMETHOD(CreateBlendState)(THIS_ const void* pBlendStateDesc, ID3D11BlendState** ppBlendState) PURE;
+    STDMETHOD(CreateQuery)(THIS_ const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) PURE;
+    STDMETHOD(CreatePredicate)(THIS_ const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) PURE;
     STDMETHOD_(void, GetImmediateContext)(THIS_ ID3D11DeviceContext** ppImmediateContext) PURE;
     STDMETHOD(GetDeviceFeatureLevel)(THIS_ UINT* pFeatureLevel) PURE;
 };
-
-class ID3D11ClassLinkage;
-class ID3D11ClassInstance;
