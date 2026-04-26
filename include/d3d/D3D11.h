@@ -76,6 +76,8 @@ public:
 };
 
 class ID3D11Buffer : public ID3D11Resource {
+public:
+    virtual void* __metalBufferPtr() const { return nullptr; }
 };
 
 class ID3D11Texture2D : public ID3D11Resource {
@@ -102,9 +104,13 @@ class ID3D11InputLayout : public ID3D11DeviceChild {
 };
 
 class ID3D11VertexShader : public ID3D11DeviceChild {
+public:
+    virtual void* __metalVertexFunction() const { return nullptr; }
 };
 
 class ID3D11PixelShader : public ID3D11DeviceChild {
+public:
+    virtual void* __metalFragmentFunction() const { return nullptr; }
 };
 
 class ID3D11GeometryShader : public ID3D11DeviceChild {

@@ -43,8 +43,8 @@ int main() {
         buffer->Release();
     }
 
-    device->Release();
     context->Release();
+    device->Release();
 
     printf("PASS: D3D11 device creation\n");
     return 0;

@@ -2,12 +2,19 @@
 
 #include <d3d/D3D11.h>
 #include <metalsharp/MetalBackend.h>
+#include <metalsharp/PipelineState.h>
 #include <array>
 #include <memory>
 
 namespace metalsharp {
 
 class D3D11Device;
+
+struct MetalShaderAccessor {
+    static void* getVertexFunction(ID3D11VertexShader* vs);
+    static void* getFragmentFunction(ID3D11PixelShader* ps);
+    static MetalBuffer* getMetalBuffer(ID3D11Buffer* buf);
+};
 
 class D3D11DeviceContext : public ID3D11DeviceContext {
 public:
@@ -112,7 +119,11 @@ private:
     UINT m_indexBufferOffset = 0;
 
     std::unique_ptr<MetalFramebuffer> m_framebuffer;
+    std::unique_ptr<PipelineState> m_cachedPipeline;
+    void* m_lastDrawable = nullptr;
     D3D11_VIEWPORT m_viewport = {};
+
+    void ensurePipeline();
 };
 
 }

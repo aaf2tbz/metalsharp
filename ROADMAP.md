@@ -11,13 +11,13 @@ Get a hardcoded triangle rendering on screen through D3D11 codepaths calling Met
 - [x] DXGI swap chain → CAMetalLayer
 - [x] Vertex buffer → MTLBuffer allocation
 - [x] DXGI format → Metal pixel format translation
-- [ ] Shader translator: embed a hardcoded MSL triangle shader, compile with newLibraryWithSource
-- [ ] Input layout → MTLVertexDescriptor mapping
-- [ ] Render pipeline state: translate D3D11 blend/rasterizer/depth state to MTLRenderPipelineDescriptor
-- [ ] Draw call encoding: flushRenderState() → MTLRenderCommandEncoder → drawPrimitives
-- [ ] End-to-end test: D3D11CreateDevice → create buffer → set shaders → draw → present triangle
+- [x] Shader translator: embed a hardcoded MSL triangle shader, compile with newLibraryWithSource
+- [x] Input layout → MTLVertexDescriptor mapping
+- [x] Render pipeline state: translate D3D11 blend/rasterizer/depth state to MTLRenderPipelineDescriptor
+- [x] Draw call encoding: flushRenderState() → MTLRenderCommandEncoder → drawPrimitives
+- [x] End-to-end test: D3D11CreateDevice → create buffer → set shaders → draw → present triangle
 
-**Milestone:** A colored triangle appears in a window via D3D11 codepaths.
+**Milestone:** A colored triangle appears in a window via D3D11 codepaths. ✅ COMPLETE
 
 ## Phase 2 — D3D11 Coverage
 

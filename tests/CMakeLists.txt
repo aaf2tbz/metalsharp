@@ -16,6 +16,13 @@ add_executable(test_d3d11_device
 )
 target_link_libraries(test_d3d11_device PRIVATE metalsharp_d3d11 metalsharp_core)
 
+add_executable(test_triangle
+    test_triangle.mm
+)
+target_link_libraries(test_triangle PRIVATE metalsharp_d3d11 metalsharp_core)
+target_compile_options(test_triangle PRIVATE -fobjc-arc)
+
 add_test(NAME metal_device COMMAND test_metal_device)
 add_test(NAME format_translation COMMAND test_format_translation)
 add_test(NAME d3d11_device COMMAND test_d3d11_device)
+add_test(NAME triangle COMMAND test_triangle)
