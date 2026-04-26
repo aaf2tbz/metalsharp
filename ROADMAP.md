@@ -36,7 +36,7 @@ Full D3D11 feature set for real games.
 - [x] CopySubresourceRegion
 - [x] ResolveSubresource (MSAA resolve)
 - [x] Predication, queries (OCCLUSION, TIMESTAMP, EVENT)
-- [ ] Deferred context support (multithreaded rendering)
+- [x] Deferred context support (multithreaded rendering)
 
 **Milestone:** Run a D3D11 game with moderate shader complexity without crashing.
 
@@ -44,14 +44,14 @@ Full D3D11 feature set for real games.
 
 Direct3D 12 translation for modern games.
 
-- [ ] D3D12 device → MTLDevice
-- [ ] Command queue → MTLCommandQueue with proper synchronization
-- [ ] Command lists/allocators → MTLCommandBuffer + encoder pooling
-- [ ] Descriptor heaps → Metal argument buffers
-- [ ] Root signatures → Metal argument table layout mapping
-- [ ] Pipeline state objects (PSO) → MTLRenderPipelineState / MTLComputePipelineState
-- [ ] Resource barriers → Metal resource state tracking
-- [ ] Command signature (indirect drawing)
+- [x] D3D12 device → MTLDevice
+- [x] Command queue → MTLCommandQueue with proper synchronization
+- [x] Command lists/allocators → MTLCommandBuffer + encoder pooling
+- [x] Descriptor heaps → Metal argument buffers
+- [x] Root signatures → Metal argument table layout mapping
+- [x] Pipeline state objects (PSO) → MTLRenderPipelineState / MTLComputePipelineState
+- [x] Resource barriers → Metal resource state tracking
+- [x] Command signature (indirect drawing)
 - [ ] Tiled resources (sparse textures)
 - [ ] Sampler feedback
 

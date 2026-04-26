@@ -60,6 +60,7 @@ add_library(metalsharp_d3d11 SHARED
     src/d3d/d3d11/D3D11RasterizerState.cpp
     src/d3d/d3d11/D3D11DepthStencilState.cpp
     src/d3d/d3d11/D3D11BlendState.cpp
+    src/d3d/d3d11/DeferredContext.cpp
     src/d3d/d3d11/EntryPoint.cpp
 )
 target_link_libraries(metalsharp_d3d11 PRIVATE metalsharp_core)
@@ -69,7 +70,7 @@ set_target_properties(metalsharp_d3d11 PROPERTIES OUTPUT_NAME "d3d11" PREFIX "")
 add_library(metalsharp_d3d12 SHARED
     src/d3d/d3d12/D3D12Device.cpp
     src/d3d/d3d12/D3D12CommandQueue.cpp
-    src/d3d/d3d12/D3D12CommandList.cpp
+    src/d3d/d3d12/D3D12CommandList.mm
     src/d3d/d3d12/D3D12Resource.cpp
     src/d3d/d3d12/D3D12DescriptorHeap.cpp
     src/d3d/d3d12/D3D12RootSignature.cpp

@@ -1,5 +1,6 @@
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/D3D11Device.h>
+#include <metalsharp/DeferredContext.h>
 #include <metalsharp/PipelineState.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
@@ -238,6 +239,7 @@ HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView* pDSV, 
 
 void D3D11DeviceContext::ensurePipeline() {
     if (m_cachedPipeline) return;
+    if (!m_vertexShader) return;
 
     PipelineStateDesc desc;
     desc.vertexStride = m_vertexBuffers[0].stride;
@@ -684,6 +686,18 @@ HRESULT D3D11DeviceContext::GetData(ID3D11Query* pQuery, void* pData, UINT DataS
 }
 
 HRESULT D3D11DeviceContext::SetPredication(ID3D11Predicate* pPredicate, INT PredicateValue) {
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::FinishCommandList(INT, ID3D11CommandList**) {
+    return E_FAIL;
+}
+
+HRESULT D3D11DeviceContext::ExecuteCommandList(ID3D11CommandList* pCommandList, INT) {
+    if (!pCommandList) return E_INVALIDARG;
+    auto* cmdList = static_cast<CommandList*>(pCommandList);
+    m_cachedPipeline.reset();
+    cmdList->replay(this);
     return S_OK;
 }
 

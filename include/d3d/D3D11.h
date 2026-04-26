@@ -21,6 +21,7 @@ static const GUID IID_ID3D11SamplerState = {0x38e4f8a8, 0xcc78, 0x4a48, {0x84, 0
 static const GUID IID_ID3D11RasterizerState = {0x1e9c9db7, 0x21b3, 0x4a30, {0x84, 0xc1, 0x3a, 0xcf, 0x16, 0xd2, 0x61, 0x8b}};
 static const GUID IID_ID3D11DepthStencilState = {0x431583c5, 0x1c9d, 0x4e72, {0x90, 0xa7, 0x3e, 0x42, 0x03, 0xfb, 0x9f, 0xf3}};
 static const GUID IID_ID3D11BlendState = {0x46e71f5a, 0x2501, 0x41a2, {0xac, 0xfb, 0x7a, 0x7f, 0x09, 0xe2, 0x81, 0x7b}};
+static const GUID IID_ID3D11CommandList = {0xa24bc4d1, 0x762e, 0x4c3e, {0x82, 0x27, 0x09, 0x3d, 0x26, 0x8e, 0x4a, 0xbf}};
 
 class ID3D11Device;
 class ID3D11DeviceContext;
@@ -545,6 +546,11 @@ public:
 class ID3D11Predicate : public ID3D11DeviceChild {
 };
 
+class ID3D11CommandList : public ID3D11DeviceChild {
+public:
+    STDMETHOD_(UINT, GetContextFlags)() { return 0; }
+};
+
 class MIDL_INTERFACE("aec81fb3-4e01-4dfe-a0a3-d0a9757d886b")
 ID3D11DeviceContext : public ID3D11DeviceChild {
 public:
@@ -601,6 +607,9 @@ public:
     STDMETHOD(End)(THIS_ ID3D11Query* pQuery) PURE;
     STDMETHOD(GetData)(THIS_ ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) PURE;
     STDMETHOD(SetPredication)(THIS_ ID3D11Predicate* pPredicate, INT PredicateValue) PURE;
+
+    STDMETHOD(FinishCommandList)(THIS_ INT RestoreDeferredContextState, ID3D11CommandList** ppCommandList) PURE;
+    STDMETHOD(ExecuteCommandList)(THIS_ ID3D11CommandList* pCommandList, INT RestoreContextState) PURE;
 };
 
 typedef struct {
@@ -634,5 +643,6 @@ public:
     STDMETHOD(CreateQuery)(THIS_ const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) PURE;
     STDMETHOD(CreatePredicate)(THIS_ const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) PURE;
     STDMETHOD_(void, GetImmediateContext)(THIS_ ID3D11DeviceContext** ppImmediateContext) PURE;
+    STDMETHOD(CreateDeferredContext)(THIS_ UINT ContextFlags, ID3D11DeviceContext** ppDeferredContext) PURE;
     STDMETHOD(GetDeviceFeatureLevel)(THIS_ UINT* pFeatureLevel) PURE;
 };
