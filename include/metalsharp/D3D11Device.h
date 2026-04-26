@@ -37,6 +37,7 @@ public:
     STDMETHOD(CreateQuery)(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) override;
     STDMETHOD(CreatePredicate)(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) override;
     STDMETHOD_(void, GetImmediateContext)(ID3D11DeviceContext** ppImmediateContext) override;
+    STDMETHOD(CreateDeferredContext)(UINT ContextFlags, ID3D11DeviceContext** ppDeferredContext) override;
     STDMETHOD(GetDeviceFeatureLevel)(UINT* pFeatureLevel) override;
 
     MetalDevice& metalDevice() { return *m_metalDevice; }

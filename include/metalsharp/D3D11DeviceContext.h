@@ -77,6 +77,9 @@ public:
     STDMETHOD(GetData)(ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) override;
     STDMETHOD(SetPredication)(ID3D11Predicate* pPredicate, INT PredicateValue) override;
 
+    STDMETHOD(FinishCommandList)(INT RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override;
+    STDMETHOD(ExecuteCommandList)(ID3D11CommandList* pCommandList, INT RestoreContextState) override;
+
 private:
     void ensurePipeline();
     void commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation, INT baseVertexLocation, bool indexed);

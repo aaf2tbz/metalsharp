@@ -1,5 +1,6 @@
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/D3D11DeviceContext.h>
+#include <metalsharp/DeferredContext.h>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/PipelineState.h>
 #include <cstring>
@@ -476,6 +477,12 @@ void D3D11Device::GetImmediateContext(ID3D11DeviceContext** ppImmediateContext) 
         m_immediateContext->AddRef();
         *ppImmediateContext = m_immediateContext.get();
     }
+}
+
+HRESULT D3D11Device::CreateDeferredContext(UINT, ID3D11DeviceContext** ppDeferredContext) {
+    if (!ppDeferredContext) return E_POINTER;
+    *ppDeferredContext = new DeferredContext(*this);
+    return S_OK;
 }
 
 HRESULT D3D11Device::GetDeviceFeatureLevel(UINT* pFeatureLevel) {

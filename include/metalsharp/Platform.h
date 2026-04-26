@@ -18,7 +18,9 @@ typedef unsigned char UINT8;
 typedef uint64_t UINT64;
 typedef size_t SIZE_T;
 
-#ifndef __OBJC__
+#ifdef __OBJC__
+#import <objc/objc.h>
+#else
 typedef int BOOL;
 #endif
 
@@ -26,13 +28,6 @@ typedef int BOOL;
 #define MS_FALSE 0
 #ifndef TRUE
 #define TRUE 1
-#endif
-#ifndef FALSE
-#define FALSE 0
-#endif
-
-#ifndef __OBJC__
-typedef int BOOL;
 #endif
 #ifndef FALSE
 #define FALSE 0
