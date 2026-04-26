@@ -123,6 +123,88 @@ HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3
     return S_OK;
 }
 
+HRESULT D3D11Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture1D** ppTexture1D) {
+    if (!pDesc || !ppTexture1D) return E_INVALIDARG;
+
+    uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
+    uint32_t usage = 0;
+    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
+
+    uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
+
+    MetalTexture* tex = MetalTexture::create1D(*m_metalDevice, pDesc->Width, metalFmt, usage, mipLevels);
+    if (!tex) return E_OUTOFMEMORY;
+
+    if (pInitialData) {
+        tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, 1);
+    }
+
+    struct Impl : public ID3D11Texture1D {
+        MS_COM_BODY()
+        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_TEXTURE1D; return S_OK; }
+        STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
+        STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
+        std::unique_ptr<MetalTexture> metalTexture;
+        D3D11_TEXTURE1D_DESC desc;
+        void GetDesc(D3D11_TEXTURE1D_DESC* p) override { if(p) *p = desc; }
+        void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
+        UINT __getResourceDimension() const override { return D3D11_RESOURCE_DIMENSION_TEXTURE1D; }
+        UINT __getCPUAccessFlags() const override { return desc.CPUAccessFlags; }
+        UINT __getUsage() const override { return desc.Usage; }
+    };
+
+    auto* impl = new Impl();
+    impl->metalTexture = std::unique_ptr<MetalTexture>(tex);
+    impl->desc = *pDesc;
+    *ppTexture1D = impl;
+    return S_OK;
+}
+
+HRESULT D3D11Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture3D** ppTexture3D) {
+    if (!pDesc || !ppTexture3D) return E_INVALIDARG;
+
+    uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
+    uint32_t usage = 0;
+    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
+
+    uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
+
+    MetalTexture* tex = MetalTexture::create3D(*m_metalDevice, pDesc->Width, pDesc->Height, pDesc->Depth, metalFmt, usage, mipLevels);
+    if (!tex) return E_OUTOFMEMORY;
+
+    if (pInitialData) {
+        tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, pDesc->Height, pDesc->Depth);
+    }
+
+    struct Impl : public ID3D11Texture3D {
+        MS_COM_BODY()
+        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_TEXTURE3D; return S_OK; }
+        STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
+        STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
+        std::unique_ptr<MetalTexture> metalTexture;
+        D3D11_TEXTURE3D_DESC desc;
+        void GetDesc(D3D11_TEXTURE3D_DESC* p) override { if(p) *p = desc; }
+        void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
+        UINT __getResourceDimension() const override { return D3D11_RESOURCE_DIMENSION_TEXTURE3D; }
+        UINT __getCPUAccessFlags() const override { return desc.CPUAccessFlags; }
+        UINT __getUsage() const override { return desc.Usage; }
+    };
+
+    auto* impl = new Impl();
+    impl->metalTexture = std::unique_ptr<MetalTexture>(tex);
+    impl->desc = *pDesc;
+    *ppTexture3D = impl;
+    return S_OK;
+}
+
 HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11VertexShader** ppVertexShader) {
     if (!pShaderBytecode || !ppVertexShader) return E_INVALIDARG;
 
@@ -230,20 +312,46 @@ HRESULT D3D11Device::CreateDepthStencilView(ID3D11Resource* pResource, const voi
 HRESULT D3D11Device::CreateShaderResourceView(ID3D11Resource* pResource, const void* pDesc, ID3D11ShaderResourceView** ppSRView) {
     if (!pResource || !ppSRView) return E_INVALIDARG;
     void* texPtr = pResource->__metalTexturePtr();
-    if (!texPtr) return E_FAIL;
+    void* bufPtr = pResource->__metalBufferPtr();
 
     struct Impl : public ID3D11ShaderResourceView {
         MS_COM_BODY()
         STDMETHOD(GetResource)(ID3D11Resource** pp) override { return E_NOTIMPL; }
         ID3D11Resource* resource = nullptr;
         void* __metalTexturePtr() const override { return metalTex; }
+        void* __metalBufferPtr() const override { return metalBuf; }
         void* metalTex = nullptr;
+        void* metalBuf = nullptr;
     };
 
     auto* srv = new Impl();
     srv->resource = pResource;
     srv->metalTex = texPtr;
+    srv->metalBuf = bufPtr;
     *ppSRView = srv;
+    return S_OK;
+}
+
+HRESULT D3D11Device::CreateUnorderedAccessView(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) {
+    if (!pResource || !ppUAView) return E_INVALIDARG;
+    void* texPtr = pResource->__metalTexturePtr();
+    void* bufPtr = pResource->__metalBufferPtr();
+
+    struct Impl : public ID3D11UnorderedAccessView {
+        MS_COM_BODY()
+        STDMETHOD(GetResource)(ID3D11Resource** pp) override { return E_NOTIMPL; }
+        ID3D11Resource* resource = nullptr;
+        void* __metalTexturePtr() const override { return metalTex; }
+        void* __metalBufferPtr() const override { return metalBuf; }
+        void* metalTex = nullptr;
+        void* metalBuf = nullptr;
+    };
+
+    auto* uav = new Impl();
+    uav->resource = pResource;
+    uav->metalTex = texPtr;
+    uav->metalBuf = bufPtr;
+    *ppUAView = uav;
     return S_OK;
 }
 

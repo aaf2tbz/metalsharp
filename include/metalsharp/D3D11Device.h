@@ -18,10 +18,13 @@ public:
     STDMETHOD_(ULONG, Release)() override;
 
     STDMETHOD(CreateBuffer)(const D3D11_BUFFER_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Buffer** ppBuffer) override;
+    STDMETHOD(CreateTexture1D)(const D3D11_TEXTURE1D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture1D** ppTexture1D) override;
     STDMETHOD(CreateTexture2D)(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) override;
+    STDMETHOD(CreateTexture3D)(const D3D11_TEXTURE3D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture3D** ppTexture3D) override;
     STDMETHOD(CreateShaderResourceView)(ID3D11Resource* pResource, const void* pDesc, ID3D11ShaderResourceView** ppSRView) override;
     STDMETHOD(CreateRenderTargetView)(ID3D11Resource* pResource, const void* pDesc, ID3D11RenderTargetView** ppRTView) override;
     STDMETHOD(CreateDepthStencilView)(ID3D11Resource* pResource, const void* pDesc, ID3D11DepthStencilView** ppDepthStencilView) override;
+    STDMETHOD(CreateUnorderedAccessView)(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) override;
     STDMETHOD(CreateVertexShader)(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11VertexShader** ppVertexShader) override;
     STDMETHOD(CreatePixelShader)(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11PixelShader** ppPixelShader) override;
     STDMETHOD(CreateGeometryShader)(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11GeometryShader** ppGeometryShader) override;
