@@ -114,12 +114,37 @@ HRESULT D3D11DeviceContext::PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D
 }
 
 HRESULT D3D11DeviceContext::GSSetShader(ID3D11GeometryShader*, ID3D11ClassInstance* const*, UINT) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetShader(ID3D11ComputeShader*, ID3D11ClassInstance* const*, UINT) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetConstantBuffers(UINT, UINT, ID3D11Buffer* const*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetShaderResources(UINT, UINT, ID3D11ShaderResourceView* const*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetUnorderedAccessViews(UINT, UINT, ID3D11UnorderedAccessView* const*, const UINT*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetSamplers(UINT, UINT, ID3D11SamplerState* const*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::Dispatch(UINT, UINT, UINT) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::CSSetShader(ID3D11ComputeShader* pComputeShader, ID3D11ClassInstance* const*, UINT) { m_computeShader = pComputeShader; return S_OK; }
+
+HRESULT D3D11DeviceContext::CSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppBuffers) {
+    if (!ppBuffers) return S_OK;
+    for (UINT i = 0; i < NumBuffers && StartSlot + i < MAX_CONSTANT_BUFFERS; ++i)
+        m_vsConstantBuffers[StartSlot + i] = ppBuffers[i];
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::CSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppViews) {
+    if (!ppViews) return S_OK;
+    for (UINT i = 0; i < NumViews && StartSlot + i < 128; ++i)
+        m_psShaderResources[StartSlot + i] = ppViews[i];
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::CSSetUnorderedAccessViews(UINT StartSlot, UINT NumUAVs, ID3D11UnorderedAccessView* const* ppUAVs, const UINT*) {
+    if (!ppUAVs) return S_OK;
+    for (UINT i = 0; i < NumUAVs && StartSlot + i < 8; ++i)
+        m_csUAVs[StartSlot + i] = ppUAVs[i];
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::CSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) {
+    if (!ppSamplers) return S_OK;
+    for (UINT i = 0; i < NumSamplers && StartSlot + i < 16; ++i)
+        m_psSamplers[StartSlot + i] = ppSamplers[i];
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::Dispatch(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) { return E_NOTIMPL; }
 
 HRESULT D3D11DeviceContext::OMSetRenderTargets(UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews, ID3D11DepthStencilView* pDepthStencilView) {
     m_renderTargets.fill(nullptr);

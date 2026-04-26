@@ -147,6 +147,29 @@ struct D3D11_TEXTURE2D_DESC {
     UINT MiscFlags;
 };
 
+struct D3D11_TEXTURE1D_DESC {
+    UINT Width;
+    UINT MipLevels;
+    UINT ArraySize;
+    DXGI_FORMAT Format;
+    UINT Usage;
+    UINT BindFlags;
+    UINT CPUAccessFlags;
+    UINT MiscFlags;
+};
+
+struct D3D11_TEXTURE3D_DESC {
+    UINT Width;
+    UINT Height;
+    UINT Depth;
+    UINT MipLevels;
+    DXGI_FORMAT Format;
+    UINT Usage;
+    UINT BindFlags;
+    UINT CPUAccessFlags;
+    UINT MiscFlags;
+};
+
 struct D3D11_VIEWPORT {
     FLOAT TopLeftX;
     FLOAT TopLeftY;
@@ -336,7 +359,7 @@ struct D3D11_SHADER_RESOURCE_VIEW_DESC {
     UINT ViewDimension;
     union {
         struct { UINT ElementOffset; UINT ElementWidth; } Buffer;
-        struct { UINT FirstElement; UINT NumElements; } BufferEx;
+        struct { UINT FirstElement; UINT NumElements; UINT Flags; } BufferEx;
         struct { UINT MostDetailedMip; UINT MipLevels; } Texture1D;
         struct { UINT MostDetailedMip; UINT MipLevels; UINT FirstArraySlice; UINT ArraySize; } Texture1DArray;
         struct { UINT MostDetailedMip; UINT MipLevels; } Texture2D;
@@ -345,6 +368,29 @@ struct D3D11_SHADER_RESOURCE_VIEW_DESC {
         struct { UINT FirstArraySlice; UINT ArraySize; } Texture2DMSArray;
         struct { UINT MostDetailedMip; UINT MipLevels; } Texture3D;
         struct { UINT First2DArrayFace; UINT NumCubes; UINT MostDetailedMip; UINT MipLevels; } TextureCubeArray;
+    };
+};
+
+constexpr UINT D3D11_UAV_DIMENSION_UNKNOWN       = 0;
+constexpr UINT D3D11_UAV_DIMENSION_BUFFER         = 1;
+constexpr UINT D3D11_UAV_DIMENSION_TEXTURE1D      = 2;
+constexpr UINT D3D11_UAV_DIMENSION_TEXTURE1DARRAY = 3;
+constexpr UINT D3D11_UAV_DIMENSION_TEXTURE2D      = 4;
+constexpr UINT D3D11_UAV_DIMENSION_TEXTURE2DARRAY = 5;
+constexpr UINT D3D11_UAV_DIMENSION_TEXTURE3D      = 8;
+
+constexpr UINT D3D11_BUFFER_UAV_FLAG_RAW = 0x1;
+
+struct D3D11_UNORDERED_ACCESS_VIEW_DESC {
+    DXGI_FORMAT Format;
+    UINT ViewDimension;
+    union {
+        struct { UINT FirstElement; UINT NumElements; UINT Flags; } Buffer;
+        struct { UINT MipSlice; } Texture1D;
+        struct { UINT MipSlice; UINT FirstArraySlice; UINT ArraySize; } Texture1DArray;
+        struct { UINT MipSlice; } Texture2D;
+        struct { UINT MipSlice; UINT FirstArraySlice; UINT ArraySize; } Texture2DArray;
+        struct { UINT MipSlice; UINT FirstWSlice; UINT WSize; } Texture3D;
     };
 };
 
@@ -375,15 +421,26 @@ public:
 class ID3D11Buffer : public ID3D11Resource {
 };
 
+class ID3D11Texture1D : public ID3D11Resource {
+public:
+    virtual void GetDesc(struct D3D11_TEXTURE1D_DESC* pDesc) = 0;
+};
+
 class ID3D11Texture2D : public ID3D11Resource {
 public:
     virtual void GetDesc(struct D3D11_TEXTURE2D_DESC* pDesc) = 0;
+};
+
+class ID3D11Texture3D : public ID3D11Resource {
+public:
+    virtual void GetDesc(struct D3D11_TEXTURE3D_DESC* pDesc) = 0;
 };
 
 class ID3D11View : public ID3D11DeviceChild {
 public:
     STDMETHOD(GetResource)(THIS_ ID3D11Resource** ppResource) PURE;
     virtual void* __metalTexturePtr() const { return nullptr; }
+    virtual void* __metalBufferPtr() const { return nullptr; }
 };
 
 class ID3D11RenderTargetView : public ID3D11View {
@@ -558,10 +615,13 @@ class MIDL_INTERFACE("2e8f6e0c-3e86-4a63-9ea5-7b52d95e08c1")
 ID3D11Device : public IUnknown {
 public:
     STDMETHOD(CreateBuffer)(THIS_ const D3D11_BUFFER_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Buffer** ppBuffer) PURE;
+    STDMETHOD(CreateTexture1D)(THIS_ const D3D11_TEXTURE1D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture1D** ppTexture1D) PURE;
     STDMETHOD(CreateTexture2D)(THIS_ const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) PURE;
+    STDMETHOD(CreateTexture3D)(THIS_ const D3D11_TEXTURE3D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture3D** ppTexture3D) PURE;
     STDMETHOD(CreateShaderResourceView)(THIS_ ID3D11Resource* pResource, const void* pDesc, ID3D11ShaderResourceView** ppSRView) PURE;
     STDMETHOD(CreateRenderTargetView)(THIS_ ID3D11Resource* pResource, const void* pDesc, ID3D11RenderTargetView** ppRTView) PURE;
     STDMETHOD(CreateDepthStencilView)(THIS_ ID3D11Resource* pResource, const void* pDesc, ID3D11DepthStencilView** ppDepthStencilView) PURE;
+    STDMETHOD(CreateUnorderedAccessView)(THIS_ ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) PURE;
     STDMETHOD(CreateVertexShader)(THIS_ const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader) PURE;
     STDMETHOD(CreatePixelShader)(THIS_ const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) PURE;
     STDMETHOD(CreateGeometryShader)(THIS_ const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11GeometryShader** ppGeometryShader) PURE;

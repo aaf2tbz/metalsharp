@@ -112,6 +112,8 @@ private:
     std::array<ID3D11ShaderResourceView*, 128> m_psShaderResources{};
     std::array<ID3D11SamplerState*, 16> m_vsSamplers{};
     std::array<ID3D11SamplerState*, 16> m_psSamplers{};
+    std::array<ID3D11UnorderedAccessView*, 8> m_csUAVs{};
+    ID3D11ComputeShader* m_computeShader = nullptr;
 
     ID3D11Buffer* m_indexBuffer = nullptr;
     DXGI_FORMAT m_indexBufferFormat = DXGI_FORMAT_UNKNOWN;

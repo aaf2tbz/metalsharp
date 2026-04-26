@@ -66,20 +66,25 @@ private:
 
 class MetalTexture {
 public:
+    static MetalTexture* create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage, uint32_t mipLevels = 1);
     static MetalTexture* create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels = 1, uint32_t sampleCount = 1);
+    static MetalTexture* create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels = 1);
     ~MetalTexture();
 
     void* nativeTexture() const;
     uint32_t width() const;
     uint32_t height() const;
+    uint32_t depth() const;
     uint32_t mipLevels() const;
     uint32_t sampleCount() const;
 
-    void uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t width, uint32_t height);
+    void uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t width, uint32_t height, uint32_t depth = 1);
 
 private:
     MetalTexture();
+    bool init1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage, uint32_t mipLevels);
     bool init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels, uint32_t sampleCount);
+    bool init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels);
 
     struct Impl;
     Impl* m_impl;
