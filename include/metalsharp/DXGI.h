@@ -37,7 +37,7 @@ public:
     STDMETHOD(CreateSwapChain)(IUnknown* pDevice, void* pDesc, IDXGISwapChain** ppSwapChain) override;
     STDMETHOD(CreateSoftwareAdapter)(HMODULE, IDXGIAdapter**) override { return E_NOTIMPL; }
     STDMETHOD(EnumAdapters1)(UINT, IDXGIAdapter**) override { return DXGI_ERROR_NOT_FOUND; }
-    STDMETHOD_(BOOL, IsCurrent)() override { return TRUE; }
+    STDMETHOD_(INT, IsCurrent)() override { return TRUE; }
 
 private:
     DXGIFactory() = default;

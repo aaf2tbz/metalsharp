@@ -31,9 +31,7 @@ typedef int BOOL;
 #define FALSE 0
 #endif
 
-#ifdef __OBJC__
-#include <objc/objc.h>
-#else
+#ifndef __OBJC__
 typedef int BOOL;
 #endif
 #ifndef FALSE

@@ -7,10 +7,7 @@
 
 namespace metalsharp {
 
-D3D11DeviceContext::D3D11DeviceContext(D3D11Device& device)
-    : m_device(device) {
-    m_framebuffer = std::make_unique<MetalFramebuffer>();
-}
+D3D11DeviceContext::D3D11DeviceContext(D3D11Device& device) : m_device(device) {}
 
 HRESULT D3D11DeviceContext::QueryInterface(REFIID riid, void** ppvObject) {
     if (!ppvObject) return E_POINTER;
@@ -117,7 +114,6 @@ HRESULT D3D11DeviceContext::PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D
 }
 
 HRESULT D3D11DeviceContext::GSSetShader(ID3D11GeometryShader*, ID3D11ClassInstance* const*, UINT) { return E_NOTIMPL; }
-
 HRESULT D3D11DeviceContext::CSSetShader(ID3D11ComputeShader*, ID3D11ClassInstance* const*, UINT) { return E_NOTIMPL; }
 HRESULT D3D11DeviceContext::CSSetConstantBuffers(UINT, UINT, ID3D11Buffer* const*) { return E_NOTIMPL; }
 HRESULT D3D11DeviceContext::CSSetShaderResources(UINT, UINT, ID3D11ShaderResourceView* const*) { return E_NOTIMPL; }
@@ -131,6 +127,7 @@ HRESULT D3D11DeviceContext::OMSetRenderTargets(UINT NumViews, ID3D11RenderTarget
         m_renderTargets[i] = ppRenderTargetViews ? ppRenderTargetViews[i] : nullptr;
     }
     m_depthStencilView = pDepthStencilView;
+    m_cachedPipeline.reset();
     return S_OK;
 }
 
@@ -138,8 +135,11 @@ HRESULT D3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(UINT NumRT
     return OMSetRenderTargets(NumRTVs, ppRTVs, pDSV);
 }
 
-HRESULT D3D11DeviceContext::OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT[4], UINT) {
+HRESULT D3D11DeviceContext::OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) {
     m_blendState = pBlendState;
+    if (BlendFactor) memcpy(m_blendFactor, BlendFactor, sizeof(m_blendFactor));
+    m_sampleMask = SampleMask;
+    m_cachedPipeline.reset();
     return S_OK;
 }
 
@@ -161,11 +161,53 @@ HRESULT D3D11DeviceContext::RSSetViewports(UINT NumViewports, const D3D11_VIEWPO
 
 HRESULT D3D11DeviceContext::RSSetScissorRects(UINT, const RECT*) { return S_OK; }
 
-HRESULT D3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView*, const FLOAT[4]) {
+HRESULT D3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView* pRTV, const FLOAT ColorRGBA[4]) {
+    if (!pRTV || !m_renderTargets[0]) return S_OK;
+    auto& metalDev = m_device.metalDevice();
+    id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+    id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+
+    void* texPtr = pRTV->__metalTexturePtr();
+    if (!texPtr) return S_OK;
+
+    MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
+    passDesc.colorAttachments[0].texture = (__bridge id<MTLTexture>)texPtr;
+    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(
+        ColorRGBA[0], ColorRGBA[1], ColorRGBA[2], ColorRGBA[3]);
+
+    id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
+    [encoder endEncoding];
+    [cmdBuffer commit];
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView*, UINT, FLOAT, UINT8) {
+HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView* pDSV, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) {
+    if (!pDSV) return S_OK;
+    void* texPtr = pDSV->__metalTexturePtr();
+    if (!texPtr) return S_OK;
+
+    auto& metalDev = m_device.metalDevice();
+    id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+    id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+
+    MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
+    passDesc.depthAttachment.texture = (__bridge id<MTLTexture>)texPtr;
+    passDesc.depthAttachment.loadAction = MTLLoadActionClear;
+    passDesc.depthAttachment.storeAction = MTLStoreActionStore;
+    passDesc.depthAttachment.clearDepth = Depth;
+
+    if (ClearFlags & D3D11_CLEAR_STENCIL) {
+        passDesc.stencilAttachment.texture = (__bridge id<MTLTexture>)texPtr;
+        passDesc.stencilAttachment.loadAction = MTLLoadActionClear;
+        passDesc.stencilAttachment.storeAction = MTLStoreActionStore;
+        passDesc.stencilAttachment.clearStencil = Stencil;
+    }
+
+    id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
+    [encoder endEncoding];
+    [cmdBuffer commit];
     return S_OK;
 }
 
@@ -176,92 +218,227 @@ void D3D11DeviceContext::ensurePipeline() {
     desc.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     desc.vertexStride = m_vertexBuffers[0].stride;
 
-    if (m_vertexShader) {
-        desc.vertexFunction = m_vertexShader->__metalVertexFunction();
+    if (m_vertexShader) desc.vertexFunction = m_vertexShader->__metalVertexFunction();
+    if (m_pixelShader) desc.fragmentFunction = m_pixelShader->__metalFragmentFunction();
+
+    if (m_blendState && m_blendState->__getBlendEnable(0)) {
+        desc.blendEnabled = true;
     }
-    if (m_pixelShader) {
-        desc.fragmentFunction = m_pixelShader->__metalFragmentFunction();
+
+    if (m_depthStencilState) {
+        desc.depthEnabled = m_depthStencilState->__getDepthEnable();
+        desc.depthWriteEnabled = m_depthStencilState->__getDepthWriteMask() == D3D11_DEPTH_WRITE_MASK_ALL;
     }
 
     m_cachedPipeline.reset(PipelineState::create(m_device.metalDevice(), desc));
 }
 
-void D3D11DeviceContext::flushRenderState() {
-    ensurePipeline();
-}
-
-void D3D11DeviceContext::commitDraw() {
+void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation, INT baseVertexLocation, bool indexed) {
     if (!m_cachedPipeline) return;
-    if (!m_vertexBuffers[0].buffer) return;
+    if (!m_vertexBuffers[0].buffer && !indexed) return;
 
     auto& metalDev = m_device.metalDevice();
     id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
     id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
 
     MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
-    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0.1, 0.1, 0.1, 1.0);
+
+    if (m_renderTargets[0]) {
+        void* texPtr = m_renderTargets[0]->__metalTexturePtr();
+        if (texPtr) {
+            passDesc.colorAttachments[0].texture = (__bridge id<MTLTexture>)texPtr;
+        }
+    }
 
     id<MTLRenderPipelineState> pipeline = (__bridge id<MTLRenderPipelineState>)m_cachedPipeline->nativeRenderPipelineState();
 
     id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
     [encoder setRenderPipelineState:pipeline];
 
-    void* bufPtr = m_vertexBuffers[0].buffer->__metalBufferPtr();
-    if (bufPtr) {
-        id<MTLBuffer> mtlBuf = (__bridge id<MTLBuffer>)bufPtr;
-        [encoder setVertexBuffer:mtlBuf offset:0 atIndex:0];
+    if (m_vertexBuffers[0].buffer) {
+        void* bufPtr = m_vertexBuffers[0].buffer->__metalBufferPtr();
+        if (bufPtr) {
+            id<MTLBuffer> mtlBuf = (__bridge id<MTLBuffer>)bufPtr;
+            [encoder setVertexBuffer:mtlBuf offset:m_vertexBuffers[0].offset atIndex:0];
+        }
+    }
+
+    for (UINT i = 0; i < MAX_CONSTANT_BUFFERS; ++i) {
+        if (m_vsConstantBuffers[i]) {
+            void* bufPtr = m_vsConstantBuffers[i]->__metalBufferPtr();
+            if (bufPtr) {
+                id<MTLBuffer> mtlBuf = (__bridge id<MTLBuffer>)bufPtr;
+                [encoder setVertexBuffer:mtlBuf offset:0 atIndex:i + 1];
+            }
+        }
+        if (m_psConstantBuffers[i]) {
+            void* bufPtr = m_psConstantBuffers[i]->__metalBufferPtr();
+            if (bufPtr) {
+                id<MTLBuffer> mtlBuf = (__bridge id<MTLBuffer>)bufPtr;
+                [encoder setFragmentBuffer:mtlBuf offset:0 atIndex:i];
+            }
+        }
+    }
+
+    for (UINT i = 0; i < 128; ++i) {
+        if (m_psShaderResources[i]) {
+            void* texPtr = m_psShaderResources[i]->__metalTexturePtr();
+            if (texPtr) {
+                [encoder setFragmentTexture:(__bridge id<MTLTexture>)texPtr atIndex:i];
+            }
+        }
+    }
+
+    for (UINT i = 0; i < 16; ++i) {
+        if (m_psSamplers[i]) {
+            void* sampPtr = m_psSamplers[i]->__metalSamplerState();
+            if (sampPtr) {
+                [encoder setFragmentSamplerState:(__bridge id<MTLSamplerState>)sampPtr atIndex:i];
+            }
+        }
     }
 
     if (m_viewport.Width > 0 && m_viewport.Height > 0) {
         MTLViewport vp;
-        vp.originX = 0;
-        vp.originY = 0;
+        vp.originX = m_viewport.TopLeftX;
+        vp.originY = m_viewport.TopLeftY;
         vp.width = m_viewport.Width;
         vp.height = m_viewport.Height;
-        vp.znear = 0.0;
-        vp.zfar = 1.0;
+        vp.znear = m_viewport.MinDepth;
+        vp.zfar = m_viewport.MaxDepth;
         [encoder setViewport:vp];
+    }
+
+    if (m_rasterizerState) {
+        MTLCullMode cullMode = MTLCullModeNone;
+        switch (m_rasterizerState->__getCullMode()) {
+            case D3D11_CULL_FRONT: cullMode = MTLCullModeFront; break;
+            case D3D11_CULL_BACK: cullMode = MTLCullModeBack; break;
+            default: break;
+        }
+        [encoder setCullMode:cullMode];
+        if (m_rasterizerState->__getFrontCCW()) {
+            [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+        } else {
+            [encoder setFrontFacingWinding:MTLWindingClockwise];
+        }
     }
 
     MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
     switch (m_primitiveTopology) {
-        case 1: primType = MTLPrimitiveTypePoint; break;
-        case 2: primType = MTLPrimitiveTypeLine; break;
-        case 3: primType = MTLPrimitiveTypeLineStrip; break;
-        case 4: primType = MTLPrimitiveTypeTriangle; break;
-        case 5: primType = MTLPrimitiveTypeTriangleStrip; break;
+        case D3D11_PRIMITIVE_TOPOLOGY_POINTLIST:     primType = MTLPrimitiveTypePoint; break;
+        case D3D11_PRIMITIVE_TOPOLOGY_LINELIST:      primType = MTLPrimitiveTypeLine; break;
+        case D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP:     primType = MTLPrimitiveTypeLineStrip; break;
+        case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST:  primType = MTLPrimitiveTypeTriangle; break;
+        case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: primType = MTLPrimitiveTypeTriangleStrip; break;
         default: break;
     }
 
-    [encoder drawPrimitives:primType vertexStart:0 vertexCount:3];
-    [encoder endEncoding];
+    if (indexed && m_indexBuffer) {
+        void* idxBufPtr = m_indexBuffer->__metalBufferPtr();
+        if (idxBufPtr) {
+            MTLIndexType indexType = MTLIndexTypeUInt16;
+            size_t indexSize = 2;
+            if (m_indexBufferFormat == DXGI_FORMAT_R32_UINT) {
+                indexType = MTLIndexTypeUInt32;
+                indexSize = 4;
+            }
+            id<MTLBuffer> mtlIdxBuf = (__bridge id<MTLBuffer>)idxBufPtr;
+            [encoder drawIndexedPrimitives:primType
+                                indexCount:vertexCount
+                                 indexType:indexType
+                               indexBuffer:mtlIdxBuf
+                         indexBufferOffset:m_indexBufferOffset + startIndexLocation * indexSize];
+        }
+    } else {
+        [encoder drawPrimitives:primType vertexStart:startIndexLocation vertexCount:vertexCount instanceCount:instanceCount > 1 ? instanceCount : 1 baseInstance:0];
+    }
 
+    [encoder endEncoding];
     [cmdBuffer commit];
-    [cmdBuffer waitUntilCompleted];
 }
 
 HRESULT D3D11DeviceContext::DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
-    flushRenderState();
-    commitDraw();
+    ensurePipeline();
+    commitDraw(IndexCount, 1, StartIndexLocation, BaseVertexLocation, true);
     return S_OK;
 }
 
 HRESULT D3D11DeviceContext::Draw(UINT VertexCount, UINT StartVertexLocation) {
-    flushRenderState();
-    commitDraw();
+    ensurePipeline();
+    commitDraw(VertexCount, 1, StartVertexLocation, 0, false);
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::DrawIndexedInstanced(UINT, UINT, UINT, INT, UINT) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::DrawInstanced(UINT, UINT, UINT, UINT) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::DrawIndexedInstanced(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation, INT BaseVertexLocation, UINT) {
+    ensurePipeline();
+    commitDraw(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, true);
+    return S_OK;
+}
 
-HRESULT D3D11DeviceContext::Map(ID3D11Resource*, UINT, UINT, UINT, void*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::Unmap(ID3D11Resource*, UINT) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT) {
+    ensurePipeline();
+    commitDraw(VertexCountPerInstance, InstanceCount, StartVertexLocation, 0, false);
+    return S_OK;
+}
+
+HRESULT D3D11DeviceContext::Map(ID3D11Resource* pResource, UINT, UINT MapType, UINT, void* pMappedResource) {
+    if (!pResource || !pMappedResource) return E_INVALIDARG;
+
+    auto* mapped = static_cast<D3D11_MAPPED_SUBRESOURCE*>(pMappedResource);
+    memset(mapped, 0, sizeof(D3D11_MAPPED_SUBRESOURCE));
+
+    void* bufPtr = pResource->__metalBufferPtr();
+    if (bufPtr) {
+        id<MTLBuffer> mtlBuf = (__bridge id<MTLBuffer>)bufPtr;
+        mapped->pData = [mtlBuf contents];
+        mapped->RowPitch = 0;
+        mapped->DepthPitch = 0;
+        return S_OK;
+    }
+
+    return E_FAIL;
+}
+
+HRESULT D3D11DeviceContext::Unmap(ID3D11Resource*, UINT) {
+    return S_OK;
+}
 
 HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource*, ID3D11Resource*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource*, UINT, const void*, const void*, UINT, UINT) { return E_NOTIMPL; }
+
+HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* pSrc) {
+    if (!pDst || !pSrc) return E_INVALIDARG;
+
+    void* dstBuf = pDst->__metalBufferPtr();
+    void* srcBuf = pSrc->__metalBufferPtr();
+    if (dstBuf && srcBuf) {
+        id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
+        id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
+        auto& metalDev = m_device.metalDevice();
+        id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
+        id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+        [cmdBuffer enqueue];
+        memcpy([dst contents], [src contents], [src length] < [dst length] ? [src length] : [dst length]);
+        [cmdBuffer commit];
+        return S_OK;
+    }
+
+    return E_NOTIMPL;
+}
+
+HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT, const void*, const void* pSrcData, UINT, UINT) {
+    if (!pDst || !pSrcData) return E_INVALIDARG;
+
+    void* dstBuf = pDst->__metalBufferPtr();
+    if (dstBuf) {
+        id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
+        memcpy([dst contents], pSrcData, [dst length]);
+        return S_OK;
+    }
+
+    return E_NOTIMPL;
+}
 
 }
