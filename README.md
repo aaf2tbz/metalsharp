@@ -22,19 +22,29 @@ Fewer hops means less overhead, lower latency, and fewer bugs from translation m
 
 ## Status
 
-**Phase 1 complete** — a colored triangle renders through D3D11 codepaths calling Metal directly.
+**Phase 1 + Phase 2 complete.** Full D3D11 API coverage with DXBC shader translation.
 
 | What | Status |
 |------|--------|
 | Metal device init (MTLDevice + MTLCommandQueue) | Done |
 | D3D11 device + immediate context (COM interfaces) | Done |
 | DXGI swap chain → CAMetalLayer | Done |
-| Vertex buffer → MTLBuffer allocation | Done |
+| Vertex/index/constant buffers → MTLBuffer | Done |
+| Texture 1D/2D/3D creation with mipmaps, MSAA, initial data | Done |
 | DXGI format → MTLPixelFormat translation | Done |
 | MSL shader compilation via newLibraryWithSource | Done |
-| Render pipeline state creation | Done |
-| Draw call encoding → Metal command buffer | Done |
-| Triangle test (end-to-end) | Passing |
+| **DXBC bytecode parser + DXBC→MSL translator** | Done |
+| State objects (blend, rasterizer, depth stencil, sampler) | Done |
+| 8 render targets with per-RT blend state | Done |
+| Input layouts → MTLVertexDescriptor | Done |
+| Shader resource views, render target views, depth stencil views | Done |
+| Unordered access views (texture + buffer) | Done |
+| Draw calls: Draw, DrawIndexed, DrawInstanced, DrawIndexedInstanced | Done |
+| Map/Unmap, UpdateSubresource, CopyResource, CopySubresourceRegion | Done |
+| GenerateMips, ResolveSubresource (MSAA) | Done |
+| Queries (occlusion, timestamp, event) + predication | Done |
+| Compute shader state management | Done |
+| 6/6 tests passing on CI (macOS) | Passing |
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
@@ -53,9 +63,9 @@ Windows Game (.exe)
    MetalSharp Core
         ├── Device      → MTLDevice
         ├── Command     → MTLCommandQueue / MTLCommandBuffer
-        ├── Pipeline    → MTLRenderPipelineState
-        ├── Shader      → DXBC/DXIL → MSL translation
-        ├── Resources   → MTLBuffer, MTLTexture, MTLSamplerState
+        ├── Pipeline    → MTLRenderPipelineState (MRT, per-RT blend)
+        ├── Shader      → DXBC bytecode → MSL → Metal library
+        ├── Resources   → MTLBuffer, MTLTexture (1D/2D/3D), MTLSamplerState
         └── Framebuffer → MTLRenderPassDescriptor
         │
         ▼
@@ -81,7 +91,7 @@ cd build && ctest --output-on-failure
 
 | Target | Output | Purpose |
 |--------|--------|---------|
-| `metalsharp_core` | static lib | Metal backend, shared infrastructure |
+| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator |
 | `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim |
 | `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim (stub) |
 | `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain & adapter |
@@ -96,26 +106,34 @@ src/
 ├── d3d/d3d11/          D3D11 device, context, resources, state objects
 ├── d3d/d3d12/          D3D12 stubs
 ├── dxgi/               DXGI factory, adapter, swap chain
-├── metal/              Metal backend wrappers
-│   ├── device/         MTLDevice
+├── metal/
+│   ├── device/         MTLDevice wrapper
 │   ├── command/        MTLCommandQueue, MTLCommandBuffer
-│   ├── pipeline/       Pipeline state creation
-│   └── shader/         HLSL → MSL shader translation
-├── audio/              XAudio2 → CoreAudio
-└── input/              XInput → GameController
+│   ├── pipeline/       Pipeline state creation & management
+│   ├── shader/         DXBC parser, DXBC→MSL translator, MSL compiler
+│   ├── Buffer.mm       MTLBuffer wrapper
+│   ├── Texture.mm      MTLTexture 1D/2D/3D wrapper
+│   ├── Sampler.mm      MTLSamplerState + format translation
+│   └── Framebuffer.mm  MTLRenderPassDescriptor wrapper
+├── audio/              XAudio2 → CoreAudio (stub)
+└── input/              XInput → GameController (stub)
 include/
-├── metalsharp/         Internal headers
-├── d3d/                D3D COM interface definitions
+├── metalsharp/         Internal headers (PipelineState, DXBCParser, DXBCtoMSL, etc.)
+├── d3d/                D3D11 COM interface definitions
 └── dxgi/               DXGI COM interface definitions
-tests/                  Test suite
+tests/                  6 tests: metal_device, format_translation, d3d11_device,
+                        triangle, phase2, dxbc
 tools/launcher/         CLI launcher
 ```
 
-## How it works (Phase 1)
+## How it works
 
-Currently, shaders are passed as MSL source strings through the D3D11 `CreateVertexShader` / `CreatePixelShader` APIs. The `ShaderTranslator` compiles them with `MTLDevice.newLibraryWithSource`. The `D3D11DeviceContext` caches a `MTLRenderPipelineState` and encodes draw commands into a `MTLCommandBuffer` when `Draw()` is called.
+Shaders can be provided two ways:
 
-The next phase will add real DXBC/DXIL bytecode parsing so actual game shaders work.
+1. **MSL source strings** — passed through `CreateVertexShader`/`CreatePixelShader`, compiled with `newLibraryWithSource`
+2. **DXBC bytecode** — `translateDXBC()` parses the DXBC container (SHDR/SHEX chunks, input/output signatures), extracts SM5.0 bytecode tokens, and generates MSL source which is then compiled to a Metal library
+
+The `D3D11DeviceContext` caches a `MTLRenderPipelineState` built from current state (shaders, blend, rasterizer, depth) and encodes draw commands into a `MTLCommandBuffer` when `Draw()` or `DrawIndexed()` is called. Pipeline state is rebuilt automatically when blend state, render targets, or shaders change.
 
 ## Requirements
 
