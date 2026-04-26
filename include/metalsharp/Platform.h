@@ -6,6 +6,9 @@
 
 typedef uint32_t DWORD;
 typedef int32_t LONG;
+typedef int16_t SHORT;
+typedef uint16_t WORD;
+typedef uint8_t BYTE;
 typedef int32_t HRESULT;
 typedef void* HWND;
 typedef void* HMODULE;

@@ -57,6 +57,24 @@ constexpr UINT D3D12_RESOURCE_STATE_COPY_SOURCE = 0x800;
 constexpr UINT D3D12_RESOURCE_STATE_UNORDERED_ACCESS = 0x100;
 constexpr UINT D3D12_RESOURCE_STATE_GENERIC_READ = 0x131;
 
+constexpr UINT D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS = 0x20;
+
+constexpr UINT D3D12_TEXTURE_LAYOUT_UNKNOWN = 0;
+constexpr UINT D3D12_TEXTURE_LAYOUT_ROW_MAJOR = 1;
+constexpr UINT D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE = 3;
+
+constexpr UINT D3D12_TILE_MAPPING_FLAG_NONE = 0;
+constexpr UINT D3D12_TILE_RANGE_FLAG_NONE = 0;
+constexpr UINT D3D12_TILE_RANGE_FLAG_NULL = 1;
+constexpr UINT D3D12_TILE_RANGE_FLAG_SKIP = 2;
+constexpr UINT D3D12_TILE_RANGE_FLAG_REUSE_SINGLE_TILE = 4;
+
+struct D3D12_TILE_REGION_SIZE { UINT NumTiles; UINT Width; UINT Height; UINT Depth; BOOL bUseBox; };
+
+struct D3D12_TILED_RESOURCE_COORDINATE { UINT X; UINT Y; UINT Z; UINT Subresource; };
+
+struct D3D12_TILE_RANGE_FLAGS { UINT Flags; };
+
 constexpr UINT D3D12_COMMAND_LIST_TYPE_DIRECT = 0;
 constexpr UINT D3D12_COMMAND_LIST_TYPE_BUNDLE = 1;
 constexpr UINT D3D12_COMMAND_LIST_TYPE_COMPUTE = 2;
@@ -324,6 +342,8 @@ public:
     STDMETHOD(Map)(ID3D12Resource* pResource, UINT Subresource, const D3D12_RANGE* pReadRange, void** ppData) PURE;
     STDMETHOD(Unmap)(ID3D12Resource* pResource, UINT Subresource, const D3D12_RANGE* pWrittenRange) PURE;
     STDMETHOD(ExecuteIndirect)(ID3D12CommandSignature* pCommandSignature, UINT MaxCommandCount, ID3D12Resource* pCommandBuffer, UINT64 CommandBufferOffset, ID3D12Resource* pCountBuffer, UINT64 CountBufferOffset) PURE;
+
+    STDMETHOD(CopyTiles)(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinate, const D3D12_TILE_REGION_SIZE* pTileRegionSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) PURE;
 };
 
 class ID3D12Device : public ID3D12Object {
@@ -345,4 +365,7 @@ public:
     STDMETHOD(CreateCommandSignature)(const D3D12_COMMAND_SIGNATURE_DESC* pDesc, ID3D12RootSignature* pRootSignature, REFIID riid, void** ppCommandSignature) PURE;
     STDMETHOD(CreateSampler)(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
     STDMETHOD_(UINT, GetDescriptorHandleIncrementSize)(UINT DescriptorHeapType) PURE;
+
+    STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates, const D3D12_TILE_REGION_SIZE* pTileRegionSizes, BOOL bSingleTile) PURE;
+    STDMETHOD(GetResourceTiling)(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource, const void* pPackedMipDesc, const void* pStandardTileShapeForNonPackedMips, UINT* pNumSubresourceTilings, UINT FirstSubresourceTilingToGet, void* pSubresourceTilingsForNonPackedMips) PURE;
 };

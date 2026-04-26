@@ -362,6 +362,9 @@ public:
 
     UINT GetDescriptorHandleIncrementSize(UINT) override { return 1; }
 
+    HRESULT ReserveTiles(ID3D12Resource*, UINT, const D3D12_TILED_RESOURCE_COORDINATE*, const D3D12_TILE_REGION_SIZE*, BOOL) override { return S_OK; }
+    HRESULT GetResourceTiling(ID3D12Resource*, UINT*, const void*, const void*, UINT*, UINT, void*) override { return E_NOTIMPL; }
+
 private:
     HRESULT createView(ID3D12Resource* pResource, UINT type, UINT format, D3D12_CPU_DESCRIPTOR_HANDLE handle) {
         if (handle.ptr == 0) return E_INVALIDARG;
