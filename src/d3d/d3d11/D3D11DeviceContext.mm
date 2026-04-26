@@ -215,18 +215,39 @@ void D3D11DeviceContext::ensurePipeline() {
     if (m_cachedPipeline) return;
 
     PipelineStateDesc desc;
-    desc.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     desc.vertexStride = m_vertexBuffers[0].stride;
 
     if (m_vertexShader) desc.vertexFunction = m_vertexShader->__metalVertexFunction();
     if (m_pixelShader) desc.fragmentFunction = m_pixelShader->__metalFragmentFunction();
 
-    if (m_blendState && m_blendState->__getBlendEnable(0)) {
-        desc.blendEnabled = true;
+    desc.numColorAttachments = 0;
+    for (UINT i = 0; i < MAX_RENDER_TARGETS; ++i) {
+        if (!m_renderTargets[i]) continue;
+        void* texPtr = m_renderTargets[i]->__metalTexturePtr();
+        if (!texPtr) continue;
+        id<MTLTexture> tex = (__bridge id<MTLTexture>)texPtr;
+        desc.colorPixelFormats[i] = (uint32_t)tex.pixelFormat;
+        desc.numColorAttachments = i + 1;
+
+        if (m_blendState) {
+            desc.blendEnabled[i] = m_blendState->__getBlendEnable(i) != 0;
+            desc.srcBlend[i] = m_blendState->__getSrcBlend(i);
+            desc.destBlend[i] = m_blendState->__getDestBlend(i);
+            desc.blendOp[i] = m_blendState->__getBlendOp(i);
+            desc.srcBlendAlpha[i] = m_blendState->__getSrcBlendAlpha(i);
+            desc.destBlendAlpha[i] = m_blendState->__getDestBlendAlpha(i);
+            desc.blendOpAlpha[i] = m_blendState->__getBlendOpAlpha(i);
+            desc.renderTargetWriteMask[i] = m_blendState->__getRenderTargetWriteMask(i);
+        }
+    }
+
+    if (desc.numColorAttachments == 0) {
+        desc.colorPixelFormats[0] = MTLPixelFormatBGRA8Unorm;
+        desc.numColorAttachments = 1;
     }
 
     if (m_depthStencilState) {
-        desc.depthEnabled = m_depthStencilState->__getDepthEnable();
+        desc.depthEnabled = m_depthStencilState->__getDepthEnable() != 0;
         desc.depthWriteEnabled = m_depthStencilState->__getDepthWriteMask() == D3D11_DEPTH_WRITE_MASK_ALL;
     }
 
@@ -242,13 +263,22 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
     id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
 
     MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
-    passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
-    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-    if (m_renderTargets[0]) {
-        void* texPtr = m_renderTargets[0]->__metalTexturePtr();
+    for (UINT i = 0; i < MAX_RENDER_TARGETS; ++i) {
+        if (!m_renderTargets[i]) continue;
+        void* texPtr = m_renderTargets[i]->__metalTexturePtr();
+        if (!texPtr) continue;
+        passDesc.colorAttachments[i].texture = (__bridge id<MTLTexture>)texPtr;
+        passDesc.colorAttachments[i].loadAction = MTLLoadActionLoad;
+        passDesc.colorAttachments[i].storeAction = MTLStoreActionStore;
+    }
+
+    if (m_depthStencilView) {
+        void* texPtr = m_depthStencilView->__metalTexturePtr();
         if (texPtr) {
-            passDesc.colorAttachments[0].texture = (__bridge id<MTLTexture>)texPtr;
+            passDesc.depthAttachment.texture = (__bridge id<MTLTexture>)texPtr;
+            passDesc.depthAttachment.loadAction = MTLLoadActionLoad;
+            passDesc.depthAttachment.storeAction = MTLStoreActionStore;
         }
     }
 
@@ -428,13 +458,33 @@ HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* p
     return E_NOTIMPL;
 }
 
-HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT, const void*, const void* pSrcData, UINT, UINT) {
+HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubresource, const void* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) {
     if (!pDst || !pSrcData) return E_INVALIDARG;
 
     void* dstBuf = pDst->__metalBufferPtr();
     if (dstBuf) {
         id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
         memcpy([dst contents], pSrcData, [dst length]);
+        return S_OK;
+    }
+
+    void* dstTex = pDst->__metalTexturePtr();
+    if (dstTex) {
+        id<MTLTexture> tex = (__bridge id<MTLTexture>)dstTex;
+        MTLRegion region;
+        if (pDstBox) {
+            const UINT* box = static_cast<const UINT*>(pDstBox);
+            region = MTLRegionMake2D(box[0], box[1], box[3] - box[0], box[4] - box[1]);
+        } else {
+            region = MTLRegionMake2D(0, 0, tex.width, tex.height);
+        }
+        NSUInteger bytesPerImage = SrcDepthPitch > 0 ? SrcDepthPitch : SrcRowPitch * tex.height;
+        [tex replaceRegion:region
+                   mipmapLevel:DstSubresource
+                     slice:0
+                 withBytes:pSrcData
+               bytesPerRow:SrcRowPitch
+             bytesPerImage:bytesPerImage];
         return S_OK;
     }
 
