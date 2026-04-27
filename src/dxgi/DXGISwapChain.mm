@@ -1,6 +1,9 @@
 #include <metalsharp/DXGI.h>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/Platform.h>
+#ifdef METALSHARP_NATIVE_LOADER
+#include <metalsharp/WindowManager.h>
+#endif
 #include <AppKit/AppKit.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
@@ -31,20 +34,33 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
     m_impl->bufferCount = bufferCount;
 
     if (window) {
-        NSView* view = (__bridge NSView*)window;
-        m_impl->layer = [CAMetalLayer layer];
-        m_impl->layer.device = m_impl->device;
-        m_impl->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        m_impl->layer.framebufferOnly = NO;
-        m_impl->layer.frame = view.bounds;
-        m_impl->layer.drawableSize = CGSizeMake(width > 0 ? width : view.bounds.size.width,
-                                                  height > 0 ? height : view.bounds.size.height);
-        view.wantsLayer = YES;
-        view.layer = m_impl->layer;
+        NSView* view = nil;
+#ifdef METALSHARP_NATIVE_LOADER
+        void* nsWinPtr = win32::WindowManager::instance().getNSWindow((HANDLE)window);
+        if (nsWinPtr) {
+            NSWindow* nsWin = (__bridge NSWindow*)nsWinPtr;
+            view = [nsWin contentView];
+        }
+#endif
+        if (!view) {
+            view = (__bridge NSView*)window;
+        }
 
-        if (width == 0 || height == 0) {
-            m_impl->width = (uint32_t)view.bounds.size.width;
-            m_impl->height = (uint32_t)view.bounds.size.height;
+        if (view) {
+            m_impl->layer = [CAMetalLayer layer];
+            m_impl->layer.device = m_impl->device;
+            m_impl->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+            m_impl->layer.framebufferOnly = NO;
+            m_impl->layer.frame = view.bounds;
+            m_impl->layer.drawableSize = CGSizeMake(width > 0 ? width : view.bounds.size.width,
+                                                      height > 0 ? height : view.bounds.size.height);
+            view.wantsLayer = YES;
+            view.layer = m_impl->layer;
+
+            if (width == 0 || height == 0) {
+                m_impl->width = (uint32_t)view.bounds.size.width;
+                m_impl->height = (uint32_t)view.bounds.size.height;
+            }
         }
     }
 
@@ -71,6 +87,10 @@ void MetalSwapChain::present(uint32_t syncInterval) {
         [cmdBuffer presentDrawable:m_impl->currentDrawable];
         [cmdBuffer commit];
     }
+
+#ifdef METALSHARP_NATIVE_LOADER
+    win32::WindowManager::instance().pumpEvents();
+#endif
 }
 
 void* MetalSwapChain::getCurrentDrawable() {
@@ -216,7 +236,22 @@ HRESULT DXGISwapChainImpl::GetBuffer(UINT Buffer, const GUID& riid, void** ppSur
     return S_OK;
 }
 
-HRESULT DXGISwapChainImpl::SetFullscreenState(INT Fullscreen, IDXGIOutput* pTarget) { return S_OK; }
+HRESULT DXGISwapChainImpl::SetFullscreenState(INT Fullscreen, IDXGIOutput* pTarget) {
+#ifdef METALSHARP_NATIVE_LOADER
+    void* nsWinPtr = win32::WindowManager::instance().getNSWindow(m_hwnd);
+    if (nsWinPtr) {
+        NSWindow* nsWin = (__bridge NSWindow*)nsWinPtr;
+        if (Fullscreen) {
+            [nsWin toggleFullScreen:nil];
+        } else {
+            if ([nsWin styleMask] & NSWindowStyleMaskFullScreen) {
+                [nsWin toggleFullScreen:nil];
+            }
+        }
+    }
+#endif
+    return S_OK;
+}
 HRESULT DXGISwapChainImpl::GetFullscreenState(INT* pFullscreen, IDXGIOutput** ppTarget) {
     if (pFullscreen) *pFullscreen = FALSE;
     if (ppTarget) *ppTarget = nullptr;
