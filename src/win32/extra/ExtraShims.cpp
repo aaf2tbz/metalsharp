@@ -1,6 +1,8 @@
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>
+#include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/Registry.h>
 #include <cstring>
 #include <cstdlib>
 #include <csignal>
@@ -28,9 +30,6 @@ static int sockFromHandle(intptr_t h) {
     auto it = g_sockets.find((int)h);
     return it != g_sockets.end() ? it->second : -1;
 }
-
-static std::unordered_map<std::string, std::string> s_registry;
-static uintptr_t s_nextKey = 0xA000;
 
 static void* MSABI gdi32_CreateCompatibleDC(void*) {
     return reinterpret_cast<void*>(0x9000);
@@ -113,32 +112,107 @@ ShimLibrary createGdi32Shim() {
     return lib;
 }
 
-static LONG MSABI advapi32_RegOpenKeyA(void*, const char*, void** key) {
-    if (key) *key = reinterpret_cast<void*>(s_nextKey++);
-    return 0;
+static LONG MSABI advapi32_RegOpenKeyA(void* hKey, const char* subKey, void** key) {
+    return Registry::instance().openKey(hKey, subKey ? subKey : "", key);
 }
 
-static LONG MSABI advapi32_RegOpenKeyExA(void*, const char*, DWORD, DWORD, void** key) {
-    if (key) *key = reinterpret_cast<void*>(s_nextKey++);
-    return 0;
+static LONG MSABI advapi32_RegOpenKeyExA(void* hKey, const char* subKey, DWORD ulOptions, DWORD samDesired, void** key) {
+    return Registry::instance().openKeyEx(hKey, subKey ? subKey : "", ulOptions, samDesired, key);
 }
 
-static LONG MSABI advapi32_RegCreateKeyExA(void*, const char*, DWORD, char*, DWORD, DWORD, void*, void** key, void*) {
-    if (key) *key = reinterpret_cast<void*>(s_nextKey++);
-    return 0;
+static LONG MSABI advapi32_RegOpenKeyExW(void* hKey, const wchar_t* subKey, DWORD ulOptions, DWORD samDesired, void** key) {
+    char narrow[1024];
+    if (subKey) {
+        int j = 0;
+        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        narrow[j] = 0;
+    } else { narrow[0] = 0; }
+    return Registry::instance().openKeyEx(hKey, narrow, ulOptions, samDesired, key);
 }
 
-static LONG MSABI advapi32_RegCloseKey(void*) { return 0; }
+static LONG MSABI advapi32_RegCreateKeyExA(void* hKey, const char* subKey, DWORD reserved, char* lpClass,
+    DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key, void* lpdwDisposition) {
+    return Registry::instance().createKeyEx(hKey, subKey ? subKey : "", reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, key, lpdwDisposition);
+}
 
-static LONG MSABI advapi32_RegQueryValueExA(void*, const char*, DWORD*, DWORD*, BYTE*, DWORD*) { return 2; }
+static LONG MSABI advapi32_RegCreateKeyExW(void* hKey, const wchar_t* subKey, DWORD reserved, wchar_t* lpClass,
+    DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key, void* lpdwDisposition) {
+    char narrow[1024];
+    if (subKey) {
+        int j = 0;
+        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        narrow[j] = 0;
+    } else { narrow[0] = 0; }
+    return Registry::instance().createKeyEx(hKey, narrow, reserved, nullptr, dwOptions, samDesired, lpSecurityAttributes, key, lpdwDisposition);
+}
 
-static LONG MSABI advapi32_RegQueryValueExW(void*, const wchar_t*, DWORD*, DWORD*, BYTE*, DWORD*) { return 2; }
+static LONG MSABI advapi32_RegCloseKey(void* hKey) {
+    return Registry::instance().closeKey(hKey);
+}
 
-static LONG MSABI advapi32_RegSetValueExA(void*, const char*, DWORD, DWORD, const BYTE*, DWORD) { return 0; }
+static LONG MSABI advapi32_RegQueryValueExA(void* hKey, const char* valueName, DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+    (void)lpReserved;
+    return Registry::instance().queryValue(hKey, valueName ? valueName : "", lpType, lpData, lpcbData);
+}
 
-static LONG MSABI advapi32_RegSetValueExW(void*, const wchar_t*, DWORD, DWORD, const BYTE*, DWORD) { return 0; }
+static LONG MSABI advapi32_RegQueryValueExW(void* hKey, const wchar_t* valueName, DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+    (void)lpReserved;
+    char narrow[256];
+    if (valueName) {
+        int j = 0;
+        for (int i = 0; valueName[i] && j < 255; i++) narrow[j++] = (char)(valueName[i] & 0xFF);
+        narrow[j] = 0;
+    } else { narrow[0] = 0; }
+    return Registry::instance().queryValue(hKey, narrow, lpType, lpData, lpcbData);
+}
 
-static LONG MSABI advapi32_RegDeleteValueA(void*, const char*) { return 0; }
+static LONG MSABI advapi32_RegSetValueExA(void* hKey, const char* valueName, DWORD reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
+    (void)reserved;
+    return Registry::instance().setValue(hKey, valueName ? valueName : "", dwType, lpData, cbData);
+}
+
+static LONG MSABI advapi32_RegSetValueExW(void* hKey, const wchar_t* valueName, DWORD reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
+    (void)reserved;
+    char narrow[256];
+    if (valueName) {
+        int j = 0;
+        for (int i = 0; valueName[i] && j < 255; i++) narrow[j++] = (char)(valueName[i] & 0xFF);
+        narrow[j] = 0;
+    } else { narrow[0] = 0; }
+    return Registry::instance().setValue(hKey, narrow, dwType, lpData, cbData);
+}
+
+static LONG MSABI advapi32_RegDeleteValueA(void* hKey, const char* valueName) {
+    return Registry::instance().deleteValue(hKey, valueName ? valueName : "");
+}
+
+static LONG MSABI advapi32_RegDeleteKeyA(void* hKey, const char* subKey) {
+    return Registry::instance().deleteKey(hKey, subKey ? subKey : "");
+}
+
+static LONG MSABI advapi32_RegDeleteKeyW(void* hKey, const wchar_t* subKey) {
+    char narrow[1024];
+    if (subKey) {
+        int j = 0;
+        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        narrow[j] = 0;
+    } else { narrow[0] = 0; }
+    return Registry::instance().deleteKey(hKey, narrow);
+}
+
+static LONG MSABI advapi32_RegEnumKeyExW(void* hKey, DWORD dwIndex, wchar_t* lpName, DWORD* lpcchName, DWORD* lpReserved,
+    wchar_t* lpClass, DWORD* lpcchClass, void* lpftLastWriteTime) {
+    (void)hKey; (void)dwIndex; (void)lpName; (void)lpcchName;
+    (void)lpReserved; (void)lpClass; (void)lpcchClass; (void)lpftLastWriteTime;
+    return 2;
+}
+
+static LONG MSABI advapi32_RegEnumValueW(void* hKey, DWORD dwIndex, wchar_t* lpValueName, DWORD* lpcchValueName,
+    DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+    (void)hKey; (void)dwIndex; (void)lpValueName; (void)lpcchValueName;
+    (void)lpReserved; (void)lpType; (void)lpData; (void)lpcbData;
+    return 2;
+}
 
 static BOOL MSABI advapi32_InitializeSecurityDescriptor(void* sd, DWORD) { memset(sd, 0, 32); return 1; }
 
@@ -157,13 +231,19 @@ ShimLibrary createAdvapi32Shim() {
 
     lib.functions["RegOpenKeyA"] = fn((void*)advapi32_RegOpenKeyA);
     lib.functions["RegOpenKeyExA"] = fn((void*)advapi32_RegOpenKeyExA);
+    lib.functions["RegOpenKeyExW"] = fn((void*)advapi32_RegOpenKeyExW);
     lib.functions["RegCreateKeyExA"] = fn((void*)advapi32_RegCreateKeyExA);
+    lib.functions["RegCreateKeyExW"] = fn((void*)advapi32_RegCreateKeyExW);
     lib.functions["RegCloseKey"] = fn((void*)advapi32_RegCloseKey);
     lib.functions["RegQueryValueExA"] = fn((void*)advapi32_RegQueryValueExA);
     lib.functions["RegQueryValueExW"] = fn((void*)advapi32_RegQueryValueExW);
     lib.functions["RegSetValueExA"] = fn((void*)advapi32_RegSetValueExA);
     lib.functions["RegSetValueExW"] = fn((void*)advapi32_RegSetValueExW);
     lib.functions["RegDeleteValueA"] = fn((void*)advapi32_RegDeleteValueA);
+    lib.functions["RegDeleteKeyA"] = fn((void*)advapi32_RegDeleteKeyA);
+    lib.functions["RegDeleteKeyW"] = fn((void*)advapi32_RegDeleteKeyW);
+    lib.functions["RegEnumKeyExW"] = fn((void*)advapi32_RegEnumKeyExW);
+    lib.functions["RegEnumValueW"] = fn((void*)advapi32_RegEnumValueW);
     lib.functions["InitializeSecurityDescriptor"] = fn((void*)advapi32_InitializeSecurityDescriptor);
     lib.functions["SetSecurityDescriptorDacl"] = fn((void*)advapi32_SetSecurityDescriptorDacl);
     lib.functions["RegisterEventSourceW"] = fn((void*)advapi32_RegisterEventSourceW);
