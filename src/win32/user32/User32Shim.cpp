@@ -11,16 +11,71 @@
 namespace metalsharp {
 namespace win32 {
 
-static int msabi_wsprintfA_impl(char* buf, const char* fmt, void* ap) {
-    (void)fmt; (void)ap;
-    if (buf) buf[0] = 0;
-    return 0;
-}
-
 static int MSABI shim_wsprintfA(char* buf, const char* fmt, ...) {
-    if (buf) buf[0] = 0;
-    (void)fmt;
-    return 0;
+    if (!buf) return 0;
+    if (!fmt) { buf[0] = 0; return 0; }
+    buf[0] = 0;
+
+    uintptr_t* stack = (uintptr_t*)&fmt + 1;
+    char* out = buf;
+    const char* p = fmt;
+    int argIdx = 0;
+
+    while (*p && (out - buf) < 2047) {
+        if (*p == '%') {
+            p++;
+            while (*p == '0' || *p == '-' || *p == '+' || *p == ' ' || *p == '#' || (*p >= '1' && *p <= '9') || *p == '.' || *p == 'l' || *p == 'I') p++;
+            char spec = *p++;
+            switch (spec) {
+                case 's': {
+                    const char* s = (argIdx < 4) ? (const char*)stack[argIdx++] : "";
+                    if (s) { while (*s && (out - buf) < 2047) *out++ = *s++; }
+                    break;
+                }
+                case 'S': {
+                    const wchar_t* ws = (argIdx < 4) ? (const wchar_t*)stack[argIdx++] : L"";
+                    if (ws) { while (*ws && (out - buf) < 2046) { *out++ = (char)*ws++; } }
+                    break;
+                }
+                case 'd': case 'i': {
+                    int val = (argIdx < 4) ? (int)stack[argIdx++] : 0;
+                    out += snprintf(out, 2047 - (out - buf), "%d", val);
+                    break;
+                }
+                case 'u': {
+                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                    out += snprintf(out, 2047 - (out - buf), "%u", val);
+                    break;
+                }
+                case 'x': {
+                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                    out += snprintf(out, 2047 - (out - buf), "%x", val);
+                    break;
+                }
+                case 'X': {
+                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                    out += snprintf(out, 2047 - (out - buf), "%X", val);
+                    break;
+                }
+                case 'p': {
+                    void* val = (argIdx < 4) ? (void*)stack[argIdx++] : nullptr;
+                    out += snprintf(out, 2047 - (out - buf), "%p", val);
+                    break;
+                }
+                case 'c': {
+                    char c = (argIdx < 4) ? (char)stack[argIdx++] : ' ';
+                    *out++ = c;
+                    break;
+                }
+                case '%': *out++ = '%'; break;
+                default: *out++ = '%'; *out++ = spec; break;
+            }
+        } else {
+            *out++ = *p++;
+        }
+    }
+    *out = 0;
+    return (int)(out - buf);
 }
 
 static void* MSABI shim_CreateWindowExW(DWORD dwExStyle, const wchar_t* lpClassName, const wchar_t* lpWindowName,

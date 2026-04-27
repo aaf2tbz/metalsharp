@@ -127,6 +127,54 @@ void Registry::seedSteam(const std::string& prefix) {
     set(hklmSysEnv, "TEMP", 1, strVal("C:\\Windows\\TEMP"));
     set(hklmSysEnv, "TMP", 1, strVal("C:\\Windows\\TEMP"));
 
+    set(hklmSteam, "ConnectivityState", 4, dwordVal(1));
+    set(hklmSteam, "EngineDllName", 1, strVal("steamui.dll"));
+    set(hklmSteam, "EngineDllName64", 1, strVal("steamui64.dll"));
+    set(hklmSteam, "ClientRegistryFile", 1, strVal("C:\\Program Files (x86)\\Steam\\ClientRegistry.blob"));
+
+    set(hkcuSteam, "Rate", 4, dwordVal(0));
+    set(hkcuSteam, "LastGameNameUsed", 1, strVal(""));
+    set(hkcuSteam, "Offline", 4, dwordVal(0));
+    set(hkcuSteam, "AllowAutoLogin", 4, dwordVal(1));
+    set(hkcuSteam, "StartupMode", 4, dwordVal(0));
+
+    std::string hklmSteamApps480 = "hkey_local_machine/software/valve/steam/apps/480";
+    set(hklmSteamApps480, "name", 1, strVal("Spacewar"));
+    set(hklmSteamApps480, "Installed", 4, dwordVal(1));
+
+    std::string hkcuSteamApps = "hkey_current_user/software/valve/steam/apps";
+    set(hkcuSteamApps, "", 1, strVal(""));
+
+    std::string hkcuSteamApps480 = "hkey_current_user/software/valve/steam/apps/480";
+    set(hkcuSteamApps480, "name", 1, strVal("Spacewar"));
+    set(hkcuSteamApps480, "Installed", 4, dwordVal(1));
+
+    std::string hklmSteamActiveProcess = "hkey_local_machine/software/valve/steam/activeprocess";
+    set(hklmSteamActiveProcess, "pid", 4, dwordVal(1337));
+    set(hklmSteamActiveProcess, "ActiveUser", 4, dwordVal(0));
+
+    std::string hklmDirectDraw = "hkey_local_machine/software/microsoft/directdraw";
+    set(hklmDirectDraw, "MostRecentApplication", 1, strVal("steam.exe"));
+    set(hklmDirectDraw, "MostRecentApplicationID", 4, dwordVal(0));
+
+    std::string hklmCTFSystemShared = "hkey_local_machine/software/microsoft/ctf/systemshared";
+    set(hklmCTFSystemShared, "EnableHexNumpad", 4, dwordVal(1));
+
+    std::string hkcuCTF = "hkey_current_user/software/microsoft/ctf";
+    set(hkcuCTF, "EnableHexNumpad", 4, dwordVal(1));
+
+    std::string hklmCodePage = "hkey_local_machine/system/currentcontrolset/control/nls/codepage";
+    set(hklmCodePage, "ACP", 1, strVal("1252"));
+    set(hklmCodePage, "OEMCP", 1, strVal("437"));
+    set(hklmCodePage, "MACCP", 1, strVal("10000"));
+
+    std::string hklmLanguage = "hkey_local_machine/system/currentcontrolset/control/nls/language";
+    set(hklmLanguage, "Default", 1, strVal("0409"));
+    set(hklmLanguage, "InstallLanguage", 1, strVal("0409"));
+
+    std::string hkcuKbdPreload = "hkey_current_user/keyboard layout/preload";
+    set(hkcuKbdPreload, "1", 1, strVal("00000409"));
+
     MS_INFO("Registry: Seeded Steam + Windows registry keys");
 }
 

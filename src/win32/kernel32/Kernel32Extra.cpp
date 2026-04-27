@@ -953,11 +953,42 @@ static BOOL MSABI shim_CreateProcessW(const wchar_t* lpApplicationName, const wc
     void* lpProcessAttributes, void* lpThreadAttributes, BOOL bInheritHandles,
     DWORD dwCreationFlags, void* lpEnvironment, const wchar_t* lpCurrentDirectory,
     void* lpStartupInfo, void* lpProcessInformation) {
-    (void)lpApplicationName; (void)lpCommandLine; (void)lpProcessAttributes;
-    (void)lpThreadAttributes; (void)bInheritHandles; (void)dwCreationFlags;
-    (void)lpEnvironment; (void)lpCurrentDirectory; (void)lpStartupInfo; (void)lpProcessInformation;
-    MS_INFO("PELoader: CreateProcessW stub");
-    return 0;
+    (void)lpProcessAttributes; (void)lpThreadAttributes; (void)bInheritHandles;
+    (void)dwCreationFlags; (void)lpEnvironment; (void)lpCurrentDirectory;
+    (void)lpStartupInfo;
+
+    char appName[1024] = {};
+    char cmdLine[2048] = {};
+    if (lpApplicationName) {
+        for (int i = 0; i < 1023 && lpApplicationName[i]; i++) appName[i] = (char)lpApplicationName[i];
+    }
+    if (lpCommandLine) {
+        for (int i = 0; i < 2047 && lpCommandLine[i]; i++) cmdLine[i] = (char)lpCommandLine[i];
+    }
+
+    MS_INFO("PELoader: CreateProcessW(\"%s\", \"%s\")", appName, cmdLine);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        char exePath[4096];
+        const char* home = getenv("HOME");
+        snprintf(exePath, sizeof(exePath), "%s/metalsharp/build/metalsharp", home ? home : "/tmp");
+
+        char* argv[] = { exePath, appName[0] ? appName : cmdLine, nullptr };
+        execv(exePath, argv);
+        _exit(127);
+    }
+
+    if (pid > 0 && lpProcessInformation) {
+        auto* pi = reinterpret_cast<DWORD*>(lpProcessInformation);
+        pi[0] = (DWORD)pid;
+        pi[1] = (DWORD)0x1337;
+        pi[2] = (DWORD)pid;
+        pi[3] = (DWORD)0;
+        return 1;
+    }
+
+    return pid > 0 ? 1 : 0;
 }
 
 static BOOL MSABI shim_FindFirstFileExW(const wchar_t* lpFileName, DWORD fInfoLevelId,
