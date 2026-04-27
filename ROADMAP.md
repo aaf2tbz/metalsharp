@@ -1,12 +1,12 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** PE loader works, steam.exe CRT init completes, exits 255. D3D11/DXGI Metal backend is 90% implemented. 339/339 imports resolved across 14 DLLs. ~11K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
+**Current state:** Phases 8-9 complete. Real file I/O, registry, environment variables, NSWindow-backed HWND system with message pump and input translation. PE loader works, steam.exe CRT init completes. D3D11/DXGI Metal backend is 90% implemented. 339/339 imports resolved across 14 DLLs. ~13K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
 ---
 
-## Phase 8: Win32 Foundation — File I/O, Registry, Environment
+## Phase 8: Win32 Foundation — File I/O, Registry, Environment ✅ DONE
 
 *steam.exe needs to read/write files, query registry, and check environment variables before it does anything useful.*
 
@@ -47,7 +47,7 @@
 
 ---
 
-## Phase 9: Window Management & Message Pump
+## Phase 9: Window Management & Message Pump ✅ DONE
 
 *Steam needs a real window to render its UI. No window = no login screen.*
 
@@ -277,17 +277,17 @@
 
 ## Summary Timeline
 
-| Phase | Description | Effort | Cumulative |
-|-------|-------------|--------|------------|
-| **8** | File I/O, Registry, Environment | 2-3 days | 2-3 days |
-| **9** | Window Management & Input | 3-4 days | 5-7 days |
-| **10** | Networking (Steam connectivity) | 3-4 days | 8-11 days |
-| **11** | Real Threading & Sync | 2-3 days | 10-14 days |
-| **12** | PE Loader Hardening | 3-4 days | 13-18 days |
-| **13** | D3D ↔ PE Integration | 2-3 days | 15-21 days |
-| **14** | First Game Validation | 2-3 days | 17-24 days |
-| **15** | Steam Full Run | 3-4 days | 20-28 days |
-| **16** | Download & Launch Game | 3-4 days | 23-32 days |
+| Phase | Description | Effort | Cumulative | Status |
+|-------|-------------|--------|------------|--------|
+| **8** | File I/O, Registry, Environment | 2-3 days | 2-3 days | ✅ Done |
+| **9** | Window Management & Input | 3-4 days | 5-7 days | ✅ Done |
+| **10** | Networking (Steam connectivity) | 3-4 days | 8-11 days | |
+| **11** | Real Threading & Sync | 2-3 days | 10-14 days | |
+| **12** | PE Loader Hardening | 3-4 days | 13-18 days | |
+| **13** | D3D ↔ PE Integration | 2-3 days | 15-21 days | |
+| **14** | First Game Validation | 2-3 days | 17-24 days | |
+| **15** | Steam Full Run | 3-4 days | 20-28 days | |
+| **16** | Download & Launch Game | 3-4 days | 23-32 days | |
 
 **Rough estimate: 4-6 weeks of focused work.**
 
