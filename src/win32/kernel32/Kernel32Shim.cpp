@@ -2,6 +2,7 @@
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Logger.h>
+#include <metalsharp/VirtualFileSystem.h>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -104,34 +105,29 @@ static void MSABI shim_GlobalFree(void* hMem) {
 
 static HANDLE MSABI shim_CreateFileA(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
     void* lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile) {
-    (void)lpFileName; (void)dwDesiredAccess; (void)dwShareMode;
-    (void)lpSecurityAttributes; (void)dwCreationDisposition;
-    (void)dwFlagsAndAttributes; (void)hTemplateFile;
-    return INVALID_HANDLE_VALUE;
+    (void)lpSecurityAttributes; (void)hTemplateFile;
+    return VirtualFileSystem::instance().createFile(lpFileName, dwDesiredAccess, dwShareMode, dwCreationDisposition, dwFlagsAndAttributes);
 }
 
 static BOOL MSABI shim_ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead,
     DWORD* lpNumberOfBytesRead, void* lpOverlapped) {
-    (void)hFile; (void)lpBuffer; (void)nNumberOfBytesToRead;
-    (void)lpNumberOfBytesRead; (void)lpOverlapped;
-    return 0;
+    (void)lpOverlapped;
+    return VirtualFileSystem::instance().readFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead);
 }
 
 static BOOL MSABI shim_WriteFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite,
     DWORD* lpNumberOfBytesWritten, void* lpOverlapped) {
-    (void)hFile; (void)lpBuffer; (void)nNumberOfBytesToWrite;
-    (void)lpNumberOfBytesWritten; (void)lpOverlapped;
-    return 0;
+    (void)lpOverlapped;
+    return VirtualFileSystem::instance().writeFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten);
 }
 
 static BOOL MSABI shim_CloseHandle(HANDLE hObject) {
-    (void)hObject;
-    return 1;
+    if (!hObject || hObject == INVALID_HANDLE_VALUE) return 1;
+    return VirtualFileSystem::instance().closeHandle(hObject) ? 1 : 1;
 }
 
 static DWORD MSABI shim_GetFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
-    (void)hFile; (void)lpFileSizeHigh;
-    return 0;
+    return VirtualFileSystem::instance().getFileSize(hFile, lpFileSizeHigh);
 }
 
 static DWORD MSABI shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {

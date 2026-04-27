@@ -1,6 +1,8 @@
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>
+#include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/Registry.h>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -104,25 +106,161 @@ void setCommandLine(const char* cmd) {
 static char* MSABI shim_GetCommandLineA() { MS_INFO("TRACE: GetCommandLineA()"); return s_cmdLineA; }
 static wchar_t* MSABI shim_GetCommandLineW() { MS_INFO("TRACE: GetCommandLineW()"); return s_cmdLineW; }
 
+static std::unordered_map<std::string, std::string> s_envStore;
+static bool s_envInitialized = false;
+
+static void ensureEnvInit() {
+    if (s_envInitialized) return;
+    s_envInitialized = true;
+    const char* home = getenv("HOME");
+    std::string homeDir = home ? home : "/tmp";
+    s_envStore["PATH"] = "C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem";
+    s_envStore["APPDATA"] = "C:\\Users\\user\\AppData\\Roaming";
+    s_envStore["USERPROFILE"] = "C:\\Users\\user";
+    s_envStore["PROGRAMFILES"] = "C:\\Program Files";
+    s_envStore["PROGRAMFILES(X86)"] = "C:\\Program Files (x86)";
+    s_envStore["PROGRAMW6432"] = "C:\\Program Files";
+    s_envStore["WINDIR"] = "C:\\Windows";
+    s_envStore["SYSTEMROOT"] = "C:\\Windows";
+    s_envStore["SYSTEMDRIVE"] = "C:";
+    s_envStore["TEMP"] = "C:\\Users\\user\\AppData\\Local\\Temp";
+    s_envStore["TMP"] = "C:\\Users\\user\\AppData\\Local\\Temp";
+    s_envStore["HOMEDRIVE"] = "C:";
+    s_envStore["HOMEPATH"] = "\\Users\\user";
+    s_envStore["COMPUTERNAME"] = "METALSHARP";
+    s_envStore["USERNAME"] = "user";
+    s_envStore["USERDOMAIN"] = "METALSHARP";
+    s_envStore["OS"] = "Windows_NT";
+    s_envStore["PROCESSOR_ARCHITECTURE"] = "AMD64";
+    s_envStore["PROCESSOR_LEVEL"] = "6";
+    s_envStore["PROCESSOR_REVISION"] = "3F09";
+    s_envStore["NUMBER_OF_PROCESSORS"] = std::to_string(sysconf(_SC_NPROCESSORS_ONLN));
+    s_envStore["COMMONPROGRAMFILES"] = "C:\\Program Files\\Common Files";
+    s_envStore["COMMONPROGRAMFILES(X86)"] = "C:\\Program Files (x86)\\Common Files";
+    s_envStore["COMMONPROGRAMW6432"] = "C:\\Program Files\\Common Files";
+    s_envStore["LOCALAPPDATA"] = "C:\\Users\\user\\AppData\\Local";
+    s_envStore["PUBLIC"] = "C:\\Users\\Public";
+    s_envStore["ALLUSERSPROFILE"] = "C:\\ProgramData";
+    s_envStore["PATHEXT"] = ".COM;.EXE;.BAT;.CMD;.VBS;.JS";
+    s_envStore["PSMODULEPATH"] = "C:\\Users\\user\\Documents\\WindowsPowerShell\\Modules";
+    s_envStore["FPS_BROWSER_USER_PROFILE"] = "default";
+    s_envStore["FPS_BROWSER_APP_PROFILE"] = "chrome";
+}
+
 static DWORD MSABI shim_GetEnvironmentVariableW(const wchar_t* lpName, wchar_t* lpBuffer, DWORD nSize) {
-    (void)lpName; (void)lpBuffer; (void)nSize;
-    return 0;
+    ensureEnvInit();
+    if (!lpName) return 0;
+    char name[256];
+    int j = 0;
+    for (int i = 0; lpName[i] && j < 255; i++) name[j++] = (char)(lpName[i] & 0x7F);
+    name[j] = 0;
+
+    std::string upper;
+    for (auto c : std::string(name)) upper += toupper(c);
+
+    auto it = s_envStore.find(upper);
+    if (it == s_envStore.end()) {
+        const char* env = getenv(name);
+        if (env) it = s_envStore.insert({upper, env}).first;
+        else return 0;
+    }
+
+    const std::string& val = it->second;
+    DWORD needed = static_cast<DWORD>(val.size());
+    if (nSize == 0) return needed + 1;
+    if (lpBuffer && nSize > needed) {
+        for (size_t i = 0; i <= needed; i++) lpBuffer[i] = (wchar_t)(unsigned char)val[i];
+    }
+    return needed;
 }
 
 static DWORD MSABI shim_GetEnvironmentVariableA(const char* lpName, char* lpBuffer, DWORD nSize) {
-    (void)lpName; (void)lpBuffer; (void)nSize;
-    return 0;
+    ensureEnvInit();
+    if (!lpName) return 0;
+
+    std::string upper;
+    for (auto c : std::string(lpName)) upper += tolower(c);
+
+    auto it = s_envStore.find(upper);
+    if (it == s_envStore.end()) {
+        const char* env = getenv(lpName);
+        if (env) it = s_envStore.insert({upper, env}).first;
+        else return 0;
+    }
+
+    const std::string& val = it->second;
+    DWORD needed = static_cast<DWORD>(val.size());
+    if (nSize == 0) return needed + 1;
+    if (lpBuffer && nSize > needed) {
+        memcpy(lpBuffer, val.c_str(), needed + 1);
+    }
+    return needed;
 }
 
 static BOOL MSABI shim_SetEnvironmentVariableW(const wchar_t* lpName, const wchar_t* lpValue) {
-    (void)lpName; (void)lpValue;
+    ensureEnvInit();
+    if (!lpName) return 0;
+    char name[256];
+    int j = 0;
+    for (int i = 0; lpName[i] && j < 255; i++) name[j++] = (char)(lpName[i] & 0x7F);
+    name[j] = 0;
+
+    std::string upper;
+    for (auto c : std::string(name)) upper += toupper(c);
+
+    if (lpValue) {
+        char val[1024];
+        int k = 0;
+        for (int i = 0; lpValue[i] && k < 1023; i++) val[k++] = (char)(lpValue[i] & 0x7F);
+        val[k] = 0;
+        s_envStore[upper] = val;
+        setenv(upper.c_str(), val, 1);
+    } else {
+        s_envStore.erase(upper);
+        unsetenv(upper.c_str());
+    }
     return 1;
 }
 
 static DWORD MSABI shim_ExpandEnvironmentStringsW(const wchar_t* lpSrc, wchar_t* lpDst, DWORD nSize) {
-    (void)lpSrc;
-    if (lpDst && nSize > 0) lpDst[0] = 0;
-    return 0;
+    ensureEnvInit();
+    if (!lpSrc) return 0;
+
+    std::string src;
+    for (int i = 0; lpSrc[i]; i++) src += (char)(lpSrc[i] & 0x7F);
+
+    std::string result;
+    size_t pos = 0;
+    while (pos < src.size()) {
+        if (src[pos] == '%') {
+            size_t end = src.find('%', pos + 1);
+            if (end != std::string::npos) {
+                std::string varName = src.substr(pos + 1, end - pos - 1);
+                std::string upper;
+                for (auto c : varName) upper += toupper(c);
+                auto it = s_envStore.find(upper);
+                if (it != s_envStore.end()) {
+                    result += it->second;
+                } else {
+                    const char* env = getenv(varName.c_str());
+                    if (env) result += env;
+                    else result += src.substr(pos, end - pos + 1);
+                }
+                pos = end + 1;
+            } else {
+                result += src[pos++];
+            }
+        } else {
+            result += src[pos++];
+        }
+    }
+
+    DWORD needed = static_cast<DWORD>(result.size()) + 1;
+    if (nSize == 0 || !lpDst) return needed;
+    DWORD copyLen = needed < nSize ? needed : nSize;
+    for (DWORD i = 0; i < copyLen; i++) lpDst[i] = (wchar_t)(unsigned char)result[i];
+    if (copyLen > 0) lpDst[copyLen - 1] = 0;
+    return needed;
 }
 
 static void MSABI shim_GetStartupInfoW(STARTUPINFOW* lpStartupInfo) {
@@ -591,19 +729,64 @@ static BOOL MSABI shim_GetStringTypeW(DWORD dwInfoType, const wchar_t* lpSrcStr,
 }
 
 static void* MSABI shim_FreeEnvironmentStringsW(wchar_t* lpszEnvironmentBlock) {
-    (void)lpszEnvironmentBlock; return reinterpret_cast<void*>(1);
+    free(lpszEnvironmentBlock);
+    return reinterpret_cast<void*>(1);
 }
 
 static wchar_t* MSABI shim_GetEnvironmentStringsW() {
-    static wchar_t env[] = {0};
-    return env;
+    ensureEnvInit();
+    size_t totalChars = 1;
+    for (auto& [key, val] : s_envStore) {
+        totalChars += key.size() + 1 + val.size() + 1;
+    }
+    totalChars++;
+
+    auto* block = static_cast<wchar_t*>(malloc(totalChars * sizeof(wchar_t)));
+    size_t pos = 0;
+    for (auto& [key, val] : s_envStore) {
+        for (size_t i = 0; i < key.size(); i++) block[pos++] = (wchar_t)(unsigned char)key[i];
+        block[pos++] = L'=';
+        for (size_t i = 0; i < val.size(); i++) block[pos++] = (wchar_t)(unsigned char)val[i];
+        block[pos++] = 0;
+    }
+    block[pos++] = 0;
+    return block;
 }
 
 static BOOL MSABI shim_CopyFileExW(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName,
     void* lpProgressRoutine, void* lpData, BOOL* pbCancel, DWORD dwCopyFlags) {
-    (void)lpExistingFileName; (void)lpNewFileName; (void)lpProgressRoutine;
-    (void)lpData; (void)pbCancel; (void)dwCopyFlags;
-    return 0;
+    (void)lpProgressRoutine; (void)lpData; (void)pbCancel; (void)dwCopyFlags;
+    if (!lpExistingFileName || !lpNewFileName) return 0;
+
+    char srcW[1024], dstW[1024];
+    for (int i = 0; lpExistingFileName[i] && i < 1023; i++) srcW[i] = (char)(lpExistingFileName[i] & 0xFF);
+    srcW[1023] = 0;
+    for (int i = 0; lpNewFileName[i] && i < 1023; i++) dstW[i] = (char)(lpNewFileName[i] & 0xFF);
+    dstW[1023] = 0;
+
+    std::string src = VirtualFileSystem::instance().winToHost(srcW);
+    std::string dst = VirtualFileSystem::instance().winToHost(dstW);
+
+    FILE* fin = fopen(src.c_str(), "rb");
+    if (!fin) return 0;
+    {
+        size_t pos = dst.rfind('/');
+        if (pos != std::string::npos) {
+            std::string cmd = "mkdir -p \"" + dst.substr(0, pos) + "\"";
+            system(cmd.c_str());
+        }
+    }
+    FILE* fout = fopen(dst.c_str(), "wb");
+    if (!fout) { fclose(fin); return 0; }
+
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+        fwrite(buf, 1, n, fout);
+    }
+    fclose(fin);
+    fclose(fout);
+    return 1;
 }
 
 static BOOL MSABI shim_CreateDirectoryW(const wchar_t* lpPathName, void* lpSecurityAttributes) {
@@ -657,9 +840,30 @@ static BOOL MSABI shim_SetCurrentDirectoryW(const wchar_t* lpPathName) {
 }
 
 static DWORD MSABI shim_GetFullPathNameW(const wchar_t* lpFileName, DWORD nBufferLength, wchar_t* lpBuffer, wchar_t** lpFilePart) {
-    (void)lpFileName; (void)lpFilePart;
-    if (nBufferLength > 0 && lpBuffer) lpBuffer[0] = 0;
-    return 0;
+    if (!lpFileName) return 0;
+    char narrow[1024];
+    int j = 0;
+    for (int i = 0; lpFileName[i] && j < 1023; i++) narrow[j++] = (char)(lpFileName[i] & 0xFF);
+    narrow[j] = 0;
+
+    std::string full = VirtualFileSystem::instance().getFullPathName(narrow);
+    DWORD needed = static_cast<DWORD>(full.size());
+
+    if (lpFilePart) {
+        auto lastSlash = full.rfind('\\');
+        if (lastSlash != std::string::npos) {
+            std::string tmp = full;
+            *lpFilePart = lpBuffer ? lpBuffer + lastSlash + 1 : nullptr;
+        } else {
+            *lpFilePart = lpBuffer;
+        }
+    }
+
+    if (nBufferLength == 0 || !lpBuffer) return needed + 1;
+    DWORD copyLen = needed < nBufferLength ? needed : nBufferLength - 1;
+    for (DWORD i = 0; i < copyLen; i++) lpBuffer[i] = (wchar_t)(unsigned char)full[i];
+    lpBuffer[copyLen] = 0;
+    return needed;
 }
 
 static BOOL MSABI shim_CreateProcessW(const wchar_t* lpApplicationName, const wchar_t* lpCommandLine,
@@ -681,34 +885,61 @@ static BOOL MSABI shim_FindFirstFileExW(const wchar_t* lpFileName, DWORD fInfoLe
 }
 
 static void* MSABI shim_FindFirstFileW(const wchar_t* lpFileName, void* lpFindFileData) {
-    (void)lpFileName; (void)lpFindFileData;
-    return INVALID_HANDLE_VALUE;
+    if (!lpFileName) return INVALID_HANDLE_VALUE;
+    char narrow[1024];
+    int j = 0;
+    for (int i = 0; lpFileName[i] && j < 1023; i++) narrow[j++] = (char)(lpFileName[i] & 0xFF);
+    narrow[j] = 0;
+    return VirtualFileSystem::instance().findFirstFileW(narrow, lpFindFileData);
 }
 
 static BOOL MSABI shim_FindNextFileW(void* hFindFile, void* lpFindFileData) {
-    (void)hFindFile; (void)lpFindFileData; return 0;
+    return VirtualFileSystem::instance().findNextFileW(hFindFile, lpFindFileData);
 }
 
 static BOOL MSABI shim_GetFileAttributesExW(const wchar_t* lpFileName, DWORD fInfoLevelId, void* lpFileInformation) {
-    (void)lpFileName; (void)fInfoLevelId; (void)lpFileInformation; return 0;
+    if (!lpFileName) return 0;
+    char narrow[1024];
+    int j = 0;
+    for (int i = 0; lpFileName[i] && j < 1023; i++) narrow[j++] = (char)(lpFileName[i] & 0xFF);
+    narrow[j] = 0;
+    return VirtualFileSystem::instance().getFileAttributesEx(narrow, lpFileInformation);
 }
 
 static DWORD MSABI shim_GetFileAttributesW(const wchar_t* lpFileName) {
-    (void)lpFileName; return 0xFFFFFFFF;
+    if (!lpFileName) return 0xFFFFFFFF;
+    char narrow[1024];
+    int j = 0;
+    for (int i = 0; lpFileName[i] && j < 1023; i++) narrow[j++] = (char)(lpFileName[i] & 0xFF);
+    narrow[j] = 0;
+    return VirtualFileSystem::instance().getFileAttributes(narrow);
 }
 
 static BOOL MSABI shim_GetFileInformationByHandle(HANDLE hFile, void* lpFileInformation) {
-    (void)hFile; (void)lpFileInformation; return 0;
+    return VirtualFileSystem::instance().getFileInformationByHandle(hFile, lpFileInformation);
 }
 
 static BOOL MSABI shim_GetFileTime(HANDLE hFile, void* lpCreationTime, void* lpLastAccessTime, void* lpLastWriteTime) {
-    (void)hFile; (void)lpCreationTime; (void)lpLastAccessTime; (void)lpLastWriteTime; return 0;
+    auto* entry = VirtualFileSystem::instance().getHandle(hFile);
+    if (!entry || entry->type != HandleType::File) return 0;
+    auto* fs = static_cast<FileState*>(entry->data);
+    struct stat st;
+    if (fstat(fs->fd, &st) != 0) return 0;
+    uint64_t ctime = static_cast<uint64_t>(st.st_ctime) * 10000000ULL + 116444736000000000ULL;
+    uint64_t atime = static_cast<uint64_t>(st.st_atime) * 10000000ULL + 116444736000000000ULL;
+    uint64_t mtime = static_cast<uint64_t>(st.st_mtime) * 10000000ULL + 116444736000000000ULL;
+    if (lpCreationTime) memcpy(lpCreationTime, &ctime, 8);
+    if (lpLastAccessTime) memcpy(lpLastAccessTime, &atime, 8);
+    if (lpLastWriteTime) memcpy(lpLastWriteTime, &mtime, 8);
+    return 1;
 }
 static BOOL MSABI shim_SetFileTime(HANDLE hFile, const void* lpCreationTime, const void* lpLastAccessTime, const void* lpLastWriteTime) {
     (void)hFile; (void)lpCreationTime; (void)lpLastAccessTime; (void)lpLastWriteTime; return 1;
 }
 
-static DWORD MSABI shim_GetFileType(HANDLE hFile) { (void)hFile; return 0x0001; }
+static DWORD MSABI shim_GetFileType(HANDLE hFile) {
+    return VirtualFileSystem::instance().getFileType(hFile);
+}
 
 static BOOL MSABI shim_GetDiskFreeSpaceA(const char* lpRootPathName, DWORD* lpSectorsPerCluster,
     DWORD* lpBytesPerSector, DWORD* lpNumberOfFreeClusters, DWORD* lpTotalNumberOfClusters) {
@@ -733,8 +964,18 @@ static UINT MSABI shim_GetDriveTypeW(const wchar_t* lpRootPathName) {
     (void)lpRootPathName; return 3;
 }
 
-static BOOL MSABI shim_FlushFileBuffers(HANDLE hFile) { (void)hFile; return 1; }
-static BOOL MSABI shim_SetEndOfFile(HANDLE hFile) { (void)hFile; return 1; }
+static BOOL MSABI shim_FlushFileBuffers(HANDLE hFile) {
+    return VirtualFileSystem::instance().flushFileBuffers(hFile);
+}
+static BOOL MSABI shim_SetEndOfFile(HANDLE hFile) {
+    auto* entry = VirtualFileSystem::instance().getHandle(hFile);
+    if (!entry || entry->type != HandleType::File) return 0;
+    auto* fs = static_cast<FileState*>(entry->data);
+    off_t pos = lseek(fs->fd, 0, SEEK_CUR);
+    if (pos == (off_t)-1) return 0;
+    if (ftruncate(fs->fd, pos) != 0) return 0;
+    return 1;
+}
 static BOOL MSABI shim_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags) {
     (void)hObject; (void)dwMask; (void)dwFlags; return 1;
 }
@@ -896,9 +1137,15 @@ static void MSABI shim_RtlVirtualUnwind(DWORD HandlerType, uint64_t ImageBase, u
 static void* MSABI shim_EncodePointer(void* Ptr) { return Ptr; }
 static void* MSABI shim_DecodePointer(void* Ptr) { return Ptr; }
 
-static BOOL MSABI stub_GetFileSizeEx(void* hFile, int64_t* size) { (void)hFile; if(size) *size = 0; return 1; }
-static DWORD MSABI stub_SetFilePointer(void* hFile, LONG lDistanceToMove, LONG* lpDistanceToMoveHigh, DWORD dwMoveMethod) { (void)hFile; (void)lDistanceToMove; (void)lpDistanceToMoveHigh; (void)dwMoveMethod; return 0; }
-static BOOL MSABI stub_SetFilePointerEx(void* hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, DWORD dwMoveMethod) { (void)hFile; (void)liDistanceToMove; (void)lpNewFilePointer; (void)dwMoveMethod; return 1; }
+static BOOL MSABI stub_GetFileSizeEx(void* hFile, int64_t* size) {
+    return VirtualFileSystem::instance().getFileSizeEx(hFile, size);
+}
+static DWORD MSABI stub_SetFilePointer(void* hFile, LONG lDistanceToMove, LONG* lpDistanceToMoveHigh, DWORD dwMoveMethod) {
+    return VirtualFileSystem::instance().setFilePointer(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod);
+}
+static BOOL MSABI stub_SetFilePointerEx(void* hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, DWORD dwMoveMethod) {
+    return VirtualFileSystem::instance().setFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod);
+}
 
 void addMissingKernel32(ShimLibrary& lib) {
     auto fn = [](void* ptr) -> ExportedFunction {
