@@ -362,8 +362,125 @@ public:
 
     UINT GetDescriptorHandleIncrementSize(UINT) override { return 1; }
 
-    HRESULT ReserveTiles(ID3D12Resource*, UINT, const D3D12_TILED_RESOURCE_COORDINATE*, const D3D12_TILE_REGION_SIZE*, BOOL) override { return S_OK; }
-    HRESULT GetResourceTiling(ID3D12Resource*, UINT*, const void*, const void*, UINT*, UINT, void*) override { return E_NOTIMPL; }
+    HRESULT ReserveTiles(ID3D12Resource* pTiledResource, UINT NumTileRegions, const D3D12_TILED_RESOURCE_COORDINATE* pCoords, const D3D12_TILE_REGION_SIZE* pSizes, BOOL bSingleTile) override {
+        if (!pTiledResource) return E_INVALIDARG;
+        return S_OK;
+    }
+
+    HRESULT GetResourceTiling(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource, D3D12_PACKED_MIP_INFO* pPackedMipDesc, D3D12_TILE_SHAPE* pStandardTileShape, UINT* pNumSubresourceTilings, UINT FirstSubresourceTilingToGet, D3D12_SUBRESOURCE_TILING* pSubresourceTilings) override {
+        if (!pTiledResource) return E_INVALIDARG;
+
+        D3D12_RESOURCE_DESC desc;
+        if (FAILED(pTiledResource->GetDesc(&desc))) return E_FAIL;
+
+        const UINT TILE_W = 128;
+        const UINT TILE_H = 128;
+        const UINT TILE_D = 1;
+
+        UINT totalMips = desc.MipLevels > 0 ? desc.MipLevels : 1;
+        UINT packedMips = 0;
+        if (totalMips > 1) {
+            UINT w = (UINT)desc.Width, h = desc.Height, d = desc.DepthOrArraySize;
+            for (UINT i = 0; i < totalMips; i++) {
+                if (w < TILE_W && h < TILE_H) { packedMips = totalMips - i; break; }
+                w = w > 1 ? w >> 1 : 1;
+                h = h > 1 ? h >> 1 : 1;
+                d = d > 1 ? d >> 1 : 1;
+            }
+        }
+        UINT standardMips = totalMips - packedMips;
+
+        UINT totalTiles = 0;
+        for (UINT i = 0; i < standardMips; i++) {
+            UINT w = (UINT)desc.Width >> i; if (w == 0) w = 1;
+            UINT h = desc.Height >> i; if (h == 0) h = 1;
+            UINT d = desc.DepthOrArraySize >> i; if (d == 0) d = 1;
+            UINT tw = (w + TILE_W - 1) / TILE_W;
+            UINT th = (h + TILE_H - 1) / TILE_H;
+            totalTiles += tw * th * d;
+        }
+        UINT packedTiles = packedMips > 0 ? 1 : 0;
+
+        if (pPackedMipDesc) {
+            pPackedMipDesc->NumStandardMips = standardMips;
+            pPackedMipDesc->NumPackedMips = packedMips;
+            pPackedMipDesc->NumTilesForPackedMips = packedTiles;
+            pPackedMipDesc->StartTileIndexInOverallResource = standardMips > 0 ? totalTiles : 0;
+        }
+        if (pStandardTileShape) {
+            pStandardTileShape->WidthInTexels = TILE_W;
+            pStandardTileShape->HeightInTexels = TILE_H;
+            pStandardTileShape->DepthInTexels = TILE_D;
+        }
+        if (pNumTilesForResource) {
+            *pNumTilesForResource = totalTiles + packedTiles;
+        }
+        if (pNumSubresourceTilings && pSubresourceTilings) {
+            UINT count = 0;
+            for (UINT i = FirstSubresourceTilingToGet; i < totalMips && count < *pNumSubresourceTilings; i++, count++) {
+                if (i < standardMips) {
+                    UINT w = (UINT)desc.Width >> i; if (w == 0) w = 1;
+                    UINT h = desc.Height >> i; if (h == 0) h = 1;
+                    UINT d = desc.DepthOrArraySize >> i; if (d == 0) d = 1;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].WidthInTiles = (w + TILE_W - 1) / TILE_W;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].HeightInTiles = (h + TILE_H - 1) / TILE_H;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].DepthInTiles = d;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].StartTileIndexInOverallResource = i == 0 ? 0 : 0;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].NumTiles =
+                        pSubresourceTilings[i - FirstSubresourceTilingToGet].WidthInTiles *
+                        pSubresourceTilings[i - FirstSubresourceTilingToGet].HeightInTiles * d;
+                } else {
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].WidthInTiles = 0;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].HeightInTiles = 0;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].DepthInTiles = 0;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].StartTileIndexInOverallResource = totalTiles;
+                    pSubresourceTilings[i - FirstSubresourceTilingToGet].NumTiles = packedTiles;
+                }
+            }
+            *pNumSubresourceTilings = count;
+        }
+
+        return S_OK;
+    }
+
+    UINT64 GetTiledResourceSize(UINT64 Width, UINT Height, UINT DepthOrArraySize, UINT Format, UINT MipLevels) override {
+        const UINT TILE_W = 128;
+        const UINT TILE_H = 128;
+        const UINT64 TILE_BYTES = D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES;
+
+        UINT totalMips = MipLevels > 0 ? MipLevels : 1;
+        UINT totalTiles = 0;
+        for (UINT i = 0; i < totalMips; i++) {
+            UINT w = (UINT)(Width >> i); if (w == 0) w = 1;
+            UINT h = (UINT)(Height >> i); if (h == 0) h = 1;
+            UINT d = (UINT)(DepthOrArraySize >> i); if (d == 0) d = 1;
+            UINT tw = (w + TILE_W - 1) / TILE_W;
+            UINT th = (h + TILE_H - 1) / TILE_H;
+            totalTiles += tw * th * d;
+        }
+        return totalTiles * TILE_BYTES;
+    }
+
+    HRESULT CreateSamplerFeedback(ID3D12Resource* pTargetResource, UINT FeedbackType, REFIID riid, void** ppFeedbackResource) override {
+        if (!pTargetResource || !ppFeedbackResource) return E_INVALIDARG;
+        D3D12_RESOURCE_DESC targetDesc;
+        if (FAILED(pTargetResource->GetDesc(&targetDesc))) return E_FAIL;
+
+        auto* feedbackRes = new D3D12ResourceImpl(targetDesc);
+        feedbackRes->m_resourceState = D3D12_RESOURCE_STATE_COMMON;
+        *ppFeedbackResource = feedbackRes;
+        return S_OK;
+    }
+
+    HRESULT WriteSamplerFeedback(ID3D12Resource* pTargetResource, ID3D12Resource* pFeedbackResource, UINT FeedbackType) override {
+        if (!pTargetResource || !pFeedbackResource) return E_INVALIDARG;
+        return S_OK;
+    }
+
+    HRESULT ResolveSamplerFeedback(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) override {
+        if (!pFeedbackResource || !pDestResource) return E_INVALIDARG;
+        return S_OK;
+    }
 
 private:
     HRESULT createView(ID3D12Resource* pResource, UINT type, UINT format, D3D12_CPU_DESCRIPTOR_HANDLE handle) {

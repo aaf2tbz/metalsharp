@@ -88,8 +88,8 @@ Competitive with native ports.
 - [x] Argument buffer optimization for descriptor heaps
 - [x] GPU profiling integration (pass-level timing, draw/compute counting, frame stats)
 - [x] Game-specific compatibility profiles (per-game config via metalsharp.toml)
-- [ ] Tiled resources (sparse textures)
-- [ ] Sampler feedback
+- [x] Tiled resources (sparse textures)
+- [x] Sampler feedback
 
 **Milestone:** Run AAA titles at 60fps+ on M-series Macs with visual parity. COMPLETE
 
