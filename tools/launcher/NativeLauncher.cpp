@@ -11,6 +11,7 @@
 #include <metalsharp/WindowManager.h>
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/SecureTransport.h>
+#include <metalsharp/SyncContext.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -107,6 +108,7 @@ int main(int argc, char* argv[]) {
     WindowManager::instance().init();
     NetworkContext::instance().initialize();
     SecureTransport::instance().initialize();
+    SyncContext::instance().initialize();
 
     auto kernel32 = win32::Kernel32Shim::create();
     win32::addMissingKernel32(kernel32);
