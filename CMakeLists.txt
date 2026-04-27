@@ -73,7 +73,7 @@ add_library(metalsharp_d3d11 SHARED
     src/d3d/d3d11/DeferredContext.cpp
     src/d3d/d3d11/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_d3d11 PRIVATE metalsharp_core)
+target_link_libraries(metalsharp_d3d11 PRIVATE metalsharp_core metalsharp_dxgi)
 target_compile_options(metalsharp_d3d11 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_d3d11 PROPERTIES OUTPUT_NAME "d3d11" PREFIX "")
 
@@ -132,6 +132,25 @@ add_executable(metalsharp_launcher
     tools/launcher/SteamIntegration.cpp
 )
 target_link_libraries(metalsharp_launcher PRIVATE metalsharp_core ${FOUNDATION_FRAMEWORK})
+
+add_library(metalsharp_loader STATIC
+    src/loader/PELoader.cpp
+    src/win32/kernel32/Kernel32Shim.cpp
+    src/win32/kernel32/NtdllShim.cpp
+    src/win32/kernel32/Kernel32Extra.cpp
+    src/win32/user32/User32Shim.cpp
+    src/win32/extra/ExtraShims.cpp
+)
+target_include_directories(metalsharp_loader PUBLIC include)
+find_package(OpenSSL REQUIRED)
+target_link_libraries(metalsharp_loader PRIVATE metalsharp_core OpenSSL::Crypto OpenSSL::SSL)
+target_compile_options(metalsharp_loader PRIVATE -fobjc-arc)
+
+add_executable(metalsharp_native
+    tools/launcher/NativeLauncher.cpp
+)
+target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
+set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
 
 if(BUILD_TESTS)
     enable_testing()

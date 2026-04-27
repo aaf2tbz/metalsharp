@@ -1,4 +1,5 @@
 #include <metalsharp/DXGI.h>
+#include <metalsharp/D3D11Device.h>
 #include <cstring>
 
 namespace metalsharp {
@@ -48,8 +49,31 @@ HRESULT DXGIFactory::EnumAdapters(UINT Adapter, IDXGIAdapter** ppAdapter) {
 }
 
 HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapChain** ppSwapChain) {
-    if (!ppSwapChain) return E_POINTER;
-    return E_NOTIMPL;
+    if (!ppSwapChain || !pDesc) return E_POINTER;
+
+    auto* desc = static_cast<DXGI_SWAP_CHAIN_DESC*>(pDesc);
+
+    D3D11Device* d3d11Device = nullptr;
+    HRESULT hr = pDevice->QueryInterface(__uuidof(ID3D11Device), (void**)&d3d11Device);
+    if (FAILED(hr) || !d3d11Device) {
+        return E_INVALIDARG;
+    }
+
+    MetalDevice* metalDev = &d3d11Device->metalDevice();
+
+    uint32_t width = desc->BufferDesc.Width;
+    uint32_t height = desc->BufferDesc.Height;
+    uint32_t bufferCount = desc->BufferCount > 0 ? desc->BufferCount : 2;
+    DXGI_FORMAT format = desc->BufferDesc.Format;
+
+    if (width == 0) width = 1920;
+    if (height == 0) height = 1080;
+    if (format == 0) format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+    hr = DXGISwapChainImpl::create(metalDev, desc->OutputWindow, width, height, bufferCount, format, ppSwapChain);
+
+    d3d11Device->Release();
+    return hr;
 }
 
 }
