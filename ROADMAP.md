@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-10 complete. Real file I/O, registry, environment variables, NSWindow-backed HWND system with message pump and input translation, full networking stack (winsock, named pipes, SSL/TLS). PE loader works, steam.exe CRT init completes. D3D11/DXGI Metal backend is 90% implemented. 339/339 imports resolved across 14 DLLs. ~14K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
+**Current state:** Phases 8-11 complete. Real file I/O, registry, environment variables, NSWindow-backed HWND system with message pump and input translation, full networking stack (winsock, named pipes, SSL/TLS), real threading and synchronization. PE loader works, steam.exe CRT init completes. D3D11/DXGI Metal backend is 90% implemented. 339/339 imports resolved across 14 DLLs. ~15K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -114,7 +114,7 @@
 
 ---
 
-## Phase 11: Threading & Synchronization — Real
+## Phase 11: Threading & Synchronization — Real ✅ DONE
 
 *Steam is heavily multithreaded. Fake sync primitives will cause deadlocks and races.*
 
@@ -282,7 +282,7 @@
 | **8** | File I/O, Registry, Environment | 2-3 days | 2-3 days | ✅ Done |
 | **9** | Window Management & Input | 3-4 days | 5-7 days | ✅ Done |
 | **10** | Networking (Steam connectivity) | 3-4 days | 8-11 days | ✅ Done |
-| **11** | Real Threading & Sync | 2-3 days | 10-14 days | |
+| **11** | Real Threading & Sync | 2-3 days | 10-14 days | ✅ Done |
 | **12** | PE Loader Hardening | 3-4 days | 13-18 days | |
 | **13** | D3D ↔ PE Integration | 2-3 days | 15-21 days | |
 | **14** | First Game Validation | 2-3 days | 17-24 days | |
