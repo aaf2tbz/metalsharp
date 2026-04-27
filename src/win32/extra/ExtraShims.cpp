@@ -1,4 +1,5 @@
 #include <metalsharp/PELoader.h>
+#include <metalsharp/Platform.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
@@ -80,6 +81,39 @@ static HANDLE MSABI gdi32_AddFontMemResourceEx(const void*, DWORD, void*, DWORD*
 
 static BOOL MSABI gdi32_RemoveFontMemResourceEx(void*) { return 1; }
 
+static BOOL MSABI gdi32_BitBlt(void*, int, int, int, int, void*, int, int, DWORD) { return 1; }
+
+static BOOL MSABI gdi32_StretchBlt(void*, int, int, int, int, void*, int, int, int, int, DWORD) { return 1; }
+
+static int MSABI gdi32_DrawTextW(void*, const wchar_t* str, int len, void* rect, UINT) {
+    if (rect) { auto* r = reinterpret_cast<LONG*>(rect); r[0] = 0; r[1] = 0; r[2] = 200; r[3] = 100; }
+    if (!str) return 0;
+    return len >= 0 ? len : (int)wcslen(str);
+}
+
+static void* MSABI gdi32_CreateFontIndirectW(const void*) { return reinterpret_cast<void*>(0x9006); }
+
+static int MSABI gdi32_GetObjectW(void*, int sz, void* buf) {
+    if (buf && sz >= 4) { memset(buf, 0, sz); *reinterpret_cast<LONG*>(buf) = -13; }
+    return sz;
+}
+
+static void* MSABI gdi32_CreateCompatibleBitmap(void*, int, int) { return reinterpret_cast<void*>(0x9007); }
+
+static BOOL MSABI gdi32_PatBlt(void*, int, int, int, int, DWORD) { return 1; }
+
+static BOOL MSABI gdi32_Rectangle(void*, int, int, int, int) { return 1; }
+
+static int MSABI gdi32_FillRect(void*, const void*, void*) { return 1; }
+
+static void* MSABI gdi32_CreateSolidBrush(DWORD) { return reinterpret_cast<void*>(0x9008); }
+
+static void* MSABI gdi32_CreateBitmap(int, int, UINT, UINT, const void*) { return reinterpret_cast<void*>(0x9009); }
+
+static int MSABI gdi32_SetDIBitsToDevice(void*, int, int, DWORD, DWORD, int, int, UINT, UINT, const void*, const void*, UINT) { return 1; }
+
+static BOOL MSABI gdi32_GdiFlush() { return 1; }
+
 ShimLibrary createGdi32Shim() {
     ShimLibrary lib;
     lib.name = "GDI32.dll";
@@ -104,6 +138,20 @@ ShimLibrary createGdi32Shim() {
     lib.functions["SetPixelFormat"] = fn((void*)gdi32_SetPixelFormat);
     lib.functions["AddFontMemResourceEx"] = fn((void*)gdi32_AddFontMemResourceEx);
     lib.functions["RemoveFontMemResourceEx"] = fn((void*)gdi32_RemoveFontMemResourceEx);
+    lib.functions["BitBlt"] = fn((void*)gdi32_BitBlt);
+    lib.functions["StretchBlt"] = fn((void*)gdi32_StretchBlt);
+    lib.functions["DrawTextW"] = fn((void*)gdi32_DrawTextW);
+    lib.functions["DrawTextA"] = fn((void*)gdi32_DrawTextW);
+    lib.functions["CreateFontIndirectW"] = fn((void*)gdi32_CreateFontIndirectW);
+    lib.functions["GetObjectW"] = fn((void*)gdi32_GetObjectW);
+    lib.functions["CreateCompatibleBitmap"] = fn((void*)gdi32_CreateCompatibleBitmap);
+    lib.functions["PatBlt"] = fn((void*)gdi32_PatBlt);
+    lib.functions["Rectangle"] = fn((void*)gdi32_Rectangle);
+    lib.functions["FillRect"] = fn((void*)gdi32_FillRect);
+    lib.functions["CreateSolidBrush"] = fn((void*)gdi32_CreateSolidBrush);
+    lib.functions["CreateBitmap"] = fn((void*)gdi32_CreateBitmap);
+    lib.functions["SetDIBitsToDevice"] = fn((void*)gdi32_SetDIBitsToDevice);
+    lib.functions["GdiFlush"] = fn((void*)gdi32_GdiFlush);
 
     return lib;
 }
@@ -901,10 +949,46 @@ ShimLibrary createShell32Shim() {
 
 static void MSABI ole32_CoTaskMemFree(void* p) { free(p); }
 
+static HRESULT MSABI ole32_CoInitialize(void*) { return 0; }
+static HRESULT MSABI ole32_CoInitializeEx(void*, DWORD) { return 0; }
+static void MSABI ole32_CoUninitialize() {}
+static HRESULT MSABI ole32_CoCreateInstance(const GUID* rclsid, void* punkOuter, DWORD dwClsCtx, const GUID* riid, void** ppv) {
+    if (ppv) *ppv = nullptr;
+    return (HRESULT)0x80040154L;
+}
+static void* MSABI ole32_CoTaskMemAlloc(SIZE_T cb) { return malloc(cb); }
+static void* MSABI ole32_CoTaskMemRealloc(void* pv, SIZE_T cb) { return realloc(pv, cb); }
+static int MSABI ole32_StringFromGUID2(const GUID* guid, wchar_t* lpsz, int cchMax) {
+    if (!guid || !lpsz || cchMax < 39) return 0;
+    swprintf(lpsz, cchMax, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        guid->Data1, guid->Data2, guid->Data3,
+        guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
+        guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
+    return 39;
+}
+static HRESULT MSABI ole32_IIDFromString(const wchar_t*, GUID* guid) {
+    if (guid) memset(guid, 0, sizeof(GUID));
+    return 0;
+}
+static HRESULT MSABI ole32_CoGetClassObject(const GUID*, DWORD, void*, const GUID*, void**) { return (HRESULT)0x80040154L; }
+static HRESULT MSABI ole32_OleInitialize(void*) { return 0; }
+static void MSABI ole32_OleUninitialize() {}
+
 ShimLibrary createOle32Shim() {
     ShimLibrary lib;
     lib.name = "ole32.dll";
     auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+    lib.functions["CoInitialize"] = fn((void*)ole32_CoInitialize);
+    lib.functions["CoInitializeEx"] = fn((void*)ole32_CoInitializeEx);
+    lib.functions["CoUninitialize"] = fn((void*)ole32_CoUninitialize);
+    lib.functions["CoCreateInstance"] = fn((void*)ole32_CoCreateInstance);
+    lib.functions["CoTaskMemAlloc"] = fn((void*)ole32_CoTaskMemAlloc);
+    lib.functions["CoTaskMemRealloc"] = fn((void*)ole32_CoTaskMemRealloc);
+    lib.functions["StringFromGUID2"] = fn((void*)ole32_StringFromGUID2);
+    lib.functions["IIDFromString"] = fn((void*)ole32_IIDFromString);
+    lib.functions["CoGetClassObject"] = fn((void*)ole32_CoGetClassObject);
+    lib.functions["OleInitialize"] = fn((void*)ole32_OleInitialize);
+    lib.functions["OleUninitialize"] = fn((void*)ole32_OleUninitialize);
     lib.functions["CoTaskMemFree"] = fn((void*)ole32_CoTaskMemFree);
     return lib;
 }
@@ -917,10 +1001,43 @@ static void* MSABI oleaut32_SysAllocString(const wchar_t* str) {
     return buf;
 }
 
+static void MSABI oleaut32_SysFreeString(void* bstr) { free(bstr); }
+static void* MSABI oleaut32_SysAllocStringLen(const wchar_t*, UINT len) {
+    return malloc((len + 1) * sizeof(wchar_t));
+}
+static UINT MSABI oleaut32_SysStringLen(void* bstr) {
+    if (!bstr) return 0;
+    return (UINT)wcslen((const wchar_t*)bstr);
+}
+static void MSABI oleaut32_VariantInit(void* pv) { if (pv) memset(pv, 0, 16); }
+static HRESULT MSABI oleaut32_VariantClear(void* pv) { if (pv) memset(pv, 0, 16); return 0; }
+static HRESULT MSABI oleaut32_VariantChangeType(void*, void*, UINT, UINT) { return 0; }
+static HRESULT MSABI oleaut32_VariantChangeTypeEx(void*, void*, DWORD, UINT, UINT) { return 0; }
+static void* MSABI oleaut32_SafeArrayCreate(UINT, UINT, void*) { return calloc(1, 32); }
+static HRESULT MSABI oleaut32_SafeArrayDestroy(void*) { return 0; }
+static HRESULT MSABI oleaut32_SafeArrayAccessData(void*, void** ppv) { if (ppv) *ppv = nullptr; return 0; }
+static HRESULT MSABI oleaut32_SafeArrayUnaccessData(void*) { return 0; }
+static HRESULT MSABI oleaut32_SafeArrayGetLBound(void*, UINT, LONG*) { return 0; }
+static HRESULT MSABI oleaut32_SafeArrayGetUBound(void*, UINT, LONG*) { return 0; }
+
 ShimLibrary createOleAut32Shim() {
     ShimLibrary lib;
     lib.name = "OLEAUT32.dll";
     auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+    lib.functions["SysAllocString"] = fn((void*)oleaut32_SysAllocString);
+    lib.functions["SysFreeString"] = fn((void*)oleaut32_SysFreeString);
+    lib.functions["SysAllocStringLen"] = fn((void*)oleaut32_SysAllocStringLen);
+    lib.functions["SysStringLen"] = fn((void*)oleaut32_SysStringLen);
+    lib.functions["VariantInit"] = fn((void*)oleaut32_VariantInit);
+    lib.functions["VariantClear"] = fn((void*)oleaut32_VariantClear);
+    lib.functions["VariantChangeType"] = fn((void*)oleaut32_VariantChangeType);
+    lib.functions["VariantChangeTypeEx"] = fn((void*)oleaut32_VariantChangeTypeEx);
+    lib.functions["SafeArrayCreate"] = fn((void*)oleaut32_SafeArrayCreate);
+    lib.functions["SafeArrayDestroy"] = fn((void*)oleaut32_SafeArrayDestroy);
+    lib.functions["SafeArrayAccessData"] = fn((void*)oleaut32_SafeArrayAccessData);
+    lib.functions["SafeArrayUnaccessData"] = fn((void*)oleaut32_SafeArrayUnaccessData);
+    lib.functions["SafeArrayGetLBound"] = fn((void*)oleaut32_SafeArrayGetLBound);
+    lib.functions["SafeArrayGetUBound"] = fn((void*)oleaut32_SafeArrayGetUBound);
     lib.ordinals[9] = fn((void*)oleaut32_SysAllocString);
     return lib;
 }
@@ -980,12 +1097,71 @@ ShimLibrary createPsapiShim() {
     return lib;
 }
 
-static BOOL MSABI version_VerQueryValueW(const void*, const wchar_t*, void**, UINT*) { return 0; }
+struct FakeVersionResource {
+    DWORD dwSignature;
+    DWORD dwStrucVersion;
+    DWORD dwFileVersionMS;
+    DWORD dwFileVersionLS;
+    DWORD dwProductVersionMS;
+    DWORD dwProductVersionLS;
+    DWORD dwFileFlagsMask;
+    DWORD dwFileFlags;
+    DWORD dwFileOS;
+    DWORD dwFileType;
+    DWORD dwFileSubtype;
+    DWORD dwFileDateMS;
+    DWORD dwFileDateLS;
+};
+
+static DWORD MSABI version_GetFileVersionInfoSizeW(const wchar_t* lptstrFilename, DWORD* lpdwHandle) {
+    if (lpdwHandle) *lpdwHandle = 0;
+    return sizeof(FakeVersionResource) + 512;
+}
+
+static BOOL MSABI version_GetFileVersionInfoW(const wchar_t* lptstrFilename, DWORD dwHandle, DWORD dwLen, void* lpData) {
+    if (!lpData || dwLen < sizeof(FakeVersionResource)) return 0;
+    auto* info = reinterpret_cast<FakeVersionResource*>(lpData);
+    memset(info, 0, sizeof(FakeVersionResource));
+    info->dwSignature = 0xFEEF04BD;
+    info->dwStrucVersion = 0x00010000;
+    info->dwFileVersionMS = (7 << 16) | 0;
+    info->dwFileVersionLS = (96 << 16) | 0;
+    info->dwProductVersionMS = (7 << 16) | 0;
+    info->dwProductVersionLS = (96 << 16) | 0;
+    info->dwFileFlagsMask = 0x3F;
+    info->dwFileType = 1;
+    info->dwFileOS = 0x00040004;
+    char* strArea = reinterpret_cast<char*>(info + 1);
+    memset(strArea, 0, 512);
+    return 1;
+}
+
+static BOOL MSABI version_VerQueryValueW(const void* pBlock, const wchar_t* lpSubBlock, void** lplpBuffer, UINT* puLen) {
+    if (!pBlock || !lplpBuffer) return 0;
+    if (wcsncmp(lpSubBlock, L"\\", 2) == 0) {
+        *lplpBuffer = const_cast<void*>(pBlock);
+        if (puLen) *puLen = sizeof(FakeVersionResource);
+        return 1;
+    }
+    if (wcsncmp(lpSubBlock, L"\\VarFileInfo\\Translation", 24) == 0) {
+        static DWORD translation = 0x040904B0;
+        *lplpBuffer = &translation;
+        if (puLen) *puLen = 4;
+        return 1;
+    }
+    if (puLen) *puLen = 0;
+    *lplpBuffer = nullptr;
+    return 0;
+}
 
 ShimLibrary createVersionShim() {
     ShimLibrary lib;
     lib.name = "VERSION.dll";
     auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+    lib.functions["GetFileVersionInfoSizeW"] = fn((void*)version_GetFileVersionInfoSizeW);
+    lib.functions["GetFileVersionInfoW"] = fn((void*)version_GetFileVersionInfoW);
+    lib.functions["GetFileVersionInfoSizeA"] = fn((void*)version_GetFileVersionInfoSizeW);
+    lib.functions["GetFileVersionInfoA"] = fn((void*)version_GetFileVersionInfoW);
     lib.functions["VerQueryValueW"] = fn((void*)version_VerQueryValueW);
     return lib;
 }
