@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-13 complete. Real file I/O, registry, environment variables, NSWindow-backed HWND system with message pump and input translation, full networking stack (winsock, named pipes, SSL/TLS), real threading and synchronization, PE loader hardened (TLS callbacks, export forwarding, delay-load, resources, VEH, section protections), D3D/DXGI shims registered through PE loader with HWND→NSWindow→CAMetalLayer pipeline and working Present loop. D3D11/DXGI Metal backend fully wired. ~16K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
+**Current state:** Phases 8-14 complete. Full pipeline validated: cross-compiled Windows D3D11 PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. ~16.5K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -194,7 +194,7 @@
 
 ---
 
-## Phase 14: First Game — Validation Target
+## Phase 14: First Game — Validation Target ✅ DONE
 
 *Pick a simple D3D11 game to validate the full pipeline. Candidate: a simple DirectX 11 sample app or an indie game with minimal Win32 usage.*
 
@@ -285,7 +285,7 @@
 | **11** | Real Threading & Sync | 2-3 days | 10-14 days | ✅ Done |
 | **12** | PE Loader Hardening | 3-4 days | 13-18 days | ✅ Done |
 | **13** | D3D ↔ PE Integration | 2-3 days | 15-21 days | ✅ Done |
-| **14** | First Game Validation | 2-3 days | 17-24 days | |
+| **14** | First Game Validation | 2-3 days | 17-24 days | ✅ Done |
 | **15** | Steam Full Run | 3-4 days | 20-28 days | |
 | **16** | Download & Launch Game | 3-4 days | 23-32 days | |
 
