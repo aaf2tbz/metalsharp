@@ -7,6 +7,7 @@ function getAPI(): MetalsharpAPI {
 class App {
   private games: Game[] = [];
   private steam: SteamStatus | null = null;
+  private config: AppConfig | null = null;
   private runningPid: number | null = null;
   private runningGameId: string | null = null;
   private currentView = "library";
@@ -14,6 +15,7 @@ class App {
   async init() {
     this.bindNav();
     await this.checkBackend();
+    await this.loadConfig();
     await this.scan();
   }
 
@@ -63,6 +65,11 @@ class App {
     }
   }
 
+  private async loadConfig() {
+    const cfg = await this.api<AppConfig>("GET", "/config");
+    if (cfg) this.config = cfg;
+  }
+
   private async scan() {
     const result = await this.api<{ games: Game[]; steam: SteamStatus }>("GET", "/scan");
     if (result) {
@@ -70,6 +77,10 @@ class App {
       this.steam = result.steam ?? { installed: false, running: false };
     }
     this.renderLibrary();
+  }
+
+  private launchMode(): string {
+    return this.config?.launch_mode ?? "native";
   }
 
   private renderLibrary() {
@@ -168,6 +179,7 @@ class App {
       debugMetal: false,
       verbose: false,
       customArgs: [],
+      launchMode: this.launchMode(),
     });
 
     if (result && typeof result === "object" && "pid" in result) {
@@ -189,10 +201,54 @@ class App {
   private renderSettings() {
     const el = document.getElementById("view-settings")!;
     const steam = this.steam;
+    const cfg = this.config;
+    const loginState = steam?.login_state;
+    const loginBadge = loginState?.state === "logged_in"
+      ? `<span class="badge badge-ok">Logged in (${loginState.account?.[0]?.name ?? "unknown"})</span>`
+      : loginState?.state === "logged_out"
+        ? `<span class="badge badge-warn">Logged out</span>`
+        : `<span class="badge badge-warn">Unknown</span>`;
+
+    const nativeLabel = cfg?.native_available ? "Available" : "Not Built";
+    const wineLabel = cfg?.wine_available ? "Available" : "Not Found";
 
     el.innerHTML = `
       <div class="library-header">
         <h1>Settings</h1>
+      </div>
+
+      <div class="settings-section">
+        <h2>Launch Mode</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">PE Loader (Native)</div>
+            <div class="settings-desc">Run Windows executables directly through MetalSharp's PE loader — no Wine needed</div>
+          </div>
+          <div class="settings-value">
+            <span class="badge ${cfg?.native_available ? "badge-ok" : "badge-warn"}">${nativeLabel}</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Wine Compatibility</div>
+            <div class="settings-desc">Fall back to Wine for executables not yet supported natively</div>
+          </div>
+          <div class="settings-value">
+            <span class="badge ${cfg?.wine_available ? "badge-ok" : "badge-warn"}">${wineLabel}</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Active Mode</div>
+            <div class="settings-desc">Choose how games are launched</div>
+          </div>
+          <div class="settings-value">
+            <select id="launch-mode-select" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;">
+              <option value="native" ${cfg?.launch_mode === "native" ? "selected" : ""}>PE Loader (Native)</option>
+              <option value="wine" ${cfg?.launch_mode === "wine" ? "selected" : ""}>Wine</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -205,6 +261,13 @@ class App {
           <div class="settings-value">
             ${steam?.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
           </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Login State</div>
+            <div class="settings-desc">Steam account login status in Wine prefix</div>
+          </div>
+          <div class="settings-value">${loginBadge}</div>
         </div>
         <div class="settings-row">
           <div>
@@ -267,6 +330,13 @@ class App {
       await this.api("POST", "/steam/install");
       await this.scan();
       this.renderSettings();
+    });
+
+    el.querySelector("#launch-mode-select")?.addEventListener("change", async (e) => {
+      const mode = (e.target as HTMLSelectElement).value;
+      await this.api("POST", "/config", { launchMode: mode });
+      await this.loadConfig();
+      this.toast(`Launch mode set to ${mode === "native" ? "PE Loader" : "Wine"}`);
     });
   }
 

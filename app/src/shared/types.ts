@@ -14,8 +14,14 @@ export interface Game {
 export interface SteamStatus {
   installed: boolean;
   path?: string;
+  loginState?: LoginState;
   steamCmdPath?: string;
   running: boolean;
+}
+
+export interface LoginState {
+  state: "logged_in" | "logged_out" | "unknown";
+  account?: { name: string; remembered: boolean }[] | null;
 }
 
 export interface LaunchOptions {
@@ -24,6 +30,14 @@ export interface LaunchOptions {
   verbose: boolean;
   prefix?: string;
   customArgs: string[];
+  launchMode: "native" | "wine";
+}
+
+export interface AppConfig {
+  ok: boolean;
+  launchMode: "native" | "wine";
+  wineAvailable: boolean;
+  nativeAvailable: boolean;
 }
 
 export interface RustResponse<T = unknown> {

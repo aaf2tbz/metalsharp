@@ -67,19 +67,54 @@ fn steam_library_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let home = dirs::home_dir().unwrap_or_default();
 
-    let wine_steamapps = home
+    let wine_steam_dir = home
         .join(".metalsharp")
         .join("prefix")
         .join("drive_c")
         .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+        .join("Steam");
 
+    let wine_steamapps = wine_steam_dir.join("steamapps");
     if wine_steamapps.exists() {
-        paths.push(wine_steamapps);
+        paths.push(wine_steamapps.clone());
+        paths.extend(parse_library_folders(&wine_steamapps));
     }
 
     paths
+}
+
+fn parse_library_folders(steamapps: &PathBuf) -> Vec<PathBuf> {
+    let lf_path = steamapps.join("libraryfolders.vdf");
+    let contents = match std::fs::read_to_string(&lf_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut extra = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = parse_vdf_path(trimmed, "path") {
+            let sa = PathBuf::from(val).join("steamapps");
+            if sa.exists() && sa != *steamapps {
+                extra.push(sa);
+            }
+        }
+    }
+    extra
+}
+
+fn parse_vdf_path(line: &str, key: &str) -> Option<String> {
+    let prefix = format!("\"{}\"", key);
+    if !line.starts_with(&prefix) {
+        return None;
+    }
+    let rest = line.trim_start_matches(&prefix).trim();
+    let rest = rest.trim_start_matches('\t').trim_start_matches(' ');
+    let val = rest.trim_matches('"');
+    if val.is_empty() {
+        return None;
+    }
+    Some(val.replace("\\\\", "/"))
 }
 
 fn parse_acf(contents: &str) -> Option<(u32, String, String)> {
