@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE
 #include <metalsharp/PELoader.h>
 #include <metalsharp/PEHeader.h>
 #include <metalsharp/Kernel32Shim.h>
@@ -9,6 +10,77 @@
 #include <cstdlib>
 #include <cstring>
 #include <unistd.h>
+#include <signal.h>
+#include <ucontext.h>
+
+static metalsharp::LoadedModule* g_mainModule = nullptr;
+
+static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
+    auto* ctx = static_cast<ucontext_t*>(ucontext);
+    #if defined(__x86_64__)
+    uint64_t rip = ctx->uc_mcontext->__ss.__rip;
+    uint64_t rsp = ctx->uc_mcontext->__ss.__rsp;
+    uint64_t rbp = ctx->uc_mcontext->__ss.__rbp;
+    uint64_t fault_addr = (uint64_t)info->si_addr;
+    uint64_t rax = ctx->uc_mcontext->__ss.__rax;
+    uint64_t rbx = ctx->uc_mcontext->__ss.__rbx;
+    uint64_t rcx = ctx->uc_mcontext->__ss.__rcx;
+    uint64_t rdx = ctx->uc_mcontext->__ss.__rdx;
+    uint64_t rsi = ctx->uc_mcontext->__ss.__rsi;
+    uint64_t rdi = ctx->uc_mcontext->__ss.__rdi;
+    uint64_t r8 = ctx->uc_mcontext->__ss.__r8;
+    uint64_t r9 = ctx->uc_mcontext->__ss.__r9;
+    uint64_t r10 = ctx->uc_mcontext->__ss.__r10;
+    uint64_t r11 = ctx->uc_mcontext->__ss.__r11;
+    uint64_t r12 = ctx->uc_mcontext->__ss.__r12;
+    uint64_t r13 = ctx->uc_mcontext->__ss.__r13;
+    uint64_t r14 = ctx->uc_mcontext->__ss.__r14;
+    uint64_t r15 = ctx->uc_mcontext->__ss.__r15;
+    #endif
+
+    fprintf(stderr, "\n=== CRASH (signal %d) ===\n", sig);
+    fprintf(stderr, "Faulting address: 0x%llX\n", (unsigned long long)fault_addr);
+    fprintf(stderr, "RIP: 0x%llX  RSP: 0x%llX  RBP: 0x%llX\n", 
+            (unsigned long long)rip, (unsigned long long)rsp, (unsigned long long)rbp);
+    fprintf(stderr, "RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX  RDX: 0x%llX\n",
+            (unsigned long long)rax, (unsigned long long)rbx, 
+            (unsigned long long)rcx, (unsigned long long)rdx);
+    fprintf(stderr, "RSI: 0x%llX  RDI: 0x%llX  R8: 0x%llX  R9: 0x%llX\n",
+            (unsigned long long)rsi, (unsigned long long)rdi,
+            (unsigned long long)r8, (unsigned long long)r9);
+
+    if (g_mainModule) {
+        uint64_t base = (uint64_t)g_mainModule->base;
+        uint64_t end = base + g_mainModule->size;
+        if (rip >= base && rip < end) {
+            uint64_t rva = rip - base;
+            fprintf(stderr, "Crash RVA: 0x%llX\n", (unsigned long long)rva);
+            const uint8_t* code = (const uint8_t*)rip;
+            fprintf(stderr, "Bytes at crash: ");
+            for (int i = -8; i < 16; i++) {
+                fprintf(stderr, "%02X ", code[i]);
+            }
+            fprintf(stderr, "\n");
+        } else {
+            fprintf(stderr, "RIP is OUTSIDE PE image (bad code pointer jump)\n");
+        }
+
+        // Print stack contents for context
+        fprintf(stderr, "Stack at RSP:\n");
+        uint64_t* stack = (uint64_t*)rsp;
+        for (int i = 0; i < 16; i++) {
+            uint64_t val = stack[i];
+            if (val >= base && val < end) {
+                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX  (PE RVA 0x%llX)\n", 
+                        i*8, (unsigned long long)val, (unsigned long long)(val - base));
+            } else {
+                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX\n", i*8, (unsigned long long)val);
+            }
+        }
+    }
+
+    _exit(139);
+}
 
 #ifndef METALSHARP_VERSION
 #define METALSHARP_VERSION "0.2.0"
@@ -353,6 +425,10 @@ int main(int argc, char* argv[]) {
         loader.addSearchPath(exePath.substr(0, lastSlash));
     }
 
+    char absPath[4096];
+    realpath(argv[1], absPath);
+    win32::setExePath(absPath);
+
     if (!loader.load(argv[1])) {
         fprintf(stderr, "Failed to load %s\n", argv[1]);
         return 1;
@@ -366,6 +442,13 @@ int main(int argc, char* argv[]) {
 
     printf("Entry point at %p\n", main->entryPoint);
     printf("Jumping to entry point...\n");
+
+    struct sigaction sa = {};
+    sa.sa_sigaction = crash_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGBUS, &sa, nullptr);
+    g_mainModule = main;
 
     if (main->isPE) {
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(main->base);

@@ -21,10 +21,12 @@ uintptr_t Kernel32Shim::s_nextHandle = 0x00010000;
 static thread_local DWORD t_lastError = 0;
 
 static DWORD MSABI shim_GetLastError() {
+    MS_INFO("TRACE: GetLastError() -> %u", t_lastError);
     return t_lastError;
 }
 
 static void MSABI shim_SetLastError(DWORD dwErrCode) {
+    MS_INFO("TRACE: SetLastError(%u)", dwErrCode);
     t_lastError = dwErrCode;
 }
 
@@ -70,6 +72,7 @@ static void* MSABI shim_HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T
 }
 
 static void* MSABI shim_HeapAlloc(void* hHeap, DWORD dwFlags, SIZE_T dwBytes) {
+    MS_INFO("TRACE: HeapAlloc(%p, 0x%X, %zu)", hHeap, dwFlags, dwBytes);
     if (dwFlags & 0x8) {
         return calloc(1, dwBytes);
     }
@@ -132,6 +135,7 @@ static DWORD MSABI shim_GetFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
 }
 
 static DWORD MSABI shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {
+    MS_INFO("TRACE: GetCurrentDirectoryA(%u, %p)", nBufferLength, lpBuffer);
     if (nBufferLength == 0) return 0;
     if (getcwd(lpBuffer, nBufferLength)) {
         return static_cast<DWORD>(strlen(lpBuffer));
@@ -143,11 +147,18 @@ static DWORD MSABI shim_SetCurrentDirectoryA(const char* lpPathName) {
     return chdir(lpPathName) == 0 ? 1 : 0;
 }
 
+static char s_exePath[4096] = "";
+
+void setExePath(const char* path) {
+    strncpy(s_exePath, path, sizeof(s_exePath) - 1);
+    s_exePath[sizeof(s_exePath) - 1] = 0;
+}
+
 static DWORD MSABI shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DWORD nSize) {
     MS_INFO("TRACE: GetModuleFileNameA(%p, %p, %u)", hModule, lpFilename, nSize);
+    const char* exe = s_exePath[0] ? s_exePath : "/metalsharp/game.exe";
     (void)hModule;
     if (nSize > 0) {
-        const char* exe = "/metalsharp/game.exe";
         size_t len = strlen(exe);
         if (len >= nSize) len = nSize - 1;
         memcpy(lpFilename, exe, len);
@@ -251,10 +262,10 @@ static void MSABI shim_Sleep(DWORD dwMilliseconds) {
 }
 
 static DWORD MSABI shim_GetTickCount() {
-    MS_INFO("TRACE: GetTickCount()");
     static auto startTime = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime);
+    MS_INFO("TRACE: GetTickCount() -> %u", (DWORD)ms.count());
     return static_cast<DWORD>(ms.count());
 }
 

@@ -249,8 +249,54 @@ bool PELoader::processRelocations(LoadedModule& module) {
     }
 
     MS_INFO("PELoader: processed %d relocations (delta 0x%llX)", relocCount, (unsigned long long)m_delta);
+
+    if (!initCFG(module)) return false;
+
     return true;
 }
+
+bool PELoader::initCFG(LoadedModule& module) {
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
+    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+
+    uint32_t lcRVA = optHeader->DataDirectory[DIRECTORY_LOAD_CONFIG].VirtualAddress;
+    uint32_t lcSize = optHeader->DataDirectory[DIRECTORY_LOAD_CONFIG].Size;
+
+    if (!lcRVA || lcSize < 128) return true;
+
+    auto* lc = reinterpret_cast<uint8_t*>(module.base + lcRVA);
+
+    uint64_t guardCFCheckFP = *reinterpret_cast<uint64_t*>(lc + 112);
+    uint64_t guardCFDispatchFP = *reinterpret_cast<uint64_t*>(lc + 120);
+
+    if (!s_cfgAllowFn) {
+        s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (s_cfgAllowFn == MAP_FAILED) {
+            s_cfgAllowFn = nullptr;
+            return true;
+        }
+        uint8_t code[] = { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 };
+        memcpy(s_cfgAllowFn, code, sizeof(code));
+    }
+
+    auto writeCFPtr = [&](uint64_t fieldVA, const char* name) {
+        if (!fieldVA) return;
+        uint64_t fieldRVA = fieldVA - reinterpret_cast<uint64_t>(module.base);
+        if (fieldRVA >= module.size) return;
+        uint64_t* ptr = reinterpret_cast<uint64_t*>(module.base + fieldRVA);
+        MS_INFO("PELoader: CFG %s at RVA 0x%llX set to allow-all stub", name, (unsigned long long)fieldRVA);
+        *ptr = reinterpret_cast<uint64_t>(s_cfgAllowFn);
+    };
+
+    if (guardCFCheckFP) writeCFPtr(guardCFCheckFP, "GuardCFCheckFP");
+    if (guardCFDispatchFP) writeCFPtr(guardCFDispatchFP, "GuardCFDispatchFP");
+
+    return true;
+}
+
+void* PELoader::s_cfgAllowFn = nullptr;
 
 bool PELoader::resolveImports(LoadedModule& module) {
     if (!module.base) return false;

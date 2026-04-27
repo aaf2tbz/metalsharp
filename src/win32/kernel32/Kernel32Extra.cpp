@@ -483,10 +483,12 @@ static BOOL MSABI shim_HeapSetInformation(HANDLE hHeap, DWORD HeapInformationCla
     return 1;
 }
 static SIZE_T MSABI shim_HeapSize(HANDLE hHeap, DWORD dwFlags, const void* lpMem) {
+    MS_INFO("TRACE: HeapSize(%p, 0x%X, %p)", hHeap, dwFlags, lpMem);
     (void)hHeap; (void)dwFlags; (void)lpMem;
     return 1024;
 }
 static void* MSABI shim_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, void* lpMem, SIZE_T dwBytes) {
+    MS_INFO("TRACE: HeapReAlloc(%p, 0x%X, %p, %zu)", hHeap, dwFlags, lpMem, dwBytes);
     (void)hHeap; (void)dwFlags;
     return realloc(lpMem, dwBytes);
 }

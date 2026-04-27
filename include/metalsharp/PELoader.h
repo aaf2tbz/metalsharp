@@ -63,6 +63,7 @@ private:
     bool processRelocations(LoadedModule& module);
     bool resolveImports(LoadedModule& module);
     bool loadDependency(const std::string& dllName, LoadedModule& outModule);
+    bool initCFG(LoadedModule& module);
 
     void* resolveImport(const std::string& dllName, const std::string& funcName, uint16_t ordinal);
     void* getExportAddress(LoadedModule& module, const std::string& funcName, uint16_t ordinal = 0xFFFF);
@@ -83,6 +84,7 @@ private:
     uint64_t m_delta = 0;
 
     static PELoader* s_instance;
+    static void* s_cfgAllowFn;
 };
 
 }
