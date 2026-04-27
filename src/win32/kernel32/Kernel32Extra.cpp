@@ -67,9 +67,23 @@ static void* MSABI shim_SetUnhandledExceptionFilter(void* lpTopLevelExceptionFil
 }
 
 static void* MSABI shim_UnhandledExceptionFilter(void* exceptionInfo) {
-    (void)exceptionInfo;
-    MS_INFO("PELoader: UnhandledExceptionFilter called");
-    abort();
+    MS_INFO("PELoader: UnhandledExceptionFilter(%p) - ignoring", exceptionInfo);
+    if (exceptionInfo) {
+        auto* ep = reinterpret_cast<uint64_t*>(exceptionInfo);
+        uint64_t exceptionRecord = ep[0];
+        if (exceptionRecord) {
+            uint32_t exceptionCode = *reinterpret_cast<uint32_t*>(exceptionRecord);
+            uint64_t exceptionAddress = *reinterpret_cast<uint64_t*>(exceptionRecord + 16);
+            MS_INFO("PELoader: ExceptionCode=0x%08X ExceptionAddress=0x%llX",
+                exceptionCode, (unsigned long long)exceptionAddress);
+            auto* mainMod = PELoader::instance()->getMainModule();
+            if (mainMod && mainMod->base) {
+                uint64_t rva = exceptionAddress - reinterpret_cast<uint64_t>(mainMod->base);
+                MS_INFO("PELoader: Crash RVA=0x%llX", (unsigned long long)rva);
+            }
+        }
+    }
+    MS_INFO("PELoader: UnhandledExceptionFilter returning (not aborting)");
     return nullptr;
 }
 
