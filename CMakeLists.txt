@@ -137,6 +137,38 @@ target_link_libraries(metalsharp_launcher PRIVATE metalsharp_core ${FOUNDATION_F
 
 add_library(metalsharp_loader STATIC
     src/loader/PELoader.cpp
+    src/loader/D3DShims.cpp
+    src/d3d/d3d11/D3D11Device.cpp
+    src/d3d/d3d11/D3D11DeviceContext.mm
+    src/d3d/d3d11/D3D11Texture2D.cpp
+    src/d3d/d3d11/D3D11Buffer.cpp
+    src/d3d/d3d11/D3D11RenderTargetView.cpp
+    src/d3d/d3d11/D3D11DepthStencilView.cpp
+    src/d3d/d3d11/D3D11ShaderResourceView.cpp
+    src/d3d/d3d11/D3D11InputLayout.cpp
+    src/d3d/d3d11/D3D11VertexShader.cpp
+    src/d3d/d3d11/D3D11PixelShader.cpp
+    src/d3d/d3d11/D3D11ComputeShader.cpp
+    src/d3d/d3d11/D3D11SamplerState.cpp
+    src/d3d/d3d11/D3D11RasterizerState.cpp
+    src/d3d/d3d11/D3D11DepthStencilState.cpp
+    src/d3d/d3d11/D3D11BlendState.cpp
+    src/d3d/d3d11/DeferredContext.cpp
+    src/d3d/d3d11/EntryPoint.cpp
+    src/d3d/d3d12/D3D12Device.cpp
+    src/d3d/d3d12/D3D12CommandQueue.cpp
+    src/d3d/d3d12/D3D12CommandList.mm
+    src/d3d/d3d12/D3D12Resource.cpp
+    src/d3d/d3d12/D3D12DescriptorHeap.cpp
+    src/d3d/d3d12/D3D12RootSignature.cpp
+    src/d3d/d3d12/D3D12PipelineState.cpp
+    src/d3d/d3d12/D3D12Fence.cpp
+    src/d3d/d3d12/EntryPoint.cpp
+    src/dxgi/DXGIFactory.cpp
+    src/dxgi/DXGIAdapter.cpp
+    src/dxgi/DXGIOutput.mm
+    src/dxgi/DXGISwapChain.mm
+    src/dxgi/EntryPoint.cpp
     src/win32/kernel32/Kernel32Shim.cpp
     src/win32/kernel32/NtdllShim.cpp
     src/win32/kernel32/Kernel32Extra.cpp
@@ -152,6 +184,7 @@ add_library(metalsharp_loader STATIC
 target_include_directories(metalsharp_loader PUBLIC include)
 target_link_libraries(metalsharp_loader PRIVATE metalsharp_core ${SECURITY_FRAMEWORK})
 target_compile_options(metalsharp_loader PRIVATE -fobjc-arc)
+target_compile_definitions(metalsharp_loader PRIVATE METALSHARP_NATIVE_LOADER)
 
 add_executable(metalsharp_native
     tools/launcher/NativeLauncher.cpp

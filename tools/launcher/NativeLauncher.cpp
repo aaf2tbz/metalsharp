@@ -4,6 +4,7 @@
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/NtdllShim.h>
 #include <metalsharp/ExtraShims.h>
+#include <metalsharp/D3DShims.h>
 #include <metalsharp/MSABITrampolines.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
@@ -143,6 +144,14 @@ int main(int argc, char* argv[]) {
     loader.registerShim("comctl32.dll", win32::createComCtl32Shim());
     loader.registerShim("WSOCK32.dll", win32::createWsock32Shim());
     loader.registerShim("wsock32.dll", win32::createWsock32Shim());
+
+    printf("Registering D3D/DXGI shims...\n");
+    loader.registerShim("d3d11.dll", win32::createD3D11Shim());
+    loader.registerShim("D3D11.dll", win32::createD3D11Shim());
+    loader.registerShim("d3d12.dll", win32::createD3D12Shim());
+    loader.registerShim("D3D12.dll", win32::createD3D12Shim());
+    loader.registerShim("dxgi.dll", win32::createDxgiShim());
+    loader.registerShim("DXGI.dll", win32::createDxgiShim());
 
     auto apiSets = {
         "api-ms-win-core-synch-l1-2-0",
