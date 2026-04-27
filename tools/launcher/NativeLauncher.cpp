@@ -3,6 +3,7 @@
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/NtdllShim.h>
 #include <metalsharp/ExtraShims.h>
+#include <metalsharp/MSABITrampolines.h>
 #include <metalsharp/Logger.h>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #endif
 
 using namespace metalsharp;
+using namespace metalsharp::win32;
 
 static void printUsage(const char* prog) {
     fprintf(stderr,
@@ -78,102 +80,160 @@ int main(int argc, char* argv[]) {
     loader.registerShim("WSOCK32.dll", win32::createWsock32Shim());
     loader.registerShim("wsock32.dll", win32::createWsock32Shim());
 
-    // Minimal msvcrt shims
+    auto apiSets = {
+        "api-ms-win-core-synch-l1-2-0",
+        "api-ms-win-core-synch-l1-1-0",
+        "api-ms-win-core-processthreads-l1-1-3",
+        "api-ms-win-core-processthreads-l1-1-2",
+        "api-ms-win-core-processthreads-l1-1-1",
+        "api-ms-win-core-file-l1-2-0",
+        "api-ms-win-core-file-l1-1-0",
+        "api-ms-win-core-handle-l1-1-0",
+        "api-ms-win-core-heap-l1-1-0",
+        "api-ms-win-core-heap-l2-1-0",
+        "api-ms-win-core-localization-l1-2-1",
+        "api-ms-win-core-localization-l1-2-0",
+        "api-ms-win-core-libraryloader-l1-1-0",
+        "api-ms-win-core-libraryloader-l1-1-1",
+        "api-ms-win-core-memory-l1-1-3",
+        "api-ms-win-core-memory-l1-1-1",
+        "api-ms-win-core-errorhandling-l1-1-1",
+        "api-ms-win-core-errorhandling-l1-1-0",
+        "api-ms-win-core-debug-l1-1-1",
+        "api-ms-win-core-debug-l1-1-0",
+        "api-ms-win-core-profile-l1-1-0",
+        "api-ms-win-core-datetime-l1-1-1",
+        "api-ms-win-core-datetime-l1-1-0",
+        "api-ms-win-core-string-l1-1-0",
+        "api-ms-win-core-string-obsolete-l1-1-0",
+        "api-ms-win-core-registry-l1-1-0",
+        "api-ms-win-core-registry-l2-1-0",
+        "api-ms-win-core-io-l1-1-1",
+        "api-ms-win-core-io-l1-1-0",
+        "api-ms-win-core-processenvironment-l1-1-0",
+        "api-ms-win-core-console-l1-1-0",
+        "api-ms-win-core-console-l2-1-0",
+        "api-ms-win-core-namedpipe-l1-1-0",
+        "api-ms-win-core-kernel32-legacy-l1-1-1",
+        "api-ms-win-core-kernel32-legacy-l1-1-0",
+        "api-ms-win-core-sysinfo-l1-1-0",
+        "api-ms-win-core-version-l1-1-0",
+        "api-ms-win-core-versionansi-l1-1-0",
+        "api-ms-win-security-base-l1-1-0",
+        "api-ms-win-security-base-l1-2-0",
+        "api-ms-win-eventing-controller-l1-1-0",
+        "api-ms-win-core-delayload-l1-1-0",
+        "api-ms-win-core-apiquery-l1-1-0",
+        "api-ms-win-core-psapi-ansi-l1-1-0",
+        "api-ms-win-core-psapi-l1-1-0",
+        "api-ms-win-core-shlwapi-legacy-l1-1-0",
+        "api-ms-win-core-shlwapi-obsolete-l1-1-0",
+        "api-ms-win-shcore-registryhelpers-l1-1-0",
+        "api-ms-win-core-winrt-error-l1-1-1",
+        "api-ms-win-core-winrt-string-l1-1-0",
+    };
+    for (const char* apiSet : apiSets) {
+        std::string dllName = std::string(apiSet) + ".dll";
+        loader.registerShim(dllName, win32::Kernel32Shim::create());
+        auto k32 = win32::Kernel32Shim::create();
+        win32::addMissingKernel32(k32);
+        loader.registerShim(dllName, std::move(k32));
+    }
+
     ShimLibrary msvcrt;
     msvcrt.name = "msvcrt.dll";
     auto fn = [](void* ptr) -> ExportedFunction {
         return [ptr]() -> void* { return ptr; };
     };
-    msvcrt.functions["malloc"] = fn((void*)malloc);
-    msvcrt.functions["free"] = fn((void*)free);
-    msvcrt.functions["realloc"] = fn((void*)realloc);
-    msvcrt.functions["calloc"] = fn((void*)calloc);
-    msvcrt.functions["memset"] = fn((void*)memset);
-    msvcrt.functions["memcpy"] = fn((void*)memcpy);
-    msvcrt.functions["memmove"] = fn((void*)memmove);
-    msvcrt.functions["memcmp"] = fn((void*)memcmp);
-    msvcrt.functions["strlen"] = fn((void*)strlen);
-    msvcrt.functions["strcpy"] = fn((void*)strcpy);
-    msvcrt.functions["strcat"] = fn((void*)strcat);
-    msvcrt.functions["strcmp"] = fn((void*)strcmp);
-    msvcrt.functions["strncmp"] = fn((void*)strncmp);
-    msvcrt.functions["strncpy"] = fn((void*)strncpy);
-    msvcrt.functions["strstr"] = fn((void*)(char*(*)(const char*, const char*))strstr);
-    msvcrt.functions["strchr"] = fn((void*)(char*(*)(const char*, int))strchr);
-    msvcrt.functions["strrchr"] = fn((void*)(char*(*)(const char*, int))strrchr);
-    msvcrt.functions["atoi"] = fn((void*)atoi);
-    msvcrt.functions["atof"] = fn((void*)atof);
-    msvcrt.functions["strtol"] = fn((void*)strtol);
-    msvcrt.functions["strtod"] = fn((void*)strtod);
-    msvcrt.functions["sprintf"] = fn((void*)sprintf);
-    msvcrt.functions["snprintf"] = fn((void*)snprintf);
-    msvcrt.functions["sscanf"] = fn((void*)sscanf);
-    msvcrt.functions["printf"] = fn((void*)printf);
-    msvcrt.functions["fprintf"] = fn((void*)fprintf);
-    msvcrt.functions["fopen"] = fn((void*)fopen);
-    msvcrt.functions["fclose"] = fn((void*)fclose);
-    msvcrt.functions["fread"] = fn((void*)fread);
-    msvcrt.functions["fwrite"] = fn((void*)fwrite);
-    msvcrt.functions["fseek"] = fn((void*)fseek);
-    msvcrt.functions["ftell"] = fn((void*)ftell);
-    msvcrt.functions["fgets"] = fn((void*)fgets);
-    msvcrt.functions["vsnprintf"] = fn((void*)vsnprintf);
-    msvcrt.functions["_stricmp"] = fn((void*)strcasecmp);
-    msvcrt.functions["_strnicmp"] = fn((void*)strncasecmp);
-    msvcrt.functions["wcslen"] = fn((void*)wcslen);
-    msvcrt.functions["wcscpy"] = fn((void*)wcscpy);
-    msvcrt.functions["wcscat"] = fn((void*)wcscat);
-    msvcrt.functions["wcscmp"] = fn((void*)wcscmp);
+    msvcrt.functions["malloc"] = fn((void*)msabi_malloc);
+    msvcrt.functions["free"] = fn((void*)msabi_free);
+    msvcrt.functions["realloc"] = fn((void*)msabi_realloc);
+    msvcrt.functions["calloc"] = fn((void*)msabi_calloc);
+    msvcrt.functions["memset"] = fn((void*)msabi_memset);
+    msvcrt.functions["memcpy"] = fn((void*)msabi_memcpy);
+    msvcrt.functions["memmove"] = fn((void*)msabi_memmove);
+    msvcrt.functions["memcmp"] = fn((void*)msabi_memcmp);
+    msvcrt.functions["strlen"] = fn((void*)msabi_strlen);
+    msvcrt.functions["strcpy"] = fn((void*)msabi_strcpy);
+    msvcrt.functions["strcat"] = fn((void*)msabi_strcat);
+    msvcrt.functions["strcmp"] = fn((void*)msabi_strcmp);
+    msvcrt.functions["strncmp"] = fn((void*)msabi_strncmp);
+    msvcrt.functions["strncpy"] = fn((void*)msabi_strncpy);
+    msvcrt.functions["strstr"] = fn((void*)msabi_strstr);
+    msvcrt.functions["strchr"] = fn((void*)msabi_strchr);
+    msvcrt.functions["strrchr"] = fn((void*)msabi_strrchr);
+    msvcrt.functions["atoi"] = fn((void*)msabi_atoi);
+    msvcrt.functions["atof"] = fn((void*)msabi_atof);
+    msvcrt.functions["strtol"] = fn((void*)msabi_strtol);
+    msvcrt.functions["strtod"] = fn((void*)msabi_strtod);
+    msvcrt.functions["sprintf"] = fn((void*)msabi_sprintf);
+    msvcrt.functions["snprintf"] = fn((void*)msabi_snprintf);
+    msvcrt.functions["sscanf"] = fn((void*)msabi_sscanf);
+    msvcrt.functions["printf"] = fn((void*)msabi_printf);
+    msvcrt.functions["fprintf"] = fn((void*)msabi_fprintf);
+    msvcrt.functions["fopen"] = fn((void*)msabi_fopen);
+    msvcrt.functions["fclose"] = fn((void*)msabi_fclose);
+    msvcrt.functions["fread"] = fn((void*)msabi_fread);
+    msvcrt.functions["fwrite"] = fn((void*)msabi_fwrite);
+    msvcrt.functions["fseek"] = fn((void*)msabi_fseek);
+    msvcrt.functions["ftell"] = fn((void*)msabi_ftell);
+    msvcrt.functions["fgets"] = fn((void*)msabi_fgets);
+    msvcrt.functions["vsnprintf"] = fn((void*)msabi_vsnprintf);
+    msvcrt.functions["_stricmp"] = fn((void*)msabi_strcasecmp);
+    msvcrt.functions["_strnicmp"] = fn((void*)msabi_strncasecmp);
+    msvcrt.functions["wcslen"] = fn((void*)msabi_wcslen);
+    msvcrt.functions["wcscpy"] = fn((void*)msabi_wcscpy);
+    msvcrt.functions["wcscat"] = fn((void*)msabi_wcscat);
+    msvcrt.functions["wcscmp"] = fn((void*)msabi_wcscmp);
     msvcrt.functions["_wcsicmp"] = fn((void*)nullptr);
-    msvcrt.functions["tolower"] = fn((void*)tolower);
-    msvcrt.functions["toupper"] = fn((void*)toupper);
-    msvcrt.functions["isalpha"] = fn((void*)isalpha);
-    msvcrt.functions["isdigit"] = fn((void*)isdigit);
-    msvcrt.functions["isspace"] = fn((void*)isspace);
-    msvcrt.functions["qsort"] = fn((void*)qsort);
-    msvcrt.functions["rand"] = fn((void*)rand);
-    msvcrt.functions["srand"] = fn((void*)srand);
-    msvcrt.functions["abs"] = fn((void*)(int(*)(int))abs);
-    msvcrt.functions["labs"] = fn((void*)labs);
-    msvcrt.functions["floor"] = fn((void*)(double(*)(double))floor);
-    msvcrt.functions["ceil"] = fn((void*)(double(*)(double))ceil);
-    msvcrt.functions["sqrt"] = fn((void*)(double(*)(double))sqrt);
-    msvcrt.functions["sin"] = fn((void*)(double(*)(double))sin);
-    msvcrt.functions["cos"] = fn((void*)(double(*)(double))cos);
-    msvcrt.functions["tan"] = fn((void*)(double(*)(double))tan);
-    msvcrt.functions["atan2"] = fn((void*)(double(*)(double, double))atan2);
-    msvcrt.functions["pow"] = fn((void*)(double(*)(double, double))pow);
-    msvcrt.functions["log"] = fn((void*)(double(*)(double))log);
-    msvcrt.functions["log10"] = fn((void*)(double(*)(double))log10);
-    msvcrt.functions["exp"] = fn((void*)(double(*)(double))exp);
-    msvcrt.functions["fabs"] = fn((void*)(double(*)(double))fabs);
-    msvcrt.functions["fmod"] = fn((void*)(double(*)(double, double))fmod);
-    msvcrt.functions["modf"] = fn((void*)(double(*)(double, double*))modf);
-    msvcrt.functions["ldexp"] = fn((void*)(double(*)(double, int))ldexp);
-    msvcrt.functions["frexp"] = fn((void*)(double(*)(double, int*))frexp);
+    msvcrt.functions["tolower"] = fn((void*)msabi_tolower);
+    msvcrt.functions["toupper"] = fn((void*)msabi_toupper);
+    msvcrt.functions["isalpha"] = fn((void*)msabi_isalpha);
+    msvcrt.functions["isdigit"] = fn((void*)msabi_isdigit);
+    msvcrt.functions["isspace"] = fn((void*)msabi_isspace);
+    msvcrt.functions["qsort"] = fn((void*)msabi_qsort);
+    msvcrt.functions["rand"] = fn((void*)msabi_rand);
+    msvcrt.functions["srand"] = fn((void*)msabi_srand);
+    msvcrt.functions["abs"] = fn((void*)msabi_abs);
+    msvcrt.functions["labs"] = fn((void*)msabi_labs);
+    msvcrt.functions["floor"] = fn((void*)msabi_floor);
+    msvcrt.functions["ceil"] = fn((void*)msabi_ceil);
+    msvcrt.functions["sqrt"] = fn((void*)msabi_sqrt);
+    msvcrt.functions["sin"] = fn((void*)msabi_sin);
+    msvcrt.functions["cos"] = fn((void*)msabi_cos);
+    msvcrt.functions["tan"] = fn((void*)msabi_tan);
+    msvcrt.functions["atan2"] = fn((void*)msabi_atan2);
+    msvcrt.functions["pow"] = fn((void*)msabi_pow);
+    msvcrt.functions["log"] = fn((void*)msabi_log);
+    msvcrt.functions["log10"] = fn((void*)msabi_log10);
+    msvcrt.functions["exp"] = fn((void*)msabi_exp);
+    msvcrt.functions["fabs"] = fn((void*)msabi_fabs);
+    msvcrt.functions["fmod"] = fn((void*)msabi_fmod);
+    msvcrt.functions["modf"] = fn((void*)msabi_modf);
+    msvcrt.functions["ldexp"] = fn((void*)msabi_ldexp);
+    msvcrt.functions["frexp"] = fn((void*)msabi_frexp);
     loader.registerShim("msvcrt.dll", std::move(msvcrt));
 
-    // vcruntime shims
     ShimLibrary vcruntime;
     vcruntime.name = "vcruntime140.dll";
-    vcruntime.functions["memset"] = fn((void*)memset);
-    vcruntime.functions["memcpy"] = fn((void*)memcpy);
-    vcruntime.functions["memmove"] = fn((void*)memmove);
-    vcruntime.functions["memcmp"] = fn((void*)memcmp);
-    vcruntime.functions["strcpy"] = fn((void*)strcpy);
-    vcruntime.functions["strcat"] = fn((void*)strcat);
-    vcruntime.functions["strlen"] = fn((void*)strlen);
-    vcruntime.functions["strcmp"] = fn((void*)strcmp);
-    vcruntime.functions["strstr"] = fn((void*)(char*(*)(const char*, const char*))strstr);
+    vcruntime.functions["memset"] = fn((void*)msabi_memset);
+    vcruntime.functions["memcpy"] = fn((void*)msabi_memcpy);
+    vcruntime.functions["memmove"] = fn((void*)msabi_memmove);
+    vcruntime.functions["memcmp"] = fn((void*)msabi_memcmp);
+    vcruntime.functions["strcpy"] = fn((void*)msabi_strcpy);
+    vcruntime.functions["strcat"] = fn((void*)msabi_strcat);
+    vcruntime.functions["strlen"] = fn((void*)msabi_strlen);
+    vcruntime.functions["strcmp"] = fn((void*)msabi_strcmp);
+    vcruntime.functions["strstr"] = fn((void*)msabi_strstr);
     vcruntime.functions["_purecall"] = fn((void*)nullptr);
     loader.registerShim("vcruntime140.dll", std::move(vcruntime));
 
     ShimLibrary ucrt;
     ucrt.name = "api-ms-win-crt-runtime-l1-1-0.dll";
-    ucrt.functions["malloc"] = fn((void*)malloc);
-    ucrt.functions["free"] = fn((void*)free);
-    ucrt.functions["realloc"] = fn((void*)realloc);
-    ucrt.functions["calloc"] = fn((void*)calloc);
+    ucrt.functions["malloc"] = fn((void*)msabi_malloc);
+    ucrt.functions["free"] = fn((void*)msabi_free);
+    ucrt.functions["realloc"] = fn((void*)msabi_realloc);
+    ucrt.functions["calloc"] = fn((void*)msabi_calloc);
     ucrt.functions["_initterm"] = fn((void*)nullptr);
     ucrt.functions["_initterm_e"] = fn((void*)nullptr);
     ucrt.functions["_initialize_onexit_table"] = fn((void*)nullptr);
@@ -182,9 +242,9 @@ int main(int argc, char* argv[]) {
     ucrt.functions["_crt_atexit"] = fn((void*)nullptr);
     ucrt.functions["_crt_at_quick_exit"] = fn((void*)nullptr);
     ucrt.functions["_c_exit"] = fn((void*)nullptr);
-    ucrt.functions["exit"] = fn((void*)exit);
-    ucrt.functions["_exit"] = fn((void*)_Exit);
-    ucrt.functions["abort"] = fn((void*)abort);
+    ucrt.functions["exit"] = fn((void*)msabi_exit);
+    ucrt.functions["_exit"] = fn((void*)msabi__Exit);
+    ucrt.functions["abort"] = fn((void*)msabi_abort);
     ucrt.functions["_configure_narrow_argv"] = fn((void*)nullptr);
     ucrt.functions["_initialize_narrow_environment"] = fn((void*)nullptr);
     ucrt.functions["get_initial_narrow_environment"] = fn((void*)nullptr);
@@ -201,28 +261,28 @@ int main(int argc, char* argv[]) {
 
     ShimLibrary crtString;
     crtString.name = "api-ms-win-crt-string-l1-1-0.dll";
-    crtString.functions["memcmp"] = fn((void*)memcmp);
-    crtString.functions["memcpy"] = fn((void*)memcpy);
-    crtString.functions["memset"] = fn((void*)memset);
-    crtString.functions["strcmp"] = fn((void*)strcmp);
-    crtString.functions["strlen"] = fn((void*)strlen);
-    crtString.functions["strncpy"] = fn((void*)strncpy);
-    crtString.functions["strchr"] = fn((void*)(char*(*)(const char*, int))strchr);
-    crtString.functions["strstr"] = fn((void*)(char*(*)(const char*, const char*))strstr);
-    crtString.functions["isalpha"] = fn((void*)isalpha);
-    crtString.functions["isdigit"] = fn((void*)isdigit);
-    crtString.functions["isspace"] = fn((void*)isspace);
-    crtString.functions["tolower"] = fn((void*)tolower);
-    crtString.functions["toupper"] = fn((void*)toupper);
-    crtString.functions["_stricmp"] = fn((void*)strcasecmp);
+    crtString.functions["memcmp"] = fn((void*)msabi_memcmp);
+    crtString.functions["memcpy"] = fn((void*)msabi_memcpy);
+    crtString.functions["memset"] = fn((void*)msabi_memset);
+    crtString.functions["strcmp"] = fn((void*)msabi_strcmp);
+    crtString.functions["strlen"] = fn((void*)msabi_strlen);
+    crtString.functions["strncpy"] = fn((void*)msabi_strncpy);
+    crtString.functions["strchr"] = fn((void*)msabi_strchr);
+    crtString.functions["strstr"] = fn((void*)msabi_strstr);
+    crtString.functions["isalpha"] = fn((void*)msabi_isalpha);
+    crtString.functions["isdigit"] = fn((void*)msabi_isdigit);
+    crtString.functions["isspace"] = fn((void*)msabi_isspace);
+    crtString.functions["tolower"] = fn((void*)msabi_tolower);
+    crtString.functions["toupper"] = fn((void*)msabi_toupper);
+    crtString.functions["_stricmp"] = fn((void*)msabi_strcasecmp);
     loader.registerShim("api-ms-win-crt-string-l1-1-0.dll", std::move(crtString));
 
     ShimLibrary crtHeap;
     crtHeap.name = "api-ms-win-crt-heap-l1-1-0.dll";
-    crtHeap.functions["malloc"] = fn((void*)malloc);
-    crtHeap.functions["free"] = fn((void*)free);
-    crtHeap.functions["realloc"] = fn((void*)realloc);
-    crtHeap.functions["calloc"] = fn((void*)calloc);
+    crtHeap.functions["malloc"] = fn((void*)msabi_malloc);
+    crtHeap.functions["free"] = fn((void*)msabi_free);
+    crtHeap.functions["realloc"] = fn((void*)msabi_realloc);
+    crtHeap.functions["calloc"] = fn((void*)msabi_calloc);
     crtHeap.functions["_recalloc"] = fn((void*)nullptr);
     crtHeap.functions["_aligned_malloc"] = fn((void*)nullptr);
     crtHeap.functions["_aligned_free"] = fn((void*)nullptr);
@@ -230,62 +290,68 @@ int main(int argc, char* argv[]) {
 
     ShimLibrary crtMath;
     crtMath.name = "api-ms-win-crt-math-l1-1-0.dll";
-    crtMath.functions["floor"] = fn((void*)(double(*)(double))floor);
-    crtMath.functions["ceil"] = fn((void*)(double(*)(double))ceil);
-    crtMath.functions["sqrt"] = fn((void*)(double(*)(double))sqrt);
-    crtMath.functions["fabs"] = fn((void*)(double(*)(double))fabs);
-    crtMath.functions["fmod"] = fn((void*)(double(*)(double, double))fmod);
-    crtMath.functions["pow"] = fn((void*)(double(*)(double, double))pow);
-    crtMath.functions["log"] = fn((void*)(double(*)(double))log);
-    crtMath.functions["log10"] = fn((void*)(double(*)(double))log10);
-    crtMath.functions["exp"] = fn((void*)(double(*)(double))exp);
-    crtMath.functions["sin"] = fn((void*)(double(*)(double))sin);
-    crtMath.functions["cos"] = fn((void*)(double(*)(double))cos);
-    crtMath.functions["tan"] = fn((void*)(double(*)(double))tan);
-    crtMath.functions["atan2"] = fn((void*)(double(*)(double, double))atan2);
-    crtMath.functions["modf"] = fn((void*)(double(*)(double, double*))modf);
-    crtMath.functions["ldexp"] = fn((void*)(double(*)(double, int))ldexp);
-    crtMath.functions["frexp"] = fn((void*)(double(*)(double, int*))frexp);
-    crtMath.functions["abs"] = fn((void*)(int(*)(int))abs);
+    crtMath.functions["floor"] = fn((void*)msabi_floor);
+    crtMath.functions["ceil"] = fn((void*)msabi_ceil);
+    crtMath.functions["sqrt"] = fn((void*)msabi_sqrt);
+    crtMath.functions["fabs"] = fn((void*)msabi_fabs);
+    crtMath.functions["fmod"] = fn((void*)msabi_fmod);
+    crtMath.functions["pow"] = fn((void*)msabi_pow);
+    crtMath.functions["log"] = fn((void*)msabi_log);
+    crtMath.functions["log10"] = fn((void*)msabi_log10);
+    crtMath.functions["exp"] = fn((void*)msabi_exp);
+    crtMath.functions["sin"] = fn((void*)msabi_sin);
+    crtMath.functions["cos"] = fn((void*)msabi_cos);
+    crtMath.functions["tan"] = fn((void*)msabi_tan);
+    crtMath.functions["atan2"] = fn((void*)msabi_atan2);
+    crtMath.functions["modf"] = fn((void*)msabi_modf);
+    crtMath.functions["ldexp"] = fn((void*)msabi_ldexp);
+    crtMath.functions["frexp"] = fn((void*)msabi_frexp);
+    crtMath.functions["abs"] = fn((void*)msabi_abs);
     crtMath.functions["_fdclass"] = fn((void*)nullptr);
     crtMath.functions["_dsign"] = fn((void*)nullptr);
     loader.registerShim("api-ms-win-crt-math-l1-1-0.dll", std::move(crtMath));
 
     ShimLibrary crtConvert;
     crtConvert.name = "api-ms-win-crt-convert-l1-1-0.dll";
-    crtConvert.functions["atoi"] = fn((void*)atoi);
-    crtConvert.functions["atof"] = fn((void*)atof);
-    crtConvert.functions["strtol"] = fn((void*)strtol);
-    crtConvert.functions["strtod"] = fn((void*)strtod);
-    crtConvert.functions["strtoul"] = fn((void*)strtoul);
+    crtConvert.functions["atoi"] = fn((void*)msabi_atoi);
+    crtConvert.functions["atof"] = fn((void*)msabi_atof);
+    crtConvert.functions["strtol"] = fn((void*)msabi_strtol);
+    crtConvert.functions["strtod"] = fn((void*)msabi_strtod);
+    crtConvert.functions["strtoul"] = fn((void*)msabi_strtoul);
     crtConvert.functions["itoa"] = fn((void*)nullptr);
     loader.registerShim("api-ms-win-crt-convert-l1-1-0.dll", std::move(crtConvert));
 
     ShimLibrary crtLocale;
     crtLocale.name = "api-ms-win-crt-locale-l1-1-0.dll";
-    crtLocale.functions["setlocale"] = fn((void*)setlocale);
+    crtLocale.functions["setlocale"] = fn((void*)msabi_setlocale);
     crtLocale.functions["localeconv"] = fn((void*)nullptr);
     loader.registerShim("api-ms-win-crt-locale-l1-1-0.dll", std::move(crtLocale));
 
     ShimLibrary crtTime;
     crtTime.name = "api-ms-win-crt-time-l1-1-0.dll";
-    crtTime.functions["clock"] = fn((void*)clock);
-    crtTime.functions["time"] = fn((void*)time);
-    crtTime.functions["strftime"] = fn((void*)strftime);
+    crtTime.functions["clock"] = fn((void*)msabi_clock);
+    crtTime.functions["time"] = fn((void*)msabi_time);
+    crtTime.functions["strftime"] = fn((void*)msabi_strftime);
     loader.registerShim("api-ms-win-crt-time-l1-1-0.dll", std::move(crtTime));
 
     ShimLibrary crtFileIo;
     crtFileIo.name = "api-ms-win-crt-filesystem-l1-1-0.dll";
-    crtFileIo.functions["fopen"] = fn((void*)fopen);
-    crtFileIo.functions["fclose"] = fn((void*)fclose);
-    crtFileIo.functions["fread"] = fn((void*)fread);
-    crtFileIo.functions["fwrite"] = fn((void*)fwrite);
-    crtFileIo.functions["fseek"] = fn((void*)fseek);
-    crtFileIo.functions["ftell"] = fn((void*)ftell);
-    crtFileIo.functions["fgets"] = fn((void*)fgets);
+    crtFileIo.functions["fopen"] = fn((void*)msabi_fopen);
+    crtFileIo.functions["fclose"] = fn((void*)msabi_fclose);
+    crtFileIo.functions["fread"] = fn((void*)msabi_fread);
+    crtFileIo.functions["fwrite"] = fn((void*)msabi_fwrite);
+    crtFileIo.functions["fseek"] = fn((void*)msabi_fseek);
+    crtFileIo.functions["ftell"] = fn((void*)msabi_ftell);
+    crtFileIo.functions["fgets"] = fn((void*)msabi_fgets);
     loader.registerShim("api-ms-win-crt-filesystem-l1-1-0.dll", std::move(crtFileIo));
 
     printf("Loading %s...\n", argv[1]);
+
+    std::string exePath(argv[1]);
+    auto lastSlash = exePath.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        loader.addSearchPath(exePath.substr(0, lastSlash));
+    }
 
     if (!loader.load(argv[1])) {
         fprintf(stderr, "Failed to load %s\n", argv[1]);

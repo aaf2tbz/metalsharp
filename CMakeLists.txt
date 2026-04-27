@@ -4,6 +4,7 @@ project(metalsharp VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Build for Rosetta 2 — Windows PE code executes natively under x86_64 translation")
 
 find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
@@ -142,8 +143,7 @@ add_library(metalsharp_loader STATIC
     src/win32/extra/ExtraShims.cpp
 )
 target_include_directories(metalsharp_loader PUBLIC include)
-find_package(OpenSSL REQUIRED)
-target_link_libraries(metalsharp_loader PRIVATE metalsharp_core OpenSSL::Crypto OpenSSL::SSL)
+target_link_libraries(metalsharp_loader PRIVATE metalsharp_core)
 target_compile_options(metalsharp_loader PRIVATE -fobjc-arc)
 
 add_executable(metalsharp_native

@@ -21,18 +21,21 @@ namespace win32 {
 
 static thread_local DWORD t_lastError = 0;
 
-static void* stub_zero() { return nullptr; }
-static BOOL stub_true() { return 1; }
-static DWORD stub_zero_dword() { return 0; }
-static void stub_void() {}
+static std::atomic<int> g_callCount{0};
+static thread_local int t_callDepth = 0;
 
-static void* shim_VirtualProtect(void* lpAddress, SIZE_T dwSize, DWORD flNewProtect, DWORD* lpflOldProtect) {
+static void* MSABI stub_zero() { return nullptr; }
+static BOOL MSABI stub_true() { return 1; }
+static DWORD MSABI stub_zero_dword() { return 0; }
+static void MSABI stub_void() {}
+
+static void* MSABI shim_VirtualProtect(void* lpAddress, SIZE_T dwSize, DWORD flNewProtect, DWORD* lpflOldProtect) {
     (void)dwSize; (void)flNewProtect;
     if (lpflOldProtect) *lpflOldProtect = PAGE_EXECUTE_READWRITE;
     return reinterpret_cast<void*>(1);
 }
 
-static BOOL shim_VirtualQuery(void* lpAddress, void* lpBuffer, SIZE_T dwLength, SIZE_T* lpResultLength) {
+static BOOL MSABI shim_VirtualQuery(void* lpAddress, void* lpBuffer, SIZE_T dwLength, SIZE_T* lpResultLength) {
     (void)lpAddress; (void)dwLength;
     auto* mbi = reinterpret_cast<MEMORY_BASIC_INFORMATION*>(lpBuffer);
     memset(mbi, 0, sizeof(MEMORY_BASIC_INFORMATION));
@@ -46,31 +49,31 @@ static BOOL shim_VirtualQuery(void* lpAddress, void* lpBuffer, SIZE_T dwLength, 
     return 1;
 }
 
-static void shim_ExitProcess(UINT uExitCode) {
+static void MSABI shim_ExitProcess(UINT uExitCode) {
     MS_INFO("PELoader: ExitProcess(%u)", uExitCode);
     exit(uExitCode);
 }
 
-static void shim_RaiseException(DWORD dwExceptionCode, DWORD dwExceptionFlags,
+static void MSABI shim_RaiseException(DWORD dwExceptionCode, DWORD dwExceptionFlags,
     DWORD nNumberOfArguments, void* lpArguments) {
     (void)dwExceptionFlags; (void)nNumberOfArguments; (void)lpArguments;
     MS_INFO("PELoader: RaiseException(0x%08X)", dwExceptionCode);
     abort();
 }
 
-static void* shim_SetUnhandledExceptionFilter(void* lpTopLevelExceptionFilter) {
+static void* MSABI shim_SetUnhandledExceptionFilter(void* lpTopLevelExceptionFilter) {
     (void)lpTopLevelExceptionFilter;
     return nullptr;
 }
 
-static void* shim_UnhandledExceptionFilter(void* exceptionInfo) {
+static void* MSABI shim_UnhandledExceptionFilter(void* exceptionInfo) {
     (void)exceptionInfo;
     MS_INFO("PELoader: UnhandledExceptionFilter called");
     abort();
     return nullptr;
 }
 
-static void shim_DebugBreak() {
+static void MSABI shim_DebugBreak() {
     MS_INFO("PELoader: DebugBreak");
 }
 
@@ -84,36 +87,38 @@ void setCommandLine(const char* cmd) {
     }
 }
 
-static char* shim_GetCommandLineA() { return s_cmdLineA; }
-static wchar_t* shim_GetCommandLineW() { return s_cmdLineW; }
+static char* MSABI shim_GetCommandLineA() { MS_INFO("TRACE: GetCommandLineA()"); return s_cmdLineA; }
+static wchar_t* MSABI shim_GetCommandLineW() { MS_INFO("TRACE: GetCommandLineW()"); return s_cmdLineW; }
 
-static DWORD shim_GetEnvironmentVariableW(const wchar_t* lpName, wchar_t* lpBuffer, DWORD nSize) {
+static DWORD MSABI shim_GetEnvironmentVariableW(const wchar_t* lpName, wchar_t* lpBuffer, DWORD nSize) {
     (void)lpName; (void)lpBuffer; (void)nSize;
     return 0;
 }
 
-static DWORD shim_GetEnvironmentVariableA(const char* lpName, char* lpBuffer, DWORD nSize) {
+static DWORD MSABI shim_GetEnvironmentVariableA(const char* lpName, char* lpBuffer, DWORD nSize) {
     (void)lpName; (void)lpBuffer; (void)nSize;
     return 0;
 }
 
-static BOOL shim_SetEnvironmentVariableW(const wchar_t* lpName, const wchar_t* lpValue) {
+static BOOL MSABI shim_SetEnvironmentVariableW(const wchar_t* lpName, const wchar_t* lpValue) {
     (void)lpName; (void)lpValue;
     return 1;
 }
 
-static DWORD shim_ExpandEnvironmentStringsW(const wchar_t* lpSrc, wchar_t* lpDst, DWORD nSize) {
+static DWORD MSABI shim_ExpandEnvironmentStringsW(const wchar_t* lpSrc, wchar_t* lpDst, DWORD nSize) {
     (void)lpSrc;
     if (lpDst && nSize > 0) lpDst[0] = 0;
     return 0;
 }
 
-static void shim_GetStartupInfoW(STARTUPINFOW* lpStartupInfo) {
+static void MSABI shim_GetStartupInfoW(STARTUPINFOW* lpStartupInfo) {
+    MS_INFO("TRACE: GetStartupInfoW(%p)", lpStartupInfo);
     memset(lpStartupInfo, 0, sizeof(STARTUPINFOW));
     lpStartupInfo->cb = sizeof(STARTUPINFOW);
 }
 
-static void* shim_GetStdHandle(DWORD nStdHandle) {
+static void* MSABI shim_GetStdHandle(DWORD nStdHandle) {
+    MS_INFO("TRACE: GetStdHandle(0x%X)", nStdHandle);
     switch (nStdHandle) {
         case 0xFFFFFFF6: return reinterpret_cast<void*>(stdin);
         case 0xFFFFFFF5: return reinterpret_cast<void*>(stdout);
@@ -122,66 +127,77 @@ static void* shim_GetStdHandle(DWORD nStdHandle) {
     }
 }
 
-static BOOL shim_SetStdHandle(DWORD nStdHandle, HANDLE hHandle) {
+static BOOL MSABI shim_SetStdHandle(DWORD nStdHandle, HANDLE hHandle) {
     (void)nStdHandle; (void)hHandle;
     return 1;
 }
 
-static BOOL shim_FreeLibrary(HMODULE hLibModule) {
+static BOOL MSABI shim_FreeLibrary(HMODULE hLibModule) {
     (void)hLibModule;
     return 1;
 }
 
-static HMODULE shim_LoadLibraryExA(const char* lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+static HMODULE MSABI shim_LoadLibraryExA(const char* lpLibFileName, HANDLE hFile, DWORD dwFlags) {
     (void)hFile; (void)dwFlags;
-    MS_INFO("PELoader: LoadLibraryExA(\"%s\")", lpLibFileName ? lpLibFileName : "(null)");
-    return reinterpret_cast<HMODULE>(0x2);
+    if (!lpLibFileName) return nullptr;
+    MS_INFO("PELoader: LoadLibraryExA(\"%s\")", lpLibFileName);
+    return PELoader::instance()->loadLibrary(std::string(lpLibFileName));
 }
 
-static HMODULE shim_LoadLibraryExW(const wchar_t* lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+static HMODULE MSABI shim_LoadLibraryExW(const wchar_t* lpLibFileName, HANDLE hFile, DWORD dwFlags) {
     (void)hFile; (void)dwFlags;
-    MS_INFO("PELoader: LoadLibraryExW(...) ");
-    return reinterpret_cast<HMODULE>(0x2);
+    if (!lpLibFileName) return nullptr;
+    const auto* u16 = reinterpret_cast<const uint16_t*>(lpLibFileName);
+    char narrow[1024];
+    int j = 0;
+    for (int i = 0; u16[i] && j < 1023; i++) {
+        char c = (char)(u16[i] & 0x7F);
+        if (c >= 0x20) narrow[j++] = c;
+    }
+    narrow[j] = 0;
+    MS_INFO("PELoader: LoadLibraryExW(\"%s\")", narrow);
+    if (j == 0) return nullptr;
+    return PELoader::instance()->loadLibrary(std::string(narrow));
 }
 
-static HMODULE shim_GetModuleHandleExA(DWORD dwFlags, const char* lpModuleName, HMODULE* phModule) {
+static HMODULE MSABI shim_GetModuleHandleExA(DWORD dwFlags, const char* lpModuleName, HMODULE* phModule) {
     (void)dwFlags; (void)lpModuleName;
     if (phModule) *phModule = reinterpret_cast<HMODULE>(0x2);
     return reinterpret_cast<HMODULE>(0x2);
 }
 
-static HMODULE shim_GetModuleHandleExW(DWORD dwFlags, const wchar_t* lpModuleName, HMODULE* phModule) {
+static HMODULE MSABI shim_GetModuleHandleExW(DWORD dwFlags, const wchar_t* lpModuleName, HMODULE* phModule) {
     (void)dwFlags; (void)lpModuleName;
     if (phModule) *phModule = reinterpret_cast<HMODULE>(0x2);
     return reinterpret_cast<HMODULE>(0x2);
 }
 
-static void* shim_CreateEventA(void* lpEventAttributes, BOOL bManualReset, BOOL bInitialState, const char* lpName) {
+static void* MSABI shim_CreateEventA(void* lpEventAttributes, BOOL bManualReset, BOOL bInitialState, const char* lpName) {
     (void)lpEventAttributes; (void)bManualReset; (void)bInitialState; (void)lpName;
     return reinterpret_cast<void*>(0x100);
 }
 
-static BOOL shim_ResetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
-static BOOL shim_SetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
+static BOOL MSABI shim_ResetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
+static BOOL MSABI shim_SetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
 
-static HANDLE shim_OpenEventA(DWORD dwDesiredAccess, BOOL bInheritHandle, const char* lpName) {
+static HANDLE MSABI shim_OpenEventA(DWORD dwDesiredAccess, BOOL bInheritHandle, const char* lpName) {
     (void)dwDesiredAccess; (void)bInheritHandle; (void)lpName;
     return reinterpret_cast<HANDLE>(0x100);
 }
 
-static void* shim_CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
+static void* MSABI shim_CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
     void* CompletionKey, DWORD NumberOfConcurrentThreads) {
     (void)FileHandle; (void)ExistingCompletionPort; (void)CompletionKey; (void)NumberOfConcurrentThreads;
     return reinterpret_cast<void*>(0x101);
 }
 
-static BOOL shim_PostQueuedCompletionStatus(HANDLE CompletionPort, DWORD dwNumberOfBytesTransferred,
+static BOOL MSABI shim_PostQueuedCompletionStatus(HANDLE CompletionPort, DWORD dwNumberOfBytesTransferred,
     void* dwCompletionKey, void* lpOverlapped) {
     (void)CompletionPort; (void)dwNumberOfBytesTransferred; (void)dwCompletionKey; (void)lpOverlapped;
     return 1;
 }
 
-static BOOL shim_DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle,
+static BOOL MSABI shim_DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle,
     HANDLE hTargetProcessHandle, HANDLE* lpTargetHandle, DWORD dwDesiredAccess,
     BOOL bInheritHandle, DWORD dwOptions) {
     (void)hSourceProcessHandle; (void)hSourceHandle; (void)hTargetProcessHandle;
@@ -190,84 +206,84 @@ static BOOL shim_DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHand
     return 1;
 }
 
-static HANDLE shim_OpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId) {
+static HANDLE MSABI shim_OpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId) {
     (void)dwDesiredAccess; (void)bInheritHandle; (void)dwProcessId;
     return reinterpret_cast<HANDLE>(0x200);
 }
 
-static HANDLE shim_OpenThread(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwThreadId) {
+static HANDLE MSABI shim_OpenThread(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwThreadId) {
     (void)dwDesiredAccess; (void)bInheritHandle; (void)dwThreadId;
     return reinterpret_cast<HANDLE>(0x201);
 }
 
-static BOOL shim_TerminateProcess(HANDLE hProcess, UINT uExitCode) {
+static BOOL MSABI shim_TerminateProcess(HANDLE hProcess, UINT uExitCode) {
     (void)hProcess; (void)uExitCode;
     return 1;
 }
 
-static BOOL shim_GetExitCodeProcess(HANDLE hProcess, DWORD* lpExitCode) {
+static BOOL MSABI shim_GetExitCodeProcess(HANDLE hProcess, DWORD* lpExitCode) {
     (void)hProcess;
     if (lpExitCode) *lpExitCode = 259;
     return 1;
 }
 
-static BOOL shim_GetExitCodeThread(HANDLE hThread, DWORD* lpExitCode) {
+static BOOL MSABI shim_GetExitCodeThread(HANDLE hThread, DWORD* lpExitCode) {
     (void)hThread;
     if (lpExitCode) *lpExitCode = 259;
     return 1;
 }
 
-static BOOL shim_TerminateThread(HANDLE hThread, DWORD dwExitCode) {
+static BOOL MSABI shim_TerminateThread(HANDLE hThread, DWORD dwExitCode) {
     (void)hThread; (void)dwExitCode;
     return 1;
 }
 
-static DWORD shim_SuspendThread(HANDLE hThread) { (void)hThread; return 0; }
-static DWORD shim_ResumeThread(HANDLE hThread) { (void)hThread; return 0; }
-static BOOL shim_SetThreadPriority(HANDLE hThread, int nPriority) { (void)hThread; (void)nPriority; return 1; }
-static DWORD shim_SetThreadAffinityMask(HANDLE hThread, DWORD_PTR dwThreadAffinityMask) {
+static DWORD MSABI shim_SuspendThread(HANDLE hThread) { (void)hThread; return 0; }
+static DWORD MSABI shim_ResumeThread(HANDLE hThread) { (void)hThread; return 0; }
+static BOOL MSABI shim_SetThreadPriority(HANDLE hThread, int nPriority) { (void)hThread; (void)nPriority; return 1; }
+static DWORD MSABI shim_SetThreadAffinityMask(HANDLE hThread, DWORD_PTR dwThreadAffinityMask) {
     (void)hThread; (void)dwThreadAffinityMask; return 1;
 }
-static BOOL shim_GetProcessAffinityMask(HANDLE hProcess, DWORD_PTR* lpProcessAffinityMask, DWORD_PTR* lpSystemAffinityMask) {
+static BOOL MSABI shim_GetProcessAffinityMask(HANDLE hProcess, DWORD_PTR* lpProcessAffinityMask, DWORD_PTR* lpSystemAffinityMask) {
     (void)hProcess;
     if (lpProcessAffinityMask) *lpProcessAffinityMask = 1;
     if (lpSystemAffinityMask) *lpSystemAffinityMask = 1;
     return 1;
 }
-static BOOL shim_SetProcessAffinityMask(HANDLE hProcess, DWORD_PTR dwProcessAffinityMask) {
+static BOOL MSABI shim_SetProcessAffinityMask(HANDLE hProcess, DWORD_PTR dwProcessAffinityMask) {
     (void)hProcess; (void)dwProcessAffinityMask; return 1;
 }
 
-static BOOL shim_SwitchToThread() { sched_yield(); return 1; }
+static BOOL MSABI shim_SwitchToThread() { sched_yield(); return 1; }
 
-static void shim_InitializeSListHead(void* ListHead) { memset(ListHead, 0, 16); }
-static void* shim_InterlockedPushEntrySList(void* ListHead, void* ListEntry) {
+static void MSABI shim_InitializeSListHead(void* ListHead) { memset(ListHead, 0, 16); }
+static void* MSABI shim_InterlockedPushEntrySList(void* ListHead, void* ListEntry) {
     (void)ListHead; (void)ListEntry; return nullptr;
 }
 
-static void shim_AcquireSRWLockExclusive(void* SRWLock) {
+static void MSABI shim_AcquireSRWLockExclusive(void* SRWLock) {
     auto* mtx = static_cast<pthread_mutex_t*>(SRWLock);
     pthread_mutex_lock(mtx);
 }
 
-static void shim_ReleaseSRWLockExclusive(void* SRWLock) {
+static void MSABI shim_ReleaseSRWLockExclusive(void* SRWLock) {
     auto* mtx = static_cast<pthread_mutex_t*>(SRWLock);
     pthread_mutex_unlock(mtx);
 }
 
-static BOOL shim_TryAcquireSRWLockExclusive(void* SRWLock) {
+static BOOL MSABI shim_TryAcquireSRWLockExclusive(void* SRWLock) {
     (void)SRWLock; return 1;
 }
 
-static BOOL shim_SleepConditionVariableSRW(void* ConditionVariable, void* SRWLock, DWORD dwMilliseconds, ULONG Flags) {
+static BOOL MSABI shim_SleepConditionVariableSRW(void* ConditionVariable, void* SRWLock, DWORD dwMilliseconds, ULONG Flags) {
     (void)ConditionVariable; (void)SRWLock; (void)dwMilliseconds; (void)Flags;
     usleep(1000);
     return 1;
 }
 
-static void shim_WakeAllConditionVariable(void* ConditionVariable) { (void)ConditionVariable; }
+static void MSABI shim_WakeAllConditionVariable(void* ConditionVariable) { (void)ConditionVariable; }
 
-static void shim_InitializeCriticalSectionAndSpinCount(void* lpCriticalSection, DWORD dwSpinCount) {
+static void MSABI shim_InitializeCriticalSectionAndSpinCount(void* lpCriticalSection, DWORD dwSpinCount) {
     auto* cs = reinterpret_cast<CRITICAL_SECTION*>(lpCriticalSection);
     auto* mtx = new pthread_mutex_t();
     pthread_mutex_init(mtx, nullptr);
@@ -275,41 +291,44 @@ static void shim_InitializeCriticalSectionAndSpinCount(void* lpCriticalSection, 
     cs->SpinCount = dwSpinCount;
 }
 
-static void shim_InitializeCriticalSectionEx(void* lpCriticalSection, DWORD dwSpinCount, DWORD dwFlags) {
+static void MSABI shim_InitializeCriticalSectionEx(void* lpCriticalSection, DWORD dwSpinCount, DWORD dwFlags) {
     (void)dwFlags;
+    MS_INFO("TRACE: InitializeCriticalSectionEx(%p, %u, %u)", lpCriticalSection, dwSpinCount, dwFlags);
     shim_InitializeCriticalSectionAndSpinCount(lpCriticalSection, dwSpinCount);
 }
 
-static BOOL shim_TryEnterCriticalSection(void* lpCriticalSection) {
+static BOOL MSABI shim_TryEnterCriticalSection(void* lpCriticalSection) {
     (void)lpCriticalSection; return 1;
 }
 
-static BOOL shim_InitOnceBeginInitialize(void* InitOnce, DWORD dwFlags, BOOL* fPending, void** lpContext) {
+static BOOL MSABI shim_InitOnceBeginInitialize(void* InitOnce, DWORD dwFlags, BOOL* fPending, void** lpContext) {
     (void)InitOnce; (void)dwFlags; (void)lpContext;
     if (fPending) *fPending = 0;
     return 1;
 }
 
-static BOOL shim_InitOnceComplete(void* InitOnce, DWORD dwFlags, void* lpContext) {
+static BOOL MSABI shim_InitOnceComplete(void* InitOnce, DWORD dwFlags, void* lpContext) {
     (void)InitOnce; (void)dwFlags; (void)lpContext; return 1;
 }
 
 static thread_local void* s_tlsSlots[1088];
 static DWORD s_nextTlsSlot = 64;
 
-static DWORD shim_TlsAlloc() {
+static DWORD MSABI shim_TlsAlloc() {
     if (s_nextTlsSlot >= 1088) return 0xFFFFFFFF;
-    return s_nextTlsSlot++;
+    DWORD slot = s_nextTlsSlot++;
+    MS_INFO("TRACE: TlsAlloc() -> %u", slot);
+    return slot;
 }
 
-static BOOL shim_TlsFree(DWORD dwTlsIndex) { (void)dwTlsIndex; return 1; }
+static BOOL MSABI shim_TlsFree(DWORD dwTlsIndex) { (void)dwTlsIndex; return 1; }
 
-static void* shim_TlsGetValue(DWORD dwTlsIndex) {
+static void* MSABI shim_TlsGetValue(DWORD dwTlsIndex) {
     if (dwTlsIndex >= 1088) return nullptr;
     return s_tlsSlots[dwTlsIndex];
 }
 
-static BOOL shim_TlsSetValue(DWORD dwTlsIndex, void* lpTlsValue) {
+static BOOL MSABI shim_TlsSetValue(DWORD dwTlsIndex, void* lpTlsValue) {
     if (dwTlsIndex >= 1088) return 0;
     s_tlsSlots[dwTlsIndex] = lpTlsValue;
     return 1;
@@ -318,34 +337,34 @@ static BOOL shim_TlsSetValue(DWORD dwTlsIndex, void* lpTlsValue) {
 static DWORD s_flsNext = 0;
 static void* s_flsSlots[256];
 
-static DWORD shim_FlsAlloc(void* lpCallback) {
+static DWORD MSABI shim_FlsAlloc(void* lpCallback) {
     (void)lpCallback;
     if (s_flsNext >= 256) return 0xFFFFFFFF;
     s_flsSlots[s_flsNext] = nullptr;
     return s_flsNext++;
 }
 
-static BOOL shim_FlsFree(DWORD dwFlsIndex) { (void)dwFlsIndex; return 1; }
-static void* shim_FlsGetValue(DWORD dwFlsIndex) {
+static BOOL MSABI shim_FlsFree(DWORD dwFlsIndex) { (void)dwFlsIndex; return 1; }
+static void* MSABI shim_FlsGetValue(DWORD dwFlsIndex) {
     if (dwFlsIndex >= 256) return nullptr;
     return s_flsSlots[dwFlsIndex];
 }
-static BOOL shim_FlsSetValue(DWORD dwFlsIndex, void* lpFlsValue) {
+static BOOL MSABI shim_FlsSetValue(DWORD dwFlsIndex, void* lpFlsValue) {
     if (dwFlsIndex >= 256) return 0;
     s_flsSlots[dwFlsIndex] = lpFlsValue;
     return 1;
 }
 
-static void* shim_ConvertThreadToFiber(void* lpParameter) { (void)lpParameter; return reinterpret_cast<void*>(0x300); }
-static BOOL shim_ConvertFiberToThread() { return 1; }
-static void* shim_CreateFiber(SIZE_T dwStackSize, void* lpStartAddress, void* lpParameter) {
+static void* MSABI shim_ConvertThreadToFiber(void* lpParameter) { (void)lpParameter; return reinterpret_cast<void*>(0x300); }
+static BOOL MSABI shim_ConvertFiberToThread() { return 1; }
+static void* MSABI shim_CreateFiber(SIZE_T dwStackSize, void* lpStartAddress, void* lpParameter) {
     (void)dwStackSize; (void)lpStartAddress; (void)lpParameter;
     return reinterpret_cast<void*>(0x301);
 }
-static void shim_DeleteFiber(void* lpFiber) { (void)lpFiber; }
-static void shim_SwitchToFiber(void* lpFiber) { (void)lpFiber; }
+static void MSABI shim_DeleteFiber(void* lpFiber) { (void)lpFiber; }
+static void MSABI shim_SwitchToFiber(void* lpFiber) { (void)lpFiber; }
 
-static void shim_GetSystemTime(void* lpSystemTime) {
+static void MSABI shim_GetSystemTime(void* lpSystemTime) {
     auto* st = reinterpret_cast<WORD*>(lpSystemTime);
     time_t now = time(nullptr);
     struct tm t;
@@ -360,7 +379,8 @@ static void shim_GetSystemTime(void* lpSystemTime) {
     st[7] = 0;
 }
 
-static void shim_GetSystemTimeAsFileTime(void* lpFileTime) {
+static void MSABI shim_GetSystemTimeAsFileTime(void* lpFileTime) {
+    MS_INFO("TRACE: GetSystemTimeAsFileTime(%p)", lpFileTime);
     auto* ft = reinterpret_cast<uint64_t*>(lpFileTime);
     auto now = std::chrono::system_clock::now();
     auto dur = now.time_since_epoch();
@@ -368,38 +388,38 @@ static void shim_GetSystemTimeAsFileTime(void* lpFileTime) {
     *ft = static_cast<uint64_t>((micros + 11644473600000000LL) * 10);
 }
 
-static void shim_FileTimeToSystemTime(const void* lpFileTime, void* lpSystemTime) {
+static void MSABI shim_FileTimeToSystemTime(const void* lpFileTime, void* lpSystemTime) {
     (void)lpFileTime; (void)lpSystemTime;
 }
 
-static void shim_SystemTimeToFileTime(const void* lpSystemTime, void* lpFileTime) {
+static void MSABI shim_SystemTimeToFileTime(const void* lpSystemTime, void* lpFileTime) {
     (void)lpSystemTime; (void)lpFileTime;
 }
 
-static void shim_SystemTimeToTzSpecificLocalTime(void* lpTimeZone, const void* lpUniversalTime, void* lpLocalTime) {
+static void MSABI shim_SystemTimeToTzSpecificLocalTime(void* lpTimeZone, const void* lpUniversalTime, void* lpLocalTime) {
     (void)lpTimeZone;
     if (lpLocalTime && lpUniversalTime) memcpy(lpLocalTime, lpUniversalTime, 16);
 }
 
-static DWORD shim_GetTimeZoneInformation(void* lpTimeZoneInformation) {
+static DWORD MSABI shim_GetTimeZoneInformation(void* lpTimeZoneInformation) {
     (void)lpTimeZoneInformation; return 0;
 }
 
-static int shim_GetDateFormatW(void* Locale, DWORD dwFlags, const void* lpDate,
+static int MSABI shim_GetDateFormatW(void* Locale, DWORD dwFlags, const void* lpDate,
     const wchar_t* lpFormat, wchar_t* lpDateStr, int cchDate) {
     (void)Locale; (void)dwFlags; (void)lpDate; (void)lpFormat;
     if (lpDateStr && cchDate > 0) { lpDateStr[0] = 0; return 0; }
     return 0;
 }
 
-static int shim_GetTimeFormatW(void* Locale, DWORD dwFlags, const void* lpTime,
+static int MSABI shim_GetTimeFormatW(void* Locale, DWORD dwFlags, const void* lpTime,
     const wchar_t* lpFormat, wchar_t* lpTimeStr, int cchTime) {
     (void)Locale; (void)dwFlags; (void)lpTime; (void)lpFormat;
     if (lpTimeStr && cchTime > 0) { lpTimeStr[0] = 0; return 0; }
     return 0;
 }
 
-static BOOL shim_GetVersionExA(void* lpVersionInformation) {
+static BOOL MSABI shim_GetVersionExA(void* lpVersionInformation) {
     auto* vi = reinterpret_cast<BYTE*>(lpVersionInformation);
     if (vi[0] < 156) return 0;
     memset(vi, 0, 156);
@@ -413,20 +433,20 @@ static BOOL shim_GetVersionExA(void* lpVersionInformation) {
     return 1;
 }
 
-static BOOL shim_VerifyVersionInfoW(void* lpVersionInformation, DWORD dwTypeMask, uint64_t dwlConditionMask) {
+static BOOL MSABI shim_VerifyVersionInfoW(void* lpVersionInformation, DWORD dwTypeMask, uint64_t dwlConditionMask) {
     (void)lpVersionInformation; (void)dwTypeMask; (void)dwlConditionMask;
     return 1;
 }
 
-static uint64_t shim_VerSetConditionMask(uint64_t dwlConditionMask, DWORD dwTypeBitMask, BYTE dwCondition) {
+static uint64_t MSABI shim_VerSetConditionMask(uint64_t dwlConditionMask, DWORD dwTypeBitMask, BYTE dwCondition) {
     (void)dwTypeBitMask; (void)dwCondition;
     return dwlConditionMask;
 }
 
-static void* shim_GlobalLock(HANDLE hMem) { return hMem; }
-static BOOL shim_GlobalUnlock(HANDLE hMem) { (void)hMem; return 1; }
+static void* MSABI shim_GlobalLock(HANDLE hMem) { return hMem; }
+static BOOL MSABI shim_GlobalUnlock(HANDLE hMem) { (void)hMem; return 1; }
 
-static void shim_GlobalMemoryStatusEx(void* lpBuffer) {
+static void MSABI shim_GlobalMemoryStatusEx(void* lpBuffer) {
     auto* ms = reinterpret_cast<DWORD*>(lpBuffer);
     memset(ms, 0, 32);
     ms[0] = 32;
@@ -435,36 +455,36 @@ static void shim_GlobalMemoryStatusEx(void* lpBuffer) {
     ms[3] = static_cast<DWORD>(8ULL * 1024 * 1024 * 1024);
 }
 
-static BOOL shim_HeapLock(HANDLE hHeap) { (void)hHeap; return 1; }
-static BOOL shim_HeapUnlock(HANDLE hHeap) { (void)hHeap; return 1; }
-static BOOL shim_HeapWalk(HANDLE hHeap, void* lpEntry) { (void)hHeap; (void)lpEntry; return 0; }
-static BOOL shim_HeapQueryInformation(HANDLE hHeap, DWORD HeapInformationClass,
+static BOOL MSABI shim_HeapLock(HANDLE hHeap) { (void)hHeap; return 1; }
+static BOOL MSABI shim_HeapUnlock(HANDLE hHeap) { (void)hHeap; return 1; }
+static BOOL MSABI shim_HeapWalk(HANDLE hHeap, void* lpEntry) { (void)hHeap; (void)lpEntry; return 0; }
+static BOOL MSABI shim_HeapQueryInformation(HANDLE hHeap, DWORD HeapInformationClass,
     void* HeapInformation, SIZE_T HeapInformationLength, SIZE_T* ReturnLength) {
     (void)hHeap; (void)HeapInformationClass; (void)HeapInformation; (void)HeapInformationLength; (void)ReturnLength;
     return 1;
 }
-static BOOL shim_HeapSetInformation(HANDLE hHeap, DWORD HeapInformationClass,
+static BOOL MSABI shim_HeapSetInformation(HANDLE hHeap, DWORD HeapInformationClass,
     void* HeapInformation, SIZE_T HeapInformationLength) {
     (void)hHeap; (void)HeapInformationClass; (void)HeapInformation; (void)HeapInformationLength;
     return 1;
 }
-static SIZE_T shim_HeapSize(HANDLE hHeap, DWORD dwFlags, const void* lpMem) {
+static SIZE_T MSABI shim_HeapSize(HANDLE hHeap, DWORD dwFlags, const void* lpMem) {
     (void)hHeap; (void)dwFlags; (void)lpMem;
     return 1024;
 }
-static void* shim_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, void* lpMem, SIZE_T dwBytes) {
+static void* MSABI shim_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, void* lpMem, SIZE_T dwBytes) {
     (void)hHeap; (void)dwFlags;
     return realloc(lpMem, dwBytes);
 }
 
-static DWORD shim_GetProcessHeaps(DWORD NumberOfHeaps, HANDLE* ProcessHeaps) {
+static DWORD MSABI shim_GetProcessHeaps(DWORD NumberOfHeaps, HANDLE* ProcessHeaps) {
     (void)NumberOfHeaps;
     if (ProcessHeaps) ProcessHeaps[0] = reinterpret_cast<HANDLE>(0x1);
     return 1;
 }
 
-static BOOL shim_IsBadWritePtr(void* lp, size_t ucb) { (void)lp; (void)ucb; return 0; }
-static BOOL shim_DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, void* lpInBuffer,
+static BOOL MSABI shim_IsBadWritePtr(void* lp, size_t ucb) { (void)lp; (void)ucb; return 0; }
+static BOOL MSABI shim_DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, void* lpInBuffer,
     DWORD nInBufferSize, void* lpOutBuffer, DWORD nOutBufferSize, DWORD* lpBytesReturned, void* lpOverlapped) {
     (void)hDevice; (void)dwIoControlCode; (void)lpInBuffer; (void)nInBufferSize;
     (void)lpOutBuffer; (void)nOutBufferSize; (void)lpOverlapped;
@@ -472,17 +492,17 @@ static BOOL shim_DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, void* lp
     return 0;
 }
 
-static BOOL shim_ProcessIdToSessionId(DWORD dwProcessId, DWORD* pSessionId) {
+static BOOL MSABI shim_ProcessIdToSessionId(DWORD dwProcessId, DWORD* pSessionId) {
     (void)dwProcessId;
     if (pSessionId) *pSessionId = 0;
     return 1;
 }
 
-static void shim_OutputDebugStringW(const wchar_t* lpOutputString) {
+static void MSABI shim_OutputDebugStringW(const wchar_t* lpOutputString) {
     (void)lpOutputString;
 }
 
-static BOOL shim_PeekNamedPipe(HANDLE hNamedPipe, void* lpBuffer, DWORD nBufferSize,
+static BOOL MSABI shim_PeekNamedPipe(HANDLE hNamedPipe, void* lpBuffer, DWORD nBufferSize,
     DWORD* lpBytesRead, DWORD* lpTotalBytesAvail, DWORD* lpBytesLeftThisMessage) {
     (void)hNamedPipe; (void)lpBuffer; (void)nBufferSize;
     if (lpBytesRead) *lpBytesRead = 0;
@@ -491,21 +511,21 @@ static BOOL shim_PeekNamedPipe(HANDLE hNamedPipe, void* lpBuffer, DWORD nBufferS
     return 0;
 }
 
-static BOOL shim_SetConsoleCtrlHandler(void* HandlerRoutine, BOOL Add) {
+static BOOL MSABI shim_SetConsoleCtrlHandler(void* HandlerRoutine, BOOL Add) {
     (void)HandlerRoutine; (void)Add; return 1;
 }
-static BOOL shim_SetConsoleMode(HANDLE hConsoleHandle, DWORD dwMode) {
+static BOOL MSABI shim_SetConsoleMode(HANDLE hConsoleHandle, DWORD dwMode) {
     (void)hConsoleHandle; (void)dwMode; return 1;
 }
-static BOOL shim_GetConsoleMode(HANDLE hConsoleHandle, DWORD* lpMode) {
+static BOOL MSABI shim_GetConsoleMode(HANDLE hConsoleHandle, DWORD* lpMode) {
     (void)hConsoleHandle;
     if (lpMode) *lpMode = 0x1FF;
     return 1;
 }
-static UINT shim_GetConsoleOutputCP() { return 437; }
-static UINT shim_GetOEMCP() { return 437; }
+static UINT MSABI shim_GetConsoleOutputCP() { return 437; }
+static UINT MSABI shim_GetOEMCP() { return 437; }
 
-static BOOL shim_GetCPInfo(UINT CodePage, void* lpCPInfo) {
+static BOOL MSABI shim_GetCPInfo(UINT CodePage, void* lpCPInfo) {
     (void)CodePage;
     memset(lpCPInfo, 0, 28);
     reinterpret_cast<DWORD*>(lpCPInfo)[0] = 1;
@@ -513,9 +533,9 @@ static BOOL shim_GetCPInfo(UINT CodePage, void* lpCPInfo) {
     return 1;
 }
 
-static void* shim_GetCurrentThread() { return reinterpret_cast<void*>(static_cast<intptr_t>(-2)); }
+static void* MSABI shim_GetCurrentThread() { return reinterpret_cast<void*>(static_cast<intptr_t>(-2)); }
 
-static int shim_CompareStringW(void* Locale, DWORD dwCmpFlags, const wchar_t* lpString1, int cchCount1,
+static int MSABI shim_CompareStringW(void* Locale, DWORD dwCmpFlags, const wchar_t* lpString1, int cchCount1,
     const wchar_t* lpString2, int cchCount2) {
     (void)Locale; (void)dwCmpFlags;
     int len1 = cchCount1 > 0 ? cchCount1 : (int)wcslen(lpString1);
@@ -530,7 +550,7 @@ static int shim_CompareStringW(void* Locale, DWORD dwCmpFlags, const wchar_t* lp
     return 2;
 }
 
-static int shim_LCMapStringW(void* Locale, DWORD dwMapFlags, const wchar_t* lpSrcStr, int cchSrc,
+static int MSABI shim_LCMapStringW(void* Locale, DWORD dwMapFlags, const wchar_t* lpSrcStr, int cchSrc,
     wchar_t* lpDestStr, int cchDest) {
     (void)Locale; (void)dwMapFlags;
     if (!lpSrcStr) return 0;
@@ -541,7 +561,7 @@ static int shim_LCMapStringW(void* Locale, DWORD dwMapFlags, const wchar_t* lpSr
     return copyLen;
 }
 
-static BOOL shim_GetStringTypeW(DWORD dwInfoType, const wchar_t* lpSrcStr, int cchSrc, WORD* lpCharType) {
+static BOOL MSABI shim_GetStringTypeW(DWORD dwInfoType, const wchar_t* lpSrcStr, int cchSrc, WORD* lpCharType) {
     (void)dwInfoType;
     int len = cchSrc > 0 ? cchSrc : (int)wcslen(lpSrcStr);
     for (int i = 0; i < len; i++) {
@@ -554,23 +574,23 @@ static BOOL shim_GetStringTypeW(DWORD dwInfoType, const wchar_t* lpSrcStr, int c
     return 1;
 }
 
-static void* shim_FreeEnvironmentStringsW(wchar_t* lpszEnvironmentBlock) {
+static void* MSABI shim_FreeEnvironmentStringsW(wchar_t* lpszEnvironmentBlock) {
     (void)lpszEnvironmentBlock; return reinterpret_cast<void*>(1);
 }
 
-static wchar_t* shim_GetEnvironmentStringsW() {
+static wchar_t* MSABI shim_GetEnvironmentStringsW() {
     static wchar_t env[] = {0};
     return env;
 }
 
-static BOOL shim_CopyFileExW(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName,
+static BOOL MSABI shim_CopyFileExW(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName,
     void* lpProgressRoutine, void* lpData, BOOL* pbCancel, DWORD dwCopyFlags) {
     (void)lpExistingFileName; (void)lpNewFileName; (void)lpProgressRoutine;
     (void)lpData; (void)pbCancel; (void)dwCopyFlags;
     return 0;
 }
 
-static BOOL shim_CreateDirectoryW(const wchar_t* lpPathName, void* lpSecurityAttributes) {
+static BOOL MSABI shim_CreateDirectoryW(const wchar_t* lpPathName, void* lpSecurityAttributes) {
     (void)lpSecurityAttributes;
     char path[1024];
     for (int i = 0; lpPathName[i] && i < 1023; i++) path[i] = (char)(lpPathName[i] & 0xFF);
@@ -578,20 +598,20 @@ static BOOL shim_CreateDirectoryW(const wchar_t* lpPathName, void* lpSecurityAtt
     return mkdir(path, 0755) == 0 ? 1 : 0;
 }
 
-static BOOL shim_RemoveDirectoryA(const char* lpPathName) { return rmdir(lpPathName) == 0 ? 1 : 0; }
-static BOOL shim_RemoveDirectoryW(const wchar_t* lpPathName) {
+static BOOL MSABI shim_RemoveDirectoryA(const char* lpPathName) { return rmdir(lpPathName) == 0 ? 1 : 0; }
+static BOOL MSABI shim_RemoveDirectoryW(const wchar_t* lpPathName) {
     char path[1024];
     for (int i = 0; lpPathName[i] && i < 1023; i++) path[i] = (char)(lpPathName[i] & 0xFF);
     path[1023] = 0;
     return rmdir(path) == 0 ? 1 : 0;
 }
-static BOOL shim_DeleteFileW(const wchar_t* lpFileName) {
+static BOOL MSABI shim_DeleteFileW(const wchar_t* lpFileName) {
     char path[1024];
     for (int i = 0; lpFileName[i] && i < 1023; i++) path[i] = (char)(lpFileName[i] & 0xFF);
     path[1023] = 0;
     return unlink(path) == 0 ? 1 : 0;
 }
-static BOOL shim_MoveFileExW(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName, DWORD dwFlags) {
+static BOOL MSABI shim_MoveFileExW(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName, DWORD dwFlags) {
     (void)dwFlags;
     char src[1024], dst[1024];
     for (int i = 0; lpExistingFileName[i] && i < 1023; i++) src[i] = (char)(lpExistingFileName[i] & 0xFF);
@@ -600,33 +620,33 @@ static BOOL shim_MoveFileExW(const wchar_t* lpExistingFileName, const wchar_t* l
     dst[1023] = 0;
     return rename(src, dst) == 0 ? 1 : 0;
 }
-static BOOL shim_ReplaceFileW(const wchar_t* lpReplacedFileName, const wchar_t* lpReplacementFileName,
+static BOOL MSABI shim_ReplaceFileW(const wchar_t* lpReplacedFileName, const wchar_t* lpReplacementFileName,
     const wchar_t* lpBackupFileName, DWORD dwReplaceFlags, void* lpExclude, void* lpReserved) {
     (void)lpReplacedFileName; (void)lpReplacementFileName; (void)lpBackupFileName;
     (void)dwReplaceFlags; (void)lpExclude; (void)lpReserved;
     return 0;
 }
-static BOOL shim_CreateSymbolicLinkW(const wchar_t* lpSymlinkFileName, const wchar_t* lpTargetFileName, DWORD dwFlags) {
+static BOOL MSABI shim_CreateSymbolicLinkW(const wchar_t* lpSymlinkFileName, const wchar_t* lpTargetFileName, DWORD dwFlags) {
     (void)lpSymlinkFileName; (void)lpTargetFileName; (void)dwFlags;
     return 0;
 }
-static BOOL shim_SetFileAttributesW(const wchar_t* lpFileName, DWORD dwFileAttributes) {
+static BOOL MSABI shim_SetFileAttributesW(const wchar_t* lpFileName, DWORD dwFileAttributes) {
     (void)lpFileName; (void)dwFileAttributes; return 1;
 }
-static BOOL shim_SetCurrentDirectoryW(const wchar_t* lpPathName) {
+static BOOL MSABI shim_SetCurrentDirectoryW(const wchar_t* lpPathName) {
     char path[1024];
     for (int i = 0; lpPathName[i] && i < 1023; i++) path[i] = (char)(lpPathName[i] & 0xFF);
     path[1023] = 0;
     return chdir(path) == 0 ? 1 : 0;
 }
 
-static DWORD shim_GetFullPathNameW(const wchar_t* lpFileName, DWORD nBufferLength, wchar_t* lpBuffer, wchar_t** lpFilePart) {
+static DWORD MSABI shim_GetFullPathNameW(const wchar_t* lpFileName, DWORD nBufferLength, wchar_t* lpBuffer, wchar_t** lpFilePart) {
     (void)lpFileName; (void)lpFilePart;
     if (nBufferLength > 0 && lpBuffer) lpBuffer[0] = 0;
     return 0;
 }
 
-static BOOL shim_CreateProcessW(const wchar_t* lpApplicationName, const wchar_t* lpCommandLine,
+static BOOL MSABI shim_CreateProcessW(const wchar_t* lpApplicationName, const wchar_t* lpCommandLine,
     void* lpProcessAttributes, void* lpThreadAttributes, BOOL bInheritHandles,
     DWORD dwCreationFlags, void* lpEnvironment, const wchar_t* lpCurrentDirectory,
     void* lpStartupInfo, void* lpProcessInformation) {
@@ -637,44 +657,44 @@ static BOOL shim_CreateProcessW(const wchar_t* lpApplicationName, const wchar_t*
     return 0;
 }
 
-static BOOL shim_FindFirstFileExW(const wchar_t* lpFileName, DWORD fInfoLevelId,
+static BOOL MSABI shim_FindFirstFileExW(const wchar_t* lpFileName, DWORD fInfoLevelId,
     void* lpFindFileData, DWORD fSearchOp, void* lpSearchFilter, DWORD dwAdditionalFlags) {
     (void)lpFileName; (void)fInfoLevelId; (void)lpFindFileData;
     (void)fSearchOp; (void)lpSearchFilter; (void)dwAdditionalFlags;
     return 0;
 }
 
-static void* shim_FindFirstFileW(const wchar_t* lpFileName, void* lpFindFileData) {
+static void* MSABI shim_FindFirstFileW(const wchar_t* lpFileName, void* lpFindFileData) {
     (void)lpFileName; (void)lpFindFileData;
     return INVALID_HANDLE_VALUE;
 }
 
-static BOOL shim_FindNextFileW(void* hFindFile, void* lpFindFileData) {
+static BOOL MSABI shim_FindNextFileW(void* hFindFile, void* lpFindFileData) {
     (void)hFindFile; (void)lpFindFileData; return 0;
 }
 
-static BOOL shim_GetFileAttributesExW(const wchar_t* lpFileName, DWORD fInfoLevelId, void* lpFileInformation) {
+static BOOL MSABI shim_GetFileAttributesExW(const wchar_t* lpFileName, DWORD fInfoLevelId, void* lpFileInformation) {
     (void)lpFileName; (void)fInfoLevelId; (void)lpFileInformation; return 0;
 }
 
-static DWORD shim_GetFileAttributesW(const wchar_t* lpFileName) {
+static DWORD MSABI shim_GetFileAttributesW(const wchar_t* lpFileName) {
     (void)lpFileName; return 0xFFFFFFFF;
 }
 
-static BOOL shim_GetFileInformationByHandle(HANDLE hFile, void* lpFileInformation) {
+static BOOL MSABI shim_GetFileInformationByHandle(HANDLE hFile, void* lpFileInformation) {
     (void)hFile; (void)lpFileInformation; return 0;
 }
 
-static BOOL shim_GetFileTime(HANDLE hFile, void* lpCreationTime, void* lpLastAccessTime, void* lpLastWriteTime) {
+static BOOL MSABI shim_GetFileTime(HANDLE hFile, void* lpCreationTime, void* lpLastAccessTime, void* lpLastWriteTime) {
     (void)hFile; (void)lpCreationTime; (void)lpLastAccessTime; (void)lpLastWriteTime; return 0;
 }
-static BOOL shim_SetFileTime(HANDLE hFile, const void* lpCreationTime, const void* lpLastAccessTime, const void* lpLastWriteTime) {
+static BOOL MSABI shim_SetFileTime(HANDLE hFile, const void* lpCreationTime, const void* lpLastAccessTime, const void* lpLastWriteTime) {
     (void)hFile; (void)lpCreationTime; (void)lpLastAccessTime; (void)lpLastWriteTime; return 1;
 }
 
-static DWORD shim_GetFileType(HANDLE hFile) { (void)hFile; return 0x0001; }
+static DWORD MSABI shim_GetFileType(HANDLE hFile) { (void)hFile; return 0x0001; }
 
-static BOOL shim_GetDiskFreeSpaceA(const char* lpRootPathName, DWORD* lpSectorsPerCluster,
+static BOOL MSABI shim_GetDiskFreeSpaceA(const char* lpRootPathName, DWORD* lpSectorsPerCluster,
     DWORD* lpBytesPerSector, DWORD* lpNumberOfFreeClusters, DWORD* lpTotalNumberOfClusters) {
     (void)lpRootPathName;
     if (lpSectorsPerCluster) *lpSectorsPerCluster = 8;
@@ -684,7 +704,7 @@ static BOOL shim_GetDiskFreeSpaceA(const char* lpRootPathName, DWORD* lpSectorsP
     return 1;
 }
 
-static BOOL shim_GetDiskFreeSpaceExW(const wchar_t* lpDirectoryName, uint64_t* lpFreeBytesAvailable,
+static BOOL MSABI shim_GetDiskFreeSpaceExW(const wchar_t* lpDirectoryName, uint64_t* lpFreeBytesAvailable,
     uint64_t* lpTotalNumberOfBytes, uint64_t* lpTotalNumberOfFreeBytes) {
     (void)lpDirectoryName;
     if (lpFreeBytesAvailable) *lpFreeBytesAvailable = 8ULL * 1024 * 1024 * 1024 * 1024;
@@ -693,55 +713,55 @@ static BOOL shim_GetDiskFreeSpaceExW(const wchar_t* lpDirectoryName, uint64_t* l
     return 1;
 }
 
-static UINT shim_GetDriveTypeW(const wchar_t* lpRootPathName) {
+static UINT MSABI shim_GetDriveTypeW(const wchar_t* lpRootPathName) {
     (void)lpRootPathName; return 3;
 }
 
-static BOOL shim_FlushFileBuffers(HANDLE hFile) { (void)hFile; return 1; }
-static BOOL shim_SetEndOfFile(HANDLE hFile) { (void)hFile; return 1; }
-static BOOL shim_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags) {
+static BOOL MSABI shim_FlushFileBuffers(HANDLE hFile) { (void)hFile; return 1; }
+static BOOL MSABI shim_SetEndOfFile(HANDLE hFile) { (void)hFile; return 1; }
+static BOOL MSABI shim_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags) {
     (void)hObject; (void)dwMask; (void)dwFlags; return 1;
 }
-static DWORD shim_SetErrorMode(DWORD uMode) { (void)uMode; return 0; }
+static DWORD MSABI shim_SetErrorMode(DWORD uMode) { (void)uMode; return 0; }
 
-static void* shim_FindResourceA(HMODULE hModule, const char* lpName, const char* lpType) {
+static void* MSABI shim_FindResourceA(HMODULE hModule, const char* lpName, const char* lpType) {
     (void)hModule; (void)lpName; (void)lpType; return nullptr;
 }
-static void* shim_LoadResource(HMODULE hModule, void* hResInfo) {
+static void* MSABI shim_LoadResource(HMODULE hModule, void* hResInfo) {
     (void)hModule; (void)hResInfo; return nullptr;
 }
-static void* shim_LockResource(void* hResData) { (void)hResData; return nullptr; }
-static DWORD shim_SizeofResource(HMODULE hModule, void* hResInfo) {
+static void* MSABI shim_LockResource(void* hResData) { (void)hResData; return nullptr; }
+static DWORD MSABI shim_SizeofResource(HMODULE hModule, void* hResInfo) {
     (void)hModule; (void)hResInfo; return 0;
 }
 
-static int shim_MulDiv(int nNumber, int nNumerator, int nDenominator) {
+static int MSABI shim_MulDiv(int nNumber, int nNumerator, int nDenominator) {
     if (nDenominator == 0) return -1;
     return (int)((int64_t)nNumber * nNumerator / nDenominator);
 }
 
-static BOOL shim_ReadConsoleA(HANDLE hConsoleInput, void* lpBuffer, DWORD nNumberOfCharsToRead,
+static BOOL MSABI shim_ReadConsoleA(HANDLE hConsoleInput, void* lpBuffer, DWORD nNumberOfCharsToRead,
     DWORD* lpNumberOfCharsRead, void* pInputControl) {
     (void)hConsoleInput; (void)lpBuffer; (void)nNumberOfCharsToRead; (void)pInputControl;
     if (lpNumberOfCharsRead) *lpNumberOfCharsRead = 0;
     return 0;
 }
 
-static BOOL shim_ReadConsoleW(HANDLE hConsoleInput, void* lpBuffer, DWORD nNumberOfCharsToRead,
+static BOOL MSABI shim_ReadConsoleW(HANDLE hConsoleInput, void* lpBuffer, DWORD nNumberOfCharsToRead,
     DWORD* lpNumberOfCharsRead, void* pInputControl) {
     (void)hConsoleInput; (void)lpBuffer; (void)nNumberOfCharsToRead; (void)pInputControl;
     if (lpNumberOfCharsRead) *lpNumberOfCharsRead = 0;
     return 0;
 }
 
-static BOOL shim_WriteConsoleW(HANDLE hConsoleOutput, const void* lpBuffer, DWORD nNumberOfCharsToWrite,
+static BOOL MSABI shim_WriteConsoleW(HANDLE hConsoleOutput, const void* lpBuffer, DWORD nNumberOfCharsToWrite,
     DWORD* lpNumberOfCharsWritten, void* lpReserved) {
     (void)hConsoleOutput; (void)lpReserved;
     if (lpNumberOfCharsWritten) *lpNumberOfCharsWritten = nNumberOfCharsToWrite;
     return 1;
 }
 
-static BOOL shim_GetProductInfo(DWORD dwOSMajorVersion, DWORD dwOSMinorVersion,
+static BOOL MSABI shim_GetProductInfo(DWORD dwOSMajorVersion, DWORD dwOSMinorVersion,
     DWORD dwSpMajorVersion, DWORD dwSpMinorVersion, DWORD* pdwReturnedProductType) {
     (void)dwOSMajorVersion; (void)dwOSMinorVersion;
     (void)dwSpMajorVersion; (void)dwSpMinorVersion;
@@ -749,36 +769,120 @@ static BOOL shim_GetProductInfo(DWORD dwOSMajorVersion, DWORD dwOSMinorVersion,
     return 1;
 }
 
-static void shim_RtlCaptureContext(void* ContextRecord) { (void)ContextRecord; }
-static void* shim_RtlCaptureStackBackTrace(DWORD FramesToSkip, DWORD FramesToCapture,
+struct XMM_SAVE_AREA32 {
+    uint8_t FloatRegisters[128];
+    uint8_t XmmRegisters[256];
+    uint8_t Reserved[96];
+};
+
+struct WIN64_CONTEXT {
+    uint64_t P1Home, P2Home, P3Home, P4Home;
+    uint64_t P5Home, P6Home;
+    uint32_t ContextFlags;
+    uint32_t MxCsr;
+    uint16_t SegCs, SegDs, SegEs, SegFs, SegGs, SegSs;
+    uint32_t EFlags;
+    uint64_t Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
+    uint64_t Rax, Rcx, Rdx, Rbx, Rsp, Rbp, Rsi, Rdi;
+    uint64_t R8, R9, R10, R11, R12, R13, R14, R15;
+    uint64_t Rip;
+    union {
+        XMM_SAVE_AREA32 FltSave;
+        struct {
+            uint8_t Header[16];
+            uint8_t Legacy[32];
+            uint8_t Xmm0[16], Xmm1[16], Xmm2[16], Xmm3[16];
+            uint8_t Xmm4[16], Xmm5[16], Xmm6[16], Xmm7[16];
+            uint8_t Xmm8[16], Xmm9[16], Xmm10[16], Xmm11[16];
+            uint8_t Xmm12[16], Xmm13[16], Xmm14[16], Xmm15[16];
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+    uint8_t VectorRegister[26][16];
+    uint64_t VectorControl;
+    uint64_t DebugControl;
+    uint64_t LastBranchToRip;
+    uint64_t LastBranchFromRip;
+    uint64_t LastExceptionToRip;
+    uint64_t LastExceptionFromRip;
+};
+
+static void MSABI shim_RtlCaptureContext(void* ContextRecord) {
+    auto* ctx = reinterpret_cast<WIN64_CONTEXT*>(ContextRecord);
+    if (ctx) {
+        memset(ctx, 0, sizeof(WIN64_CONTEXT));
+        ctx->ContextFlags = 0x100000;
+        ctx->Rip = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+        uint64_t rbp_val = 0;
+#if defined(__x86_64__)
+        __asm__ volatile ("movq %%rbp, %0" : "=r"(rbp_val));
+#endif
+        ctx->Rsp = rbp_val + 16;
+    }
+    MS_INFO("TRACE: RtlCaptureContext(%p) -> Rip=0x%llX, Rsp=0x%llX",
+        ContextRecord, (unsigned long long)(ctx ? ctx->Rip : 0), (unsigned long long)(ctx ? ctx->Rsp : 0));
+}
+static void* MSABI shim_RtlCaptureStackBackTrace(DWORD FramesToSkip, DWORD FramesToCapture,
     void** BackTrace, DWORD* BackTraceHash) {
     (void)FramesToSkip; (void)FramesToCapture; (void)BackTrace;
     if (BackTraceHash) *BackTraceHash = 0;
     return nullptr;
 }
-static void* shim_RtlLookupFunctionEntry(uint64_t ControlPoint, uint64_t* ImageBase, void* HistoryTable) {
-    (void)ControlPoint; (void)ImageBase; (void)HistoryTable;
-    return nullptr;
+static uint32_t s_fakeRuntimeFunc[3] = {0, 0, 0};
+static uint8_t s_fakeUnwindInfo[8] = {1, 0, 0, 0, 0, 0, 0, 0};
+
+static void* MSABI shim_RtlLookupFunctionEntry(uint64_t ControlPoint, uint64_t* ImageBase, void* HistoryTable) {
+    MS_INFO("TRACE: RtlLookupFunctionEntry(0x%llX)", (unsigned long long)ControlPoint);
+    (void)ControlPoint; (void)HistoryTable;
+    if (ImageBase) *ImageBase = 0;
+    void* result = PELoader::instance()->lookupFunctionEntry(ControlPoint, ImageBase);
+    if (!result) {
+        MS_INFO("TRACE: RtlLookupFunctionEntry -> returning fake entry");
+        s_fakeRuntimeFunc[0] = 0;
+        s_fakeRuntimeFunc[1] = 0x1000;
+        auto* base = reinterpret_cast<uint8_t*>(*ImageBase);
+        if (!base) base = reinterpret_cast<uint8_t*>(PELoader::instance()->getMainModule()->base);
+        s_fakeRuntimeFunc[2] = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(s_fakeUnwindInfo) - reinterpret_cast<uintptr_t>(base));
+        result = s_fakeRuntimeFunc;
+    }
+    return result;
 }
-static void* shim_RtlPcToFileHeader(uint64_t PcValue, uint64_t* ImageBase) {
+static void* MSABI shim_RtlPcToFileHeader(uint64_t PcValue, uint64_t* ImageBase) {
+    MS_INFO("TRACE: RtlPcToFileHeader(0x%llX)", PcValue);
     (void)PcValue;
     if (ImageBase) *ImageBase = 0;
     return nullptr;
 }
-static void shim_RtlUnwind(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue) {
-    (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue;
+static void MSABI shim_RtlUnwind(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue) {
+    MS_INFO("TRACE: RtlUnwind(%p, %p, %p, %p)", TargetFrame, TargetIp, ExceptionRecord, ReturnValue);
 }
-static void shim_RtlUnwindEx(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord) {
-    (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue; (void)ContextRecord;
+static void MSABI shim_RtlUnwindEx(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord) {
+    MS_INFO("TRACE: RtlUnwindEx(%p, %p, %p, %p, %p)", TargetFrame, TargetIp, ExceptionRecord, ReturnValue, ContextRecord);
 }
-static void shim_RtlVirtualUnwind(DWORD HandlerType, uint64_t ImageBase, uint64_t ControlPc,
+static void MSABI shim_RtlVirtualUnwind(DWORD HandlerType, uint64_t ImageBase, uint64_t ControlPc,
     void* FunctionEntry, void* ContextRecord, void** HandlerData, uint64_t* EstablisherFrame, void* ContextPointers) {
-    (void)HandlerType; (void)ImageBase; (void)ControlPc; (void)FunctionEntry;
-    (void)ContextRecord; (void)HandlerData; (void)EstablisherFrame; (void)ContextPointers;
+    (void)HandlerType; (void)ControlPc; (void)ContextPointers;
+    (void)FunctionEntry;
+
+    auto* ctx = reinterpret_cast<WIN64_CONTEXT*>(ContextRecord);
+
+    uint64_t frame = ctx ? ctx->Rsp : 0;
+    if (EstablisherFrame) *EstablisherFrame = frame;
+    if (HandlerData) *HandlerData = nullptr;
+
+    if (ctx) {
+        ctx->Rip = 0;
+        ctx->Rsp = 0;
+    }
+
+    MS_INFO("TRACE: RtlVirtualUnwind -> Establisher=0x%llX", (unsigned long long)frame);
 }
 
-static void* shim_EncodePointer(void* Ptr) { return Ptr; }
-static void* shim_DecodePointer(void* Ptr) { return Ptr; }
+static void* MSABI shim_EncodePointer(void* Ptr) { return Ptr; }
+static void* MSABI shim_DecodePointer(void* Ptr) { return Ptr; }
+
+static BOOL MSABI stub_GetFileSizeEx(void* hFile, int64_t* size) { (void)hFile; if(size) *size = 0; return 1; }
+static DWORD MSABI stub_SetFilePointer(void* hFile, LONG lDistanceToMove, LONG* lpDistanceToMoveHigh, DWORD dwMoveMethod) { (void)hFile; (void)lDistanceToMove; (void)lpDistanceToMoveHigh; (void)dwMoveMethod; return 0; }
+static BOOL MSABI stub_SetFilePointerEx(void* hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, DWORD dwMoveMethod) { (void)hFile; (void)liDistanceToMove; (void)lpNewFilePointer; (void)dwMoveMethod; return 1; }
 
 void addMissingKernel32(ShimLibrary& lib) {
     auto fn = [](void* ptr) -> ExportedFunction {
@@ -937,9 +1041,9 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["EncodePointer"] = fn((void*)shim_EncodePointer);
     lib.functions["DecodePointer"] = fn((void*)shim_DecodePointer);
     lib.functions["SetStdHandle"] = fn((void*)shim_SetStdHandle);
-    lib.functions["GetFileSizeEx"] = fn((void*)static_cast<BOOL(*)(HANDLE, int64_t*)>([](HANDLE, int64_t* s) -> BOOL { if(s) *s = 0; return 1; }));
-    lib.functions["SetFilePointer"] = fn((void*)static_cast<DWORD(*)(HANDLE, LONG, LONG*, DWORD)>([](HANDLE, LONG, LONG*, DWORD) -> DWORD { return 0; }));
-    lib.functions["SetFilePointerEx"] = fn((void*)static_cast<BOOL(*)(HANDLE, int64_t, int64_t*, DWORD)>([](HANDLE, int64_t, int64_t*, DWORD) -> BOOL { return 1; }));
+    lib.functions["GetFileSizeEx"] = fn((void*)stub_GetFileSizeEx);
+    lib.functions["SetFilePointer"] = fn((void*)stub_SetFilePointer);
+    lib.functions["SetFilePointerEx"] = fn((void*)stub_SetFilePointerEx);
 }
 
 }
