@@ -257,6 +257,11 @@ ShimLibrary createUser32Shim() {
     lib.functions["GetProcessWindowStation"] = fn((void*)stub_GetProcessWindowStation);
     lib.functions["GetUserObjectInformationW"] = fn((void*)stub_GetUserObjectInformationW);
     lib.functions["wsprintfA"] = fn((void*)shim_wsprintfA);
+    lib.functions["PostQuitMessage"] = fn((void*)+[](int nExitCode) -> void {
+        auto& wm = WindowManager::instance();
+        wm.postMessage(nullptr, WM_QUIT, (uintptr_t)nExitCode, 0);
+    });
+    lib.functions["RegisterClassW"] = fn((void*)shim_RegisterClassExW);
 
     return lib;
 }

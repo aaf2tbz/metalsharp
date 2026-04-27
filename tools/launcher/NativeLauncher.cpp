@@ -19,8 +19,26 @@
 #include <unistd.h>
 #include <signal.h>
 #include <ucontext.h>
+#include <sys/mman.h>
+#include <pthread.h>
 
 static metalsharp::LoadedModule* g_mainModule = nullptr;
+
+static int g_argc = 1;
+static char* g_argv_data[2] = {const_cast<char*>("test.exe"), nullptr};
+static char** g_argv = g_argv_data;
+static char* g_cmdline = const_cast<char*>("test.exe");
+static int g_commode = 0;
+static int g_fmode = 0;
+static char** g_environ_data = nullptr;
+
+static void MSABI stub_noop_void() {}
+static int MSABI stub_noop_int() { return 0; }
+static void* MSABI stub_noop_ptr() { return nullptr; }
+
+#define STUB_V ((void*)(void(*)())stub_noop_void)
+#define STUB_I ((void*)(int(*)())stub_noop_int)
+#define STUB_P ((void*)(void*(*)())stub_noop_ptr)
 
 static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
 #if defined(__x86_64__)
@@ -298,7 +316,7 @@ int main(int argc, char* argv[]) {
     vcruntime.functions["strlen"] = fn((void*)msabi_strlen);
     vcruntime.functions["strcmp"] = fn((void*)msabi_strcmp);
     vcruntime.functions["strstr"] = fn((void*)msabi_strstr);
-    vcruntime.functions["_purecall"] = fn((void*)nullptr);
+    vcruntime.functions["_purecall"] = fn(STUB_I);
     loader.registerShim("vcruntime140.dll", std::move(vcruntime));
 
     ShimLibrary ucrt;
@@ -307,29 +325,40 @@ int main(int argc, char* argv[]) {
     ucrt.functions["free"] = fn((void*)msabi_free);
     ucrt.functions["realloc"] = fn((void*)msabi_realloc);
     ucrt.functions["calloc"] = fn((void*)msabi_calloc);
-    ucrt.functions["_initterm"] = fn((void*)nullptr);
-    ucrt.functions["_initterm_e"] = fn((void*)nullptr);
-    ucrt.functions["_initialize_onexit_table"] = fn((void*)nullptr);
-    ucrt.functions["_register_onexit_function"] = fn((void*)nullptr);
-    ucrt.functions["_execute_onexit_table"] = fn((void*)nullptr);
-    ucrt.functions["_crt_atexit"] = fn((void*)nullptr);
-    ucrt.functions["_crt_at_quick_exit"] = fn((void*)nullptr);
-    ucrt.functions["_c_exit"] = fn((void*)nullptr);
+    ucrt.functions["_initterm"] = fn(STUB_V);
+    ucrt.functions["_initterm_e"] = fn(STUB_V);
+    ucrt.functions["_initialize_onexit_table"] = fn(STUB_I);
+    ucrt.functions["_register_onexit_function"] = fn(STUB_P);
+    ucrt.functions["_execute_onexit_table"] = fn(STUB_I);
+    ucrt.functions["_crt_atexit"] = fn(STUB_I);
+    ucrt.functions["_crt_at_quick_exit"] = fn(STUB_I);
+    ucrt.functions["_c_exit"] = fn(STUB_V);
     ucrt.functions["exit"] = fn((void*)msabi_exit);
     ucrt.functions["_exit"] = fn((void*)msabi__Exit);
     ucrt.functions["abort"] = fn((void*)msabi_abort);
-    ucrt.functions["_configure_narrow_argv"] = fn((void*)nullptr);
-    ucrt.functions["_initialize_narrow_environment"] = fn((void*)nullptr);
-    ucrt.functions["get_initial_narrow_environment"] = fn((void*)nullptr);
-    ucrt.functions["_setusermatherr"] = fn((void*)nullptr);
+    ucrt.functions["_configure_narrow_argv"] = fn(STUB_I);
+    ucrt.functions["_initialize_narrow_environment"] = fn(STUB_I);
+    ucrt.functions["get_initial_narrow_environment"] = fn(STUB_P);
+    ucrt.functions["_setusermatherr"] = fn(STUB_I);
+    ucrt.functions["__p___argc"] = fn((void*)+[]() -> void* { return &g_argc; });
+    ucrt.functions["__p___argv"] = fn((void*)+[]() -> void* { return &g_argv; });
+    ucrt.functions["__p__acmdln"] = fn((void*)+[]() -> void* { return &g_cmdline; });
+    ucrt.functions["_cexit"] = fn(STUB_V);
+    ucrt.functions["_set_app_type"] = fn(STUB_V);
+    ucrt.functions["_set_invalid_parameter_handler"] = fn(STUB_P);
+    ucrt.functions["signal"] = fn(STUB_P);
     loader.registerShim("api-ms-win-crt-runtime-l1-1-0.dll", std::move(ucrt));
 
     ShimLibrary crtStdio;
     crtStdio.name = "api-ms-win-crt-stdio-l1-1-0.dll";
-    crtStdio.functions["__acrt_iob_func"] = fn((void*)nullptr);
-    crtStdio.functions["__stdio_common_vsprintf"] = fn((void*)nullptr);
-    crtStdio.functions["__stdio_common_vfprintf"] = fn((void*)nullptr);
-    crtStdio.functions["__stdio_common_vsscanf"] = fn((void*)nullptr);
+    crtStdio.functions["__acrt_iob_func"] = fn(STUB_P);
+    crtStdio.functions["__stdio_common_vsprintf"] = fn(STUB_I);
+    crtStdio.functions["__stdio_common_vfprintf"] = fn(STUB_I);
+    crtStdio.functions["__stdio_common_vsscanf"] = fn(STUB_I);
+    crtStdio.functions["__p__commode"] = fn((void*)+[]() -> void* { return &g_commode; });
+    crtStdio.functions["__p__fmode"] = fn((void*)+[]() -> void* { return &g_fmode; });
+    crtStdio.functions["fflush"] = fn((void*)+[](void*) -> int { return 0; });
+    crtStdio.functions["setvbuf"] = fn((void*)+[](void*, char*, int, unsigned) -> int { return 0; });
     loader.registerShim("api-ms-win-crt-stdio-l1-1-0.dll", std::move(crtStdio));
 
     ShimLibrary crtString;
@@ -342,6 +371,7 @@ int main(int argc, char* argv[]) {
     crtString.functions["strncpy"] = fn((void*)msabi_strncpy);
     crtString.functions["strchr"] = fn((void*)msabi_strchr);
     crtString.functions["strstr"] = fn((void*)msabi_strstr);
+    crtString.functions["strncmp"] = fn((void*)msabi_strncmp);
     crtString.functions["isalpha"] = fn((void*)msabi_isalpha);
     crtString.functions["isdigit"] = fn((void*)msabi_isdigit);
     crtString.functions["isspace"] = fn((void*)msabi_isspace);
@@ -356,9 +386,10 @@ int main(int argc, char* argv[]) {
     crtHeap.functions["free"] = fn((void*)msabi_free);
     crtHeap.functions["realloc"] = fn((void*)msabi_realloc);
     crtHeap.functions["calloc"] = fn((void*)msabi_calloc);
-    crtHeap.functions["_recalloc"] = fn((void*)nullptr);
-    crtHeap.functions["_aligned_malloc"] = fn((void*)nullptr);
-    crtHeap.functions["_aligned_free"] = fn((void*)nullptr);
+    crtHeap.functions["_recalloc"] = fn(STUB_P);
+    crtHeap.functions["_aligned_malloc"] = fn(STUB_P);
+    crtHeap.functions["_aligned_free"] = fn(STUB_V);
+    crtHeap.functions["_set_new_mode"] = fn(STUB_I);
     loader.registerShim("api-ms-win-crt-heap-l1-1-0.dll", std::move(crtHeap));
 
     ShimLibrary crtMath;
@@ -380,8 +411,9 @@ int main(int argc, char* argv[]) {
     crtMath.functions["ldexp"] = fn((void*)msabi_ldexp);
     crtMath.functions["frexp"] = fn((void*)msabi_frexp);
     crtMath.functions["abs"] = fn((void*)msabi_abs);
-    crtMath.functions["_fdclass"] = fn((void*)nullptr);
-    crtMath.functions["_dsign"] = fn((void*)nullptr);
+    crtMath.functions["_fdclass"] = fn(STUB_I);
+    crtMath.functions["_dsign"] = fn(STUB_I);
+    crtMath.functions["__setusermatherr"] = fn(STUB_I);
     loader.registerShim("api-ms-win-crt-math-l1-1-0.dll", std::move(crtMath));
 
     ShimLibrary crtConvert;
@@ -391,13 +423,14 @@ int main(int argc, char* argv[]) {
     crtConvert.functions["strtol"] = fn((void*)msabi_strtol);
     crtConvert.functions["strtod"] = fn((void*)msabi_strtod);
     crtConvert.functions["strtoul"] = fn((void*)msabi_strtoul);
-    crtConvert.functions["itoa"] = fn((void*)nullptr);
+    crtConvert.functions["itoa"] = fn(STUB_P);
     loader.registerShim("api-ms-win-crt-convert-l1-1-0.dll", std::move(crtConvert));
 
     ShimLibrary crtLocale;
     crtLocale.name = "api-ms-win-crt-locale-l1-1-0.dll";
     crtLocale.functions["setlocale"] = fn((void*)msabi_setlocale);
-    crtLocale.functions["localeconv"] = fn((void*)nullptr);
+    crtLocale.functions["localeconv"] = fn(STUB_P);
+    crtLocale.functions["_configthreadlocale"] = fn(STUB_I);
     loader.registerShim("api-ms-win-crt-locale-l1-1-0.dll", std::move(crtLocale));
 
     ShimLibrary crtTime;
@@ -417,6 +450,22 @@ int main(int argc, char* argv[]) {
     crtFileIo.functions["ftell"] = fn((void*)msabi_ftell);
     crtFileIo.functions["fgets"] = fn((void*)msabi_fgets);
     loader.registerShim("api-ms-win-crt-filesystem-l1-1-0.dll", std::move(crtFileIo));
+
+    ShimLibrary crtPrivate;
+    crtPrivate.name = "api-ms-win-crt-private-l1-1-0.dll";
+    crtPrivate.functions["memcpy"] = fn((void*)msabi_memcpy);
+    crtPrivate.functions["memset"] = fn((void*)msabi_memset);
+    crtPrivate.functions["memmove"] = fn((void*)msabi_memmove);
+    crtPrivate.functions["memcmp"] = fn((void*)msabi_memcmp);
+    crtPrivate.functions["strlen"] = fn((void*)msabi_strlen);
+    crtPrivate.functions["strcmp"] = fn((void*)msabi_strcmp);
+    loader.registerShim("api-ms-win-crt-private-l1-1-0.dll", std::move(crtPrivate));
+
+    ShimLibrary crtEnv;
+    crtEnv.name = "api-ms-win-crt-environment-l1-1-0.dll";
+    crtEnv.functions["__p__environ"] = fn((void*)+[]() -> void* { return &g_environ_data; });
+    crtEnv.functions["getenv"] = fn((void*)+[](const char* name) -> char* { return getenv(name); });
+    loader.registerShim("api-ms-win-crt-environment-l1-1-0.dll", std::move(crtEnv));
 
     printf("Loading %s...\n", argv[1]);
 
@@ -451,6 +500,7 @@ int main(int argc, char* argv[]) {
     sigaction(SIGBUS, &sa, nullptr);
     g_mainModule = main;
 
+    uint8_t* fakeTeb = nullptr;
     if (main->isPE) {
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(main->base);
         auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
@@ -462,6 +512,35 @@ int main(int argc, char* argv[]) {
         if (fileHdr->Characteristics & IMAGE_FILE_DLL) {
             isDll = true;
         }
+
+        fakeTeb = (uint8_t*)mmap(nullptr, 0x10000, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        memset(fakeTeb, 0, 0x10000);
+
+        fakeTeb[0x30] = 0;
+        uint64_t tebAddr = (uint64_t)fakeTeb;
+        memcpy(&fakeTeb[0x30], &tebAddr, 8);
+        uint64_t stackTop = (uint64_t)mmap(nullptr, 0x100000, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        uint64_t stackBase = stackTop + 0x100000;
+        memcpy(&fakeTeb[0x08], &stackTop, 8);
+        memcpy(&fakeTeb[0x10], &stackBase, 8);
+        uint64_t pebAddr = (uint64_t)(fakeTeb + 0x2000);
+        memcpy(&fakeTeb[0x60], &pebAddr, 8);
+
+        fakeTeb[0x2000 + 0x02] = 1;
+        fakeTeb[0x2000 + 0x04] = 1;
+
+        uint64_t tlsIndexAddr = (uint64_t)(fakeTeb + 0x1480);
+        uint64_t tlsValueAddr = (uint64_t)fakeTeb;
+        memcpy(&fakeTeb[0x1480], &tlsIndexAddr, 8);
+        memcpy(&fakeTeb[0x1488], &tlsValueAddr, 8);
+
+        __asm__ volatile (
+            "mov %0, %%rax\n"
+            "mov %%rax, %%gs:0x30\n"
+            : : "r"(tebAddr) : "rax", "memory"
+        );
 
         if (isDll) {
             using DllMainProc = int (*)(void* hinstDLL, unsigned long fdwReason, void* lpReserved);

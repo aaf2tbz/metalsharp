@@ -1424,6 +1424,9 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["ExpandEnvironmentStringsA"] = fn((void*)stub_zero_dword);
     lib.functions["ExpandEnvironmentStringsW"] = fn((void*)shim_ExpandEnvironmentStringsW);
     lib.functions["GetStartupInfoW"] = fn((void*)shim_GetStartupInfoW);
+    lib.functions["GetStartupInfoA"] = fn((void*)shim_GetStartupInfoW);
+    lib.functions["IsDBCSLeadByte"] = fn((void*)+[](UINT) -> int { return 0; });
+    lib.functions["__C_specific_handler"] = fn((void*)+[]() -> void* { return nullptr; });
     lib.functions["FreeLibrary"] = fn((void*)shim_FreeLibrary);
     lib.functions["LoadLibraryExA"] = fn((void*)shim_LoadLibraryExA);
     lib.functions["LoadLibraryExW"] = fn((void*)shim_LoadLibraryExW);
