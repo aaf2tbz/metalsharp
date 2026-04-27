@@ -136,12 +136,13 @@ cmake --build build
 - [x] Game launcher CLI
 - [x] Game compatibility testing
 
-### Phase 5 — Performance (next)
-- [ ] Shader caching (DXIL→MSL compilation is expensive)
-- [ ] Command buffer batching
-- [ ] Memory allocation pooling
-- [ ] MetalFX upscaling integration
-- [ ] Frame pacing
+### Phase 5 — Performance (complete)
+- [x] Shader caching (DXBC→MSL compilation cache, persisted to disk)
+- [x] Pipeline state cache (descriptor hash, LRU eviction)
+- [x] Command buffer batching
+- [x] Memory allocation pooling (MTLBuffer recycling)
+- [x] MetalFX upscaling integration
+- [x] Frame pacing
 
 ## Key References
 

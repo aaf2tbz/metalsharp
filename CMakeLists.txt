@@ -36,6 +36,14 @@ add_library(metalsharp_core STATIC
     src/metal/Framebuffer.mm
     src/runtime/Logger.cpp
     src/runtime/PEHook.cpp
+    src/perf/ShaderCache.cpp
+    src/perf/ShaderCache.mm
+    src/perf/PipelineCache.cpp
+    src/perf/BufferPool.mm
+    src/perf/FramePacer.cpp
+    src/perf/GPUProfiler.cpp
+    src/perf/CommandBatcher.cpp
+    src/perf/MetalFXUpscaler.cpp
 )
 target_include_directories(metalsharp_core PUBLIC include)
 target_link_libraries(metalsharp_core PUBLIC

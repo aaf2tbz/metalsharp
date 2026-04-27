@@ -59,6 +59,11 @@ add_executable(test_input
 target_link_libraries(test_input PRIVATE metalsharp_input metalsharp_core)
 target_compile_options(test_input PRIVATE -fobjc-arc)
 
+add_executable(test_phase5
+    test_phase5.cpp
+)
+target_link_libraries(test_phase5 PRIVATE metalsharp_core)
+
 add_test(NAME metal_device COMMAND test_metal_device)
 add_test(NAME format_translation COMMAND test_format_translation)
 add_test(NAME d3d11_device COMMAND test_d3d11_device)
@@ -70,3 +75,4 @@ add_test(NAME d3d12 COMMAND test_d3d12)
 add_test(NAME runtime COMMAND test_runtime)
 add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
+add_test(NAME phase5 COMMAND test_phase5)
