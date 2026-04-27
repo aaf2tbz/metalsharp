@@ -11,6 +11,7 @@ find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
 find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(GAMECONTROLLER_FRAMEWORK GameController REQUIRED)
 find_library(METALFX_FRAMEWORK MetalFX)
 
@@ -141,12 +142,14 @@ add_library(metalsharp_loader STATIC
     src/win32/kernel32/Kernel32Extra.cpp
     src/win32/kernel32/VirtualFileSystem.cpp
     src/win32/kernel32/Registry.cpp
+    src/win32/kernel32/NetworkContext.cpp
+    src/win32/kernel32/SecureTransport.mm
     src/win32/user32/User32Shim.cpp
     src/win32/user32/WindowManager.mm
     src/win32/extra/ExtraShims.cpp
 )
 target_include_directories(metalsharp_loader PUBLIC include)
-target_link_libraries(metalsharp_loader PRIVATE metalsharp_core)
+target_link_libraries(metalsharp_loader PRIVATE metalsharp_core ${SECURITY_FRAMEWORK})
 target_compile_options(metalsharp_loader PRIVATE -fobjc-arc)
 
 add_executable(metalsharp_native
