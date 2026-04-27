@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>MetalSharp</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="drag-bar"></div>
+    <nav class="sidebar">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 32 32" fill="none">
+          <path d="M16 2L28 9V23L16 30L4 23V9L16 2Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          <path d="M16 8L22 12V20L16 24L10 20V12L16 8Z" fill="currentColor" opacity="0.3"/>
+          <circle cx="16" cy="16" r="3" fill="currentColor"/>
+        </svg>
+        <span class="logo-text">MetalSharp</span>
+      </div>
+      <div class="nav-items">
+        <button class="nav-item active" data-view="library">Library</button>
+        <button class="nav-item" data-view="store">Store</button>
+        <button class="nav-item" data-view="settings">Settings</button>
+      </div>
+      <div class="sidebar-footer">
+        <div class="status-dot" id="backend-status"></div>
+        <span class="status-text" id="backend-status-text">Connecting...</span>
+      </div>
+    </nav>
+    <main class="content" id="main-content">
+      <div class="view" id="view-library"></div>
+      <div class="view hidden" id="view-store"></div>
+      <div class="view hidden" id="view-settings"></div>
+    </main>
+  </div>
+  <script src="index.js"></script>
+</body>
+</html>

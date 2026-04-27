@@ -22,3 +22,6 @@ compile_commands.json
 .clangd/
 dist/
 node_modules/
+
+# Rust build artifacts
+app/src-rust/target/

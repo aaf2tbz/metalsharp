@@ -612,12 +612,24 @@ public:
     STDMETHOD(ExecuteCommandList)(THIS_ ID3D11CommandList* pCommandList, INT RestoreContextState) PURE;
 };
 
-typedef struct {
+typedef struct DXGI_SWAP_CHAIN_DESC {
+    struct {
+        DXGI_FORMAT Format;
+        UINT ScanlineOrdering;
+        UINT Scaling;
+        UINT Width;
+        UINT Height;
+        UINT RefreshRateNumerator;
+        UINT RefreshRateDenominator;
+    } BufferDesc;
+    DXGI_SAMPLE_DESC SampleDesc;
+    DXGI_FORMAT BufferFormat;
+    UINT BufferUsage;
     UINT BufferCount;
-    UINT Width;
-    UINT Height;
-    DXGI_FORMAT Format;
-    UINT Windowed;
+    HWND OutputWindow;
+    INT Windowed;
+    UINT SwapEffect;
+    UINT Flags;
 } DXGI_SWAP_CHAIN_DESC;
 
 class MIDL_INTERFACE("2e8f6e0c-3e86-4a63-9ea5-7b52d95e08c1")
