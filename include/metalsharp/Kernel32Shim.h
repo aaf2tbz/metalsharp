@@ -8,6 +8,8 @@
 namespace metalsharp {
 namespace win32 {
 
+void setExePath(const char* path);
+
 class Kernel32Shim {
 public:
     static ShimLibrary create();
