@@ -553,11 +553,16 @@ int main(int argc, char* argv[]) {
         memcpy(&fakeTeb[0x1480], &tlsIndexAddr, 8);
         memcpy(&fakeTeb[0x1488], &tlsValueAddr, 8);
 
+#if defined(__x86_64__)
         __asm__ volatile (
             "mov %0, %%rax\n"
             "mov %%rax, %%gs:0x30\n"
             : : "r"(tebAddr) : "rax", "memory"
         );
+#else
+        fprintf(stderr, "PE execution requires x86_64 (Rosetta 2)\n");
+        return 1;
+#endif
 
         if (isDll) {
             using DllMainProc = int (*)(void* hinstDLL, unsigned long fdwReason, void* lpReserved);
