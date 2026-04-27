@@ -139,6 +139,38 @@ struct IMAGE_EXPORT_DIRECTORY {
     uint32_t AddressOfNameOrdinals;
 };
 
+struct IMAGE_RESOURCE_DIRECTORY {
+    uint32_t Characteristics;
+    uint32_t TimeDateStamp;
+    uint16_t MajorVersion;
+    uint16_t MinorVersion;
+    uint16_t NumberOfNamedEntries;
+    uint16_t NumberOfIdEntries;
+};
+
+struct IMAGE_RESOURCE_DIRECTORY_ENTRY {
+    uint32_t Name;
+    uint32_t OffsetToData;
+};
+
+struct IMAGE_RESOURCE_DATA_ENTRY {
+    uint32_t OffsetToData;
+    uint32_t Size;
+    uint32_t CodePage;
+    uint32_t Reserved;
+};
+
+struct IMAGE_DELAY_IMPORT_DESCRIPTOR {
+    uint32_t grfAttrs;
+    uint32_t rvaDLLName;
+    uint32_t rvaHmod;
+    uint32_t rvaIAT;
+    uint32_t rvaINT;
+    uint32_t rvaBoundIAT;
+    uint32_t rvaUnloadIAT;
+    uint32_t dwTimeStamp;
+};
+
 #pragma pack(pop)
 
 constexpr uint16_t IMAGE_DOS_SIGNATURE     = 0x5A4D;
@@ -169,5 +201,11 @@ constexpr int DIRECTORY_BASERELOC = 5;
 constexpr int DIRECTORY_DEBUG     = 6;
 constexpr int DIRECTORY_TLS       = 9;
 constexpr int DIRECTORY_LOAD_CONFIG = 10;
+constexpr int DIRECTORY_DELAY_IMPORT = 13;
+
+constexpr uint32_t DLL_PROCESS_ATTACH = 1;
+constexpr uint32_t DLL_THREAD_ATTACH = 2;
+constexpr uint32_t DLL_THREAD_DETACH = 3;
+constexpr uint32_t DLL_PROCESS_DETACH = 0;
 
 }

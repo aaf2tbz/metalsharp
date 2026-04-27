@@ -62,11 +62,15 @@ private:
     bool mapSections(LoadedModule& module, const uint8_t* rawData, size_t rawSize);
     bool processRelocations(LoadedModule& module);
     bool resolveImports(LoadedModule& module);
+    bool resolveDelayImports(LoadedModule& module);
+    void processTLS(LoadedModule& module, uint32_t reason);
+    void applySectionProtections(LoadedModule& module);
     bool loadDependency(const std::string& dllName, LoadedModule& outModule);
     bool initCFG(LoadedModule& module);
 
     void* resolveImport(const std::string& dllName, const std::string& funcName, uint16_t ordinal);
     void* getExportAddress(LoadedModule& module, const std::string& funcName, uint16_t ordinal = 0xFFFF);
+    void* resolveForwardedExport(const char* forwardString);
 
     uint64_t alignUp(uint64_t value, uint64_t alignment) {
         return (value + alignment - 1) & ~(alignment - 1);

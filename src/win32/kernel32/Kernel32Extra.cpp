@@ -5,6 +5,8 @@
 #include <metalsharp/Registry.h>
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/SyncContext.h>
+#include <metalsharp/PEHeader.h>
+#include <mutex>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -60,6 +62,10 @@ static void MSABI shim_ExitProcess(UINT uExitCode) {
     exit(uExitCode);
 }
 
+static void* s_unhandledExceptionFilter = nullptr;
+static std::vector<std::pair<void*, bool>> s_vehHandlers;
+static std::mutex s_vehMutex;
+
 static void MSABI shim_RaiseException(DWORD dwExceptionCode, DWORD dwExceptionFlags,
     DWORD nNumberOfArguments, void* lpArguments) {
     (void)dwExceptionFlags; (void)nNumberOfArguments; (void)lpArguments;
@@ -68,29 +74,70 @@ static void MSABI shim_RaiseException(DWORD dwExceptionCode, DWORD dwExceptionFl
 }
 
 static void* MSABI shim_SetUnhandledExceptionFilter(void* lpTopLevelExceptionFilter) {
-    (void)lpTopLevelExceptionFilter;
-    return nullptr;
+    void* old = s_unhandledExceptionFilter;
+    s_unhandledExceptionFilter = lpTopLevelExceptionFilter;
+    return old;
 }
 
 static void* MSABI shim_UnhandledExceptionFilter(void* exceptionInfo) {
-    MS_INFO("PELoader: UnhandledExceptionFilter(%p) - ignoring", exceptionInfo);
-    if (exceptionInfo) {
-        auto* ep = reinterpret_cast<uint64_t*>(exceptionInfo);
-        uint64_t exceptionRecord = ep[0];
-        if (exceptionRecord) {
-            uint32_t exceptionCode = *reinterpret_cast<uint32_t*>(exceptionRecord);
-            uint64_t exceptionAddress = *reinterpret_cast<uint64_t*>(exceptionRecord + 16);
-            MS_INFO("PELoader: ExceptionCode=0x%08X ExceptionAddress=0x%llX",
-                exceptionCode, (unsigned long long)exceptionAddress);
-            auto* mainMod = PELoader::instance()->getMainModule();
-            if (mainMod && mainMod->base) {
-                uint64_t rva = exceptionAddress - reinterpret_cast<uint64_t>(mainMod->base);
-                MS_INFO("PELoader: Crash RVA=0x%llX", (unsigned long long)rva);
+    MS_INFO("PELoader: UnhandledExceptionFilter(%p)", exceptionInfo);
+
+    {
+        std::lock_guard<std::mutex> lock(s_vehMutex);
+        for (auto& [handler, isFirst] : s_vehHandlers) {
+            if (handler && exceptionInfo) {
+                typedef int32_t (*VEHHandler)(void*);
+                auto veh = reinterpret_cast<VEHHandler>(handler);
+                int32_t result = veh(exceptionInfo);
+                if (result == -1) {
+                    MS_INFO("PELoader: VEH handler %p handled exception", handler);
+                    return nullptr;
+                }
             }
         }
     }
-    MS_INFO("PELoader: UnhandledExceptionFilter returning (not aborting)");
+
+    if (s_unhandledExceptionFilter) {
+        typedef void* (*FilterFunc)(void*);
+        auto filter = reinterpret_cast<FilterFunc>(s_unhandledExceptionFilter);
+        return filter(exceptionInfo);
+    }
+
+    MS_INFO("PELoader: UnhandledExceptionFilter returning (no handler)");
     return nullptr;
+}
+
+static void* MSABI shim_AddVectoredExceptionHandler(uint32_t First, void* Handler) {
+    MS_INFO("TRACE: AddVectoredExceptionHandler(%u, %p)", First, Handler);
+    std::lock_guard<std::mutex> lock(s_vehMutex);
+    if (First) {
+        s_vehHandlers.insert(s_vehHandlers.begin(), {Handler, true});
+    } else {
+        s_vehHandlers.push_back({Handler, false});
+    }
+    return Handler;
+}
+
+static uint32_t MSABI shim_RemoveVectoredExceptionHandler(void* Handler) {
+    MS_INFO("TRACE: RemoveVectoredExceptionHandler(%p)", Handler);
+    std::lock_guard<std::mutex> lock(s_vehMutex);
+    for (auto it = s_vehHandlers.begin(); it != s_vehHandlers.end(); ++it) {
+        if (it->first == Handler) {
+            s_vehHandlers.erase(it);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void* MSABI shim_AddVectoredContinueHandler(uint32_t First, void* Handler) {
+    (void)First;
+    return Handler;
+}
+
+static uint32_t MSABI shim_RemoveVectoredContinueHandler(void* Handler) {
+    (void)Handler;
+    return 0;
 }
 
 static void MSABI shim_DebugBreak() {
@@ -1017,15 +1064,67 @@ static BOOL MSABI shim_SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD 
 }
 static DWORD MSABI shim_SetErrorMode(DWORD uMode) { (void)uMode; return 0; }
 
+static void* findResourceEntry(uint8_t* base, IMAGE_RESOURCE_DIRECTORY* dir, uint32_t id) {
+    auto* entries = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY_ENTRY*>(dir + 1);
+    uint16_t count = dir->NumberOfNamedEntries + dir->NumberOfIdEntries;
+
+    for (uint16_t i = 0; i < count; i++) {
+        if (entries[i].Name == id) {
+            if (entries[i].OffsetToData & 0x80000000) {
+                uint32_t dirRVA = entries[i].OffsetToData & 0x7FFFFFFF;
+                return base + dirRVA;
+            }
+            return base + entries[i].OffsetToData;
+        }
+    }
+    return nullptr;
+}
+
 static void* MSABI shim_FindResourceA(HMODULE hModule, const char* lpName, const char* lpType) {
-    (void)hModule; (void)lpName; (void)lpType; return nullptr;
+    auto* mod = PELoader::instance()->getMainModule();
+    if (!mod || !mod->base) return nullptr;
+
+    uint8_t* base = mod->base;
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+        base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+
+    if (opt->DataDirectory[DIRECTORY_RESOURCE].Size == 0) return nullptr;
+
+    uint32_t rsrcRVA = opt->DataDirectory[DIRECTORY_RESOURCE].VirtualAddress;
+    auto* rsrcDir = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY*>(base + rsrcRVA);
+
+    uint32_t typeId = (reinterpret_cast<uintptr_t>(lpType) >= 0x10000) ? 0 : static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lpType));
+
+    auto* typeDir = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY*>(findResourceEntry(base, rsrcDir, typeId));
+    if (!typeDir) return nullptr;
+
+    uint32_t nameId = (reinterpret_cast<uintptr_t>(lpName) >= 0x10000) ? 0 : static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lpName));
+
+    auto* nameDir = reinterpret_cast<IMAGE_RESOURCE_DIRECTORY*>(findResourceEntry(base, typeDir, nameId));
+    if (!nameDir) return nullptr;
+
+    auto* langEntry = reinterpret_cast<IMAGE_RESOURCE_DATA_ENTRY*>(findResourceEntry(base, nameDir, 0));
+    if (!langEntry) return nullptr;
+
+    return langEntry;
 }
 static void* MSABI shim_LoadResource(HMODULE hModule, void* hResInfo) {
-    (void)hModule; (void)hResInfo; return nullptr;
+    (void)hModule;
+    return hResInfo;
 }
-static void* MSABI shim_LockResource(void* hResData) { (void)hResData; return nullptr; }
+static void* MSABI shim_LockResource(void* hResData) {
+    if (!hResData) return nullptr;
+    auto* dataEntry = static_cast<IMAGE_RESOURCE_DATA_ENTRY*>(hResData);
+    auto* mod = PELoader::instance()->getMainModule();
+    if (!mod || !mod->base) return nullptr;
+    return mod->base + dataEntry->OffsetToData;
+}
 static DWORD MSABI shim_SizeofResource(HMODULE hModule, void* hResInfo) {
-    (void)hModule; (void)hResInfo; return 0;
+    (void)hModule;
+    if (!hResInfo) return 0;
+    auto* dataEntry = static_cast<IMAGE_RESOURCE_DATA_ENTRY*>(hResInfo);
+    return dataEntry->Size;
 }
 
 static int MSABI shim_MulDiv(int nNumber, int nNumerator, int nDenominator) {
@@ -1312,6 +1411,10 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["RaiseException"] = fn((void*)shim_RaiseException);
     lib.functions["SetUnhandledExceptionFilter"] = fn((void*)shim_SetUnhandledExceptionFilter);
     lib.functions["UnhandledExceptionFilter"] = fn((void*)shim_UnhandledExceptionFilter);
+    lib.functions["AddVectoredExceptionHandler"] = fn((void*)shim_AddVectoredExceptionHandler);
+    lib.functions["RemoveVectoredExceptionHandler"] = fn((void*)shim_RemoveVectoredExceptionHandler);
+    lib.functions["AddVectoredContinueHandler"] = fn((void*)shim_AddVectoredContinueHandler);
+    lib.functions["RemoveVectoredContinueHandler"] = fn((void*)shim_RemoveVectoredContinueHandler);
     lib.functions["DebugBreak"] = fn((void*)shim_DebugBreak);
     lib.functions["GetCommandLineA"] = fn((void*)shim_GetCommandLineA);
     lib.functions["GetCommandLineW"] = fn((void*)shim_GetCommandLineW);
