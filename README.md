@@ -22,7 +22,7 @@ Fewer hops means less overhead, lower latency, and fewer bugs from translation m
 
 ## Status
 
-**Phase 1 + 2 + 3 + 4 complete.** Full D3D11 + D3D12 API coverage, DXBC shader translation, Wine integration, audio/input bridges, and game launcher.
+**Phases 1–5 complete.** Full D3D11 + D3D12 API coverage, DXBC shader translation, Wine integration, audio/input bridges, game launcher, and performance subsystems.
 
 | What | Status |
 |------|--------|
@@ -55,7 +55,15 @@ Fewer hops means less overhead, lower latency, and fewer bugs from translation m
 | Config system (TOML-like, per-game profiles) | Done |
 | SteamCMD integration (Windows depot download) | Done |
 | Game launcher CLI | Done |
-| **11/11 tests passing (161 checks)** | Passing |
+| Shader cache (FNV-1a hash, disk persistence, Metal precompilation) | Done |
+| Pipeline state cache (descriptor hash, LRU eviction) | Done |
+| Command buffer batching | Done |
+| Buffer pool (MTLBuffer recycling) | Done |
+| MetalFX spatial upscaling + temporal interpolation | Done |
+| Frame pacing (target FPS, VSync wait) | Done |
+| GPU profiler (pass-level timing, draw/compute counting) | Done |
+| Game-specific compatibility profiles | Done |
+| **12/12 tests passing (212 checks)** | Passing |
 
 See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
@@ -102,7 +110,7 @@ cd build && ctest --output-on-failure
 
 | Target | Output | Purpose |
 |--------|--------|---------|
-| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, Logger, PEHook |
+| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, Logger, PEHook, perf subsystems |
 | `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim |
 | `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim |
 | `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain, adapter, output enumeration |
@@ -144,15 +152,17 @@ src/
 │   └── Framebuffer.mm  MTLRenderPassDescriptor wrapper
 ├── runtime/            Logger, PEHook (DLL injection + env setup)
 ├── audio/              XAudio2 → CoreAudio bridge
-└── input/              XInput → GameController bridge
+├── input/              XInput → GameController bridge
+└── perf/               ShaderCache, PipelineCache, BufferPool, FramePacer,
+                        GPUProfiler, CommandBatcher, MetalFXUpscaler
 include/
 ├── metalsharp/         Internal headers (PipelineState, DXBCParser, DXBCtoMSL, Logger, etc.)
 ├── d3d/                D3D11 + D3D12 COM interface definitions
 └── dxgi/               DXGI COM interface definitions
 tools/launcher/         CLI launcher (WinePrefix, Config, SteamIntegration)
-tests/                  11 tests: metal_device, format_translation, d3d11_device,
+tests/                  12 tests: metal_device, format_translation, d3d11_device,
                         triangle, phase2, dxbc, deferred_context, d3d12,
-                        runtime, audio, input
+                        runtime, audio, input, phase5
 ```
 
 ## How it works
