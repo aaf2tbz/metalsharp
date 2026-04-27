@@ -93,6 +93,14 @@ Windows Game (.exe)
 
 ## Build
 
+## Quick Install
+
+```bash
+git clone https://github.com/aaf2tbz/metalsharp.git && cd metalsharp && ./install.sh
+```
+
+The install script checks for and installs all dependencies (Homebrew, CMake, Wine, SteamCMD), builds MetalSharp, runs tests, and sets up the Wine prefix. Everything is interactive with confirmation prompts.
+
 Requires macOS with Xcode command line tools and CMake 3.24+.
 
 ```bash
