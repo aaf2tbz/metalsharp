@@ -189,7 +189,9 @@ pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::
     let install_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     std::fs::create_dir_all(&install_dir)?;
 
-    let output = Command::new(&steamcmd)
+    let progress_file = home.join(".metalsharp").join("download_progress.json");
+
+    let mut child = Command::new(&steamcmd)
         .args([
             "+@sSteamCmdForcePlatformType",
             "windows",
@@ -202,7 +204,33 @@ pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::
             "validate",
             "+quit",
         ])
-        .output()?;
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+
+    if let Some(stdout) = child.stdout.take() {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stdout);
+        let progress = progress_file.clone();
+        let aid = appid;
+
+        std::thread::spawn(move || {
+            for line in reader.lines().flatten() {
+                let pct = parse_progress_line(&line);
+                if pct.is_some() {
+                    let json = serde_json::json!({
+                        "appId": aid,
+                        "progress": pct,
+                        "line": line,
+                    });
+                    let _ = std::fs::write(&progress, json.to_string());
+                }
+            }
+        });
+    }
+
+    let output = child.wait_with_output()?;
+    let _ = std::fs::remove_file(&progress_file);
 
     if !output.status.success() {
         return Err(format!(
@@ -213,6 +241,17 @@ pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::
     }
 
     Ok(scan_downloaded_dir(&install_dir, appid))
+}
+
+fn parse_progress_line(line: &str) -> Option<f64> {
+    let lower = line.to_lowercase();
+    if !lower.contains("progress:") {
+        return None;
+    }
+    let start = lower.find("progress:")? + "progress:".len();
+    let rest = &lower[start..].trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+    rest[..end].parse().ok()
 }
 
 fn scan_downloaded_dir(dir: &PathBuf, _appid: u32) -> Vec<serde_json::Value> {

@@ -63,6 +63,41 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "steamAppId required"})),
             }
         }
+        (Method::Get, "/steam/download-progress") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let path = home.join(".metalsharp").join("download_progress.json");
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+                        Ok(v) => resp(200, v),
+                        Err(_) => resp(200, json!({"progress": null})),
+                    },
+                    Err(_) => resp(200, json!({"progress": null})),
+                }
+            } else {
+                resp(200, json!({"progress": null}))
+            }
+        }
+        (Method::Get, "/logs") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let log_path = home.join(".metalsharp").join("logs");
+            let mut entries = Vec::new();
+            if let Ok(mut rd) = std::fs::read_dir(&log_path) {
+                while let Some(Ok(e)) = rd.next() {
+                    let p = e.path();
+                    if p.extension().map(|e| e == "log").unwrap_or(false) {
+                        if let Ok(content) = std::fs::read_to_string(&p) {
+                            let lines: Vec<&str> = content.lines().take(500).collect();
+                            entries.push(json!({
+                                "name": p.file_name().unwrap_or_default().to_string_lossy(),
+                                "lines": lines,
+                            }));
+                        }
+                    }
+                }
+            }
+            resp(200, json!({"ok": true, "logs": entries}))
+        }
         (Method::Get, "/config") => resp(200, launch::get_config()),
         (Method::Post, "/config") => {
             let body = read_body(req);
