@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#define MSABI __attribute__((ms_abi))
+
 namespace metalsharp {
 namespace win32 {
 

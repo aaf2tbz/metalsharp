@@ -1,32 +1,34 @@
 #include <metalsharp/NtdllShim.h>
+#include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>
 #include <cstring>
 #include <cstdlib>
+#include <sched.h>
 
 namespace metalsharp {
 namespace win32 {
 
-static int64_t shim_RtlGetVersion(void* lpVersionInformation) {
+static int64_t MSABI shim_RtlGetVersion(void* lpVersionInformation) {
     (void)lpVersionInformation;
     return 0;
 }
 
-static void* shim_RtlAllocateHeap(void* HeapHandle, uint32_t Flags, size_t Size) {
+static void* MSABI shim_RtlAllocateHeap(void* HeapHandle, uint32_t Flags, size_t Size) {
     if (Flags & 0x8) return calloc(1, Size);
     return malloc(Size);
 }
 
-static int shim_RtlFreeHeap(void* HeapHandle, uint32_t Flags, void* BaseAddress) {
+static int MSABI shim_RtlFreeHeap(void* HeapHandle, uint32_t Flags, void* BaseAddress) {
     free(BaseAddress);
     return 1;
 }
 
-static size_t shim_RtlSizeHeap(void* HeapHandle, uint32_t Flags, void* BaseAddress) {
+static size_t MSABI shim_RtlSizeHeap(void* HeapHandle, uint32_t Flags, void* BaseAddress) {
     (void)HeapHandle; (void)Flags; (void)BaseAddress;
     return 0;
 }
 
-static uint32_t shim_RtlComputeCrc32(uint32_t PartialCrc, const void* Buffer, size_t Length) {
+static uint32_t MSABI shim_RtlComputeCrc32(uint32_t PartialCrc, const void* Buffer, size_t Length) {
     const uint8_t* data = static_cast<const uint8_t*>(Buffer);
     uint32_t crc = PartialCrc ^ 0xFFFFFFFF;
     for (size_t i = 0; i < Length; i++) {
@@ -38,21 +40,32 @@ static uint32_t shim_RtlComputeCrc32(uint32_t PartialCrc, const void* Buffer, si
     return crc ^ 0xFFFFFFFF;
 }
 
-static void shim_RtlInitializeCriticalSection(void* lpCriticalSection) {
+static void MSABI shim_RtlInitializeCriticalSection(void* lpCriticalSection) {
     auto** mtx = reinterpret_cast<pthread_mutex_t**>(lpCriticalSection);
     *mtx = new pthread_mutex_t();
     pthread_mutex_init(*mtx, nullptr);
 }
 
-static void shim_RtlEnterCriticalSection(void* lpCriticalSection) {
+static void MSABI shim_RtlEnterCriticalSection(void* lpCriticalSection) {
     auto** mtx = reinterpret_cast<pthread_mutex_t**>(lpCriticalSection);
     if (*mtx) pthread_mutex_lock(*mtx);
 }
 
-static void shim_RtlLeaveCriticalSection(void* lpCriticalSection) {
+static void MSABI shim_RtlLeaveCriticalSection(void* lpCriticalSection) {
     auto** mtx = reinterpret_cast<pthread_mutex_t**>(lpCriticalSection);
     if (*mtx) pthread_mutex_unlock(*mtx);
 }
+
+static void MSABI wrap_memset(void* d, int c, size_t n) { memset(d, c, n); }
+static void MSABI wrap_memcpy(void* d, const void* s, size_t n) { memcpy(d, s, n); }
+static void MSABI wrap_memmove(void* d, const void* s, size_t n) { memmove(d, s, n); }
+static int MSABI wrap_memcmp(const void* a, const void* b, size_t n) { return memcmp(a, b, n); }
+
+static int MSABI stub_NtYieldExecution() { sched_yield(); return 0; }
+
+static void MSABI stub_NtTerminateProcess(void*, int code) { exit(code); }
+
+static void MSABI wrap_RtlZeroMemory(void* d, size_t n) { memset(d, 0, n); }
 
 ShimLibrary createNtdllShim() {
     ShimLibrary lib;
@@ -74,11 +87,11 @@ ShimLibrary createNtdllShim() {
     lib.functions["RtlTryEnterCriticalSection"] = fn((void*)nullptr);
     lib.functions["RtlInitializeCriticalSectionAndSpinCount"] = fn((void*)shim_RtlInitializeCriticalSection);
     lib.functions["RtlSetCriticalSectionSpinCount"] = fn((void*)nullptr);
-    lib.functions["RtlZeroMemory"] = fn((void*)memset);
-    lib.functions["RtlFillMemory"] = fn((void*)memset);
-    lib.functions["RtlCopyMemory"] = fn((void*)memcpy);
-    lib.functions["RtlMoveMemory"] = fn((void*)memmove);
-    lib.functions["RtlCompareMemory"] = fn((void*)memcmp);
+    lib.functions["RtlZeroMemory"] = fn((void*)wrap_RtlZeroMemory);
+    lib.functions["RtlFillMemory"] = fn((void*)wrap_memset);
+    lib.functions["RtlCopyMemory"] = fn((void*)wrap_memcpy);
+    lib.functions["RtlMoveMemory"] = fn((void*)wrap_memmove);
+    lib.functions["RtlCompareMemory"] = fn((void*)wrap_memcmp);
     lib.functions["RtlInitUnicodeString"] = fn((void*)nullptr);
     lib.functions["RtlAnsiStringToUnicodeString"] = fn((void*)nullptr);
     lib.functions["RtlFreeUnicodeString"] = fn((void*)nullptr);
@@ -109,14 +122,14 @@ ShimLibrary createNtdllShim() {
     lib.functions["RtlGetLastNtStatus"] = fn((void*)nullptr);
     lib.functions["RtlNtStatusToDosError"] = fn((void*)nullptr);
     lib.functions["NtDeviceIoControlFile"] = fn((void*)nullptr);
-    lib.functions["NtYieldExecution"] = fn((void*)static_cast<int(*)()>([]() -> int { sched_yield(); return 0; }));
+    lib.functions["NtYieldExecution"] = fn((void*)stub_NtYieldExecution);
     lib.functions["RtlDecompressBuffer"] = fn((void*)nullptr);
     lib.functions["RtlDecompressFragment"] = fn((void*)nullptr);
     lib.functions["RtlLookupFunctionEntry"] = fn((void*)nullptr);
     lib.functions["RtlVirtualUnwind"] = fn((void*)nullptr);
     lib.functions["RtlRaiseException"] = fn((void*)nullptr);
     lib.functions["KiUserExceptionDispatcher"] = fn((void*)nullptr);
-    lib.functions["NtTerminateProcess"] = fn((void*)static_cast<void(*)(void*, int)>([](void*, int code) { exit(code); }));
+    lib.functions["NtTerminateProcess"] = fn((void*)stub_NtTerminateProcess);
 
     return lib;
 }

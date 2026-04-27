@@ -7,7 +7,9 @@
 
 namespace metalsharp {
 
-PELoader::PELoader() = default;
+PELoader* PELoader::s_instance = nullptr;
+
+PELoader::PELoader() { s_instance = this; }
 PELoader::~PELoader() {
     if (m_mainModule.base) {
         munmap(m_mainModule.base, m_mainModule.size);
@@ -17,6 +19,7 @@ PELoader::~PELoader() {
             munmap(mod.base, mod.size);
         }
     }
+    s_instance = nullptr;
 }
 
 void PELoader::registerShim(const std::string& dllName, ShimLibrary&& shim) {
@@ -29,10 +32,12 @@ void* PELoader::resolveFunction(const std::string& dllName, const std::string& f
     return resolveImport(dllName, funcName, 0xFFFF);
 }
 
-bool PELoader::load(const std::string& path) {
-    MS_INFO("PELoader: loading %s", path.c_str());
+ bool PELoader::load(const std::string& path) {
+     MS_INFO("PELoader: loading %s", path.c_str());
+ 
+     m_mainModule.name = path;
 
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
+     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         MS_INFO("PELoader: failed to open %s", path.c_str());
         return false;
@@ -180,14 +185,9 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
         const auto& sec = sections[i];
         if (sec.VirtualSize == 0) continue;
 
-        int prot = PROT_READ;
-        if (sec.Characteristics & IMAGE_SCN_MEM_READ)    prot |= PROT_READ;
-        if (sec.Characteristics & IMAGE_SCN_MEM_WRITE)   prot |= PROT_READ | PROT_WRITE;
-        if (sec.Characteristics & IMAGE_SCN_MEM_EXECUTE)  prot = PROT_READ | PROT_EXEC;
-
         uint32_t secSize = alignUp(sec.VirtualSize, 0x1000);
         if (sec.VirtualAddress + secSize <= imageSize) {
-            mprotect(mem + sec.VirtualAddress, secSize, prot);
+            mprotect(mem + sec.VirtualAddress, secSize, PROT_READ | PROT_WRITE | PROT_EXEC);
         }
     }
 
@@ -397,30 +397,82 @@ void* PELoader::getExportAddress(LoadedModule& module, const std::string& funcNa
     return nullptr;
 }
 
-bool PELoader::loadDependency(const std::string& dllName, LoadedModule& outModule) {
-    std::vector<std::string> searchPaths = {
-        m_mainModule.name.empty() ? "." : m_mainModule.name,
+void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) {
+    struct RuntimeFunction {
+        uint32_t BeginAddress;
+        uint32_t EndAddress;
+        uint32_t UnwindData;
     };
 
-    for (const auto& dir : searchPaths) {
+    for (auto& [name, mod] : m_loadedDLLs) {
+        if (!mod.base || !mod.isPE) continue;
+        auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(mod.base);
+        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+            mod.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+        if (opt->DataDirectory[DIRECTORY_EXCEPTION].Size == 0) continue;
+
+        uint64_t modBase = reinterpret_cast<uint64_t>(mod.base);
+        uint64_t modEnd = modBase + mod.size;
+        if (controlPc < modBase || controlPc >= modEnd) continue;
+
+        uint32_t exceptRva = opt->DataDirectory[DIRECTORY_EXCEPTION].VirtualAddress;
+        uint32_t exceptSize = opt->DataDirectory[DIRECTORY_EXCEPTION].Size;
+        auto* funcs = reinterpret_cast<const RuntimeFunction*>(mod.base + exceptRva);
+        size_t count = exceptSize / sizeof(RuntimeFunction);
+
+        uint32_t rva = static_cast<uint32_t>(controlPc - modBase);
+        for (size_t i = 0; i < count; i++) {
+            if (rva >= funcs[i].BeginAddress && rva < funcs[i].EndAddress) {
+                if (outImageBase) *outImageBase = modBase;
+                MS_INFO("PELoader: lookupFunctionEntry(0x%llX) found in %s at RVA 0x%X",
+                    (unsigned long long)controlPc, name.c_str(), rva);
+                return const_cast<RuntimeFunction*>(&funcs[i]);
+            }
+        }
+    }
+
+    if (m_mainModule.base && m_mainModule.isPE) {
+        auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(m_mainModule.base);
+        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+            m_mainModule.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+        if (opt->DataDirectory[DIRECTORY_EXCEPTION].Size > 0) {
+            uint64_t modBase = reinterpret_cast<uint64_t>(m_mainModule.base);
+            uint32_t exceptRva = opt->DataDirectory[DIRECTORY_EXCEPTION].VirtualAddress;
+            uint32_t exceptSize = opt->DataDirectory[DIRECTORY_EXCEPTION].Size;
+            auto* funcs = reinterpret_cast<const RuntimeFunction*>(m_mainModule.base + exceptRva);
+            size_t count = exceptSize / sizeof(RuntimeFunction);
+
+            uint32_t rva = static_cast<uint32_t>(controlPc - modBase);
+            for (size_t i = 0; i < count; i++) {
+                if (rva >= funcs[i].BeginAddress && rva < funcs[i].EndAddress) {
+                    if (outImageBase) *outImageBase = modBase;
+                    MS_INFO("PELoader: lookupFunctionEntry(0x%llX) found in main module at RVA 0x%X",
+                        (unsigned long long)controlPc, rva);
+                    return const_cast<RuntimeFunction*>(&funcs[i]);
+                }
+            }
+        }
+    }
+
+    if (outImageBase) *outImageBase = 0;
+    return nullptr;
+}
+
+bool PELoader::loadDependency(const std::string& dllName, LoadedModule& outModule) {
+    std::vector<std::string> paths = m_searchPaths;
+    if (!m_mainModule.name.empty()) {
+        auto lastSlash = m_mainModule.name.find_last_of("/\\");
+        if (lastSlash != std::string::npos) {
+            paths.push_back(m_mainModule.name.substr(0, lastSlash));
+        }
+    }
+
+    for (const auto& dir : paths) {
         std::string path = dir + "/" + dllName;
         std::ifstream f(path);
         if (f.is_open()) {
-            MS_INFO("PELoader: loading dependency %s from %s", dllName.c_str(), path.c_str());
             f.close();
-
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
-            size_t fileSize = file.tellg();
-            file.seekg(0);
-            std::vector<uint8_t> data(fileSize);
-            file.read(reinterpret_cast<char*>(data.data()), fileSize);
-
-            outModule.name = dllName;
-            if (!parsePE(outModule, data.data(), fileSize)) return false;
-            if (!mapSections(outModule, data.data(), fileSize)) return false;
-            if (!processRelocations(outModule)) return false;
-            if (!resolveImports(outModule)) return false;
-            return true;
+            return loadDLL(path, dllName);
         }
     }
 
@@ -433,6 +485,116 @@ LoadedModule* PELoader::getModule(const std::string& name) {
 
     if (m_loadedDLLs.count(lower)) return &m_loadedDLLs[lower];
     return nullptr;
+}
+
+PELoader* PELoader::instance() { return s_instance; }
+
+void PELoader::addSearchPath(const std::string& path) {
+    m_searchPaths.push_back(path);
+}
+
+HMODULE PELoader::loadLibrary(const std::string& dllName) {
+    std::string lower = dllName;
+    for (auto& c : lower) c = tolower(c);
+
+    auto existing = m_loadedDLLs.find(lower);
+    if (existing != m_loadedDLLs.end()) {
+        return reinterpret_cast<HMODULE>(existing->second.base);
+    }
+
+    std::string lowerWithDll = lower;
+    if (lower.size() < 4 || lower.substr(lower.size()-4) != ".dll") {
+        lowerWithDll = lower + ".dll";
+    }
+
+    for (auto& name : {lower, lowerWithDll}) {
+        auto shimIt = m_shims.find(name);
+        if (shimIt != m_shims.end()) {
+            HMODULE fake = reinterpret_cast<HMODULE>(0x2);
+            m_moduleHandles[fake] = name;
+            return fake;
+        }
+    }
+
+    for (const auto& dir : m_searchPaths) {
+        for (auto& name : {lower, lowerWithDll}) {
+            std::string path = dir + "/" + name;
+            std::ifstream f(path);
+            if (f.is_open()) {
+                f.close();
+                if (loadDLL(path, name)) {
+                    return reinterpret_cast<HMODULE>(m_loadedDLLs[name].base);
+                }
+            }
+        }
+    }
+
+    MS_INFO("PELoader: LoadLibrary(\"%s\") — not found, returning shim handle", dllName.c_str());
+    HMODULE fake = reinterpret_cast<HMODULE>(0x2);
+    m_moduleHandles[fake] = lowerWithDll;
+    return fake;
+}
+
+void* PELoader::getProcAddress(HMODULE hModule, const std::string& funcName) {
+    auto it = m_moduleHandles.find(hModule);
+    if (it != m_moduleHandles.end()) {
+        std::string lower = it->second;
+        auto shimIt = m_shims.find(lower);
+        if (shimIt != m_shims.end()) {
+            auto fit = shimIt->second.functions.find(funcName);
+            if (fit != shimIt->second.functions.end()) {
+                MS_INFO("PELoader: GetProcAddress(%s, %s) -> %p", lower.c_str(), funcName.c_str(), fit->second());
+                return fit->second();
+            }
+            MS_INFO("PELoader: GetProcAddress(%s, %s) -> NOT FOUND in shim", lower.c_str(), funcName.c_str());
+        }
+    }
+
+    for (auto& [name, mod] : m_loadedDLLs) {
+        if (reinterpret_cast<HMODULE>(mod.base) == hModule) {
+            void* addr = getExportAddress(mod, funcName);
+            MS_INFO("PELoader: GetProcAddress(PE:%s, %s) -> %p", name.c_str(), funcName.c_str(), addr);
+            return addr;
+        }
+    }
+
+    MS_INFO("PELoader: GetProcAddress(%p, %s) -> null", hModule, funcName.c_str());
+    return nullptr;
+}
+
+bool PELoader::loadDLL(const std::string& path, const std::string& dllName) {
+    MS_INFO("PELoader: loading DLL %s from %s", dllName.c_str(), path.c_str());
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return false;
+
+    size_t fileSize = file.tellg();
+    file.seekg(0);
+    std::vector<uint8_t> data(fileSize);
+    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize)) return false;
+
+    LoadedModule mod;
+    mod.name = dllName;
+    if (!parsePE(mod, data.data(), fileSize)) return false;
+    if (!mapSections(mod, data.data(), fileSize)) return false;
+    if (!processRelocations(mod)) return false;
+    if (!resolveImports(mod)) return false;
+
+    m_loadedDLLs[dllName] = std::move(mod);
+    auto& stored = m_loadedDLLs[dllName];
+
+    if (stored.entryPoint) {
+        auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(stored.base);
+        auto* fileHdr = reinterpret_cast<const IMAGE_FILE_HEADER*>(stored.base + dos->e_lfanew + 4);
+        if (fileHdr->Characteristics & IMAGE_FILE_DLL) {
+            typedef int (*DllMainProc)(void*, unsigned long, void*);
+            auto dllMain = reinterpret_cast<DllMainProc>(stored.entryPoint);
+            dllMain(reinterpret_cast<void*>(stored.base), 1, nullptr);
+            MS_INFO("PELoader: DllMain(%s) called", dllName.c_str());
+        }
+    }
+
+    return true;
 }
 
 }

@@ -1,5 +1,6 @@
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/Win32Types.h>
+#include <metalsharp/PELoader.h>
 #include <metalsharp/Logger.h>
 #include <cstring>
 #include <cstdlib>
@@ -19,15 +20,16 @@ uintptr_t Kernel32Shim::s_nextHandle = 0x00010000;
 
 static thread_local DWORD t_lastError = 0;
 
-static DWORD shim_GetLastError() {
+static DWORD MSABI shim_GetLastError() {
     return t_lastError;
 }
 
-static void shim_SetLastError(DWORD dwErrCode) {
+static void MSABI shim_SetLastError(DWORD dwErrCode) {
     t_lastError = dwErrCode;
 }
 
-static void* shim_VirtualAlloc(void* lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect) {
+static void* MSABI shim_VirtualAlloc(void* lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect) {
+    MS_INFO("TRACE: VirtualAlloc(%p, %zu, 0x%X, 0x%X)", lpAddress, dwSize, flAllocationType, flProtect);
     int prot = PROT_READ | PROT_WRITE;
     if (flProtect & PAGE_EXECUTE || flProtect & PAGE_EXECUTE_READ || flProtect & PAGE_EXECUTE_READWRITE) {
         prot = PROT_READ | PROT_WRITE | PROT_EXEC;
@@ -44,7 +46,7 @@ static void* shim_VirtualAlloc(void* lpAddress, SIZE_T dwSize, DWORD flAllocatio
     return ptr;
 }
 
-static BOOL shim_VirtualFree(void* lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
+static BOOL MSABI shim_VirtualFree(void* lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
     auto it = Kernel32Shim::s_allocations.find(reinterpret_cast<uintptr_t>(lpAddress));
     if (it == Kernel32Shim::s_allocations.end()) return 0;
 
@@ -57,41 +59,47 @@ static BOOL shim_VirtualFree(void* lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
     return 1;
 }
 
-static void* shim_GetProcessHeap() {
+static void* MSABI shim_GetProcessHeap() {
     return reinterpret_cast<void*>(0x1);
 }
 
-static void* shim_HeapAlloc(void* hHeap, DWORD dwFlags, SIZE_T dwBytes) {
+static void* MSABI shim_HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize) {
+    (void)flOptions; (void)dwInitialSize; (void)dwMaximumSize;
+    MS_INFO("TRACE: HeapCreate(0x%X, %zu, %zu) -> fake heap", flOptions, dwInitialSize, dwMaximumSize);
+    return reinterpret_cast<void*>(0x1);
+}
+
+static void* MSABI shim_HeapAlloc(void* hHeap, DWORD dwFlags, SIZE_T dwBytes) {
     if (dwFlags & 0x8) {
         return calloc(1, dwBytes);
     }
     return malloc(dwBytes);
 }
 
-static BOOL shim_HeapFree(void* hHeap, DWORD dwFlags, void* lpMem) {
+static BOOL MSABI shim_HeapFree(void* hHeap, DWORD dwFlags, void* lpMem) {
     free(lpMem);
     return 1;
 }
 
-static void* shim_LocalAlloc(UINT uFlags, SIZE_T uBytes) {
+static void* MSABI shim_LocalAlloc(UINT uFlags, SIZE_T uBytes) {
     if (uFlags & 0x40) return calloc(1, uBytes);
     return malloc(uBytes);
 }
 
-static void shim_LocalFree(void* hMem) {
+static void MSABI shim_LocalFree(void* hMem) {
     free(hMem);
 }
 
-static void* shim_GlobalAlloc(UINT uFlags, SIZE_T uBytes) {
+static void* MSABI shim_GlobalAlloc(UINT uFlags, SIZE_T uBytes) {
     if (uFlags & 0x40) return calloc(1, uBytes);
     return malloc(uBytes);
 }
 
-static void shim_GlobalFree(void* hMem) {
+static void MSABI shim_GlobalFree(void* hMem) {
     free(hMem);
 }
 
-static HANDLE shim_CreateFileA(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+static HANDLE MSABI shim_CreateFileA(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
     void* lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile) {
     (void)lpFileName; (void)dwDesiredAccess; (void)dwShareMode;
     (void)lpSecurityAttributes; (void)dwCreationDisposition;
@@ -99,31 +107,31 @@ static HANDLE shim_CreateFileA(const char* lpFileName, DWORD dwDesiredAccess, DW
     return INVALID_HANDLE_VALUE;
 }
 
-static BOOL shim_ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead,
+static BOOL MSABI shim_ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead,
     DWORD* lpNumberOfBytesRead, void* lpOverlapped) {
     (void)hFile; (void)lpBuffer; (void)nNumberOfBytesToRead;
     (void)lpNumberOfBytesRead; (void)lpOverlapped;
     return 0;
 }
 
-static BOOL shim_WriteFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite,
+static BOOL MSABI shim_WriteFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite,
     DWORD* lpNumberOfBytesWritten, void* lpOverlapped) {
     (void)hFile; (void)lpBuffer; (void)nNumberOfBytesToWrite;
     (void)lpNumberOfBytesWritten; (void)lpOverlapped;
     return 0;
 }
 
-static BOOL shim_CloseHandle(HANDLE hObject) {
+static BOOL MSABI shim_CloseHandle(HANDLE hObject) {
     (void)hObject;
     return 1;
 }
 
-static DWORD shim_GetFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
+static DWORD MSABI shim_GetFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
     (void)hFile; (void)lpFileSizeHigh;
     return 0;
 }
 
-static DWORD shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {
+static DWORD MSABI shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {
     if (nBufferLength == 0) return 0;
     if (getcwd(lpBuffer, nBufferLength)) {
         return static_cast<DWORD>(strlen(lpBuffer));
@@ -131,11 +139,12 @@ static DWORD shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {
     return 0;
 }
 
-static DWORD shim_SetCurrentDirectoryA(const char* lpPathName) {
+static DWORD MSABI shim_SetCurrentDirectoryA(const char* lpPathName) {
     return chdir(lpPathName) == 0 ? 1 : 0;
 }
 
-static DWORD shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DWORD nSize) {
+static DWORD MSABI shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DWORD nSize) {
+    MS_INFO("TRACE: GetModuleFileNameA(%p, %p, %u)", hModule, lpFilename, nSize);
     (void)hModule;
     if (nSize > 0) {
         const char* exe = "/metalsharp/game.exe";
@@ -148,51 +157,63 @@ static DWORD shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DWORD nS
     return 0;
 }
 
-static HMODULE shim_GetModuleHandleA(const char* lpModuleName) {
-    (void)lpModuleName;
-    return reinterpret_cast<HMODULE>(0x2);
+static HMODULE MSABI shim_GetModuleHandleA(const char* lpModuleName) {
+    MS_INFO("TRACE: GetModuleHandleA(\"%s\")", lpModuleName ? lpModuleName : "(null)");
+    if (!lpModuleName) return reinterpret_cast<HMODULE>(PELoader::instance()->getMainModule()->base);
+    auto* mod = PELoader::instance()->getModule(lpModuleName);
+    if (mod) return reinterpret_cast<HMODULE>(mod->base);
+    return PELoader::instance()->loadLibrary(lpModuleName);
 }
 
-static FARPROC shim_GetProcAddress(HMODULE hModule, const char* lpProcName) {
-    (void)hModule; (void)lpProcName;
+static FARPROC MSABI shim_GetProcAddress(HMODULE hModule, const char* lpProcName) {
+    if (!hModule || !lpProcName) return nullptr;
+    if (reinterpret_cast<uintptr_t>(lpProcName) > 0xFFFF) {
+        void* addr = PELoader::instance()->getProcAddress(hModule, std::string(lpProcName));
+        if (addr) return reinterpret_cast<FARPROC>(addr);
+    }
     return nullptr;
 }
 
-static DWORD shim_GetCurrentProcessId() {
+static DWORD MSABI shim_GetCurrentProcessId() {
+    MS_INFO("TRACE: GetCurrentProcessId()");
     return static_cast<DWORD>(getpid());
 }
 
-static HANDLE shim_GetCurrentProcess() {
+static HANDLE MSABI shim_GetCurrentProcess() {
     return reinterpret_cast<HANDLE>(static_cast<intptr_t>(-1));
 }
 
-static void shim_GetSystemInfo(SYSTEM_INFO* lpSystemInfo) {
+static void MSABI shim_GetSystemInfo(SYSTEM_INFO* lpSystemInfo) {
     memset(lpSystemInfo, 0, sizeof(SYSTEM_INFO));
-    lpSystemInfo->wProcessorArchitecture = 9; // PROCESSOR_ARCHITECTURE_AMD64
+    lpSystemInfo->wProcessorArchitecture = 9;
     lpSystemInfo->dwPageSize = 4096;
     lpSystemInfo->dwNumberOfProcessors = static_cast<DWORD>(sysconf(_SC_NPROCESSORS_ONLN));
     lpSystemInfo->dwAllocationGranularity = 65536;
 }
 
-static void shim_InitializeCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
+static void MSABI shim_InitializeCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
     auto* mtx = new pthread_mutex_t();
     pthread_mutex_init(mtx, nullptr);
     lpCriticalSection->DebugInfo = mtx;
 }
 
-static void shim_EnterCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
-    if (lpCriticalSection->DebugInfo) {
-        pthread_mutex_lock(static_cast<pthread_mutex_t*>(lpCriticalSection->DebugInfo));
+static void MSABI shim_EnterCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
+    MS_INFO("TRACE: EnterCriticalSection(%p)", lpCriticalSection);
+    if (lpCriticalSection && lpCriticalSection->DebugInfo) {
+        auto* mtx = static_cast<pthread_mutex_t*>(lpCriticalSection->DebugInfo);
+        pthread_mutex_lock(mtx);
     }
 }
 
-static void shim_LeaveCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
-    if (lpCriticalSection->DebugInfo) {
-        pthread_mutex_unlock(static_cast<pthread_mutex_t*>(lpCriticalSection->DebugInfo));
+static void MSABI shim_LeaveCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
+    MS_INFO("TRACE: LeaveCriticalSection(%p)", lpCriticalSection);
+    if (lpCriticalSection && lpCriticalSection->DebugInfo) {
+        auto* mtx = static_cast<pthread_mutex_t*>(lpCriticalSection->DebugInfo);
+        pthread_mutex_unlock(mtx);
     }
 }
 
-static void shim_DeleteCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
+static void MSABI shim_DeleteCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
     if (lpCriticalSection->DebugInfo) {
         auto* mtx = static_cast<pthread_mutex_t*>(lpCriticalSection->DebugInfo);
         pthread_mutex_destroy(mtx);
@@ -201,8 +222,9 @@ static void shim_DeleteCriticalSection(CRITICAL_SECTION* lpCriticalSection) {
     }
 }
 
-static HANDLE shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSize,
+static HANDLE MSABI shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSize,
     void* lpStartAddress, void* lpParameter, DWORD dwCreationFlags, DWORD* lpThreadId) {
+    MS_INFO("TRACE: CreateThread(%p, %zu, %p, %p, 0x%X, %p)", lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
     (void)lpThreadAttributes; (void)dwStackSize; (void)dwCreationFlags;
 
     pthread_t thread;
@@ -217,44 +239,49 @@ static HANDLE shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSize,
     return reinterpret_cast<HANDLE>(thread);
 }
 
-static DWORD shim_WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds) {
+static DWORD MSABI shim_WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds) {
+    MS_INFO("TRACE: WaitForSingleObject(%p, %u)", hHandle, dwMilliseconds);
     (void)hHandle; (void)dwMilliseconds;
     return WAIT_OBJECT_0;
 }
 
-static void shim_Sleep(DWORD dwMilliseconds) {
+static void MSABI shim_Sleep(DWORD dwMilliseconds) {
+    MS_INFO("TRACE: Sleep(%u)", dwMilliseconds);
     usleep(dwMilliseconds * 1000);
 }
 
-static DWORD shim_GetTickCount() {
+static DWORD MSABI shim_GetTickCount() {
+    MS_INFO("TRACE: GetTickCount()");
     static auto startTime = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime);
     return static_cast<DWORD>(ms.count());
 }
 
-static BOOL shim_QueryPerformanceCounter(int64_t* lpPerformanceCount) {
+static BOOL MSABI shim_QueryPerformanceCounter(int64_t* lpPerformanceCount) {
+    MS_INFO("TRACE: QueryPerformanceCounter(%p)", lpPerformanceCount);
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     *lpPerformanceCount = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
     return 1;
 }
 
-static BOOL shim_QueryPerformanceFrequency(int64_t* lpFrequency) {
+static BOOL MSABI shim_QueryPerformanceFrequency(int64_t* lpFrequency) {
     *lpFrequency = 1000000000LL;
     return 1;
 }
 
-static void shim_OutputDebugStringA(const char* lpOutputString) {
-    MS_INFO("Game debug: %s", lpOutputString);
+static void MSABI shim_OutputDebugStringA(const char* lpOutputString) {
+    MS_INFO("TRACE: OutputDebugStringA(\"%s\")", lpOutputString ? lpOutputString : "(null)");
 }
 
-static BOOL shim_IsProcessorFeaturePresent(DWORD ProcessorFeature) {
-    (void)ProcessorFeature;
+static BOOL MSABI shim_IsProcessorFeaturePresent(DWORD ProcessorFeature) {
+    MS_INFO("TRACE: IsProcessorFeaturePresent(%u)", ProcessorFeature);
+    if (ProcessorFeature == 23) return 0;
     return 1;
 }
 
-static int shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
+static int MSABI shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
     const char* lpMultiByteStr, int cbMultiByte, wchar_t* lpWideCharStr, int cchWideChar) {
     (void)CodePage; (void)dwFlags;
     if (!lpMultiByteStr) return 0;
@@ -269,7 +296,7 @@ static int shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
     return copyLen;
 }
 
-static int shim_WideCharToMultiByte(UINT CodePage, DWORD dwFlags,
+static int MSABI shim_WideCharToMultiByte(UINT CodePage, DWORD dwFlags,
     const wchar_t* lpWideCharStr, int cchWideChar, char* lpMultiByteStr,
     int cbMultiByte, const char* lpDefaultChar, BOOL* lpUsedDefaultChar) {
     (void)CodePage; (void)dwFlags; (void)lpDefaultChar; (void)lpUsedDefaultChar;
@@ -285,17 +312,76 @@ static int shim_WideCharToMultiByte(UINT CodePage, DWORD dwFlags,
     return copyLen;
 }
 
-static HANDLE shim_GetStdHandle(DWORD nStdHandle) {
+static HANDLE MSABI shim_GetStdHandle(DWORD nStdHandle) {
     (void)nStdHandle;
     return INVALID_HANDLE_VALUE;
 }
 
-static int shim_lstrcmpA(const char* str1, const char* str2) {
+static int MSABI shim_lstrcmpA(const char* str1, const char* str2) {
     return strcmp(str1, str2);
 }
 
-static int shim_lstrcmpiA(const char* str1, const char* str2) {
+static int MSABI shim_lstrcmpiA(const char* str1, const char* str2) {
     return strcasecmp(str1, str2);
+}
+
+static char* MSABI stub_lstrcpyA(char* d, const char* s) {
+    return strcpy(d, s);
+}
+
+static int MSABI stub_lstrlenA(const char* s) {
+    return (int)strlen(s);
+}
+
+static DWORD MSABI stub_GetCurrentThreadId() {
+    return (DWORD)pthread_mach_thread_np(pthread_self());
+}
+
+static DWORD MSABI stub_GetUserDefaultLCID() {
+    return 0x0409;
+}
+
+static WORD MSABI stub_GetUserDefaultLangID() {
+    return 0x0409;
+}
+
+static UINT MSABI stub_GetACP() {
+    return 65001;
+}
+
+static BOOL MSABI stub_IsValidCodePage(UINT) {
+    return 1;
+}
+
+static BOOL MSABI stub_HeapValidate() {
+    return 1;
+}
+
+static HANDLE MSABI stub_FindFirstFileA() {
+    return INVALID_HANDLE_VALUE;
+}
+
+static BOOL MSABI stub_FindNextFileA() {
+    return 0;
+}
+
+static BOOL MSABI stub_FindClose() {
+    return 1;
+}
+
+static DWORD MSABI stub_GetFileAttributesA(const char* p) {
+    return access(p, F_OK) == 0 ? FILE_ATTRIBUTE_NORMAL : 0xFFFFFFFF;
+}
+
+static DWORD MSABI stub_GetTempPathA(DWORD n, char* b) {
+    const char* t = "/tmp/";
+    size_t l = strlen(t);
+    if (n > l) memcpy(b, t, l + 1);
+    return (DWORD)l;
+}
+
+static BOOL MSABI stub_IsDebuggerPresent() {
+    return 0;
 }
 
 ShimLibrary Kernel32Shim::create() {
@@ -317,7 +403,7 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["HeapAlloc"] = fn((void*)shim_HeapAlloc);
     lib.functions["HeapFree"] = fn((void*)shim_HeapFree);
     lib.functions["HeapSize"] = fn((void*)nullptr);
-    lib.functions["HeapCreate"] = fn((void*)nullptr);
+    lib.functions["HeapCreate"] = fn((void*)shim_HeapCreate);
     lib.functions["HeapDestroy"] = fn((void*)nullptr);
     lib.functions["LocalAlloc"] = fn((void*)shim_LocalAlloc);
     lib.functions["LocalFree"] = fn((void*)shim_LocalFree);
@@ -360,8 +446,8 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["GetStdHandle"] = fn((void*)shim_GetStdHandle);
     lib.functions["lstrcmpA"] = fn((void*)shim_lstrcmpA);
     lib.functions["lstrcmpiA"] = fn((void*)shim_lstrcmpiA);
-    lib.functions["lstrcpyA"] = fn((void*)strcpy);
-    lib.functions["lstrlenA"] = fn((void*)strlen);
+    lib.functions["lstrcpyA"] = fn((void*)stub_lstrcpyA);
+    lib.functions["lstrlenA"] = fn((void*)stub_lstrlenA);
     lib.functions["LoadLibraryA"] = fn((void*)shim_GetModuleHandleA);
     lib.functions["LoadLibraryW"] = fn((void*)shim_GetModuleHandleA);
     lib.functions["FreeLibrary"] = fn((void*)nullptr);
@@ -369,7 +455,7 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["GetCommandLineW"] = fn((void*)nullptr);
     lib.functions["GetEnvironmentVariableA"] = fn((void*)nullptr);
     lib.functions["ExpandEnvironmentStringsA"] = fn((void*)nullptr);
-    lib.functions["GetCurrentThreadId"] = fn((void*)(DWORD(*)())[]()->DWORD{ return (DWORD)pthread_mach_thread_np(pthread_self()); });
+    lib.functions["GetCurrentThreadId"] = fn((void*)stub_GetCurrentThreadId);
     lib.functions["TlsAlloc"] = fn((void*)nullptr);
     lib.functions["TlsFree"] = fn((void*)nullptr);
     lib.functions["TlsGetValue"] = fn((void*)nullptr);
@@ -381,12 +467,12 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["GetExitCodeThread"] = fn((void*)nullptr);
     lib.functions["TerminateThread"] = fn((void*)nullptr);
     lib.functions["GetThreadLocale"] = fn((void*)nullptr);
-    lib.functions["GetUserDefaultLCID"] = fn((void*)static_cast<DWORD(*)()>([]() -> DWORD { return 0x0409; }));
-    lib.functions["GetUserDefaultLangID"] = fn((void*)static_cast<WORD(*)()>([]() -> WORD { return 0x0409; }));
-    lib.functions["GetACP"] = fn((void*)static_cast<UINT(*)()>([]() -> UINT { return 65001; }));
-    lib.functions["IsValidCodePage"] = fn((void*)static_cast<BOOL(*)(UINT)>([](UINT) -> BOOL { return 1; }));
+    lib.functions["GetUserDefaultLCID"] = fn((void*)stub_GetUserDefaultLCID);
+    lib.functions["GetUserDefaultLangID"] = fn((void*)stub_GetUserDefaultLangID);
+    lib.functions["GetACP"] = fn((void*)stub_GetACP);
+    lib.functions["IsValidCodePage"] = fn((void*)stub_IsValidCodePage);
     lib.functions["GetCPInfo"] = fn((void*)nullptr);
-    lib.functions["HeapValidate"] = fn((void*)static_cast<BOOL(*)()>([]() -> BOOL { return 1; }));
+    lib.functions["HeapValidate"] = fn((void*)stub_HeapValidate);
     lib.functions["GetProcessAffinityMask"] = fn((void*)nullptr);
     lib.functions["SetThreadAffinityMask"] = fn((void*)nullptr);
     lib.functions["GetLogicalProcessorInformation"] = fn((void*)nullptr);
@@ -395,27 +481,20 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["GetComputerNameW"] = fn((void*)nullptr);
     lib.functions["GetUserNameA"] = fn((void*)nullptr);
     lib.functions["GetUserNameW"] = fn((void*)nullptr);
-    lib.functions["FindFirstFileA"] = fn((void*)static_cast<HANDLE(*)()>([]() -> HANDLE { return INVALID_HANDLE_VALUE; }));
-    lib.functions["FindNextFileA"] = fn((void*)static_cast<BOOL(*)()>([]() -> BOOL { return 0; }));
-    lib.functions["FindClose"] = fn((void*)static_cast<BOOL(*)()>([]() -> BOOL { return 1; }));
-    lib.functions["GetFileAttributesA"] = fn((void*)static_cast<DWORD(*)(const char*)>([](const char* p) -> DWORD {
-        return access(p, F_OK) == 0 ? FILE_ATTRIBUTE_NORMAL : 0xFFFFFFFF;
-    }));
+    lib.functions["FindFirstFileA"] = fn((void*)stub_FindFirstFileA);
+    lib.functions["FindNextFileA"] = fn((void*)stub_FindNextFileA);
+    lib.functions["FindClose"] = fn((void*)stub_FindClose);
+    lib.functions["GetFileAttributesA"] = fn((void*)stub_GetFileAttributesA);
     lib.functions["SetFilePointer"] = fn((void*)nullptr);
     lib.functions["SetFilePointerEx"] = fn((void*)nullptr);
     lib.functions["FlushFileBuffers"] = fn((void*)nullptr);
     lib.functions["GetFileType"] = fn((void*)nullptr);
-    lib.functions["GetTempPathA"] = fn((void*)static_cast<DWORD(*)(DWORD, char*)>([](DWORD n, char* b) -> DWORD {
-        const char* t = "/tmp/";
-        size_t l = strlen(t);
-        if (n > l) memcpy(b, t, l + 1);
-        return (DWORD)l;
-    }));
+    lib.functions["GetTempPathA"] = fn((void*)stub_GetTempPathA);
     lib.functions["GetTempPathW"] = fn((void*)nullptr);
     lib.functions["RaiseException"] = fn((void*)nullptr);
     lib.functions["UnhandledExceptionFilter"] = fn((void*)nullptr);
     lib.functions["SetUnhandledExceptionFilter"] = fn((void*)nullptr);
-    lib.functions["IsDebuggerPresent"] = fn((void*)static_cast<BOOL(*)()>([]() -> BOOL { return 0; }));
+    lib.functions["IsDebuggerPresent"] = fn((void*)stub_IsDebuggerPresent);
     lib.functions["DebugBreak"] = fn((void*)nullptr);
     lib.functions["GetVersionExA"] = fn((void*)nullptr);
     lib.functions["GetVersionExW"] = fn((void*)nullptr);

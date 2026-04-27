@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "freshness": {
+    "symbol_count": 4000,
+    "edge_count": 7435,
+    "file_count": 132
+  },
+  "indexed_at": "1777305290",
+  "symbols": 4000,
+  "edges": 7435,
+  "files": 132,
+  "artifacts": {
+    "fts": "ready",
+    "cruncher": "ready"
+  },
+  "active_search_mode": "GraphWalk",
+  "best_available_mode": "GraphWalk"
+}
