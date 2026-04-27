@@ -8,6 +8,7 @@
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Registry.h>
+#include <metalsharp/WindowManager.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -101,6 +102,7 @@ int main(int argc, char* argv[]) {
     std::string prefix = home ? std::string(home) + "/.metalsharp/prefix" : "/tmp/metalsharp/prefix";
     VirtualFileSystem::instance().setPrefix(prefix);
     Registry::instance().init(prefix);
+    WindowManager::instance().init();
 
     auto kernel32 = win32::Kernel32Shim::create();
     win32::addMissingKernel32(kernel32);

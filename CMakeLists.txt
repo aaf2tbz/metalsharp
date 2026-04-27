@@ -142,6 +142,7 @@ add_library(metalsharp_loader STATIC
     src/win32/kernel32/VirtualFileSystem.cpp
     src/win32/kernel32/Registry.cpp
     src/win32/user32/User32Shim.cpp
+    src/win32/user32/WindowManager.mm
     src/win32/extra/ExtraShims.cpp
 )
 target_include_directories(metalsharp_loader PUBLIC include)
