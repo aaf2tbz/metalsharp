@@ -13,13 +13,13 @@ MetalSharp: Game → D3D → MetalSharp → Metal → GPU              (2 hops)
 
 ## What's New
 
-**Native PE Loader** — MetalSharp now loads and executes Windows x86_64 executables directly on macOS via Rosetta 2, no Wine required. The loader maps PE sections, processes 20K+ relocations, resolves 339 imports across 14 DLLs, handles structured exception handling, and patches Control Flow Guard dispatch tables — all natively.
+**All 16 phases complete.** MetalSharp loads Windows x86_64 executables via native PE loader on Rosetta 2, translates D3D11/D3D12 calls to Metal, manages Win32 APIs through comprehensive shims, and ships with a full Electron + Rust frontend for game library management, Steam integration, and download/launch workflows.
 
-**steam.exe runs.** Windows Steam's CRT initialization completes cleanly through the native PE loader. The process reaches main initialization, allocates TLS/FLS slots, and exits with a clean status code. This is the foundation for running Steam and its games without Wine.
+**Native PE Loader** — Loads Windows x86_64 PE files directly on macOS. Maps sections, processes relocations, resolves imports across 14+ DLLs (339 functions), handles TLS callbacks, delay-load imports, export forwarding, structured exception handling, Control Flow Guard, and resource loading — all natively, no Wine required.
 
-**CFG Initialization** — The loader reads the PE's LoadConfig directory, finds GuardCFCheckFunctionPointer and GuardCFDispatchFunctionPointer entries, and patches them with an allow-all stub (`mov eax, 1; ret`). This resolves the crash that prevented statically-linked VC++ CRT binaries from initializing.
+**D3D → Metal Rendering** — Full D3D11 and D3D12 device/context implementations backed by Metal. DXBC bytecode parsed and translated to MSL. Shader and pipeline caches persisted to disk for fast subsequent launches.
 
-**Crash Diagnostics** — SIGSEGV/SIGBUS handler prints full x86_64 register dump (RIP, RSP, RAX, RBX, RCX, RDX), faulting address, crash RVA within the PE image, and a 16-entry stack trace with PE RVA resolution.
+**Electron App** — Game library grid, Steam download with live progress, Rust HTTP backend, launch mode selector (Native PE / Wine), log viewer, error reporting.
 
 ---
 
@@ -50,66 +50,47 @@ MetalSharp: Game → D3D → MetalSharp → Metal → GPU              (2 hops)
 |---------|--------|
 | PE32+ (AMD64) parsing + section mapping | **Done** |
 | 20K+ base relocations (DIR64) | **Done** |
-| Import resolution across 14 DLLs (339/339) | **Done** |
+| Import resolution across 14+ DLLs (339/339) | **Done** |
 | Dynamic DLL loading (LoadLibrary/GetProcAddress) | **Done** |
 | 51 api-ms-win-* API-set redirects | **Done** |
+| TLS callbacks + delay-load imports | **Done** |
+| Export forwarding + resource loading | **Done** |
 | Structured Exception Handling (SEH chain) | **Done** |
 | Control Flow Guard (CFG) initialization | **Done** |
 | CRT init (security cookies, TLS, constructors) | **Done** |
-| x86_64 + Rosetta 2 (MSABI on all shims) | **Done** |
+| Fake TEB + PEB for Windows CRT (%gs:0x30) | **Done** |
 | Crash handler with register dump + RVA resolution | **Done** |
 
-### Win32 Shims — 339 Functions Registered
+### Win32 Shims — 400+ Functions
 
 | DLL | Count | Key Functions |
 |-----|-------|---------------|
-| KERNEL32 | 202 | Memory (VirtualAlloc, HeapAlloc), Threading (CreateThread, pthreads), Sync (CriticalSection, SRWLock), Time, TLS, Module loading |
-| USER32 | 57 | Window management (stub), Message pump (stub), Input (stub) |
-| GDI32 | 19 | Device contexts, fonts, bitmaps (stubs) |
-| ADVAPI32 | 14 | Registry (stub — returns FILE_NOT_FOUND), Security |
-| WS2_32 | 28 | **Real networking** — socket, connect, send, recv, bind, listen, accept, getaddrinfo |
-| SHELL32 | 4 | Known folders (stubs) |
-| ole32 | 1 | CoTaskMemFree |
-| OLEAUT32 | 1 | SysAllocString |
-| CRYPT32 | 7 | Certificate functions (stubs) |
-| PSAPI | 3 | Process info (stubs) |
-| VERSION | 1 | Version queries (stub) |
-| COMCTL32 | 1 | Common controls (stub) |
-| WS2_32 | 28 | Winsock with real POSIX delegation |
-| WSOCK32 | 1 | Legacy winsock |
+| KERNEL32 | 220+ | Memory, threading (pthreads), sync, file I/O, time, TLS, modules, CreateProcessW |
+| USER32 | 60+ | Window management (NSWindow), message pump, input translation, wsprintfA |
+| GDI32 | 30+ | BitBlt, StretchBlt, DrawTextW, CreateFontIndirectW, bitmaps, brushes |
+| ADVAPI32 | 14+ | Registry (real in-memory store), security |
+| WS2_32 | 28+ | Real networking — socket, connect, send, recv, SSL/TLS |
+| OLE32 | 12 | CoInitialize, CoCreateInstance, CoTaskMemAlloc |
+| OLEAUT32 | 14 | SysAllocString, VariantInit, SafeArray |
+| VERSION | 3+ | GetFileVersionInfoW, VerQueryValueW |
+| ntdll | 15+ | Heap, CRC32, critical sections, RtlCaptureContext |
 | bcrypt | 1 | BCryptGenRandom |
-| ntdll | 15 | Heap, CRC32, critical sections, memory ops |
+| + 51 api-ms-win-* sets | — | CRT runtime, heap, stdio, string, math, locale, time, environment |
 
-### Electron App — Built
+### Electron App
 
 | Feature | Status |
 |---------|--------|
 | Game library grid with Play/Stop | **Done** |
-| Rust HTTP backend (scan, launch, kill, steam status) | **Done** |
-| Steam game download via SteamCMD | **Done** |
-| Settings panel (Steam config, launch defaults) | **Done** |
+| Rust HTTP backend (scan, launch, kill, steam, config) | **Done** |
+| Steam game download with live progress | **Done** |
+| Steam login state detection | **Done** |
+| Launch mode selector (PE Loader / Wine) | **Done** |
+| Log viewer with monospace display | **Done** |
+| Error dialogs for crashes/failures | **Done** |
+| Settings panel with Steam config | **Done** |
 
-### Tests — 12/12 Passing
-
----
-
-## What's In Progress
-
-See [ROADMAP.md](ROADMAP.md) for the full phased plan (phases 8–16).
-
-| Phase | Description | Effort |
-|-------|-------------|--------|
-| **8** | Real File I/O, Registry, Environment Variables | 2-3 days |
-| **9** | Window Management (NSWindow-backed HWND, message pump, input) | 3-4 days |
-| **10** | Networking (async Winsock, SSL, named pipes) | 3-4 days |
-| **11** | Real Threading & Synchronization | 2-3 days |
-| **12** | PE Loader Hardening (TLS callbacks, delay imports, resources) | 3-4 days |
-| **13** | D3D ↔ PE Loader Integration | 2-3 days |
-| **14** | First Game Validation | 2-3 days |
-| **15** | Steam Full Run (login, UI, game library) | 3-4 days |
-| **16** | Download & Launch a Game | 3-4 days |
-
-**Goal:** Launch Steam from the Electron app, login, download a game, play it.
+### Tests — 13/13 Passing
 
 ---
 
@@ -127,6 +108,7 @@ Windows Game (.exe)
    MetalSharp Win32 Shims             MetalSharp DLL Shims
    (kernel32, user32, ws2_32,         (d3d11, d3d12, dxgi,
     advapi32, gdi32, ntdll,            xaudio2_9, xinput1_4)
+    ole32, oleaut32, version,
     + 51 api-ms-win-* sets)
         │                                      │
         └──────────────────┬───────────────────┘
@@ -163,18 +145,28 @@ cmake --build build -j$(sysctl -n hw.ncpu)
 cd build && ctest --output-on-failure
 ```
 
+### Electron App
+
+```bash
+cd app
+npm install
+npm run rust:build          # Build Rust backend
+npm run build               # Build TypeScript + copy HTML
+npm run start               # Launch Electron app
+```
+
 ### Build Targets
 
 | Target | Output | Purpose |
 |--------|--------|---------|
 | `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, perf subsystems |
-| `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim |
-| `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim |
+| `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim (DLL injection mode) |
+| `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim (DLL injection mode) |
 | `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain, adapter, output enumeration |
 | `metalsharp_audio` | `xaudio2_9.dylib` | XAudio2 → CoreAudio bridge |
 | `metalsharp_input` | `xinput1_4.dylib` | XInput → GameController bridge |
-| `metalsharp_loader` | static lib | Native PE loader + Win32 shims |
-| `metalsharp` | executable | Native PE launcher (runs .exe directly, no Wine) |
+| `metalsharp_loader` | static lib | Native PE loader + all Win32 shims |
+| `metalsharp` | executable | Native PE launcher (runs .exe directly) |
 | `metalsharp_launcher` | executable | Wine-based launcher, SteamCMD integration |
 
 ### Launch a Game
@@ -186,11 +178,8 @@ cd build && ctest --output-on-failure
 # Wine-based launcher (DLL injection mode)
 ./build/metalsharp_launcher game.exe
 
-# Steam game download + launch
-./build/metalsharp_launcher --steam 730
-
-# List your Steam library
-./build/metalsharp_launcher --list-games
+# Steam game download + launch (via Electron app)
+cd app && npm run start
 ```
 
 ---
@@ -213,7 +202,10 @@ src/
 │   ├── Sampler.mm      MTLSamplerState + format translation
 │   └── Framebuffer.mm  MTLRenderPassDescriptor
 ├── loader/             Native PE loader (parse, map, reloc, imports, CFG)
-├── win32/              Win32 API shims (kernel32, user32, ws2_32, advapi32, etc.)
+├── win32/              Win32 API shims
+│   ├── kernel32/       KERNEL32, ntdll, VirtualFileSystem, Registry, networking, sync
+│   ├── user32/         USER32, WindowManager (NSWindow-backed HWND)
+│   └── extra/          GDI32, ADVAPI32, SHELL32, OLE32, OLEAUT32, VERSION, etc.
 ├── runtime/            Logger, PEHook
 ├── audio/              XAudio2 → CoreAudio
 ├── input/              XInput → GameController
@@ -221,11 +213,23 @@ src/
                        GPUProfiler, CommandBatcher, MetalFXUpscaler
 app/
 ├── src/main/           Electron main process + Rust bridge
-├── src/renderer/       Game library UI, settings, store
-└── src-rust/           Rust HTTP backend (launch, scan, steam integration)
+├── src/renderer/       Game library UI, settings, store, logs
+├── src/shared/         TypeScript types
+└── src-rust/           Rust HTTP backend (launch, scan, steam, config, logs)
 tools/launcher/         CLI launchers (NativeLauncher + WineLauncher)
-tests/                  12 test suites
+tests/                  13 test suites
+docs/                   Architecture docs, PE loader reference, Win32 shim guide
 ```
+
+---
+
+## Documentation
+
+- [Architecture Overview](docs/ARCHITECTURE.md) — system design, data flow, component relationships
+- [PE Loader](docs/PE-LOADER.md) — how the native PE loader works internally
+- [Win32 Shims](docs/WIN32-SHIMS.md) — Win32 API shim implementation guide
+- [Electron App](docs/ELECTRON-APP.md) — frontend architecture, Rust backend API
+- [Roadmap](ROADMAP.md) — full phased plan (phases 1–16, all complete)
 
 ---
 
@@ -236,12 +240,15 @@ tests/                  12 test suites
 The `metalsharp` executable loads Windows x86_64 PE files directly on macOS:
 
 1. **Parse PE headers** — DOS header, COFF header, optional header, section table
-2. **Map sections** — `mmap` a region of `SizeOfImage` bytes, copy each section from the raw PE data to its virtual address
-3. **Process relocations** — Walk the `.reloc` section, apply `IMAGE_REL_BASED_DIR64` fixups for the delta between preferred and actual load address
-4. **Resolve imports** — Walk import descriptors, match DLL names to registered shims, resolve function names/ordinals to shim addresses, write into the IAT
-5. **Initialize CFG** — Read LoadConfig, patch GuardCF function pointers with allow-all stub
-6. **Handle exceptions** — `RtlCaptureContext` captures PE context, `RtlLookupFunctionEntry` searches `.pdata`, `UnhandledExceptionFilter` logs and continues
-7. **Call entry point** — Jump to the PE's entry point via ms_abi trampoline
+2. **Map sections** — `mmap` a region of `SizeOfImage` bytes, copy each section to its virtual address
+3. **Process relocations** — Walk `.reloc`, apply `IMAGE_REL_BASED_DIR64` fixups for load address delta
+4. **Resolve imports** — Walk import descriptors, match DLL names to registered shims, resolve to shim addresses
+5. **Process delay imports** — Lazy-resolve delay-load imports on first call
+6. **Handle TLS callbacks** — Walk TLS directory, fire callbacks with `DLL_PROCESS_ATTACH`
+7. **Initialize CFG** — Read LoadConfig, patch GuardCF function pointers with allow-all stub
+8. **Apply section protections** — mprotect sections based on characteristics (RX, R, RW)
+9. **Set up TEB/PEB** — Allocate fake TEB with stack limits, PEB pointer, set `%gs:0x30`
+10. **Call entry point** — Jump to PE entry via ms_abi trampoline
 
 ### D3D Translation
 
@@ -250,7 +257,20 @@ Shaders take two paths:
 1. **MSL source** — compiled with `newLibraryWithSource`
 2. **DXBC bytecode** — parsed (SHDR/SHEX chunks, input/output signatures, SM5.0 tokens) → MSL generated → compiled to Metal library
 
-The `D3D11DeviceContext` caches a `MTLRenderPipelineState` from current state (shaders, blend, rasterizer, depth). Draw calls encode directly into a `MTLCommandBuffer`. Pipeline state rebuilds automatically when state changes.
+The `D3D11DeviceContext` caches a `MTLRenderPipelineState` from current state (shaders, blend, rasterizer, depth). Draw calls encode directly into a `MTLCommandBuffer`. Pipeline state rebuilds automatically when state changes. Shader and pipeline caches persist to `~/.metalsharp/cache/` for fast subsequent launches.
+
+### Win32 API Shims
+
+Games call Win32 APIs through import tables. The PE loader resolves these to shim functions that delegate to macOS APIs:
+
+- **kernel32** → POSIX file I/O, pthreads, mmap, getenv, clock_gettime
+- **user32** → NSWindow, NSEvent, NSPasteboard, message queue
+- **gdi32** → Basic software rendering (BitBlt, DrawTextW)
+- **ws2_32** → POSIX sockets, Security.framework for TLS
+- **advapi32** → In-memory registry with JSON persistence
+- **ole32/oleaut32** → COM initialization stubs, SafeArray, Variant
+
+All shim functions use `__attribute__((ms_abi))` to match the Windows x86_64 calling convention that PE code expects.
 
 ---
 
