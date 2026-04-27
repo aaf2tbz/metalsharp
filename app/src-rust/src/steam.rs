@@ -5,21 +5,22 @@ use std::process::Command;
 pub fn status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
-    let wine_steam_exe = home
+    let wine_steam_dir = home
         .join(".metalsharp")
         .join("prefix")
         .join("drive_c")
         .join("Program Files (x86)")
-        .join("Steam")
-        .join("Steam.exe");
+        .join("Steam");
 
-    let wine_steam_dir = wine_steam_exe.parent().map(|p| p.to_path_buf());
+    let wine_steam_exe = wine_steam_dir.join("Steam.exe");
     let windows_installed = wine_steam_exe.exists();
     let windows_path = if windows_installed {
-        wine_steam_dir.as_ref().map(|p| p.to_string_lossy().to_string())
+        Some(wine_steam_dir.to_string_lossy().to_string())
     } else {
         None
     };
+
+    let login_state = detect_login_state(&wine_steam_dir);
 
     let mac_paths = vec![
         home.join(".steam/steam/steamapps"),
@@ -39,10 +40,55 @@ pub fn status() -> Value {
     json!({
         "installed": windows_installed,
         "path": windows_path,
+        "loginState": login_state,
         "macInstalled": mac_installed,
         "steamCmdPath": steamcmd,
         "running": running
     })
+}
+
+fn detect_login_state(steam_dir: &PathBuf) -> Value {
+    let loginusers_path = steam_dir.join("config").join("loginusers.vdf");
+
+    if !loginusers_path.exists() {
+        return json!({"state": "unknown", "account": null});
+    }
+
+    let contents = match std::fs::read_to_string(&loginusers_path) {
+        Ok(c) => c,
+        Err(_) => return json!({"state": "unknown", "account": null}),
+    };
+
+    let mut accounts: Vec<Value> = Vec::new();
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = parse_vdf_value(trimmed, "PersonaName") {
+            let remembered = contents
+                .lines()
+                .any(|l| l.contains("RememberPassword") && l.contains("1"));
+            accounts.push(json!({
+                "name": name,
+                "remembered": remembered,
+            }));
+        }
+    }
+
+    if accounts.is_empty() {
+        json!({"state": "logged_out", "account": null})
+    } else {
+        json!({"state": "logged_in", "account": accounts})
+    }
+}
+
+fn parse_vdf_value(line: &str, key: &str) -> Option<String> {
+    let prefix = format!("\"{}\"", key);
+    if !line.starts_with(&prefix) {
+        return None;
+    }
+    let rest = line.trim_start_matches(&prefix).trim();
+    let rest = rest.trim_start_matches('\t').trim_start_matches(' ');
+    Some(rest.trim_matches('"').to_string())
 }
 
 fn which_steamcmd() -> Option<String> {
@@ -169,7 +215,7 @@ pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::
     Ok(scan_downloaded_dir(&install_dir, appid))
 }
 
-fn scan_downloaded_dir(dir: &PathBuf, appid: u32) -> Vec<serde_json::Value> {
+fn scan_downloaded_dir(dir: &PathBuf, _appid: u32) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     let mut exe_name = String::new();
 

@@ -1,6 +1,21 @@
-use serde_json::Map;
+use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 use std::process::Command;
+
+#[derive(Clone, PartialEq)]
+pub enum LaunchMode {
+    Native,
+    Wine,
+}
+
+impl LaunchMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "wine" => LaunchMode::Wine,
+            _ => LaunchMode::Native,
+        }
+    }
+}
 
 pub struct LaunchOptions {
     pub fullscreen: bool,
@@ -8,6 +23,7 @@ pub struct LaunchOptions {
     pub verbose: bool,
     pub prefix: Option<String>,
     pub custom_args: Vec<String>,
+    pub mode: LaunchMode,
 }
 
 impl LaunchOptions {
@@ -26,6 +42,9 @@ impl LaunchOptions {
                         .collect()
                 })
                 .unwrap_or_default(),
+            mode: LaunchMode::from_str(
+                map.get("launchMode").and_then(|v| v.as_str()).unwrap_or("native"),
+            ),
         }
     }
 }
@@ -37,16 +56,10 @@ pub fn launch(exe_path: &str, opts: &LaunchOptions) -> Result<u32, Box<dyn std::
         .clone()
         .unwrap_or_else(|| home.join(".metalsharp").join("prefix").to_string_lossy().to_string());
 
-    if is_steam_client(exe_path) {
-        return launch_via_wine(exe_path, &prefix, opts);
+    match opts.mode {
+        LaunchMode::Wine => launch_via_wine(exe_path, &prefix, opts),
+        LaunchMode::Native => launch_native(exe_path, opts),
     }
-
-    launch_via_metalsharp(exe_path, &prefix, opts)
-}
-
-fn is_steam_client(exe_path: &str) -> bool {
-    let lower = exe_path.to_lowercase().replace("\\", "/");
-    lower.contains("steam.exe") && !lower.contains("steamsetup") && !lower.contains("uninstall")
 }
 
 fn launch_via_wine(exe_path: &str, prefix: &str, opts: &LaunchOptions) -> Result<u32, Box<dyn std::error::Error>> {
@@ -64,13 +77,11 @@ fn launch_via_wine(exe_path: &str, prefix: &str, opts: &LaunchOptions) -> Result
     Ok(child.id())
 }
 
-fn launch_via_metalsharp(exe_path: &str, prefix: &str, opts: &LaunchOptions) -> Result<u32, Box<dyn std::error::Error>> {
-    let metalsharp_bin = find_metalsharp_binary()?;
+fn launch_native(exe_path: &str, opts: &LaunchOptions) -> Result<u32, Box<dyn std::error::Error>> {
+    let metalsharp_bin = find_metalsharp_native()?;
 
     let mut args: Vec<String> = Vec::new();
     args.push(exe_path.into());
-    args.push("--prefix".into());
-    args.push(prefix.into());
 
     if opts.fullscreen {
         args.push("--fullscreen".into());
@@ -120,13 +131,14 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     Err("wine not found — install with: brew install --cask wine-stable".into())
 }
 
-fn find_metalsharp_binary() -> Result<String, Box<dyn std::error::Error>> {
+fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
     let candidates = vec![
-        home.join("metalsharp/build/metalsharp_launcher"),
-        home.join("metalsharp/build/tools/launcher/metalsharp_launcher"),
-        PathBuf::from("/usr/local/bin/metalsharp_launcher"),
+        home.join("metalsharp/build/metalsharp"),
+        home.join("metalsharp/build/metalsharp_native"),
+        PathBuf::from("/usr/local/bin/metalsharp"),
+        PathBuf::from("/opt/homebrew/bin/metalsharp"),
     ];
 
     for c in candidates {
@@ -135,13 +147,50 @@ fn find_metalsharp_binary() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
 
-    let which = Command::new("which")
-        .arg("metalsharp_launcher")
-        .output()?;
-
+    let which = Command::new("which").arg("metalsharp").output()?;
     if which.status.success() {
         return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
     }
 
-    Err("metalsharp_launcher binary not found".into())
+    Err("metalsharp binary not found — build with: cmake --build build".into())
+}
+
+pub fn get_config() -> Value {
+    let home = dirs::home_dir().unwrap_or_default();
+    let config_path = home.join(".metalsharp").join("config.json");
+    let mode = if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(&s).ok())
+            .and_then(|m| m.get("launchMode").and_then(|v| v.as_str()).map(String::from))
+            .unwrap_or_else(|| "native".into())
+    } else {
+        "native".into()
+    };
+
+    json!({
+        "ok": true,
+        "launchMode": mode,
+        "wineAvailable": find_wine().is_ok(),
+        "nativeAvailable": find_metalsharp_native().is_ok(),
+    })
+}
+
+pub fn set_config(mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let config_dir = home.join(".metalsharp");
+    std::fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("config.json");
+
+    let existing = if config_path.exists() {
+        std::fs::read_to_string(&config_path)?
+    } else {
+        "{}".into()
+    };
+
+    let mut config: serde_json::Map<String, Value> = serde_json::from_str(&existing)?;
+    config.insert("launchMode".into(), json!(mode));
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+
+    Ok(get_config())
 }

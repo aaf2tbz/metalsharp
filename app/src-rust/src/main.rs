@@ -63,6 +63,15 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "steamAppId required"})),
             }
         }
+        (Method::Get, "/config") => resp(200, launch::get_config()),
+        (Method::Post, "/config") => {
+            let body = read_body(req);
+            let mode = body.get("launchMode").and_then(|v| v.as_str()).unwrap_or("native");
+            match launch::set_config(mode) {
+                Ok(cfg) => resp(200, cfg),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
         (Method::Post, "/launch") => {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");

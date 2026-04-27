@@ -11,9 +11,22 @@ interface Game {
 interface SteamStatus {
   installed: boolean;
   path?: string;
+  login_state?: LoginState;
   mac_installed?: boolean;
   steam_cmd_path?: string;
   running: boolean;
+}
+
+interface LoginState {
+  state: "logged_in" | "logged_out" | "unknown";
+  account?: { name: string; remembered: boolean }[] | null;
+}
+
+interface AppConfig {
+  ok: boolean;
+  launch_mode: "native" | "wine";
+  wine_available: boolean;
+  native_available: boolean;
 }
 
 interface BackendResponse {
