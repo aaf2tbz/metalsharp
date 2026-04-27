@@ -566,3 +566,41 @@ body {
   background: rgba(232, 148, 58, 0.12);
   color: var(--orange);
 }
+
+.error-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.error-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.error-dialog-content {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  max-width: 440px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.error-dialog-content h3 {
+  color: var(--error);
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.error-dialog-content p {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}

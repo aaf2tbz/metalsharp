@@ -13,6 +13,8 @@
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/SecureTransport.h>
 #include <metalsharp/SyncContext.h>
+#include <metalsharp/ShaderCache.h>
+#include <metalsharp/PipelineCache.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -116,12 +118,17 @@ int main(int argc, char* argv[]) {
     metalsharp::Logger::init("");
     metalsharp::Logger::setLevel(metalsharp::LogLevel::Trace);
 
+    const char* home = getenv("HOME");
+    std::string prefix = home ? std::string(home) + "/.metalsharp/prefix" : "/tmp/metalsharp/prefix";
+    std::string cacheDir = home ? std::string(home) + "/.metalsharp/cache" : "/tmp/metalsharp/cache";
+
+    metalsharp::ShaderCache::instance().init(cacheDir);
+    metalsharp::PipelineCache::instance().init(cacheDir);
+
     PELoader loader;
 
     printf("Registering Win32 shims...\n");
 
-    const char* home = getenv("HOME");
-    std::string prefix = home ? std::string(home) + "/.metalsharp/prefix" : "/tmp/metalsharp/prefix";
     VirtualFileSystem::instance().setPrefix(prefix);
     Registry::instance().init(prefix);
     WindowManager::instance().init();
@@ -479,6 +486,16 @@ int main(int argc, char* argv[]) {
     realpath(argv[1], absPath);
     win32::setExePath(absPath);
 
+    const char* envCmdline = getenv("METALSHARP_CMDLINE");
+    const char* envCwd = getenv("METALSHARP_CWD");
+    if (envCwd) chdir(envCwd);
+    if (envCmdline) {
+        g_cmdline = const_cast<char*>(envCmdline);
+    } else {
+        g_cmdline = const_cast<char*>(argv[1]);
+    }
+    g_argv_data[0] = g_cmdline;
+
     if (!loader.load(argv[1])) {
         fprintf(stderr, "Failed to load %s\n", argv[1]);
         return 1;
@@ -554,6 +571,9 @@ int main(int argc, char* argv[]) {
             printf("Entry point returned: %d\n", result);
         }
     }
+
+    metalsharp::ShaderCache::instance().shutdown();
+    metalsharp::PipelineCache::instance().shutdown();
 
     return 0;
 }

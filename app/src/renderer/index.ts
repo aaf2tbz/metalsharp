@@ -37,6 +37,7 @@ class App {
 
     if (view === "settings") this.renderSettings();
     if (view === "store") this.renderStore();
+    if (view === "logs") this.renderLogs();
   }
 
   private async api<T = unknown>(method: string, url: string, body?: Record<string, unknown>): Promise<T | null> {
@@ -366,22 +367,83 @@ class App {
       const status = el.querySelector("#download-status")!;
       status.innerHTML = `<div class="spinner"></div> Downloading...`;
 
-      const result = await this.api<{ games: unknown[] }>("POST", "/steam/download-game", {
-        steamAppId: appid,
-      });
+      const progressInterval = setInterval(async () => {
+        const prog = await this.api<{ progress: number | null; line?: string }>("GET", "/steam/download-progress");
+        if (prog && prog.progress != null) {
+          status.innerHTML = `<div class="spinner"></div> Downloading... ${prog.progress.toFixed(1)}%`;
+        }
+      }, 2000);
 
-      if (result && typeof result === "object" && "games" in result) {
-        const games = (result as { games: unknown[] }).games;
-        status.innerHTML = `Downloaded ${games.length} executable(s). <a href="#" id="goto-library">View in Library</a>`;
-        el.querySelector("#goto-library")?.addEventListener("click", (e) => {
-          e.preventDefault();
-          this.scan();
-          this.switchView("library");
+      try {
+        const result = await this.api<{ games: unknown[] }>("POST", "/steam/download-game", {
+          steamAppId: appid,
         });
-      } else {
-        status.innerHTML = `<span style="color:var(--error)">Download failed</span>`;
+
+        clearInterval(progressInterval);
+
+        if (result && typeof result === "object" && "games" in result) {
+          const games = (result as { games: unknown[] }).games;
+          status.innerHTML = `Downloaded ${games.length} executable(s). <a href="#" id="goto-library">View in Library</a>`;
+          el.querySelector("#goto-library")?.addEventListener("click", (e) => {
+            e.preventDefault();
+            this.scan();
+            this.switchView("library");
+          });
+        } else {
+          this.showError("Download Failed", "The download did not complete successfully. Check the Logs tab for details.");
+          status.innerHTML = `<span style="color:var(--error)">Download failed</span>`;
+        }
+      } catch (e) {
+        clearInterval(progressInterval);
+        this.showError("Download Error", (e as Error).message);
       }
     });
+  }
+
+  private async renderLogs() {
+    const el = document.getElementById("view-logs")!;
+    el.innerHTML = `
+      <div class="library-header">
+        <div>
+          <h1>Logs</h1>
+          <p class="subtitle">MetalSharp runtime logs</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary" id="btn-refresh-logs">Refresh</button>
+        </div>
+      </div>
+      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.6;max-height:calc(100vh - 200px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
+    `;
+
+    el.querySelector("#btn-refresh-logs")?.addEventListener("click", () => this.renderLogs());
+
+    const result = await this.api<{ logs: { name: string; lines: string[] }[] }>("GET", "/logs");
+    const content = el.querySelector("#log-content")!;
+    if (result && result.logs && result.logs.length > 0) {
+      const latest = result.logs[result.logs.length - 1];
+      content.textContent = latest.lines.join("\n");
+    } else {
+      content.textContent = "No logs found. Logs are written to ~/.metalsharp/logs/ during game execution.";
+    }
+  }
+
+  private showError(title: string, message: string) {
+    const existing = document.querySelector(".error-dialog");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "error-dialog";
+    overlay.innerHTML = `
+      <div class="error-dialog-backdrop"></div>
+      <div class="error-dialog-content">
+        <h3>${this.esc(title)}</h3>
+        <p>${this.esc(message)}</p>
+        <button class="btn btn-secondary" id="error-dismiss">Dismiss</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#error-dismiss")?.addEventListener("click", () => overlay.remove());
+    overlay.querySelector(".error-dialog-backdrop")?.addEventListener("click", () => overlay.remove());
   }
 
   private toast(msg: string, type: "success" | "error" = "success") {

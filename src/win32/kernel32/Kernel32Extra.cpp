@@ -954,27 +954,56 @@ static BOOL MSABI shim_CreateProcessW(const wchar_t* lpApplicationName, const wc
     DWORD dwCreationFlags, void* lpEnvironment, const wchar_t* lpCurrentDirectory,
     void* lpStartupInfo, void* lpProcessInformation) {
     (void)lpProcessAttributes; (void)lpThreadAttributes; (void)bInheritHandles;
-    (void)dwCreationFlags; (void)lpEnvironment; (void)lpCurrentDirectory;
-    (void)lpStartupInfo;
+    (void)dwCreationFlags; (void)lpEnvironment; (void)lpStartupInfo;
 
     char appName[1024] = {};
     char cmdLine[2048] = {};
+    char workDir[1024] = {};
+
     if (lpApplicationName) {
         for (int i = 0; i < 1023 && lpApplicationName[i]; i++) appName[i] = (char)lpApplicationName[i];
     }
     if (lpCommandLine) {
         for (int i = 0; i < 2047 && lpCommandLine[i]; i++) cmdLine[i] = (char)lpCommandLine[i];
     }
+    if (lpCurrentDirectory) {
+        for (int i = 0; i < 1023 && lpCurrentDirectory[i]; i++) workDir[i] = (char)lpCurrentDirectory[i];
+    }
 
-    MS_INFO("PELoader: CreateProcessW(\"%s\", \"%s\")", appName, cmdLine);
+    MS_INFO("PELoader: CreateProcessW(\"%s\", \"%s\", cwd=\"%s\")", appName, cmdLine, workDir);
+
+    const char* targetExe = appName[0] ? appName : cmdLine;
+
+    char exeArgs[4096] = {};
+    if (cmdLine[0]) {
+        snprintf(exeArgs, sizeof(exeArgs), "%s", cmdLine);
+    } else if (appName[0]) {
+        snprintf(exeArgs, sizeof(exeArgs), "%s", appName);
+    }
 
     pid_t pid = fork();
     if (pid == 0) {
+        if (workDir[0]) {
+            chdir(workDir);
+        } else if (appName[0]) {
+            char dirCopy[1024];
+            snprintf(dirCopy, sizeof(dirCopy), "%s", appName);
+            char* lastSlash = strrchr(dirCopy, '/');
+            if (lastSlash) {
+                *lastSlash = 0;
+                chdir(dirCopy);
+            }
+        }
+
         char exePath[4096];
         const char* home = getenv("HOME");
         snprintf(exePath, sizeof(exePath), "%s/metalsharp/build/metalsharp", home ? home : "/tmp");
 
-        char* argv[] = { exePath, appName[0] ? appName : cmdLine, nullptr };
+        setenv("METALSHARP_CHILD_PROCESS", "1", 1);
+        setenv("METALSHARP_CMDLINE", exeArgs, 1);
+        if (workDir[0]) setenv("METALSHARP_CWD", workDir, 1);
+
+        char* argv[] = { exePath, const_cast<char*>(targetExe), nullptr };
         execv(exePath, argv);
         _exit(127);
     }

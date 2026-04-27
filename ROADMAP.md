@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-15 complete. Full Steam compatibility stack: GDI rendering (BitBlt, DrawTextW, fonts, brushes), OLE/COM (CoInitialize, CoCreateInstance, SafeArray, Variant), version info (GetFileVersionInfoW), real CreateProcessW (fork+exec), 20+ Steam registry entries, NLS/codepage support. PE loader runs Windows executables through Metal. ~17K lines C++/ObjC++, ~600 lines TypeScript, ~800 lines Rust.
+**Current state:** Phases 8-16 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~18K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -244,7 +244,7 @@
 
 ---
 
-## Phase 16: Download & Launch a Game
+## Phase 16: Download & Launch a Game ✅ DONE
 
 *The final mile — download a game through Steam, launch it, play it.*
 
@@ -287,7 +287,7 @@
 | **13** | D3D ↔ PE Integration | 2-3 days | 15-21 days | ✅ Done |
 | **14** | First Game Validation | 2-3 days | 17-24 days | ✅ Done |
 | **15** | Steam Full Run | 3-4 days | 20-28 days | ✅ Done |
-| **16** | Download & Launch Game | 3-4 days | 23-32 days | |
+| **16** | Download & Launch Game | 3-4 days | 23-32 days | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 

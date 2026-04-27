@@ -37,6 +37,9 @@ public:
 private:
     PipelineCache() = default;
 
+    bool loadFromDisk();
+    bool saveToDisk();
+
     std::unordered_map<uint64_t, PipelineCacheEntry> m_entries;
     std::string m_cacheDir;
     bool m_initialized = false;
