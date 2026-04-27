@@ -64,6 +64,11 @@ add_executable(test_phase5
 )
 target_link_libraries(test_phase5 PRIVATE metalsharp_core)
 
+add_executable(test_tiled_resources
+    test_tiled_resources.cpp
+)
+target_link_libraries(test_tiled_resources PRIVATE metalsharp_core)
+
 add_test(NAME metal_device COMMAND test_metal_device)
 add_test(NAME format_translation COMMAND test_format_translation)
 add_test(NAME d3d11_device COMMAND test_d3d11_device)
@@ -76,3 +81,4 @@ add_test(NAME runtime COMMAND test_runtime)
 add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
 add_test(NAME phase5 COMMAND test_phase5)
+add_test(NAME tiled_resources COMMAND test_tiled_resources)

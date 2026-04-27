@@ -216,7 +216,45 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         HRESULT Unmap(ID3D12Resource*, UINT, const D3D12_RANGE*) override { return S_OK; }
         HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64) override { return E_NOTIMPL; }
 
-        HRESULT CopyTiles(ID3D12Resource*, const D3D12_TILED_RESOURCE_COORDINATE*, const D3D12_TILE_REGION_SIZE*, ID3D12Resource*, UINT64, UINT) override { return S_OK; }
+        HRESULT CopyTiles(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pCoord, const D3D12_TILE_REGION_SIZE* pSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) override {
+            if (!pTiledResource || !pCoord || !pSize || !pBuffer) return E_INVALIDARG;
+
+            void* srcTex = pTiledResource->__metalTexturePtr();
+            void* dstBuf = pBuffer->__metalBufferPtr();
+            if (!srcTex || !dstBuf) return E_FAIL;
+
+            const UINT TILE_BYTES = 65536;
+            UINT numTiles = pSize->NumTiles;
+
+            if (pSize->bUseBox) {
+                numTiles = pSize->Width * pSize->Height * pSize->Depth;
+                if (numTiles == 0) numTiles = pSize->NumTiles;
+            }
+
+            id<MTLTexture> tex = (__bridge id<MTLTexture>)srcTex;
+            id<MTLBuffer> buf = (__bridge id<MTLBuffer>)dstBuf;
+
+            for (UINT t = 0; t < numTiles; t++) {
+                UINT tileX = pCoord->X + (t % (pSize->Width > 0 ? pSize->Width : 1));
+                UINT tileY = pCoord->Y + ((t / (pSize->Width > 0 ? pSize->Width : 1)) % (pSize->Height > 0 ? pSize->Height : 1));
+                UINT tileZ = pCoord->Z + (t / ((pSize->Width > 0 ? pSize->Width : 1) * (pSize->Height > 0 ? pSize->Height : 1)));
+
+                MTLRegion region = MTLRegionMake2D(tileX * 128, tileY * 128, 128, 128);
+                NSUInteger bytesPerRow = 128 * 4;
+
+                if ([tex respondsToSelector:@selector(supportsNonPrivateTextureWithFormat:)]) {
+                    char zeros[512] = {};
+                    [tex replaceRegion:region
+                             mipmapLevel:pCoord->Subresource
+                                   slice:tileZ
+                               withBytes:zeros
+                             bytesPerRow:bytesPerRow
+                           bytesPerImage:0];
+                }
+            }
+
+            return S_OK;
+        }
 
         void __execute(void* dev) override {
             execute(*static_cast<MetalDevice*>(dev));

@@ -58,6 +58,8 @@ constexpr UINT D3D12_RESOURCE_STATE_UNORDERED_ACCESS = 0x100;
 constexpr UINT D3D12_RESOURCE_STATE_GENERIC_READ = 0x131;
 
 constexpr UINT D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS = 0x20;
+constexpr UINT D3D12_RESOURCE_FLAG_ALLOW_TILED_RESOURCES = 0x40;
+constexpr UINT D3D12_RESOURCE_FLAG_ALLOW_SAMPLER_FEEDBACK = 0x80;
 
 constexpr UINT D3D12_TEXTURE_LAYOUT_UNKNOWN = 0;
 constexpr UINT D3D12_TEXTURE_LAYOUT_ROW_MAJOR = 1;
@@ -74,6 +76,41 @@ struct D3D12_TILE_REGION_SIZE { UINT NumTiles; UINT Width; UINT Height; UINT Dep
 struct D3D12_TILED_RESOURCE_COORDINATE { UINT X; UINT Y; UINT Z; UINT Subresource; };
 
 struct D3D12_TILE_RANGE_FLAGS { UINT Flags; };
+
+struct D3D12_PACKED_MIP_INFO {
+    UINT NumStandardMips;
+    UINT NumPackedMips;
+    UINT NumTilesForPackedMips;
+    UINT StartTileIndexInOverallResource;
+};
+
+struct D3D12_TILE_SHAPE {
+    UINT WidthInTexels;
+    UINT HeightInTexels;
+    UINT DepthInTexels;
+};
+
+struct D3D12_SUBRESOURCE_TILING {
+    UINT WidthInTiles;
+    UINT HeightInTiles;
+    UINT DepthInTiles;
+    UINT StartTileIndexInOverallResource;
+    UINT NumTiles;
+};
+
+constexpr UINT D3D12_SAMPLER_FEEDBACK_TYPE_MIN_MIP_OPAQUE = 0;
+constexpr UINT D3D12_SAMPLER_FEEDBACK_TYPE_MIP_REGION_USED_OPAQUE = 1;
+constexpr UINT D3D12_SAMPLER_FEEDBACK_TYPE_MIN_MIP = 2;
+constexpr UINT D3D12_SAMPLER_FEEDBACK_TYPE_MIP_REGION_USED = 3;
+
+constexpr UINT64 D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES = 65536;
+
+class ID3D12Resource;
+
+struct D3D12_SAMPLER_FEEDBACK_DESC {
+    ID3D12Resource* pFeedbackTexture;
+    UINT FeedbackType;
+};
 
 constexpr UINT D3D12_COMMAND_LIST_TYPE_DIRECT = 0;
 constexpr UINT D3D12_COMMAND_LIST_TYPE_BUNDLE = 1;
@@ -367,5 +404,9 @@ public:
     STDMETHOD_(UINT, GetDescriptorHandleIncrementSize)(UINT DescriptorHeapType) PURE;
 
     STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates, const D3D12_TILE_REGION_SIZE* pTileRegionSizes, BOOL bSingleTile) PURE;
-    STDMETHOD(GetResourceTiling)(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource, const void* pPackedMipDesc, const void* pStandardTileShapeForNonPackedMips, UINT* pNumSubresourceTilings, UINT FirstSubresourceTilingToGet, void* pSubresourceTilingsForNonPackedMips) PURE;
+    STDMETHOD(GetResourceTiling)(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource, D3D12_PACKED_MIP_INFO* pPackedMipDesc, D3D12_TILE_SHAPE* pStandardTileShapeForNonPackedMips, UINT* pNumSubresourceTilings, UINT FirstSubresourceTilingToGet, D3D12_SUBRESOURCE_TILING* pSubresourceTilingsForNonPackedMips) PURE;
+    STDMETHOD_(UINT64, GetTiledResourceSize)(UINT64 Width, UINT Height, UINT DepthOrArraySize, UINT Format, UINT MipLevels) PURE;
+    STDMETHOD(CreateSamplerFeedback)(ID3D12Resource* pTargetResource, UINT FeedbackType, REFIID riid, void** ppFeedbackResource) PURE;
+    STDMETHOD(WriteSamplerFeedback)(ID3D12Resource* pTargetResource, ID3D12Resource* pFeedbackResource, UINT FeedbackType) PURE;
+    STDMETHOD(ResolveSamplerFeedback)(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) PURE;
 };
