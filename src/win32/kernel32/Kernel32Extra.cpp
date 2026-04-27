@@ -4,6 +4,7 @@
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Registry.h>
 #include <metalsharp/NetworkContext.h>
+#include <metalsharp/SyncContext.h>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -328,16 +329,18 @@ static HMODULE MSABI shim_GetModuleHandleExW(DWORD dwFlags, const wchar_t* lpMod
 }
 
 static void* MSABI shim_CreateEventA(void* lpEventAttributes, BOOL bManualReset, BOOL bInitialState, const char* lpName) {
-    (void)lpEventAttributes; (void)bManualReset; (void)bInitialState; (void)lpName;
-    return reinterpret_cast<void*>(0x100);
+    (void)lpEventAttributes;
+    std::string name = lpName ? lpName : "";
+    return SyncContext::instance().createEvent(bManualReset != 0, bInitialState != 0, name);
 }
 
-static BOOL MSABI shim_ResetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
-static BOOL MSABI shim_SetEvent(HANDLE hEvent) { (void)hEvent; return 1; }
+static BOOL MSABI shim_ResetEvent(HANDLE hEvent) { return SyncContext::instance().resetEvent(hEvent) ? 1 : 0; }
+static BOOL MSABI shim_SetEvent(HANDLE hEvent) { return SyncContext::instance().setEvent(hEvent) ? 1 : 0; }
 
 static HANDLE MSABI shim_OpenEventA(DWORD dwDesiredAccess, BOOL bInheritHandle, const char* lpName) {
-    (void)dwDesiredAccess; (void)bInheritHandle; (void)lpName;
-    return reinterpret_cast<HANDLE>(0x100);
+    (void)dwDesiredAccess; (void)bInheritHandle;
+    if (!lpName) return nullptr;
+    return SyncContext::instance().createEvent(true, false, lpName);
 }
 
 static void* MSABI shim_CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
@@ -383,8 +386,14 @@ static BOOL MSABI shim_GetExitCodeProcess(HANDLE hProcess, DWORD* lpExitCode) {
 }
 
 static BOOL MSABI shim_GetExitCodeThread(HANDLE hThread, DWORD* lpExitCode) {
-    (void)hThread;
-    if (lpExitCode) *lpExitCode = 259;
+    auto* state = SyncContext::instance().getThreadState(hThread);
+    if (lpExitCode) {
+        if (state && state->finished.load()) {
+            *lpExitCode = state->exitCode.load();
+        } else {
+            *lpExitCode = 259;
+        }
+    }
     return 1;
 }
 
@@ -431,12 +440,36 @@ static BOOL MSABI shim_TryAcquireSRWLockExclusive(void* SRWLock) {
 }
 
 static BOOL MSABI shim_SleepConditionVariableSRW(void* ConditionVariable, void* SRWLock, DWORD dwMilliseconds, ULONG Flags) {
-    (void)ConditionVariable; (void)SRWLock; (void)dwMilliseconds; (void)Flags;
-    usleep(1000);
+    (void)Flags;
+    auto* cond = static_cast<pthread_cond_t*>(ConditionVariable);
+    auto* mtx = static_cast<pthread_mutex_t*>(SRWLock);
+
+    if (dwMilliseconds == 0xFFFFFFFF) {
+        pthread_cond_wait(cond, mtx);
+        return 1;
+    }
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += dwMilliseconds / 1000;
+    ts.tv_nsec += (dwMilliseconds % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000L;
+    }
+    pthread_cond_timedwait(cond, mtx, &ts);
     return 1;
 }
 
-static void MSABI shim_WakeAllConditionVariable(void* ConditionVariable) { (void)ConditionVariable; }
+static void MSABI shim_WakeAllConditionVariable(void* ConditionVariable) {
+    auto* cond = static_cast<pthread_cond_t*>(ConditionVariable);
+    pthread_cond_broadcast(cond);
+}
+
+static void MSABI shim_WakeConditionVariable(void* ConditionVariable) {
+    auto* cond = static_cast<pthread_cond_t*>(ConditionVariable);
+    pthread_cond_signal(cond);
+}
 
 static void MSABI shim_InitializeCriticalSectionAndSpinCount(void* lpCriticalSection, DWORD dwSpinCount) {
     auto* cs = reinterpret_cast<CRITICAL_SECTION*>(lpCriticalSection);
@@ -1226,6 +1259,48 @@ static BOOL MSABI shim_TransactNamedPipe(void* hNamedPipe, void* lpInBuffer, DWO
     return 0;
 }
 
+static void* MSABI shim_CreateMutexA(void* lpMutexAttributes, BOOL bInitialOwner, const char* lpName) {
+    (void)lpMutexAttributes;
+    std::string name = lpName ? lpName : "";
+    return SyncContext::instance().createMutex(bInitialOwner != 0, name);
+}
+
+static BOOL MSABI shim_ReleaseMutex(HANDLE hMutex) {
+    return SyncContext::instance().releaseMutex(hMutex) ? 1 : 0;
+}
+
+static void* MSABI shim_CreateSemaphoreA(void* lpSemaphoreAttributes, LONG lInitialCount, LONG lMaximumCount, const char* lpName) {
+    (void)lpSemaphoreAttributes;
+    std::string name = lpName ? lpName : "";
+    return SyncContext::instance().createSemaphore(lInitialCount, lMaximumCount, name);
+}
+
+static BOOL MSABI shim_ReleaseSemaphore(HANDLE hSemaphore, LONG lReleaseCount, LONG* lpPreviousCount) {
+    return SyncContext::instance().releaseSemaphore(hSemaphore, lReleaseCount, lpPreviousCount) ? 1 : 0;
+}
+
+static void* MSABI shim_CreateEventW(void* lpEventAttributes, BOOL bManualReset, BOOL bInitialState, const wchar_t* lpName) {
+    (void)lpEventAttributes;
+    std::string name;
+    if (lpName) {
+        char buf[256] = {0};
+        for (int i = 0; lpName[i] && i < 255; i++) buf[i] = (char)(lpName[i] & 0x7F);
+        name = buf;
+    }
+    return SyncContext::instance().createEvent(bManualReset != 0, bInitialState != 0, name);
+}
+
+static void* MSABI shim_CreateMutexW(void* lpMutexAttributes, BOOL bInitialOwner, const wchar_t* lpName) {
+    (void)lpMutexAttributes;
+    std::string name;
+    if (lpName) {
+        char buf[256] = {0};
+        for (int i = 0; lpName[i] && i < 255; i++) buf[i] = (char)(lpName[i] & 0x7F);
+        name = buf;
+    }
+    return SyncContext::instance().createMutex(bInitialOwner != 0, name);
+}
+
 void addMissingKernel32(ShimLibrary& lib) {
     auto fn = [](void* ptr) -> ExportedFunction {
         return [ptr]() -> void* { return ptr; };
@@ -1252,9 +1327,15 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["GetModuleHandleExA"] = fn((void*)shim_GetModuleHandleExA);
     lib.functions["GetModuleHandleExW"] = fn((void*)shim_GetModuleHandleExW);
     lib.functions["CreateEventA"] = fn((void*)shim_CreateEventA);
+    lib.functions["CreateEventW"] = fn((void*)shim_CreateEventW);
     lib.functions["ResetEvent"] = fn((void*)shim_ResetEvent);
     lib.functions["SetEvent"] = fn((void*)shim_SetEvent);
     lib.functions["OpenEventA"] = fn((void*)shim_OpenEventA);
+    lib.functions["CreateMutexA"] = fn((void*)shim_CreateMutexA);
+    lib.functions["CreateMutexW"] = fn((void*)shim_CreateMutexW);
+    lib.functions["ReleaseMutex"] = fn((void*)shim_ReleaseMutex);
+    lib.functions["CreateSemaphoreA"] = fn((void*)shim_CreateSemaphoreA);
+    lib.functions["ReleaseSemaphore"] = fn((void*)shim_ReleaseSemaphore);
     lib.functions["CreateIoCompletionPort"] = fn((void*)shim_CreateIoCompletionPort);
     lib.functions["PostQueuedCompletionStatus"] = fn((void*)shim_PostQueuedCompletionStatus);
     lib.functions["DuplicateHandle"] = fn((void*)shim_DuplicateHandle);
@@ -1278,6 +1359,7 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["TryAcquireSRWLockExclusive"] = fn((void*)shim_TryAcquireSRWLockExclusive);
     lib.functions["SleepConditionVariableSRW"] = fn((void*)shim_SleepConditionVariableSRW);
     lib.functions["WakeAllConditionVariable"] = fn((void*)shim_WakeAllConditionVariable);
+    lib.functions["WakeConditionVariable"] = fn((void*)shim_WakeConditionVariable);
     lib.functions["InitializeCriticalSectionAndSpinCount"] = fn((void*)shim_InitializeCriticalSectionAndSpinCount);
     lib.functions["InitializeCriticalSectionEx"] = fn((void*)shim_InitializeCriticalSectionEx);
     lib.functions["TryEnterCriticalSection"] = fn((void*)shim_TryEnterCriticalSection);

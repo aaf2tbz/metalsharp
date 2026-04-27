@@ -3,6 +3,7 @@
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/SyncContext.h>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -243,13 +244,20 @@ static HANDLE MSABI shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSi
     }
 
     if (lpThreadId) *lpThreadId = static_cast<DWORD>(reinterpret_cast<uintptr_t>(thread));
-    return reinterpret_cast<HANDLE>(thread);
+
+    HANDLE h = SyncContext::instance().createThread(thread);
+    MS_INFO("TRACE: CreateThread -> handle %p (pthread %p)", h, (void*)thread);
+    return h;
 }
 
 static DWORD MSABI shim_WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds) {
     MS_INFO("TRACE: WaitForSingleObject(%p, %u)", hHandle, dwMilliseconds);
-    (void)hHandle; (void)dwMilliseconds;
-    return WAIT_OBJECT_0;
+    return SyncContext::instance().waitForSingleObject(hHandle, dwMilliseconds);
+}
+
+static DWORD MSABI shim_WaitForMultipleObjects(DWORD nCount, HANDLE* lpHandles, BOOL bWaitAll, DWORD dwMilliseconds) {
+    MS_INFO("TRACE: WaitForForMultipleObjects(%u, %p, %d, %u)", nCount, lpHandles, bWaitAll, dwMilliseconds);
+    return SyncContext::instance().waitForMultipleObjects(nCount, lpHandles, bWaitAll != 0, dwMilliseconds);
 }
 
 static void MSABI shim_Sleep(DWORD dwMilliseconds) {
@@ -440,6 +448,7 @@ ShimLibrary Kernel32Shim::create() {
     lib.functions["DeleteCriticalSection"] = fn((void*)shim_DeleteCriticalSection);
     lib.functions["CreateThread"] = fn((void*)shim_CreateThread);
     lib.functions["WaitForSingleObject"] = fn((void*)shim_WaitForSingleObject);
+    lib.functions["WaitForMultipleObjects"] = fn((void*)shim_WaitForMultipleObjects);
     lib.functions["Sleep"] = fn((void*)shim_Sleep);
     lib.functions["SleepEx"] = fn((void*)shim_Sleep);
     lib.functions["GetTickCount"] = fn((void*)shim_GetTickCount);

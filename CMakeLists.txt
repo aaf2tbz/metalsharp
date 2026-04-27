@@ -144,6 +144,7 @@ add_library(metalsharp_loader STATIC
     src/win32/kernel32/Registry.cpp
     src/win32/kernel32/NetworkContext.cpp
     src/win32/kernel32/SecureTransport.mm
+    src/win32/kernel32/SyncContext.cpp
     src/win32/user32/User32Shim.cpp
     src/win32/user32/WindowManager.mm
     src/win32/extra/ExtraShims.cpp
