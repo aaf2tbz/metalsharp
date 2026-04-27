@@ -56,6 +56,9 @@ void* PELoader::resolveFunction(const std::string& dllName, const std::string& f
     if (!mapSections(m_mainModule, data.data(), fileSize)) return false;
     if (!processRelocations(m_mainModule)) return false;
     if (!resolveImports(m_mainModule)) return false;
+    resolveDelayImports(m_mainModule);
+    applySectionProtections(m_mainModule);
+    processTLS(m_mainModule, DLL_PROCESS_ATTACH);
 
     MS_INFO("PELoader: loaded %s at %p, entry %p, size %u",
             path.c_str(), m_mainModule.base, m_mainModule.entryPoint, m_mainModule.size);
@@ -67,6 +70,9 @@ bool PELoader::loadFromMemory(const uint8_t* data, size_t size) {
     if (!mapSections(m_mainModule, data, size)) return false;
     if (!processRelocations(m_mainModule)) return false;
     if (!resolveImports(m_mainModule)) return false;
+    resolveDelayImports(m_mainModule);
+    applySectionProtections(m_mainModule);
+    processTLS(m_mainModule, DLL_PROCESS_ATTACH);
     return true;
 }
 
@@ -417,30 +423,169 @@ void* PELoader::getExportAddress(LoadedModule& module, const std::string& funcNa
     if (optHeader->DataDirectory[DIRECTORY_EXPORT].Size == 0) return nullptr;
 
     uint32_t exportRVA = optHeader->DataDirectory[DIRECTORY_EXPORT].VirtualAddress;
+    uint32_t exportSize = optHeader->DataDirectory[DIRECTORY_EXPORT].Size;
     auto* exportDir = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(module.base + exportRVA);
 
     auto* names = reinterpret_cast<uint32_t*>(module.base + exportDir->AddressOfNames);
     auto* functions = reinterpret_cast<uint32_t*>(module.base + exportDir->AddressOfFunctions);
     auto* ordinals = reinterpret_cast<uint16_t*>(module.base + exportDir->AddressOfNameOrdinals);
 
+    uint32_t funcRVA = 0;
+
     if (!funcName.empty()) {
         for (uint32_t i = 0; i < exportDir->NumberOfNames; i++) {
             const char* name = reinterpret_cast<const char*>(module.base + names[i]);
             if (strcmp(name, funcName.c_str()) == 0) {
                 uint16_t idx = ordinals[i];
-                return module.base + functions[idx];
+                funcRVA = functions[idx];
+                break;
             }
         }
     }
 
-    if (ordinal != 0xFFFF && ordinal >= exportDir->Base) {
+    if (funcRVA == 0 && ordinal != 0xFFFF && ordinal >= exportDir->Base) {
         uint32_t idx = ordinal - exportDir->Base;
         if (idx < exportDir->NumberOfFunctions) {
-            return module.base + functions[idx];
+            funcRVA = functions[idx];
         }
     }
 
-    return nullptr;
+    if (funcRVA == 0) return nullptr;
+
+    if (funcRVA >= exportRVA && funcRVA < exportRVA + exportSize) {
+        const char* fwdStr = reinterpret_cast<const char*>(module.base + funcRVA);
+        return resolveForwardedExport(fwdStr);
+    }
+
+    return module.base + funcRVA;
+}
+
+void* PELoader::resolveForwardedExport(const char* forwardString) {
+    if (!forwardString) return nullptr;
+
+    std::string fwd(forwardString);
+    auto dot = fwd.find('.');
+    if (dot == std::string::npos) return nullptr;
+
+    std::string dllName = fwd.substr(0, dot) + ".dll";
+    std::string funcName = fwd.substr(dot + 1);
+
+    for (auto& c : dllName) c = tolower(c);
+
+    auto it = m_loadedDLLs.find(dllName);
+    if (it != m_loadedDLLs.end()) {
+        return getExportAddress(it->second, funcName);
+    }
+
+    LoadedModule depModule;
+    if (loadDependency(dllName, depModule)) {
+        m_loadedDLLs[dllName] = std::move(depModule);
+        return getExportAddress(m_loadedDLLs[dllName], funcName);
+    }
+
+    return resolveImport(dllName, funcName, 0xFFFF);
+}
+
+void PELoader::processTLS(LoadedModule& module, uint32_t reason) {
+    if (!module.base) return;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
+    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+
+    if (optHeader->DataDirectory[DIRECTORY_TLS].Size == 0) return;
+
+    uint32_t tlsRVA = optHeader->DataDirectory[DIRECTORY_TLS].VirtualAddress;
+    auto* tlsDir = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(module.base + tlsRVA);
+
+    if (tlsDir->AddressOfCallBacks == 0) return;
+
+    auto** callbacks = reinterpret_cast<void**>(tlsDir->AddressOfCallBacks);
+
+    MS_INFO("PELoader: processing TLS callbacks for %s", module.name.c_str());
+
+    typedef void (*TLSCallback)(void*, uint32_t, void*);
+    for (int i = 0; callbacks[i] != nullptr; i++) {
+        auto cb = reinterpret_cast<TLSCallback>(callbacks[i]);
+        MS_INFO("PELoader: calling TLS callback %d at %p", i, (void*)cb);
+        cb(reinterpret_cast<void*>(module.base), reason, nullptr);
+    }
+}
+
+bool PELoader::resolveDelayImports(LoadedModule& module) {
+    if (!module.base) return true;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
+    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
+        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+
+    if (optHeader->NumberOfRvaAndSizes <= 13) return true;
+    if (optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].Size == 0) return true;
+
+    uint32_t delayRVA = optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].VirtualAddress;
+    uint32_t delaySize = optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].Size;
+    auto* desc = reinterpret_cast<IMAGE_DELAY_IMPORT_DESCRIPTOR*>(module.base + delayRVA);
+
+    size_t count = delaySize / sizeof(IMAGE_DELAY_IMPORT_DESCRIPTOR);
+    for (size_t i = 0; i < count; i++) {
+        if (desc[i].rvaDLLName == 0) break;
+
+        const char* dllNameStr = reinterpret_cast<const char*>(module.base + desc[i].rvaDLLName);
+        if (!dllNameStr || !dllNameStr[0]) break;
+
+        MS_INFO("PELoader: resolving delay-load import: %s", dllNameStr);
+
+        auto* intPtr = reinterpret_cast<uint64_t*>(module.base + desc[i].rvaINT);
+        auto* iatPtr = reinterpret_cast<uint64_t*>(module.base + desc[i].rvaIAT);
+
+        for (int j = 0; intPtr[j] != 0; j++) {
+            void* funcPtr = nullptr;
+
+            if (intPtr[j] & (1ULL << 63)) {
+                uint16_t ordinal = static_cast<uint16_t>(intPtr[j] & 0xFFFF);
+                funcPtr = resolveImport(dllNameStr, "", ordinal);
+            } else {
+                auto* ibn = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(module.base + intPtr[j]);
+                std::string name = reinterpret_cast<const char*>(ibn->Name);
+                funcPtr = resolveImport(dllNameStr, name, 0xFFFF);
+            }
+
+            iatPtr[j] = reinterpret_cast<uint64_t>(funcPtr);
+        }
+
+        HMODULE hMod = loadLibrary(dllNameStr);
+        if (hMod && desc[i].rvaHmod) {
+            *reinterpret_cast<HMODULE*>(module.base + desc[i].rvaHmod) = hMod;
+        }
+    }
+
+    return true;
+}
+
+void PELoader::applySectionProtections(LoadedModule& module) {
+    if (!module.base) return;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
+    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(
+        module.base + dos->e_lfanew + 4);
+    auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
+        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER) + fileHeader->SizeOfOptionalHeader);
+
+    for (uint16_t i = 0; i < fileHeader->NumberOfSections; i++) {
+        auto& sec = sections[i];
+        if (sec.VirtualSize == 0 || sec.VirtualAddress == 0) continue;
+
+        uint32_t pageRVA = sec.VirtualAddress;
+        uint32_t pageSize = alignUp(sec.VirtualSize, 4096);
+        uint32_t chars = sec.Characteristics;
+
+        int prot = PROT_READ;
+        if (chars & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
+        if (chars & IMAGE_SCN_MEM_WRITE) prot |= PROT_WRITE;
+
+        void* addr = module.base + pageRVA;
+        mprotect(addr, pageSize, prot);
+    }
 }
 
 void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) {
@@ -625,9 +770,13 @@ bool PELoader::loadDLL(const std::string& path, const std::string& dllName) {
     if (!mapSections(mod, data.data(), fileSize)) return false;
     if (!processRelocations(mod)) return false;
     if (!resolveImports(mod)) return false;
+    resolveDelayImports(mod);
 
     m_loadedDLLs[dllName] = std::move(mod);
     auto& stored = m_loadedDLLs[dllName];
+
+    applySectionProtections(stored);
+    processTLS(stored, DLL_PROCESS_ATTACH);
 
     if (stored.entryPoint) {
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(stored.base);
