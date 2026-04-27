@@ -3,6 +3,7 @@
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Registry.h>
+#include <metalsharp/NetworkContext.h>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -17,6 +18,8 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 namespace metalsharp {
 namespace win32 {
@@ -1147,6 +1150,82 @@ static BOOL MSABI stub_SetFilePointerEx(void* hFile, int64_t liDistanceToMove, i
     return VirtualFileSystem::instance().setFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod);
 }
 
+static void* MSABI shim_CreateNamedPipeW(const wchar_t* lpName, DWORD dwOpenMode, DWORD dwPipeMode,
+    DWORD nMaxInstances, DWORD nOutBufferSize, DWORD nInBufferSize, DWORD nDefaultTimeOut, void* lpSecurityAttributes) {
+    (void)dwOpenMode; (void)dwPipeMode; (void)nMaxInstances;
+    (void)nOutBufferSize; (void)nInBufferSize; (void)nDefaultTimeOut; (void)lpSecurityAttributes;
+    if (!lpName) return INVALID_HANDLE_VALUE;
+
+    char nameA[256] = {0};
+    for (int i = 0; lpName[i] && i < 255; i++) nameA[i] = (char)(lpName[i] & 0x7F);
+
+    std::string pipeName(nameA);
+    size_t pipePos = pipeName.find("pipe");
+    if (pipePos != std::string::npos) pipeName = pipeName.substr(pipePos + 5);
+
+    int* handles = NetworkContext::instance().allocPipePair(pipeName, true);
+    if (!handles) return INVALID_HANDLE_VALUE;
+
+    MS_INFO("TRACE: CreateNamedPipeW(\"%s\") -> handle %d", nameA, handles[0]);
+    return reinterpret_cast<void*>(static_cast<intptr_t>(handles[0]));
+}
+
+static BOOL MSABI shim_ConnectNamedPipe(void* hNamedPipe, void* lpOverlapped) {
+    (void)lpOverlapped;
+    int handle = (int)(intptr_t)hNamedPipe;
+    int listenFd = NetworkContext::instance().getPipeReadFd(handle);
+    if (listenFd < 0) return 0;
+
+    int clientFd = accept(listenFd, nullptr, nullptr);
+    if (clientFd < 0) return 0;
+
+    MS_INFO("TRACE: ConnectNamedPipe(%d) -> client fd %d", handle, clientFd);
+
+    int pipeHandles[2];
+    if (pipe(pipeHandles) < 0) return 0;
+
+    fcntl(pipeHandles[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipeHandles[1], F_SETFL, O_NONBLOCK);
+
+    return 1;
+}
+
+static BOOL MSABI shim_WaitNamedPipeW(const wchar_t* lpNamedPipeName, DWORD nTimeOut) {
+    (void)nTimeOut;
+    if (!lpNamedPipeName) return 0;
+    return 1;
+}
+
+static BOOL MSABI shim_CallNamedPipeW(const wchar_t* lpNamedPipeName, void* lpInBuffer, DWORD nInBufferSize,
+    void* lpOutBuffer, DWORD nOutBufferSize, DWORD* lpBytesRead, DWORD nTimeOut) {
+    (void)lpNamedPipeName; (void)lpInBuffer; (void)nInBufferSize;
+    (void)lpOutBuffer; (void)nOutBufferSize; (void)nTimeOut;
+    if (lpBytesRead) *lpBytesRead = 0;
+    return 0;
+}
+
+static BOOL MSABI shim_CreatePipe(void* hReadPipe, void* hWritePipe, void* lpPipeAttributes, DWORD nSize) {
+    (void)lpPipeAttributes; (void)nSize;
+    int fds[2];
+    if (pipe(fds) < 0) return 0;
+
+    auto& vfs = VirtualFileSystem::instance();
+    *(reinterpret_cast<HANDLE*>(hReadPipe)) = vfs.registerPipeFd(fds[0]);
+    *(reinterpret_cast<HANDLE*>(hWritePipe)) = vfs.registerPipeFd(fds[1]);
+
+    fcntl(fds[0], F_SETFL, O_NONBLOCK);
+    fcntl(fds[1], F_SETFL, O_NONBLOCK);
+    return 1;
+}
+
+static BOOL MSABI shim_TransactNamedPipe(void* hNamedPipe, void* lpInBuffer, DWORD nInBufferSize,
+    void* lpOutBuffer, DWORD nOutBufferSize, DWORD* lpBytesRead, void* lpOverlapped) {
+    (void)hNamedPipe; (void)lpInBuffer; (void)nInBufferSize;
+    (void)lpOutBuffer; (void)nOutBufferSize; (void)lpOverlapped;
+    if (lpBytesRead) *lpBytesRead = 0;
+    return 0;
+}
+
 void addMissingKernel32(ShimLibrary& lib) {
     auto fn = [](void* ptr) -> ExportedFunction {
         return [ptr]() -> void* { return ptr; };
@@ -1307,6 +1386,12 @@ void addMissingKernel32(ShimLibrary& lib) {
     lib.functions["GetFileSizeEx"] = fn((void*)stub_GetFileSizeEx);
     lib.functions["SetFilePointer"] = fn((void*)stub_SetFilePointer);
     lib.functions["SetFilePointerEx"] = fn((void*)stub_SetFilePointerEx);
+    lib.functions["CreateNamedPipeW"] = fn((void*)shim_CreateNamedPipeW);
+    lib.functions["ConnectNamedPipe"] = fn((void*)shim_ConnectNamedPipe);
+    lib.functions["WaitNamedPipeW"] = fn((void*)shim_WaitNamedPipeW);
+    lib.functions["CallNamedPipeW"] = fn((void*)shim_CallNamedPipeW);
+    lib.functions["CreatePipe"] = fn((void*)shim_CreatePipe);
+    lib.functions["TransactNamedPipe"] = fn((void*)shim_TransactNamedPipe);
 }
 
 }

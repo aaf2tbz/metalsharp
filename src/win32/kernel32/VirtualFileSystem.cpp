@@ -480,5 +480,13 @@ std::string VirtualFileSystem::getFullPathName(const std::string& path) {
     return "C:\\Users\\user\\" + result;
 }
 
+HANDLE VirtualFileSystem::registerPipeFd(int fd) {
+    auto* state = new FileState();
+    state->fd = fd;
+    state->position = 0;
+    state->path = "<pipe>";
+    return allocHandle(HandleType::Pipe, state);
+}
+
 }
 }

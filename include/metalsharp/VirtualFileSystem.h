@@ -73,6 +73,8 @@ public:
 
     std::string getFullPathName(const std::string& path);
 
+    HANDLE registerPipeFd(int fd);
+
 private:
     VirtualFileSystem();
 

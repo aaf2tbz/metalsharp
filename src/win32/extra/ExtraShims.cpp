@@ -3,11 +3,13 @@
 #include <metalsharp/Logger.h>
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Registry.h>
+#include <metalsharp/NetworkContext.h>
 #include <cstring>
 #include <cstdlib>
 #include <csignal>
 #include <unordered_map>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -15,6 +17,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cerrno>
+#include <poll.h>
+#include <sys/ioctl.h>
 
 #if __has_include(<openssl/rand.h>)
 #include <openssl/rand.h>
@@ -22,14 +26,6 @@
 
 namespace metalsharp {
 namespace win32 {
-
-static std::unordered_map<int, int> g_sockets;
-static int g_nextSock = 100;
-
-static int sockFromHandle(intptr_t h) {
-    auto it = g_sockets.find((int)h);
-    return it != g_sockets.end() ? it->second : -1;
-}
 
 static void* MSABI gdi32_CreateCompatibleDC(void*) {
     return reinterpret_cast<void*>(0x9000);
@@ -260,71 +256,96 @@ static int MSABI ws2_32_WSAStartup(WORD, void* data) {
 
 static int MSABI ws2_32_WSACleanup() { return 0; }
 
-static int MSABI ws2_32_WSAGetLastError() { return errno; }
+static int MSABI ws2_32_WSAGetLastError() {
+    return (int)NetworkContext::instance().getWsaError();
+}
 
 static void* MSABI ws2_32_WSASocketA(int af, int type, int proto, void*, DWORD, DWORD) {
     int sock = socket(af, type, proto);
-    if (sock < 0) return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
-    int id = g_nextSock++;
-    g_sockets[id] = sock;
+    if (sock < 0) {
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+        return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
+    }
+    int id = NetworkContext::instance().allocSocket(sock);
     return reinterpret_cast<void*>(static_cast<intptr_t>(id));
 }
 
 static int MSABI ws2_32_closesocket(void* s) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd >= 0) { close(fd); g_sockets.erase((int)(intptr_t)s); }
-    return 0;
+    int fd = NetworkContext::instance().releaseSocket((int)(intptr_t)s);
+    if (fd >= 0) { close(fd); return 0; }
+    NetworkContext::instance().setWsaError(WSAENOTSOCK);
+    return -1;
 }
 
 static int MSABI ws2_32_connect(void* s, const void* addr, int len) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return ::connect(fd, (const sockaddr*)addr, (socklen_t)len);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = ::connect(fd, (const sockaddr*)addr, (socklen_t)len);
+    if (ret < 0) {
+        if (errno == EINPROGRESS) {
+            NetworkContext::instance().setWsaError(WSAEWOULDBLOCK);
+            return -1;
+        }
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    }
+    return ret;
 }
 
 static int MSABI ws2_32_send(void* s, const char* buf, int len, int flags) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return (int)::send(fd, buf, (size_t)len, flags);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = (int)::send(fd, buf, (size_t)len, flags);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
 }
 
 static int MSABI ws2_32_recv(void* s, char* buf, int len, int flags) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return (int)::recv(fd, buf, (size_t)len, flags);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = (int)::recv(fd, buf, (size_t)len, flags);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
 }
 
 static int MSABI ws2_32_bind(void* s, const void* addr, int len) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return ::bind(fd, (const sockaddr*)addr, (socklen_t)len);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = ::bind(fd, (const sockaddr*)addr, (socklen_t)len);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
 }
 
 static int MSABI ws2_32_listen(void* s, int backlog) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return ::listen(fd, backlog);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = ::listen(fd, backlog);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
 }
 
 static void* MSABI ws2_32_accept(void* s, void* addr, int* len) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
     int nfd = ::accept(fd, (sockaddr*)addr, (socklen_t*)len);
-    if (nfd < 0) return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
-    int id = g_nextSock++;
-    g_sockets[id] = nfd;
+    if (nfd < 0) {
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+        return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
+    }
+    int id = NetworkContext::instance().allocSocket(nfd);
     return reinterpret_cast<void*>(static_cast<intptr_t>(id));
 }
 
 static int MSABI ws2_32_shutdown(void* s, int how) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
-    return ::shutdown(fd, how);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = ::shutdown(fd, how);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
 }
 
 static int MSABI ws2_32_ioctlsocket(void* s, long cmd, void* argp) {
-    int fd = sockFromHandle((intptr_t)s);
-    if (fd < 0) return -1;
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
     if (cmd == 0x8004667E) {
         int flags = fcntl(fd, F_GETFL, 0);
         if (*(reinterpret_cast<uint32_t*>(argp))) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -334,84 +355,443 @@ static int MSABI ws2_32_ioctlsocket(void* s, long cmd, void* argp) {
 }
 
 static int MSABI ws2_32_getsockname(void* s, void* addr, int* len) {
-    int fd = sockFromHandle((intptr_t)s);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
     if (fd < 0) return -1;
     return ::getsockname(fd, (sockaddr*)addr, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_getpeername(void* s, void* addr, int* len) {
-    int fd = sockFromHandle((intptr_t)s);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
     if (fd < 0) return -1;
     return ::getpeername(fd, (sockaddr*)addr, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_getsockopt(void* s, int level, int opt, char* val, int* len) {
-    int fd = sockFromHandle((intptr_t)s);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
     if (fd < 0) return -1;
     return ::getsockopt(fd, level, opt, val, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_setsockopt(void* s, int level, int opt, const char* val, int len) {
-    int fd = sockFromHandle((intptr_t)s);
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
     if (fd < 0) return -1;
     return ::setsockopt(fd, level, opt, val, (socklen_t)len);
 }
 
-static int MSABI ws2_32_select(int, void*, void*, void*, const void*) { return 0; }
+struct WinFDSet {
+    uint32_t fd_count;
+    void* fd_array[64];
+};
+
+static int MSABI ws2_32_select(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+    auto& ctx = NetworkContext::instance();
+
+    fd_set prd, pwr, pex;
+    FD_ZERO(&prd);
+    FD_ZERO(&pwr);
+    FD_ZERO(&pex);
+
+    int maxfd = 0;
+
+    auto translateSet = [&](void* winSet, fd_set& posixSet) {
+        if (!winSet) return;
+        auto* wfd = reinterpret_cast<WinFDSet*>(winSet);
+        for (uint32_t i = 0; i < wfd->fd_count; i++) {
+            int fd = ctx.getFd((int)(intptr_t)wfd->fd_array[i]);
+            if (fd >= 0) {
+                FD_SET(fd, &posixSet);
+                if (fd > maxfd) maxfd = fd;
+            }
+        }
+    };
+
+    translateSet(readfds, prd);
+    translateSet(writefds, pwr);
+    translateSet(exceptfds, pex);
+
+    struct timeval tv;
+    struct timeval* ptv = nullptr;
+    if (timeout) {
+        auto* wt = reinterpret_cast<const uint32_t*>(timeout);
+        tv.tv_sec = wt[0] / 1000000;
+        tv.tv_usec = wt[0] % 1000000;
+        ptv = &tv;
+    }
+
+    int ret = ::select(maxfd + 1, readfds ? &prd : nullptr, writefds ? &pwr : nullptr, exceptfds ? &pex : nullptr, ptv);
+    if (ret < 0) {
+        ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+        return -1;
+    }
+
+    auto translateBack = [&](void* winSet, fd_set& posixSet) {
+        if (!winSet) return;
+        auto* wfd = reinterpret_cast<WinFDSet*>(winSet);
+        uint32_t outCount = 0;
+        for (uint32_t i = 0; i < wfd->fd_count; i++) {
+            int fd = ctx.getFd((int)(intptr_t)wfd->fd_array[i]);
+            if (fd >= 0 && FD_ISSET(fd, &posixSet)) {
+                wfd->fd_array[outCount++] = wfd->fd_array[i];
+            }
+        }
+        wfd->fd_count = outCount;
+    };
+
+    translateBack(readfds, prd);
+    translateBack(writefds, pwr);
+    translateBack(exceptfds, pex);
+
+    return ret;
+}
 
 static int MSABI ws2_32_getaddrinfo(const char* node, const char* service, const void* hints, void** res) {
-    return getaddrinfo(node, service, (const addrinfo*)hints, (addrinfo**)res);
+    int ret = getaddrinfo(node, service, (const addrinfo*)hints, (addrinfo**)res);
+    if (ret != 0) {
+        NetworkContext::instance().setWsaError(WSAEHOSTUNREACH);
+    }
+    return ret;
 }
 
 static void MSABI ws2_32_freeaddrinfo(void* p) { freeaddrinfo((addrinfo*)p); }
 
 static uint16_t MSABI ws2_32_htons(uint16_t v) { return __builtin_bswap16(v); }
-
 static uint16_t MSABI ws2_32_ntohs(uint16_t v) { return __builtin_bswap16(v); }
-
 static uint32_t MSABI ws2_32_htonl(uint32_t v) { return __builtin_bswap32(v); }
-
 static uint32_t MSABI ws2_32_ntohl(uint32_t v) { return __builtin_bswap32(v); }
-
 static uint32_t MSABI ws2_32_inet_addr(const char* cp) { return inet_addr(cp); }
-
 static char* MSABI ws2_32_inet_ntoa(struct in_addr in) { return inet_ntoa(in); }
 
-static int MSABI ws2_32_WSAIoctl(void*, DWORD, void*, DWORD, void*, DWORD, DWORD*, void*, void*) { return 0; }
+static struct hostent g_hostent;
+static char* g_hostentAliases[2] = {nullptr, nullptr};
+static char* g_hostentAddrList[2] = {nullptr};
+static uint32_t g_hostentAddr;
+static pthread_mutex_t g_hostentMutex = PTHREAD_MUTEX_INITIALIZER;
 
-static int MSABI ws2_32_WSARecv(void*, void*, DWORD, DWORD*, DWORD*, void*, void*) { return -1; }
+static void* MSABI ws2_32_gethostbyname(const char* name) {
+    if (!name) return nullptr;
+    pthread_mutex_lock(&g_hostentMutex);
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    int rc = getaddrinfo(name, nullptr, &hints, &res);
+    if (rc != 0 || !res) {
+        pthread_mutex_unlock(&g_hostentMutex);
+        NetworkContext::instance().setWsaError(WSAEHOSTUNREACH);
+        return nullptr;
+    }
+    auto* sa = reinterpret_cast<sockaddr_in*>(res->ai_addr);
+    g_hostentAddr = sa->sin_addr.s_addr;
+    g_hostent.h_name = const_cast<char*>(name);
+    g_hostent.h_aliases = g_hostentAliases;
+    g_hostent.h_addrtype = AF_INET;
+    g_hostent.h_length = 4;
+    g_hostentAddrList[0] = reinterpret_cast<char*>(&g_hostentAddr);
+    g_hostentAddrList[1] = nullptr;
+    g_hostent.h_addr_list = g_hostentAddrList;
+    freeaddrinfo(res);
+    pthread_mutex_unlock(&g_hostentMutex);
+    return &g_hostent;
+}
 
-static int MSABI ws2_32_WSARecvFrom(void*, void*, DWORD, DWORD*, DWORD*, void*, int*, void*, void*) { return -1; }
+static int MSABI ws2_32_WSAIoctl(void* s, DWORD dwIoControlCode, void* lpvInBuffer, DWORD cbInBuffer,
+    void* lpvOutBuffer, DWORD cbOutBuffer, DWORD* lpcbBytesReturned, void*, void*) {
+    auto& ctx = NetworkContext::instance();
+    if (dwIoControlCode == SIO_GET_EXTENSION_FUNCTION_POINTER) {
+        if (lpvInBuffer && cbInBuffer >= sizeof(uint32_t)) {
+            uint32_t guid0 = *reinterpret_cast<uint32_t*>(lpvInBuffer);
+            if (lpvOutBuffer && cbOutBuffer >= sizeof(void*)) {
+                *reinterpret_cast<void**>(lpvOutBuffer) = reinterpret_cast<void*>(static_cast<intptr_t>(guid0));
+                if (lpcbBytesReturned) *lpcbBytesReturned = sizeof(void*);
+                return 0;
+            }
+        }
+    }
 
-static int MSABI ws2_32_WSASend(void*, void*, DWORD, DWORD*, DWORD, void*, void*) { return -1; }
+    int fd = ctx.getFd((int)(intptr_t)s);
+    if (fd < 0) return -1;
 
-static int MSABI ws2_32_WSASendTo(void*, void*, DWORD, DWORD*, DWORD, const void*, int, void*, void*) { return -1; }
+    if (dwIoControlCode == 0x4004667F || dwIoControlCode == 0x8004667D) {
+        int arg = 0;
+        if (dwIoControlCode == 0x8004667D) arg = 1;
+        int ret = ::ioctl(fd, FIONBIO, &arg);
+        if (ret < 0) { ctx.setWsaError(ctx.mapErrnoToWsa(errno)); return -1; }
+        return 0;
+    }
 
-static int MSABI ws2_32_ord3(void*) { return 0; }
+    return 0;
+}
 
-static int MSABI ws2_32_ord4(void*, int, int) { return 0; }
+static int MSABI ws2_32_WSARecv(void* s, void* lpBuffers, DWORD dwBufferCount,
+    DWORD* lpNumberOfBytesRecvd, DWORD* lpFlags, void* lpOverlapped, void* lpCompletionRoutine) {
+    auto& ctx = NetworkContext::instance();
+    int fd = ctx.getFd((int)(intptr_t)s);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
 
-static void* MSABI ws2_32_ord6(void*, void*, int*) { return reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
+    auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
+    if (lpOverlapped) {
+        ctx.setWsaError(WSAEWOULDBLOCK);
+        return -1;
+    }
 
-static int MSABI ws2_32_ord8(void*, int, int, char*, int*) { return 0; }
+    DWORD totalRead = 0;
+    for (DWORD i = 0; i < dwBufferCount; i++) {
+        ssize_t n = ::recv(fd, bufs[i].buf, bufs[i].len, 0);
+        if (n < 0) {
+            ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+            if (totalRead > 0) break;
+            return -1;
+        }
+        totalRead += (DWORD)n;
+        if ((DWORD)n < bufs[i].len) break;
+    }
+    if (lpNumberOfBytesRecvd) *lpNumberOfBytesRecvd = totalRead;
+    return 0;
+}
 
-static int MSABI ws2_32_ord9(void*, int, int, const char*, int) { return 0; }
+static int MSABI ws2_32_WSARecvFrom(void* s, void* lpBuffers, DWORD dwBufferCount,
+    DWORD* lpNumberOfBytesRecvd, DWORD* lpFlags, void* lpFrom, int* lpFromlen,
+    void* lpOverlapped, void* lpCompletionRoutine) {
+    auto& ctx = NetworkContext::instance();
+    int fd = ctx.getFd((int)(intptr_t)s);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
 
-static int MSABI ws2_32_ord10(void*, void*, int) { return 0; }
+    auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
+    if (lpOverlapped) {
+        ctx.setWsaError(WSAEWOULDBLOCK);
+        return -1;
+    }
 
-static int MSABI ws2_32_ord15(void*, int) { return 0; }
+    DWORD totalRead = 0;
+    for (DWORD i = 0; i < dwBufferCount; i++) {
+        ssize_t n = ::recvfrom(fd, bufs[i].buf, bufs[i].len, 0,
+            (sockaddr*)lpFrom, (socklen_t*)(lpFromlen));
+        if (n < 0) {
+            ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+            if (totalRead > 0) break;
+            return -1;
+        }
+        totalRead += (DWORD)n;
+        if ((DWORD)n < bufs[i].len) break;
+    }
+    if (lpNumberOfBytesRecvd) *lpNumberOfBytesRecvd = totalRead;
+    return 0;
+}
 
-static int MSABI ws2_32_ord16(void*, int, const void*, int) { return 0; }
+static int MSABI ws2_32_WSASend(void* s, void* lpBuffers, DWORD dwBufferCount,
+    DWORD* lpNumberOfBytesSent, DWORD dwFlags, void* lpOverlapped, void* lpCompletionRoutine) {
+    auto& ctx = NetworkContext::instance();
+    int fd = ctx.getFd((int)(intptr_t)s);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
 
-static int MSABI ws2_32_ord18(void*, const void*, int) { return 0; }
+    auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
+    if (lpOverlapped) {
+        ctx.setWsaError(WSAEWOULDBLOCK);
+        return -1;
+    }
 
-static int MSABI ws2_32_ord19(void*, int, long, void*) { return 0; }
+    DWORD totalSent = 0;
+    for (DWORD i = 0; i < dwBufferCount; i++) {
+        ssize_t n = ::send(fd, bufs[i].buf, bufs[i].len, dwFlags);
+        if (n < 0) {
+            ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+            if (totalSent > 0) break;
+            return -1;
+        }
+        totalSent += (DWORD)n;
+    }
+    if (lpNumberOfBytesSent) *lpNumberOfBytesSent = totalSent;
+    return 0;
+}
 
-static int MSABI ws2_32_ord23(void*, void*, int*) { return 0; }
+static int MSABI ws2_32_WSASendTo(void* s, void* lpBuffers, DWORD dwBufferCount,
+    DWORD* lpNumberOfBytesSent, DWORD dwFlags, const void* lpTo, int iTolen,
+    void* lpOverlapped, void* lpCompletionRoutine) {
+    auto& ctx = NetworkContext::instance();
+    int fd = ctx.getFd((int)(intptr_t)s);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
 
-static int MSABI ws2_32_ord116(void*, int, int, int, char*, int*) { return 0; }
+    auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
+    if (lpOverlapped) {
+        ctx.setWsaError(WSAEWOULDBLOCK);
+        return -1;
+    }
 
-static int MSABI ws2_32_ord151(void*, const char*, const char*, const void*, void**) { return 0; }
+    DWORD totalSent = 0;
+    for (DWORD i = 0; i < dwBufferCount; i++) {
+        ssize_t n = ::sendto(fd, bufs[i].buf, bufs[i].len, dwFlags,
+            (const sockaddr*)lpTo, (socklen_t)iTolen);
+        if (n < 0) {
+            ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+            if (totalSent > 0) break;
+            return -1;
+        }
+        totalSent += (DWORD)n;
+    }
+    if (lpNumberOfBytesSent) *lpNumberOfBytesSent = totalSent;
+    return 0;
+}
+
+static int MSABI ws2_32_WSAEventSelect(void* s, void* hEventObject, uint32_t lNetworkEvents) {
+    auto& ctx = NetworkContext::instance();
+    int handle = (int)(intptr_t)s;
+    int fd = ctx.getFd(handle);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+
+    ctx.setSocketEventMask(handle, lNetworkEvents, hEventObject);
+
+    if (lNetworkEvents != 0) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    return 0;
+}
+
+static int MSABI ws2_32_WSAAsyncSelect(void* s, void* hWnd, uint32_t wMsg, uint32_t lEvent) {
+    auto& ctx = NetworkContext::instance();
+    int handle = (int)(intptr_t)s;
+    int fd = ctx.getFd(handle);
+    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+
+    ctx.setSocketEventMask(handle, lEvent, hWnd);
+
+    if (lEvent != 0) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    return 0;
+}
+
+static int MSABI ws2_32_WSAGetOverlappedResult(void* s, void* lpOverlapped,
+    DWORD* lpcbTransfer, BOOL fWait, DWORD* lpdwFlags) {
+    (void)s; (void)lpOverlapped; (void)fWait;
+    if (lpcbTransfer) *lpcbTransfer = 0;
+    if (lpdwFlags) *lpdwFlags = 0;
+    return 1;
+}
+
+static int MSABI ws2_32_WSACreateEvent(void** lpEvent) {
+    if (lpEvent) *lpEvent = reinterpret_cast<void*>(0xEE00);
+    return 0;
+}
+
+static int MSABI ws2_32_WSACloseEvent(void* hEvent) {
+    (void)hEvent;
+    return 1;
+}
+
+static int MSABI ws2_32_WSAWaitForMultipleEvents(DWORD cEvents, void** lphEvents,
+    BOOL fWaitAll, DWORD dwTimeout, BOOL fAlertable) {
+    (void)fWaitAll; (void)fAlertable;
+    if (cEvents == 0) return -1;
+    if (dwTimeout == 0xFFFFFFFF) {
+        pollfd pfd;
+        pfd.fd = 0;
+        pfd.events = POLLIN;
+        poll(&pfd, 1, -1);
+    } else {
+        pollfd pfd;
+        pfd.fd = 0;
+        pfd.events = POLLIN;
+        poll(&pfd, 1, (int)dwTimeout);
+    }
+    return 0;
+}
+
+static int MSABI ws2_32_WSAEnumNetworkEvents(void* s, void* hEvent, void* lpNetworkEvents) {
+    (void)s; (void)hEvent;
+    if (lpNetworkEvents) {
+        auto* ne = reinterpret_cast<uint32_t*>(lpNetworkEvents);
+        ne[0] = FD_READ | FD_WRITE | FD_ACCEPT | FD_CONNECT;
+        ne[1] = 0;
+    }
+    return 0;
+}
+
+static int MSABI ws2_32_ord3(void* s) {
+    return ws2_32_closesocket(s);
+}
+
+static int MSABI ws2_32_ord4(void* s, int level, int opt) {
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) return -1;
+    int val = 0;
+    return ::getsockopt(fd, level, opt, reinterpret_cast<char*>(&val), nullptr) == 0 ? val : 0;
+}
+
+static void* MSABI ws2_32_ord6(void* s, void* addr, int* len) {
+    return ws2_32_accept(s, addr, len);
+}
+
+static int MSABI ws2_32_ord8(void* s, int level, int opt, char* val, int* len) {
+    return ws2_32_getsockopt(s, level, opt, val, len);
+}
+
+static int MSABI ws2_32_ord9(void* s, int level, int opt, const char* val, int len) {
+    return ws2_32_setsockopt(s, level, opt, val, len);
+}
+
+static int MSABI ws2_32_ord10(void* s, void* addr, int len) {
+    return ws2_32_connect(s, addr, len);
+}
+
+static int MSABI ws2_32_ord15(void* s, int how) {
+    return ws2_32_shutdown(s, how);
+}
+
+static int MSABI ws2_32_ord16(void* s, int backlog) {
+    return ws2_32_listen(s, backlog);
+}
+
+static int MSABI ws2_32_ord18(void* s, const void* addr, int len) {
+    return ws2_32_bind(s, addr, len);
+}
+
+static int MSABI ws2_32_ord19(void* s, int cmd, long arg) {
+    uint32_t val = (uint32_t)arg;
+    return ws2_32_ioctlsocket(s, cmd, &val);
+}
+
+static int MSABI ws2_32_ord23(void* s, void* addr, int* len) {
+    return ws2_32_getsockname(s, addr, len);
+}
+
+static int MSABI ws2_32_ord111(void* s, int level, int opt, const char* val, int len) {
+    return ws2_32_setsockopt(s, level, opt, val, len);
+}
+
+static int MSABI ws2_32_ord112(void* s, int level, int opt, char* val, int* len) {
+    return ws2_32_getsockopt(s, level, opt, val, len);
+}
+
+static int MSABI ws2_32_ord115(void* s, void* addr, int* len) {
+    return ws2_32_getpeername(s, addr, len);
+}
+
+static int MSABI ws2_32_ord116(void* s, int what, int backlog, char* addr, int* addrLen) {
+    (void)what;
+    return ws2_32_listen(s, backlog);
+}
+
+static int MSABI ws2_32_ord151(void* s, const char* host, const char* service, const void* hints, void** res) {
+    (void)s;
+    return getaddrinfo(host, service, (const addrinfo*)hints, (addrinfo**)res);
+}
+
+static int MSABI ws2_32_recvfrom(void* s, char* buf, int len, int flags, void* from, int* fromlen) {
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = (int)::recvfrom(fd, buf, (size_t)len, flags, (sockaddr*)from, (socklen_t*)fromlen);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
+}
+
+static int MSABI ws2_32_sendto(void* s, const char* buf, int len, int flags, const void* to, int tolen) {
+    int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
+    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    int ret = (int)::sendto(fd, buf, (size_t)len, flags, (const sockaddr*)to, (socklen_t)tolen);
+    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    return ret;
+}
 
 ShimLibrary createWs2_32Shim() {
     ShimLibrary lib;
@@ -444,11 +824,21 @@ ShimLibrary createWs2_32Shim() {
     lib.functions["ntohl"] = fn((void*)ws2_32_ntohl);
     lib.functions["inet_addr"] = fn((void*)ws2_32_inet_addr);
     lib.functions["inet_ntoa"] = fn((void*)ws2_32_inet_ntoa);
+    lib.functions["gethostbyname"] = fn((void*)ws2_32_gethostbyname);
     lib.functions["WSAIoctl"] = fn((void*)ws2_32_WSAIoctl);
     lib.functions["WSARecv"] = fn((void*)ws2_32_WSARecv);
     lib.functions["WSARecvFrom"] = fn((void*)ws2_32_WSARecvFrom);
     lib.functions["WSASend"] = fn((void*)ws2_32_WSASend);
     lib.functions["WSASendTo"] = fn((void*)ws2_32_WSASendTo);
+    lib.functions["WSAEventSelect"] = fn((void*)ws2_32_WSAEventSelect);
+    lib.functions["WSAAsyncSelect"] = fn((void*)ws2_32_WSAAsyncSelect);
+    lib.functions["WSAGetOverlappedResult"] = fn((void*)ws2_32_WSAGetOverlappedResult);
+    lib.functions["WSACreateEvent"] = fn((void*)ws2_32_WSACreateEvent);
+    lib.functions["WSACloseEvent"] = fn((void*)ws2_32_WSACloseEvent);
+    lib.functions["WSAWaitForMultipleEvents"] = fn((void*)ws2_32_WSAWaitForMultipleEvents);
+    lib.functions["WSAEnumNetworkEvents"] = fn((void*)ws2_32_WSAEnumNetworkEvents);
+    lib.functions["recvfrom"] = fn((void*)ws2_32_recvfrom);
+    lib.functions["sendto"] = fn((void*)ws2_32_sendto);
 
     lib.ordinals[2] = fn((void*)ws2_32_select);
     lib.ordinals[3] = fn((void*)ws2_32_ord3);
@@ -465,9 +855,9 @@ ShimLibrary createWs2_32Shim() {
     lib.ordinals[21] = fn((void*)ws2_32_ord3);
     lib.ordinals[22] = fn((void*)ws2_32_ord15);
     lib.ordinals[23] = fn((void*)ws2_32_ord23);
-    lib.ordinals[111] = fn((void*)ws2_32_ord9);
-    lib.ordinals[112] = fn((void*)ws2_32_ord8);
-    lib.ordinals[115] = fn((void*)ws2_32_ord23);
+    lib.ordinals[111] = fn((void*)ws2_32_ord111);
+    lib.ordinals[112] = fn((void*)ws2_32_ord112);
+    lib.ordinals[115] = fn((void*)ws2_32_ord115);
     lib.ordinals[116] = fn((void*)ws2_32_ord116);
     lib.ordinals[151] = fn((void*)ws2_32_ord151);
 
