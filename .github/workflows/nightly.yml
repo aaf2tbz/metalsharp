@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  nightly-arm64:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -24,15 +24,40 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          cp build/d3d11.dylib dist/
-          cp build/d3d12.dylib dist/
-          cp build/dxgi.dylib dist/
-          cp build/xaudio2_9.dylib dist/
-          cp build/xinput1_4.dylib dist/
+          cp build/metalsharp dist/
           cp build/metalsharp_launcher dist/
+          cp build/*.dylib dist/ 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: metalsharp-nightly-${{ github.sha }}
+          name: metalsharp-nightly-arm64-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+
+  nightly-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -- -j$(sysctl -n hw.ncpu)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/metalsharp dist/
+          cp build/metalsharp_launcher dist/
+          cp build/*.dylib dist/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metalsharp-nightly-x86_64-${{ github.sha }}
           path: dist/
           retention-days: 30

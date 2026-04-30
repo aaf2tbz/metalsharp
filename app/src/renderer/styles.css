@@ -292,6 +292,14 @@ body {
   overflow: hidden;
 }
 
+.game-card-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  position: absolute;
+  inset: 0;
+}
+
 .game-card-banner::before {
   content: "";
   position: absolute;
