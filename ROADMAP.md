@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-18 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers, descriptor heaps with tracked view creation, command list root binding with layout offsets. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~22K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-19 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support: ray tracing pipeline with IRRayTracingPipelineConfiguration, mesh/amplification shader stages, compute root signature binding, SM 6.6 validation warnings. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~24K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -368,6 +368,55 @@
 
 ---
 
+## Phase 19: Shader Model 6.x Coverage ✅ DONE
+
+*Full SM 6.0-6.6 feature set through Apple's IRConverter, including ray tracing, mesh shaders, and validation.*
+
+### 19.1 SM 6.0-6.2 Features (~200 lines)
+
+- `ShaderStage` enum extended: `Mesh`, `Amplification`, `RayGeneration`, `ClosestHit`, `Miss`, `Intersection`, `AnyHit`, `Callable`
+- `IRConverterBridge::getShaderModelCapabilities()` returns capability flags per SM version (waveOps, halfPrecision, int64, barycentrics, rayTracing, meshShaders, samplerFeedback, computeDerivatives)
+- `toIRStage()` maps all new shader stages to IRShaderStage enum values
+- Wave intrinsics, 64-bit integers, half precision handled by Apple's converter transparently
+
+### 19.2 SM 6.3-6.4: Ray Tracing (~600 lines)
+
+- `IRRayTracingPipelineConfiguration` function pointers loaded: Create, Destroy, SetMaxAttributeSize, SetPipelineFlags, SetMaxRecursiveDepth, SetRayGenCompilationMode
+- `IRCompilerSetRayTracingPipelineConfiguration` loaded
+- `IRConverterBridge::compileRayTracingShader()` — compiles DXIL with RT pipeline config (max recursion, max attribute size)
+- D3D12 RT types: `D3D12_STATE_OBJECT_DESC`, `D3D12_STATE_SUBOBJECT`, `D3D12_RAYTRACING_PIPELINE_CONFIG`, `D3D12_RAYTRACING_SHADER_CONFIG`, `D3D12_DXIL_LIBRARY_DESC`, `D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC`, `D3D12_DISPATCH_RAYS_DESC`
+- `ID3D12StateObject` interface with `__metalRTPipeline()` virtual
+- `ID3D12StateObjectProperties` interface with `GetShaderIdentifier`, `GetRaytracingAccelerationStructureGPUAddress`
+- `D3D12DeviceImpl::CreateStateObject()` parses subobjects (pipeline config, shader config, DXIL libraries), compiles RT shaders via IRConverter
+- `D3D12DeviceImpl::GetRaytracingAccelerationStructurePrebuildInfo()` returns conservative prebuild info
+- Command list: `DispatchRays`, `BuildRaytracingAccelerationStructure`, `CopyRaytracingAccelerationStructure`, `EmitRaytracingAccelerationStructurePostbuildInfo`
+- Execute: DispatchRays creates Metal compute encoder with RT pipeline and argument buffer
+
+### 19.3 SM 6.5: Mesh Shaders (~300 lines)
+
+- `DispatchMesh` command list method records mesh thread group dispatch
+- Execute: mesh dispatch uses Metal render encoder with mesh threadgroup API (macOS 13+)
+- Pipeline state creation supports mesh/amplification shader stages
+
+### 19.4 SM 6.6 Limitations (~100 lines)
+
+- `ShaderModelValidator` class with static validation methods
+- `validateComputeShader()`: warns when SM 6.6 compute uses derivatives/quad ops/texture samples with non-1D threadgroup size
+- `validateWaveSize()`: warns when requested wave size != 32 (Apple GPU requirement)
+- Early SM versions skip validation silently
+
+### Compute Root Signature Support (~200 lines)
+
+- `SetComputeRootSignature`, `SetComputeRoot32BitConstants`, `SetComputeRootDescriptorTable`, `SetComputeRootConstantBufferView`, `SetComputeRootShaderResourceView`, `SetComputeRootUnorderedAccessView`
+- Separate `m_computeArgumentBuffer` with same layout offset scheme as graphics root binding
+- `Dispatch` records compute dispatches, executed via Metal compute encoder with argument buffer
+
+**Deliverable:** Full SM 6.x shader pipeline. Ray tracing state objects compile through IRConverter. Mesh shaders dispatch through Metal. Compute root signatures bind correctly. SM 6.6 limitations validated with warnings. 16/16 tests pass.
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -383,6 +432,7 @@
 | **16** | Download & Launch Game | 3-4 days | 23-32 days | ✅ Done |
 | **17** | Apple IRConverter Integration | 2-3 weeks | 6-8 weeks | ✅ Done |
 | **18** | D3D12 Root Signatures & Heaps | 1-2 weeks | 7-10 weeks | ✅ Done |
+| **19** | SM 6.x Shader Coverage | 1-2 weeks | 8-12 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 

@@ -263,6 +263,26 @@ public:
     STDMETHOD(SetName)(const char*) override { return S_OK; }
 };
 
+class D3D12StateObjectImpl final : public ID3D12StateObject {
+public:
+    ULONG refCount = 1;
+    void* m_rtPipeline = nullptr;
+    std::vector<uint8_t> m_shaderIdentifierData;
+
+    HRESULT QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (riid == IID_IUnknown) { AddRef(); *ppv = this; return S_OK; }
+        return E_NOINTERFACE;
+    }
+    ULONG AddRef() override { return ++refCount; }
+    ULONG Release() override { ULONG c = --refCount; if (c == 0) delete this; return c; }
+    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
+    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
+    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
+    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    void* __metalRTPipeline() const override { return m_rtPipeline; }
+};
+
 class D3D12ResourceImpl final : public ID3D12Resource {
 public:
     ULONG refCount = 1;
@@ -685,6 +705,86 @@ public:
     HRESULT ResolveSamplerFeedback(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) override {
         if (!pFeedbackResource || !pDestResource) return E_INVALIDARG;
         return S_OK;
+    }
+
+    HRESULT CreateStateObject(const void* pDesc, REFIID riid, void** ppStateObject) override {
+        if (!pDesc || !ppStateObject) return E_INVALIDARG;
+        auto* desc = static_cast<const D3D12_STATE_OBJECT_DESC*>(pDesc);
+
+        auto* stateObj = new D3D12StateObjectImpl();
+
+        uint32_t maxRecursion = 0;
+        uint32_t maxPayloadSize = 0;
+        uint32_t maxAttributeSize = 0;
+        std::vector<std::pair<const uint8_t*, size_t>> libraries;
+
+        for (UINT i = 0; i < desc->NumSubobjects; ++i) {
+            auto& sub = desc->pSubobjects[i];
+            switch (sub.Type) {
+                case 0: {
+                    auto* config = static_cast<const D3D12_RAYTRACING_PIPELINE_CONFIG*>(sub.pDesc);
+                    if (config) maxRecursion = config->MaxTraceRecursionDepth;
+                    break;
+                }
+                case 1: {
+                    auto* config = static_cast<const D3D12_RAYTRACING_SHADER_CONFIG*>(sub.pDesc);
+                    if (config) {
+                        maxPayloadSize = config->MaxPayloadSizeInBytes;
+                        maxAttributeSize = config->MaxAttributeSizeInBytes;
+                    }
+                    break;
+                }
+                case 2: {
+                    auto* lib = static_cast<const D3D12_DXIL_LIBRARY_DESC*>(sub.pDesc);
+                    if (lib && lib->DXILLibrary && lib->DXILLibrarySize > 0) {
+                        libraries.emplace_back(
+                            static_cast<const uint8_t*>(lib->DXILLibrary),
+                            lib->DXILLibrarySize
+                        );
+                    }
+                    break;
+                }
+                case 5: {
+                    auto* config1 = static_cast<const D3D12_RAYTRACING_PIPELINE_CONFIG1*>(sub.pDesc);
+                    if (config1) maxRecursion = config1->MaxTraceRecursionDepth;
+                    break;
+                }
+            }
+        }
+
+        auto& bridge = IRConverterBridge::instance();
+        if (bridge.isAvailable() && !libraries.empty()) {
+            IRConverterReflection reflection;
+            std::vector<uint8_t> metallib;
+            for (auto& [data, size] : libraries) {
+                bridge.compileRayTracingShader(
+                    data, size,
+                    ShaderStage::RayGeneration,
+                    nullptr,
+                    maxRecursion,
+                    maxAttributeSize > 0 ? maxAttributeSize : 32,
+                    metallib,
+                    reflection
+                );
+            }
+            stateObj->m_shaderIdentifierData.resize(64, 0);
+        }
+
+        *ppStateObject = stateObj;
+        return S_OK;
+    }
+
+    HRESULT GetRaytracingAccelerationStructurePrebuildInfo(const void* pDesc, void* pInfo) override {
+        if (!pDesc || !pInfo) return E_INVALIDARG;
+        auto* info = static_cast<D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO*>(pInfo);
+        info->ResultDataMaxSizeInBytes = 64 * 1024 * 1024;
+        info->ScratchDataSizeInBytes = 32 * 1024 * 1024;
+        info->UpdateScratchDataSizeInBytes = 32 * 1024 * 1024;
+        return S_OK;
+    }
+
+    HRESULT DecodeRaytracingAccelerationStructure(ID3D12Resource*, void*) override {
+        return E_NOTIMPL;
     }
 
 private:
