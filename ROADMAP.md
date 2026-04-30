@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-16 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~18K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-18 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers, descriptor heaps with tracked view creation, command list root binding with layout offsets. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~22K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -275,6 +275,99 @@
 
 ---
 
+## Phase 17: Apple libmetalirconverter Integration ✅ DONE
+
+*Replace the custom DXBC→MSL translator with Apple's battle-tested DXIL→Metal compiler for SM 5.1+ shaders.*
+
+### 17.1 IRConverter Integration (~600 lines)
+
+- Installed Metal Shader Converter 3.1 beta 1 from Apple developer downloads
+- Linked against `libmetalirconverter.dylib` at `/usr/local/lib/` via runtime `dlopen` with graceful fallback
+- `IRConverterBridge` class: loads all IRCompiler/IRObject/IRMetalLib/IRReflection function pointers dynamically
+- `ShaderTranslator::translateDXBC` → primary path: extract DXIL from DXBC container → `IRObjectCreateFromDXIL()` → `IRCompilerAllocCompileAndLink()` → `IRObjectGetMetalLibBinary()` → `IRMetalLibGetBytecode()` → `[device newLibraryWithData:]`
+- `ShaderTranslator::translateDXIL` → direct DXIL input path
+- Root signature support: `IRCompilerSetGlobalRootSignature()` for D3D12 explicit resource layout
+- Full reflection extraction: entry point, resource locations, compute threadgroup sizes, vertex output info, fragment render targets
+- New files: `include/metalsharp/IRConverterBridge.h`, `src/metal/shader/IRConverterBridge.cpp`, `src/metal/shader/IRConverterBridge.mm`
+
+### 17.2 Runtime Shader Compilation Service (~400 lines)
+
+- `ShaderCompileService`: thread pool with configurable worker count (defaults to half hardware concurrency)
+- Async compilation via `std::future<ShaderCompileResult>` — non-blocking submit, blocking get
+- Metallib disk cache at `~/.metalsharp/cache/metallib_cache/` keyed by FNV-1a hash of DXIL bytecode
+- Reflection JSON stored alongside cached metallibs for pipeline state creation
+- Cache hit path: load metallib directly, skip compilation
+- Thread-safe queue with condition variable for work distribution
+
+### 17.3 DXBC → DXIL Conversion Strategy (~300 lines)
+
+- Hybrid approach: `IRConverterBridge::isDXIL()` detects whether container has DXIL chunks
+- DXIL containers (SM 6.0+) → direct path through Apple's converter
+- DXBC containers with DXIL chunks (SM 5.1+) → extract DXIL, then convert
+- DXBC containers without DXIL (SM ≤ 5.0) → fallback to custom `DXBCtoMSL` translator
+- `IRConverterBridge::detectShaderModel()` parses version token for logging
+- `IRConverterBridge::extractDXILFromDXBC()` walks DXBC chunk array for `DXIL` magic
+
+### 17.4 Argument Buffer Binding Model (~500 lines)
+
+- `ArgumentBufferManager`: builds Metal Argument Buffer layouts from IRConverter reflection data
+- `ArgumentBufferLayout`: entries with root parameter index, space, slot, top-level offset, size
+- `encodeRootConstants()` — write inline 32-bit constants into AB
+- `encodeDescriptorTable()` — write GPU address pointer into AB (3 uint64_t per entry)
+- `encodeRootDescriptor()` — write CBV/SRV/UAV GPU address into AB
+- `buildLayoutFromReflection()` — map `IRConverterReflection` resources to AB layout
+- `buildLayoutFromRootSignature()` — parse root signature blob via `IRVersionedRootSignatureDescriptorCreateFromBlob()`
+
+**Deliverable:** Shaders compiled through Apple's converter, producing correct metallibs with proper resource binding. DXBC→MSL fallback preserved for older shaders. 14/14 tests pass.
+
+**Estimated effort:** completed
+
+---
+
+## Phase 18: D3D12 Root Signatures & Descriptor Heaps ✅ DONE
+
+*D3D12 uses root signatures to define the shader resource binding layout. This phase implements parsing, layout computation, descriptor heap tracking, and root binding in command lists backed by Metal argument buffers.*
+
+### 18.1 Root Signature Parsing & Layout (~400 lines)
+
+- `D3D12RootSignatureImpl` extended with `parameters`, `rawBytecode`, `parameterLayouts`, `argumentBufferSize`, `computeLayout()`
+- `CreateRootSignature` now parses DXBC container for `RTS0` chunk, parses root parameter blob
+- `parseRootSignatureBlob()` helper: walks versioned root signature descriptor, extracts parameter types, shader registers, visibility
+- Layout computation: CBV/SRV/UAV get 8-byte aligned slots, 32-bit constants pack densely, descriptor tables get pointer slots
+
+### 18.2 Descriptor Heap Tracking & Views (~300 lines)
+
+- `D3D12DescriptorHeapImpl` extended with `metalArgumentBuffer`, per-descriptor `gpuAddress`, `metalSampler`, `shaderRegister`, `registerSpace`
+- `handleToIndex()`, `gpuHandleToIndex()`, `copyDescriptors()`, `getDescriptorByIndex()` helpers
+- `CreateDescriptorHeap` tracks heaps in device's `m_trackedHeaps` vector
+- `CreateConstantBufferView` writes GPU address + size into tracked descriptor slot
+- `CreateSampler` stores Metal sampler state in tracked descriptor slot
+- `findHeapForHandle()` resolves CPU descriptor handle back to owning heap
+
+### 18.3 Command List Root Binding (~500 lines)
+
+- `D3D12CommandList.mm` rewritten: root binding methods write into `m_argumentBuffer` using root signature layout offsets
+- `SetGraphicsRootSignature` — stores root signature, resizes argument buffer to `argumentBufferSize`
+- `SetGraphicsRoot32BitConstants` — memcpy constants at computed offset
+- `SetGraphicsRootConstantBufferView` — write GPU address at CBV slot offset
+- `SetGraphicsRootShaderResourceView` / `SetGraphicsRootUnorderedAccessView` — write GPU address at slot offset
+- `SetGraphicsRootDescriptorTable` — write GPU descriptor handle at table offset
+- `ResourceBarrier` with resource state tracking
+- `CopyBufferRegion`, `CopyResource`, `CopyTextureRegion` — Metal blit encoder operations
+- `SetDescriptorHeaps` — track active heaps for execute
+- Execute creates Metal argument buffer and sets at vertex/fragment buffer index 16
+
+### 18.4 Pipeline State Integration (~100 lines)
+
+- `CreateGraphicsPipelineState` tries `translateDXBCWithRootSignature` first for root-signature-aware shader compilation
+- Falls back to plain `translateDXBC` when no root signature available
+
+**Deliverable:** D3D12 root signatures parse correctly, descriptor heaps track views, command lists bind root parameters to Metal argument buffers with correct layout offsets. 15/15 tests pass.
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -288,6 +381,8 @@
 | **14** | First Game Validation | 2-3 days | 17-24 days | ✅ Done |
 | **15** | Steam Full Run | 3-4 days | 20-28 days | ✅ Done |
 | **16** | Download & Launch Game | 3-4 days | 23-32 days | ✅ Done |
+| **17** | Apple IRConverter Integration | 2-3 weeks | 6-8 weeks | ✅ Done |
+| **18** | D3D12 Root Signatures & Heaps | 1-2 weeks | 7-10 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 
