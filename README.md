@@ -83,14 +83,48 @@ MetalSharp: Game → D3D → MetalSharp → Metal → GPU              (2 hops)
 
 | Feature | Status |
 |---------|--------|
-| Game library grid with Play/Stop | **Done** |
+| Game library grid with Play/Stop + cover art | **Done** |
 | Rust HTTP backend (scan, launch, kill, steam, config) | **Done** |
 | Steam game download with live progress | **Done** |
 | Steam login state detection | **Done** |
 | Launch mode selector (PE Loader / Wine) | **Done** |
 | Log viewer with monospace display | **Done** |
 | Error dialogs for crashes/failures | **Done** |
-| Settings panel with Steam config | **Done** |
+| Settings panel with graphics/shader cache/updates | **Done** |
+| Auto-detect games from Steam/Epic/GOG | **Done** |
+| Crash reporter with automatic log collection | **Done** |
+| Update checker via GitHub Releases | **Done** |
+
+### Performance Pipeline — Complete
+
+| Component | Status |
+|-----------|--------|
+| Shader cache (metallib binary, LRU eviction, 2GB default) | **Done** |
+| Pipeline state cache (serialized descriptors, binary index) | **Done** |
+| Render thread pool + command buffer pooling | **Done** |
+| Frame pacing (VSync/Immediate/Adaptive, triple buffering, percentiles) | **Done** |
+| MetalFX spatial upscaler integration | **Done** |
+| GPU profiler with Metal GPU timing | **Done** |
+
+### Audio Pipeline — Complete
+
+| Component | Status |
+|-----------|--------|
+| CoreAudio AudioUnit with real render callback | **Done** |
+| XAudio2 source voice with buffer submission | **Done** |
+| X3DAudio positional audio (distance, panning, Doppler) | **Done** |
+| DirectSound backend for legacy games | **Done** |
+
+### Anti-Cheat & Game Validation — Complete
+
+| Component | Status |
+|-----------|--------|
+| DRM/anti-cheat binary signature scanner (30 signatures) | **Done** |
+| Compatibility database (Platinum/Gold/Silver/Bronze/Broken) | **Done** |
+| Import resolution reporter | **Done** |
+| Crash diagnostics with dump-to-file | **Done** |
+| Game validator orchestrator | **Done** |
+| Game auto-detection (Steam/Epic/GOG/local) | **Done** |
 
 ### Tests — 21/21 Passing
 
@@ -161,13 +195,13 @@ npm run start               # Launch Electron app
 
 | Target | Output | Purpose |
 |--------|--------|---------|
-| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, perf subsystems |
+| `metalsharp_core` | static lib | Metal backend, DXBC parser, MSL translator, perf, runtime subsystems |
 | `metalsharp_d3d11` | `d3d11.dylib` | D3D11 API shim (DLL injection mode) |
 | `metalsharp_d3d12` | `d3d12.dylib` | D3D12 API shim (DLL injection mode) |
 | `metalsharp_dxgi` | `dxgi.dylib` | DXGI swap chain, adapter, output enumeration |
 | `metalsharp_audio` | `xaudio2_9.dylib` | XAudio2 → CoreAudio bridge |
 | `metalsharp_input` | `xinput1_4.dylib` | XInput → GameController bridge |
-| `metalsharp_loader` | static lib | Native PE loader + all Win32 shims |
+| `metalsharp_loader` | static lib | Native PE loader + all Win32 shims + D3D/DXGI shims |
 | `metalsharp` | executable | Native PE launcher (runs .exe directly) |
 | `metalsharp_launcher` | executable | Wine-based launcher, SteamCMD integration |
 
@@ -198,7 +232,7 @@ src/
 │   ├── device/         MTLDevice wrapper
 │   ├── command/        MTLCommandQueue, MTLCommandBuffer
 │   ├── pipeline/       Pipeline state creation
-│   ├── shader/         DXBC parser, DXBC→MSL translator
+│   ├── shader/         DXBC parser, DXBC→MSL, IRConverter bridge, argument buffers
 │   ├── Buffer.mm       MTLBuffer wrapper
 │   ├── Texture.mm      MTLTexture 1D/2D/3D
 │   ├── Sampler.mm      MTLSamplerState + format translation
@@ -208,19 +242,23 @@ src/
 │   ├── kernel32/       KERNEL32, ntdll, VirtualFileSystem, Registry, networking, sync
 │   ├── user32/         USER32, WindowManager (NSWindow-backed HWND)
 │   └── extra/          GDI32, ADVAPI32, SHELL32, OLE32, OLEAUT32, VERSION, etc.
-├── runtime/            Logger, PEHook
-├── audio/              XAudio2 → CoreAudio
+├── runtime/            Logger, PEHook, GameDetector, CrashReporter, UpdateChecker,
+│                       SettingsManager, CompatDatabase, ImportReporter, CrashDiagnostics,
+│                       DRMDetector, GameValidator
+├── audio/              XAudio2 → CoreAudio, X3DAudio, DirectSound
 ├── input/              XInput → GameController
 └── perf/               ShaderCache, PipelineCache, BufferPool, FramePacer,
-                       GPUProfiler, CommandBatcher, MetalFXUpscaler
+                       GPUProfiler, CommandBatcher, MetalFXUpscaler, RenderThreadPool
 app/
 ├── src/main/           Electron main process + Rust bridge
 ├── src/renderer/       Game library UI, settings, store, logs
 ├── src/shared/         TypeScript types
 └── src-rust/           Rust HTTP backend (launch, scan, steam, config, logs)
-tools/launcher/         CLI launchers (NativeLauncher + WineLauncher)
-tests/                  13 test suites
-docs/                   Architecture docs, PE loader reference, Win32 shim guide
+tools/
+├── launcher/           CLI launchers (NativeLauncher + WineLauncher)
+└── dmg/                DMG installer + dependency checker
+tests/                  21 test suites
+docs/                   Architecture, user guide, compat guide, dev guide, troubleshooting
 ```
 
 ---
@@ -260,8 +298,8 @@ The `metalsharp` executable loads Windows x86_64 PE files directly on macOS:
 
 Shaders take two paths:
 
-1. **MSL source** — compiled with `newLibraryWithSource`
-2. **DXBC bytecode** — parsed (SHDR/SHEX chunks, input/output signatures, SM5.0 tokens) → MSL generated → compiled to Metal library
+1. **Apple IRConverter** — DXIL bytecode compiled to metallib via `libmetalirconverter` (primary path when installed)
+2. **DXBC→MSL** — DXBC bytecode parsed (SHDR/SHEX chunks, input/output signatures, SM5.0 tokens) → MSL generated → compiled to Metal library (fallback for SM ≤ 5.0)
 
 The `D3D11DeviceContext` caches a `MTLRenderPipelineState` from current state (shaders, blend, rasterizer, depth). Draw calls encode directly into a `MTLCommandBuffer`. Pipeline state rebuilds automatically when state changes. Shader and pipeline caches persist to `~/.metalsharp/cache/` for fast subsequent launches.
 

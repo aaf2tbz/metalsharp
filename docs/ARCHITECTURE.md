@@ -58,10 +58,42 @@ RAII wrappers around Metal API objects. All Objective-C/Metal calls isolated in 
 - Device, CommandQueue, CommandBuffer, CommandEncoder wrappers
 - Pipeline state creation (render + compute)
 - DXBC parser + DXBC→MSL translator
-- Shader cache (FNV-1a hash → `.msl` files on disk)
+- Apple IRConverter bridge (DXIL→Metal, runtime dlopen)
+- Argument buffer manager (root constant/descriptor/table encoding)
+- Shader cache (FNV-1a hash → metallib on disk, LRU eviction)
 - Pipeline cache (descriptor hash → binary index on disk)
 
-### 5. Electron App (`app/`)
+### 5. Performance Pipeline (`src/perf/`)
+
+- `ShaderCache` — metallib binary storage, LRU eviction (configurable max MB), auto entry point discovery
+- `PipelineCache` — serialized descriptors, LRU deque, binary index persistence
+- `RenderThreadPool` — configurable worker pool, command buffer pooling
+- `FramePacer` — PresentMode (VSync/Immediate/HalfRate/Adaptive), triple buffering, frame time percentiles
+- `MetalFXUpscaler` — runtime dlopen for MetalFX, spatial upscaling with sharpness
+- `GPUProfiler` — Metal GPU timing (GPUStartTime/GPUEndTime), per-pass CPU+GPU timing
+- `CommandBatcher` — command buffer batching
+- `BufferPool` — MTLBuffer recycling
+
+### 6. Audio Pipeline (`src/audio/`)
+
+- `CoreAudioBackend` — real AudioUnit render callback, buffer queue, hardware volume
+- `XAudio2Engine` — source voice with buffer submission
+- `X3DAudioEngine` — positional audio (distance attenuation, stereo panning, Doppler)
+- `DirectSoundBackend` — legacy audio fallback
+
+### 7. Runtime Services (`src/runtime/`)
+
+- `GameDetector` — auto-detect games from Steam (VDF/ACF), Epic (.item), GOG, local dirs
+- `CrashReporter` — session tracking, automatic log collection, crash dump persistence
+- `UpdateChecker` — semantic version comparison, GitHub Releases API
+- `SettingsManager` — JSON-persisted render/upscaling/cache/launch configuration
+- `CompatDatabase` — game compatibility DB (Platinum/Gold/Silver/Bronze/Broken)
+- `ImportReporter` — structured import resolution tracking
+- `CrashDiagnostics` — crash dump to file with register state + RVA resolution
+- `DRMDetector` — binary signature scanner (30 anti-cheat/DRM/engine signatures)
+- `GameValidator` — validation protocol orchestrator
+
+### 8. Electron App (`app/`)
 
 TypeScript frontend + Rust HTTP backend:
 
@@ -72,7 +104,7 @@ TypeScript frontend + Rust HTTP backend:
   - `/steam/status` — detect Steam install + login state (reads `loginusers.vdf`)
   - `/steam/download-game` — SteamCMD with live progress reporting
   - `/logs` — serve runtime log files
-- **Electron frontend** (`app/src/renderer/`): game library grid, settings, store, log viewer
+- **Electron frontend** (`app/src/renderer/`): game library grid with cover art, settings (graphics/shader cache/updates), store, log viewer, crash reports
 - **Rust bridge** (`app/src/main/rust-bridge.ts`): spawns Rust binary, HTTP request wrapper
 
 ## Data Flow
@@ -121,3 +153,7 @@ NativeLauncher
 4. **Shader cache keyed by FNV-1a hash** — DXBC bytecode is hashed, and the resulting MSL is cached to `~/.metalsharp/cache/shader_cache/<hash>.msl`. On subsequent loads, the cache is checked before recompiling.
 
 5. **Pipeline cache keyed by descriptor hash** — Pipeline state descriptors are hashed, and the resulting MTLRenderPipelineState is cached. An LRU eviction policy keeps the cache bounded. A binary index file persists across sessions.
+
+6. **IRConverter runtime loading** — `libmetalirconverter` is loaded via `dlopen` at runtime. If not installed, DXBC→MSL fallback handles shader translation. This avoids a hard dependency on Apple's Metal Shader Converter.
+
+7. **JSON for persistence** — Compatibility database, settings, and crash reports use simple JSON/text formats. No SQLite or other database dependencies. Consistent with the project's zero-runtime-dependency philosophy.

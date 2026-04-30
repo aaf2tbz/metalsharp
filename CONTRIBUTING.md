@@ -12,7 +12,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-All 13 tests should pass. If they don't, open an issue.
+All 21 tests should pass. If they don't, open an issue.
 
 ## Code conventions
 
