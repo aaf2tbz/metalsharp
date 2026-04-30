@@ -130,3 +130,11 @@ target_link_libraries(test_phase22 PRIVATE metalsharp_audio metalsharp_core)
 target_compile_options(test_phase22 PRIVATE -fobjc-arc)
 
 add_test(NAME phase22 COMMAND test_phase22)
+
+add_executable(test_phase23
+    test_phase23.cpp
+)
+target_link_libraries(test_phase23 PRIVATE metalsharp_core)
+target_compile_options(test_phase23 PRIVATE -fobjc-arc)
+
+add_test(NAME phase23 COMMAND test_phase23)

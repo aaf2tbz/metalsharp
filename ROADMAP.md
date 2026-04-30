@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-22 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. Performance pipeline: shader cache with metallib binary storage and LRU eviction, pipeline state cache with serialized descriptors, render thread pool with command buffer pooling, frame pacing with present mode selection and frame time percentiles, MetalFX spatial upscaler integration, GPU profiler with Metal GPU timing. Audio pipeline: CoreAudio AudioUnit with real render callback and buffer queue, XAudio2 source voice with buffer submission, X3DAudio positional audio with distance attenuation and Doppler, DirectSound backend for legacy games. ~30K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-23 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. Performance pipeline: shader cache with metallib binary storage and LRU eviction, pipeline state cache with serialized descriptors, render thread pool with command buffer pooling, frame pacing with present mode selection and frame time percentiles, MetalFX spatial upscaler integration, GPU profiler with Metal GPU timing. Audio pipeline: CoreAudio AudioUnit with real render callback and buffer queue, XAudio2 source voice with buffer submission, X3DAudio positional audio with distance attenuation and Doppler, DirectSound backend for legacy games. Game validation: compatibility database with Platinum/Gold/Silver/Bronze/Broken status levels, import resolution reporter, crash diagnostics with dump-to-file, DRM/anti-cheat binary signature scanner, game validator orchestrator. ~33K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -550,6 +550,63 @@
 
 ---
 
+## Phase 23: Game Validation Sprint ✅ DONE
+
+*Infrastructure for testing game compatibility: database, import reporting, crash diagnostics, DRM detection, game validation.*
+
+### 23.1 Compatibility Database (~450 lines)
+
+- `CompatDatabase.h`: `GameEntry` with gameId, name, exePath, platform, D3D version, anti-cheat, DRM, missing imports, crash history, notes, workarounds, FPS, tester
+- `CompatStatus` enum: Platinum (perfect), Gold (minor issues), Silver (playable with glitches), Bronze (boots but unplayable), Broken (won't launch), Untested
+- JSON-based persistence — `saveToDisk()`/`loadToDisk()` with simple parser (no SQLite dependency)
+- `addMissingImport()`: accumulates unresolved imports per game
+- `addCrashRecord()`: records crash history and auto-downgrades status to Broken
+- `generateReport()`: human-readable compatibility report with all collected data
+- Query by status, count by status, full listing
+
+### 23.2 Import Reporter (~120 lines)
+
+- `ImportReporter`: structured import resolution tracking — every resolved/missing import recorded
+- `recordImport(dll, function, resolved)` and `recordOrdinalImport(dll, ordinal, resolved)`
+- `missingImports()` / `resolvedImports()` / `missingDlls()` queries
+- `generateSummary()`: counts and per-DLL breakdown
+- Singleton, thread-safe, clear between modules
+
+### 23.3 Crash Diagnostics (~130 lines)
+
+- `CrashDiagnostics`: crash dump to file with register state, signal, fault address, PE RVA
+- `writeCrashDump()`: structured text file in `~/.metalsharp/diag/crashes/` with timestamp
+- Crash analysis: detects NULL RIP (unresolved import), inside PE image (unsupported instruction), outside PE (bad code pointer)
+- `writeDiagnosticsBundle()`: module info + crash summary
+- `formatTimestamp()`: epoch to human-readable
+- Module info tracking (base, size, path) for crash site resolution
+
+### 23.4 DRM / Anti-cheat Detection (~200 lines)
+
+- `DRMDetector`: binary signature scanner for 30 known DRM/anti-cheat/engine signatures
+- Anti-cheat signatures: EAC, BattlEye, Ricochet, EA AntiCheat, ACE, nProtect, GameGuard, XIGNCODE3, VAC, PunkBuster
+- DRM signatures: Denuvo, SecuROM, SafeDisc, VMProtect, Themida, Arxan, Steam Stub, CEG
+- Engine/runtime signatures: .NET, Unity, Unreal Engine (4/5), Mono, XNA, FNA, Godot
+- `scanFile()` / `scanMemory()`: pattern matching over binary data
+- `hasKernelAntiCheat()`: detects incompatible kernel-level systems
+- `isCompatible()`: returns true if no kernel anti-cheat detected
+- `summary()`: comma-separated list of detected systems
+
+### 23.5 Game Validator (~150 lines)
+
+- `GameValidator`: orchestrator that runs full validation protocol
+- `validate(exePath)`: scans for DRM, checks import reporter, estimates compatibility status
+- `quickCheck(exePath)`: fast DRM-only scan without import analysis
+- `estimateStatus()`: heuristic based on kernel anti-cheat + critical missing imports (D3D, kernel32, user32)
+- `saveResult()`: persists validation to CompatDatabase with DRM/anti-cheat info
+- `generateFullReport()`: delegates to CompatDatabase for complete report
+
+**Deliverable:** 22 test_phase23 tests pass. Compatibility database with 5 status levels persists to JSON. Import reporter tracks resolved/missing per-DLL. Crash diagnostics writes structured dumps. DRM detector scans for 30 signatures. Game validator orchestrates full validation protocol. 20/20 total tests pass.
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -569,6 +626,7 @@
 | **20** | Anti-Cheat & DRM Compatibility | 1-2 weeks | 9-14 weeks | ✅ Done |
 | **21** | Performance Pipeline | 3-4 weeks | 12-18 weeks | ✅ Done |
 | **22** | Audio Pipeline | 2-3 weeks | 14-21 weeks | ✅ Done |
+| **23** | Game Validation Sprint | 4-6 weeks | 18-27 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 
