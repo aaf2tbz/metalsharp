@@ -3,6 +3,7 @@
 #include <metalsharp/Platform.h>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace metalsharp {
 
@@ -13,6 +14,13 @@ struct FrameTiming {
     uint64_t frameCount;
     uint32_t currentFPS;
     uint32_t averageFPS;
+};
+
+enum class PresentMode {
+    VSync,
+    Immediate,
+    HalfRateVSync,
+    Adaptive,
 };
 
 class FramePacer {
@@ -26,6 +34,8 @@ public:
     void endFrame();
     void waitForVSync();
 
+    double computePresentTime() const;
+
     FrameTiming getTiming() const;
     void setTargetFPS(double fps);
     double targetFPS() const { return m_targetFPS; }
@@ -33,6 +43,15 @@ public:
     void setEnabled(bool enabled) { m_enabled = enabled; }
 
     void setPresentCallback(std::function<void()> callback);
+
+    void setPresentMode(PresentMode mode);
+    PresentMode presentMode() const { return m_presentMode; }
+
+    void setFrameHistorySize(uint32_t size) { m_frameTimeHistory.resize(size, 0); }
+    double getFrameTimePercentile(double percentile) const;
+
+    uint32_t tripleBufferCount() const { return m_tripleBufferCount; }
+    void setTripleBufferCount(uint32_t count) { m_tripleBufferCount = count; }
 
 private:
     FramePacer() = default;
@@ -48,6 +67,9 @@ private:
     double m_fpsAccum = 0;
     uint64_t m_fpsFrameCount = 0;
     uint32_t m_currentFPS = 0;
+    PresentMode m_presentMode = PresentMode::VSync;
+    uint32_t m_tripleBufferCount = 3;
+    std::vector<double> m_frameTimeHistory;
     std::function<void()> m_presentCallback;
 };
 

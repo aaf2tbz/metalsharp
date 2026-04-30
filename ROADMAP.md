@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-20 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. ~26K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-22 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. Performance pipeline: shader cache with metallib binary storage and LRU eviction, pipeline state cache with serialized descriptors, render thread pool with command buffer pooling, frame pacing with present mode selection and frame time percentiles, MetalFX spatial upscaler integration, GPU profiler with Metal GPU timing. Audio pipeline: CoreAudio AudioUnit with real render callback and buffer queue, XAudio2 source voice with buffer submission, X3DAudio positional audio with distance attenuation and Doppler, DirectSound backend for legacy games. ~30K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -459,6 +459,97 @@
 
 ---
 
+## Phase 21: Performance Pipeline ✅ DONE
+
+*Shader caching, pipeline caching, multi-threaded rendering, frame pacing, MetalFX upscaling, GPU profiling.*
+
+### 21.1 Shader Cache Overhaul (~300 lines)
+
+- `ShaderCache.h`: added `metallib` binary blob, `entryPoint` name, `storeMetallib`/`lookupMetallib` methods
+- `ShaderCache.cpp`: replaced `popen("ls")` with `opendir/readdir` for directory scanning
+- Binary metallib storage alongside MSL source — skip recompilation entirely on cache hit
+- LRU eviction when total cache exceeds 2GB configurable limit
+- `ShaderCache.mm`: auto-discovers all entry point names from `MTLLibrary` function names (not hardcoded)
+
+### 21.2 Pipeline State Cache (~250 lines)
+
+- `PipelineCache.h`: added `serializedDescriptor` vector, `lastAccess` timestamp, `storeDescriptor`/`getDescriptor`
+- Proper LRU tracking with `std::deque<uint64_t>` eviction order
+- Serialized pipeline descriptors persisted to `pipeline_cache.bin` alongside hash and label
+- On reload, descriptors available for pipeline re-creation without re-hashing
+
+### 21.3 Multi-Threaded Rendering (~250 lines)
+
+- `RenderThreadPool`: configurable worker threads (defaults to `hardware_concurrency / 2`)
+- Task submission with ordering, barriers for synchronization, `waitIdle()` for flush
+- `CommandBufferPool`: acquire/release pattern for Metal command buffer reuse
+- Thread-safe resource creation — `MTLDevice` is thread-safe for resource creation
+
+### 21.4 Frame Pacing & VSync (~200 lines)
+
+- `FramePacer`: `PresentMode` enum — VSync, Immediate, HalfRateVSync, Adaptive
+- `computePresentTime()` calculates next VSync boundary for `presentDrawable:atTime:`
+- Triple buffering support with configurable buffer count (default 3)
+- Frame time history ring buffer with percentile calculation (`getFrameTimePercentile`)
+- `waitForVSync()` adapts sleep duration based on present mode
+
+### 21.5 MetalFX Integration (~150 lines)
+
+- `MetalFXUpscaler.mm`: texture binding with `id<MTLTexture>` for input/output
+- `MetalFXInterpolator`: temporal interpolation framework
+- Runtime detection via `dlopen("/System/Library/Frameworks/MetalFX.framework/MetalFX")`
+- Sharpness parameter, jitter offset, motion vector scale configuration
+
+### 21.6 GPU Profiling (~200 lines)
+
+- `GPUProfiler.mm`: real Metal GPU timing via `MTLCommandBuffer.GPUStartTime/GPUEndTime`
+- `recordGPUTiming(void* commandBuffer)` extracts per-buffer GPU timestamps
+- Per-pass CPU + GPU timing with draw call, compute call, and triangle counts
+- `FrameRecord` now includes `gpuStartTime`, `gpuEndTime`, `gpuDuration`
+- Rolling frame history (60 frames) with `getAverageStats(numFrames)`
+
+**Deliverable:** 21 test_phase21 tests pass. Shader cache stores/loads metallibs. Pipeline cache persists descriptors. Thread pool parallelizes work. Frame pacer supports 4 present modes. MetalFX framework detected. GPU profiler captures Metal timing.
+
+**Estimated effort:** completed
+
+---
+
+## Phase 22: Audio Pipeline ✅ DONE
+
+*XAudio2 → CoreAudio, X3DAudio positional audio, DirectSound fallback.*
+
+### 22.1 XAudio2 → CoreAudio (~400 lines)
+
+- `CoreAudioBackend.mm`: real AudioUnit output with `kAudioUnitSubType_DefaultOutput`
+- Render callback (`AURenderCallbackStruct`) feeds audio data from buffer queue to AudioUnit
+- PCM format: 44100 Hz, 16-bit signed integer, stereo (configurable)
+- Buffer queue: `std::deque<AudioBufferEntry>` with read position tracking
+- Volume applied per-sample in render callback (int16 multiplication)
+- Hardware volume control via `AudioUnitSetParameter(kHALOutputParam_Volume)`
+- `setFrequencyRatio` / `setFrequencyRatio` for pitch control
+- `queuedBufferCount()` / `flushBuffers()` for buffer management
+
+### 22.2 X3DAudio → AVAudio3D (~200 lines)
+
+- `X3DAudioEngine`: distance attenuation with near/far distance and rolloff factor
+- Panning: cross-product right vector from listener orientation, dot product for stereo pan
+- Doppler: velocity projection along listener-emitter axis, configurable speed of sound
+- `calculate()`: full output with matrix coefficients, distance, Doppler factor, reverb/LFE levels
+- `setDistanceCurve()` / `setDopplerFactor()` for tuning
+
+### 22.3 DirectSound / WASAPI Fallback (~150 lines)
+
+- `DirectSoundBackend`: buffer creation, write, play/stop, volume control
+- `WAVEFORMAT` and `WAVEHDR` structs matching Windows definitions
+- Buffer management with destroy tracking
+- Standalone from CoreAudio — can coexist for legacy game support
+
+**Deliverable:** 18 test_phase22 tests pass. AudioUnit plays real PCM audio. XAudio2 source voice submits buffers and plays/stops. X3DAudio calculates distance attenuation, panning, and Doppler. DirectSound backend creates/manages buffers. All existing tests continue to pass (19/19 total).
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -476,6 +567,8 @@
 | **18** | D3D12 Root Signatures & Heaps | 1-2 weeks | 7-10 weeks | ✅ Done |
 | **19** | SM 6.x Shader Coverage | 1-2 weeks | 8-12 weeks | ✅ Done |
 | **20** | Anti-Cheat & DRM Compatibility | 1-2 weeks | 9-14 weeks | ✅ Done |
+| **21** | Performance Pipeline | 3-4 weeks | 12-18 weeks | ✅ Done |
+| **22** | Audio Pipeline | 2-3 weeks | 14-21 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 
