@@ -350,6 +350,90 @@ public:
 
 static MSDeviceContext g_ctx_impl;
 
+class MSCPSwapChain : public IDXGISwapChain {
+    LONG m_ref = 1;
+    DXGI_SWAP_CHAIN_DESC m_desc;
+public:
+    MSCPSwapChain() { memset(&m_desc, 0, sizeof(m_desc)); }
+    
+    HRESULT WINAPI QueryInterface(REFIID riid, void** ppv) override {
+        if (ppv) *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG WINAPI AddRef() override { return InterlockedIncrement(&m_ref); }
+    ULONG WINAPI Release() override { LONG r = InterlockedDecrement(&m_ref); return r ? r : 1; }
+    HRESULT WINAPI SetPrivateDataInterface(REFGUID, const IUnknown*) override { return S_OK; }
+    HRESULT WINAPI GetPrivateData(REFGUID, UINT*, void*) override { return E_NOTIMPL; }
+    HRESULT WINAPI SetPrivateData(REFGUID, UINT, const void*) override { return S_OK; }
+    HRESULT WINAPI GetParent(REFIID, void** pp) override { if(pp)*pp=nullptr; return E_NOINTERFACE; }
+    HRESULT WINAPI GetDevice(REFIID, void** pp) override { if(pp)*pp=nullptr; return E_NOINTERFACE; }
+    
+    HRESULT WINAPI Present(UINT SyncInterval, UINT Flags) override {
+        unix_call(MS_FUNC_PRESENT, nullptr);
+        return S_OK;
+    }
+    
+    HRESULT WINAPI GetBuffer(UINT Buffer, REFIID riid, void** ppSurface) override {
+        if (!ppSurface) return E_POINTER;
+        struct ms_get_buffer_params p = {};
+        p.buffer_index = Buffer;
+        NTSTATUS r = unix_call(MS_FUNC_GET_BUFFER, &p);
+        if (r < 0) return E_FAIL;
+        
+        auto* tex = new MSTexture2D();
+        set_handle(tex, p.out_handle);
+        *ppSurface = tex;
+        return S_OK;
+    }
+    
+    HRESULT WINAPI GetDesc(DXGI_SWAP_CHAIN_DESC* pDesc) override {
+        if (pDesc) *pDesc = m_desc;
+        return S_OK;
+    }
+    
+    HRESULT WINAPI ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) override {
+        struct ms_resize_params p = {};
+        p.width = Width;
+        p.height = Height;
+        p.buffer_count = BufferCount;
+        unix_call(MS_FUNC_RESIZE_BUFFERS, &p);
+        return S_OK;
+    }
+    
+    HRESULT WINAPI ResizeTarget(const DXGI_MODE_DESC* pNewTargetParameters) override { return S_OK; }
+    HRESULT WINAPI GetContainingOutput(IDXGIOutput** ppOutput) override { if(ppOutput)*ppOutput=nullptr; return E_NOTIMPL; }
+    HRESULT WINAPI GetFrameStatistics(DXGI_FRAME_STATISTICS* pStats) override { if(pStats) memset(pStats,0,sizeof(*pStats)); return S_OK; }
+    HRESULT WINAPI GetLastPresentCount(UINT* pLastPresentCount) override { if(pLastPresentCount)*pLastPresentCount=0; return S_OK; }
+    HRESULT WINAPI SetFullscreenState(BOOL Fullscreen, IDXGIOutput* pTarget) override { return S_OK; }
+    HRESULT WINAPI GetFullscreenState(BOOL* pFullscreen, IDXGIOutput** ppTarget) override { if(pFullscreen)*pFullscreen=FALSE; if(ppTarget)*ppTarget=nullptr; return S_OK; }
+    
+    void InitDesc(const DXGI_SWAP_CHAIN_DESC* pDesc) {
+        if (pDesc) m_desc = *pDesc;
+    }
+};
+
+static MSCPSwapChain g_swapchain;
+
+void InitSwapChain(const DXGI_SWAP_CHAIN_DESC* pDesc) {
+    g_swapchain.InitDesc(pDesc);
+    struct ms_create_swap_chain_params p = {};
+    if (pDesc) {
+        p.width = pDesc->BufferDesc.Width;
+        p.height = pDesc->BufferDesc.Height;
+        p.windowed = pDesc->Windowed;
+        p.buffer_count = pDesc->BufferCount;
+        p.format = (int)pDesc->BufferDesc.Format;
+        p.hwnd = (uint64_t)(uintptr_t)pDesc->OutputWindow;
+    } else {
+        p.width = 1280;
+        p.height = 720;
+        p.windowed = 1;
+        p.buffer_count = 2;
+        p.format = 28;
+    }
+    unix_call(MS_FUNC_CREATE_SWAP_CHAIN, &p);
+}
+
 class MSDevice : public ID3D11Device {
     LONG m_ref = 1;
 public:
@@ -490,7 +574,7 @@ __declspec(dllexport)
 HRESULT WINAPI D3D11CreateDeviceAndSwapChain(
     IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT,
     const D3D_FEATURE_LEVEL*, UINT, UINT,
-    const DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**,
+    const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc, IDXGISwapChain** ppSwapChain,
     ID3D11Device** ppDevice, D3D_FEATURE_LEVEL* pFL,
     ID3D11DeviceContext** ppCtx)
 {
@@ -506,6 +590,12 @@ HRESULT WINAPI D3D11CreateDeviceAndSwapChain(
     if (ppDevice) *ppDevice = &g_dev_impl;
     if (ppCtx) *ppCtx = g_ctx;
     if (pFL) *pFL = D3D_FEATURE_LEVEL_11_0;
+    
+    if (pSwapChainDesc && ppSwapChain) {
+        InitSwapChain(pSwapChainDesc);
+        *ppSwapChain = &g_swapchain;
+    }
+    
     return S_OK;
 }
 
@@ -517,6 +607,16 @@ HRESULT WINAPI D3D11CreateDevice(
     ID3D11DeviceContext** ppCtx)
 {
     return D3D11CreateDeviceAndSwapChain(a, dt, sw, f, fl, nfl, sdk, NULL, NULL, ppDev, pFL2, ppCtx);
+}
+
+__declspec(dllexport)
+long MetalSharpUnixCall(unsigned int code, void* args) {
+    return unix_call(code, args);
+}
+
+__declspec(dllexport)
+void* MetalSharpGetSwapChain() {
+    return &g_swapchain;
 }
 
 }
