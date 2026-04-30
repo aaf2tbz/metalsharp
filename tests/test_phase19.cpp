@@ -27,6 +27,7 @@ static bool test_shader_stage_new_values() {
 
 static bool test_shader_model_60_capabilities() {
     auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto caps = bridge.getShaderModelCapabilities(60);
     return caps.waveOps && caps.int64 &&
            !caps.halfPrecision && !caps.barycentrics &&
@@ -35,6 +36,7 @@ static bool test_shader_model_60_capabilities() {
 
 static bool test_shader_model_61_capabilities() {
     auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto caps = bridge.getShaderModelCapabilities(61);
     return caps.waveOps && caps.int64 &&
            caps.halfPrecision && caps.barycentrics &&
@@ -43,12 +45,14 @@ static bool test_shader_model_61_capabilities() {
 
 static bool test_shader_model_63_raytracing() {
     auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto caps = bridge.getShaderModelCapabilities(63);
     return caps.rayTracing && caps.waveOps && caps.halfPrecision;
 }
 
 static bool test_shader_model_65_mesh() {
     auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto caps = bridge.getShaderModelCapabilities(65);
     return caps.meshShaders && caps.samplerFeedback && caps.rayTracing;
 }
@@ -311,6 +315,9 @@ static bool test_irconverter_availability() {
 }
 
 static bool test_detect_shader_model_dxil() {
+    auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
+
     uint8_t fakeDXBC[64] = {};
     memcpy(fakeDXBC, "DXBC", 4);
     uint32_t hash = 0;
@@ -330,7 +337,6 @@ static bool test_detect_shader_model_dxil() {
     uint32_t versionToken = (6 << 4) | 0;
     memcpy(fakeDXBC + chunkOffset + 8, &versionToken, 4);
 
-    auto& bridge = IRConverterBridge::instance();
     uint32_t sm = bridge.detectShaderModel(fakeDXBC, sizeof(fakeDXBC));
     return sm == 60;
 }
