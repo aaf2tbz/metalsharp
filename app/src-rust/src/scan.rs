@@ -67,6 +67,19 @@ fn steam_library_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let home = dirs::home_dir().unwrap_or_default();
 
+    let mac_candidates = vec![
+        home.join("Library/Application Support/Steam/steamapps"),
+        home.join(".steam/steam/steamapps"),
+        home.join(".local/share/Steam/steamapps"),
+    ];
+
+    for mac_path in &mac_candidates {
+        if mac_path.exists() {
+            paths.push(mac_path.clone());
+            paths.extend(parse_library_folders(mac_path));
+        }
+    }
+
     let wine_steam_dir = home
         .join(".metalsharp")
         .join("prefix")

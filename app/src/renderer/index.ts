@@ -4,22 +4,46 @@ function getAPI(): MetalsharpAPI {
   return (window as unknown as { metalsharp: MetalsharpAPI }).metalsharp;
 }
 
+interface SteamGame {
+  appid: number;
+  name: string;
+  installed: boolean;
+  state: "installed" | "not_installed" | "downloading";
+  cover_url: string;
+  header_url: string;
+}
+
+interface SteamLibrary {
+  ok: boolean;
+  total: number;
+  installed_count: number;
+  games: SteamGame[];
+}
+
 class App {
-  private games: Game[] = [];
+  private library: SteamLibrary | null = null;
   private steam: SteamStatus | null = null;
   private config: AppConfig | null = null;
   private runningPid: number | null = null;
-  private runningGameId: string | null = null;
+  private runningAppId: number | null = null;
   private currentView = "library";
   private updateStatus: UpdateStatus | null = null;
-  private crashReports: CrashReportSummary[] = [];
+  private downloadingAppId: number | null = null;
+  private downloadProgress: number = 0;
+  private progressInterval: ReturnType<typeof setInterval> | null = null;
+
+  private steamApiKey: string | null = null;
+  private steamcmdLoggedIn: boolean = false;
 
   async init() {
     this.bindNav();
     await this.checkBackend();
     await this.loadConfig();
     await this.checkForUpdates();
-    await this.scan();
+    this.steamApiKey = await this.getSteamApiKey();
+    const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
+    this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;
+    await this.loadLibrary();
   }
 
   private bindNav() {
@@ -79,19 +103,19 @@ class App {
     if (result) this.updateStatus = result;
   }
 
-  private coverArtUrl(game: Game): string {
-    if (game.cover_art) return game.cover_art;
-    if (game.steam_app_id) return `https://steamcdn-a.akamaihd.net/steam/apps/${game.steam_app_id}/library_600x900.jpg`;
-    return "";
+  private async loadLibrary() {
+    const lib = await this.api<SteamLibrary>("GET", "/steam/library");
+    if (lib) this.library = lib;
+
+    const scan = await this.api<{ steam: SteamStatus }>("GET", "/scan");
+    if (scan) this.steam = scan.steam ?? { installed: false, running: false };
+
+    this.renderLibrary();
   }
 
-  private async scan() {
-    const result = await this.api<{ games: Game[]; steam: SteamStatus }>("GET", "/scan");
-    if (result) {
-      this.games = result.games ?? [];
-      this.steam = result.steam ?? { installed: false, running: false };
-    }
-    this.renderLibrary();
+  private async getSteamApiKey(): Promise<string | null> {
+    const result = await this.api<{ key: string }>("GET", "/steam/api-key");
+    return result?.key ?? null;
   }
 
   private launchMode(): string {
@@ -100,67 +124,112 @@ class App {
 
   private renderLibrary() {
     const el = document.getElementById("view-library")!;
-    if (this.games.length === 0) {
+    const lib = this.library;
+
+    if (!lib || lib.games.length === 0) {
       el.innerHTML = `
         <div class="library-header">
           <div>
             <h1>Library</h1>
-            <p class="subtitle">No games detected yet</p>
+            <p class="subtitle">Loading your Steam library...</p>
           </div>
           <div class="header-actions">
-            <button class="btn btn-secondary" id="btn-scan">Scan</button>
-            <button class="btn btn-primary" id="btn-add-game">Add Game</button>
+            <button class="btn btn-secondary" id="btn-scan">Refresh</button>
           </div>
         </div>
         <div class="empty-state">
           <div class="empty-state-icon">&#x2699;</div>
           <h2>No games found</h2>
-          <p>Install Steam or add Windows executables to ~/.metalsharp/games/ to see them here.</p>
+          <p>Could not load your Steam library. Check your Steam API key in settings.</p>
         </div>
       `;
-      el.querySelector("#btn-scan")?.addEventListener("click", () => this.scan());
-      el.querySelector("#btn-add-game")?.addEventListener("click", () => this.switchView("store"));
+      el.querySelector("#btn-scan")?.addEventListener("click", () => this.loadLibrary());
       return;
     }
+
+    const installedGames = lib.games.filter(g => g.installed);
+    const notInstalled = lib.games.filter(g => !g.installed);
 
     el.innerHTML = `
       <div class="library-header">
         <div>
           <h1>Library</h1>
-          <p class="subtitle">${this.games.length} game${this.games.length !== 1 ? "s" : ""} detected</p>
+          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed</p>
         </div>
         <div class="header-actions">
+          <input type="text" id="library-search" placeholder="Search games..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;font-size:13px;width:220px;" />
+          <select id="library-filter" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;">
+            <option value="all">All Games</option>
+            <option value="installed">Installed</option>
+            <option value="not_installed">Not Installed</option>
+          </select>
           <button class="btn btn-secondary" id="btn-scan">Refresh</button>
         </div>
       </div>
       <div class="game-grid" id="game-grid"></div>
     `;
 
-    const grid = el.querySelector("#game-grid")!;
-    for (const game of this.games) {
-      grid.appendChild(this.createGameCard(game));
-    }
+    this.renderGameGrid(lib.games);
 
-    el.querySelector("#btn-scan")?.addEventListener("click", () => this.scan());
+    el.querySelector("#btn-scan")?.addEventListener("click", () => this.loadLibrary());
+    el.querySelector("#library-search")?.addEventListener("input", () => this.filterGames());
+    el.querySelector("#library-filter")?.addEventListener("change", () => this.filterGames());
   }
 
-  private createGameCard(game: Game): HTMLElement {
+  private filterGames() {
+    if (!this.library) return;
+    const search = (document.getElementById("library-search") as HTMLInputElement)?.value.toLowerCase() ?? "";
+    const filter = (document.getElementById("library-filter") as HTMLSelectElement)?.value ?? "all";
+
+    let games = this.library.games;
+    if (filter === "installed") games = games.filter(g => g.installed);
+    if (filter === "not_installed") games = games.filter(g => !g.installed);
+    if (search) games = games.filter(g => g.name.toLowerCase().includes(search));
+
+    this.renderGameGrid(games);
+  }
+
+  private renderGameGrid(games: SteamGame[]) {
+    const grid = document.getElementById("game-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    for (const game of games) {
+      grid.appendChild(this.createGameCard(game));
+    }
+  }
+
+  private createGameCard(game: SteamGame): HTMLElement {
     const card = document.createElement("div");
     card.className = "game-card";
-    card.dataset.gameId = game.id;
+    card.dataset.appid = String(game.appid);
 
-    const isRunning = this.runningGameId === game.id;
+    const isRunning = this.runningAppId === game.appid;
+    const isDownloading = this.downloadingAppId === game.appid;
     if (isRunning) card.classList.add("running");
 
-    const sizeStr = game.size_bytes ? this.formatBytes(game.size_bytes) : "";
-    const compatBadge = game.metalsharp_compatible
-      ? `<span class="badge badge-ok">Compatible</span>`
-      : `<span class="badge badge-warn">Unknown</span>`;
-
-    const coverUrl = this.coverArtUrl(game);
+    const coverUrl = game.header_url || game.cover_url;
     const bannerContent = coverUrl
-      ? `<img class="game-card-cover" src="${coverUrl}" alt="${this.esc(game.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" /><span class="game-icon-placeholder" style="display:none">${this.platformIcon(game.platform)}</span>`
-      : `<span class="game-icon-placeholder">${this.platformIcon(game.platform)}</span>`;
+      ? `<img class="game-card-cover" src="${coverUrl}" alt="${this.esc(game.name)}" loading="lazy" onerror="this.onerror=null;this.src='';this.style.display='none';this.nextElementSibling.style.display='block'" /><span class="game-icon-placeholder" style="display:none">${this.esc(game.name).charAt(0).toUpperCase()}</span>`
+      : `<span class="game-icon-placeholder">${this.esc(game.name).charAt(0).toUpperCase()}</span>`;
+
+    let actionHtml: string;
+    if (isDownloading) {
+      actionHtml = `
+        <div class="download-bar">
+          <div class="download-progress" style="width:${this.downloadProgress}%"></div>
+        </div>
+        <span class="download-pct">${Math.round(this.downloadProgress)}%</span>
+      `;
+    } else if (isRunning) {
+      actionHtml = `<button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>`;
+    } else if (game.installed) {
+      actionHtml = `<button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>`;
+    } else if (this.steamcmdLoggedIn) {
+      actionHtml = `<button class="btn btn-install" data-action="install" data-appid="${game.appid}">Install</button>`;
+    } else {
+      actionHtml = `<span class="badge badge-warn">Login required</span>`;
+    }
 
     card.innerHTML = `
       <div class="game-card-banner">
@@ -169,14 +238,10 @@ class App {
       <div class="game-card-body">
         <div class="game-card-title">${this.esc(game.name)}</div>
         <div class="game-card-meta">
-          <span class="game-card-platform">${game.platform}</span>
-          ${sizeStr ? `<span class="game-card-size">${sizeStr}</span>` : ""}
-          ${compatBadge}
+          ${game.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
         </div>
         <div class="game-card-actions">
-          <button class="btn btn-play ${isRunning ? "running" : ""}" data-action="${isRunning ? "stop" : "play"}" data-id="${game.id}">
-            ${isRunning ? "Stop" : "Play"}
-          </button>
+          ${actionHtml}
         </div>
       </div>
     `;
@@ -185,16 +250,75 @@ class App {
       const btn = e.currentTarget as HTMLElement;
       const action = btn.dataset.action;
       if (action === "play") this.launchGame(game);
-      else if (action === "stop" && this.runningPid) this.killGame(game);
+      else if (action === "stop" && this.runningPid) this.stopGame(game);
+      else if (action === "install") this.installGame(game);
     });
 
     return card;
   }
 
-  private async launchGame(game: Game) {
+  private async installGame(game: SteamGame) {
+    this.downloadingAppId = game.appid;
+    this.downloadProgress = 0;
+
+    const card = document.querySelector(`[data-appid="${game.appid}"]`);
+    if (card) {
+      const actions = card.querySelector(".game-card-actions");
+      if (actions) {
+        actions.innerHTML = `
+          <div class="download-bar"><div class="download-progress" style="width:0%"></div></div>
+          <span class="download-pct">0%</span>
+        `;
+      }
+    }
+
+    this.toast(`Installing ${game.name}...`, "success");
+
+    const result = await this.api<{ ok: boolean }>("POST", "/steam/download-game", {
+      steamAppId: game.appid,
+    });
+
+    if (!result?.ok) {
+      this.toast(`Failed to start download`, "error");
+      this.downloadingAppId = null;
+      return;
+    }
+
+    if (this.progressInterval) clearInterval(this.progressInterval);
+    const barEl = () => document.querySelector(`[data-appid="${game.appid}"] .download-progress`) as HTMLElement | null;
+    const pctEl = () => document.querySelector(`[data-appid="${game.appid}"] .download-pct`);
+
+    this.progressInterval = setInterval(async () => {
+      try {
+        const res = await getAPI().request("GET", "/steam/download-progress");
+        const prog = (res?.data ?? res) as { progress?: number; status?: string } | null;
+        if (!prog || typeof prog.progress !== "number") return;
+
+        const bar = barEl();
+        const pct = pctEl();
+        if (bar) bar.style.width = `${prog.progress}%`;
+        if (pct) pct.textContent = `${Math.round(prog.progress)}%`;
+
+        if (prog.status === "complete") {
+          if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
+          this.downloadingAppId = null;
+          this.toast(`${game.name} installed!`, "success");
+          await this.loadLibrary();
+        } else if (prog.status === "error") {
+          if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
+          this.downloadingAppId = null;
+          this.toast(`Download failed`, "error");
+        }
+      } catch { }
+    }, 2000);
+  }
+
+  private async launchGame(game: SteamGame) {
     this.toast(`Launching ${game.name}...`, "success");
+
     const result = await this.api<{ pid: number }>("POST", "/launch", {
-      exePath: game.exe_path,
+      exePath: `~/.metalsharp/games/${game.appid}`,
+      steamAppId: game.appid,
       fullscreen: true,
       debugMetal: false,
       verbose: false,
@@ -204,16 +328,16 @@ class App {
 
     if (result && typeof result === "object" && "pid" in result) {
       this.runningPid = (result as { pid: number }).pid;
-      this.runningGameId = game.id;
+      this.runningAppId = game.appid;
       this.renderLibrary();
     }
   }
 
-  private async killGame(game: Game) {
+  private async stopGame(game: SteamGame) {
     if (!this.runningPid) return;
     await this.api("POST", "/kill", { pid: this.runningPid });
     this.runningPid = null;
-    this.runningGameId = null;
+    this.runningAppId = null;
     this.toast(`Stopped ${game.name}`);
     this.renderLibrary();
   }
@@ -229,12 +353,46 @@ class App {
         ? `<span class="badge badge-warn">Logged out</span>`
         : `<span class="badge badge-warn">Unknown</span>`;
 
+    const savedKey = this.steamApiKey;
     const nativeLabel = cfg?.native_available ? "Available" : "Not Built";
     const wineLabel = cfg?.wine_available ? "Available" : "Not Found";
 
     el.innerHTML = `
       <div class="library-header">
         <h1>Settings</h1>
+      </div>
+
+      <div class="settings-section">
+        <h2>Steam Integration</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Steam Web API Key</div>
+            <div class="settings-desc">Required to load your full game library (owned + uninstalled games). Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a> — log in, fill in any domain name, and copy the key.</div>
+          </div>
+          <div class="settings-value">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="password" id="steam-api-key" value="${savedKey ?? ""}" placeholder="Enter your Steam Web API key..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;width:280px;" />
+              <button class="btn btn-primary btn-sm" id="btn-save-api-key">Save & Sync</button>
+            </div>
+            ${savedKey ? `<span class="badge badge-ok" style="margin-top:6px;">Key saved — ${this.library?.total ?? 0} games synced</span>` : `<span class="badge badge-warn" style="margin-top:6px;">No key — only installed games shown</span>`}
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">SteamCMD Login</div>
+            <div class="settings-desc">Required to download Windows game files. Uses your Steam username and password — credentials are sent only to Steam via SteamCMD and never stored.</div>
+          </div>
+          <div class="settings-value">
+            <div id="steamcmd-login-area">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="steam-username" placeholder="Steam username" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;width:180px;" />
+                <input type="password" id="steam-password" placeholder="Steam password" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;width:180px;" />
+                <button class="btn btn-primary btn-sm" id="btn-steamcmd-login">Login</button>
+              </div>
+              <div id="steamcmd-status" style="margin-top:6px;"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -458,10 +616,64 @@ class App {
       </div>
     `;
 
+    el.querySelector("#btn-save-api-key")?.addEventListener("click", async () => {
+      const input = document.getElementById("steam-api-key") as HTMLInputElement;
+      const key = input?.value?.trim();
+      if (!key) {
+        this.toast("Please enter a Steam API key", "error");
+        return;
+      }
+      await this.api("POST", "/steam/save-api-key", { key });
+      this.toast("API key saved — syncing library...", "success");
+      await this.loadLibrary();
+      this.renderSettings();
+    });
+
+    const initSteamcmdStatus = async () => {
+      const status = await this.api<{ logged_in: boolean; username?: string }>("GET", "/steam/steamcmd-status");
+      const area = document.getElementById("steamcmd-login-area");
+      if (!area) return;
+      if (status?.logged_in && status.username) {
+        area.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="badge badge-ok">Logged in as ${this.esc(status.username)}</span>
+            <button class="btn btn-secondary btn-sm" id="btn-steamcmd-logout">Logout</button>
+          </div>
+        `;
+        area.querySelector("#btn-steamcmd-logout")?.addEventListener("click", async () => {
+          await this.api("POST", "/steam/steamcmd-logout");
+          this.toast("Logged out of SteamCMD");
+          this.renderSettings();
+        });
+      }
+    };
+    initSteamcmdStatus();
+
+    el.querySelector("#btn-steamcmd-login")?.addEventListener("click", async () => {
+      const username = (document.getElementById("steam-username") as HTMLInputElement)?.value?.trim();
+      const password = (document.getElementById("steam-password") as HTMLInputElement)?.value;
+      if (!username || !password) {
+        this.toast("Enter your Steam username and password", "error");
+        return;
+      }
+      const btn = document.getElementById("btn-steamcmd-login") as HTMLElement;
+      if (btn) btn.textContent = "Logging in...";
+      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password });
+      if (result?.ok) {
+        this.steamcmdLoggedIn = true;
+        this.toast("SteamCMD login successful!", "success");
+        this.renderSettings();
+        this.renderLibrary();
+      } else {
+        this.toast(result?.error ?? "Login failed", "error");
+        if (btn) btn.textContent = "Login";
+      }
+    });
+
     el.querySelector("#btn-install-steam")?.addEventListener("click", async () => {
       this.toast("Installing Steam...");
       await this.api("POST", "/steam/install");
-      await this.scan();
+      await this.loadLibrary();
       this.renderSettings();
     });
 
@@ -538,7 +750,7 @@ class App {
           status.innerHTML = `Downloaded ${games.length} executable(s). <a href="#" id="goto-library">View in Library</a>`;
           el.querySelector("#goto-library")?.addEventListener("click", (e) => {
             e.preventDefault();
-            this.scan();
+            this.loadLibrary();
             this.switchView("library");
           });
         } else {

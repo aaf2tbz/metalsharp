@@ -135,6 +135,7 @@ fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
     let candidates = vec![
+        home.join(".metalsharp/metalsharp"),
         home.join("metalsharp/build/metalsharp"),
         home.join("metalsharp/build/metalsharp_native"),
         PathBuf::from("/usr/local/bin/metalsharp"),
@@ -170,9 +171,9 @@ pub fn get_config() -> Value {
 
     json!({
         "ok": true,
-        "launchMode": mode,
-        "wineAvailable": find_wine().is_ok(),
-        "nativeAvailable": find_metalsharp_native().is_ok(),
+        "launch_mode": mode,
+        "wine_available": find_wine().is_ok(),
+        "native_available": find_metalsharp_native().is_ok(),
     })
 }
 
