@@ -20,7 +20,7 @@ pub fn status() -> Value {
         None
     };
 
-    let login_state = detect_login_state(&wine_steam_dir);
+    let login_state = detect_login_state();
 
     let mac_paths = vec![
         home.join(".steam/steam/steamapps"),
@@ -40,24 +40,377 @@ pub fn status() -> Value {
     json!({
         "installed": windows_installed,
         "path": windows_path,
-        "loginState": login_state,
-        "macInstalled": mac_installed,
-        "steamCmdPath": steamcmd,
+        "login_state": login_state,
+        "mac_installed": mac_installed,
+        "steam_cmd_path": steamcmd,
         "running": running
     })
 }
 
-fn detect_login_state(steam_dir: &PathBuf) -> Value {
-    let loginusers_path = steam_dir.join("config").join("loginusers.vdf");
+pub fn steamcmd_status() -> Value {
+    let steamcmd = which_steamcmd();
+    let home = dirs::home_dir().unwrap_or_default();
+    let config_path = home.join(".metalsharp/cache/steam_config.json");
 
-    if !loginusers_path.exists() {
-        return json!({"state": "unknown", "account": null});
+    let logged_in = if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(&s).ok())
+            .and_then(|m| m.get("steamcmd_logged_in").and_then(|v| v.as_bool()))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let username = if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(&s).ok())
+            .and_then(|m| m.get("steam_username").and_then(|v| v.as_str()).map(String::from))
+    } else {
+        None
+    };
+
+    json!({
+        "ok": true,
+        "steamcmd_path": steamcmd,
+        "logged_in": logged_in,
+        "username": username,
+    })
+}
+
+pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+
+    let output = Command::new(&steamcmd)
+        .args([
+            "+login",
+            username,
+            password,
+            "+quit",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{}{}", stdout, stderr);
+
+    let success = combined.contains("Logged in OK")
+        || combined.contains("Steam>quit")
+        || (output.status.success() && !combined.contains("Invalid Password") && !combined.contains("Invalid Login"));
+
+    if success {
+        let config_dir = home.join(".metalsharp/cache");
+        std::fs::create_dir_all(&config_dir)?;
+        let config_path = config_dir.join("steam_config.json");
+
+        let mut config: serde_json::Map<String, Value> = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+        } else {
+            serde_json::Map::new()
+        };
+
+        config.insert("steamcmd_logged_in".into(), json!(true));
+        config.insert("steam_username".into(), json!(username));
+
+        if let Some(steam_id) = get_steam_id() {
+            config.insert("steam_id".into(), json!(steam_id));
+        }
+
+        std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+
+        Ok(json!({"ok": true, "username": username}))
+    } else {
+        let reason = if combined.contains("Invalid Password") {
+            "Invalid password"
+        } else if combined.contains("Invalid Login") {
+            "Invalid login credentials"
+        } else {
+            "Login failed — check your credentials"
+        };
+        Ok(json!({"ok": false, "error": reason}))
+    }
+}
+
+pub fn steamcmd_logout() -> Result<Value, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let config_path = home.join(".metalsharp/cache/steam_config.json");
+
+    if config_path.exists() {
+        let mut config: serde_json::Map<String, Value> = std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        config.insert("steamcmd_logged_in".into(), json!(false));
+        config.remove("steam_username");
+        std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
     }
 
-    let contents = match std::fs::read_to_string(&loginusers_path) {
-        Ok(c) => c,
-        Err(_) => return json!({"state": "unknown", "account": null}),
+    Ok(json!({"ok": true}))
+}
+
+pub fn get_steamcmd_username() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let config_path = home.join(".metalsharp/cache/steam_config.json");
+    let config = std::fs::read_to_string(&config_path).ok()?;
+    let map: serde_json::Map<String, Value> = serde_json::from_str(&config).ok()?;
+    let logged_in = map.get("steamcmd_logged_in").and_then(|v| v.as_bool())?;
+    if !logged_in { return None; }
+    map.get("steam_username").and_then(|v| v.as_str()).map(String::from)
+}
+
+pub fn get_api_key() -> Value {
+    let (key, _) = read_steam_config();
+    json!({
+        "ok": true,
+        "key": key.unwrap_or_default(),
+    })
+}
+
+pub fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let config_dir = home.join(".metalsharp/cache");
+    std::fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("steam_config.json");
+
+    let steam_id = get_steam_id().unwrap_or_default();
+
+    let config = json!({
+        "steam_api_key": key,
+        "steam_id": steam_id,
+    });
+
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+
+    let cache_path = config_dir.join("owned_games.json");
+    let _ = std::fs::remove_file(cache_path);
+
+    Ok(())
+}
+
+pub fn get_steam_id() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let mac_path = home.join("Library/Application Support/Steam/config/loginusers.vdf");
+    let contents = std::fs::read_to_string(&mac_path).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('"') && trimmed.chars().filter(|c| *c == '"').count() == 2 {
+            let id = trimmed.trim_matches('"').trim();
+            if id.starts_with("7656") {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn library() -> Value {
+    let installed_appids = get_installed_appids();
+    let downloaded_appids = get_downloaded_appids();
+
+    let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
+        Ok(games) => games,
+        Err(_) => vec![],
     };
+
+    let games: Vec<Value> = owned
+        .iter()
+        .map(|(appid, name)| {
+            let is_installed = installed_appids.contains(appid) || downloaded_appids.contains(appid);
+            json!({
+                "appid": appid,
+                "name": name,
+                "installed": is_installed,
+                "state": if is_installed { "installed" } else { "not_installed" },
+                "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
+                "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
+            })
+        })
+        .collect();
+
+    json!({
+        "ok": true,
+        "total": games.len(),
+        "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
+        "games": games,
+    })
+}
+
+fn get_downloaded_appids() -> Vec<u32> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let games_dir = home.join(".metalsharp").join("games");
+    let mut appids = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&games_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() { continue; }
+            if let Some(name) = path.file_name() {
+                if let Ok(id) = name.to_string_lossy().parse::<u32>() {
+                    let has_exe = walkdir::WalkDir::new(&path)
+                        .max_depth(3)
+                        .into_iter()
+                        .flatten()
+                        .any(|e| e.path().extension().map(|ext| ext == "exe").unwrap_or(false));
+                    if has_exe {
+                        appids.push(id);
+                    }
+                }
+            }
+        }
+    }
+
+    appids
+}
+
+fn read_steam_config() -> (Option<String>, Option<String>) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let config_path = home.join(".metalsharp/cache/steam_config.json");
+    if let Ok(contents) = std::fs::read_to_string(&config_path) {
+        if let Ok(cfg) = serde_json::from_str::<serde_json::Map<String, Value>>(&contents) {
+            let key = cfg.get("steam_api_key").and_then(|v| v.as_str()).map(String::from);
+            let sid = cfg.get("steam_id").and_then(|v| v.as_str()).map(String::from);
+            return (key, sid);
+        }
+    }
+    (None, get_steam_id())
+}
+
+fn fetch_owned_games(_steam_id: Option<&str>) -> Result<Vec<(u32, String)>, Box<dyn std::error::Error>> {
+    let (api_key, steam_id) = read_steam_config();
+    let key = api_key.as_deref().unwrap_or("");
+    let sid = steam_id.as_deref().or(_steam_id).unwrap_or("");
+
+    if key.is_empty() || sid.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let cache_path = dirs::home_dir()
+        .map(|h| h.join(".metalsharp/cache/owned_games.json"))
+        .unwrap_or_default();
+
+    if cache_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&cache_path) {
+            if let Ok(cached) = serde_json::from_str::<serde_json::Map<String, Value>>(&contents) {
+                if let Some(ts) = cached.get("timestamp").and_then(|t| t.as_u64()) {
+                    let age = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    if age - ts < 3600 {
+                        if let Some(arr) = cached.get("games").and_then(|g| g.as_array()) {
+                            return Ok(arr.iter().filter_map(|g| {
+                                let id = g.get("appid")?.as_u64()? as u32;
+                                let name = g.get("name")?.as_str()?.to_string();
+                                Some((id, name))
+                            }).collect());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let url = format!(
+        "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json",
+        key, sid
+    );
+
+    let output = Command::new("curl")
+        .args(["-sL", "-m", "15", &url])
+        .output()?;
+
+    if !output.status.success() {
+        return Err("curl failed".into());
+    }
+
+    let body: Value = serde_json::from_slice(&output.stdout)?;
+
+    let games_arr = body
+        .get("response")
+        .and_then(|r| r.get("games"))
+        .and_then(|g| g.as_array());
+
+    let result: Vec<(u32, String)> = match games_arr {
+        Some(arr) => arr.iter().filter_map(|g| {
+            let id = g.get("appid")?.as_u64()? as u32;
+            let name = g.get("name")?.as_str()?.to_string();
+            Some((id, name))
+        }).collect(),
+        None => vec![],
+    };
+
+    let _ = save_cache(&cache_path, &result);
+
+    Ok(result)
+}
+
+fn save_cache(path: &PathBuf, games: &[(u32, String)]) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let arr: Vec<Value> = games
+        .iter()
+        .map(|(id, name)| json!({"appid": id, "name": name}))
+        .collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    std::fs::write(path, serde_json::to_string_pretty(&json!({"timestamp": now, "games": arr}))?)?;
+    Ok(())
+}
+
+fn get_installed_appids() -> Vec<u32> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut appids = Vec::new();
+
+    let steamapps_dirs = vec![
+        home.join("Library/Application Support/Steam/steamapps"),
+        home.join(".steam/steam/steamapps"),
+        home.join(".local/share/Steam/steamapps"),
+    ];
+
+    for dir in steamapps_dirs {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("appmanifest_") && name.ends_with(".acf") {
+                    if let Some(id_str) = name
+                        .strip_prefix("appmanifest_")
+                        .and_then(|s| s.strip_suffix(".acf"))
+                    {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            appids.push(id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    appids
+}
+
+fn detect_login_state() -> Value {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mac_path = home.join("Library/Application Support/Steam/config/loginusers.vdf");
+    let wine_path = home
+        .join(".metalsharp/prefix/drive_c/Program Files (x86)/Steam/config/loginusers.vdf");
+
+    let contents = std::fs::read_to_string(&mac_path)
+        .or_else(|_| std::fs::read_to_string(&wine_path))
+        .unwrap_or_default();
+
+    if contents.is_empty() {
+        return json!({"state": "unknown", "account": null});
+    }
 
     let mut accounts: Vec<Value> = Vec::new();
 
@@ -182,7 +535,7 @@ fn find_metalsharp_launcher() -> Result<String, Box<dyn std::error::Error>> {
     Err("metalsharp_launcher not found".into())
 }
 
-pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
 
     let home = dirs::home_dir().ok_or("no home dir")?;
@@ -191,66 +544,74 @@ pub fn download_game(appid: u32) -> Result<Vec<serde_json::Value>, Box<dyn std::
 
     let progress_file = home.join(".metalsharp").join("download_progress.json");
 
-    let mut child = Command::new(&steamcmd)
-        .args([
-            "+@sSteamCmdForcePlatformType",
-            "windows",
-            "+force_install_dir",
-            install_dir.to_str().unwrap_or(""),
-            "+login",
-            "anonymous",
-            "+app_update",
-            &appid.to_string(),
-            "validate",
-            "+quit",
-        ])
-        .stderr(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()?;
+    let _ = std::fs::write(&progress_file, serde_json::json!({
+        "appId": appid,
+        "progress": 0.0,
+        "status": "downloading",
+    }).to_string());
 
-    if let Some(stdout) = child.stdout.take() {
-        use std::io::{BufRead, BufReader};
-        let reader = BufReader::new(stdout);
-        let progress = progress_file.clone();
-        let aid = appid;
+    let cmd = steamcmd;
+    let dir = install_dir.clone();
+    let pf = progress_file.clone();
 
-        std::thread::spawn(move || {
-            for line in reader.lines().flatten() {
-                let pct = parse_progress_line(&line);
-                if pct.is_some() {
-                    let json = serde_json::json!({
-                        "appId": aid,
-                        "progress": pct,
-                        "line": line,
-                    });
-                    let _ = std::fs::write(&progress, json.to_string());
-                }
+    std::thread::spawn(move || {
+        let username = get_steamcmd_username().unwrap_or_else(|| "anonymous".into());
+        let mut child = match Command::new(&cmd)
+            .args([
+                "+@sSteamCmdForcePlatformType",
+                "windows",
+                "+force_install_dir",
+                dir.to_str().unwrap_or(""),
+                "+login",
+                &username,
+                "+app_update",
+                &appid.to_string(),
+                "validate",
+                "+quit",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                return;
             }
-        });
-    }
+        };
 
-    let output = child.wait_with_output()?;
-    let _ = std::fs::remove_file(&progress_file);
+        let _ = child.wait();
 
-    if !output.status.success() {
-        return Err(format!(
-            "steamcmd failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
+        let has_exe = walkdir::WalkDir::new(&dir)
+            .max_depth(3)
+            .into_iter()
+            .flatten()
+            .any(|e| e.path().extension().map(|ext| ext == "exe").unwrap_or(false));
 
-    Ok(scan_downloaded_dir(&install_dir, appid))
+        if has_exe {
+            let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 100.0, "status": "complete"}).to_string());
+        } else {
+            let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+        }
+    });
+
+    Ok(json!({"ok": true, "appId": appid, "status": "started"}))
 }
 
 fn parse_progress_line(line: &str) -> Option<f64> {
     let lower = line.to_lowercase();
-    if !lower.contains("progress:") {
+    if lower.contains("fully installed") || lower.contains("success") {
+        return Some(100.0);
+    }
+    if !lower.contains("progress") {
         return None;
     }
-    let start = lower.find("progress:")? + "progress:".len();
-    let rest = &lower[start..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+    let idx = lower.find("progress")?;
+    let rest = &lower[idx + 8..].trim_start_matches(|c: char| c == ':' || c == ' ' || c == '=');
+    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
     rest[..end].parse().ok()
 }
 

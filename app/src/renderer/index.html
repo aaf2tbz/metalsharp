@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://steamcdn-a.akamaihd.net https://cdn.akamai.steamstatic.com https://store.steampowered.com; style-src 'self' 'unsafe-inline'; script-src 'self';" />
   <title>MetalSharp</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -12,11 +12,7 @@
     <div class="drag-bar"></div>
     <nav class="sidebar">
       <div class="logo">
-        <svg class="logo-icon" viewBox="0 0 32 32" fill="none">
-          <path d="M16 2L28 9V23L16 30L4 23V9L16 2Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <path d="M16 8L22 12V20L16 24L10 20V12L16 8Z" fill="currentColor" opacity="0.3"/>
-          <circle cx="16" cy="16" r="3" fill="currentColor"/>
-        </svg>
+        <img src="icon.png" class="logo-icon" alt="MetalSharp" />
         <span class="logo-text">MetalSharp</span>
       </div>
       <div class="nav-items">
