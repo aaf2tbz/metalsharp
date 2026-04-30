@@ -1,5 +1,6 @@
 #include <metalsharp/GPUProfiler.h>
 #include <metalsharp/Logger.h>
+#import <Metal/Metal.h>
 #include <chrono>
 #include <algorithm>
 #include <cstring>
@@ -32,6 +33,8 @@ void GPUProfiler::beginFrame() {
 
     m_currentFrame = FrameRecord();
     m_currentFrame.startTime = ns.count() / 1e9;
+    m_currentFrame.gpuStartTime = 0;
+    m_currentFrame.gpuEndTime = 0;
 }
 
 void GPUProfiler::endFrame() {
@@ -40,6 +43,10 @@ void GPUProfiler::endFrame() {
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
     m_currentFrame.endTime = ns.count() / 1e9;
+
+    if (m_currentFrame.gpuEndTime > m_currentFrame.gpuStartTime) {
+        m_currentFrame.gpuDuration = m_currentFrame.gpuEndTime - m_currentFrame.gpuStartTime;
+    }
 
     m_history.push_back(std::move(m_currentFrame));
     if (m_history.size() > m_maxHistory) {
@@ -62,6 +69,7 @@ void GPUProfiler::beginPass(const std::string& name) {
     PassTimer timer;
     timer.name = name;
     timer.startTime = ns.count() / 1e9;
+    timer.gpuStartTime = 0;
     m_currentFrame.passes.push_back(std::move(timer));
     m_activePasses.push_back(&m_currentFrame.passes.back());
 }
@@ -77,6 +85,30 @@ void GPUProfiler::endPass(const std::string& name) {
             (*it)->duration = (ns.count() / 1e9) - (*it)->startTime;
             m_activePasses.erase(std::next(it).base());
             break;
+        }
+    }
+}
+
+void GPUProfiler::recordGPUTiming(void* commandBuffer) {
+    if (!m_initialized || !m_enabled) return;
+
+    id<MTLCommandBuffer> cmdBuf = (__bridge id<MTLCommandBuffer>)commandBuffer;
+    if (!cmdBuf) return;
+
+    double gpuStart = [cmdBuf GPUStartTime];
+    double gpuEnd = [cmdBuf GPUEndTime];
+
+    if (m_currentFrame.gpuStartTime == 0 || gpuStart < m_currentFrame.gpuStartTime) {
+        m_currentFrame.gpuStartTime = gpuStart;
+    }
+    if (gpuEnd > m_currentFrame.gpuEndTime) {
+        m_currentFrame.gpuEndTime = gpuEnd;
+    }
+
+    for (auto* pass : m_activePasses) {
+        if (pass->gpuStartTime == 0) {
+            pass->gpuStartTime = gpuStart;
+            pass->gpuDuration = gpuEnd - gpuStart;
         }
     }
 }
@@ -117,6 +149,7 @@ GPUProfiler::FrameStats GPUProfiler::getLastFrameStats() const {
 
     const auto& frame = m_history.back();
     stats.frameTime = frame.endTime - frame.startTime;
+    stats.gpuTime = frame.gpuDuration;
     stats.frameIndex = m_frameIndex;
 
     for (const auto& pass : frame.passes) {
@@ -144,6 +177,7 @@ GPUProfiler::FrameStats GPUProfiler::getAverageStats(uint32_t numFrames) const {
     auto start = m_history.end() - count;
     for (auto it = start; it != m_history.end(); ++it) {
         avg.frameTime += it->endTime - it->startTime;
+        avg.gpuTime += it->gpuDuration;
         for (const auto& pass : it->passes) {
             avg.drawCalls += pass.draws;
             avg.computeCalls += pass.computes;
@@ -152,6 +186,7 @@ GPUProfiler::FrameStats GPUProfiler::getAverageStats(uint32_t numFrames) const {
     }
 
     avg.frameTime /= count;
+    avg.gpuTime /= count;
     avg.drawCalls /= count;
     avg.computeCalls /= count;
     avg.triangles /= count;

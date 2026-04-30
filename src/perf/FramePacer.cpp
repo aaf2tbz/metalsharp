@@ -3,6 +3,7 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include <algorithm>
 
 namespace metalsharp {
 
@@ -20,7 +21,12 @@ void FramePacer::init(double targetFPS) {
     m_lastFrameEnd = 0;
     m_frameTimeAccum = 0;
     m_currentFPS = 0;
-    MS_INFO("FramePacer initialized: target %.1f FPS (%.2f ms frame time)", targetFPS, m_targetFrameTime * 1000.0);
+    m_frameTimeHistory.resize(120, 0);
+    MS_INFO("FramePacer initialized: target %.1f FPS (%.2f ms), present mode: %s",
+            targetFPS, m_targetFrameTime * 1000.0,
+            m_presentMode == PresentMode::VSync ? "VSync" :
+            m_presentMode == PresentMode::Immediate ? "Immediate" :
+            m_presentMode == PresentMode::HalfRateVSync ? "HalfRateVSync" : "Adaptive");
 }
 
 void FramePacer::shutdown() {
@@ -46,6 +52,13 @@ void FramePacer::endFrame() {
     m_frameTimeAccum += frameTime;
     m_frameCount++;
 
+    if (m_frameCount <= m_frameTimeHistory.size()) {
+        m_frameTimeHistory[m_frameCount - 1] = frameTime;
+    } else {
+        m_frameTimeHistory.erase(m_frameTimeHistory.begin());
+        m_frameTimeHistory.push_back(frameTime);
+    }
+
     m_fpsFrameCount++;
     m_fpsAccum += frameTime;
 
@@ -62,14 +75,35 @@ void FramePacer::endFrame() {
 
 void FramePacer::waitForVSync() {
     if (!m_initialized || !m_enabled) return;
+    if (m_presentMode == PresentMode::Immediate) return;
 
     double elapsed = m_lastFrameEnd - m_lastFrameStart;
     double remaining = m_targetFrameTime - elapsed;
 
-    if (remaining > 0.001) {
+    if (m_presentMode == PresentMode::HalfRateVSync) {
+        remaining = (m_targetFrameTime * 2.0) - elapsed;
+    }
+
+    if (remaining > 0.0005) {
         auto sleepDuration = std::chrono::duration<double>(remaining * 0.75);
         std::this_thread::sleep_for(sleepDuration);
     }
+}
+
+double FramePacer::computePresentTime() const {
+    if (m_presentMode == PresentMode::Immediate) return 0;
+
+    double target = m_targetFrameTime;
+    if (m_presentMode == PresentMode::HalfRateVSync) {
+        target *= 2.0;
+    }
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
+    double currentTime = ns.count() / 1e9;
+
+    double nextVSync = std::ceil(currentTime / target) * target;
+    return nextVSync;
 }
 
 FrameTiming FramePacer::getTiming() const {
@@ -90,6 +124,20 @@ void FramePacer::setTargetFPS(double fps) {
 
 void FramePacer::setPresentCallback(std::function<void()> callback) {
     m_presentCallback = callback;
+}
+
+void FramePacer::setPresentMode(PresentMode mode) {
+    m_presentMode = mode;
+}
+
+double FramePacer::getFrameTimePercentile(double percentile) const {
+    if (m_frameTimeHistory.empty()) return 0;
+
+    std::vector<double> sorted = m_frameTimeHistory;
+    std::sort(sorted.begin(), sorted.end());
+
+    size_t idx = static_cast<size_t>(percentile / 100.0 * (sorted.size() - 1));
+    return sorted[idx];
 }
 
 }

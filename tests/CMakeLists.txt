@@ -114,3 +114,19 @@ target_link_libraries(test_phase20 PRIVATE metalsharp_loader metalsharp_core)
 target_compile_options(test_phase20 PRIVATE -fobjc-arc)
 
 add_test(NAME phase20 COMMAND test_phase20)
+
+add_executable(test_phase21
+    test_phase21.cpp
+)
+target_link_libraries(test_phase21 PRIVATE metalsharp_core)
+target_compile_options(test_phase21 PRIVATE -fobjc-arc)
+
+add_test(NAME phase21 COMMAND test_phase21)
+
+add_executable(test_phase22
+    test_phase22.cpp
+)
+target_link_libraries(test_phase22 PRIVATE metalsharp_audio metalsharp_core)
+target_compile_options(test_phase22 PRIVATE -fobjc-arc)
+
+add_test(NAME phase22 COMMAND test_phase22)

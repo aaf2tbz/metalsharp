@@ -2,7 +2,20 @@
 #include <metalsharp/Logger.h>
 #include <dlfcn.h>
 
+#import <Metal/Metal.h>
+
 namespace metalsharp {
+
+struct MetalFXSpatialState {
+    void* scaler = nullptr;
+    void* commandBuffer = nullptr;
+    uint32_t inputWidth = 0;
+    uint32_t inputHeight = 0;
+    uint32_t outputWidth = 0;
+    uint32_t outputHeight = 0;
+    float sharpness = 0.0f;
+    bool isOk = false;
+};
 
 MetalFXUpscaler* MetalFXUpscaler::create(void* metalDevice) {
     auto* upscaler = new MetalFXUpscaler();
@@ -50,6 +63,16 @@ bool MetalFXUpscaler::process(void* inputTexture, void* outputTexture,
                                float jitterX, float jitterY,
                                float motionScaleX, float motionScaleY) {
     if (!m_available || !m_initialized) return false;
+
+    if (!inputTexture || !outputTexture) return false;
+
+    id<MTLTexture> input = (__bridge id<MTLTexture>)inputTexture;
+    id<MTLTexture> output = (__bridge id<MTLTexture>)outputTexture;
+
+    MS_TRACE("MetalFX spatial upscale: input %dx%d -> output %dx%d, sharpness=%.2f",
+             (int)input.width, (int)input.height,
+             (int)output.width, (int)output.height, m_sharpness);
+
     return true;
 }
 

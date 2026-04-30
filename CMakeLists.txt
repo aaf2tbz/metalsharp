@@ -11,6 +11,8 @@ find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
 find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+
 find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(GAMECONTROLLER_FRAMEWORK GameController REQUIRED)
 find_library(METALFX_FRAMEWORK MetalFX)
@@ -55,9 +57,10 @@ add_library(metalsharp_core STATIC
     src/perf/PipelineCache.cpp
     src/perf/BufferPool.mm
     src/perf/FramePacer.cpp
-    src/perf/GPUProfiler.cpp
+    src/perf/GPUProfiler.mm
     src/perf/CommandBatcher.cpp
-    src/perf/MetalFXUpscaler.cpp
+    src/perf/MetalFXUpscaler.mm
+    src/perf/RenderThreadPool.cpp
 )
 target_include_directories(metalsharp_core PUBLIC include)
 if(METALIRCONVERTER_INCLUDE_DIR)
@@ -130,11 +133,12 @@ add_library(metalsharp_audio SHARED
     src/audio/XAudio2Engine.cpp
     src/audio/XAudio2Voice.cpp
     src/audio/XAudio2Buffer.cpp
-    src/audio/CoreAudioBackend.cpp
+    src/audio/X3DAudioEngine.cpp
+    src/audio/DirectSoundBackend.cpp
     src/audio/CoreAudioBackend.mm
     src/audio/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK})
+target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK} ${AVFOUNDATION_FRAMEWORK})
 target_compile_options(metalsharp_audio PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX "")
 

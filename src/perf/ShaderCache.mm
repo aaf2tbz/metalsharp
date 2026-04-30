@@ -26,17 +26,21 @@ bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
         if (library) {
             entry.library = (__bridge_retained void*)library;
 
-            if ([library newFunctionWithName:@"vertexShader"]) {
-                id<MTLFunction> func = [library newFunctionWithName:@"vertexShader"];
-                entry.vertexFunction = func ? (__bridge_retained void*)func : nullptr;
-            }
-            if ([library newFunctionWithName:@"fragmentShader"]) {
-                id<MTLFunction> func = [library newFunctionWithName:@"fragmentShader"];
-                entry.fragmentFunction = func ? (__bridge_retained void*)func : nullptr;
-            }
-            if ([library newFunctionWithName:@"computeShader"]) {
-                id<MTLFunction> func = [library newFunctionWithName:@"computeShader"];
-                entry.computeFunction = func ? (__bridge_retained void*)func : nullptr;
+            NSArray<NSString*>* names = [library functionNames];
+            for (NSString* name in names) {
+                id<MTLFunction> func = [library newFunctionWithName:name];
+                if (!func) continue;
+
+                std::string nameStr = [name UTF8String];
+                if (nameStr.find("vertex") != std::string::npos || nameStr == "vs" || nameStr == "VS") {
+                    entry.vertexFunction = (__bridge_retained void*)func;
+                } else if (nameStr.find("fragment") != std::string::npos || nameStr == "ps" || nameStr == "FS") {
+                    entry.fragmentFunction = (__bridge_retained void*)func;
+                } else if (nameStr.find("compute") != std::string::npos || nameStr == "cs" || nameStr == "CS") {
+                    entry.computeFunction = (__bridge_retained void*)func;
+                } else {
+                    entry.entryPoint = nameStr;
+                }
             }
         } else if (error) {
             MS_WARN("ShaderCache: failed to precompile %s: %s",

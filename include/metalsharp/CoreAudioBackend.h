@@ -1,6 +1,7 @@
 #pragma once
 
 #include <metalsharp/Platform.h>
+#include <cstdint>
 
 namespace metalsharp {
 
@@ -24,12 +25,19 @@ public:
 
     bool submitBuffer(const void* data, uint32_t size, const XAudio2WaveFormat& format);
     void setVolume(float volume);
+    float volume() const;
     void play();
     void stop();
     void pause();
+    void setFrequencyRatio(float ratio);
+    float frequencyRatio() const;
+
+    uint32_t queuedBufferCount() const;
+    void flushBuffers();
+
+    struct Impl;
 
 private:
-    struct Impl;
     Impl* m_impl;
 };
 

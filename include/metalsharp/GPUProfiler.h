@@ -29,6 +29,7 @@ public:
 
     void recordDraw(const std::string& passName, uint32_t vertexCount, uint32_t instanceCount);
     void recordCompute(const std::string& passName, uint32_t threadgroupsX, uint32_t threadgroupsY, uint32_t threadgroupsZ);
+    void recordGPUTiming(void* commandBuffer);
 
     struct FrameStats {
         double frameTime;
@@ -58,6 +59,7 @@ private:
         double startTime;
         double gpuStartTime;
         double duration;
+        double gpuDuration = 0;
         uint32_t draws = 0;
         uint32_t computes = 0;
         uint32_t triangles = 0;
@@ -66,6 +68,9 @@ private:
     struct FrameRecord {
         double startTime;
         double endTime;
+        double gpuStartTime = 0;
+        double gpuEndTime = 0;
+        double gpuDuration = 0;
         std::vector<PassTimer> passes;
     };
 
