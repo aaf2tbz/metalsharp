@@ -52,6 +52,11 @@ add_library(metalsharp_core STATIC
     src/metal/Framebuffer.mm
     src/runtime/Logger.cpp
     src/runtime/PEHook.cpp
+    src/runtime/CompatDatabase.cpp
+    src/runtime/ImportReporter.cpp
+    src/runtime/CrashDiagnostics.cpp
+    src/runtime/DRMDetector.cpp
+    src/runtime/GameValidator.cpp
     src/perf/ShaderCache.cpp
     src/perf/ShaderCache.mm
     src/perf/PipelineCache.cpp
