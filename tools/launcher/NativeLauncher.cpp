@@ -138,10 +138,17 @@ int main(int argc, char* argv[]) {
 
     auto kernel32 = win32::Kernel32Shim::create();
     win32::addMissingKernel32(kernel32);
+
+    ShimLibrary winmmShim;
+    win32::addDRMShims(kernel32, winmmShim);
     loader.registerShim("kernel32.dll", std::move(kernel32));
+
+    loader.registerShim("winmm.dll", std::move(winmmShim));
 
     auto kernelBase = win32::Kernel32Shim::create();
     win32::addMissingKernel32(kernelBase);
+    ShimLibrary winmmBase;
+    win32::addDRMShims(kernelBase, winmmBase);
     loader.registerShim("kernelbase.dll", std::move(kernelBase));
 
     loader.registerShim("ntdll.dll", win32::createNtdllShim());

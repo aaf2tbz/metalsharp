@@ -106,3 +106,11 @@ target_link_libraries(test_phase19 PRIVATE metalsharp_d3d12 metalsharp_core)
 target_compile_options(test_phase19 PRIVATE -fobjc-arc)
 
 add_test(NAME phase19 COMMAND test_phase19)
+
+add_executable(test_phase20
+    test_phase20.cpp
+)
+target_link_libraries(test_phase20 PRIVATE metalsharp_loader metalsharp_core)
+target_compile_options(test_phase20 PRIVATE -fobjc-arc)
+
+add_test(NAME phase20 COMMAND test_phase20)

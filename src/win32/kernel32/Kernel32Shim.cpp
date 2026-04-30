@@ -277,12 +277,13 @@ static BOOL MSABI shim_QueryPerformanceCounter(int64_t* lpPerformanceCount) {
     MS_INFO("TRACE: QueryPerformanceCounter(%p)", lpPerformanceCount);
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    *lpPerformanceCount = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    int64_t ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    *lpPerformanceCount = ns / 100;
     return 1;
 }
 
 static BOOL MSABI shim_QueryPerformanceFrequency(int64_t* lpFrequency) {
-    *lpFrequency = 1000000000LL;
+    *lpFrequency = 10000000LL;
     return 1;
 }
 
