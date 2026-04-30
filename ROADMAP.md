@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-19 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support: ray tracing pipeline with IRRayTracingPipelineConfiguration, mesh/amplification shader stages, compute root signature binding, SM 6.6 validation warnings. All 55 imports resolved across 10 DLLs. Fake TEB for Windows CRT compatibility. Shader cache persists DXBC→MSL to disk. Pipeline cache persists to disk with binary index. CreateProcessW sets CWD/cmdline/env for child processes. Steam download progress reported to Electron. Log viewer in Electron. Error dialog for crashes. ~24K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-20 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. ~26K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -417,6 +417,48 @@
 
 ---
 
+## Phase 20: Anti-Cheat & DRM Compatibility ✅ DONE
+
+*Making the PE loader environment look realistic enough for DRM and anti-cheat checks.*
+
+### 20.1 Anti-Cheat Analysis & Database (~200 lines)
+
+- `AntiCheatDB.h`: 18-entry database of known anti-cheat/DRM systems
+- Each entry: name, type (Anti-cheat/DRM), kernel-level flag, compatible flag, notes
+- `findAntiCheat()` lookup, `getCompatibleCount()`, `getIncompatibleCount()`
+- Kernel-level systems (EAC, BattlEye, Ricochet, EA AntiCheat, ACE, nProtect, GameGuard) marked incompatible
+- User-mode systems (VAC, PunkBuster, Denuvo, Steam Stub, VMProtect, etc.) marked compatible
+- DRM systems (Denuvo Anti-Tamper, SecuROM, SafeDisc, VMProtect, Themida, Arxan) documented
+
+### 20.2 Denuvo / DRM (~300 lines)
+
+- `GetSystemFirmwareTable`: fake SMBIOS data (BIOS type 0, system info type 1, chassis type 3) with "Apple Inc." / "MacBook Pro" strings
+- `GetAdaptersInfo` / `GetAdaptersAddresses`: stable fake MAC address (00:1A:2B:3C:4D:5E), "MetalSharp Virtual Ethernet" adapter
+- `DeviceIoControl` rewritten: disk serial queries return stable `0xABCDEF12`, storage device info returns "MetalSharp" vendor string
+- All fingerprint values are deterministic across runs
+
+### 20.3 SEH & Exception Handling Hardening (~400 lines)
+
+- `RaiseException` rewritten: now walks VEH chain before aborting, dispatches to `SetUnhandledExceptionFilter` if no VEH handler catches it
+- `RtlRaiseException` (ntdll): real implementation walking VEH chain + unhandled exception filter
+- `KiUserExceptionDispatcher` (ntdll): real implementation delegating to `RtlRaiseException`
+- VEH handler vector and mutex changed from `static` to extern linkage so ntdll can access kernel32's handler list
+- Exception record structure passed to VEH handlers with proper code and flags
+
+### 20.4 Timing & Hardware Fingerprinting (~200 lines)
+
+- `QueryPerformanceFrequency` fixed: returns 10 MHz (realistic Windows value, was 1 GHz)
+- `QueryPerformanceCounter` adjusted: nanoseconds / 100 to match 10 MHz frequency
+- `GetLocalTime`: real implementation using `localtime_r` filling SYSTEMTIME struct
+- winmm.dll shim registered: `timeGetTime` (millisecond timer), `timeBeginPeriod`, `timeEndPeriod`, plus stubs for multimedia functions
+- CPUID/RDTSC: handled by Rosetta 2 natively — cannot shim inline asm, noted in AntiCheatDB
+
+**Deliverable:** DRM fingerprint shims return stable, consistent values. VEH-aware exception dispatch works. KiUserExceptionDispatcher implemented. Timing APIs return realistic values. Anti-cheat database documents compatibility for 18 systems. 17/17 tests pass.
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -433,6 +475,7 @@
 | **17** | Apple IRConverter Integration | 2-3 weeks | 6-8 weeks | ✅ Done |
 | **18** | D3D12 Root Signatures & Heaps | 1-2 weeks | 7-10 weeks | ✅ Done |
 | **19** | SM 6.x Shader Coverage | 1-2 weeks | 8-12 weeks | ✅ Done |
+| **20** | Anti-Cheat & DRM Compatibility | 1-2 weeks | 9-14 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 

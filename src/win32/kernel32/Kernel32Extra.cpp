@@ -62,15 +62,53 @@ static void MSABI shim_ExitProcess(UINT uExitCode) {
     exit(uExitCode);
 }
 
-static void* s_unhandledExceptionFilter = nullptr;
-static std::vector<std::pair<void*, bool>> s_vehHandlers;
-static std::mutex s_vehMutex;
+void* s_unhandledExceptionFilter = nullptr;
+std::vector<std::pair<void*, bool>> s_vehHandlers;
+std::mutex s_vehMutex;
 
 static void MSABI shim_RaiseException(DWORD dwExceptionCode, DWORD dwExceptionFlags,
     DWORD nNumberOfArguments, void* lpArguments) {
     (void)dwExceptionFlags; (void)nNumberOfArguments; (void)lpArguments;
-    MS_INFO("PELoader: RaiseException(0x%08X)", dwExceptionCode);
-    abort();
+    MS_INFO("PELoader: RaiseException(0x%08X) — dispatching to VEH chain", dwExceptionCode);
+
+    struct FakeExceptionRecord {
+        uint32_t ExceptionCode;
+        uint32_t ExceptionFlags;
+        void* ExceptionRecord;
+        void* ExceptionAddress;
+        uint32_t NumberParameters;
+        void* ExceptionInformation[15];
+    } record = {};
+    record.ExceptionCode = dwExceptionCode;
+    record.ExceptionFlags = dwExceptionFlags;
+
+    {
+        std::lock_guard<std::mutex> lock(s_vehMutex);
+        for (auto& [handler, isFirst] : s_vehHandlers) {
+            if (handler) {
+                struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
+                FakePointers pointers = { &record, nullptr };
+                typedef int32_t (*VEHHandler)(void*);
+                auto veh = reinterpret_cast<VEHHandler>(handler);
+                int32_t result = veh(&pointers);
+                if (result == -1) {
+                    MS_INFO("PELoader: VEH handler %p handled exception 0x%08X", handler, dwExceptionCode);
+                    return;
+                }
+            }
+        }
+    }
+
+    if (s_unhandledExceptionFilter) {
+        struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
+        FakePointers pointers = { &record, nullptr };
+        typedef void* (*FilterFunc)(void*);
+        auto filter = reinterpret_cast<FilterFunc>(s_unhandledExceptionFilter);
+        filter(&pointers);
+        return;
+    }
+
+    MS_WARN("PELoader: Unhandled exception 0x%08X", dwExceptionCode);
 }
 
 static void* MSABI shim_SetUnhandledExceptionFilter(void* lpTopLevelExceptionFilter) {

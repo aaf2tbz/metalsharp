@@ -67,6 +67,41 @@ static void MSABI stub_NtTerminateProcess(void*, int code) { exit(code); }
 
 static void MSABI wrap_RtlZeroMemory(void* d, size_t n) { memset(d, 0, n); }
 
+static void MSABI shim_RtlRaiseException(void* exceptionRecord) {
+    if (!exceptionRecord) return;
+    uint32_t code = *reinterpret_cast<uint32_t*>(exceptionRecord);
+
+    extern std::vector<std::pair<void*, bool>> s_vehHandlers;
+    extern std::mutex s_vehMutex;
+    extern void* s_unhandledExceptionFilter;
+
+    {
+        std::lock_guard<std::mutex> lock(s_vehMutex);
+        for (auto& [handler, isFirst] : s_vehHandlers) {
+            if (handler) {
+                struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
+                FakePointers pointers = { exceptionRecord, nullptr };
+                typedef int32_t (*VEHHandler)(void*);
+                auto veh = reinterpret_cast<VEHHandler>(handler);
+                int32_t result = veh(&pointers);
+                if (result == -1) return;
+            }
+        }
+    }
+
+    if (s_unhandledExceptionFilter) {
+        struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
+        FakePointers pointers = { exceptionRecord, nullptr };
+        typedef void* (*FilterFunc)(void*);
+        auto filter = reinterpret_cast<FilterFunc>(s_unhandledExceptionFilter);
+        filter(&pointers);
+    }
+}
+
+static void MSABI shim_KiUserExceptionDispatcher(void* exceptionRecord, void* contextRecord) {
+    shim_RtlRaiseException(exceptionRecord);
+}
+
 ShimLibrary createNtdllShim() {
     ShimLibrary lib;
     lib.name = "ntdll.dll";
@@ -127,8 +162,8 @@ ShimLibrary createNtdllShim() {
     lib.functions["RtlDecompressFragment"] = fn((void*)nullptr);
     lib.functions["RtlLookupFunctionEntry"] = fn((void*)nullptr);
     lib.functions["RtlVirtualUnwind"] = fn((void*)nullptr);
-    lib.functions["RtlRaiseException"] = fn((void*)nullptr);
-    lib.functions["KiUserExceptionDispatcher"] = fn((void*)nullptr);
+    lib.functions["RtlRaiseException"] = fn((void*)shim_RtlRaiseException);
+    lib.functions["KiUserExceptionDispatcher"] = fn((void*)shim_KiUserExceptionDispatcher);
     lib.functions["NtTerminateProcess"] = fn((void*)stub_NtTerminateProcess);
 
     return lib;
