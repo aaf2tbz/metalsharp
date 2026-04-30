@@ -1,7 +1,6 @@
 #include <metalsharp/IRConverterBridge.h>
 #include <metalsharp/DXBCParser.h>
 #include <metalsharp/Logger.h>
-#include <metal_irconverter/metal_irconverter.h>
 #include <dlfcn.h>
 #include <cstring>
 #include <cstdlib>
@@ -9,11 +8,17 @@
 #include <fstream>
 #include <filesystem>
 
+#ifdef METALSHARP_HAS_IRCONVERTER
+#include <metal_irconverter/metal_irconverter.h>
+#endif
+
 namespace metalsharp {
 
 static const uint32_t DXBC_MAGIC = 0x43425844;
 static const uint32_t DXIL_MAGIC = 0x4C495844;
 static const uint32_t RTS0_MAGIC = 0x30535452;
+
+#ifdef METALSHARP_HAS_IRCONVERTER
 
 struct IRConverterBridge::FuncPtrs {
     decltype(IRCompilerCreate)* compilerCreate = nullptr;
@@ -849,5 +854,67 @@ void ShaderCompileService::storeDiskCache(uint64_t hash, const ShaderCompileResu
             file << result.reflection.reflectionJSON;
     }
 }
+
+#else // !METALSHARP_HAS_IRCONVERTER
+
+IRConverterBridge::IRConverterBridge() : m_fn(nullptr) {}
+IRConverterBridge::~IRConverterBridge() {}
+IRConverterBridge& IRConverterBridge::instance() {
+    static IRConverterBridge inst;
+    return inst;
+}
+bool IRConverterBridge::loadDylib() { return false; }
+void IRConverterBridge::unloadDylib() {}
+bool IRConverterBridge::isAvailable() const { return false; }
+
+bool IRConverterBridge::isDXIL(const uint8_t* data, size_t size) const {
+    if (!data || size < 16) return false;
+    uint32_t magic;
+    memcpy(&magic, data, 4);
+    if (magic == DXIL_MAGIC) return true;
+    if (magic == DXBC_MAGIC && size >= 32) {
+        uint32_t chunkCount;
+        memcpy(&chunkCount, data + 28, 4);
+        for (uint32_t i = 0; i < chunkCount; ++i) {
+            uint32_t offset;
+            if (32 + i * 4 + 4 > size) break;
+            memcpy(&offset, data + 32 + i * 4, 4);
+            if (offset + 8 > size) continue;
+            uint32_t chunkMagic;
+            memcpy(&chunkMagic, data + offset, 4);
+            if (chunkMagic == DXIL_MAGIC) return true;
+        }
+    }
+    return false;
+}
+
+uint32_t IRConverterBridge::detectShaderModel(const uint8_t* data, size_t size) const { return 0; }
+bool IRConverterBridge::extractDXILFromDXBC(const uint8_t*, size_t, std::vector<uint8_t>&) { return false; }
+bool IRConverterBridge::compileDXILToMetallib(const uint8_t*, size_t, ShaderStage, const char*, std::vector<uint8_t>&, IRConverterReflection&) { return false; }
+bool IRConverterBridge::compileDXILToMetallibWithRootSignature(const uint8_t*, size_t, ShaderStage, const char*, const void*, size_t, std::vector<uint8_t>&, IRConverterReflection&) { return false; }
+bool IRConverterBridge::compileRayTracingShader(const uint8_t*, size_t, ShaderStage, const char*, uint32_t, uint32_t, std::vector<uint8_t>&, IRConverterReflection&) { return false; }
+IRConverterBridge::ShaderModelCapabilities IRConverterBridge::getShaderModelCapabilities(uint32_t) const { return {}; }
+
+ShaderCompileService& ShaderCompileService::instance() {
+    static ShaderCompileService inst;
+    return inst;
+}
+ShaderCompileService::~ShaderCompileService() { shutdown(); }
+bool ShaderCompileService::init(uint32_t) { return false; }
+void ShaderCompileService::shutdown() {}
+void ShaderCompileService::setCacheDir(const std::string&) {}
+std::future<ShaderCompileService::ShaderCompileResult> ShaderCompileService::submit(const ShaderCompileRequest&) {
+    std::promise<ShaderCompileResult> p;
+    ShaderCompileResult r;
+    r.success = false;
+    r.error = "libmetalirconverter not available";
+    p.set_value(std::move(r));
+    return p.get_future();
+}
+void ShaderCompileService::workerLoop() {}
+bool ShaderCompileService::checkDiskCache(uint64_t, ShaderCompileResult&) { return false; }
+void ShaderCompileService::storeDiskCache(uint64_t, const ShaderCompileResult&) {}
+
+#endif // METALSHARP_HAS_IRCONVERTER
 
 }
