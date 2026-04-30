@@ -903,7 +903,7 @@ ShaderCompileService::~ShaderCompileService() { shutdown(); }
 bool ShaderCompileService::init(uint32_t) { return false; }
 void ShaderCompileService::shutdown() {}
 void ShaderCompileService::setCacheDir(const std::string&) {}
-std::future<ShaderCompileService::ShaderCompileResult> ShaderCompileService::submit(const ShaderCompileRequest&) {
+std::future<ShaderCompileResult> ShaderCompileService::submit(const ShaderCompileRequest&) {
     std::promise<ShaderCompileResult> p;
     ShaderCompileResult r;
     r.success = false;
