@@ -80,6 +80,10 @@ struct FrameState {
     id<MTLTexture> render_targets[8];
     id<MTLTexture> depth_target;
     
+    id<MTLFunction> vs_function;
+    id<MTLFunction> ps_function;
+    bool needs_pipeline_update;
+    
     float viewport_x, viewport_y, viewport_w, viewport_h, viewport_min, viewport_max;
     bool has_viewport;
     
@@ -222,7 +226,18 @@ static NTSTATUS ms_present(void*) {
         }
     }
     
-    memset((void*)&g_frame, 0, sizeof(g_frame));
+    @autoreleasepool {
+        id<MTLRenderPipelineState> saved_pipeline = g_frame.pipeline;
+        id<MTLFunction> saved_vs = g_frame.vs_function;
+        id<MTLFunction> saved_ps = g_frame.ps_function;
+        
+        memset((void*)&g_frame, 0, sizeof(g_frame));
+        
+        g_frame.pipeline = saved_pipeline;
+        g_frame.vs_function = saved_vs;
+        g_frame.ps_function = saved_ps;
+    }
+    
     return 0;
 }
 
@@ -352,15 +367,94 @@ static NTSTATUS ms_create_vertex_shader(void* p) {
     
     uint64_t handle = new_handle();
     auto& shader = g_shaders[handle];
-    auto* bc = (const uint8_t*)params->bytecode;
-    shader.bytecode.assign(bc, bc + params->bytecode_size);
+    
+    const uint8_t* ptr = (const uint8_t*)params->bytecode;
+    if (params->bytecode_size > 5 && ptr[0] == 'M' && ptr[1] == 'S' && ptr[2] == 'L' && ptr[3] == '\0') {
+        const char* func_name = (const char*)(ptr + 4);
+        size_t remaining = params->bytecode_size - 4;
+        size_t name_len = strnlen(func_name, remaining);
+        if (name_len >= remaining) {
+            g_shaders.erase(handle);
+            return -1;
+        }
+        const char* source = func_name + name_len + 1;
+        size_t source_len = remaining - name_len - 1;
+        
+        @autoreleasepool {
+            NSString* nsSource = [[NSString alloc] initWithBytes:source length:source_len encoding:NSUTF8StringEncoding];
+            NSError* error = nil;
+            id<MTLLibrary> library = [g_device newLibraryWithSource:nsSource options:nil error:&error];
+            if (error || !library) {
+                fprintf(stderr, "[metalsharp] VS compile error: %s\n",
+                    error ? [[error localizedDescription] UTF8String] : "unknown");
+                g_shaders.erase(handle);
+                return -1;
+            }
+            NSString* nsFunc = [NSString stringWithUTF8String:func_name];
+            shader.function = [library newFunctionWithName:nsFunc];
+            if (!shader.function) {
+                fprintf(stderr, "[metalsharp] VS function '%s' not found\n", func_name);
+                g_shaders.erase(handle);
+                return -1;
+            }
+            shader.library = library;
+            fprintf(stderr, "[metalsharp] VS compiled: %s\n", func_name);
+        }
+    } else {
+        auto* bc = (const uint8_t*)params->bytecode;
+        shader.bytecode.assign(bc, bc + params->bytecode_size);
+    }
     
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_pixel_shader(void* p) {
-    return ms_create_vertex_shader(p);
+    auto* params = (struct ms_create_shader_params*)p;
+    if (!g_device || !params->bytecode || params->bytecode_size == 0) return -1;
+    
+    uint64_t handle = new_handle();
+    auto& shader = g_shaders[handle];
+    
+    const uint8_t* ptr = (const uint8_t*)params->bytecode;
+    if (params->bytecode_size > 5 && ptr[0] == 'M' && ptr[1] == 'S' && ptr[2] == 'L' && ptr[3] == '\0') {
+        const char* func_name = (const char*)(ptr + 4);
+        size_t remaining = params->bytecode_size - 4;
+        size_t name_len = strnlen(func_name, remaining);
+        if (name_len >= remaining) {
+            g_shaders.erase(handle);
+            return -1;
+        }
+        const char* source = func_name + name_len + 1;
+        size_t source_len = remaining - name_len - 1;
+        
+        @autoreleasepool {
+            NSString* nsSource = [[NSString alloc] initWithBytes:source length:source_len encoding:NSUTF8StringEncoding];
+            NSError* error = nil;
+            id<MTLLibrary> library = [g_device newLibraryWithSource:nsSource options:nil error:&error];
+            if (error || !library) {
+                fprintf(stderr, "[metalsharp] PS compile error: %s\n",
+                    error ? [[error localizedDescription] UTF8String] : "unknown");
+                g_shaders.erase(handle);
+                return -1;
+            }
+            NSString* nsFunc = [NSString stringWithUTF8String:func_name];
+            shader.function = [library newFunctionWithName:nsFunc];
+            if (!shader.function) {
+                fprintf(stderr, "[metalsharp] PS function '%s' not found\n", func_name);
+                g_shaders.erase(handle);
+                return -1;
+            }
+            shader.library = library;
+            fprintf(stderr, "[metalsharp] PS compiled: %s\n", func_name);
+        }
+    } else {
+        auto* bc = (const uint8_t*)params->bytecode;
+        shader.bytecode.assign(bc, bc + params->bytecode_size);
+    }
+    
+    params->out_handle = handle;
+    return 0;
 }
 
 static NTSTATUS ms_create_input_layout(void*) { return 0; }
@@ -406,6 +500,33 @@ static void ensure_render_pass() {
     
     g_frame.encoder = [g_frame.command_buffer renderCommandEncoderWithDescriptor:desc];
     g_frame.in_render_pass = true;
+    
+    if (g_frame.needs_pipeline_update && g_frame.vs_function && g_frame.ps_function) {
+        @autoreleasepool {
+            MTLRenderPipelineDescriptor* pdesc = [[MTLRenderPipelineDescriptor alloc] init];
+            pdesc.vertexFunction = g_frame.vs_function;
+            pdesc.fragmentFunction = g_frame.ps_function;
+            
+            MTLPixelFormat rt_format = MTLPixelFormatBGRA8Unorm;
+            for (int i = 0; i < 8; i++) {
+                if (g_frame.render_targets[i]) {
+                    rt_format = g_frame.render_targets[i].pixelFormat;
+                    break;
+                }
+            }
+            pdesc.colorAttachments[0].pixelFormat = rt_format;
+            
+            NSError* error = nil;
+            g_frame.pipeline = [g_device newRenderPipelineStateWithDescriptor:pdesc error:&error];
+            if (error || !g_frame.pipeline) {
+                fprintf(stderr, "[metalsharp] Pipeline error: %s\n",
+                    error ? [[error localizedDescription] UTF8String] : "unknown");
+            } else {
+                fprintf(stderr, "[metalsharp] Pipeline created\n");
+            }
+            g_frame.needs_pipeline_update = false;
+        }
+    }
     
     if (g_frame.pipeline) {
         [g_frame.encoder setRenderPipelineState:g_frame.pipeline];
@@ -524,6 +645,38 @@ static NTSTATUS ms_ia_set_index_buffer(void* p) {
 
 static NTSTATUS ms_ia_set_primitive_topology(void* p) {
     g_frame.primitive_topology = *(uint32_t*)p;
+    return 0;
+}
+
+static NTSTATUS ms_vs_set_shader(void* p) {
+    uint64_t handle = *(uint64_t*)p;
+    id<MTLFunction> new_func = nil;
+    if (handle) {
+        auto it = g_shaders.find(handle);
+        if (it != g_shaders.end() && it->second.function) {
+            new_func = it->second.function;
+        }
+    }
+    if (g_frame.vs_function != new_func) {
+        g_frame.vs_function = new_func;
+        g_frame.needs_pipeline_update = true;
+    }
+    return 0;
+}
+
+static NTSTATUS ms_ps_set_shader(void* p) {
+    uint64_t handle = *(uint64_t*)p;
+    id<MTLFunction> new_func = nil;
+    if (handle) {
+        auto it = g_shaders.find(handle);
+        if (it != g_shaders.end() && it->second.function) {
+            new_func = it->second.function;
+        }
+    }
+    if (g_frame.ps_function != new_func) {
+        g_frame.ps_function = new_func;
+        g_frame.needs_pipeline_update = true;
+    }
     return 0;
 }
 
@@ -738,8 +891,8 @@ unixlib_entry_t __wine_unix_call_funcs[] = {
     ms_ia_set_vertex_buffers,
     ms_ia_set_index_buffer,
     ms_ia_set_primitive_topology,
-    ms_stub,
-    ms_stub,
+    ms_vs_set_shader,
+    ms_ps_set_shader,
     ms_vs_set_constant_buffers,
     ms_ps_set_constant_buffers,
     ms_stub,
@@ -752,7 +905,6 @@ unixlib_entry_t __wine_unix_call_funcs[] = {
     ms_stub,
     ms_create_shader_resource_view,
     ms_update_subresource,
-    ms_stub,
     ms_stub,
     ms_stub,
     ms_stub,
@@ -805,8 +957,8 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
     ms_ia_set_vertex_buffers,
     ms_ia_set_index_buffer,
     ms_ia_set_primitive_topology,
-    ms_stub,
-    ms_stub,
+    ms_vs_set_shader,
+    ms_ps_set_shader,
     ms_vs_set_constant_buffers,
     ms_ps_set_constant_buffers,
     ms_stub,
