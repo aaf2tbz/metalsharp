@@ -77,6 +77,8 @@ static bool test_shader_translator_fallback_dxbc() {
 }
 
 static bool test_shader_compile_service_init() {
+    auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto& service = ShaderCompileService::instance();
     bool ok = service.init(2);
     service.shutdown();
