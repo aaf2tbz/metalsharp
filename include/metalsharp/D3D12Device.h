@@ -92,6 +92,11 @@ struct D3D12Descriptor {
     void* metalBuffer = nullptr;
     UINT64 bufferOffset = 0;
     UINT64 bufferSize = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS gpuAddress = 0;
+    void* metalSampler = nullptr;
+    UINT shaderRegister = 0;
+    UINT registerSpace = 0;
+    UINT numDescriptors = 1;
 };
 
 class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
@@ -99,6 +104,7 @@ public:
     ULONG refCount = 1;
     D3D12_DESCRIPTOR_HEAP_DESC desc;
     std::vector<D3D12Descriptor> descriptors;
+    void* metalArgumentBuffer = nullptr;
 
     D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {}
 
@@ -115,7 +121,7 @@ public:
     STDMETHOD(SetName)(const char*) override { return S_OK; }
 
     D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() override { return {1}; }
-    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override { return {1}; }
+    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override { return {reinterpret_cast<UINT64>(this) + 1}; }
     UINT __getDescriptorCount() const override { return desc.NumDescriptors; }
     UINT __getHeapType() const override { return desc.Type; }
 
@@ -123,11 +129,53 @@ public:
         if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors) return nullptr;
         return &descriptors[handle.ptr - 1];
     }
+
+    D3D12Descriptor* getDescriptorByIndex(UINT index) {
+        if (index >= desc.NumDescriptors) return nullptr;
+        return &descriptors[index];
+    }
+
+    UINT handleToIndex(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
+        if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors) return UINT_MAX;
+        return static_cast<UINT>(handle.ptr - 1);
+    }
+
+    UINT gpuHandleToIndex(D3D12_GPU_DESCRIPTOR_HANDLE handle) const {
+        UINT64 base = reinterpret_cast<UINT64>(this) + 1;
+        if (handle.ptr < base) return UINT_MAX;
+        UINT64 offset = handle.ptr - base;
+        if (offset >= desc.NumDescriptors) return UINT_MAX;
+        return static_cast<UINT>(offset);
+    }
+
+    void copyDescriptors(UINT numDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE dstStart, D3D12_CPU_DESCRIPTOR_HANDLE srcStart) {
+        UINT dstIdx = handleToIndex(dstStart);
+        UINT srcIdx = handleToIndex(srcStart);
+        for (UINT i = 0; i < numDescriptors; ++i) {
+            if (dstIdx + i < desc.NumDescriptors && srcIdx + i < desc.NumDescriptors) {
+                descriptors[dstIdx + i] = descriptors[srcIdx + i];
+            }
+        }
+    }
 };
 
 class D3D12RootSignatureImpl final : public ID3D12RootSignature {
 public:
     ULONG refCount = 1;
+    std::vector<D3D12_ROOT_PARAMETER> parameters;
+    std::vector<D3D12_STATIC_SAMPLER_DESC> staticSamplers;
+    UINT flags = 0;
+    std::vector<uint8_t> rawBytecode;
+    uint32_t numParameters = 0;
+    uint64_t argumentBufferSize = 0;
+
+    struct RootParameterLayout {
+        uint32_t type;
+        uint32_t offset;
+        uint32_t size;
+        uint32_t shaderVisibility;
+    };
+    std::vector<RootParameterLayout> parameterLayouts;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv) return E_POINTER;
@@ -140,6 +188,42 @@ public:
     STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
     STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
     STDMETHOD(SetName)(const char*) override { return S_OK; }
+
+    void computeLayout() {
+        parameterLayouts.clear();
+        uint32_t offset = 0;
+        for (uint32_t i = 0; i < numParameters; ++i) {
+            RootParameterLayout layout;
+            layout.type = (i < parameters.size()) ? parameters[i].ParameterType : 0;
+            layout.offset = offset;
+            layout.shaderVisibility = (i < parameters.size()) ? parameters[i].ShaderVisibility : 0;
+
+            switch (layout.type) {
+                case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS: {
+                    uint32_t numConst = (i < parameters.size()) ? parameters[i].Constants.Num32BitValues : 0;
+                    layout.size = numConst * sizeof(uint32_t);
+                    if (layout.size < 4) layout.size = 4;
+                    break;
+                }
+                case D3D12_ROOT_PARAMETER_TYPE_CBV:
+                case D3D12_ROOT_PARAMETER_TYPE_SRV:
+                case D3D12_ROOT_PARAMETER_TYPE_UAV:
+                    layout.size = sizeof(uint64_t);
+                    break;
+                case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE:
+                    layout.size = sizeof(uint64_t);
+                    break;
+                default:
+                    layout.size = sizeof(uint64_t);
+                    break;
+            }
+
+            parameterLayouts.push_back(layout);
+            offset += layout.size;
+            offset = (offset + 15u) & ~15u;
+        }
+        argumentBufferSize = offset > 0 ? offset : 256;
+    }
 };
 
 class D3D12PipelineStateImpl final : public ID3D12PipelineState {
@@ -307,14 +391,102 @@ public:
 
     HRESULT CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC* pDesc, REFIID riid, void** ppHeap) override {
         if (!pDesc || !ppHeap) return E_INVALIDARG;
-        *ppHeap = new D3D12DescriptorHeapImpl(pDesc);
+        auto* heap = new D3D12DescriptorHeapImpl(pDesc);
+        m_trackedHeaps.push_back(heap);
+        *ppHeap = heap;
         return S_OK;
     }
 
-    HRESULT CreateRootSignature(UINT, const void*, SIZE_T, REFIID riid, void** ppRS) override {
+    HRESULT CreateRootSignature(UINT, const void* pBlob, SIZE_T blobSize, REFIID riid, void** ppRS) override {
         if (!ppRS) return E_POINTER;
-        *ppRS = new D3D12RootSignatureImpl();
+        auto* rs = new D3D12RootSignatureImpl();
+        rs->rawBytecode.assign(static_cast<const uint8_t*>(pBlob), static_cast<const uint8_t*>(pBlob) + blobSize);
+
+        const uint8_t* data = rs->rawBytecode.data();
+        size_t size = rs->rawBytecode.size();
+
+        if (size >= 4) {
+            uint32_t magic;
+            memcpy(&magic, data, 4);
+
+            if (magic == 0x43425844 && size >= 32) {
+                uint32_t chunkCount;
+                memcpy(&chunkCount, data + 28, 4);
+                for (uint32_t i = 0; i < chunkCount; ++i) {
+                    uint32_t offset;
+                    if (32 + i * 4 + 4 > size) break;
+                    memcpy(&offset, data + 32 + i * 4, 4);
+                    if (offset + 8 > size) continue;
+                    uint32_t chunkMagic;
+                    memcpy(&chunkMagic, data + offset, 4);
+                    uint32_t chunkSize;
+                    memcpy(&chunkSize, data + offset + 4, 4);
+                    if (offset + 8 + chunkSize > size) continue;
+
+                    if (chunkMagic == 0x30535452) {
+                        parseRootSignatureBlob(data + offset + 8, chunkSize, rs);
+                    }
+                }
+            } else {
+                parseRootSignatureBlob(data, size, rs);
+            }
+        }
+
+        rs->computeLayout();
+        *ppRS = rs;
         return S_OK;
+    }
+
+    void parseRootSignatureBlob(const uint8_t* data, size_t size, D3D12RootSignatureImpl* rs) {
+        if (size < 16) return;
+        uint32_t version;
+        memcpy(&version, data, 4);
+        uint32_t numParams;
+        memcpy(&numParams, data + 4, 4);
+        uint32_t numStaticSamplers;
+        memcpy(&numStaticSamplers, data + 8, 4);
+        uint32_t flags;
+        memcpy(&flags, data + 12, 4);
+
+        rs->numParameters = numParams;
+        rs->flags = flags;
+
+        size_t paramOffset = 16;
+        for (uint32_t i = 0; i < numParams && paramOffset + 16 <= size; ++i) {
+            D3D12_ROOT_PARAMETER param = {};
+            memcpy(&param.ParameterType, data + paramOffset, 4);
+            memcpy(&param.ShaderVisibility, data + paramOffset + 4, 4);
+
+            switch (param.ParameterType) {
+                case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS:
+                    memcpy(&param.Constants.ShaderRegister, data + paramOffset + 8, 4);
+                    memcpy(&param.Constants.RegisterSpace, data + paramOffset + 12, 4);
+                    memcpy(&param.Constants.Num32BitValues, data + paramOffset + 16, 4);
+                    paramOffset += 20;
+                    break;
+                case D3D12_ROOT_PARAMETER_TYPE_CBV:
+                case D3D12_ROOT_PARAMETER_TYPE_SRV:
+                case D3D12_ROOT_PARAMETER_TYPE_UAV:
+                    memcpy(&param.Descriptor.ShaderRegister, data + paramOffset + 8, 4);
+                    memcpy(&param.Descriptor.RegisterSpace, data + paramOffset + 12, 4);
+                    paramOffset += 16;
+                    break;
+                case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE: {
+                    uint32_t numRanges;
+                    memcpy(&numRanges, data + paramOffset + 8, 4);
+                    paramOffset += 16;
+                    D3D12_ROOT_DESCRIPTOR_TABLE table = {};
+                    table.NumDescriptorRanges = numRanges;
+                    param.DescriptorTable = table;
+                    paramOffset += numRanges * 20;
+                    break;
+                }
+                default:
+                    paramOffset += 16;
+                    break;
+            }
+            rs->parameters.push_back(param);
+        }
     }
 
     HRESULT CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid, void** ppPSO) override;
@@ -356,9 +528,42 @@ public:
         return createView(pResource, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, DXGI_FORMAT_UNKNOWN, handle);
     }
 
-    HRESULT CreateConstantBufferView(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE handle) override { return E_NOTIMPL; }
+    HRESULT CreateConstantBufferView(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE handle) override {
+        if (!pDesc || handle.ptr == 0) return E_INVALIDARG;
+        D3D12DescriptorHeapImpl* heap = nullptr;
+        for (auto* h : m_trackedHeaps) {
+            if (h->handleToIndex(handle) != UINT_MAX) { heap = h; break; }
+        }
+        if (!heap) return S_OK;
+        auto* desc = heap->getDescriptor(handle);
+        if (!desc) return S_OK;
 
-    HRESULT CreateSampler(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE handle) override { return E_NOTIMPL; }
+        struct CBVDesc { D3D12_GPU_VIRTUAL_ADDRESS BufferLocation; UINT SizeInBytes; };
+        auto* cbv = static_cast<const CBVDesc*>(pDesc);
+        desc->gpuAddress = cbv->BufferLocation;
+        desc->bufferSize = cbv->SizeInBytes;
+        desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        return S_OK;
+    }
+
+    HRESULT CreateSampler(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE handle) override {
+        if (!pDesc || handle.ptr == 0) return E_INVALIDARG;
+        D3D12DescriptorHeapImpl* heap = nullptr;
+        for (auto* h : m_trackedHeaps) {
+            if (h->handleToIndex(handle) != UINT_MAX) { heap = h; break; }
+        }
+        if (!heap) return S_OK;
+        auto* desc = heap->getDescriptor(handle);
+        if (!desc) return S_OK;
+
+        desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+        auto* samplerDesc = static_cast<const D3D12_STATIC_SAMPLER_DESC*>(pDesc);
+        if (samplerDesc) {
+            desc->shaderRegister = samplerDesc->ShaderRegister;
+            desc->registerSpace = samplerDesc->RegisterSpace;
+        }
+        return S_OK;
+    }
 
     UINT GetDescriptorHandleIncrementSize(UINT) override { return 1; }
 
@@ -485,8 +690,37 @@ public:
 private:
     HRESULT createView(ID3D12Resource* pResource, UINT type, UINT format, D3D12_CPU_DESCRIPTOR_HANDLE handle) {
         if (handle.ptr == 0) return E_INVALIDARG;
+
+        D3D12DescriptorHeapImpl* heap = nullptr;
+        for (auto* h : m_trackedHeaps) {
+            if (h->handleToIndex(handle) != UINT_MAX) { heap = h; break; }
+        }
+        if (!heap) return S_OK;
+
+        auto* desc = heap->getDescriptor(handle);
+        if (!desc) return S_OK;
+
+        desc->resource = pResource;
+        desc->type = type;
+        desc->format = format;
+
+        if (pResource) {
+            D3D12ResourceImpl* res = static_cast<D3D12ResourceImpl*>(pResource);
+            desc->metalBuffer = res->__metalBufferPtr();
+            desc->metalTexture = res->__metalTexturePtr();
+            desc->gpuAddress = res->m_gpuAddress;
+
+            D3D12_RESOURCE_DESC resDesc;
+            if (SUCCEEDED(pResource->GetDesc(&resDesc))) {
+                desc->bufferSize = resDesc.Width;
+            }
+        }
         return S_OK;
     }
+
+    std::vector<D3D12DescriptorHeapImpl*> m_trackedHeaps;
+
+    D3D12DescriptorHeapImpl* findHeapForHandle(D3D12_CPU_DESCRIPTOR_HANDLE handle) const;
 };
 
 }

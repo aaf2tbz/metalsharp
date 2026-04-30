@@ -1,5 +1,7 @@
 #include <metalsharp/D3D12Device.h>
 #include <metalsharp/PipelineState.h>
+#include <metalsharp/ArgumentBufferBinding.h>
+#include <metalsharp/Logger.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
 #include <cstring>
@@ -38,6 +40,13 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         UINT m_rtvFormats[MAX_RENDER_TARGETS] = {};
         UINT m_dsvFormat = 0;
 
+        D3D12RootSignatureImpl* m_rootSignature = nullptr;
+        std::vector<uint8_t> m_argumentBuffer;
+        size_t MAX_ARGUMENT_BUFFER_SIZE = 4096;
+        std::vector<ID3D12Resource*> m_referencedResources;
+        ID3D12DescriptorHeap* m_descriptorHeaps[2] = {};
+        UINT m_numDescriptorHeaps = 0;
+
         struct ClearCmd {
             void* texture;
             bool isDepth;
@@ -71,13 +80,15 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         std::vector<D3D12_RESOURCE_BARRIER> m_barriers;
 
         D3D12_VIEWPORT m_viewport = {};
+        D3D12_RECT m_scissorRect = {};
 
-        explicit CmdListImpl(D3D12DeviceImpl& dev) : device(dev) {}
+        explicit CmdListImpl(D3D12DeviceImpl& dev) : device(dev) {
+            m_argumentBuffer.resize(MAX_ARGUMENT_BUFFER_SIZE, 0);
+        }
 
         ~CmdListImpl() {
-            for (auto& cmd : m_copyCmds) {
-                if (cmd.dst) cmd.dst->Release();
-                if (cmd.src) cmd.src->Release();
+            for (auto* res : m_referencedResources) {
+                if (res) res->Release();
             }
         }
 
@@ -105,6 +116,11 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             memset(m_renderTargets, 0, sizeof(m_renderTargets));
             m_depthTarget = nullptr;
             m_pso = pInitialState;
+            m_rootSignature = nullptr;
+            std::fill(m_argumentBuffer.begin(), m_argumentBuffer.end(), 0);
+            m_numDescriptorHeaps = 0;
+            for (auto* res : m_referencedResources) { if (res) res->Release(); }
+            m_referencedResources.clear();
             return S_OK;
         }
 
@@ -129,30 +145,108 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
 
         HRESULT SetPipelineState(ID3D12PipelineState* pPSO) override { m_pso = pPSO; return S_OK; }
-        HRESULT SetGraphicsRootSignature(ID3D12RootSignature*) override { return S_OK; }
-        HRESULT SetGraphicsRootDescriptorTable(UINT, D3D12_GPU_DESCRIPTOR_HANDLE) override { return S_OK; }
-        HRESULT SetGraphicsRootConstantBufferView(UINT, D3D12_GPU_VIRTUAL_ADDRESS) override { return S_OK; }
-        HRESULT SetGraphicsRootShaderResourceView(UINT, D3D12_GPU_VIRTUAL_ADDRESS) override { return S_OK; }
-        HRESULT SetGraphicsRootUnorderedAccessView(UINT, D3D12_GPU_VIRTUAL_ADDRESS) override { return S_OK; }
-        HRESULT SetGraphicsRoot32BitConstants(UINT, UINT, const void*, UINT) override { return S_OK; }
+
+        HRESULT SetGraphicsRootSignature(ID3D12RootSignature* pRS) override {
+            m_rootSignature = static_cast<D3D12RootSignatureImpl*>(pRS);
+            if (m_rootSignature) {
+                size_t needed = m_rootSignature->argumentBufferSize;
+                if (needed > m_argumentBuffer.size())
+                    m_argumentBuffer.resize(needed, 0);
+                std::fill(m_argumentBuffer.begin(), m_argumentBuffer.begin() + needed, 0);
+            }
+            return S_OK;
+        }
+
+        HRESULT SetGraphicsRootDescriptorTable(UINT rootParamIndex, D3D12_GPU_DESCRIPTOR_HANDLE baseDescriptor) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+            auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
+
+            if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
+                uint64_t ptr = baseDescriptor.ptr;
+                memcpy(m_argumentBuffer.data() + layout.offset, &ptr, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetGraphicsRootConstantBufferView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+            auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
+
+            if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
+                memcpy(m_argumentBuffer.data() + layout.offset, &bufferLocation, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetGraphicsRootShaderResourceView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+            auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
+
+            if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
+                memcpy(m_argumentBuffer.data() + layout.offset, &bufferLocation, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetGraphicsRootUnorderedAccessView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+            auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
+
+            if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
+                memcpy(m_argumentBuffer.data() + layout.offset, &bufferLocation, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetGraphicsRoot32BitConstants(UINT rootParamIndex, UINT num32BitValues, const void* pData, UINT destOffset) override {
+            if (!pData || num32BitValues == 0) return S_OK;
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+            auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
+
+            size_t writeOffset = layout.offset + destOffset * sizeof(uint32_t);
+            size_t writeSize = num32BitValues * sizeof(uint32_t);
+            if (writeOffset + writeSize <= m_argumentBuffer.size()) {
+                memcpy(m_argumentBuffer.data() + writeOffset, pData, writeSize);
+            }
+            return S_OK;
+        }
 
         HRESULT OMSetRenderTargets(UINT numRTVs, const D3D12_CPU_DESCRIPTOR_HANDLE* pRTVs, BOOL, const D3D12_CPU_DESCRIPTOR_HANDLE* pDSV) override {
             m_numRenderTargets = numRTVs;
+            if (pRTVs) {
+                for (UINT i = 0; i < numRTVs && i < 8; ++i) {
+                    D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(pRTVs[i]);
+                    if (heap) {
+                        auto* desc = heap->getDescriptor(pRTVs[i]);
+                        if (desc) m_renderTargets[i] = desc->metalTexture;
+                    } else {
+                        m_renderTargets[i] = reinterpret_cast<void*>(pRTVs[i].ptr);
+                    }
+                }
+            }
             if (pDSV) m_depthTarget = reinterpret_cast<void*>(pDSV->ptr);
             return S_OK;
         }
-        HRESULT OMSetStencilRef(UINT) override { return S_OK; }
-        HRESULT OMSetBlendFactor(const FLOAT[4]) override { return S_OK; }
+        HRESULT OMSetStencilRef(UINT ref) override { return S_OK; }
+        HRESULT OMSetBlendFactor(const FLOAT factor[4]) override { return S_OK; }
 
         HRESULT RSSetViewports(UINT num, const D3D12_VIEWPORT* pVPs) override {
             if (num > 0 && pVPs) m_viewport = pVPs[0];
             return S_OK;
         }
-        HRESULT RSSetScissorRects(UINT, const D3D12_RECT*) override { return S_OK; }
+        HRESULT RSSetScissorRects(UINT num, const D3D12_RECT* pRects) override {
+            if (num > 0 && pRects) m_scissorRect = pRects[0];
+            return S_OK;
+        }
 
         HRESULT ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE handle, const FLOAT color[4], UINT, const D3D12_RECT*) override {
             ClearCmd cmd = {};
-            cmd.texture = reinterpret_cast<void*>(handle.ptr);
+            D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(handle);
+            if (heap) {
+                auto* desc = heap->getDescriptor(handle);
+                if (desc) cmd.texture = desc->metalTexture;
+            }
+            if (!cmd.texture) cmd.texture = reinterpret_cast<void*>(handle.ptr);
             cmd.isDepth = false;
             if (color) memcpy(cmd.color, color, sizeof(cmd.color));
             m_clearCmds.push_back(cmd);
@@ -161,7 +255,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
         HRESULT ClearDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT flags, FLOAT depth, UINT8 stencil, UINT, const D3D12_RECT*) override {
             ClearCmd cmd = {};
-            cmd.texture = reinterpret_cast<void*>(handle.ptr);
+            D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(handle);
+            if (heap) {
+                auto* desc = heap->getDescriptor(handle);
+                if (desc) cmd.texture = desc->metalTexture;
+            }
+            if (!cmd.texture) cmd.texture = reinterpret_cast<void*>(handle.ptr);
             cmd.isDepth = true;
             cmd.depth = depth;
             cmd.stencil = stencil;
@@ -198,7 +297,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT CopyTextureRegion(const void*, UINT, UINT, UINT, ID3D12Resource*, UINT, const void*) override { return E_NOTIMPL; }
+        HRESULT CopyTextureRegion(const void* pDst, UINT dstX, UINT dstY, UINT dstZ, ID3D12Resource* pSrc, UINT srcSub, const void* pSrcBox) override {
+            if (!pSrc) return E_INVALIDARG;
+            pSrc->AddRef();
+            m_copyCmds.push_back({nullptr, pSrc, false, (UINT64)dstX | ((UINT64)dstY << 16), srcSub, (UINT64)dstZ});
+            return S_OK;
+        }
 
         HRESULT ResourceBarrier(UINT numBarriers, const D3D12_RESOURCE_BARRIER* pBarriers) override {
             for (UINT i = 0; i < numBarriers; ++i) {
@@ -210,10 +314,22 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetDescriptorHeaps(UINT, ID3D12DescriptorHeap* const*) override { return S_OK; }
+        HRESULT SetDescriptorHeaps(UINT numHeaps, ID3D12DescriptorHeap* const* ppHeaps) override {
+            m_numDescriptorHeaps = std::min(numHeaps, (UINT)2);
+            for (UINT i = 0; i < m_numDescriptorHeaps; ++i) {
+                m_descriptorHeaps[i] = ppHeaps ? ppHeaps[i] : nullptr;
+            }
+            return S_OK;
+        }
         HRESULT IASetInputLayout(UINT, const D3D12_INPUT_ELEMENT_DESC*) override { return S_OK; }
-        HRESULT Map(ID3D12Resource*, UINT, const D3D12_RANGE*, void**) override { return E_NOTIMPL; }
-        HRESULT Unmap(ID3D12Resource*, UINT, const D3D12_RANGE*) override { return S_OK; }
+        HRESULT Map(ID3D12Resource* pRes, UINT sub, const D3D12_RANGE*, void** ppData) override {
+            if (!pRes || !ppData) return E_POINTER;
+            return pRes->Map(sub, nullptr, ppData);
+        }
+        HRESULT Unmap(ID3D12Resource* pRes, UINT sub, const D3D12_RANGE*) override {
+            if (!pRes) return E_POINTER;
+            return pRes->Unmap(sub, nullptr);
+        }
         HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64) override { return E_NOTIMPL; }
 
         HRESULT CopyTiles(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pCoord, const D3D12_TILE_REGION_SIZE* pSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) override {
@@ -265,14 +381,16 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
 
             for (auto& cmd : m_copyCmds) {
-                void* dstBuf = cmd.dst ? cmd.dst->__metalBufferPtr() : nullptr;
-                void* srcBuf = cmd.src ? cmd.src->__metalBufferPtr() : nullptr;
-                if (dstBuf && srcBuf) {
-                    id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
-                    id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
-                    memcpy((char*)[dst contents] + cmd.dstOffset,
-                           (char*)[src contents] + cmd.srcOffset,
-                           (size_t)cmd.numBytes);
+                if (cmd.isBuffer && cmd.dst && cmd.src) {
+                    void* dstBuf = cmd.dst->__metalBufferPtr();
+                    void* srcBuf = cmd.src->__metalBufferPtr();
+                    if (dstBuf && srcBuf) {
+                        id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
+                        id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
+                        memcpy((char*)[dst contents] + cmd.dstOffset,
+                               (char*)[src contents] + cmd.srcOffset,
+                               (size_t)cmd.numBytes);
+                    }
                 }
             }
 
@@ -308,6 +426,11 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                             passDesc.colorAttachments[i].storeAction = MTLStoreActionStore;
                         }
                     }
+                    if (m_depthTarget) {
+                        passDesc.depthAttachment.texture = (__bridge id<MTLTexture>)m_depthTarget;
+                        passDesc.depthAttachment.loadAction = MTLLoadActionLoad;
+                        passDesc.depthAttachment.storeAction = MTLStoreActionStore;
+                    }
 
                     id<MTLRenderCommandEncoder> enc = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
                     [enc setRenderPipelineState:pipeline];
@@ -321,6 +444,36 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                         vp.znear = m_viewport.MinDepth;
                         vp.zfar = m_viewport.MaxDepth;
                         [enc setViewport:vp];
+                    }
+
+                    if (m_scissorRect.right > m_scissorRect.left) {
+                        MTLScissorRect scissor;
+                        scissor.x = m_scissorRect.left;
+                        scissor.y = m_scissorRect.top;
+                        scissor.width = m_scissorRect.right - m_scissorRect.left;
+                        scissor.height = m_scissorRect.bottom - m_scissorRect.top;
+                        [enc setScissorRect:scissor];
+                    }
+
+                    if (m_rootSignature && !m_argumentBuffer.empty()) {
+                        id<MTLDevice> mtlDev = MTLCreateSystemDefaultDevice();
+                        if (mtlDev) {
+                            id<MTLBuffer> argBuf = [mtlDev newBufferWithBytes:m_argumentBuffer.data()
+                                                                       length:m_rootSignature->argumentBufferSize
+                                                                      options:MTLResourceStorageModeShared];
+                            if (argBuf) {
+                                [enc setVertexBuffer:argBuf offset:0 atIndex:16];
+                                [enc setFragmentBuffer:argBuf offset:0 atIndex:16];
+                            }
+                        }
+                    }
+
+                    for (auto* res : m_referencedResources) {
+                        if (!res) continue;
+                        void* buf = res->__metalBufferPtr();
+                        void* tex = res->__metalTexturePtr();
+                        if (buf) [enc useResource:(__bridge id<MTLBuffer>)buf usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
+                        if (tex) [enc useResource:(__bridge id<MTLTexture>)tex usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
                     }
 
                     MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
@@ -369,10 +522,33 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
         pipeDesc.vertexStride = 0;
 
         CompiledShader compiled;
-        const char* mslSrc = reinterpret_cast<const char*>(pDesc->VS);
-        if (m_shaderTranslator->compileMSL(mslSrc, "vertexShader", "fragmentShader", compiled)) {
+        const uint8_t* shaderData = static_cast<const uint8_t*>(pDesc->VS);
+        size_t shaderSize = pDesc->VSsize;
+
+        D3D12RootSignatureImpl* rootSig = static_cast<D3D12RootSignatureImpl*>(pDesc->pRootSignature);
+        bool ok = false;
+        if (rootSig && !rootSig->rawBytecode.empty()) {
+            ok = m_shaderTranslator->translateDXBCWithRootSignature(
+                shaderData, shaderSize,
+                ShaderStage::Vertex,
+                rootSig->rawBytecode.data(), rootSig->rawBytecode.size(),
+                compiled
+            );
+        }
+
+        if (!ok) {
+            ok = m_shaderTranslator->translateDXBC(shaderData, shaderSize, ShaderStage::Vertex, compiled);
+        }
+
+        if (ok) {
             pipeDesc.vertexFunction = compiled.vertexFunction;
-            pipeDesc.fragmentFunction = compiled.fragmentFunction;
+        }
+
+        if (pDesc->PS && pDesc->PSsize > 0) {
+            CompiledShader psCompiled;
+            if (m_shaderTranslator->translateDXBC(static_cast<const uint8_t*>(pDesc->PS), pDesc->PSsize, ShaderStage::Pixel, psCompiled)) {
+                pipeDesc.fragmentFunction = psCompiled.fragmentFunction;
+            }
         }
 
         pipeDesc.numColorAttachments = pDesc->NumRenderTargets;
@@ -396,6 +572,13 @@ HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandL
         ppLists[i]->__execute(&metalDevice);
     }
     return S_OK;
+}
+
+D3D12DescriptorHeapImpl* D3D12DeviceImpl::findHeapForHandle(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
+    for (auto* h : m_trackedHeaps) {
+        if (h->handleToIndex(handle) != UINT_MAX) return h;
+    }
+    return nullptr;
 }
 
 }

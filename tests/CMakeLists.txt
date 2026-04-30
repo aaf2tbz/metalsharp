@@ -82,3 +82,19 @@ add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
 add_test(NAME phase5 COMMAND test_phase5)
 add_test(NAME tiled_resources COMMAND test_tiled_resources)
+
+add_executable(test_phase17
+    test_phase17.cpp
+)
+target_link_libraries(test_phase17 PRIVATE metalsharp_core)
+target_compile_options(test_phase17 PRIVATE -fobjc-arc)
+
+add_test(NAME phase17 COMMAND test_phase17)
+
+add_executable(test_phase18
+    test_phase18.cpp
+)
+target_link_libraries(test_phase18 PRIVATE metalsharp_d3d12 metalsharp_core)
+target_compile_options(test_phase18 PRIVATE -fobjc-arc)
+
+add_test(NAME phase18 COMMAND test_phase18)

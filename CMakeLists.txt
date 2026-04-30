@@ -15,6 +15,15 @@ find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(GAMECONTROLLER_FRAMEWORK GameController REQUIRED)
 find_library(METALFX_FRAMEWORK MetalFX)
 
+find_path(METALIRCONVERTER_INCLUDE_DIR
+    NAMES metal_irconverter/metal_irconverter.h
+    PATHS /usr/local/include
+)
+find_library(METALIRCONVERTER_LIBRARY
+    NAMES metalirconverter
+    PATHS /usr/local/lib
+)
+
 find_package(SDL2 QUIET)
 
 add_library(metalsharp_core STATIC
@@ -32,6 +41,9 @@ add_library(metalsharp_core STATIC
     src/metal/shader/ShaderTranslator.mm
     src/metal/shader/DXBCParser.cpp
     src/metal/shader/DXBCtoMSL.cpp
+    src/metal/shader/IRConverterBridge.cpp
+    src/metal/shader/IRConverterBridge.mm
+    src/metal/shader/ArgumentBufferBinding.cpp
     src/metal/Buffer.mm
     src/metal/Texture.mm
     src/metal/Sampler.mm
@@ -48,6 +60,15 @@ add_library(metalsharp_core STATIC
     src/perf/MetalFXUpscaler.cpp
 )
 target_include_directories(metalsharp_core PUBLIC include)
+if(METALIRCONVERTER_INCLUDE_DIR)
+    target_include_directories(metalsharp_core PUBLIC ${METALIRCONVERTER_INCLUDE_DIR})
+    target_compile_definitions(metalsharp_core PUBLIC METALSHARP_HAS_IRCONVERTER)
+    message(STATUS "MetalSharp: found metal_irconverter headers at ${METALIRCONVERTER_INCLUDE_DIR}")
+endif()
+if(METALIRCONVERTER_LIBRARY)
+    target_link_libraries(metalsharp_core PUBLIC ${METALIRCONVERTER_LIBRARY})
+    message(STATUS "MetalSharp: found libmetalirconverter at ${METALIRCONVERTER_LIBRARY}")
+endif()
 target_link_libraries(metalsharp_core PUBLIC
     ${METAL_FRAMEWORK}
     ${FOUNDATION_FRAMEWORK}
