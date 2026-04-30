@@ -62,6 +62,30 @@ public:
         IRConverterReflection& outReflection
     );
 
+    bool compileRayTracingShader(
+        const uint8_t* dxilData,
+        size_t dxilSize,
+        ShaderStage stage,
+        const char* entryPoint,
+        uint32_t maxRecursionDepth,
+        uint32_t maxAttributeSize,
+        std::vector<uint8_t>& outMetallib,
+        IRConverterReflection& outReflection
+    );
+
+    struct ShaderModelCapabilities {
+        bool waveOps = false;
+        bool halfPrecision = false;
+        bool int64 = false;
+        bool barycentrics = false;
+        bool rayTracing = false;
+        bool meshShaders = false;
+        bool samplerFeedback = false;
+        bool computeDerivatives = false;
+    };
+
+    ShaderModelCapabilities getShaderModelCapabilities(uint32_t smVersion) const;
+
     bool extractDXILFromDXBC(
         const uint8_t* dxbcData,
         size_t dxbcSize,

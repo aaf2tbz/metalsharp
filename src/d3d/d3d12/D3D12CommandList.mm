@@ -47,6 +47,14 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         ID3D12DescriptorHeap* m_descriptorHeaps[2] = {};
         UINT m_numDescriptorHeaps = 0;
 
+        D3D12RootSignatureImpl* m_computeRootSignature = nullptr;
+        std::vector<uint8_t> m_computeArgumentBuffer;
+        D3D12_DISPATCH_RAYS_DESC m_dispatchRays = {};
+        bool m_hasDispatchRays = false;
+        std::vector<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC> m_buildASDescs;
+        bool m_hasDispatchMesh = false;
+        UINT m_meshGroupCount[3] = {};
+
         struct ClearCmd {
             void* texture;
             bool isDepth;
@@ -56,6 +64,9 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             UINT clearFlags;
         };
         std::vector<ClearCmd> m_clearCmds;
+
+        struct ComputeDispatch { UINT x, y, z; };
+        std::vector<ComputeDispatch> m_computeDispatches;
 
         struct DrawCmd {
             bool indexed;
@@ -279,7 +290,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT Dispatch(UINT, UINT, UINT) override { return S_OK; }
+        HRESULT Dispatch(UINT x, UINT y, UINT z) override {
+            m_computeDispatches.push_back({x, y, z});
+            return S_OK;
+        }
 
         HRESULT CopyResource(ID3D12Resource* dst, ID3D12Resource* src) override {
             if (!dst || !src) return E_INVALIDARG;
@@ -331,6 +345,82 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return pRes->Unmap(sub, nullptr);
         }
         HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64) override { return E_NOTIMPL; }
+
+        HRESULT DispatchRays(const D3D12_DISPATCH_RAYS_DESC* pDesc) override {
+            if (!pDesc) return E_INVALIDARG;
+            m_dispatchRays = *pDesc;
+            m_hasDispatchRays = true;
+            return S_OK;
+        }
+
+        HRESULT BuildRaytracingAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc, UINT, const void*) override {
+            if (!pDesc) return E_INVALIDARG;
+            m_buildASDescs.push_back(*pDesc);
+            return S_OK;
+        }
+
+        HRESULT CopyRaytracingAccelerationStructure(UINT64, UINT64, UINT) override {
+            return S_OK;
+        }
+
+        HRESULT EmitRaytracingAccelerationStructurePostbuildInfo(const void*, UINT, const UINT64*) override {
+            return S_OK;
+        }
+
+        HRESULT DispatchMesh(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) override {
+            m_hasDispatchMesh = true;
+            m_meshGroupCount[0] = ThreadGroupCountX;
+            m_meshGroupCount[1] = ThreadGroupCountY;
+            m_meshGroupCount[2] = ThreadGroupCountZ;
+            return S_OK;
+        }
+
+        HRESULT SetComputeRootSignature(ID3D12RootSignature* pRootSignature) override {
+            m_computeRootSignature = static_cast<D3D12RootSignatureImpl*>(pRootSignature);
+            if (m_computeRootSignature) {
+                m_computeArgumentBuffer.resize(m_computeRootSignature->argumentBufferSize, 0);
+            }
+            return S_OK;
+        }
+
+        HRESULT SetComputeRoot32BitConstants(UINT RootParameterIndex, UINT Num32BitValues, const void* pData, UINT DestOffset) override {
+            if (!m_computeRootSignature || !pData) return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+            auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
+            size_t offset = layout.offset + DestOffset * sizeof(uint32_t);
+            if (offset + Num32BitValues * sizeof(uint32_t) <= m_computeArgumentBuffer.size()) {
+                memcpy(m_computeArgumentBuffer.data() + offset, pData, Num32BitValues * sizeof(uint32_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetComputeRootDescriptorTable(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) override {
+            if (!m_computeRootSignature) return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+            auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
+            if (layout.offset + sizeof(uint64_t) <= m_computeArgumentBuffer.size()) {
+                memcpy(m_computeArgumentBuffer.data() + layout.offset, &BaseDescriptor.ptr, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetComputeRootConstantBufferView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+            if (!m_computeRootSignature) return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+            auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
+            if (layout.offset + sizeof(uint64_t) <= m_computeArgumentBuffer.size()) {
+                memcpy(m_computeArgumentBuffer.data() + layout.offset, &BufferLocation, sizeof(uint64_t));
+            }
+            return S_OK;
+        }
+
+        HRESULT SetComputeRootShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+            return SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
+        }
+
+        HRESULT SetComputeRootUnorderedAccessView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+            return SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
+        }
 
         HRESULT CopyTiles(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pCoord, const D3D12_TILE_REGION_SIZE* pSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) override {
             if (!pTiledResource || !pCoord || !pSize || !pBuffer) return E_INVALIDARG;
@@ -502,6 +592,117 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                     }
                     [enc endEncoding];
                 }
+            }
+
+            if (m_hasDispatchRays) {
+                void* rtPipeline = nullptr;
+                if (m_pso) rtPipeline = m_pso->__metalRenderPipelineState();
+
+                id<MTLComputePipelineState> computePipeline = nil;
+                if (rtPipeline) {
+                    computePipeline = (__bridge id<MTLComputePipelineState>)rtPipeline;
+                }
+
+                if (computePipeline) {
+                    id<MTLComputeCommandEncoder> enc = [cmdBuffer computeCommandEncoder];
+                    [enc setComputePipelineState:computePipeline];
+
+                    if (!m_computeArgumentBuffer.empty() && m_computeRootSignature) {
+                        id<MTLDevice> mtlDev = MTLCreateSystemDefaultDevice();
+                        if (mtlDev) {
+                            id<MTLBuffer> argBuf = [mtlDev newBufferWithBytes:m_computeArgumentBuffer.data()
+                                                                       length:m_computeRootSignature->argumentBufferSize
+                                                                      options:MTLResourceStorageModeShared];
+                            if (argBuf) {
+                                [enc setBuffer:argBuf offset:0 atIndex:16];
+                            }
+                        }
+                    }
+
+                    MTLSize threadgroups = MTLSizeMake(
+                        (m_dispatchRays.Width + 7) / 8,
+                        (m_dispatchRays.Height + 7) / 8,
+                        m_dispatchRays.Depth > 0 ? m_dispatchRays.Depth : 1
+                    );
+                    MTLSize threadsPerGroup = MTLSizeMake(8, 8, 1);
+                    [enc dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerGroup];
+                    [enc endEncoding];
+                }
+            }
+
+            if (!m_computeDispatches.empty()) {
+                id<MTLComputePipelineState> computePipeline = nil;
+                if (m_pso) {
+                    void* ptr = m_pso->__metalComputePipelineState();
+                    if (ptr) computePipeline = (__bridge id<MTLComputePipelineState>)ptr;
+                    if (!ptr) {
+                        ptr = m_pso->__metalRenderPipelineState();
+                    }
+                }
+
+                if (computePipeline) {
+                    id<MTLComputeCommandEncoder> enc = [cmdBuffer computeCommandEncoder];
+                    [enc setComputePipelineState:computePipeline];
+
+                    if (!m_computeArgumentBuffer.empty() && m_computeRootSignature) {
+                        id<MTLDevice> mtlDev = MTLCreateSystemDefaultDevice();
+                        if (mtlDev) {
+                            id<MTLBuffer> argBuf = [mtlDev newBufferWithBytes:m_computeArgumentBuffer.data()
+                                                                       length:m_computeRootSignature->argumentBufferSize
+                                                                      options:MTLResourceStorageModeShared];
+                            if (argBuf) [enc setBuffer:argBuf offset:0 atIndex:16];
+                        }
+                    }
+
+                    for (auto& dispatch : m_computeDispatches) {
+                        MTLSize threadgroups = MTLSizeMake(dispatch.x, dispatch.y, dispatch.z);
+                        MTLSize threadsPerGroup = MTLSizeMake(1, 1, 1);
+                        [enc dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerGroup];
+                    }
+                    [enc endEncoding];
+                }
+            }
+
+            if (m_hasDispatchMesh) {
+                void* pipelinePtr = m_pso ? m_pso->__metalRenderPipelineState() : nullptr;
+                if (pipelinePtr) {
+                    id<MTLRenderPipelineState> pipeline = (__bridge id<MTLRenderPipelineState>)pipelinePtr;
+
+                    MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
+                    for (UINT i = 0; i < m_numRenderTargets && i < 8; ++i) {
+                        if (m_renderTargets[i]) {
+                            passDesc.colorAttachments[i].texture = (__bridge id<MTLTexture>)m_renderTargets[i];
+                            passDesc.colorAttachments[i].loadAction = MTLLoadActionLoad;
+                            passDesc.colorAttachments[i].storeAction = MTLStoreActionStore;
+                        }
+                    }
+                    if (m_depthTarget) {
+                        passDesc.depthAttachment.texture = (__bridge id<MTLTexture>)m_depthTarget;
+                        passDesc.depthAttachment.loadAction = MTLLoadActionLoad;
+                        passDesc.depthAttachment.storeAction = MTLStoreActionStore;
+                    }
+
+                    id<MTLRenderCommandEncoder> enc = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
+                    [enc setRenderPipelineState:pipeline];
+
+                    MTLSize threadgroups = MTLSizeMake(m_meshGroupCount[0], m_meshGroupCount[1], m_meshGroupCount[2]);
+                    MTLSize threadsPerGroup = MTLSizeMake(1, 1, 1);
+
+                    if (@available(macOS 13.0, *)) {
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wundeclared-selector"
+                        if ([enc respondsToSelector:@selector(drawMeshThreadgroups:threadsPerMeshThreadgroup:)]) {
+                            [enc performSelector:@selector(drawMeshThreadgroups:threadsPerMeshThreadgroup:)
+                                       withObject:nil];
+                        }
+    #pragma clang diagnostic pop
+                    }
+
+                    [enc endEncoding];
+                }
+            }
+
+            for (auto& asDesc : m_buildASDescs) {
             }
 
             [cmdBuffer commit];

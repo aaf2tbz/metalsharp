@@ -173,6 +173,40 @@ constexpr UINT D3D12_ROOT_PARAMETER_TYPE_UAV = 4;
 constexpr UINT D3D12_ROOT_SIGNATURE_FLAG_NONE = 0x0;
 constexpr UINT D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT = 0x1;
 
+constexpr UINT D3D12_STATE_OBJECT_TYPE_COLLECTION = 0;
+constexpr UINT D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE = 1;
+
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL = 0;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL = 1;
+
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE = 0;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE = 1;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION = 2;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE = 4;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD = 8;
+constexpr UINT D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_MINIMIZE_MEMORY = 16;
+
+constexpr UINT D3D12_ELEMENTS_LAYOUT_ARRAY = 0;
+constexpr UINT D3D12_ELEMENTS_LAYOUT_ARRAY_OF_POINTERS = 1;
+
+constexpr UINT D3D12_RAYTRACING_INSTANCE_FLAGS_NONE = 0;
+constexpr UINT D3D12_RAYTRACING_INSTANCE_FLAGS_TRIANGLE_CULL_DISABLE = 1;
+constexpr UINT D3D12_RAYTRACING_INSTANCE_FLAGS_TRIANGLE_FRONT_COUNTERCLOCKWISE = 2;
+constexpr UINT D3D12_RAYTRACING_INSTANCE_FLAGS_FORCE_OPAQUE = 4;
+constexpr UINT D3D12_RAYTRACING_INSTANCE_FLAGS_FORCE_NON_OPAQUE = 8;
+
+constexpr UINT D3D12_DISPATCH_RAYS_FLAG_NONE = 0;
+
+constexpr UINT D3D12_RAY_FLAG_NONE = 0;
+constexpr UINT D3D12_RAY_FLAG_FORCE_OPAQUE = 1;
+constexpr UINT D3D12_RAY_FLAG_FORCE_NON_OPAQUE = 2;
+constexpr UINT D3D12_RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH = 4;
+constexpr UINT D3D12_RAY_FLAG_SKIP_CLOSEST_HIT_SHADER = 8;
+constexpr UINT D3D12_RAY_FLAG_CULL_BACK_FACING_TRIANGLES = 16;
+constexpr UINT D3D12_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES = 32;
+constexpr UINT D3D12_RAY_FLAG_CULL_OPAQUE = 64;
+constexpr UINT D3D12_RAY_FLAG_CULL_NON_OPAQUE = 128;
+
 constexpr UINT D3D12_PRIMITIVE_TOPOLOGY_POINTLIST = 1;
 constexpr UINT D3D12_PRIMITIVE_TOPOLOGY_LINELIST = 2;
 constexpr UINT D3D12_PRIMITIVE_TOPOLOGY_LINESTRIP = 3;
@@ -271,6 +305,84 @@ struct D3D12_CPU_DESCRIPTOR_HANDLE { UINT64 ptr; };
 
 struct D3D12_COMMAND_SIGNATURE_DESC { UINT ByteStride; UINT NumArgumentDescs; const void* pArgumentDescs; UINT NodeMask; };
 
+struct D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS {
+    UINT Type;
+    UINT Flags;
+    UINT NumDescs;
+    UINT DescsLayout;
+    UINT64 InstanceDescs;
+    const void* pGeometryDescs;
+};
+struct D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC {
+    UINT64 DestAccelerationStructureData;
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS Inputs;
+    UINT64 SourceAccelerationStructureData;
+    UINT64 ScratchAccelerationStructureData;
+};
+
+struct D3D12_DISPATCH_RAYS_DESC {
+    UINT64 RayGenerationShaderRecord;
+    UINT64 RayGenerationShaderRecordSize;
+    UINT64 MissShaderTable;
+    UINT64 MissShaderTableSizeInBytes;
+    UINT64 MissShaderTableStride;
+    UINT64 HitGroupTable;
+    UINT64 HitGroupTableSizeInBytes;
+    UINT64 HitGroupTableStride;
+    UINT64 CallableShaderTable;
+    UINT64 CallableShaderTableSizeInBytes;
+    UINT64 CallableShaderTableStride;
+    UINT Width;
+    UINT Height;
+    UINT Depth;
+};
+
+struct D3D12_RAYTRACING_PIPELINE_CONFIG {
+    UINT MaxTraceRecursionDepth;
+};
+
+struct D3D12_RAYTRACING_SHADER_CONFIG {
+    UINT MaxPayloadSizeInBytes;
+    UINT MaxAttributeSizeInBytes;
+};
+
+struct D3D12_RAYTRACING_PIPELINE_CONFIG1 {
+    UINT MaxTraceRecursionDepth;
+    UINT PipelineFlags;
+};
+
+struct D3D12_HIT_GROUP_DESC {
+    const char* HitGroupExport;
+    UINT Type;
+    const char* ClosestHitShaderImport;
+    const char* AnyHitShaderImport;
+    const char* IntersectionShaderImport;
+};
+
+struct D3D12_EXPORT_DESC {
+    const char* Name;
+    const void* ExportToRename;
+    UINT Flags;
+};
+
+struct D3D12_DXIL_LIBRARY_DESC {
+    const void* DXILLibrary;
+    SIZE_T DXILLibrarySize;
+    UINT NumExports;
+    const D3D12_EXPORT_DESC* pExports;
+};
+
+struct D3D12_STATE_SUBOBJECT {
+    UINT Type;
+    const void* pDesc;
+};
+
+struct D3D12_STATE_OBJECT_DESC {
+    UINT Type;
+    UINT NumSubobjects;
+    const D3D12_STATE_SUBOBJECT* pSubobjects;
+};
+
 class ID3D12Object : public IUnknown {
 public:
     STDMETHOD(GetPrivateData)(const GUID& guid, UINT* pDataSize, void* pData) { return E_NOTIMPL; }
@@ -287,6 +399,14 @@ public:
 };
 
 class ID3D12RootSignature : public ID3D12Object {};
+
+struct D3D12_GLOBAL_ROOT_SIGNATURE {
+    ID3D12RootSignature* pRootSignature;
+};
+
+struct D3D12_LOCAL_ROOT_SIGNATURE {
+    ID3D12RootSignature* pRootSignature;
+};
 class ID3D12PipelineState : public ID3D12Object { public: virtual void* __metalRenderPipelineState() const { return nullptr; } virtual void* __metalComputePipelineState() const { return nullptr; } };
 class ID3D12CommandSignature : public ID3D12Object {};
 class ID3D12CommandAllocator : public ID3D12Object { public: STDMETHOD(Reset)() PURE; };
@@ -381,6 +501,18 @@ public:
     STDMETHOD(ExecuteIndirect)(ID3D12CommandSignature* pCommandSignature, UINT MaxCommandCount, ID3D12Resource* pCommandBuffer, UINT64 CommandBufferOffset, ID3D12Resource* pCountBuffer, UINT64 CountBufferOffset) PURE;
 
     STDMETHOD(CopyTiles)(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinate, const D3D12_TILE_REGION_SIZE* pTileRegionSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) PURE;
+
+    STDMETHOD(DispatchRays)(const D3D12_DISPATCH_RAYS_DESC* pDesc) PURE;
+    STDMETHOD(BuildRaytracingAccelerationStructure)(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc, UINT NumPostbuildInfoDescs, const void* pPostbuildInfoDescs) PURE;
+    STDMETHOD(CopyRaytracingAccelerationStructure)(UINT64 DestAccelerationStructureData, UINT64 SourceAccelerationStructureData, UINT Mode) PURE;
+    STDMETHOD(EmitRaytracingAccelerationStructurePostbuildInfo)(const void* pDesc, UINT NumAccelerationStructures, const UINT64* pAccelerationStructureData) PURE;
+    STDMETHOD(DispatchMesh)(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) PURE;
+    STDMETHOD(SetComputeRootSignature)(ID3D12RootSignature* pRootSignature) PURE;
+    STDMETHOD(SetComputeRoot32BitConstants)(UINT RootParameterIndex, UINT Num32BitValues, const void* pData, UINT DestOffsetIn32BitValues) PURE;
+    STDMETHOD(SetComputeRootDescriptorTable)(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) PURE;
+    STDMETHOD(SetComputeRootConstantBufferView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetComputeRootShaderResourceView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetComputeRootUnorderedAccessView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
 };
 
 class ID3D12Device : public ID3D12Object {
@@ -409,4 +541,42 @@ public:
     STDMETHOD(CreateSamplerFeedback)(ID3D12Resource* pTargetResource, UINT FeedbackType, REFIID riid, void** ppFeedbackResource) PURE;
     STDMETHOD(WriteSamplerFeedback)(ID3D12Resource* pTargetResource, ID3D12Resource* pFeedbackResource, UINT FeedbackType) PURE;
     STDMETHOD(ResolveSamplerFeedback)(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) PURE;
+
+    STDMETHOD(CreateStateObject)(const void* pDesc, REFIID riid, void** ppStateObject) PURE;
+    STDMETHOD(GetRaytracingAccelerationStructurePrebuildInfo)(const void* pDesc, void* pInfo) PURE;
+    STDMETHOD(DecodeRaytracingAccelerationStructure)(ID3D12Resource* pAS, void* pCallback) PURE;
+};
+
+struct D3D12_RAYTRACING_GEOMETRY_DESC {
+    UINT Type;
+    UINT Flags;
+    struct Triangles {
+        UINT64 Transform3x4;
+        UINT64 IndexBuffer;
+        UINT IndexCount;
+        UINT IndexFormat;
+        UINT64 VertexBuffer;
+        UINT VertexCount;
+        UINT VertexFormat;
+        UINT VertexStride;
+    } Triangles;
+};
+
+struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS { UINT Flags; };
+
+struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO {
+    UINT64 ResultDataMaxSizeInBytes;
+    UINT64 ScratchDataSizeInBytes;
+    UINT64 UpdateScratchDataSizeInBytes;
+};
+
+class ID3D12StateObject : public ID3D12Object {
+public:
+    virtual void* __metalRTPipeline() const { return nullptr; }
+};
+
+class ID3D12StateObjectProperties : public IUnknown {
+public:
+    virtual void* GetShaderIdentifier(const char* pExportName) = 0;
+    virtual UINT64 GetRaytracingAccelerationStructureGPUAddress(ID3D12Resource* pAS) = 0;
 };

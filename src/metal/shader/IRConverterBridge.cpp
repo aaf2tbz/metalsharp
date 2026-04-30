@@ -67,6 +67,14 @@ struct IRConverterBridge::FuncPtrs {
 
     decltype(IRErrorGetCode)* errorGetCode = nullptr;
     decltype(IRErrorDestroy)* errorDestroy = nullptr;
+
+    decltype(IRRayTracingPipelineConfigurationCreate)* rtPipelineConfigCreate = nullptr;
+    decltype(IRRayTracingPipelineConfigurationDestroy)* rtPipelineConfigDestroy = nullptr;
+    decltype(IRRayTracingPipelineConfigurationSetMaxAttributeSizeInBytes)* rtSetMaxAttrSize = nullptr;
+    decltype(IRRayTracingPipelineConfigurationSetPipelineFlags)* rtSetPipelineFlags = nullptr;
+    decltype(IRRayTracingPipelineConfigurationSetMaxRecursiveDepth)* rtSetMaxRecursion = nullptr;
+    decltype(IRRayTracingPipelineConfigurationSetRayGenerationCompilationMode)* rtSetRayGenMode = nullptr;
+    decltype(IRCompilerSetRayTracingPipelineConfiguration)* compilerSetRTPipeline = nullptr;
 };
 
 static IRShaderStage toIRStage(ShaderStage stage) {
@@ -77,6 +85,14 @@ static IRShaderStage toIRStage(ShaderStage stage) {
         case ShaderStage::Geometry: return IRShaderStageGeometry;
         case ShaderStage::Hull: return IRShaderStageHull;
         case ShaderStage::Domain: return IRShaderStageDomain;
+        case ShaderStage::Mesh: return IRShaderStageMesh;
+        case ShaderStage::Amplification: return IRShaderStageAmplification;
+        case ShaderStage::RayGeneration: return IRShaderStageRayGeneration;
+        case ShaderStage::ClosestHit: return IRShaderStageClosestHit;
+        case ShaderStage::Miss: return IRShaderStageMiss;
+        case ShaderStage::Intersection: return IRShaderStageIntersection;
+        case ShaderStage::AnyHit: return IRShaderStageAnyHit;
+        case ShaderStage::Callable: return IRShaderStageCallable;
         default: return IRShaderStageInvalid;
     }
 }
@@ -173,6 +189,14 @@ bool IRConverterBridge::loadDylib() {
     loadSym(m_dylib, f.reflectionReleaseString, "IRShaderReflectionReleaseString");
     loadSym(m_dylib, f.setInputTopology, "IRCompilerSetInputTopology");
     loadSym(m_dylib, f.enableGeomTess, "IRCompilerEnableGeometryAndTessellationEmulation");
+
+    loadSym(m_dylib, f.rtPipelineConfigCreate, "IRRayTracingPipelineConfigurationCreate");
+    loadSym(m_dylib, f.rtPipelineConfigDestroy, "IRRayTracingPipelineConfigurationDestroy");
+    loadSym(m_dylib, f.rtSetMaxAttrSize, "IRRayTracingPipelineConfigurationSetMaxAttributeSizeInBytes");
+    loadSym(m_dylib, f.rtSetPipelineFlags, "IRRayTracingPipelineConfigurationSetPipelineFlags");
+    loadSym(m_dylib, f.rtSetMaxRecursion, "IRRayTracingPipelineConfigurationSetMaxRecursiveDepth");
+    loadSym(m_dylib, f.rtSetRayGenMode, "IRRayTracingPipelineConfigurationSetRayGenerationCompilationMode");
+    loadSym(m_dylib, f.compilerSetRTPipeline, "IRCompilerSetRayTracingPipelineConfiguration");
 
     if (!ok) {
         MS_ERROR("IRConverterBridge: failed to load required symbols from libmetalirconverter");
@@ -423,7 +447,11 @@ bool IRConverterBridge::compileDXILToMetallibWithRootSignature(
         MS_WARN("IRConverterBridge: no metallib for stage, trying all stages");
         static const IRShaderStage stages[] = {
             IRShaderStageVertex, IRShaderStageFragment, IRShaderStageCompute,
-            IRShaderStageGeometry, IRShaderStageHull, IRShaderStageDomain
+            IRShaderStageGeometry, IRShaderStageHull, IRShaderStageDomain,
+            IRShaderStageMesh, IRShaderStageAmplification,
+            IRShaderStageRayGeneration, IRShaderStageClosestHit,
+            IRShaderStageMiss, IRShaderStageIntersection,
+            IRShaderStageAnyHit, IRShaderStageCallable
         };
         for (auto s : stages) {
             if (f.objectGetMetalLib(compiled, s, metallib)) {
@@ -532,6 +560,120 @@ bool IRConverterBridge::compileDXILToMetallibWithRootSignature(
 
     MS_INFO("IRConverterBridge: compiled DXIL → metallib (%zu bytes, stage %d)", bytecodeSize, (int)stage);
     return true;
+}
+
+bool IRConverterBridge::compileRayTracingShader(
+    const uint8_t* dxilData,
+    size_t dxilSize,
+    ShaderStage stage,
+    const char* entryPoint,
+    uint32_t maxRecursionDepth,
+    uint32_t maxAttributeSize,
+    std::vector<uint8_t>& outMetallib,
+    IRConverterReflection& outReflection
+) {
+    if (!m_loaded || !dxilData || dxilSize == 0) return false;
+
+    std::lock_guard<std::mutex> lock(m_compileMutex);
+    auto& f = *m_fn;
+
+    IRCompiler* compiler = f.compilerCreate();
+    if (!compiler) return false;
+    auto compilerCleanup = [&](IRCompiler*) { f.compilerDestroy(compiler); };
+    std::unique_ptr<IRCompiler, decltype(compilerCleanup)> compilerGuard(compiler, compilerCleanup);
+
+    f.setMinimumDeploymentTarget(compiler, IROperatingSystem_macOS, "14.0.0");
+
+    if (f.rtPipelineConfigCreate && f.compilerSetRTPipeline) {
+        IRRayTracingPipelineConfiguration* rtConfig = f.rtPipelineConfigCreate();
+        if (rtConfig) {
+            auto rtCleanup = [&](IRRayTracingPipelineConfiguration*) { if (f.rtPipelineConfigDestroy) f.rtPipelineConfigDestroy(rtConfig); };
+            std::unique_ptr<IRRayTracingPipelineConfiguration, decltype(rtCleanup)> rtGuard(rtConfig, rtCleanup);
+
+            if (f.rtSetMaxRecursion)
+                f.rtSetMaxRecursion(rtConfig, maxRecursionDepth);
+            if (f.rtSetMaxAttrSize)
+                f.rtSetMaxAttrSize(rtConfig, maxAttributeSize);
+
+            f.compilerSetRTPipeline(compiler, rtConfig);
+        }
+    }
+
+    IRObject* irObject = f.objectCreateFromDXIL(dxilData, dxilSize, IRBytecodeOwnershipCopy);
+    if (!irObject) return false;
+
+    IRError* compileError = nullptr;
+    IRObject* compiled = f.compileAndLink(compiler, entryPoint, irObject, &compileError);
+    f.objectDestroy(irObject);
+
+    if (!compiled) {
+        if (compileError) { f.errorDestroy(compileError); }
+        return false;
+    }
+
+    IRShaderStage irStage = toIRStage(stage);
+    IRMetalLibBinary* metallib = f.metallibCreate();
+    if (!metallib) { f.objectDestroy(compiled); if (compileError) f.errorDestroy(compileError); return false; }
+
+    bool gotBinary = f.objectGetMetalLib(compiled, irStage, metallib);
+    if (!gotBinary) {
+        static const IRShaderStage rtStages[] = {
+            IRShaderStageRayGeneration, IRShaderStageClosestHit,
+            IRShaderStageMiss, IRShaderStageIntersection,
+            IRShaderStageAnyHit, IRShaderStageCallable
+        };
+        for (auto s : rtStages) {
+            if (f.objectGetMetalLib(compiled, s, metallib)) { gotBinary = true; break; }
+        }
+    }
+
+    if (!gotBinary) {
+        f.metallibDestroy(metallib);
+        f.objectDestroy(compiled);
+        if (compileError) f.errorDestroy(compileError);
+        return false;
+    }
+
+    size_t bytecodeSize = f.metallibGetBytecodeSize(metallib);
+    if (bytecodeSize == 0) {
+        f.metallibDestroy(metallib);
+        f.objectDestroy(compiled);
+        if (compileError) f.errorDestroy(compileError);
+        return false;
+    }
+
+    outMetallib.resize(bytecodeSize);
+    f.metallibGetBytecode(metallib, outMetallib.data());
+
+    f.metallibDestroy(metallib);
+    f.objectDestroy(compiled);
+    if (compileError) f.errorDestroy(compileError);
+
+    MS_INFO("IRConverterBridge: compiled RT shader → metallib (%zu bytes, stage %d, maxRecursion=%u)", bytecodeSize, (int)stage, maxRecursionDepth);
+    return true;
+}
+
+IRConverterBridge::ShaderModelCapabilities IRConverterBridge::getShaderModelCapabilities(uint32_t smVersion) const {
+    ShaderModelCapabilities caps;
+    if (smVersion >= 60) {
+        caps.waveOps = true;
+        caps.int64 = true;
+    }
+    if (smVersion >= 61) {
+        caps.halfPrecision = true;
+        caps.barycentrics = true;
+    }
+    if (smVersion >= 63) {
+        caps.rayTracing = true;
+    }
+    if (smVersion >= 65) {
+        caps.meshShaders = true;
+        caps.samplerFeedback = true;
+    }
+    if (smVersion >= 66) {
+        caps.computeDerivatives = true;
+    }
+    return caps;
 }
 
 ShaderCompileService& ShaderCompileService::instance() {

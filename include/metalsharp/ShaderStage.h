@@ -9,6 +9,14 @@ enum class ShaderStage {
     Geometry,
     Hull,
     Domain,
+    Mesh,
+    Amplification,
+    RayGeneration,
+    ClosestHit,
+    Miss,
+    Intersection,
+    AnyHit,
+    Callable,
 };
 
 }
