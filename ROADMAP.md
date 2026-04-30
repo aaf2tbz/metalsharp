@@ -1,6 +1,6 @@
 # MetalSharp Roadmap: PE Loader → Playable Steam Games
 
-**Current state:** Phases 8-23 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. Performance pipeline: shader cache with metallib binary storage and LRU eviction, pipeline state cache with serialized descriptors, render thread pool with command buffer pooling, frame pacing with present mode selection and frame time percentiles, MetalFX spatial upscaler integration, GPU profiler with Metal GPU timing. Audio pipeline: CoreAudio AudioUnit with real render callback and buffer queue, XAudio2 source voice with buffer submission, X3DAudio positional audio with distance attenuation and Doppler, DirectSound backend for legacy games. Game validation: compatibility database with Platinum/Gold/Silver/Bronze/Broken status levels, import resolution reporter, crash diagnostics with dump-to-file, DRM/anti-cheat binary signature scanner, game validator orchestrator. ~33K lines C++/ObjC++, ~900 lines TypeScript, ~900 lines Rust.
+**Current state:** Phases 8-24 complete. Full pipeline: cross-compiled Windows PE executable loads, CRT initializes, D3D11 device creation succeeds, rendering works through Metal. Apple's libmetalirconverter integrated for DXIL→AIR→metallib shader compilation with DXBC→MSL fallback. D3D12 root signatures parsed and bound to Metal argument buffers. SM 6.x shader support with ray tracing, mesh shaders, compute root signatures. Anti-cheat & DRM compatibility: SMBIOS firmware table, MAC address, disk serial shims, VEH-aware RaiseException, KiUserExceptionDispatcher, winmm.dll timing, realistic QPC frequency. Anti-cheat database with 18 entries documenting kernel-level vs user-mode compatibility. Performance pipeline: shader cache with metallib binary storage and LRU eviction, pipeline state cache with serialized descriptors, render thread pool with command buffer pooling, frame pacing with present mode selection and frame time percentiles, MetalFX spatial upscaler integration, GPU profiler with Metal GPU timing. Audio pipeline: CoreAudio AudioUnit with real render callback and buffer queue, XAudio2 source voice with buffer submission, X3DAudio positional audio with distance attenuation and Doppler, DirectSound backend for legacy games. Game validation: compatibility database with Platinum/Gold/Silver/Bronze/Broken status levels, import resolution reporter, crash diagnostics with dump-to-file, DRM/anti-cheat binary signature scanner, game validator orchestrator. Production polish: game auto-detection from Steam/Epic/GOG, crash reporter with automatic log collection, update checker via GitHub Releases, settings manager with resolution/upscaling/shader cache controls, DMG installer, CI/CD for ARM64 + x86_64, full documentation suite. ~35K lines C++/ObjC++, ~1K lines TypeScript, ~900 lines Rust.
 
 **End state:** Launch Steam from Electron app, login, download a game, play it with D3D→Metal rendering.
 
@@ -607,6 +607,41 @@
 
 ---
 
+## Phase 24: Polish & 1.0 Release ✅ DONE
+
+*Production-ready release: game detection, crash reporting, update checking, settings management, documentation, installer, CI/CD.*
+
+### 24.1 Electron App Polish (~600 lines C++, ~150 lines TypeScript)
+
+- `GameDetector.h/.cpp`: Auto-detect installed games from Steam (VDF/ACF parsing), Epic Games Store (.item manifests), GOG, and local `~/.metalsharp/games/` directory. Scans library folders, finds game executables, calculates install sizes.
+- `CrashReporter.h/.cpp`: Session-based crash tracking with `beginSession`/`endSession`. Auto-collects crash reports with runtime logs, import logs, Metal logs, system info. Persists to `~/.metalsharp/crashes/` with unique IDs. Recent report listing and deletion.
+- `UpdateChecker.h/.cpp`: Semantic version comparison (`major.minor.patch-prerelease`). GitHub Releases API integration. Version parsing, release note extraction. Current version tracking.
+- `SettingsManager.h/.cpp`: JSON-persisted settings for render resolution (720p–4K), window mode (fullscreen/borderless/windowed), MetalFX upscaling quality (off/low/medium/high/ultra), VSync, Metal validation, shader cache management, pipeline cache management, launch mode, crash reporting toggle, auto-update toggle. Cache clearing with size reporting.
+- Electron frontend updated: cover art from Steam CDN, expanded settings (graphics, shader cache, crash reports, updates), update checker status badge, crash report viewer button.
+
+### 24.2 Documentation (~400 lines)
+
+- `docs/USER-GUIDE.md`: Installation (quick + manual), requirements, launching games (3 methods), configuration reference, directory layout, updating, getting help.
+- `docs/COMPATIBILITY.md`: Five-tier status system (Platinum/Gold/Silver/Bronze/Broken), DRM detection list (30 signatures), incompatible games (kernel anti-cheat), reporting instructions.
+- `docs/DEVELOPER-GUIDE.md`: Architecture overview, adding Win32 shims (step-by-step), extending D3D coverage, shader translation, build system, code conventions, performance subsystems, debug tips.
+- `docs/TROUBLESHOOTING.md`: Game won't launch, graphics issues, audio issues, Steam issues, Wine issues, crash reports, build errors.
+
+### 24.3 Installer (~250 lines)
+
+- `tools/dmg/create-dmg.sh`: Automated DMG creation — builds Release, stages binaries + dylibs + docs, creates wrapper script with `DYLD_LIBRARY_PATH`, writes INSTALL.txt, packages as compressed DMG via `hdiutil`.
+- `tools/dmg/dependency-check.sh`: Verifies all required (cmake, clang++, Xcode CLI tools) and optional (wine, steamcmd, libmetalirconverter) dependencies. Checks Metal support. Reports errors/warnings.
+
+### 24.4 CI/CD (~100 lines YAML)
+
+- `.github/workflows/ci.yml`: Matrix build for ARM64 (macos-14) + x86_64 (macos-13). Build → Test → Package → Upload artifacts. Release job on version tags: downloads both architectures, creates zip archives, publishes GitHub Release.
+- `.github/workflows/nightly.yml`: Nightly builds for both architectures. 30-day artifact retention.
+
+**Deliverable:** 22 test_phase24 tests pass. Game auto-detection from 3 platforms. Crash reporter with automatic log collection. Update checker via GitHub Releases. Settings manager with full graphics configuration. DMG installer. Dual-arch CI/CD. 4 documentation files. 21/21 total tests pass.
+
+**Estimated effort:** completed
+
+---
+
 ## Summary Timeline
 
 | Phase | Description | Effort | Cumulative | Status |
@@ -627,6 +662,7 @@
 | **21** | Performance Pipeline | 3-4 weeks | 12-18 weeks | ✅ Done |
 | **22** | Audio Pipeline | 2-3 weeks | 14-21 weeks | ✅ Done |
 | **23** | Game Validation Sprint | 4-6 weeks | 18-27 weeks | ✅ Done |
+| **24** | Polish & 1.0 Release | 2-3 weeks | 20-30 weeks | ✅ Done |
 
 **Rough estimate: 4-6 weeks of focused work.**
 

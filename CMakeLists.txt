@@ -57,6 +57,10 @@ add_library(metalsharp_core STATIC
     src/runtime/CrashDiagnostics.cpp
     src/runtime/DRMDetector.cpp
     src/runtime/GameValidator.cpp
+    src/runtime/GameDetector.cpp
+    src/runtime/CrashReporter.cpp
+    src/runtime/UpdateChecker.cpp
+    src/runtime/SettingsManager.cpp
     src/perf/ShaderCache.cpp
     src/perf/ShaderCache.mm
     src/perf/PipelineCache.cpp

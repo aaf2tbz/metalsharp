@@ -6,6 +6,7 @@ interface Game {
   steam_app_id?: number;
   size_bytes?: number;
   metalsharp_compatible: boolean;
+  cover_art?: string;
 }
 
 interface SteamStatus {
@@ -27,6 +28,21 @@ interface AppConfig {
   launch_mode: "native" | "wine";
   wine_available: boolean;
   native_available: boolean;
+}
+
+interface UpdateStatus {
+  available: boolean;
+  current_version: string;
+  latest_version: string;
+  download_url: string;
+  release_notes: string;
+}
+
+interface CrashReportSummary {
+  id: string;
+  timestamp: string;
+  game: string;
+  exit_code: number;
 }
 
 interface BackendResponse {

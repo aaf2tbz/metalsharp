@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build-arm64:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -22,30 +22,72 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure
 
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure Release
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
-
-      - name: Build
-        run: cmake --build build -- -j$(sysctl -n hw.ncpu)
-
       - name: Package artifacts
         run: |
           mkdir -p dist
-          cp build/d3d11.dylib dist/
-          cp build/d3d12.dylib dist/
-          cp build/dxgi.dylib dist/
-          cp build/xaudio2_9.dylib dist/
-          cp build/xinput1_4.dylib dist/
+          cp build/metalsharp dist/
           cp build/metalsharp_launcher dist/
+          cp build/*.dylib dist/ 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: metalsharp-macos-arm64
           path: dist/
+
+  build-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -- -j$(sysctl -n hw.ncpu)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp build/metalsharp dist/
+          cp build/metalsharp_launcher dist/
+          cp build/*.dylib dist/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metalsharp-macos-x86_64
+          path: dist/
+
+  release:
+    needs: [build-arm64, build-x86_64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ARM64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: metalsharp-macos-arm64
+          path: dist-arm64/
+
+      - name: Download x86_64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: metalsharp-macos-x86_64
+          path: dist-x86_64/
+
+      - name: Create release archives
+        run: |
+          mkdir -p release
+          cd dist-arm64 && zip -r ../release/metalsharp-0.1.0-macos-arm64.zip . && cd ..
+          cd dist-x86_64 && zip -r ../release/metalsharp-0.1.0-macos-x86_64.zip . && cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true

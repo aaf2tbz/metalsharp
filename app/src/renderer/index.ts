@@ -11,11 +11,14 @@ class App {
   private runningPid: number | null = null;
   private runningGameId: string | null = null;
   private currentView = "library";
+  private updateStatus: UpdateStatus | null = null;
+  private crashReports: CrashReportSummary[] = [];
 
   async init() {
     this.bindNav();
     await this.checkBackend();
     await this.loadConfig();
+    await this.checkForUpdates();
     await this.scan();
   }
 
@@ -69,6 +72,17 @@ class App {
   private async loadConfig() {
     const cfg = await this.api<AppConfig>("GET", "/config");
     if (cfg) this.config = cfg;
+  }
+
+  private async checkForUpdates() {
+    const result = await this.api<UpdateStatus>("GET", "/update/check");
+    if (result) this.updateStatus = result;
+  }
+
+  private coverArtUrl(game: Game): string {
+    if (game.cover_art) return game.cover_art;
+    if (game.steam_app_id) return `https://steamcdn-a.akamaihd.net/steam/apps/${game.steam_app_id}/library_600x900.jpg`;
+    return "";
   }
 
   private async scan() {
@@ -143,9 +157,14 @@ class App {
       ? `<span class="badge badge-ok">Compatible</span>`
       : `<span class="badge badge-warn">Unknown</span>`;
 
+    const coverUrl = this.coverArtUrl(game);
+    const bannerContent = coverUrl
+      ? `<img class="game-card-cover" src="${coverUrl}" alt="${this.esc(game.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" /><span class="game-icon-placeholder" style="display:none">${this.platformIcon(game.platform)}</span>`
+      : `<span class="game-icon-placeholder">${this.platformIcon(game.platform)}</span>`;
+
     card.innerHTML = `
       <div class="game-card-banner">
-        <span class="game-icon-placeholder">${this.platformIcon(game.platform)}</span>
+        ${bannerContent}
       </div>
       <div class="game-card-body">
         <div class="game-card-title">${this.esc(game.name)}</div>
@@ -308,14 +327,127 @@ class App {
       </div>
 
       <div class="settings-section">
-        <h2>Launch Defaults</h2>
+        <h2>Graphics</h2>
         <div class="settings-row">
           <div>
-            <div class="settings-label">Fullscreen</div>
-            <div class="settings-desc">Launch games in fullscreen mode</div>
+            <div class="settings-label">Resolution</div>
+            <div class="settings-desc">Internal render resolution</div>
+          </div>
+          <div class="settings-value">
+            <select id="resolution-select" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;">
+              <option value="1280x720">1280 x 720</option>
+              <option value="1920x1080" selected>1920 x 1080</option>
+              <option value="2560x1440">2560 x 1440</option>
+              <option value="3840x2160">3840 x 2160</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Window Mode</div>
+            <div class="settings-desc">Fullscreen, borderless, or windowed</div>
+          </div>
+          <div class="settings-value">
+            <select id="window-mode-select" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;">
+              <option value="fullscreen" selected>Fullscreen</option>
+              <option value="borderless">Borderless</option>
+              <option value="windowed">Windowed</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Upscaling</div>
+            <div class="settings-desc">MetalFX spatial upscaling quality</div>
+          </div>
+          <div class="settings-value">
+            <select id="upscaling-select" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;">
+              <option value="off" selected>Off</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="ultra">Ultra</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">VSync</div>
+            <div class="settings-desc">Synchronize frames to display refresh rate</div>
           </div>
           <div class="settings-value">Enabled</div>
         </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Shader Cache</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Shader Cache</div>
+            <div class="settings-desc">Persist compiled shaders to disk for faster loading</div>
+          </div>
+          <div class="settings-value">
+            <button class="btn btn-secondary btn-sm" id="btn-clear-shader-cache">Clear Cache</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Pipeline Cache</div>
+            <div class="settings-desc">Persist compiled pipeline state objects</div>
+          </div>
+          <div class="settings-value">
+            <button class="btn btn-secondary btn-sm" id="btn-clear-pipeline-cache">Clear Cache</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Crash Reports</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Automatic Crash Reporting</div>
+            <div class="settings-desc">Collect logs and diagnostics when games crash</div>
+          </div>
+          <div class="settings-value">
+            <button class="btn btn-secondary btn-sm" id="btn-view-crashes">View Reports</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Updates</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Auto-Check Updates</div>
+            <div class="settings-desc">Check for new MetalSharp versions on startup</div>
+          </div>
+          <div class="settings-value">Enabled</div>
+        </div>
+        ${this.updateStatus?.available ? `
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Update Available</div>
+            <div class="settings-desc">v${this.esc(this.updateStatus.latest_version)} (current: v${this.esc(this.updateStatus.current_version)})</div>
+          </div>
+          <div class="settings-value">
+            <a href="${this.updateStatus.download_url}" target="_blank" class="btn btn-primary btn-sm">Download</a>
+          </div>
+        </div>
+        ` : `
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Version</div>
+            <div class="settings-desc">You're up to date</div>
+          </div>
+          <div class="settings-value">
+            <span class="badge badge-ok">v${this.updateStatus?.current_version ?? "0.1.0"}</span>
+          </div>
+        </div>
+        `}
+      </div>
+
+      <div class="settings-section">
+        <h2>Launch Defaults</h2>
         <div class="settings-row">
           <div>
             <div class="settings-label">Metal Debug</div>
@@ -338,6 +470,26 @@ class App {
       await this.api("POST", "/config", { launchMode: mode });
       await this.loadConfig();
       this.toast(`Launch mode set to ${mode === "native" ? "PE Loader" : "Wine"}`);
+    });
+
+    el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {
+      await this.api("POST", "/cache/clear", { type: "shader" });
+      this.toast("Shader cache cleared");
+    });
+
+    el.querySelector("#btn-clear-pipeline-cache")?.addEventListener("click", async () => {
+      await this.api("POST", "/cache/clear", { type: "pipeline" });
+      this.toast("Pipeline cache cleared");
+    });
+
+    el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {
+      const reports = await this.api<CrashReportSummary[]>("GET", "/crash-reports");
+      if (reports && Array.isArray(reports) && reports.length > 0) {
+        const lines = reports.map((r: CrashReportSummary) => `[${r.timestamp}] ${r.game} (exit ${r.exit_code})`).join("\n");
+        this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
+      } else {
+        this.toast("No crash reports found.");
+      }
     });
   }
 

@@ -13,7 +13,9 @@ MetalSharp: Game → D3D → MetalSharp → Metal → GPU              (2 hops)
 
 ## What's New
 
-**All 16 phases complete.** MetalSharp loads Windows x86_64 executables via native PE loader on Rosetta 2, translates D3D11/D3D12 calls to Metal, manages Win32 APIs through comprehensive shims, and ships with a full Electron + Rust frontend for game library management, Steam integration, and download/launch workflows.
+**All 24 phases complete.** MetalSharp loads Windows x86_64 executables via native PE loader on Rosetta 2, translates D3D11/D3D12 calls to Metal, manages Win32 APIs through comprehensive shims, and ships with a full Electron + Rust frontend for game library management, Steam integration, and download/launch workflows.
+
+**Production Ready** — Auto-detects games from Steam, Epic, and GOG. Automatic crash reporting with log collection. Update checker via GitHub Releases. Full settings management (resolution, upscaling, shader cache). DMG installer for macOS. CI/CD for ARM64 and x86_64. Complete documentation suite.
 
 **Native PE Loader** — Loads Windows x86_64 PE files directly on macOS. Maps sections, processes relocations, resolves imports across 14+ DLLs (339 functions), handles TLS callbacks, delay-load imports, export forwarding, structured exception handling, Control Flow Guard, and resource loading — all natively, no Wine required.
 
@@ -90,7 +92,7 @@ MetalSharp: Game → D3D → MetalSharp → Metal → GPU              (2 hops)
 | Error dialogs for crashes/failures | **Done** |
 | Settings panel with Steam config | **Done** |
 
-### Tests — 13/13 Passing
+### Tests — 21/21 Passing
 
 ---
 
@@ -226,10 +228,14 @@ docs/                   Architecture docs, PE loader reference, Win32 shim guide
 ## Documentation
 
 - [Architecture Overview](docs/ARCHITECTURE.md) — system design, data flow, component relationships
+- [User Guide](docs/USER-GUIDE.md) — installation, configuration, launching games
+- [Compatibility Guide](docs/COMPATIBILITY.md) — game compatibility status, DRM detection
+- [Developer Guide](docs/DEVELOPER-GUIDE.md) — contributing, adding shims, extending D3D
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — common issues and solutions
 - [PE Loader](docs/PE-LOADER.md) — how the native PE loader works internally
 - [Win32 Shims](docs/WIN32-SHIMS.md) — Win32 API shim implementation guide
 - [Electron App](docs/ELECTRON-APP.md) — frontend architecture, Rust backend API
-- [Roadmap](ROADMAP.md) — full phased plan (phases 1–16, all complete)
+- [Roadmap](ROADMAP.md) — full phased plan (phases 1–24, all complete)
 
 ---
 
