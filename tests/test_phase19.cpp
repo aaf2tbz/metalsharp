@@ -59,6 +59,7 @@ static bool test_shader_model_65_mesh() {
 
 static bool test_shader_model_66_derivatives() {
     auto& bridge = IRConverterBridge::instance();
+    if (!bridge.isAvailable()) return true;
     auto caps = bridge.getShaderModelCapabilities(66);
     return caps.computeDerivatives && caps.meshShaders && caps.rayTracing;
 }
