@@ -53,6 +53,33 @@ interface BackendResponse {
   games?: unknown[];
 }
 
+interface SetupState {
+  ok: boolean;
+  completed: boolean;
+  step: number;
+  deviceName: string;
+  steamApiKeySet: boolean;
+  steamcmdLoggedIn: boolean;
+}
+
+interface Dependency {
+  id: string;
+  name: string;
+  desc: string;
+  installed: boolean;
+  required: boolean;
+  installCmd: string;
+}
+
+interface DependenciesResponse {
+  ok: boolean;
+  allInstalled: boolean;
+  dependencies: Dependency[];
+}
+
 type MetalsharpAPI = {
   request: (method: string, url: string, body?: Record<string, unknown>) => Promise<BackendResponse>;
+  isFirstLaunch: () => Promise<boolean>;
+  ejectDmg: () => Promise<void>;
+  installDepsSudo: (command: string) => Promise<{ ok: boolean; error?: string }>;
 };

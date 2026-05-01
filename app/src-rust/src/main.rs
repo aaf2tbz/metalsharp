@@ -1,4 +1,5 @@
 mod scan;
+mod setup;
 mod steam;
 mod launch;
 
@@ -53,6 +54,40 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             "latest": "0.1.0",
             "updateAvailable": false
         })),
+        (Method::Get, "/setup/state") => resp(200, setup::state()),
+        (Method::Post, "/setup/save") => {
+            let body = read_body(req);
+            match setup::save_step(&body) {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        (Method::Get, "/setup/device-name") => resp(200, json!({
+            "ok": true,
+            "name": setup::generate_device_name(),
+        })),
+        (Method::Get, "/setup/dependencies") => resp(200, setup::dependencies()),
+        (Method::Post, "/setup/install-deps") => {
+            let body = read_body(req);
+            match setup::install_dependencies(&body) {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        (Method::Post, "/game/prepare") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    app_log(&format!("Preparing game runtime: appid {}", id));
+                    match setup::prepare_game(id as u32) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                }
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        }
         (Method::Get, "/scan") => {
             app_log("Scanning for installed games...");
             match scan::scan_all() {
