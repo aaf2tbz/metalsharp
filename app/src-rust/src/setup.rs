@@ -300,23 +300,42 @@ fn detect_dotnet_game(game_dir: &PathBuf) -> bool {
             if name_lower.ends_with("_data") && entry.path().is_dir() {
                 let managed = entry.path().join("Managed");
                 if managed.exists() {
-                    return true;
+                    return !has_native_windows_dlls(game_dir);
                 }
             }
         }
     }
 
-    for entry in walkdir::WalkDir::new(game_dir).max_depth(2).into_iter().flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let name_lower = name.to_lowercase();
-        if name_lower.contains("microsoft.xna")
-            || name_lower.contains("fna.dll")
-            || name_lower.contains("monogame")
-        {
-            return true;
+    false
+}
+
+fn has_native_windows_dlls(game_dir: &PathBuf) -> bool {
+    let managed_extensions = ["cs.dll", ".managed.dll", ".net.dll"];
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext == "dll" {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let name_lower = name.to_lowercase();
+                    let is_managed_wrapper = name_lower.contains("steamworks.net")
+                        || name_lower.contains("fmod")
+                        || managed_extensions.iter().any(|e| name_lower.ends_with(e));
+                    if !is_managed_wrapper {
+                        let output = std::process::Command::new("file")
+                            .arg(&path)
+                            .output();
+                        if let Ok(o) = output {
+                            let desc = String::from_utf8_lossy(&o.stdout);
+                            if desc.contains("PE32") && !desc.contains(".Net") && !desc.contains("Mono/.Net") {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-
     false
 }
 
