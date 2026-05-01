@@ -96,7 +96,7 @@ jobs:
         run: cd app && npm run build
 
       - name: Package DMG
-        run: cd app && npx electron-builder --mac dmg --arm64
+        run: cd app && npx electron-builder --mac dmg --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
