@@ -6,7 +6,7 @@
 #include <cstring>
 
 #ifndef METALSHARP_VERSION
-#define METALSHARP_VERSION "0.1.0"
+#define METALSHARP_VERSION "0.1.1"
 #endif
 
 #include <getopt.h>

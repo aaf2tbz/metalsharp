@@ -51,7 +51,7 @@ bool WinePrefix::createWinePrefix() {
     dosdev << "# MetalSharp Wine prefix\n";
 
     std::ofstream ver(m_path + "/.update-timestamp");
-    ver << "metalsharp-0.1.0\n";
+    ver << "metalsharp-0.1.1\n";
 
     return true;
 }

@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
-DMG_NAME="MetalSharp-0.1.0"
+DMG_NAME="MetalSharp-0.1.1"
 DMG_DIR="$PROJECT_DIR/dist/$DMG_NAME"
-DMG_OUTPUT="$PROJECT_DIR/dist/MetalSharp-0.1.0.dmg"
+DMG_OUTPUT="$PROJECT_DIR/dist/MetalSharp-0.1.1.dmg"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -73,7 +73,7 @@ chmod +x "$DMG_DIR/metalsharp.sh"
 
 info "Writing install notes..."
 cat > "$DMG_DIR/INSTALL.txt" << 'NOTES'
-MetalSharp 0.1.0 — D3D to Metal Translation Layer
+MetalSharp 0.1.1 — D3D to Metal Translation Layer
 
 Quick Install:
   1. Open Terminal
