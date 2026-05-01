@@ -148,7 +148,7 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
 
     uint8_t* mem = reinterpret_cast<uint8_t*>(mmap(
         nullptr, imageSize,
-        PROT_READ | PROT_WRITE,
+        PROT_READ | PROT_WRITE | PROT_EXEC,
         MAP_PRIVATE | MAP_ANONYMOUS,
         -1, 0));
 
@@ -185,16 +185,6 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
         const char* name = reinterpret_cast<const char*>(sec.Name);
         MS_INFO("PELoader: mapped section %.8s at RVA 0x%X (0x%X bytes, raw 0x%X)",
                 name, sec.VirtualAddress, sec.VirtualSize, sec.SizeOfRawData);
-    }
-
-    for (uint16_t i = 0; i < fileHeader->NumberOfSections; i++) {
-        const auto& sec = sections[i];
-        if (sec.VirtualSize == 0) continue;
-
-        uint32_t secSize = alignUp(sec.VirtualSize, 0x1000);
-        if (sec.VirtualAddress + secSize <= imageSize) {
-            mprotect(mem + sec.VirtualAddress, secSize, PROT_READ | PROT_WRITE | PROT_EXEC);
-        }
     }
 
     module.base = mem;
