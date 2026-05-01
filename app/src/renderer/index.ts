@@ -286,20 +286,39 @@ class App {
 
     body.querySelector("#setup-install-deps")?.addEventListener("click", async () => {
       const btn = body.querySelector("#setup-install-deps") as HTMLElement;
+      const backBtn = body.querySelector("#setup-back") as HTMLElement;
+      const skipBtn = body.querySelector("#setup-skip") as HTMLElement;
       btn.textContent = "Installing...";
       (btn as HTMLButtonElement).disabled = true;
+      if (backBtn) (backBtn as HTMLButtonElement).disabled = true;
+      if (skipBtn) (skipBtn as HTMLButtonElement).disabled = true;
 
       const missing = deps?.dependencies?.filter(d => !d.installed && d.required) ?? [];
+      let anyFailed = false;
+
       for (const dep of missing) {
         if (dep.id === "mono" || dep.id === "sdl3") {
-          const result = await getAPI().installDepsSudo(dep.installCmd);
+          btn.textContent = `Installing ${dep.name}...`;
+          const result = await getAPI().installDeps(dep.installCmd);
           if (!result.ok) {
+            anyFailed = true;
             this.toast(`Failed to install ${dep.name}: ${result.error}`, "error");
+          } else {
+            this.toast(`${dep.name} installed successfully`, "success");
           }
         }
       }
 
-      this.toast("Dependencies installed!", "success");
+      if (anyFailed) {
+        this.toast("Some dependencies failed to install. You can retry or skip.", "error");
+        btn.textContent = "Retry Install";
+        (btn as HTMLButtonElement).disabled = false;
+        if (backBtn) (backBtn as HTMLButtonElement).disabled = false;
+        if (skipBtn) (skipBtn as HTMLButtonElement).disabled = false;
+        return;
+      }
+
+      this.toast("All dependencies installed!", "success");
       this.renderSetupStep(2);
     });
 

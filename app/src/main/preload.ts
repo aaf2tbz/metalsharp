@@ -7,6 +7,6 @@ contextBridge.exposeInMainWorld("metalsharp", {
     ipcRenderer.invoke("app:is-first-launch"),
   ejectDmg: () =>
     ipcRenderer.invoke("app:eject-dmg"),
-  installDepsSudo: (command: string) =>
-    ipcRenderer.invoke("app:install-deps-sudo", command),
+  installDeps: (command: string) =>
+    ipcRenderer.invoke("app:install-deps", command),
 });

@@ -167,8 +167,8 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
 
     for id in ids {
         let result = match id {
-            "mono" => run_sudo_brew("mono"),
-            "sdl3" => run_sudo_brew("sdl3"),
+            "mono" => run_brew_install("mono"),
+            "sdl3" => run_brew_install("sdl3"),
             "steamcmd" => install_steamcmd(&home),
             _ => {
                 json!({"id": id, "ok": false, "error": "unknown dependency"})
@@ -185,7 +185,7 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
     }))
 }
 
-fn run_sudo_brew(package: &str) -> Value {
+fn run_brew_install(package: &str) -> Value {
     let output = std::process::Command::new("brew")
         .args(["install", package])
         .stdout(std::process::Stdio::piped())

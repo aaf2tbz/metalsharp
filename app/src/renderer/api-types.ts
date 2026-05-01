@@ -81,5 +81,5 @@ type MetalsharpAPI = {
   request: (method: string, url: string, body?: Record<string, unknown>) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
   ejectDmg: () => Promise<void>;
-  installDepsSudo: (command: string) => Promise<{ ok: boolean; error?: string }>;
+  installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
 };
