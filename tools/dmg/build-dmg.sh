@@ -72,12 +72,12 @@ npm run build 2>&1 | tail -5
 info "Packaging with electron-builder..."
 npx electron-builder --mac dmg --arm64 2>&1 | tail -10
 
-if [[ -f "$BUILD_DIR/MetalSharp-0.1.0-arm64.dmg" ]]; then
-    cp "$BUILD_DIR/MetalSharp-0.1.0-arm64.dmg" "$DMG_OUTPUT"
+if [[ -f "$BUILD_DIR/MetalSharp-0.1.1-arm64.dmg" ]]; then
+    cp "$BUILD_DIR/MetalSharp-0.1.1-arm64.dmg" "$DMG_OUTPUT"
     ok "DMG created: $DMG_OUTPUT"
     info "Size: $(du -sh "$DMG_OUTPUT" | cut -f1)"
-elif [[ -f "$BUILD_DIR/MetalSharp-0.1.0.dmg" ]]; then
-    cp "$BUILD_DIR/MetalSharp-0.1.0.dmg" "$DMG_OUTPUT"
+elif [[ -f "$BUILD_DIR/MetalSharp-0.1.1.dmg" ]]; then
+    cp "$BUILD_DIR/MetalSharp-0.1.1.dmg" "$DMG_OUTPUT"
     ok "DMG created: $DMG_OUTPUT"
     info "Size: $(du -sh "$DMG_OUTPUT" | cut -f1)"
 else

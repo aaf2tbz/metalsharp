@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -9,8 +9,8 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc && npm run copy-html",
-    "copy-html": "cp src/renderer/index.html dist/renderer/",
+    "build": "tsc && npm run copy-renderer-assets",
+    "copy-renderer-assets": "mkdir -p dist/renderer && cp src/renderer/index.html src/renderer/styles.css src/renderer/icon.png dist/renderer/",
     "start": "npm run build && electron .",
     "dev": "tsc -w & electron .",
     "rust:build": "cd src-rust && cargo build --release",
@@ -38,7 +38,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "hardenedRuntime": true,
@@ -49,23 +51,34 @@
       "protocols": [
         {
           "name": "MetalSharp Game",
-          "schemes": ["metalsharp"]
+          "schemes": [
+            "metalsharp"
+          ]
         }
       ]
     },
     "dmg": {
       "iconSize": 120,
       "contents": [
-        { "x": 130, "y": 220, "type": "file" },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ],
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "files": [
       "dist/**/*",
-      "src/renderer/index.html",
-      "src/renderer/styles.css",
-      "src/renderer/icon.png",
       "package.json"
     ],
     "extraResources": [
