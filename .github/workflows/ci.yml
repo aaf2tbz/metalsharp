@@ -3,6 +3,7 @@ name: Build & Test
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -11,9 +12,11 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build -- -j$(sysctl -n hw.ncpu)
@@ -38,9 +41,11 @@ jobs:
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build -- -j$(sysctl -n hw.ncpu)
@@ -61,10 +66,52 @@ jobs:
           name: metalsharp-macos-x86_64
           path: dist/
 
+  build-electron:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-rust
+
+      - name: Build Rust backend
+        run: cd app/src-rust && cargo build --release
+
+      - name: Install Electron deps
+        run: cd app && npm install
+
+      - name: Build TypeScript
+        run: cd app && npm run build
+
+      - name: Package DMG
+        run: cd app && npx electron-builder --mac dmg --arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MetalSharp-dmg
+          path: dist/electron/*.dmg
+
   release:
-    needs: [build-arm64, build-x86_64]
+    needs: [build-arm64, build-x86_64, build-electron]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -80,14 +127,40 @@ jobs:
           name: metalsharp-macos-x86_64
           path: dist-x86_64/
 
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: MetalSharp-dmg
+          path: dist-dmg/
+
       - name: Create release archives
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
-          cd dist-arm64 && zip -r ../release/metalsharp-0.1.0-macos-arm64.zip . && cd ..
-          cd dist-x86_64 && zip -r ../release/metalsharp-0.1.0-macos-x86_64.zip . && cd ..
+          cd dist-arm64 && zip -r "../release/metalsharp-${VERSION}-macos-arm64.zip" . && cd ..
+          cd dist-x86_64 && zip -r "../release/metalsharp-${VERSION}-macos-x86_64.zip" . && cd ..
+          cp dist-dmg/*.dmg release/ 2>/dev/null || true
+          ls -la release/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.zip
+          files: release/*
           generate_release_notes: true
+          body: |
+            ## MetalSharp ${{ github.ref_name }}
+
+            ### Downloads
+            - **MetalSharp.dmg** — macOS installer (Apple Silicon). Mount, drag to Applications, launch.
+            - **metalsharp-*-arm64.zip** — ARM64 binaries (native engine, PE loader, shims)
+            - **metalsharp-*-x86_64.zip** — Intel binaries
+
+            ### First Launch
+            The setup wizard walks you through connecting Steam, installing dependencies, and choosing a device name. Then download games from your library and play.
+
+            ### What's New
+            - XNA/FNA native support (Celeste runs on Apple Silicon!)
+            - DMG installer with setup wizard
+            - Auto game runtime configuration
+            - CSteamworks shim for Steamworks.NET
+            - FMOD audio stubs for games without arm64 builds
