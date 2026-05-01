@@ -133,17 +133,46 @@ function registerIpc() {
   ipcMain.handle("app:install-deps", async (_e, command: string) => {
     return new Promise((resolve) => {
       const { spawn } = require("child_process");
-      const args = command.split(/\s+/);
       const env = { ...process.env, PATH: ensureShellPath() };
-      const proc = spawn(args[0], args.slice(1), { env });
+      const brewPath = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].find((p) => {
+        try { fs.accessSync(p); return true; } catch { return false; }
+      });
+
+      let proc;
+      if (command.startsWith("brew ")) {
+        if (!brewPath) {
+          resolve({ ok: false, error: "Homebrew is not installed. Install it from https://brew.sh first." });
+          return;
+        }
+        const args = command.split(/\s+/).slice(1);
+        proc = spawn(brewPath, args, { env });
+      } else {
+        const parts = command.split(/\s+/);
+        proc = spawn(parts[0], parts.slice(1), { env });
+      }
+
       let stdout = "";
       let stderr = "";
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          proc.kill();
+          resolve({ ok: false, error: "Installation timed out after 10 minutes. Try running the command manually in Terminal." });
+        }
+      }, 10 * 60 * 1000);
+
       proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
       proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
       proc.on("error", (err: Error) => {
+        if (!settled) { settled = true; clearTimeout(timer); }
         resolve({ ok: false, error: `Failed to run "${command}": ${err.message}` });
       });
       proc.on("close", (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         const combined = `${stdout}${stderr}`;
         const ok = code === 0 || combined.includes("already installed");
         resolve({ ok, error: ok ? null : combined.split("\n").filter(Boolean).pop() ?? `exit code ${code}` });
