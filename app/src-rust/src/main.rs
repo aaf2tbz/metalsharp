@@ -232,8 +232,7 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 exe.to_string()
             };
             app_log(&format!("Launching: {}", resolved));
-            let opts = launch::LaunchOptions::from_map(&body);
-            match launch::launch(&resolved, &opts) {
+            match launch::launch(&resolved) {
                 Ok(pid) => { app_log(&format!("Process started: pid {}", pid)); resp(200, json!({"ok": true, "pid": pid})) }
                 Err(e) => { app_log(&format!("Launch failed: {}", e)); resp(500, json!({"ok": false, "error": e.to_string()})) }
             }

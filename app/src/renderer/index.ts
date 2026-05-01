@@ -130,10 +130,6 @@ class App {
     return result?.key ?? null;
   }
 
-  private launchMode(): string {
-    return this.config?.launch_mode ?? "native";
-  }
-
   // === SETUP WIZARD ===
 
   private showSetupWizard() {
@@ -783,11 +779,6 @@ class App {
     const result = await this.api<{ pid: number }>("POST", "/launch", {
       exePath: `~/.metalsharp/games/${game.appid}`,
       steamAppId: game.appid,
-      fullscreen: true,
-      debugMetal: false,
-      verbose: false,
-      customArgs: [],
-      launchMode: this.launchMode(),
     });
 
     if (result && typeof result === "object" && "pid" in result) {
@@ -812,8 +803,6 @@ class App {
     const cfg = this.config;
 
     const savedKey = this.steamApiKey;
-    const nativeLabel = cfg?.native_available ? "Available" : "Not Built";
-    const wineLabel = cfg?.wine_available ? "Available" : "Not Found";
 
     el.innerHTML = `
       <div class="library-header">
@@ -861,40 +850,6 @@ class App {
               <span>${this.esc(this.setupDeviceName || "Not set")}</span>
               <button class="btn btn-secondary btn-sm" id="btn-change-device">Change</button>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <h2>Launch Mode</h2>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">PE Loader (Native)</div>
-            <div class="settings-desc">Run Windows executables directly through MetalSharp's PE loader — no Wine needed</div>
-          </div>
-          <div class="settings-value">
-            <span class="badge ${cfg?.native_available ? "badge-ok" : "badge-warn"}">${nativeLabel}</span>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">Wine Compatibility</div>
-            <div class="settings-desc">Fall back to Wine for executables not yet supported natively</div>
-          </div>
-          <div class="settings-value">
-            <span class="badge ${cfg?.wine_available ? "badge-ok" : "badge-warn"}">${wineLabel}</span>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">Active Mode</div>
-            <div class="settings-desc">Choose how games are launched</div>
-          </div>
-          <div class="settings-value">
-            <select id="launch-mode-select" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;">
-              <option value="native" ${cfg?.launch_mode === "native" ? "selected" : ""}>PE Loader (Native)</option>
-              <option value="wine" ${cfg?.launch_mode === "wine" ? "selected" : ""}>Wine</option>
-            </select>
           </div>
         </div>
       </div>
@@ -1132,13 +1087,6 @@ class App {
       await this.api("POST", "/steam/install");
       await this.loadLibrary();
       this.renderSettings();
-    });
-
-    el.querySelector("#launch-mode-select")?.addEventListener("change", async (e) => {
-      const mode = (e.target as HTMLSelectElement).value;
-      await this.api("POST", "/config", { launchMode: mode });
-      await this.loadConfig();
-      this.toast(`Launch mode set to ${mode === "native" ? "PE Loader" : "Wine"}`);
     });
 
     el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {

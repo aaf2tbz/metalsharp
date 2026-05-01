@@ -39,6 +39,7 @@ jobs:
 
   build-electron:
     runs-on: macos-14
+    needs: build-arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,6 +60,12 @@ jobs:
 
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
+
+      - name: Download native engine
+        uses: actions/download-artifact@v4
+        with:
+          name: metalsharp-macos-arm64
+          path: app/native/
 
       - name: Install Electron deps
         run: cd app && npm install
