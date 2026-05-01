@@ -667,11 +667,12 @@ class App {
 
     let actionHtml: string;
     if (isDownloading) {
+      const statusText = this.downloadProgress >= 95 ? "Installing..." : `Downloading ${Math.round(this.downloadProgress)}%`;
       actionHtml = `
         <div class="download-bar">
           <div class="download-progress" style="width:${this.downloadProgress}%"></div>
         </div>
-        <span class="download-pct">${Math.round(this.downloadProgress)}%</span>
+        <span class="download-pct">${statusText}</span>
       `;
     } else if (isRunning) {
       actionHtml = `<button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>`;
@@ -749,7 +750,12 @@ class App {
         const bar = barEl();
         const pct = pctEl();
         if (bar) bar.style.width = `${prog.progress}%`;
-        if (pct) pct.textContent = `${Math.round(prog.progress)}%`;
+
+        if (prog.status === "installing") {
+          if (pct) pct.textContent = "Installing...";
+        } else {
+          if (pct) pct.textContent = `${Math.round(prog.progress)}%`;
+        }
 
         if (prog.status === "complete") {
           if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
@@ -802,12 +808,6 @@ class App {
     const el = document.getElementById("view-settings")!;
     const steam = this.steam;
     const cfg = this.config;
-    const loginState = steam?.login_state;
-    const loginBadge = loginState?.state === "logged_in"
-      ? `<span class="badge badge-ok">Logged in (${loginState.account?.[0]?.name ?? "unknown"})</span>`
-      : loginState?.state === "logged_out"
-        ? `<span class="badge badge-warn">Logged out</span>`
-        : `<span class="badge badge-warn">Unknown</span>`;
 
     const savedKey = this.steamApiKey;
     const nativeLabel = cfg?.native_available ? "Available" : "Not Built";
@@ -898,46 +898,22 @@ class App {
       </div>
 
       <div class="settings-section">
-        <h2>Steam (Windows)</h2>
+        <h2>Steam</h2>
         <div class="settings-row">
           <div>
-            <div class="settings-label">Windows Steam</div>
-            <div class="settings-desc">Required for running games through MetalSharp</div>
+            <div class="settings-label">Steam</div>
+            <div class="settings-desc">Used to download games via SteamCMD</div>
           </div>
           <div class="settings-value">
-            ${steam?.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
+            ${steam?.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Found</span>`}
           </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">Login State</div>
-            <div class="settings-desc">Steam account login status in Wine prefix</div>
-          </div>
-          <div class="settings-value">${loginBadge}</div>
         </div>
         <div class="settings-row">
           <div>
             <div class="settings-label">Install Path</div>
-            <div class="settings-desc">Windows Steam in Wine prefix</div>
+            <div class="settings-desc">Steam installation directory</div>
           </div>
           <div class="settings-value">${steam?.path || "—"}</div>
-        </div>
-        ${!steam?.installed ? `
-        <div style="padding-top:12px">
-          <button class="btn btn-primary" id="btn-install-steam">Install Windows Steam</button>
-        </div>` : ""}
-      </div>
-
-      <div class="settings-section">
-        <h2>Steam (macOS)</h2>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">macOS Steam</div>
-            <div class="settings-desc">Native Mac client — not used by MetalSharp</div>
-          </div>
-          <div class="settings-value">
-            ${steam?.mac_installed ? `<span class="badge badge-ok">Detected</span>` : `<span class="badge badge-warn">Not Found</span>`}
-          </div>
         </div>
       </div>
 

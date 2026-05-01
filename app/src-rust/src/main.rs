@@ -307,12 +307,12 @@ fn dir_size(dir: &std::path::PathBuf) -> u64 {
 }
 
 fn estimate_progress(bytes: u64) -> f64 {
-    if bytes >= 200_000_000 { 95.0 }
-    else if bytes >= 100_000_000 { 80.0 + ((bytes - 100_000_000) as f64 / 100_000_000.0 * 15.0).min(14.9) }
-    else if bytes >= 50_000_000 { 60.0 + ((bytes - 50_000_000) as f64 / 50_000_000.0 * 20.0).min(19.9) }
-    else if bytes >= 10_000_000 { 30.0 + ((bytes - 10_000_000) as f64 / 40_000_000.0 * 30.0).min(29.9) }
-    else if bytes >= 1_000_000 { 10.0 + ((bytes - 1_000_000) as f64 / 9_000_000.0 * 20.0).min(19.9) }
-    else if bytes > 0 { (bytes as f64 / 1_000_000.0 * 10.0).min(9.9) }
+    if bytes >= 200_000_000 { 90.0 }
+    else if bytes >= 100_000_000 { 75.0 + ((bytes - 100_000_000) as f64 / 100_000_000.0 * 15.0).min(14.9) }
+    else if bytes >= 50_000_000 { 55.0 + ((bytes - 50_000_000) as f64 / 50_000_000.0 * 20.0).min(19.9) }
+    else if bytes >= 10_000_000 { 25.0 + ((bytes - 10_000_000) as f64 / 40_000_000.0 * 30.0).min(29.9) }
+    else if bytes >= 1_000_000 { 5.0 + ((bytes - 1_000_000) as f64 / 9_000_000.0 * 20.0).min(19.9) }
+    else if bytes > 0 { (bytes as f64 / 1_000_000.0 * 5.0).min(4.9) }
     else { 0.0 }
 }
 

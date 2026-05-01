@@ -569,8 +569,8 @@ pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
                 "validate",
                 "+quit",
             ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
         {
             Ok(c) => c,
@@ -580,7 +580,27 @@ pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
             }
         };
 
+        if let Some(stdout) = child.stdout.take() {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                if let Some(pct) = parse_progress_line(&line) {
+                    let _ = std::fs::write(&pf, json!({
+                        "appId": appid,
+                        "progress": pct,
+                        "status": "downloading",
+                    }).to_string());
+                }
+            }
+        }
+
         let _ = child.wait();
+
+        let _ = std::fs::write(&pf, json!({
+            "appId": appid,
+            "progress": 100.0,
+            "status": "installing",
+        }).to_string());
 
         let has_exe = walkdir::WalkDir::new(&dir)
             .max_depth(3)
