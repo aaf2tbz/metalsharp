@@ -85,6 +85,34 @@
       {
         "from": "src-rust/target/release/metalsharp-backend",
         "to": "metalsharp-backend"
+      },
+      {
+        "from": "native/metalsharp",
+        "to": "metalsharp"
+      },
+      {
+        "from": "native/metalsharp_launcher",
+        "to": "metalsharp_launcher"
+      },
+      {
+        "from": "native/d3d11.dylib",
+        "to": "d3d11.dylib"
+      },
+      {
+        "from": "native/d3d12.dylib",
+        "to": "d3d12.dylib"
+      },
+      {
+        "from": "native/dxgi.dylib",
+        "to": "dxgi.dylib"
+      },
+      {
+        "from": "native/xaudio2_9.dylib",
+        "to": "xaudio2_9.dylib"
+      },
+      {
+        "from": "native/xinput1_4.dylib",
+        "to": "xinput1_4.dylib"
       }
     ],
     "directories": {
