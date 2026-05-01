@@ -232,7 +232,22 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 exe.to_string()
             };
             app_log(&format!("Launching: {}", resolved));
-            match launch::launch(&resolved) {
+
+            let mut game_type = "native";
+            if steam_app_id.is_some() {
+                let home = dirs::home_dir().unwrap_or_default();
+                let marker = home.join(".metalsharp")
+                    .join("games").join(steam_app_id.unwrap().to_string())
+                    .join(".metalsharp_prepared");
+                if let Ok(content) = std::fs::read_to_string(&marker) {
+                    if content.contains("is_dotnet=true") {
+                        app_log("Detected XNA/FNA game — using mono runtime");
+                        game_type = "xna_fna";
+                    }
+                }
+            }
+
+            match launch::launch(&resolved, game_type) {
                 Ok(pid) => { app_log(&format!("Process started: pid {}", pid)); resp(200, json!({"ok": true, "pid": pid})) }
                 Err(e) => { app_log(&format!("Launch failed: {}", e)); resp(500, json!({"ok": false, "error": e.to_string()})) }
             }
