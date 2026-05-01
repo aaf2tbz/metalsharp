@@ -273,8 +273,8 @@ bool PELoader::initCFG(LoadedModule& module) {
 
     auto* lc = reinterpret_cast<uint8_t*>(module.base + lcRVA);
 
-    uint64_t guardCFCheckFP = *reinterpret_cast<uint64_t*>(lc + 112);
-    uint64_t guardCFDispatchFP = *reinterpret_cast<uint64_t*>(lc + 120);
+    uint64_t guardCFCheckFPRVA = *reinterpret_cast<uint64_t*>(lc + 112);
+    uint64_t guardCFDispatchFPRVA = *reinterpret_cast<uint64_t*>(lc + 120);
 
     if (!s_cfgAllowFn) {
         s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -287,17 +287,15 @@ bool PELoader::initCFG(LoadedModule& module) {
         memcpy(s_cfgAllowFn, code, sizeof(code));
     }
 
-    auto writeCFPtr = [&](uint64_t fieldVA, const char* name) {
-        if (!fieldVA) return;
-        uint64_t fieldRVA = fieldVA - reinterpret_cast<uint64_t>(module.base);
-        if (fieldRVA >= module.size) return;
+    auto writeCFPtr = [&](uint64_t fieldRVA, const char* name) {
+        if (!fieldRVA || fieldRVA >= module.size) return;
         uint64_t* ptr = reinterpret_cast<uint64_t*>(module.base + fieldRVA);
         MS_INFO("PELoader: CFG %s at RVA 0x%llX set to allow-all stub", name, (unsigned long long)fieldRVA);
         *ptr = reinterpret_cast<uint64_t>(s_cfgAllowFn);
     };
 
-    if (guardCFCheckFP) writeCFPtr(guardCFCheckFP, "GuardCFCheckFP");
-    if (guardCFDispatchFP) writeCFPtr(guardCFDispatchFP, "GuardCFDispatchFP");
+    if (guardCFCheckFPRVA) writeCFPtr(guardCFCheckFPRVA, "GuardCFCheckFP");
+    if (guardCFDispatchFPRVA) writeCFPtr(guardCFDispatchFPRVA, "GuardCFDispatchFP");
 
     return true;
 }
@@ -498,9 +496,18 @@ void PELoader::processTLS(LoadedModule& module, uint32_t reason) {
     uint32_t tlsRVA = optHeader->DataDirectory[DIRECTORY_TLS].VirtualAddress;
     auto* tlsDir = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(module.base + tlsRVA);
 
-    if (tlsDir->AddressOfCallBacks == 0) return;
+    uint64_t callbacksVA = tlsDir->AddressOfCallBacks;
+    if (callbacksVA == 0) return;
 
-    auto** callbacks = reinterpret_cast<void**>(tlsDir->AddressOfCallBacks);
+    uint64_t callbacksRVA;
+    if (callbacksVA >= m_imageBase && callbacksVA < m_imageBase + module.size) {
+        callbacksRVA = callbacksVA - m_imageBase;
+    } else {
+        callbacksRVA = callbacksVA - reinterpret_cast<uint64_t>(module.base);
+        if (callbacksRVA >= module.size) return;
+    }
+
+    auto** callbacks = reinterpret_cast<void**>(module.base + callbacksRVA);
 
     MS_INFO("PELoader: processing TLS callbacks for %s", module.name.c_str());
 
@@ -582,6 +589,14 @@ void PELoader::applySectionProtections(LoadedModule& module) {
         int prot = PROT_READ;
         if (chars & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
         if (chars & IMAGE_SCN_MEM_WRITE) prot |= PROT_WRITE;
+
+        if ((chars & IMAGE_SCN_CNT_CODE) && !(chars & IMAGE_SCN_MEM_WRITE)) {
+            prot |= PROT_EXEC;
+        }
+
+        if (prot == PROT_READ) {
+            prot = PROT_READ | PROT_WRITE;
+        }
 
         void* addr = module.base + pageRVA;
         mprotect(addr, pageSize, prot);
