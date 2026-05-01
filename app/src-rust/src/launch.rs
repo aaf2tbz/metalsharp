@@ -6,18 +6,20 @@ use std::process::Command;
 pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error::Error>> {
     match game_type {
         "xna_fna" => launch_via_fna_mono(exe_path),
-        _ => launch_native(exe_path),
+        _ => launch_via_wine(exe_path),
     }
 }
 
-fn launch_native(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
-    let metalsharp_bin = find_metalsharp_native()?;
+fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = find_wine()?;
+    let prefix = home.join(".metalsharp").join("prefix");
+    let prefix_str = prefix.to_string_lossy().to_string();
 
-    let mut args: Vec<String> = Vec::new();
-    args.push(exe_path.into());
-    args.push("--fullscreen".into());
-
-    let child = Command::new(&metalsharp_bin).args(&args).spawn()?;
+    let child = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .arg(exe_path)
+        .spawn()?;
 
     Ok(child.id())
 }
@@ -89,14 +91,43 @@ fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn get_config() -> Value {
-    let available = find_metalsharp_native().is_ok();
+    let native_available = find_metalsharp_native().is_ok();
     let mono_available = find_mono().is_ok();
+    let wine_available = find_wine().is_ok();
 
     json!({
         "ok": true,
-        "native_available": available,
+        "native_available": native_available,
         "mono_available": mono_available,
+        "wine_available": wine_available,
     })
+}
+
+fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
+    let candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/wine64"),
+        PathBuf::from("/opt/homebrew/bin/wine"),
+        PathBuf::from("/usr/local/bin/wine64"),
+        PathBuf::from("/usr/local/bin/wine"),
+    ];
+
+    for c in candidates {
+        if c.exists() {
+            return Ok(c.to_string_lossy().to_string());
+        }
+    }
+
+    let which = Command::new("which").arg("wine64").output()?;
+    if which.status.success() {
+        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
+    }
+
+    let which = Command::new("which").arg("wine").output()?;
+    if which.status.success() {
+        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
+    }
+
+    Err("wine not found — install with: brew install --cask wine-stable".into())
 }
 
 pub fn set_config(_mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
