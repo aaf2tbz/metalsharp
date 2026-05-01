@@ -3,6 +3,26 @@ import * as path from "path";
 import * as fs from "fs";
 import { RustBridge } from "./rust-bridge";
 
+let shellPath: string | undefined;
+
+function ensureShellPath() {
+  if (shellPath) return shellPath;
+  const home = process.env.HOME || "";
+  const candidates = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    `${home}/.cargo/bin`,
+  ];
+  const existing = new Set((process.env.PATH || "").split(":"));
+  const additions = candidates.filter((c) => !existing.has(c));
+  shellPath = [...additions, process.env.PATH].filter(Boolean).join(":");
+  return shellPath;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let bridge: RustBridge;
 
@@ -114,7 +134,8 @@ function registerIpc() {
     return new Promise((resolve) => {
       const { spawn } = require("child_process");
       const args = command.split(/\s+/);
-      const proc = spawn(args[0], args.slice(1));
+      const env = { ...process.env, PATH: ensureShellPath() };
+      const proc = spawn(args[0], args.slice(1), { env });
       let stdout = "";
       let stderr = "";
       proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));

@@ -2,6 +2,24 @@ import { ChildProcess, spawn } from "child_process";
 import * as path from "path";
 import * as http from "http";
 
+function getShellPath(): string {
+  const home = process.env.HOME || "";
+  const candidates = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    `${home}/.cargo/bin`,
+  ];
+  const existing = new Set((process.env.PATH || "").split(":"));
+  const additions = candidates.filter((c) => !existing.has(c));
+  return [...additions, process.env.PATH].filter(Boolean).join(":");
+}
+
+const shellPath = getShellPath();
+
 export class RustBridge {
   private proc: ChildProcess | null = null;
   private port: number = 9274;
@@ -20,7 +38,7 @@ export class RustBridge {
     }
 
     this.proc = spawn(binPath, [], {
-      env: { ...process.env, METALSHARP_PORT: String(this.port) },
+      env: { ...process.env, PATH: shellPath, METALSHARP_PORT: String(this.port) },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
