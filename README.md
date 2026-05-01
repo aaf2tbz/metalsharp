@@ -9,42 +9,39 @@ Everyone else:   Game → D3D → DXVK → Vulkan → MoltenVK → Metal → GPU
 MetalSharp:      Game → D3D → MetalSharp → Metal → GPU                 (2 hops)
 ```
 
-The result is a thinner stack, less overhead, and a rendering path that gets out of the way so your game can get to the GPU.
-
 ---
 
-## How It Works
+## What Works
 
-MetalSharp has a native PE loader. That means it loads Windows `.exe` files directly on macOS — the game binary runs under Rosetta 2, and every Windows API call it makes gets intercepted and handled by macOS equivalents. No Wine dependency. No compatibility layers stacked on compatibility layers.
+MetalSharp currently supports two paths for running Windows games on macOS:
 
-**The translation chain:**
+**Native D3D → Metal** — Windows games that use Direct3D 9, 11, or 12 run through MetalSharp's translation layer. D3D calls are intercepted and mapped to Metal API calls. Shaders are compiled to Metal Shading Language. Works with both the native PE loader and Wine.
 
-1. **Load the game.** The PE loader parses the Windows executable, maps its sections into memory, processes relocations, and resolves imports — all the things a Windows kernel would do, but on macOS.
-
-2. **Intercept Windows calls.** Games call Win32 and DirectX APIs through their import tables. MetalSharp resolves these to shim functions — 400+ across 14+ DLLs — that delegate to native macOS APIs. File I/O goes to POSIX. Windows go to NSWindow. Networking goes to BSD sockets. The game doesn't know it's not on Windows.
-
-3. **Translate D3D to Metal.** When the game draws a frame, D3D11 or D3D12 calls are translated directly into Metal API calls. Shaders follow two paths: DXIL bytecode compiles to metallib via Apple's Metal Shader Converter (when installed), or DXBC bytecode translates to Metal Shading Language as a fallback. Compiled shaders are cached to disk so subsequent launches are fast.
-
-4. **Render.** Metal drives your GPU. The game appears on screen.
-
-The full Win32 shim surface covers kernel32, user32, gdi32, ws2_32, advapi32, ole32, oleaut32, ntdll, and 51 api-ms-win-* API sets. D3D11 and D3D12 are both supported, along with DXGI, XAudio2 → CoreAudio, and XInput → GameController.
+**XNA/FNA** — Games built on Microsoft's XNA Framework (Celeste, Terraria, Stardew Valley, and hundreds more) run natively via FNA + SDL3 + Metal. No Wine needed. Audio, input, and Steam integration all work. [Celeste runs natively on Apple Silicon with controller support.](src/fna/README.md)
 
 ---
 
 ## Install
 
-### Requirements
+### DMG Installer (Recommended)
 
-- macOS 13 (Ventura) or later
-- Apple Silicon Mac or Intel Mac with Metal support
-- Xcode Command Line Tools (`xcode-select --install`)
+1. Download `MetalSharp.dmg`
+2. Double-click to mount
+3. Drag **MetalSharp** to **Applications**
+4. Launch — the setup wizard walks you through everything
 
-### Quick Install (CLI)
+The setup wizard handles:
+- Installing dependencies (Mono, SDL3)
+- Choosing a device name for persistent Steam sessions
+- Connecting your Steam account (API key + SteamCMD login)
+- Everything else happens automatically from there
 
-One command. Checks dependencies, builds, runs tests, sets up everything:
+### Manual Install
 
 ```bash
-git clone https://github.com/aaf2tbz/metalsharp.git && cd metalsharp && ./install.sh
+git clone https://github.com/aaf2tbz/metalsharp.git
+cd metalsharp
+./install.sh
 ```
 
 Then launch a game:
@@ -53,9 +50,7 @@ Then launch a game:
 ./build/metalsharp path/to/game.exe
 ```
 
-### Desktop App
-
-MetalSharp also ships with an Electron app — game library, cover art, one-click launch, settings, crash reporting, the works.
+### Desktop App (Development)
 
 ```bash
 cd metalsharp/app
@@ -64,73 +59,138 @@ npm run build:all
 npm run start
 ```
 
-The app auto-detects games installed through Steam, Epic Games Store, and GOG. You can also download Windows games directly via SteamCMD integration and add local executables to `~/.metalsharp/games/`.
-
-### DMG Installer
-
-For a packaged install:
+### Build a DMG
 
 ```bash
-./tools/dmg/create-dmg.sh
+./tools/dmg/build-dmg.sh
 ```
 
-Creates a macOS DMG with all binaries, libraries, documentation, and a setup script.
+---
+
+## First Launch
+
+When you open MetalSharp for the first time, a setup wizard guides you through:
+
+1. **Welcome** — what MetalSharp does and how it works
+2. **Dependencies** — checks for Mono, SDL3, SteamCMD, and installs what's missing
+3. **Device Name** — auto-generates a memorable name (e.g. `Storm-Falcon`) or pick your own. This identifies your machine to Steam so you don't need to re-login every session
+4. **Steam API Key** — free key from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) to load your full game library
+5. **Steam Login** — your Steam credentials (sent only to Steam, never stored)
+6. **Done** — start downloading and playing
+
+---
+
+## Playing Games
+
+### From Your Steam Library
+
+1. Open MetalSharp
+2. Browse your full Steam library with cover art
+3. Click **Install** on any game — it downloads via SteamCMD
+4. Click **Play** — MetalSharp auto-configures the runtime on first launch
+
+### Auto Runtime Setup
+
+When you launch a game for the first time, MetalSharp detects what kind of game it is and sets everything up:
+
+- **XNA games** — copies FNA assemblies, FNA3D (SDL3 Metal backend), SDL3, Steamworks shim, FMOD stubs, and DllMap configs
+- **D3D games** — configures Wine prefix with DLL overrides and Metal translation shims
+- Subsequent launches skip setup (tracked via `.metalsharp_prepared` marker)
+
+### What's Supported
+
+| Game Type | Status | Notes |
+|-----------|--------|-------|
+| XNA/FNA | Working | Celeste confirmed — full gameplay, controller support, Steam integration |
+| D3D9 | In Progress | MojoShader SM2.0/SM3.0 → MSL translation working |
+| D3D11 | In Progress | Full device/context, DXGI swap chain, Metal backend |
+| D3D12 | In Progress | Command queues, descriptor heaps, pipeline state |
+
+---
+
+## How It Works
+
+### D3D → Metal Path
+
+1. **Load the game.** The PE loader parses the Windows executable, maps sections, processes relocations, resolves imports.
+
+2. **Intercept Windows calls.** 400+ Win32 API shims across 14+ DLLs delegate to native macOS APIs. File I/O → POSIX. Windows → NSWindow. Networking → BSD sockets. The game doesn't know it's not on Windows.
+
+3. **Translate D3D to Metal.** D3D calls map directly to Metal. Shaders compile via Apple IRConverter or DXBC→MSL fallback. Compiled shaders cache to disk for fast reloads.
+
+4. **Render.** Metal drives your GPU.
+
+### XNA/FNA Path
+
+1. Game `.exe` is .NET/Mono — runs directly on macOS Mono runtime (arm64)
+2. FNA replaces XNA assemblies — same API, different backend
+3. FNA3D renders via SDL3's GPU API → Metal
+4. Native shims bridge Steamworks.NET and FMOD to macOS dylibs
+5. Controller input via SDL3 → GameController
+
+```
+Celeste.exe (Mono) → FNA → FNA3D → SDL3 → Metal → Apple M4
+```
 
 ---
 
 ## Settings
 
-Configuration lives at `~/.metalsharp/settings.json` and can be managed through the desktop app or manually:
-
 | Setting | Options | Description |
 |---------|---------|-------------|
 | Resolution | 720p – 4K | Internal render resolution |
-| Window Mode | Fullscreen, Borderless, Windowed | How the game window appears |
-| Upscaling | Off, Low, Medium, High, Ultra | MetalFX spatial upscaling quality |
-| VSync | On / Off | Frame sync to display |
-| Shader Cache | On / Off, configurable size | Persist compiled shaders for fast reloads |
-| Pipeline Cache | On / Off | Persist compiled pipeline state objects |
-| Launch Mode | Native PE / Wine | How executables are loaded |
+| Window Mode | Fullscreen, Borderless, Windowed | Game window appearance |
+| Upscaling | Off – Ultra | MetalFX spatial upscaling |
+| Shader Cache | On / Off | Persist compiled shaders |
+| Pipeline Cache | On / Off | Persist pipeline state objects |
+| Launch Mode | Native PE / Wine | How executables load |
 
-Per-game profiles can override global settings and are stored in `~/.metalsharp/profiles/`.
+Per-game profiles in `~/.metalsharp/profiles/`.
 
 ---
 
-## Game Compatibility
+## Directory Layout
 
-Games are rated on a five-tier scale: **Platinum** (perfect), **Gold** (minor issues), **Silver** (playable with glitches), **Bronze** (boots but unplayable), **Broken** (won't launch).
-
-MetalSharp includes a binary scanner that detects 30+ known DRM and anti-cheat systems. Games using kernel-level anti-cheat (Fortnite, Valorant, PUBG, Apex Legends) will not work — these require a real Windows kernel.
-
-Games using D3D11 generally have the best coverage. D3D12 support is present and growing. Games relying on OpenGL or Vulkan won't work through MetalSharp's translation path.
-
-See the [Compatibility Guide](docs/COMPATIBILITY.md) for details.
+```
+~/.metalsharp/
+├── games/           Downloaded games (by Steam App ID)
+├── runtime/
+│   ├── fna/         FNA assemblies (.dll) for XNA games
+│   └── shims/       Native dylibs (FNA3D, SDL3, CSteamworks, FMOD stubs)
+├── cache/           Steam config, owned games cache
+├── logs/            Runtime logs
+├── prefix/          Wine prefix (for D3D games via Wine)
+├── profiles/        Per-game config overrides
+├── config.json      Global settings
+└── setup.json       Setup wizard state
+```
 
 ---
 
 ## What's Inside
 
-- **Native PE Loader** — Loads Windows x86_64 executables directly. Handles relocations, imports, TLS callbacks, delay loads, SEH, CFG, and CRT initialization. No Wine needed.
-- **D3D11 & D3D12** — Full device and context implementations backed by Metal. Shader translation via Apple IRConverter (primary) or DXBC→MSL (fallback).
-- **400+ Win32 API Shims** — kernel32, user32, gdi32, ws2_32, advapi32, ole32, oleaut32, ntdll, and 51 API sets, all delegating to native macOS APIs.
-- **Audio** — XAudio2 → CoreAudio with positional audio (distance attenuation, stereo panning, Doppler). DirectSound fallback for legacy titles.
-- **Input** — XInput → Apple GameController with rumble and gyro support.
-- **Performance** — Shader cache, pipeline cache, render thread pool, frame pacing, MetalFX upscaling, GPU profiler.
-- **Desktop App** — Game library with cover art, Steam/Epic/GOG detection, one-click download and launch, settings, crash reporter, update checker.
-- **Game Validation** — DRM scanner, compatibility database, import reporter, crash diagnostics.
+- **Native PE Loader** — Windows x86_64 executables on macOS. Relocations, imports, TLS, SEH, CFG.
+- **D3D9/11/12 → Metal** — Full device/context backed by Metal. MojoShader for SM2.0/SM3.0 → MSL.
+- **400+ Win32 Shims** — kernel32, user32, gdi32, ws2_32, advapi32, ole32, ntdll, 51 API sets.
+- **XNA/FNA Support** — FNA + SDL3 + Metal for XNA games. CSteamworks shim. FMOD stubs.
+- **Audio** — XAudio2 → CoreAudio. FMOD stubs for games without arm64 builds.
+- **Input** — XInput → GameController. Full controller support with rumble.
+- **Performance** — Shader cache, pipeline cache, MetalFX upscaling, frame pacing.
+- **Desktop App** — Electron + Rust backend. Setup wizard, library browser, one-click install/play.
 
-~35K lines of C++/Objective-C++, ~1K lines TypeScript, ~900 lines Rust. MIT licensed.
+~35K lines C++/ObjC++, ~1.5K lines TypeScript, ~1.2K lines Rust. MIT licensed.
 
 ---
 
 ## Documentation
 
-- [User Guide](docs/USER-GUIDE.md) — Getting started
-- [Compatibility Guide](docs/COMPATIBILITY.md) — Game compatibility and DRM
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — Common issues
-- [Developer Guide](docs/DEVELOPER-GUIDE.md) — Contributing
-- [Architecture](docs/ARCHITECTURE.md) — System design and data flow
-- [Roadmap](ROADMAP.md) — Full development history (24 phases, all complete)
+- [User Guide](docs/USER-GUIDE.md)
+- [Compatibility Guide](docs/COMPATIBILITY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Developer Guide](docs/DEVELOPER-GUIDE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [FNA Integration](src/fna/README.md)
+- [Roadmap](ROADMAP.md)
 
 ---
 
