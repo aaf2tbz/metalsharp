@@ -146,10 +146,16 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
 
     uint32_t imageSize = alignUp(optHeader->SizeOfImage, 0x1000);
 
+#ifdef __APPLE__
+    int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT;
+#else
+    int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
+#endif
+
     uint8_t* mem = reinterpret_cast<uint8_t*>(mmap(
         nullptr, imageSize,
         PROT_READ | PROT_WRITE | PROT_EXEC,
-        MAP_PRIVATE | MAP_ANONYMOUS,
+        mmapFlags,
         -1, 0));
 
     if (mem == MAP_FAILED) {
@@ -267,8 +273,13 @@ bool PELoader::initCFG(LoadedModule& module) {
     uint64_t guardCFDispatchFPRVA = *reinterpret_cast<uint64_t*>(lc + 120);
 
     if (!s_cfgAllowFn) {
+#ifdef __APPLE__
+        s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
+#else
         s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
         if (s_cfgAllowFn == MAP_FAILED) {
             s_cfgAllowFn = nullptr;
             return true;
