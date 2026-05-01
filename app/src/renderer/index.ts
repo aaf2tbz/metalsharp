@@ -34,10 +34,20 @@ class App {
 
   private steamApiKey: string | null = null;
   private steamcmdLoggedIn: boolean = false;
+  private setupState: SetupState | null = null;
+  private setupStep = 0;
+  private setupDeviceName = "";
 
   async init() {
     this.bindNav();
     await this.checkBackend();
+
+    const firstLaunch = await getAPI().isFirstLaunch();
+    if (firstLaunch) {
+      this.showSetupWizard();
+      return;
+    }
+
     await this.loadConfig();
     await this.checkForUpdates();
     this.steamApiKey = await this.getSteamApiKey();
@@ -121,6 +131,397 @@ class App {
   private launchMode(): string {
     return this.config?.launch_mode ?? "native";
   }
+
+  // === SETUP WIZARD ===
+
+  private showSetupWizard() {
+    const appEl = document.getElementById("app")!;
+    const sidebar = appEl.querySelector(".sidebar") as HTMLElement;
+    const content = appEl.querySelector(".content") as HTMLElement;
+
+    if (sidebar) sidebar.style.display = "none";
+    if (content) {
+      content.style.padding = "0";
+      content.style.width = "100%";
+    }
+
+    this.renderSetupStep(0);
+  }
+
+  private async renderSetupStep(step: number) {
+    this.setupStep = step;
+    const content = document.getElementById("main-content")!;
+    content.classList.remove("hidden");
+    content.innerHTML = "";
+
+    const wizard = document.createElement("div");
+    wizard.className = "setup-wizard";
+    content.appendChild(wizard);
+
+    switch (step) {
+      case 0: this.renderSetupWelcome(wizard); break;
+      case 1: this.renderSetupDependencies(wizard); break;
+      case 2: this.renderSetupDeviceName(wizard); break;
+      case 3: this.renderSetupSteamApiKey(wizard); break;
+      case 4: this.renderSetupSteamLogin(wizard); break;
+      case 5: this.renderSetupComplete(wizard); break;
+    }
+  }
+
+  private renderSetupStepIndicator(container: HTMLElement, current: number) {
+    const steps = ["Welcome", "Dependencies", "Device", "Steam API", "Steam Login", "Done"];
+    const indicator = document.createElement("div");
+    indicator.className = "setup-steps";
+
+    for (let i = 0; i < steps.length; i++) {
+      const dot = document.createElement("div");
+      dot.className = "setup-step-dot";
+      if (i < current) dot.classList.add("done");
+      if (i === current) dot.classList.add("current");
+
+      const label = document.createElement("span");
+      label.className = "setup-step-label";
+      label.textContent = steps[i];
+      if (i === current) label.classList.add("current");
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "setup-step-item";
+      wrapper.appendChild(dot);
+      wrapper.appendChild(label);
+      indicator.appendChild(wrapper);
+
+      if (i < steps.length - 1) {
+        const line = document.createElement("div");
+        line.className = "setup-step-line";
+        if (i < current) line.classList.add("done");
+        indicator.appendChild(line);
+      }
+    }
+
+    container.appendChild(indicator);
+  }
+
+  private renderSetupWelcome(container: HTMLElement) {
+    container.innerHTML = `
+      <div class="setup-hero">
+        <div class="setup-hero-icon">M</div>
+        <h1 class="setup-hero-title">Welcome to MetalSharp</h1>
+        <p class="setup-hero-sub">Run Windows games natively on macOS with Metal. No VM, no Vulkan.</p>
+      </div>
+      <div class="setup-body">
+        <div class="setup-features">
+          <div class="setup-feature">
+            <div class="setup-feature-icon">&#9889;</div>
+            <div>
+              <div class="setup-feature-title">Direct3D to Metal</div>
+              <div class="setup-feature-desc">Single-hop translation — faster than DXVK+MoltenVK</div>
+            </div>
+          </div>
+          <div class="setup-feature">
+            <div class="setup-feature-icon">&#127918;</div>
+            <div>
+              <div class="setup-feature-title">XNA/FNA Native</div>
+              <div class="setup-feature-desc">Run Celeste, Terraria, and other XNA games via FNA + SDL3 + Metal</div>
+            </div>
+          </div>
+          <div class="setup-feature">
+            <div class="setup-feature-icon">&#128274;</div>
+            <div>
+              <div class="setup-feature-title">Steam Integration</div>
+              <div class="setup-feature-desc">Browse your library, download games, launch with one click</div>
+            </div>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-primary btn-lg" id="setup-next">Get Started</button>
+        </div>
+      </div>
+    `;
+    this.renderSetupStepIndicator(container, 0);
+
+    container.querySelector("#setup-next")?.addEventListener("click", () => {
+      this.renderSetupStep(1);
+    });
+  }
+
+  private async renderSetupDependencies(container: HTMLElement) {
+    this.renderSetupStepIndicator(container, 1);
+
+    const body = document.createElement("div");
+    body.className = "setup-body";
+    container.appendChild(body);
+
+    body.innerHTML = `
+      <div class="setup-section-header">
+        <h1>Install Dependencies</h1>
+        <p>MetalSharp needs a few system libraries to run games.</p>
+      </div>
+      <div id="dep-list" class="setup-dep-list"></div>
+      <div class="setup-actions">
+        <button class="btn btn-secondary" id="setup-back">Back</button>
+        <button class="btn btn-primary" id="setup-install-deps">Install Missing</button>
+        <button class="btn btn-secondary" id="setup-skip">Skip</button>
+      </div>
+    `;
+
+    const depList = body.querySelector("#dep-list")!;
+    const deps = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
+
+    if (deps?.dependencies) {
+      for (const dep of deps.dependencies) {
+        const row = document.createElement("div");
+        row.className = `setup-dep-row ${dep.installed ? "installed" : ""}`;
+        row.innerHTML = `
+          <div class="setup-dep-status">${dep.installed ? "&#10003;" : "&#10007;"}</div>
+          <div class="setup-dep-info">
+            <div class="setup-dep-name">${this.esc(dep.name)}${dep.required ? ' <span class="badge badge-warn">Required</span>' : ""}</div>
+            <div class="setup-dep-desc">${this.esc(dep.desc)}</div>
+          </div>
+          <div class="setup-dep-badge">${dep.installed ? '<span class="badge badge-ok">Installed</span>' : '<span class="badge badge-warn">Missing</span>'}</div>
+        `;
+        depList.appendChild(row);
+      }
+    }
+
+    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(0));
+
+    body.querySelector("#setup-install-deps")?.addEventListener("click", async () => {
+      const btn = body.querySelector("#setup-install-deps") as HTMLElement;
+      btn.textContent = "Installing...";
+      (btn as HTMLButtonElement).disabled = true;
+
+      const missing = deps?.dependencies?.filter(d => !d.installed && d.required) ?? [];
+      for (const dep of missing) {
+        if (dep.id === "mono" || dep.id === "sdl3") {
+          const result = await getAPI().installDepsSudo(dep.installCmd);
+          if (!result.ok) {
+            this.toast(`Failed to install ${dep.name}: ${result.error}`, "error");
+          }
+        }
+      }
+
+      this.toast("Dependencies installed!", "success");
+      this.renderSetupStep(2);
+    });
+
+    body.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(2));
+  }
+
+  private async renderSetupDeviceName(container: HTMLElement) {
+    this.renderSetupStepIndicator(container, 2);
+
+    const suggested = await this.api<{ name: string }>("GET", "/setup/device-name");
+    this.setupDeviceName = suggested?.name ?? "";
+
+    container.innerHTML += `
+      <div class="setup-body">
+        <div class="setup-section-header">
+          <h1>Device Name</h1>
+          <p>Choose a name for this device. This helps Steam recognize your machine so you don't need to re-login every session.</p>
+        </div>
+        <div class="setup-form">
+          <div class="setup-form-group">
+            <label class="setup-label">Device Name</label>
+            <input type="text" id="device-name-input" value="${this.esc(this.setupDeviceName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
+            <div class="setup-hint">This is stored locally and sent to Steam as your machine identifier.</div>
+          </div>
+          <div class="setup-form-group">
+            <button class="btn btn-secondary btn-sm" id="regen-name">Generate Random Name</button>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-secondary" id="setup-back">Back</button>
+          <button class="btn btn-primary" id="setup-next">Continue</button>
+        </div>
+      </div>
+    `;
+
+    container.querySelector("#regen-name")?.addEventListener("click", async () => {
+      const result = await this.api<{ name: string }>("GET", "/setup/device-name");
+      const input = document.getElementById("device-name-input") as HTMLInputElement;
+      if (result?.name && input) input.value = result.name;
+    });
+
+    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(1));
+
+    container.querySelector("#setup-next")?.addEventListener("click", async () => {
+      const input = document.getElementById("device-name-input") as HTMLInputElement;
+      this.setupDeviceName = input?.value?.trim() || this.setupDeviceName;
+
+      await this.api("POST", "/setup/save", {
+        step: 2,
+        deviceName: this.setupDeviceName,
+      });
+
+      this.renderSetupStep(3);
+    });
+  }
+
+  private renderSetupSteamApiKey(container: HTMLElement) {
+    this.renderSetupStepIndicator(container, 3);
+
+    container.innerHTML += `
+      <div class="setup-body">
+        <div class="setup-section-header">
+          <h1>Steam Web API Key</h1>
+          <p>Required to load your full game library (including uninstalled games).</p>
+        </div>
+        <div class="setup-form">
+          <div class="setup-form-group">
+            <label class="setup-label">API Key</label>
+            <input type="password" id="setup-api-key" placeholder="Enter your Steam Web API key..." class="setup-input" />
+            <div class="setup-hint">
+              Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a> — 
+              log in with Steam, fill in any domain name, and copy the key.
+            </div>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-secondary" id="setup-back">Back</button>
+          <button class="btn btn-secondary" id="setup-skip">Skip for Now</button>
+          <button class="btn btn-primary" id="setup-next">Save & Continue</button>
+        </div>
+      </div>
+    `;
+
+    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(2));
+
+    container.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(4));
+
+    container.querySelector("#setup-next")?.addEventListener("click", async () => {
+      const input = document.getElementById("setup-api-key") as HTMLInputElement;
+      const key = input?.value?.trim();
+      if (!key) {
+        this.toast("Enter your API key or skip", "error");
+        return;
+      }
+
+      await this.api("POST", "/steam/save-api-key", { key });
+      await this.api("POST", "/setup/save", { step: 3, steamApiKeySet: true });
+      this.steamApiKey = key;
+
+      this.toast("API key saved!", "success");
+      this.renderSetupStep(4);
+    });
+  }
+
+  private renderSetupSteamLogin(container: HTMLElement) {
+    this.renderSetupStepIndicator(container, 4);
+
+    container.innerHTML += `
+      <div class="setup-body">
+        <div class="setup-section-header">
+          <h1>Steam Login</h1>
+          <p>Log in with Steam to download and run games. Credentials are sent only to Steam — never stored.</p>
+        </div>
+        <div class="setup-form">
+          <div class="setup-form-group">
+            <label class="setup-label">Steam Username</label>
+            <input type="text" id="setup-steam-user" placeholder="Your Steam username" class="setup-input" />
+          </div>
+          <div class="setup-form-group">
+            <label class="setup-label">Steam Password</label>
+            <input type="password" id="setup-steam-pass" placeholder="Your Steam password" class="setup-input" />
+            <div class="setup-hint">Steam Guard will send a confirmation to your mobile app.</div>
+          </div>
+          <div id="setup-login-status"></div>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-secondary" id="setup-back">Back</button>
+          <button class="btn btn-secondary" id="setup-skip">Skip for Now</button>
+          <button class="btn btn-primary" id="setup-login">Login</button>
+        </div>
+      </div>
+    `;
+
+    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
+
+    container.querySelector("#setup-skip")?.addEventListener("click", async () => {
+      await this.api("POST", "/setup/save", { step: 4 });
+      this.renderSetupStep(5);
+    });
+
+    container.querySelector("#setup-login")?.addEventListener("click", async () => {
+      const username = (document.getElementById("setup-steam-user") as HTMLInputElement)?.value?.trim();
+      const password = (document.getElementById("setup-steam-pass") as HTMLInputElement)?.value;
+      const btn = container.querySelector("#setup-login") as HTMLElement;
+      const status = document.getElementById("setup-login-status")!;
+
+      if (!username || !password) {
+        this.toast("Enter your Steam credentials", "error");
+        return;
+      }
+
+      btn.textContent = "Logging in...";
+      (btn as HTMLButtonElement).disabled = true;
+      status.innerHTML = '<div class="spinner"></div> Connecting to Steam...';
+
+      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password });
+
+      if (result?.ok) {
+        this.steamcmdLoggedIn = true;
+        await this.api("POST", "/setup/save", { step: 4, steamcmdLoggedIn: true });
+        status.innerHTML = '<span class="badge badge-ok">Connected!</span>';
+        this.toast("Steam login successful!", "success");
+
+        setTimeout(() => this.renderSetupStep(5), 800);
+      } else {
+        status.innerHTML = `<span style="color:var(--error)">${this.esc(result?.error ?? "Login failed")}</span>`;
+        btn.textContent = "Login";
+        (btn as HTMLButtonElement).disabled = false;
+      }
+    });
+  }
+
+  private async renderSetupComplete(container: HTMLElement) {
+    this.renderSetupStepIndicator(container, 5);
+
+    await this.api("POST", "/setup/save", { step: 5, completed: true });
+
+    container.innerHTML += `
+      <div class="setup-body">
+        <div class="setup-complete">
+          <div class="setup-complete-icon">&#10003;</div>
+          <h1>You're All Set!</h1>
+          <p>MetalSharp is ready to go. Download games from your library and play them natively on macOS.</p>
+          <div class="setup-complete-tips">
+            <div class="setup-tip">
+              <strong>Download a game</strong> — Find it in your Library and click Install.
+            </div>
+            <div class="setup-tip">
+              <strong>First launch</strong> — MetalSharp auto-configures the runtime (FNA, shims, etc.) for each game.
+            </div>
+            <div class="setup-tip">
+              <strong>No audio?</strong> — Some games use FMOD which has no arm64 macOS build. Audio stubs are applied automatically.
+            </div>
+          </div>
+          <div class="setup-actions" style="justify-content:center;margin-top:32px;">
+            <button class="btn btn-primary btn-lg" id="setup-finish">Launch MetalSharp</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.querySelector("#setup-finish")?.addEventListener("click", async () => {
+      const appEl = document.getElementById("app")!;
+      const sidebar = appEl.querySelector(".sidebar") as HTMLElement;
+      const content = appEl.querySelector(".content") as HTMLElement;
+
+      if (sidebar) sidebar.style.display = "";
+      if (content) {
+        content.style.padding = "";
+        content.style.width = "";
+      }
+
+      this.steamApiKey = await this.getSteamApiKey();
+      const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
+      this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;
+      await this.loadConfig();
+      await this.loadLibrary();
+    });
+  }
+
+  // === LIBRARY ===
 
   private renderLibrary() {
     const el = document.getElementById("view-library")!;
@@ -314,6 +715,10 @@ class App {
   }
 
   private async launchGame(game: SteamGame) {
+    this.toast(`Preparing ${game.name}...`, "success");
+
+    const prep = await this.api<{ ok: boolean; gameType: string }>("POST", "/game/prepare", { appid: game.appid });
+
     this.toast(`Launching ${game.name}...`, "success");
 
     const result = await this.api<{ pid: number }>("POST", "/launch", {
@@ -390,6 +795,18 @@ class App {
                 <button class="btn btn-primary btn-sm" id="btn-steamcmd-login">Login</button>
               </div>
               <div id="steamcmd-status" style="margin-top:6px;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Device Name</div>
+            <div class="settings-desc">Identifies this machine to Steam for persistent login</div>
+          </div>
+          <div class="settings-value">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span>${this.esc(this.setupDeviceName || "Not set")}</span>
+              <button class="btn btn-secondary btn-sm" id="btn-change-device">Change</button>
             </div>
           </div>
         </div>
@@ -714,7 +1131,7 @@ class App {
         <p>Enter a Steam App ID to download via SteamCMD</p>
       </div>
       <div class="download-form">
-        <input type="text" id="store-appid" placeholder="Steam App ID (e.g. 440 for TF2)" />
+        <input type="text" id="store-appid" placeholder="Steam App ID (e.g. 504230 for Celeste)" />
         <button class="btn btn-primary" id="btn-download">Download</button>
       </div>
       <div id="download-status" style="text-align:center;padding:24px;color:var(--text-dim);font-size:13px;"></div>

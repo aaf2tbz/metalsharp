@@ -79,6 +79,7 @@ export class RustBridge {
 
   private findBinary(): string | null {
     const candidates = [
+      path.join(process.resourcesPath || "", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",

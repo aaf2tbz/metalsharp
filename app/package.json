@@ -10,7 +10,10 @@
     "dev": "tsc -w & electron .",
     "rust:build": "cd src-rust && cargo build --release",
     "rust:dev": "cd src-rust && cargo build",
-    "build:all": "npm run rust:build && npm run build"
+    "build:all": "npm run rust:build && npm run build",
+    "pack": "npm run build:all && electron-builder --dir",
+    "dist": "npm run build:all && electron-builder",
+    "dmg": "npm run dist -- --mac dmg"
   },
   "dependencies": {
     "electron-store": "^10.0.0"
@@ -20,5 +23,60 @@
     "electron-builder": "^26.0.0",
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
+  },
+  "build": {
+    "appId": "com.metalsharp.app",
+    "productName": "MetalSharp",
+    "copyright": "Copyright © 2026 MetalSharp",
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"],
+          "protocols": [
+            {
+              "name": "MetalSharp Game",
+              "schemes": ["metalsharp"]
+            }
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "minimumSystemVersion": "13.0.0"
+    },
+    "dmg": {
+      "background": "build/dmg-background.png",
+      "iconSize": 120,
+      "contents": [
+        { "x": 130, "y": 220, "type": "file" },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": { "width": 540, "height": 380 }
+    },
+    "files": [
+      "dist/**/*",
+      "src/renderer/index.html",
+      "src/renderer/styles.css",
+      "src/renderer/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src-rust/target/release/metalsharp-backend",
+        "to": "metalsharp-backend"
+      },
+      {
+        "from": "../src/fna/shims",
+        "to": "runtime/shims",
+        "filter": ["*.dylib", "*.c", "*.sh"]
+      }
+    ],
+    "directories": {
+      "output": "../dist/electron"
+    }
   }
 }
