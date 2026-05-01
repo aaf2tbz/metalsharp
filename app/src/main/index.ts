@@ -110,17 +110,22 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("app:install-deps-sudo", async (_e, command: string) => {
+  ipcMain.handle("app:install-deps", async (_e, command: string) => {
     return new Promise((resolve) => {
       const { spawn } = require("child_process");
-      const proc = spawn("osascript", [
-        "-e",
-        `do shell script "${command}" with administrator privileges`,
-      ]);
+      const args = command.split(/\s+/);
+      const proc = spawn(args[0], args.slice(1));
+      let stdout = "";
       let stderr = "";
+      proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
       proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      proc.on("error", (err: Error) => {
+        resolve({ ok: false, error: `Failed to run "${command}": ${err.message}` });
+      });
       proc.on("close", (code: number) => {
-        resolve({ ok: code === 0, error: code !== 0 ? stderr : null });
+        const combined = `${stdout}${stderr}`;
+        const ok = code === 0 || combined.includes("already installed");
+        resolve({ ok, error: ok ? null : combined.split("\n").filter(Boolean).pop() ?? `exit code ${code}` });
       });
     });
   });
