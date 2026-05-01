@@ -63,6 +63,13 @@ jobs:
       - name: Install Electron deps
         run: cd app && npm install
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd app
+          npm version "$VERSION" --no-git-tag-version
+
       - name: Build TypeScript
         run: cd app && npm run build
 
