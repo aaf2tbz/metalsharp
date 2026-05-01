@@ -135,28 +135,27 @@ class App {
   // === SETUP WIZARD ===
 
   private showSetupWizard() {
-    const appEl = document.getElementById("app")!;
-    const sidebar = appEl.querySelector(".sidebar") as HTMLElement;
-    const content = appEl.querySelector(".content") as HTMLElement;
-
-    if (sidebar) sidebar.style.display = "none";
-    if (content) {
-      content.style.padding = "0";
-      content.style.width = "100%";
-    }
+    const overlay = document.createElement("div");
+    overlay.className = "setup-overlay";
+    overlay.id = "setup-overlay";
+    document.body.appendChild(overlay);
 
     this.renderSetupStep(0);
   }
 
+  private hideSetupWizard() {
+    const overlay = document.getElementById("setup-overlay");
+    if (overlay) overlay.remove();
+  }
+
   private async renderSetupStep(step: number) {
     this.setupStep = step;
-    const content = document.getElementById("main-content")!;
-    content.classList.remove("hidden");
-    content.innerHTML = "";
+    const overlay = document.getElementById("setup-overlay")!;
+    overlay.innerHTML = "";
 
     const wizard = document.createElement("div");
     wizard.className = "setup-wizard";
-    content.appendChild(wizard);
+    overlay.appendChild(wizard);
 
     switch (step) {
       case 0: this.renderSetupWelcome(wizard); break;
@@ -311,9 +310,13 @@ class App {
     this.renderSetupStepIndicator(container, 2);
 
     const suggested = await this.api<{ name: string }>("GET", "/setup/device-name");
-    this.setupDeviceName = suggested?.name ?? "";
+    this.setupDeviceName = suggested?.name ?? (this.setupDeviceName || "");
 
-    container.innerHTML += `
+    const body = document.createElement("div");
+    body.className = "setup-body";
+    container.appendChild(body);
+
+    body.innerHTML = `
       <div class="setup-body">
         <div class="setup-section-header">
           <h1>Device Name</h1>
@@ -360,7 +363,11 @@ class App {
   private renderSetupSteamApiKey(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 3);
 
-    container.innerHTML += `
+    const body = document.createElement("div");
+    body.className = "setup-body";
+    container.appendChild(body);
+
+    body.innerHTML = `
       <div class="setup-body">
         <div class="setup-section-header">
           <h1>Steam Web API Key</h1>
@@ -384,11 +391,11 @@ class App {
       </div>
     `;
 
-    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(2));
+    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(2));
 
-    container.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(4));
+    body.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(4));
 
-    container.querySelector("#setup-next")?.addEventListener("click", async () => {
+    body.querySelector("#setup-next")?.addEventListener("click", async () => {
       const input = document.getElementById("setup-api-key") as HTMLInputElement;
       const key = input?.value?.trim();
       if (!key) {
@@ -408,7 +415,11 @@ class App {
   private renderSetupSteamLogin(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 4);
 
-    container.innerHTML += `
+    const body = document.createElement("div");
+    body.className = "setup-body";
+    container.appendChild(body);
+
+    body.innerHTML = `
       <div class="setup-body">
         <div class="setup-section-header">
           <h1>Steam Login</h1>
@@ -434,17 +445,17 @@ class App {
       </div>
     `;
 
-    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
+    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
 
-    container.querySelector("#setup-skip")?.addEventListener("click", async () => {
+    body.querySelector("#setup-skip")?.addEventListener("click", async () => {
       await this.api("POST", "/setup/save", { step: 4 });
       this.renderSetupStep(5);
     });
 
-    container.querySelector("#setup-login")?.addEventListener("click", async () => {
+    body.querySelector("#setup-login")?.addEventListener("click", async () => {
       const username = (document.getElementById("setup-steam-user") as HTMLInputElement)?.value?.trim();
       const password = (document.getElementById("setup-steam-pass") as HTMLInputElement)?.value;
-      const btn = container.querySelector("#setup-login") as HTMLElement;
+      const btn = body.querySelector("#setup-login") as HTMLElement;
       const status = document.getElementById("setup-login-status")!;
 
       if (!username || !password) {
@@ -478,7 +489,11 @@ class App {
 
     await this.api("POST", "/setup/save", { step: 5, completed: true });
 
-    container.innerHTML += `
+    const body = document.createElement("div");
+    body.className = "setup-body";
+    container.appendChild(body);
+
+    body.innerHTML = `
       <div class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">&#10003;</div>
@@ -502,16 +517,8 @@ class App {
       </div>
     `;
 
-    container.querySelector("#setup-finish")?.addEventListener("click", async () => {
-      const appEl = document.getElementById("app")!;
-      const sidebar = appEl.querySelector(".sidebar") as HTMLElement;
-      const content = appEl.querySelector(".content") as HTMLElement;
-
-      if (sidebar) sidebar.style.display = "";
-      if (content) {
-        content.style.padding = "";
-        content.style.width = "";
-      }
+    body.querySelector("#setup-finish")?.addEventListener("click", async () => {
+      this.hideSetupWizard();
 
       this.steamApiKey = await this.getSteamApiKey();
       const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");

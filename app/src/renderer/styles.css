@@ -684,11 +684,18 @@ body {
 }
 
 /* Setup Wizard */
+.setup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: var(--gradient-main);
+  overflow-y: auto;
+}
+
 .setup-wizard {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--gradient-main);
 }
 
 .setup-steps {
