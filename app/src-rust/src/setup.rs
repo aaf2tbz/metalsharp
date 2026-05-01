@@ -86,15 +86,12 @@ pub fn generate_device_name() -> String {
         use std::io::Read;
         let _ = f.read_exact(&mut buf);
     } else {
-        for (i, b) in SystemTime::now()
+        let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            unwrap_or_default()
+            .unwrap_or_default()
             .as_nanos()
-            .to_ne_bytes()
-            .iter()
-            .take(4)
-            .enumerate()
-        {
+            .to_ne_bytes();
+        for (i, b) in nanos.iter().take(4).enumerate() {
             buf[i] = *b;
         }
     }
