@@ -345,13 +345,11 @@ class App {
   private async renderSetupDeviceName(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 2);
 
-    const suggested = await this.api<{ name: string }>("GET", "/setup/device-name");
-    this.setupDeviceName = suggested?.name ?? (this.setupDeviceName || "");
-
     const body = document.createElement("div");
     body.className = "setup-body";
     container.appendChild(body);
 
+    const defaultName = this.setupDeviceName || "";
     body.innerHTML = `
       <div class="setup-body">
         <div class="setup-section-header">
@@ -361,7 +359,7 @@ class App {
         <div class="setup-form">
           <div class="setup-form-group">
             <label class="setup-label">Device Name</label>
-            <input type="text" id="device-name-input" value="${this.esc(this.setupDeviceName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
+            <input type="text" id="device-name-input" value="${this.esc(defaultName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
             <div class="setup-hint">This is stored locally and sent to Steam as your machine identifier.</div>
           </div>
           <div class="setup-form-group">
@@ -374,6 +372,16 @@ class App {
         </div>
       </div>
     `;
+
+    if (!defaultName) {
+      this.api<{ name: string }>("GET", "/setup/device-name").then((result) => {
+        const input = document.getElementById("device-name-input") as HTMLInputElement;
+        if (result?.name && input && !input.value) {
+          input.value = result.name;
+          this.setupDeviceName = result.name;
+        }
+      });
+    }
 
     container.querySelector("#regen-name")?.addEventListener("click", async () => {
       const result = await this.api<{ name: string }>("GET", "/setup/device-name");

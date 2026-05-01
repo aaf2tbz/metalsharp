@@ -1,5 +1,6 @@
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
@@ -81,11 +82,22 @@ pub fn generate_device_name() -> String {
     ];
 
     let mut buf: [u8; 4] = [0; 4];
-    let _ = std::fs::read("/dev/urandom").map(|v| {
-        for (i, b) in v.iter().take(4).enumerate() {
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        let _ = f.read_exact(&mut buf);
+    } else {
+        for (i, b) in SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            unwrap_or_default()
+            .as_nanos()
+            .to_ne_bytes()
+            .iter()
+            .take(4)
+            .enumerate()
+        {
             buf[i] = *b;
         }
-    });
+    }
     let adj_idx = (u32::from_be_bytes([0, buf[0], buf[1], buf[2]]) as usize) % adjectives.len();
     let noun_idx = (buf[3] as usize) % nouns.len();
 
