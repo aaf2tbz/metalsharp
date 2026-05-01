@@ -279,6 +279,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
 
     if is_dotnet {
         setup_fna_runtime(&game_dir, &runtime_dir)?;
+        let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     }
 
     std::fs::write(&marker, format!("prepared: is_dotnet={}", is_dotnet))?;
@@ -292,80 +293,166 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn detect_dotnet_game(game_dir: &PathBuf) -> bool {
-    let managed_dir = game_dir.join("Celeste_Data").join("Managed");
-    if managed_dir.exists() {
-        return true;
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+            if name_lower.ends_with("_data") && entry.path().is_dir() {
+                let managed = entry.path().join("Managed");
+                if managed.exists() {
+                    return true;
+                }
+            }
+        }
     }
 
     for entry in walkdir::WalkDir::new(game_dir).max_depth(2).into_iter().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let name_lower = name.to_lowercase();
         if name_lower.contains("microsoft.xna")
-            || name_lower.contains("fna")
-            || name_lower == "monogame"
-            || name_lower.contains("_data") && entry.path().is_dir()
+            || name_lower.contains("fna.dll")
+            || name_lower.contains("monogame")
         {
             return true;
-        }
-    }
-
-    if let Ok(entries) = std::fs::read_dir(game_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let name_lower = name.to_lowercase();
-            if name_lower.contains("steamworks.net")
-                || name_lower.contains("fmod")
-            {
-                return true;
-            }
         }
     }
 
     false
 }
 
-fn setup_fna_runtime(game_dir: &PathBuf, runtime_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let fna_dir = runtime_dir.join("fna");
-    let shims_dir = runtime_dir.join("shims");
+fn setup_fna_runtime(game_dir: &PathBuf, _runtime_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let fna_src = home.join("metalsharp").join("src").join("fna");
 
-    if fna_dir.exists() {
-        for entry in std::fs::read_dir(&fna_dir)?.flatten() {
-            let src = entry.path();
-            if let Some(ext) = src.extension() {
-                if ext == "dll" || ext == "config" {
-                    let _ = std::fs::copy(&src, game_dir.join(entry.file_name()));
+    let fna_build = fna_src.join("FNA").join("bin").join("Release").join("net4.0");
+    let fna3d_build = fna_src.join("FNA3D").join("build");
+    let shims_src = fna_src.join("shims");
+
+    if fna_build.exists() {
+        if let Ok(entries) = std::fs::read_dir(&fna_build) {
+            for entry in entries.flatten() {
+                let src = entry.path();
+                if let Some(ext) = src.extension() {
+                    if ext == "dll" {
+                        let _ = std::fs::copy(&src, game_dir.join(entry.file_name()));
+                    }
                 }
             }
         }
     }
 
-    let dylibs_to_copy = [
-        "libFNA3D.dylib",
-        "libSDL3.dylib",
-        "libCSteamworks.dylib",
-        "libfmod.dylib",
-        "libfmodstudio.dylib",
-        "libsteam_api.dylib",
+    let xna_assemblies = [
+        "Microsoft.Xna.Framework.dll",
+        "Microsoft.Xna.Framework.Game.dll",
+        "Microsoft.Xna.Framework.Graphics.dll",
+        "Microsoft.Xna.Framework.Audio.dll",
+        "Microsoft.Xna.Framework.Input.dll",
+        "Microsoft.Xna.Framework.Media.dll",
+        "Microsoft.Xna.Framework.Storage.dll",
     ];
 
-    for dylib in &dylibs_to_copy {
-        let src = shims_dir.join(dylib);
-        if src.exists() {
-            let _ = std::fs::copy(&src, game_dir.join(dylib));
+    if fna_build.exists() {
+        let fna_dll = fna_build.join("FNA.dll");
+        if fna_dll.exists() {
+            for name in &xna_assemblies {
+                let _ = std::fs::copy(&fna_dll, game_dir.join(name));
+            }
         }
     }
 
-    let steam_appid_src = runtime_dir.join("steam_appid.txt");
-    if steam_appid_src.exists() {
-        let _ = std::fs::copy(&steam_appid_src, game_dir.join("steam_appid.txt"));
+    if fna3d_build.exists() {
+        let src = fna3d_build.join("libFNA3D.dylib");
+        if src.exists() {
+            let _ = std::fs::copy(&src, game_dir.join("libFNA3D.dylib"));
+        }
     }
 
-    let steam_appid_fallback = game_dir.join("steam_appid.txt");
-    if !steam_appid_fallback.exists() {
-        let _ = std::fs::write(&steam_appid_fallback, "");
+    if shims_src.exists() {
+        for shim in &["csteamworks_shim.c", "fmod_stub.c", "fmodstudio_stub.c"] {
+            let src = shims_src.join(shim);
+            if src.exists() {
+                build_shim(&src, game_dir);
+            }
+        }
     }
+
+    let sdl3_candidates = [
+        PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"),
+        PathBuf::from("/usr/local/lib/libSDL3.0.dylib"),
+    ];
+    for sdl3 in &sdl3_candidates {
+        if sdl3.exists() {
+            let dst = game_dir.join("libSDL3.0.dylib");
+            let _ = std::fs::copy(sdl3, &dst);
+            let _ = std::process::Command::new("install_name_tool")
+                .args(["-id", "@loader_path/libSDL3.0.dylib"])
+                .arg(&dst)
+                .output();
+
+            let fna3d = game_dir.join("libFNA3D.dylib");
+            if fna3d.exists() {
+                let _ = std::process::Command::new("install_name_tool")
+                    .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
+                    .arg(&fna3d)
+                    .output();
+            }
+
+            let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", game_dir.join("libSDL3.dylib"));
+            break;
+        }
+    }
+
+    let steam_dylib_candidates = [
+        home.join("Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/libsteam_api.dylib"),
+        home.join("Library/Application Support/Steam/steamapps/common/Nidhogg 2/Nidhogg_2.app/Contents/MacOS/libsteam_api.dylib"),
+    ];
+    for dylib in &steam_dylib_candidates {
+        if dylib.exists() {
+            let _ = std::fs::copy(dylib, game_dir.join("libsteam_api.dylib"));
+            break;
+        }
+    }
+
+    let _ = std::fs::write(game_dir.join("steam_appid.txt"), "");
+
+    let _ = std::process::Command::new("codesign")
+        .args(["--force", "-s", "-"])
+        .arg(game_dir.join("libCSteamworks.dylib"))
+        .arg(game_dir.join("libfmod.dylib"))
+        .arg(game_dir.join("libfmodstudio.dylib"))
+        .output();
 
     Ok(())
+}
+
+fn build_shim(src: &PathBuf, game_dir: &PathBuf) {
+    let name = src.file_stem().unwrap_or_default().to_string_lossy();
+    let (output_name, install_name) = if name.contains("csteamworks") {
+        ("libCSteamworks.dylib", "@loader_path/libCSteamworks.dylib")
+    } else if name.contains("fmodstudio") {
+        ("libfmodstudio.dylib", "@loader_path/libfmodstudio.dylib")
+    } else if name.contains("fmod") {
+        ("libfmod.dylib", "@loader_path/libfmod.dylib")
+    } else {
+        return;
+    };
+
+    let output = game_dir.join(output_name);
+    let result = std::process::Command::new("clang")
+        .args(["-shared", "-arch", "arm64"])
+        .arg("-o").arg(&output)
+        .arg(src)
+        .arg("-install_name").arg(install_name)
+        .output();
+
+    if let Ok(o) = result {
+        if o.status.success() {
+            let _ = std::process::Command::new("codesign")
+                .args(["--force", "-s", "-"])
+                .arg(&output)
+                .output();
+        }
+    }
 }
 
 fn check_command(cmd: &str) -> bool {
