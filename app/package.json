@@ -33,23 +33,22 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"],
-          "protocols": [
-            {
-              "name": "MetalSharp Game",
-              "schemes": ["metalsharp"]
-            }
-          ]
+          "arch": ["arm64"]
         }
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "minimumSystemVersion": "13.0.0"
+      "minimumSystemVersion": "13.0.0",
+      "protocols": [
+        {
+          "name": "MetalSharp Game",
+          "schemes": ["metalsharp"]
+        }
+      ]
     },
     "dmg": {
-      "background": "build/dmg-background.png",
       "iconSize": 120,
       "contents": [
         { "x": 130, "y": 220, "type": "file" },
@@ -68,11 +67,6 @@
       {
         "from": "src-rust/target/release/metalsharp-backend",
         "to": "metalsharp-backend"
-      },
-      {
-        "from": "../src/fna/shims",
-        "to": "runtime/shims",
-        "filter": ["*.dylib", "*.c", "*.sh"]
       }
     ],
     "directories": {
