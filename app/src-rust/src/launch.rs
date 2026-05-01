@@ -16,6 +16,8 @@ fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     let prefix = home.join(".metalsharp").join("prefix");
     let prefix_str = prefix.to_string_lossy().to_string();
 
+    ensure_wine_prefix(&prefix)?;
+
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .arg(exe_path)
@@ -104,7 +106,10 @@ pub fn get_config() -> Value {
 }
 
 fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+
     let candidates = vec![
+        PathBuf::from("/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine"),
         PathBuf::from("/opt/homebrew/bin/wine64"),
         PathBuf::from("/opt/homebrew/bin/wine"),
         PathBuf::from("/usr/local/bin/wine64"),
@@ -128,6 +133,28 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     Err("wine not found — install with: brew install --cask wine-stable".into())
+}
+
+pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    if system32.exists() {
+        return Ok(());
+    }
+
+    let wine = find_wine()?;
+    let status = Command::new(&wine)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .arg("wineboot")
+        .arg("--init")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+
+    if !status.success() {
+        return Err("failed to initialize Wine prefix".into());
+    }
+
+    Ok(())
 }
 
 pub fn set_config(_mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
