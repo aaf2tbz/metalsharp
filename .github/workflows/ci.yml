@@ -67,6 +67,9 @@ jobs:
           name: metalsharp-macos-arm64
           path: app/native/
 
+      - name: Set executable permissions
+        run: chmod +x app/native/metalsharp app/native/metalsharp_launcher
+
       - name: Install Electron deps
         run: cd app && npm install
 
