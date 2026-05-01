@@ -53,6 +53,8 @@ class App {
     this.steamApiKey = await this.getSteamApiKey();
     const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
     this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;
+    const setupState = await this.api<{ deviceName?: string }>("GET", "/setup/state");
+    if (setupState?.deviceName) this.setupDeviceName = setupState.deviceName;
     await this.loadLibrary();
   }
 
@@ -901,30 +903,30 @@ class App {
         <h2>Steam</h2>
         <div class="settings-row">
           <div>
-            <div class="settings-label">Steam</div>
-            <div class="settings-desc">Used to download games via SteamCMD</div>
+            <div class="settings-label">macOS Steam</div>
+            <div class="settings-desc">Native Steam client on this Mac</div>
           </div>
           <div class="settings-value">
-            ${steam?.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Found</span>`}
+            ${steam?.mac_installed ? `<span class="badge badge-ok">Detected</span>` : `<span class="badge badge-warn">Not Found</span>`}
           </div>
         </div>
         <div class="settings-row">
           <div>
-            <div class="settings-label">Install Path</div>
-            <div class="settings-desc">Steam installation directory</div>
+            <div class="settings-label">SteamCMD</div>
+            <div class="settings-desc">Used to download Windows game files</div>
           </div>
-          <div class="settings-value">${steam?.path || "—"}</div>
+          <div class="settings-value">
+            ${steam?.steam_cmd_path ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Found</span>`}
+          </div>
         </div>
-      </div>
-
-      <div class="settings-section">
-        <h2>SteamCMD</h2>
         <div class="settings-row">
           <div>
-            <div class="settings-label">SteamCMD Path</div>
-            <div class="settings-desc">Used for downloading Windows game depots</div>
+            <div class="settings-label">SteamCMD Login</div>
+            <div class="settings-desc">${this.steamcmdLoggedIn ? "Logged in and ready to download" : "Login required to download games"}</div>
           </div>
-          <div class="settings-value">${steam?.steam_cmd_path || "Not found"}</div>
+          <div class="settings-value">
+            ${this.steamcmdLoggedIn ? `<span class="badge badge-ok">Logged In</span>` : `<span class="badge badge-warn">Not Logged In</span>`}
+          </div>
         </div>
       </div>
 
@@ -1111,6 +1113,17 @@ class App {
       } else {
         this.toast(result?.error ?? "Login failed", "error");
         if (btn) btn.textContent = "Login";
+      }
+    });
+
+    el.querySelector("#btn-change-device")?.addEventListener("click", async () => {
+      const result = await this.api<{ name: string }>("GET", "/setup/device-name");
+      const newName = result?.name;
+      if (newName) {
+        this.setupDeviceName = newName;
+        await this.api("POST", "/setup/save", { deviceName: newName });
+        this.toast(`Device name changed to ${newName}`);
+        this.renderSettings();
       }
     });
 

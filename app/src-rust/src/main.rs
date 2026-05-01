@@ -327,7 +327,7 @@ fn resolve_game_exe(appid: u32) -> String {
                 let name_lower = name.to_lowercase();
                 if name_lower.starts_with("terraria") && !name_lower.contains("server")
                     || name_lower.starts_with("hl2") && !name_lower.contains("launcher")
-                    || !name_lower.contains("setup") && !name_lower.contains("redist") && !name_lower.contains("dotnet") && !name_lower.contains("installer") && !name_lower.contains("uninstall") && !name_lower.contains("vcredist")
+                    || !name_lower.contains("setup") && !name_lower.contains("redist") && !name_lower.contains("dotnet") && !name_lower.contains("installer") && !name_lower.contains("uninstall") && !name_lower.contains("vcredist") && !name_lower.contains("crashhandler")
                 {
                     return entry.path().to_string_lossy().to_string();
                 }
@@ -341,7 +341,7 @@ fn resolve_game_exe(appid: u32) -> String {
                 let name = entry.file_name().to_string_lossy().to_lowercase();
                 if !name.contains("setup") && !name.contains("redist") && !name.contains("dotnet")
                     && !name.contains("installer") && !name.contains("uninstall") && !name.contains("vcredist")
-                    && !name.contains("server") {
+                    && !name.contains("server") && !name.contains("crashhandler") {
                     return entry.path().to_string_lossy().to_string();
                 }
             }
