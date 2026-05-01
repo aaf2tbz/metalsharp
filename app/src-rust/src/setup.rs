@@ -95,15 +95,16 @@ pub fn generate_device_name() -> String {
 pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
-    let mono = check_command("mono");
+    let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
     let sdl3 = check_dylib(&home, "libSDL3.dylib")
         || check_framework("SDL3")
         || check_brew("sdl3");
     let steamcmd = check_path(&home.join("steamcmd/steamcmd.sh"))
         || check_command("steamcmd");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
+        || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"))
         || check_command("steam");
-    let homebrew = check_command("brew");
+    let homebrew = check_command("brew") || check_path(&PathBuf::from("/opt/homebrew/bin/brew")) || check_path(&PathBuf::from("/usr/local/bin/brew"));
 
     let all_ok = mono && sdl3;
 

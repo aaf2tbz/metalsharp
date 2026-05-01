@@ -288,37 +288,54 @@ class App {
       const btn = body.querySelector("#setup-install-deps") as HTMLElement;
       const backBtn = body.querySelector("#setup-back") as HTMLElement;
       const skipBtn = body.querySelector("#setup-skip") as HTMLElement;
-      btn.textContent = "Installing...";
-      (btn as HTMLButtonElement).disabled = true;
-      if (backBtn) (backBtn as HTMLButtonElement).disabled = true;
-      if (skipBtn) (skipBtn as HTMLButtonElement).disabled = true;
+      const allBtns = [btn, backBtn, skipBtn].filter(Boolean) as HTMLElement[];
+      allBtns.forEach((b) => (b as HTMLButtonElement).disabled = true);
+      btn.textContent = "Checking...";
 
-      const missing = deps?.dependencies?.filter(d => !d.installed && d.required) ?? [];
-      let anyFailed = false;
-
-      for (const dep of missing) {
-        if (dep.id === "mono" || dep.id === "sdl3") {
-          btn.textContent = `Installing ${dep.name}...`;
-          const result = await getAPI().installDeps(dep.installCmd);
-          if (!result.ok) {
-            anyFailed = true;
-            this.toast(`Failed to install ${dep.name}: ${result.error}`, "error");
-          } else {
-            this.toast(`${dep.name} installed successfully`, "success");
-          }
-        }
-      }
-
-      if (anyFailed) {
-        this.toast("Some dependencies failed to install. You can retry or skip.", "error");
-        btn.textContent = "Retry Install";
-        (btn as HTMLButtonElement).disabled = false;
-        if (backBtn) (backBtn as HTMLButtonElement).disabled = false;
-        if (skipBtn) (skipBtn as HTMLButtonElement).disabled = false;
+      const brewDep = deps?.dependencies?.find((d) => d.id === "homebrew");
+      if (brewDep && !brewDep.installed) {
+        this.toast("Homebrew is required to install dependencies. Install it from https://brew.sh, then restart MetalSharp.", "error");
+        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
+        btn.textContent = "Install Missing";
         return;
       }
 
-      this.toast("All dependencies installed!", "success");
+      const missing = deps?.dependencies?.filter((d) => !d.installed && d.required) ?? [];
+      if (missing.length === 0) {
+        this.toast("All required dependencies are already installed.", "success");
+        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
+        this.renderSetupStep(2);
+        return;
+      }
+
+      const brewable = missing.filter((d) => d.installCmd?.startsWith("brew "));
+      let anyFailed = false;
+
+      for (const dep of brewable) {
+        btn.textContent = `Installing ${dep.name}...`;
+        const result = await getAPI().installDeps(dep.installCmd);
+        if (!result.ok) {
+          anyFailed = true;
+          this.toast(`Failed to install ${dep.name}: ${result.error}`, "error");
+        } else {
+          this.toast(`${dep.name} installed successfully`, "success");
+        }
+      }
+
+      btn.textContent = "Verifying...";
+      const verify = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
+      const stillMissing = verify?.dependencies?.filter((d) => !d.installed && d.required) ?? [];
+
+      if (anyFailed || stillMissing.length > 0) {
+        const names = stillMissing.map((d) => d.name).join(", ");
+        this.toast(`Some dependencies could not be installed: ${names}. You can retry or skip.`, "error");
+        btn.textContent = "Retry Install";
+        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
+        this.renderSetupDependencies(container);
+        return;
+      }
+
+      this.toast("All dependencies installed and verified!", "success");
       this.renderSetupStep(2);
     });
 
