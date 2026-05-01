@@ -52,6 +52,12 @@ void Shutdown(void) {
     if (fn) fn();
 }
 
+void RunCallbacks(void) {
+    if (!g_api) return;
+    void (*fn)(void) = dlsym(g_api, "SteamAPI_RunCallbacks");
+    if (fn) fn();
+}
+
 /* ISteamApps wrappers */
 typedef const char *(*Apps_GetCurrentGameLanguage_t)(void *);
 typedef int (*Apps_BIsSubscribed_t)(void *);
