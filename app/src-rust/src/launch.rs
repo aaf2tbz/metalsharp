@@ -34,6 +34,11 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_gptk(&exe.to_string_lossy())?;
             Ok((pid, "gptk_wine"))
         }
+        535520 => {
+            let exe = game_dir.join("Nidhogg_2.exe");
+            let pid = launch_dxvk_wine(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "dxvk_wine"))
+        }
         _ => {
             let exe = resolve_game_exe_fallback(&game_dir);
             let game_type = detect_game_type(&game_dir);
@@ -110,6 +115,47 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     let child = Command::new(&wine64)
         .current_dir(&game_dir)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+
+    if !wine.exists() {
+        return Err("Wine (devel) not found — install with: brew install --cask wine-crossover || brew install --cask wine-stable".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-nidhogg");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
+
+    for dll in &["d3d11.dll", "dxgi.dll"] {
+        let src = dxvk_dir.join(dll);
+        let dst = game_dir.join(dll);
+        if src.exists() && !dst.exists() {
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+
+    let moltenvk_icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
+    if !moltenvk_icd.exists() {
+        return Err("MoltenVK ICD not found — install with: brew install molten-vk".into());
+    }
+
+    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
+    let dyld = format!(
+        "/opt/homebrew/lib:{}",
+        wine_lib.to_string_lossy()
+    );
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("VK_ICD_FILENAMES", moltenvk_icd.to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg(exe_path)
         .spawn()?;
 
@@ -328,6 +374,7 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
         105600 => "setup-terraria-deps.sh",
         504230 => "setup-celeste-deps.sh",
         312520 => "setup-rainworld-deps.sh",
+        535520 => "setup-nidhogg2-deps.sh",
         _ => return Ok(()),
     };
 
