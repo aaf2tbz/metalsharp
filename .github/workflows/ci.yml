@@ -78,7 +78,10 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cd app
-          npm version "$VERSION" --no-git-tag-version
+          CURRENT=$(node -p "require('./package.json').version")
+          if [ "$VERSION" != "$CURRENT" ]; then
+            npm version "$VERSION" --no-git-tag-version
+          fi
 
       - name: Build TypeScript
         run: cd app && npm run build
