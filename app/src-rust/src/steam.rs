@@ -83,8 +83,8 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
     let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
     let home = dirs::home_dir().ok_or("no home dir")?;
 
-    use std::io::{BufRead, Write};
-    use std::process::{Stdio};
+    use std::io::BufRead;
+    use std::process::Stdio;
 
     let mut child = Command::new(&steamcmd)
         .args(["+login", username, password, "+quit"])
@@ -95,7 +95,6 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
 
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
-    let mut stdin = child.stdin.take().ok_or("no stdin")?;
 
     let stderr_handle = std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stderr);
@@ -108,43 +107,52 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
     });
 
     let reader = std::io::BufReader::new(stdout);
-    let mut stdout_combined = String::new();
+    let mut combined_output = String::new();
     let mut logged_in = false;
-    let mut steam_guard_prompted = false;
+    let mut login_failed = false;
+    let mut failure_reason = String::new();
 
     for line in reader.lines().flatten() {
-        stdout_combined.push_str(&line);
-        stdout_combined.push('\n');
+        combined_output.push_str(&line);
+        combined_output.push('\n');
 
         let lower = line.to_lowercase();
-
-        if lower.contains("steam Guard") || lower.contains("verification") || lower.contains("check your email") || lower.contains("enter the code") || lower.contains("2-factor") {
-            steam_guard_prompted = true;
-            let _ = stdin.write_all("\n".as_bytes());
-        }
 
         if lower.contains("logged in ok") || lower.contains("logged in") && lower.contains("ok") {
             logged_in = true;
             break;
         }
 
-        if lower.starts_with("steam>") {
+        if lower.contains("invalid password") || lower.contains("invalid login") {
+            login_failed = true;
+            failure_reason = if lower.contains("invalid password") {
+                "Invalid password".into()
+            } else {
+                "Invalid login credentials".into()
+            };
+            break;
+        }
+
+        if lower.contains("steam>") {
             break;
         }
     }
 
-    let _ = child.kill();
+    drop(child.stdin.take());
     let _ = child.wait();
 
     let stderr_combined = stderr_handle.join().unwrap_or_default();
-    let combined = format!("{}{}", stdout_combined, stderr_combined);
+    let combined = format!("{}{}", combined_output, stderr_combined);
 
-    let success = logged_in
+    let logged_in = logged_in
         || combined.contains("Logged in OK")
-        || (combined.contains("Steam>quit") && !combined.contains("Invalid Password"))
-        || (combined.contains("Steam>") && combined.contains("quit") && !combined.contains("Invalid"));
+        || combined.contains("Logged in user");
 
-    if success {
+    let login_failed = login_failed
+        || combined.contains("Invalid Password")
+        || combined.contains("Invalid Login");
+
+    if logged_in && !login_failed {
         let config_dir = home.join(".metalsharp/cache");
         std::fs::create_dir_all(&config_dir)?;
         let config_path = config_dir.join("steam_config.json");
@@ -169,14 +177,16 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
 
         Ok(json!({"ok": true, "username": username}))
     } else {
-        let reason = if combined.contains("Invalid Password") {
-            "Invalid password"
+        let reason = if login_failed && !failure_reason.is_empty() {
+            failure_reason
+        } else if combined.contains("Invalid Password") {
+            "Invalid password".into()
         } else if combined.contains("Invalid Login") {
-            "Invalid login credentials"
-        } else if steam_guard_prompted {
-            "Steam Guard verification timed out — try again and approve the prompt quickly"
+            "Invalid login credentials".into()
+        } else if combined.contains("Steam Guard") || combined.contains("verification") {
+            "Steam Guard verification failed — try again and approve the prompt quickly".into()
         } else {
-            "Login failed — check your credentials"
+            "Login failed — check your credentials".into()
         };
         Ok(json!({"ok": false, "error": reason}))
     }

@@ -89,8 +89,8 @@ app.on("window-all-closed", () => {
 });
 
 function registerIpc() {
-  ipcMain.handle("backend:request", async (_e, method: string, url: string, body?: Record<string, unknown>) => {
-    return bridge.request(method, url, body);
+  ipcMain.handle("backend:request", async (_e, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
+    return bridge.request(method, url, body, timeoutMs);
   });
 
   ipcMain.handle("app:is-first-launch", () => {

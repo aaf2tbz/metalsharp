@@ -57,7 +57,7 @@ export class RustBridge {
     this.proc = null;
   }
 
-  async request(method: string, url: string, body?: Record<string, unknown>): Promise<unknown> {
+  async request(method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body ? JSON.stringify(body) : "";
       const opts: http.RequestOptions = {
@@ -69,7 +69,7 @@ export class RustBridge {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload),
         },
-        timeout: 30000,
+        timeout: timeoutMs ?? 30000,
       };
 
       const req = http.request(opts, (res) => {
