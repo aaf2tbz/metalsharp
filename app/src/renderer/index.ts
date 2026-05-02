@@ -79,9 +79,9 @@ class App {
     if (view === "logs") this.renderLogs();
   }
 
-  private async api<T = unknown>(method: string, url: string, body?: Record<string, unknown>): Promise<T | null> {
+  private async api<T = unknown>(method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number): Promise<T | null> {
     try {
-      const res = await getAPI().request(method, url, body);
+      const res = await getAPI().request(method, url, body, timeoutMs);
       if (!res.ok && res.error) this.toast(res.error, "error");
       return (res.data ?? res) as T;
     } catch (e) {
@@ -516,7 +516,7 @@ class App {
       (btn as HTMLButtonElement).disabled = true;
       status.innerHTML = '<div class="spinner"></div> Connecting to Steam...<br><span style="font-size:12px;color:var(--text-dim)">If prompted, approve the login on your Steam mobile app.</span>';
 
-      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password });
+      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password }, 120000);
 
       if (result?.ok) {
         this.steamcmdLoggedIn = true;
@@ -1068,7 +1068,7 @@ class App {
       }
       const btn = document.getElementById("btn-steamcmd-login") as HTMLElement;
       if (btn) btn.textContent = "Logging in...";
-      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password });
+      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password }, 120000);
       if (result?.ok) {
         this.steamcmdLoggedIn = true;
         this.toast("SteamCMD login successful!", "success");
