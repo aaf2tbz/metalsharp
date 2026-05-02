@@ -756,7 +756,9 @@ class App {
         const pct = pctEl();
         if (bar) bar.style.width = `${prog.progress}%`;
 
-        if (prog.status === "installing") {
+        if (prog.status === "setting_up") {
+          if (pctEl) pctEl.textContent = "Setting up...";
+        } else if (prog.status === "installing") {
           if (pct) pct.textContent = "Installing...";
         } else {
           if (pct) pct.textContent = `${Math.round(prog.progress)}%`;

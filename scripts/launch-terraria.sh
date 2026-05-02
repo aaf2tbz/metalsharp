@@ -28,7 +28,7 @@ METALSHARP_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$GAME_DIR"
 
-DYLD_LIBRARY_PATH="/opt/homebrew/lib:$GAME_DIR" \
+DYLD_LIBRARY_PATH="$GAME_DIR:/opt/homebrew/lib" \
 MONO_CONFIG="$METALSHARP_REPO/configs/terraria-mono.config" \
 FNA3D_DRIVER=OpenGL \
 "$MONO" TerrariaLauncher.exe

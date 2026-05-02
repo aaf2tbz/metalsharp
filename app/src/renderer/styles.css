@@ -704,6 +704,10 @@ body {
   z-index: 2000;
   background: var(--gradient-main);
   overflow-y: auto;
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 .setup-wizard {
@@ -748,7 +752,7 @@ body {
 }
 
 .setup-step-label {
-  font-size: 8px;
+  font-size: 10px;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -796,7 +800,7 @@ body {
 }
 
 .setup-hero-title {
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 800;
   background: var(--gradient-accent);
   -webkit-background-clip: text;
@@ -805,7 +809,7 @@ body {
 }
 
 .setup-hero-sub {
-  font-size: 11px;
+  font-size: 15px;
   color: var(--text-secondary);
   max-width: 500px;
   line-height: 1.6;
@@ -843,13 +847,13 @@ body {
 }
 
 .setup-feature-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   margin-bottom: 2px;
 }
 
 .setup-feature-desc {
-  font-size: 10px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
@@ -858,13 +862,13 @@ body {
 }
 
 .setup-section-header h1 {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   margin-bottom: 8px;
 }
 
 .setup-section-header p {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -889,7 +893,7 @@ body {
 }
 
 .setup-label {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -900,7 +904,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
-  font-size: 11px;
+  font-size: 14px;
   outline: none;
   transition: border-color var(--transition);
 }
@@ -910,7 +914,7 @@ body {
 }
 
 .setup-hint {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -966,12 +970,12 @@ body {
 }
 
 .setup-dep-name {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .setup-dep-desc {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--text-dim);
   margin-top: 2px;
   line-height: 1.4;
@@ -987,7 +991,7 @@ body {
   border: 1px solid var(--orange-dim);
   background: rgba(232, 148, 58, 0.1);
   color: var(--orange-bright);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
@@ -1008,10 +1012,24 @@ body {
 .setup-dep-install-btn.installing {
   border-color: var(--orange);
   color: var(--orange);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setup-dep-install-btn.installing::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(232, 148, 58, 0.3);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
 }
 
 .setup-dep-error {
-  font-size: 8px;
+  font-size: 11px;
   color: var(--error);
   margin-top: 4px;
   line-height: 1.4;
@@ -1036,13 +1054,13 @@ body {
 }
 
 .setup-complete h1 {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   margin-bottom: 12px;
 }
 
 .setup-complete p {
-  font-size: 11px;
+  font-size: 15px;
   color: var(--text-secondary);
   max-width: 480px;
   margin: 0 auto;
@@ -1065,7 +1083,7 @@ body {
   background: var(--gradient-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -1076,7 +1094,7 @@ body {
 
 .btn-lg {
   padding: 14px 36px;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   border-radius: var(--radius-md);
 }

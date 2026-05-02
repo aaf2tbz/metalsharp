@@ -51,11 +51,13 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
         return Err("x86_64 mono not found — run setup-celeste-deps.sh first".into());
     }
 
-    let mono_config = home.join("metalsharp").join("configs").join("celeste-x86-mono.config");
+    let mono_config = find_config("celeste-x86-mono.config");
+    let shims_dir = find_shims_dir();
     let dyld = format!(
-        "{}/lib:/opt/homebrew/lib:.:{}/shims",
+        "{}:{}/lib:/opt/homebrew/lib:.:{}",
+        shims_dir,
         home.join(".metalsharp").join("runtime").join("mono-x86").join("lib").to_string_lossy(),
-        home.join(".metalsharp").to_string_lossy()
+        shims_dir,
     );
     let mono_path = home.join(".metalsharp").join("runtime").join("mono-x86").join("lib").join("mono").join("4.5");
 
@@ -63,7 +65,7 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
         .args(["-x86_64", &mono_x86.to_string_lossy()])
         .current_dir(game_dir)
         .env("DYLD_LIBRARY_PATH", &dyld)
-        .env("MONO_CONFIG", mono_config.to_string_lossy().to_string())
+        .env("MONO_CONFIG", mono_config)
         .env("MONO_PATH", mono_path.to_string_lossy().to_string())
         .env("FNA3D_DRIVER", "OpenGL")
         .env("METAL_DEVICE_WRAPPER_TYPE", "0")
@@ -75,16 +77,16 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
 
 fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let mono_config = home.join("metalsharp").join("configs").join("terraria-mono.config");
+    let mono_config = find_config("terraria-mono.config");
     let dyld = format!(
-        "/opt/homebrew/lib:{}",
+        "{}:/opt/homebrew/lib",
         game_dir.to_string_lossy()
     );
 
     let child = Command::new("mono")
         .current_dir(game_dir)
         .env("DYLD_LIBRARY_PATH", &dyld)
-        .env("MONO_CONFIG", mono_config.to_string_lossy().to_string())
+        .env("MONO_CONFIG", mono_config)
         .env("FNA3D_DRIVER", "OpenGL")
         .arg(exe_path)
         .spawn()?;
@@ -282,6 +284,84 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     Err("wine not found — install with: brew install --cask wine-stable".into())
+}
+
+fn find_config(name: &str) -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join("metalsharp").join("configs").join(name),
+        home.join(".metalsharp").join("configs").join(name),
+    ];
+    for c in candidates {
+        if c.exists() {
+            return c.to_string_lossy().to_string();
+        }
+    }
+    home.join("metalsharp").join("configs").join(name).to_string_lossy().to_string()
+}
+
+fn find_shims_dir() -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join(".metalsharp").join("runtime").join("shims"),
+        home.join(".metalsharp").join("shims"),
+    ];
+    for c in candidates {
+        if c.exists() {
+            return c.to_string_lossy().to_string();
+        }
+    }
+    home.join(".metalsharp").join("runtime").join("shims").to_string_lossy().to_string()
+}
+
+fn find_scripts_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join("metalsharp").join("scripts"),
+        home.join(".metalsharp").join("scripts"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let script_name = match appid {
+        105600 => "setup-terraria-deps.sh",
+        504230 => "setup-celeste-deps.sh",
+        312520 => "setup-rainworld-deps.sh",
+        _ => return Ok(()),
+    };
+
+    let scripts_dir = match find_scripts_dir() {
+        Some(d) => d,
+        None => return Err("scripts directory not found".into()),
+    };
+
+    let script = scripts_dir.join(script_name);
+    if !script.exists() {
+        return Err(format!("setup script not found: {}", script.display()).into());
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let env_path = format!(
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}",
+        home.join(".cargo/bin").to_string_lossy()
+    );
+
+    let status = Command::new("/bin/bash")
+        .arg(&script)
+        .arg(appid.to_string())
+        .env("PATH", &env_path)
+        .env("HOME", &home)
+        .env("METALSHARP_HOME", home.join(".metalsharp").to_string_lossy().to_string())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status()?;
+
+    if !status.success() {
+        return Err(format!("setup script {} failed", script_name).into());
+    }
+
+    Ok(())
 }
 
 pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {

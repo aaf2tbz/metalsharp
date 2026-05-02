@@ -110,17 +110,14 @@ pub fn dependencies() -> Value {
     let gptk = check_path(&PathBuf::from(
         "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
     ));
-    let sdl3 = check_dylib(&home, "libSDL3.dylib")
-        || check_framework("SDL3")
-        || check_brew("sdl3");
+    let xcode_cli = check_command("clang") || check_command("xcodebuild");
     let steamcmd = check_path(&home.join("steamcmd/steamcmd.sh"))
         || check_command("steamcmd");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
-        || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"))
-        || check_command("steam");
-    let homebrew = check_command("brew") || check_path(&PathBuf::from("/opt/homebrew/bin/brew")) || check_path(&PathBuf::from("/usr/local/bin/brew"));
+        || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
+    let homebrew = check_command("brew");
 
-    let all_ok = mono && gptk && rosetta;
+    let all_ok = homebrew && rosetta && xcode_cli && mono && gptk;
 
     json!({
         "ok": true,
@@ -129,7 +126,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "homebrew",
                 "name": "Homebrew",
-                "desc": "Package manager — required to install other dependencies",
+                "desc": "Package manager — required to install Mono, GPTK, and other dependencies",
                 "installed": homebrew,
                 "required": true,
                 "installCmd": "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
@@ -137,55 +134,47 @@ pub fn dependencies() -> Value {
             {
                 "id": "rosetta",
                 "name": "Rosetta 2",
-                "desc": "x86_64 translation layer — needed for GPTK Wine and Celeste",
+                "desc": "x86_64 translation layer — needed for Celeste (x86 mono) and GPTK Wine (Rain World)",
                 "installed": rosetta,
                 "required": true,
                 "installCmd": "softwareupdate --install-rosetta --agree-to-license",
             },
             {
-                "id": "gptk",
-                "name": "Game Porting Toolkit",
-                "desc": "Apple's D3D→Metal translation + Wine. Required for Unity/D3D11 games (Rain World)",
-                "installed": gptk,
+                "id": "xcode_cli",
+                "name": "Xcode Command Line Tools",
+                "desc": "Provides clang compiler for building native shims (gdiplus stub, CSteamworks, FMOD)",
+                "installed": xcode_cli,
                 "required": true,
-                "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
+                "installCmd": "xcode-select --install",
             },
             {
                 "id": "mono",
                 "name": "Mono Runtime (arm64)",
-                "desc": "Required for Terraria and other arm64 FNA games",
+                "desc": "Required for Terraria and other arm64 FNA/XNA games",
                 "installed": mono,
                 "required": true,
                 "installCmd": "brew install mono",
             },
             {
-                "id": "mono_x86",
-                "name": "Mono Runtime (x86_64)",
-                "desc": "Required for Celeste and other x86_64 FNA games with FMOD audio",
-                "installed": mono_x86,
-                "required": false,
-                "installCmd": "script:setup-celeste-deps.sh",
-            },
-            {
-                "id": "sdl3",
-                "name": "SDL3",
-                "desc": "Graphics and input backend for FNA games",
-                "installed": sdl3,
-                "required": false,
-                "installCmd": "brew install sdl3",
+                "id": "gptk",
+                "name": "Game Porting Toolkit (Wine)",
+                "desc": "Apple's D3D→Metal translation + Wine runtime. Required for Unity/D3D games (Rain World)",
+                "installed": gptk,
+                "required": true,
+                "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
             },
             {
                 "id": "steamcmd",
                 "name": "SteamCMD",
-                "desc": "Downloads Windows game depots from Steam",
+                "desc": "Downloads Windows game files from Steam. Required to install games",
                 "installed": steamcmd,
                 "required": false,
                 "installCmd": "script:install-steamcmd.sh",
             },
             {
                 "id": "steam",
-                "name": "Steam Client",
-                "desc": "Native macOS Steam (for library data and steam_api.dylib)",
+                "name": "Steam Client (macOS)",
+                "desc": "Provides native macOS libraries (libsteam_api.dylib, SDL3, FNA3D) needed by Windows FNA games. Install Terraria for macOS to get the best compatibility.",
                 "installed": steam,
                 "required": false,
                 "installCmd": "https://store.steampowered.com/about/",
@@ -297,28 +286,219 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("game directory not found: {}", game_dir.display()).into());
     }
 
-    let runtime_dir = home.join(".metalsharp").join("runtime");
     let marker = game_dir.join(".metalsharp_prepared");
 
-    if marker.exists() {
-        return Ok(json!({"ok": true, "alreadyPrepared": true}));
-    }
-
     let is_dotnet = detect_dotnet_game(&game_dir);
+    let game_type = match appid {
+        105600 => "xna_fna_arm64",
+        504230 => "xna_fna_x86",
+        312520 => "gptk_wine",
+        _ => if is_dotnet { "xna_fna" } else { "native" },
+    };
 
-    if is_dotnet {
-        setup_fna_runtime(&game_dir, &runtime_dir)?;
+    if !marker.exists() {
         let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     }
 
-    std::fs::write(&marker, format!("prepared: is_dotnet={}", is_dotnet))?;
+    match appid {
+        105600 => prepare_terrarria(&game_dir, &home)?,
+        504230 => prepare_celeste(&game_dir, &home)?,
+        312520 => prepare_rain_world(&game_dir, &home)?,
+        _ => {
+            if is_dotnet {
+                setup_fna_runtime(&game_dir, &home)?;
+            }
+        }
+    }
+
+    std::fs::write(&marker, format!("prepared: game_type={}", game_type))?;
 
     Ok(json!({
         "ok": true,
         "alreadyPrepared": false,
-        "gameType": if is_dotnet { "xna_fna" } else { "native" },
+        "gameType": game_type,
         "appid": appid,
     }))
+}
+
+fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let mac_libs = home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx");
+
+    if mac_libs.exists() {
+        for lib in &["libsteam_api.dylib", "libSDL3.0.dylib", "libFAudio.0.dylib", "libFNA3D.0.dylib", "libnfd.dylib"] {
+            let src = mac_libs.join(lib);
+            if src.exists() {
+                let _ = std::fs::copy(&src, game_dir.join(lib));
+            }
+        }
+        let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", game_dir.join("libSDL3.dylib"));
+        let _ = std::os::unix::fs::symlink("libFAudio.0.dylib", game_dir.join("libFAudio.dylib"));
+        let _ = std::os::unix::fs::symlink("libFNA3D.0.dylib", game_dir.join("libFNA3D.dylib"));
+    }
+
+    let gdiplus = game_dir.join("libgdiplus.dylib");
+    if !gdiplus.exists() {
+        let repo = home.join("metalsharp");
+        let stub_src = repo.join("src/fna/terraria/gdiplus_stub.c");
+        if stub_src.exists() {
+            let _ = std::process::Command::new("clang")
+                .args(["-shared", "-arch", "arm64", "-o"])
+                .arg(&gdiplus)
+                .arg(&stub_src)
+                .args(["-install_name", "@loader_path/libgdiplus.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let launcher = game_dir.join("TerrariaLauncher.exe");
+    if !launcher.exists() {
+        let repo = home.join("metalsharp");
+        let src = repo.join("src/fna/terraria/TerrariaLauncher.cs");
+        if src.exists() {
+            let _ = std::process::Command::new("mcs")
+                .args(["-out"])
+                .arg(&launcher)
+                .args(["-target:winexe"])
+                .arg(&src)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let pipeline = game_dir.join("Microsoft.Xna.Framework.Content.Pipeline.dll");
+    if !pipeline.exists() {
+        let repo = home.join("metalsharp");
+        let src = repo.join("src/fna/terraria/ContentPipelineStub.cs");
+        if src.exists() {
+            let _ = std::process::Command::new("mcs")
+                .args(["-out"])
+                .arg(&pipeline)
+                .args(["-target:library"])
+                .arg(&src)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let xact = game_dir.join("Microsoft.Xna.Framework.Xact.dll");
+    if !xact.exists() {
+        let repo = home.join("metalsharp");
+        let src = repo.join("src/fna/terraria/Microsoft.Xna.Framework.Xact.dll");
+        if src.exists() {
+            let _ = std::fs::copy(&src, &xact);
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
+    if !mono_x86.exists() {
+        let _ = crate::launch::run_game_setup_script(504230);
+    }
+
+    let shims_dir = home.join(".metalsharp").join("runtime").join("shims");
+    let _ = std::fs::create_dir_all(&shims_dir);
+
+    let steam_dylib = find_steam_api(home);
+    if let Some(ref src) = steam_dylib {
+        let _ = std::fs::copy(src, game_dir.join("libsteam_api.dylib"));
+        let _ = std::fs::copy(src, shims_dir.join("libsteam_api.dylib"));
+    }
+
+    let csteamworks = game_dir.join("libCSteamworks.dylib");
+    if !csteamworks.exists() {
+        let repo = home.join("metalsharp");
+        let shim_src = repo.join("src/fna/shims/csteamworks_shim.c");
+        let alias_file = repo.join("src/fna/shims/csteamworks_aliases.txt");
+        if shim_src.exists() {
+            let mut cmd = std::process::Command::new("clang");
+            cmd.args(["-shared", "-arch", "x86_64"])
+                .arg("-o").arg(&csteamworks)
+                .arg(&shim_src);
+
+            if alias_file.exists() {
+                if let Ok(aliases) = std::fs::read_to_string(&alias_file) {
+                    let flags: Vec<&str> = aliases.split_whitespace().collect();
+                    if !flags.is_empty() {
+                        cmd.args(["-L"]).arg(game_dir).arg("-lsteam_api");
+                        cmd.args(&flags);
+                    }
+                }
+            }
+
+            let result = cmd
+                .args(["-install_name", "@loader_path/libCSteamworks.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+
+            if result.is_err() || !result.unwrap().success() {
+                let _ = std::process::Command::new("clang")
+                    .args(["-shared", "-arch", "x86_64"])
+                    .arg("-o").arg(&csteamworks)
+                    .arg(&shim_src)
+                    .args(["-undefined", "dynamic_lookup", "-install_name", "@loader_path/libCSteamworks.dylib"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+
+            let _ = std::fs::copy(&csteamworks, shims_dir.join("libCSteamworks.dylib"));
+        }
+    }
+
+    for fmod in &["libfmod.dylib", "libfmodstudio.dylib"] {
+        let dst = game_dir.join(fmod);
+        if !dst.exists() {
+            let stub_name = fmod.replace(".dylib", "_stub.c");
+            let repo = home.join("metalsharp");
+            let stub_src = repo.join("src/fna/shims").join(&stub_name);
+            if stub_src.exists() {
+                let _ = std::process::Command::new("clang")
+                    .args(["-shared", "-arch", "x86_64"])
+                    .arg("-o").arg(&dst)
+                    .arg(&stub_src)
+                    .args(["-undefined", "dynamic_lookup", "-install_name", &format!("@loader_path/{}", fmod)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                let _ = std::fs::copy(&dst, shims_dir.join(fmod));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let wine64 = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64");
+    if wine64.exists() {
+        let prefix = home.join(".metalsharp").join("prefix-gptk");
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        if !system32.exists() {
+            let _ = std::process::Command::new(&wine64)
+                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .arg("wineboot")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    Ok(())
+}
+
+fn find_steam_api(home: &PathBuf) -> Option<PathBuf> {
+    let candidates = vec![
+        home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx/libsteam_api.dylib"),
+        home.join("Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/libsteam_api.dylib"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
 }
 
 fn detect_dotnet_game(game_dir: &PathBuf) -> bool {
@@ -368,8 +548,7 @@ fn has_native_windows_dlls(game_dir: &PathBuf) -> bool {
     false
 }
 
-fn setup_fna_runtime(game_dir: &PathBuf, _runtime_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
+fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let fna_src = home.join("metalsharp").join("src").join("fna");
 
     let fna_build = fna_src.join("FNA").join("bin").join("Release").join("net4.0");
