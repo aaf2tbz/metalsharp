@@ -904,7 +904,7 @@ body {
 .setup-dep-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 16px;
 }
 
@@ -912,7 +912,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: var(--gradient-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -921,6 +921,15 @@ body {
 
 .setup-dep-row.installed {
   opacity: 0.7;
+  border-color: rgba(92, 184, 112, 0.2);
+}
+
+.setup-dep-row.installing {
+  border-color: var(--orange-dim);
+}
+
+.setup-dep-row.install-failed {
+  border-color: rgba(212, 80, 80, 0.3);
 }
 
 .setup-dep-status {
@@ -932,6 +941,10 @@ body {
 
 .setup-dep-row:not(.installed) .setup-dep-status {
   color: var(--error);
+}
+
+.setup-dep-row.installing .setup-dep-status {
+  color: var(--orange);
 }
 
 .setup-dep-info {
@@ -947,10 +960,47 @@ body {
   font-size: 12px;
   color: var(--text-dim);
   margin-top: 2px;
+  line-height: 1.4;
 }
 
 .setup-dep-badge {
   flex-shrink: 0;
+}
+
+.setup-dep-install-btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--orange-dim);
+  background: rgba(232, 148, 58, 0.1);
+  color: var(--orange-bright);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.setup-dep-install-btn:hover:not(:disabled) {
+  background: rgba(232, 148, 58, 0.2);
+  border-color: var(--orange);
+}
+
+.setup-dep-install-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.setup-dep-install-btn.installing {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.setup-dep-error {
+  font-size: 11px;
+  color: var(--error);
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 .setup-complete {
