@@ -1,4 +1,12 @@
+@font-face {
+  font-family: "PressStart2P";
+  src: url("pressstart2p.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
 :root {
+  --font-main: "PressStart2P", monospace;
   --bg-deep: #1a1118;
   --bg-surface: #231a20;
   --bg-card: #2d2228;
@@ -36,21 +44,26 @@
 }
 
 body {
-  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: var(--font-main);
   background: var(--bg-deep);
   color: var(--text-primary);
   overflow: hidden;
   height: 100vh;
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: none;
+  font-size: 13px;
+  line-height: 2;
 }
 
 #app {
   display: flex;
   height: 100vh;
   position: relative;
-  padding: 4px;
-  outline: 2px solid rgba(140, 120, 190, 0.25);
-  outline-offset: -4px;
+  border: 5px solid transparent;
+  border-radius: 12px;
+  overflow: hidden;
+  background-image: linear-gradient(var(--bg-deep), var(--bg-deep)), linear-gradient(135deg, #e8943a, #9b7ec8, #5cb870);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
 }
 
 .drag-bar {
@@ -58,9 +71,10 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  height: 12px;
+  height: 42px;
   -webkit-app-region: drag;
   z-index: 100;
+  pointer-events: auto;
 }
 
 .sidebar {
@@ -90,7 +104,7 @@ body {
 }
 
 .logo-text {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   background: var(--gradient-accent);
   -webkit-background-clip: text;
@@ -109,7 +123,7 @@ body {
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
@@ -154,7 +168,7 @@ body {
 }
 
 .status-text {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 
@@ -178,13 +192,13 @@ body {
 }
 
 .library-header h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.5px;
 }
 
 .library-header .subtitle {
-  font-size: 14px;
+  font-size: 11px;
   color: var(--text-dim);
   margin-top: 4px;
 }
@@ -199,7 +213,7 @@ body {
   padding: 9px 20px;
   border-radius: var(--radius-sm);
   border: none;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
@@ -243,7 +257,7 @@ body {
   background: var(--gradient-accent);
   color: #1a1118;
   padding: 10px 28px;
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 700;
   border-radius: var(--radius-md);
 }
@@ -260,7 +274,7 @@ body {
 
 .btn-sm {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: 9px;
 }
 
 /* Game grid */
@@ -273,7 +287,7 @@ body {
 /* Game card */
 .game-card {
   background: var(--gradient-card);
-  border: 1px solid var(--border);
+  border: 2px solid rgba(196, 168, 232, 0.45);
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition: all var(--transition);
@@ -281,8 +295,8 @@ body {
 }
 
 .game-card:hover {
-  border-color: var(--orange-dim);
-  box-shadow: var(--shadow-card), var(--shadow-glow-orange);
+  border-color: rgba(240, 168, 78, 0.7);
+  box-shadow: var(--shadow-card), 0 0 24px rgba(155, 126, 200, 0.2);
   transform: translateY(-2px);
 }
 
@@ -332,7 +346,7 @@ body {
 }
 
 .game-card-title {
-  font-size: 16px;
+  font-size: 10px;
   font-weight: 700;
   margin-bottom: 6px;
   letter-spacing: -0.2px;
@@ -342,7 +356,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: 8px;
   color: var(--text-dim);
   margin-bottom: 14px;
 }
@@ -355,7 +369,7 @@ body {
   background: rgba(232, 148, 58, 0.12);
   color: var(--orange);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -388,20 +402,20 @@ body {
 }
 
 .empty-state-icon {
-  font-size: 48px;
+  font-size: 32px;
   color: var(--text-dim);
   margin-bottom: 16px;
 }
 
 .empty-state h2 {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   margin-bottom: 8px;
 }
 
 .empty-state p {
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 11px;
   max-width: 400px;
   line-height: 1.5;
 }
@@ -412,7 +426,7 @@ body {
 }
 
 .settings-section h2 {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   margin-bottom: 16px;
   padding-bottom: 8px;
@@ -432,18 +446,18 @@ body {
 }
 
 .settings-label {
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .settings-desc {
-  font-size: 12px;
+  font-size: 9px;
   color: var(--text-dim);
   margin-top: 2px;
 }
 
 .settings-value {
-  font-size: 13px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -454,7 +468,7 @@ body {
 }
 
 .store-header h1 {
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 700;
   background: var(--gradient-accent);
   -webkit-background-clip: text;
@@ -464,7 +478,7 @@ body {
 .store-header p {
   color: var(--text-dim);
   margin-top: 8px;
-  font-size: 15px;
+  font-size: 11px;
 }
 
 .download-form {
@@ -481,7 +495,7 @@ body {
   border-radius: var(--radius-sm);
   padding: 10px 16px;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 11px;
   outline: none;
   transition: border-color var(--transition);
 }
@@ -503,7 +517,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 14px 20px;
-  font-size: 13px;
+  font-size: 10px;
   box-shadow: var(--shadow-card);
   z-index: 1000;
   animation: slideUp 0.3s ease;
@@ -560,8 +574,8 @@ body {
 
 /* Running game highlight */
 .game-card.running {
-  border-color: var(--orange);
-  box-shadow: var(--shadow-glow-orange);
+  border-color: rgba(232, 148, 58, 0.6);
+  box-shadow: var(--shadow-glow-orange), 0 0 24px rgba(155, 126, 200, 0.15);
 }
 
 .game-card.running .game-card-banner {
@@ -574,7 +588,7 @@ body {
   align-items: center;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.3px;
 }
@@ -616,13 +630,13 @@ body {
 
 .error-dialog-content h3 {
   color: var(--error);
-  font-size: 18px;
+  font-size: 14px;
   margin-bottom: 12px;
 }
 
 .error-dialog-content p {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1.5;
   margin-bottom: 20px;
 }
@@ -633,7 +647,7 @@ body {
   border: none;
   border-radius: var(--radius-sm);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   transition: var(--transition);
@@ -650,7 +664,7 @@ body {
   border: none;
   border-radius: var(--radius-sm);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   transition: var(--transition);
@@ -678,7 +692,7 @@ body {
 }
 
 .download-pct {
-  font-size: 12px;
+  font-size: 9px;
   color: var(--orange-bright);
   font-weight: 600;
 }
@@ -734,7 +748,7 @@ body {
 }
 
 .setup-step-label {
-  font-size: 10px;
+  font-size: 8px;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -782,7 +796,7 @@ body {
 }
 
 .setup-hero-title {
-  font-size: 36px;
+  font-size: 26px;
   font-weight: 800;
   background: var(--gradient-accent);
   -webkit-background-clip: text;
@@ -791,7 +805,7 @@ body {
 }
 
 .setup-hero-sub {
-  font-size: 16px;
+  font-size: 11px;
   color: var(--text-secondary);
   max-width: 500px;
   line-height: 1.6;
@@ -829,13 +843,13 @@ body {
 }
 
 .setup-feature-title {
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 600;
   margin-bottom: 2px;
 }
 
 .setup-feature-desc {
-  font-size: 13px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -844,13 +858,13 @@ body {
 }
 
 .setup-section-header h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
   margin-bottom: 8px;
 }
 
 .setup-section-header p {
-  font-size: 14px;
+  font-size: 11px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -875,7 +889,7 @@ body {
 }
 
 .setup-label {
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -886,7 +900,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
-  font-size: 14px;
+  font-size: 11px;
   outline: none;
   transition: border-color var(--transition);
 }
@@ -896,7 +910,7 @@ body {
 }
 
 .setup-hint {
-  font-size: 12px;
+  font-size: 9px;
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -952,12 +966,12 @@ body {
 }
 
 .setup-dep-name {
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .setup-dep-desc {
-  font-size: 12px;
+  font-size: 9px;
   color: var(--text-dim);
   margin-top: 2px;
   line-height: 1.4;
@@ -973,7 +987,7 @@ body {
   border: 1px solid var(--orange-dim);
   background: rgba(232, 148, 58, 0.1);
   color: var(--orange-bright);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
@@ -997,7 +1011,7 @@ body {
 }
 
 .setup-dep-error {
-  font-size: 11px;
+  font-size: 8px;
   color: var(--error);
   margin-top: 4px;
   line-height: 1.4;
@@ -1022,13 +1036,13 @@ body {
 }
 
 .setup-complete h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
   margin-bottom: 12px;
 }
 
 .setup-complete p {
-  font-size: 15px;
+  font-size: 11px;
   color: var(--text-secondary);
   max-width: 480px;
   margin: 0 auto;
@@ -1051,7 +1065,7 @@ body {
   background: var(--gradient-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 10px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -1062,7 +1076,7 @@ body {
 
 .btn-lg {
   padding: 14px 36px;
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 700;
   border-radius: var(--radius-md);
 }
@@ -1073,7 +1087,7 @@ body {
   border: none;
   border-radius: var(--radius-sm);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   transition: var(--transition);

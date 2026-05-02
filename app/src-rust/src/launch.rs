@@ -10,6 +10,155 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
     }
 }
 
+pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+
+    if !game_dir.exists() {
+        return Err(format!("game directory not found: {}", game_dir.display()).into());
+    }
+
+    match appid {
+        504230 => {
+            let exe = game_dir.join("Celeste.exe");
+            let pid = launch_fna_x86(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "xna_fna_x86"))
+        }
+        105600 => {
+            let exe = game_dir.join("TerrariaLauncher.exe");
+            let pid = launch_fna_arm64(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "xna_fna_arm64"))
+        }
+        312520 => {
+            let exe = game_dir.join("RainWorld.exe");
+            let pid = launch_gptk(&exe.to_string_lossy())?;
+            Ok((pid, "gptk_wine"))
+        }
+        _ => {
+            let exe = resolve_game_exe_fallback(&game_dir);
+            let game_type = detect_game_type(&game_dir);
+            let pid = launch(&exe, game_type)?;
+            Ok((pid, game_type))
+        }
+    }
+}
+
+fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
+
+    if !mono_x86.exists() {
+        return Err("x86_64 mono not found — run setup-celeste-deps.sh first".into());
+    }
+
+    let mono_config = home.join("metalsharp").join("configs").join("celeste-x86-mono.config");
+    let dyld = format!(
+        "{}/lib:/opt/homebrew/lib:.:{}/shims",
+        home.join(".metalsharp").join("runtime").join("mono-x86").join("lib").to_string_lossy(),
+        home.join(".metalsharp").to_string_lossy()
+    );
+    let mono_path = home.join(".metalsharp").join("runtime").join("mono-x86").join("lib").join("mono").join("4.5");
+
+    let child = Command::new("arch")
+        .args(["-x86_64", &mono_x86.to_string_lossy()])
+        .current_dir(game_dir)
+        .env("DYLD_LIBRARY_PATH", &dyld)
+        .env("MONO_CONFIG", mono_config.to_string_lossy().to_string())
+        .env("MONO_PATH", mono_path.to_string_lossy().to_string())
+        .env("FNA3D_DRIVER", "OpenGL")
+        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let mono_config = home.join("metalsharp").join("configs").join("terraria-mono.config");
+    let dyld = format!(
+        "/opt/homebrew/lib:{}",
+        game_dir.to_string_lossy()
+    );
+
+    let child = Command::new("mono")
+        .current_dir(game_dir)
+        .env("DYLD_LIBRARY_PATH", &dyld)
+        .env("MONO_CONFIG", mono_config.to_string_lossy().to_string())
+        .env("FNA3D_DRIVER", "OpenGL")
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine64 = PathBuf::from(
+        "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
+    );
+
+    if !wine64.exists() {
+        return Err("GPTK wine64 not found — install with: brew install --cask gcenx/wine/game-porting-toolkit".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-gptk");
+    let game_dir = PathBuf::from(exe_path).parent().ok_or("no parent dir")?.to_path_buf();
+
+    let child = Command::new(&wine64)
+        .current_dir(&game_dir)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn resolve_game_exe_fallback(game_dir: &PathBuf) -> String {
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".exe")
+                && !name.contains("setup")
+                && !name.contains("redist")
+                && !name.contains("uninstall")
+                && !name.contains("vcredist")
+                && !name.contains("installer")
+                && !name.contains("crashhandler")
+            {
+                return entry.path().to_string_lossy().to_string();
+            }
+        }
+    }
+    game_dir.to_string_lossy().to_string()
+}
+
+fn detect_game_type(game_dir: &PathBuf) -> &'static str {
+    let marker = game_dir.join(".metalsharp_prepared");
+    if let Ok(content) = std::fs::read_to_string(&marker) {
+        if content.contains("is_dotnet=true") {
+            return "xna_fna";
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".exe") && !name.contains("setup") {
+                let wine = PathBuf::from(
+                    "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
+                );
+                if wine.exists() {
+                    return "gptk_wine";
+                }
+                return "native";
+            }
+        }
+    }
+
+    "native"
+}
+
 fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = find_wine()?;
