@@ -118,22 +118,19 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
 
         let lower = line.to_lowercase();
 
-        if lower.contains("logged in ok") || lower.contains("logged in") && lower.contains("ok") {
+        if lower.contains("logged in ok") || lower.contains("waiting for user info...ok") {
             logged_in = true;
             break;
         }
 
-        if lower.contains("invalid password") || lower.contains("invalid login") {
+        if lower.contains("invalid password") {
             login_failed = true;
-            failure_reason = if lower.contains("invalid password") {
-                "Invalid password".into()
-            } else {
-                "Invalid login credentials".into()
-            };
+            failure_reason = "Invalid password".into();
             break;
         }
-
-        if lower.contains("steam>") {
+        if lower.contains("invalid login") {
+            login_failed = true;
+            failure_reason = "Invalid login credentials".into();
             break;
         }
     }
@@ -146,7 +143,8 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
 
     let logged_in = logged_in
         || combined.contains("Logged in OK")
-        || combined.contains("Logged in user");
+        || combined.contains("Logged in user")
+        || combined.contains("Waiting for user info...OK");
 
     let login_failed = login_failed
         || combined.contains("Invalid Password")
