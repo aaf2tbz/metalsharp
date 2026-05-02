@@ -27,3 +27,4 @@ node_modules/
 app/src-rust/target/
 src/fna/FNA/
 src/fna/FNA3D/
+build-x86/
