@@ -1,42 +1,43 @@
 # MetalSharp
 
-Run Windows games on your Mac. Natively.
+Run Windows games on macOS. Natively.
 
-No virtual machine. No Windows license. No Vulkan translation layer. MetalSharp takes Direct3D calls from Windows games and translates them directly to Metal — Apple's native GPU framework. Two hops. That's it.
+MetalSharp translates Direct3D calls into Metal — Apple's native GPU framework. No VM, no Windows license, no Vulkan middleman.
 
 ```
-Everyone else:   Game → D3D → DXVK → Vulkan → MoltenVK → Metal → GPU   (4 hops)
-MetalSharp:      Game → D3D → MetalSharp → Metal → GPU                 (2 hops)
+Current stack:  Game → D3D → DXVK → Vulkan → MoltenVK → Metal → GPU  (4 hops)
+MetalSharp:     Game → D3D → MetalSharp → Metal → GPU                (2 hops)
 ```
 
 ---
 
-## What Works
+## Supported Games
 
-MetalSharp currently supports two paths for running Windows games on macOS:
+| Game | Engine | Runtime | Audio | Steam | Verified |
+|------|--------|---------|-------|-------|----------|
+| **Celeste** | XNA/FNA | Mono x86_64 + SDL3 Metal | FMOD 1.10 | Working | M4, macOS 26 |
+| **Terraria** | XNA/FNA | Mono arm64 + SDL3 Metal | FAudio | Working | M4, macOS 26 |
+| **Rain World** | Unity Mono | GPTK Wine + D3DMetal | Working | Working | M4, macOS 26 |
 
-**Native D3D → Metal** — Windows games that use Direct3D 9, 11, or 12 run through MetalSharp's translation layer. D3D calls are intercepted and mapped to Metal API calls. Shaders are compiled to Metal Shading Language. Works with both the native PE loader and Wine.
-
-**XNA/FNA** — Games built on Microsoft's XNA Framework (Celeste, Terraria, Stardew Valley, and hundreds more) run natively via FNA + SDL3 + Metal. No Wine needed. Audio, input, and Steam integration all work. [Celeste runs natively on Apple Silicon with controller support.](src/fna/README.md)
+| Game Type | Status | Method |
+|-----------|--------|--------|
+| XNA/FNA | Working | Native Mono + FNA3D + SDL3 Metal |
+| Unity D3D11 | Working | Apple Game Porting Toolkit (D3DMetal) |
+| D3D9 | In progress | MojoShader SM2.0/SM3.0 → MSL |
+| D3D11 native | In progress | MetalSharp translation layer |
+| D3D12 | In progress | Command queues, descriptor heaps, PSO |
 
 ---
 
 ## Install
 
-### DMG Installer (Recommended)
+### DMG (recommended)
 
-1. Download `MetalSharp.dmg`
-2. Double-click to mount
-3. Drag **MetalSharp** to **Applications**
-4. Launch — the setup wizard walks you through everything
+1. Download `MetalSharp.dmg` from [Releases](https://github.com/aaf2tbz/metalsharp/releases)
+2. Mount → drag to Applications → launch
+3. Setup wizard handles the rest
 
-The setup wizard handles:
-- Installing dependencies (Mono, SDL3)
-- Choosing a device name for persistent Steam sessions
-- Connecting your Steam account (API key + SteamCMD login)
-- Everything else happens automatically from there
-
-### Manual Install
+### From source
 
 ```bash
 git clone https://github.com/aaf2tbz/metalsharp.git
@@ -44,114 +45,124 @@ cd metalsharp
 ./install.sh
 ```
 
-Then launch a game:
-
-```bash
-./build/metalsharp path/to/game.exe
-```
-
-### Desktop App (Development)
+### Electron app (development)
 
 ```bash
 cd metalsharp/app
 npm install
-npm run build:all
-npm run start
+npm run build:all    # builds Rust backend + TypeScript
+npm run start        # launches Electron app
 ```
 
-### Build a DMG
+### Build a DMG locally
 
 ```bash
-./tools/dmg/build-dmg.sh
+cd metalsharp/app
+npm run dist -- --mac dmg
 ```
 
 ---
 
-## First Launch
+## Setup Wizard
 
-When you open MetalSharp for the first time, a setup wizard guides you through:
+First launch walks you through:
 
-1. **Welcome** — what MetalSharp does and how it works
-2. **Dependencies** — checks for Mono, SDL3, SteamCMD, and installs what's missing
-3. **Device Name** — auto-generates a memorable name (e.g. `Storm-Falcon`) or pick your own. This identifies your machine to Steam so you don't need to re-login every session
-4. **Steam API Key** — free key from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) to load your full game library
-5. **Steam Login** — your Steam credentials (sent only to Steam, never stored)
-6. **Done** — start downloading and playing
+1. **Welcome** — what MetalSharp does
+2. **Dependencies** — installs what's needed:
+   - Homebrew (package manager)
+   - Rosetta 2 (x86_64 translation for GPTK and Celeste)
+   - Game Porting Toolkit (D3D→Metal for Unity games)
+   - Mono arm64 (Terraria and arm64 FNA games)
+   - Mono x86_64 (Celeste and x86 FMOD games)
+   - SDL3 (graphics/input backend)
+   - SteamCMD (downloads Windows game depots)
+3. **Device Name** — auto-generated (e.g. `Storm-Falcon`) or custom
+4. **Steam API Key** — free from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)
+5. **Steam Login** — credentials sent only to Steam servers
+6. **Done**
 
 ---
 
 ## Playing Games
 
-### From Your Steam Library
+### From the app
 
-1. Open MetalSharp
-2. Browse your full Steam library with cover art
-3. Click **Install** on any game — it downloads via SteamCMD
-4. Click **Play** — MetalSharp auto-configures the runtime on first launch
+1. Open MetalSharp → browse your Steam library
+2. Click **Install** — downloads via SteamCMD
+3. Click **Play** — auto-detects engine, configures runtime, launches
 
-### Auto Runtime Setup
-
-When you launch a game for the first time, MetalSharp detects what kind of game it is and sets everything up:
-
-- **XNA games** — copies FNA assemblies, FNA3D (SDL3 Metal backend), SDL3, Steamworks shim, FMOD stubs, and DllMap configs
-- **D3D games** — configures Wine prefix with DLL overrides and Metal translation shims
-- Subsequent launches skip setup (tracked via `.metalsharp_prepared` marker)
-
-### What's Supported
-
-| Game | Engine | Method | Status | Notes |
-|------|--------|--------|--------|-------|
-| Celeste | XNA/FNA | Native Mono (x86_64) + SDL3 Metal | **Working** | Full gameplay, audio (FMOD 1.10), controller, Steam |
-| Terraria | XNA/FNA | Native Mono (arm64) + SDL3 Metal | **Working** | Full gameplay, audio (FAudio), controller, Steam |
-| Rain World | Unity Mono | GPTK Wine + D3D→Metal | **Working** | Full gameplay via Apple Game Porting Toolkit |
-
-| Game Type | Status | Notes |
-|-----------|--------|-------|
-| XNA/FNA | Working | Native Metal rendering via FNA3D + SDL3 |
-| Unity D3D11 | Working | Via Apple Game Porting Toolkit (D3DMetal) |
-| D3D9 | In Progress | MojoShader SM2.0/SM3.0 → MSL translation working |
-| D3D11 | In Progress | MetalSharp native translation layer |
-| D3D12 | In Progress | Command queues, descriptor heaps, pipeline state |
-
-### Launching Games
+### From the command line
 
 ```bash
 # XNA/FNA games (native Metal)
-./scripts/setup-celeste-deps.sh    # one-time setup
+./scripts/setup-celeste-deps.sh    # one-time
 ./scripts/launch-celeste.sh
 
-./scripts/setup-terraria-deps.sh   # one-time setup
+./scripts/setup-terraria-deps.sh   # one-time
 ./scripts/launch-terraria.sh
 
-# Unity/D3D11 games (via Game Porting Toolkit)
-./scripts/setup-rainworld-deps.sh  # one-time setup
+# Unity/D3D11 games (Game Porting Toolkit)
+./scripts/setup-rainworld-deps.sh  # one-time
 ./scripts/launch-rainworld.sh
 ```
+
+### How auto-launch works
+
+When you click Play, the Rust backend detects the game by Steam App ID and picks the right runtime:
+
+| App ID | Game | Launch method |
+|--------|------|---------------|
+| 504230 | Celeste | `arch -x86_64` mono-x86 + FMOD + SDL3 x86 |
+| 105600 | Terraria | arm64 mono + FAudio + SDL3 arm64 |
+| 312520 | Rain World | GPTK wine64 + prefix-gptk |
+| other | auto | detect via `.metalsharp_prepared` marker |
 
 ---
 
 ## How It Works
 
-### D3D → Metal Path
-
-1. **Load the game.** The PE loader parses the Windows executable, maps sections, processes relocations, resolves imports.
-
-2. **Intercept Windows calls.** 400+ Win32 API shims across 14+ DLLs delegate to native macOS APIs. File I/O → POSIX. Windows → NSWindow. Networking → BSD sockets. The game doesn't know it's not on Windows.
-
-3. **Translate D3D to Metal.** D3D calls map directly to Metal. Shaders compile via Apple IRConverter or DXBC→MSL fallback. Compiled shaders cache to disk for fast reloads.
-
-4. **Render.** Metal drives your GPU.
-
-### XNA/FNA Path
-
-1. Game `.exe` is .NET/Mono — runs directly on macOS Mono runtime (arm64)
-2. FNA replaces XNA assemblies — same API, different backend
-3. FNA3D renders via SDL3's GPU API → Metal
-4. Native shims bridge Steamworks.NET and FMOD to macOS dylibs
-5. Controller input via SDL3 → GameController
+### D3D → Metal path
 
 ```
-Celeste.exe (Mono) → FNA → FNA3D → SDL3 → Metal → Apple M4
+Game (.exe)
+  → PE loader (sections, relocations, imports)
+  → 400+ Win32 API shims (POSIX, NSWindow, BSD sockets)
+  → D3D shims (d3d11.dll, dxgi.dll) → Metal API calls
+  → Shader compilation (DXBC → MSL via MojoShader / Apple IRConverter)
+  → Metal GPU
+```
+
+### XNA/FNA path
+
+```
+Game.exe (Mono)
+  → FNA assemblies replace XNA
+  → FNA3D → SDL3 → Metal
+  → CSteamworks shim → libsteam_api
+  → FMOD stubs / FAudio for audio
+  → Metal GPU
+```
+
+---
+
+## Directory Layout
+
+```
+~/.metalsharp/
+├── games/              Downloaded games (by Steam App ID)
+│   ├── 504230/         Celeste
+│   ├── 105600/         Terraria
+│   └── 312520/         Rain World
+├── runtime/
+│   ├── fna/            FNA assemblies for XNA games
+│   ├── shims/          Native dylibs (FNA3D, SDL3, CSteamworks, FMOD stubs)
+│   └── mono-x86/       x86_64 Mono runtime (Celeste)
+├── prefix-gptk/        Wine prefix for GPTK games (Rain World)
+├── cache/              Steam config, owned games cache
+├── logs/               Runtime logs
+├── profiles/           Per-game config overrides
+├── config.json         Global settings
+└── setup.json          Setup wizard state
 ```
 
 ---
@@ -161,9 +172,9 @@ Celeste.exe (Mono) → FNA → FNA3D → SDL3 → Metal → Apple M4
 | Setting | Options | Description |
 |---------|---------|-------------|
 | Resolution | 720p – 4K | Internal render resolution |
-| Window Mode | Fullscreen, Borderless, Windowed | Game window appearance |
+| Window Mode | Fullscreen / Borderless / Windowed | Game window style |
 | Upscaling | Off – Ultra | MetalFX spatial upscaling |
-| Shader Cache | On / Off | Persist compiled shaders |
+| Shader Cache | On / Off | Persist compiled shaders to disk |
 | Pipeline Cache | On / Off | Persist pipeline state objects |
 | Launch Mode | Native PE / Wine | How executables load |
 
@@ -171,34 +182,15 @@ Per-game profiles in `~/.metalsharp/profiles/`.
 
 ---
 
-## Directory Layout
+## Tech Stack
 
-```
-~/.metalsharp/
-├── games/           Downloaded games (by Steam App ID)
-├── runtime/
-│   ├── fna/         FNA assemblies (.dll) for XNA games
-│   └── shims/       Native dylibs (FNA3D, SDL3, CSteamworks, FMOD stubs)
-├── cache/           Steam config, owned games cache
-├── logs/            Runtime logs
-├── prefix/          Wine prefix (for D3D games via Wine)
-├── profiles/        Per-game config overrides
-├── config.json      Global settings
-└── setup.json       Setup wizard state
-```
-
----
-
-## What's Inside
-
-- **Native PE Loader** — Windows x86_64 executables on macOS. Relocations, imports, TLS, SEH, CFG.
-- **D3D9/11/12 → Metal** — Full device/context backed by Metal. MojoShader for SM2.0/SM3.0 → MSL.
-- **400+ Win32 Shims** — kernel32, user32, gdi32, ws2_32, advapi32, ole32, ntdll, 51 API sets.
-- **XNA/FNA Support** — FNA + SDL3 + Metal for XNA games. CSteamworks shim. FMOD stubs.
-- **Audio** — XAudio2 → CoreAudio. FMOD stubs for games without arm64 builds.
-- **Input** — XInput → GameController. Full controller support with rumble.
-- **Performance** — Shader cache, pipeline cache, MetalFX upscaling, frame pacing.
-- **Desktop App** — Electron + Rust backend. Setup wizard, library browser, one-click install/play.
+| Component | Language | What it does |
+|-----------|----------|--------------|
+| D3D→Metal engine | C++20 / ObjC++ | D3D9/11/12 translation, shader compilation |
+| Native PE loader | C++20 | Windows x86_64 executable loading on macOS |
+| Win32 shims | C++20 | 400+ API shims across 14+ DLLs |
+| Rust backend | Rust | HTTP API (tiny_http), game launch, dep management |
+| Electron app | TypeScript | Desktop UI, setup wizard, library browser |
 
 ~35K lines C++/ObjC++, ~1.5K lines TypeScript, ~1.2K lines Rust. MIT licensed.
 
@@ -206,11 +198,14 @@ Per-game profiles in `~/.metalsharp/profiles/`.
 
 ## Documentation
 
+- [Architecture](docs/ARCHITECTURE.md)
 - [User Guide](docs/USER-GUIDE.md)
-- [Compatibility Guide](docs/COMPATIBILITY.md)
+- [Compatibility](docs/COMPATIBILITY.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Developer Guide](docs/DEVELOPER-GUIDE.md)
-- [Architecture](docs/ARCHITECTURE.md)
+- [PE Loader](docs/PE-LOADER.md)
+- [Win32 Shims](docs/WIN32-SHIMS.md)
+- [Electron App](docs/ELECTRON-APP.md)
 - [FNA Integration](src/fna/README.md)
 - [Roadmap](ROADMAP.md)
 
