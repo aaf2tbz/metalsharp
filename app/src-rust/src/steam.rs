@@ -83,24 +83,66 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
     let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
     let home = dirs::home_dir().ok_or("no home dir")?;
 
-    let output = Command::new(&steamcmd)
-        .args([
-            "+login",
-            username,
-            password,
-            "+quit",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()?;
+    use std::io::{BufRead, Write};
+    use std::process::{Stdio};
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let combined = format!("{}{}", stdout, stderr);
+    let mut child = Command::new(&steamcmd)
+        .args(["+login", username, password, "+quit"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-    let success = combined.contains("Logged in OK")
-        || combined.contains("Steam>quit")
-        || (output.status.success() && !combined.contains("Invalid Password") && !combined.contains("Invalid Login"));
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+
+    let stderr_handle = std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stderr);
+        let mut combined = String::new();
+        for line in reader.lines().flatten() {
+            combined.push_str(&line);
+            combined.push('\n');
+        }
+        combined
+    });
+
+    let reader = std::io::BufReader::new(stdout);
+    let mut stdout_combined = String::new();
+    let mut logged_in = false;
+    let mut steam_guard_prompted = false;
+
+    for line in reader.lines().flatten() {
+        stdout_combined.push_str(&line);
+        stdout_combined.push('\n');
+
+        let lower = line.to_lowercase();
+
+        if lower.contains("steam Guard") || lower.contains("verification") || lower.contains("check your email") || lower.contains("enter the code") || lower.contains("2-factor") {
+            steam_guard_prompted = true;
+            let _ = stdin.write_all("\n".as_bytes());
+        }
+
+        if lower.contains("logged in ok") || lower.contains("logged in") && lower.contains("ok") {
+            logged_in = true;
+            break;
+        }
+
+        if lower.starts_with("steam>") {
+            break;
+        }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let stderr_combined = stderr_handle.join().unwrap_or_default();
+    let combined = format!("{}{}", stdout_combined, stderr_combined);
+
+    let success = logged_in
+        || combined.contains("Logged in OK")
+        || (combined.contains("Steam>quit") && !combined.contains("Invalid Password"))
+        || (combined.contains("Steam>") && combined.contains("quit") && !combined.contains("Invalid"));
 
     if success {
         let config_dir = home.join(".metalsharp/cache");
@@ -131,6 +173,8 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
             "Invalid password"
         } else if combined.contains("Invalid Login") {
             "Invalid login credentials"
+        } else if steam_guard_prompted {
+            "Steam Guard verification timed out — try again and approve the prompt quickly"
         } else {
             "Login failed — check your credentials"
         };
