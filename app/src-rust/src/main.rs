@@ -252,6 +252,26 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 Err(e) => { app_log(&format!("Launch failed: {}", e)); resp(500, json!({"ok": false, "error": e.to_string()})) }
             }
         }
+        (Method::Post, "/game/launch-auto") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    app_log(&format!("Auto-launching game: appid {}", id));
+                    match launch::launch_auto(id as u32) {
+                        Ok((pid, game_type)) => {
+                            app_log(&format!("Launched appid {} as {} (pid {})", id, game_type, pid));
+                            resp(200, json!({"ok": true, "pid": pid, "gameType": game_type, "appid": id}))
+                        }
+                        Err(e) => {
+                            app_log(&format!("Auto-launch failed: {}", e));
+                            resp(500, json!({"ok": false, "error": e.to_string()}))
+                        }
+                    }
+                }
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        }
         (Method::Post, "/kill") => {
             let body = read_body(req);
             let pid = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;

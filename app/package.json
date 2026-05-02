@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.1.5",
+  "version": "0.2.3",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -10,7 +10,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "build": "tsc && npm run copy-renderer-assets",
-    "copy-renderer-assets": "mkdir -p dist/renderer && cp src/renderer/index.html src/renderer/styles.css src/renderer/icon.png dist/renderer/",
+    "copy-renderer-assets": "mkdir -p dist/renderer && cp src/renderer/index.html src/renderer/styles.css src/renderer/icon.png src/renderer/pressstart2p.ttf dist/renderer/",
     "start": "npm run build && electron .",
     "dev": "tsc -w & electron .",
     "rust:build": "cd src-rust && cargo build --release",

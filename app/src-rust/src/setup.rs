@@ -105,6 +105,11 @@ pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
+    let mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
+    let rosetta = check_rosetta();
+    let gptk = check_path(&PathBuf::from(
+        "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
+    ));
     let sdl3 = check_dylib(&home, "libSDL3.dylib")
         || check_framework("SDL3")
         || check_brew("sdl3");
@@ -115,26 +120,58 @@ pub fn dependencies() -> Value {
         || check_command("steam");
     let homebrew = check_command("brew") || check_path(&PathBuf::from("/opt/homebrew/bin/brew")) || check_path(&PathBuf::from("/usr/local/bin/brew"));
 
-    let all_ok = mono && sdl3;
+    let all_ok = mono && gptk && rosetta;
 
     json!({
         "ok": true,
         "allInstalled": all_ok,
         "dependencies": [
             {
+                "id": "homebrew",
+                "name": "Homebrew",
+                "desc": "Package manager — required to install other dependencies",
+                "installed": homebrew,
+                "required": true,
+                "installCmd": "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
+            },
+            {
+                "id": "rosetta",
+                "name": "Rosetta 2",
+                "desc": "x86_64 translation layer — needed for GPTK Wine and Celeste",
+                "installed": rosetta,
+                "required": true,
+                "installCmd": "softwareupdate --install-rosetta --agree-to-license",
+            },
+            {
+                "id": "gptk",
+                "name": "Game Porting Toolkit",
+                "desc": "Apple's D3D→Metal translation + Wine. Required for Unity/D3D11 games (Rain World)",
+                "installed": gptk,
+                "required": true,
+                "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
+            },
+            {
                 "id": "mono",
-                "name": "Mono Runtime",
-                "desc": "Required for XNA/FNA games (.NET Framework)",
+                "name": "Mono Runtime (arm64)",
+                "desc": "Required for Terraria and other arm64 FNA games",
                 "installed": mono,
                 "required": true,
                 "installCmd": "brew install mono",
+            },
+            {
+                "id": "mono_x86",
+                "name": "Mono Runtime (x86_64)",
+                "desc": "Required for Celeste and other x86_64 FNA games with FMOD audio",
+                "installed": mono_x86,
+                "required": false,
+                "installCmd": "script:setup-celeste-deps.sh",
             },
             {
                 "id": "sdl3",
                 "name": "SDL3",
                 "desc": "Graphics and input backend for FNA games",
                 "installed": sdl3,
-                "required": true,
+                "required": false,
                 "installCmd": "brew install sdl3",
             },
             {
@@ -143,23 +180,15 @@ pub fn dependencies() -> Value {
                 "desc": "Downloads Windows game depots from Steam",
                 "installed": steamcmd,
                 "required": false,
-                "installCmd": "Auto-installed by MetalSharp on first use",
+                "installCmd": "script:install-steamcmd.sh",
             },
             {
                 "id": "steam",
                 "name": "Steam Client",
-                "desc": "Native macOS Steam (for library data)",
+                "desc": "Native macOS Steam (for library data and steam_api.dylib)",
                 "installed": steam,
                 "required": false,
                 "installCmd": "https://store.steampowered.com/about/",
-            },
-            {
-                "id": "homebrew",
-                "name": "Homebrew",
-                "desc": "Package manager for installing dependencies",
-                "installed": homebrew,
-                "required": false,
-                "installCmd": "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
             },
         ],
     })
@@ -507,4 +536,14 @@ fn check_brew(formula: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn check_rosetta() -> bool {
+    PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
+        || std::process::Command::new("pgrep")
+            .arg("-q")
+            .arg("oahd")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
 }
