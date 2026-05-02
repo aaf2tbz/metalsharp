@@ -99,12 +99,34 @@ When you launch a game for the first time, MetalSharp detects what kind of game 
 
 ### What's Supported
 
+| Game | Engine | Method | Status | Notes |
+|------|--------|--------|--------|-------|
+| Celeste | XNA/FNA | Native Mono (x86_64) + SDL3 Metal | **Working** | Full gameplay, audio (FMOD 1.10), controller, Steam |
+| Terraria | XNA/FNA | Native Mono (arm64) + SDL3 Metal | **Working** | Full gameplay, audio (FAudio), controller, Steam |
+| Rain World | Unity Mono | GPTK Wine + D3D→Metal | **Working** | Full gameplay via Apple Game Porting Toolkit |
+
 | Game Type | Status | Notes |
 |-----------|--------|-------|
-| XNA/FNA | Working | Celeste confirmed — full gameplay, controller support, Steam integration |
+| XNA/FNA | Working | Native Metal rendering via FNA3D + SDL3 |
+| Unity D3D11 | Working | Via Apple Game Porting Toolkit (D3DMetal) |
 | D3D9 | In Progress | MojoShader SM2.0/SM3.0 → MSL translation working |
-| D3D11 | In Progress | Full device/context, DXGI swap chain, Metal backend |
+| D3D11 | In Progress | MetalSharp native translation layer |
 | D3D12 | In Progress | Command queues, descriptor heaps, pipeline state |
+
+### Launching Games
+
+```bash
+# XNA/FNA games (native Metal)
+./scripts/setup-celeste-deps.sh    # one-time setup
+./scripts/launch-celeste.sh
+
+./scripts/setup-terraria-deps.sh   # one-time setup
+./scripts/launch-terraria.sh
+
+# Unity/D3D11 games (via Game Porting Toolkit)
+./scripts/setup-rainworld-deps.sh  # one-time setup
+./scripts/launch-rainworld.sh
+```
 
 ---
 
