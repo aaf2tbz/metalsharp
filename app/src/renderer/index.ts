@@ -757,7 +757,7 @@ class App {
         if (bar) bar.style.width = `${prog.progress}%`;
 
         if (prog.status === "setting_up") {
-          if (pctEl) pctEl.textContent = "Setting up...";
+          if (pct) pct.textContent = "Setting up...";
         } else if (prog.status === "installing") {
           if (pct) pct.textContent = "Installing...";
         } else {
