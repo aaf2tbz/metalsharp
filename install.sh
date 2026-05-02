@@ -96,45 +96,42 @@ else
     fi
 fi
 
-# ── Step 4: Wine ──
-step "Checking Wine"
+# ── Step 4: Game Porting Toolkit (Wine + D3D→Metal) ──
+step "Checking Game Porting Toolkit"
+GPTK_WINE="/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
+if [[ -x "$GPTK_WINE" ]]; then
+    ok "Game Porting Toolkit found"
+else
+    echo ""
+    info "Game Porting Toolkit provides Wine + Apple's D3D→Metal translation."
+    info "Required for D3D11/12 games (Rain World, etc.)"
+    echo ""
+    if confirm "Install Game Porting Toolkit via Homebrew? (free, from Apple/GCenx)" "y"; then
+        brew install --cask gcenx/wine/game-porting-toolkit || {
+            warn "GPTK install failed. Install manually:"
+            echo "  brew install --cask gcenx/wine/game-porting-toolkit"
+        }
+        if [[ -x "$GPTK_WINE" ]]; then
+            ok "Game Porting Toolkit installed"
+        else
+            warn "GPTK binary not found. May need terminal restart."
+            SKIP_GPTK=1
+        fi
+    else
+        info "Skipping GPTK. D3D11/12 games won't run."
+        info "Install later: brew install --cask gcenx/wine/game-porting-toolkit"
+        SKIP_GPTK=1
+    fi
+fi
+
+# ── Step 4b: Wine (fallback for non-D3D11 games) ──
+step "Checking Wine (fallback)"
 if cmd_exists wine || cmd_exists wine64; then
     WINE_VER=$(wine --version 2>/dev/null || wine64 --version 2>/dev/null)
     ok "Wine found: $WINE_VER"
 else
-    echo ""
-    info "Wine is required to run Windows executables."
-    echo "  Options:"
-    echo "    1) wine-stable via Homebrew (free, needs sudo for GStreamer dep)"
-    echo "    2) CrossOver from crossover.com (paid, best compat, no sudo)"
-    echo "    3) Skip Wine (build MetalSharp only, test later)"
-    echo ""
-    if confirm "Install wine-stable via Homebrew now? (requires sudo for GStreamer)" "y"; then
-        info "Installing wine-stable..."
-        info "This may prompt for your password (sudo) to install GStreamer."
-        brew install --cask wine-stable || {
-            warn "wine-stable install failed. You may need to run:"
-            echo "  brew install --cask wine-stable"
-            echo "  (requires sudo for GStreamer runtime)"
-            echo ""
-            if confirm "Continue without Wine? (MetalSharp will build but can't run .exe yet)" "y"; then
-                SKIP_WINE=1
-            else
-                fail "Install Wine and re-run this script"
-            fi
-        }
-        if [[ -z "${SKIP_WINE:-}" ]]; then
-            if cmd_exists wine || cmd_exists wine64; then
-                ok "Wine installed"
-            else
-                warn "Wine binary not found in PATH yet. You may need to restart your terminal."
-                SKIP_WINE=1
-            fi
-        fi
-    else
-        info "Skipping Wine. MetalSharp will build but won't be able to run .exe files."
-        info "Install Wine later with: brew install --cask wine-stable"
-        SKIP_WINE=1
+    if confirm "Install wine-stable for non-GPTK Wine support?" "n"; then
+        brew install --cask wine-stable 2>/dev/null || warn "wine-stable install skipped"
     fi
 fi
 
@@ -213,6 +210,46 @@ if [[ -z "${SKIP_WINE:-}" ]]; then
     done
 fi
 
+# ── Step 9: Mono ──
+step "Checking Mono"
+if cmd_exists mono; then
+    ok "System mono: $(mono --version | head -1)"
+else
+    if confirm "Install Mono via Homebrew? (needed for XNA/FNA games)" "y"; then
+        brew install mono || warn "Mono install failed"
+    fi
+fi
+
+# ── Step 10: Rosetta 2 (for x86_64 mono / GPTK) ──
+if [[ "$(uname -m)" == "arm64" ]]; then
+    step "Checking Rosetta 2"
+    if arch -x86_64 /usr/bin/true 2>/dev/null; then
+        ok "Rosetta 2 available"
+    else
+        if confirm "Install Rosetta 2? (needed for x86_64 games like Celeste)" "y"; then
+            softwareupdate --install-rosetta --agree-to-license || warn "Rosetta install failed"
+        fi
+    fi
+fi
+
+# ── Step 11: Game-specific deps ──
+step "Game Setup"
+echo ""
+echo "  Supported games and setup commands:"
+echo ""
+echo "    Celeste (XNA/FNA, native Metal):"
+echo "      ./scripts/setup-celeste-deps.sh"
+echo "      ./scripts/launch-celeste.sh"
+echo ""
+echo "    Terraria (XNA/FNA, native Metal):"
+echo "      ./scripts/setup-terraria-deps.sh"
+echo "      ./scripts/launch-terraria.sh"
+echo ""
+echo "    Rain World (Unity D3D11, via GPTK):"
+echo "      ./scripts/setup-rainworld-deps.sh"
+echo "      ./scripts/launch-rainworld.sh"
+echo ""
+
 # ── Summary ──
 echo ""
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -222,16 +259,17 @@ echo "  Built:"
 echo "    $(ls build/*.dylib build/metalsharp_launcher 2>/dev/null | wc -l | tr -d ' ') targets in build/"
 echo "    $TOTAL_PASS test checks passed"
 echo ""
-if [[ -z "${SKIP_WINE:-}" ]]; then
+if [[ -z "${SKIP_WINE:-}" ]] || [[ -z "${SKIP_GPTK:-}" ]]; then
     echo "  Usage:"
     echo "    ./build/metalsharp_launcher game.exe"
-    echo "    ./build/metalsharp_launcher --steam 730"
-    echo "    ./build/metalsharp_launcher --list-games"
-    echo "    ./build/metalsharp_launcher --help"
+    echo "    ./scripts/launch-celeste.sh     # XNA/FNA game (native Metal)"
+    echo "    ./scripts/launch-terraria.sh    # XNA/FNA game (native Metal)"
+    echo "    ./scripts/launch-rainworld.sh   # Unity D3D11 game (via GPTK)"
 else
     echo "  Next steps:"
-    echo "    Install Wine:  brew install --cask wine-stable"
-    echo "    Then run:      ./build/metalsharp_launcher game.exe"
+    echo "    Install GPTK:  brew install --cask gcenx/wine/game-porting-toolkit"
+    echo "    Install Mono:  brew install mono"
+    echo "    Then run:      ./scripts/setup-<game>-deps.sh"
 fi
 echo ""
 echo "  Prefix:  $PREFIX_DIR"
