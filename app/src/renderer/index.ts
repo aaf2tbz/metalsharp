@@ -514,7 +514,7 @@ class App {
 
       btn.textContent = "Logging in...";
       (btn as HTMLButtonElement).disabled = true;
-      status.innerHTML = '<div class="spinner"></div> Connecting to Steam...';
+      status.innerHTML = '<div class="spinner"></div> Connecting to Steam...<br><span style="font-size:12px;color:var(--text-dim)">If prompted, approve the login on your Steam mobile app.</span>';
 
       const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password });
 
