@@ -599,7 +599,7 @@ pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         let _ = std::fs::write(&pf, json!({
             "appId": appid,
             "progress": 100.0,
-            "status": "installing",
+            "status": "setting_up",
         }).to_string());
 
         let has_exe = walkdir::WalkDir::new(&dir)
@@ -609,6 +609,7 @@ pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
             .any(|e| e.path().extension().map(|ext| ext == "exe").unwrap_or(false));
 
         if has_exe {
+            let _ = crate::setup::prepare_game(appid);
             let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 100.0, "status": "complete"}).to_string());
         } else {
             let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());

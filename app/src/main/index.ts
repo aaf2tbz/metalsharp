@@ -148,9 +148,12 @@ function registerIpc() {
         proc = spawn(brewPath, args, { env });
       } else if (command.startsWith("script:")) {
         const scriptName = command.slice(7);
-        const scriptPath = path.join(path.dirname(app.getPath("exe")), "..", "scripts", scriptName);
-        const fallbackPath = path.join(getMetalsharpDir(), "scripts", scriptName);
-        const resolved = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
+        const candidates = [
+          path.join(path.dirname(app.getPath("exe")), "..", "scripts", scriptName),
+          path.join(getMetalsharpDir(), "scripts", scriptName),
+          path.join(__dirname, "..", "..", "..", "scripts", scriptName),
+        ];
+        const resolved = candidates.find((p) => fs.existsSync(p)) ?? null;
         if (!resolved) {
           resolve({ ok: false, error: `Script not found: ${scriptName}` });
           return;
