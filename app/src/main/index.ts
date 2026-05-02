@@ -43,7 +43,7 @@ function isFirstLaunch(): boolean {
 
 function ensureMetalsharpDirs() {
   const base = getMetalsharpDir();
-  const dirs = ["games", "cache", "logs", "runtime/fna", "runtime/shims"];
+  const dirs = ["games", "cache", "logs", "runtime/fna", "runtime/shims", "runtime/mono-x86", "prefix-gptk"];
   for (const d of dirs) {
     fs.mkdirSync(path.join(base, d), { recursive: true });
   }
@@ -146,6 +146,16 @@ function registerIpc() {
         }
         const args = command.split(/\s+/).slice(1);
         proc = spawn(brewPath, args, { env });
+      } else if (command.startsWith("script:")) {
+        const scriptName = command.slice(7);
+        const scriptPath = path.join(path.dirname(app.getPath("exe")), "..", "scripts", scriptName);
+        const fallbackPath = path.join(getMetalsharpDir(), "scripts", scriptName);
+        const resolved = fs.existsSync(scriptPath) ? scriptPath : fs.existsSync(fallbackPath) ? fallbackPath : null;
+        if (!resolved) {
+          resolve({ ok: false, error: `Script not found: ${scriptName}` });
+          return;
+        }
+        proc = spawn("/bin/bash", [resolved], { env });
       } else {
         const parts = command.split(/\s+/);
         proc = spawn(parts[0], parts.slice(1), { env });

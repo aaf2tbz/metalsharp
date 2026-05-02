@@ -251,93 +251,100 @@ class App {
     body.innerHTML = `
       <div class="setup-section-header">
         <h1>Install Dependencies</h1>
-        <p>MetalSharp needs a few system libraries to run games.</p>
+        <p>MetalSharp needs a few system libraries to run games. Install each one individually.</p>
       </div>
       <div id="dep-list" class="setup-dep-list"></div>
       <div class="setup-actions">
         <button class="btn btn-secondary" id="setup-back">Back</button>
-        <button class="btn btn-primary" id="setup-install-deps">Install Missing</button>
-        <button class="btn btn-secondary" id="setup-skip">Skip</button>
+        <button class="btn btn-primary" id="setup-next">Continue</button>
       </div>
     `;
 
     const depList = body.querySelector("#dep-list")!;
     const deps = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
 
-    if (deps?.dependencies) {
+    const depState: Map<string, "pending" | "installed" | "installing" | "failed"> = new Map();
+    const depErrors: Map<string, string> = new Map();
+
+    const renderDeps = () => {
+      depList.innerHTML = "";
+      if (!deps?.dependencies) return;
+
       for (const dep of deps.dependencies) {
+        const state = depState.get(dep.id) ?? (dep.installed ? "installed" : "pending");
+        const error = depErrors.get(dep.id);
+
         const row = document.createElement("div");
-        row.className = `setup-dep-row ${dep.installed ? "installed" : ""}`;
+        row.className = `setup-dep-row ${state === "installed" ? "installed" : ""} ${state === "installing" ? "installing" : ""} ${state === "failed" ? "install-failed" : ""}`;
+
+        const statusIcon = state === "installed" ? "&#10003;" : state === "installing" ? "&#9679;" : state === "failed" ? "&#10007;" : "&#9675;";
+        const badge = state === "installed"
+          ? '<span class="badge badge-ok">Installed</span>'
+          : state === "installing"
+          ? '<span class="badge badge-warn">Installing...</span>'
+          : state === "failed"
+          ? '<span class="badge badge-warn">Failed</span>'
+          : dep.required
+          ? '<span class="badge badge-warn">Required</span>'
+          : '<span class="badge" style="background:rgba(122,106,94,0.12);color:var(--text-dim)">Optional</span>';
+
+        const btnLabel = state === "installing" ? "Installing..." : state === "failed" ? "Retry" : "Install";
+        const btnDisabled = state === "installed" || state === "installing" ? "disabled" : "";
+
         row.innerHTML = `
-          <div class="setup-dep-status">${dep.installed ? "&#10003;" : "&#10007;"}</div>
+          <div class="setup-dep-status">${statusIcon}</div>
           <div class="setup-dep-info">
-            <div class="setup-dep-name">${this.esc(dep.name)}${dep.required ? ' <span class="badge badge-warn">Required</span>' : ""}</div>
+            <div class="setup-dep-name">${this.esc(dep.name)}</div>
             <div class="setup-dep-desc">${this.esc(dep.desc)}</div>
+            ${error ? `<div class="setup-dep-error">${this.esc(error)}</div>` : ""}
           </div>
-          <div class="setup-dep-badge">${dep.installed ? '<span class="badge badge-ok">Installed</span>' : '<span class="badge badge-warn">Missing</span>'}</div>
+          ${badge}
+          ${state !== "installed" ? `<button class="setup-dep-install-btn ${state}" data-dep-id="${dep.id}" ${btnDisabled}>${btnLabel}</button>` : ""}
         `;
         depList.appendChild(row);
+
+        const btn = row.querySelector(`[data-dep-id="${dep.id}"]`);
+        if (btn) {
+          btn.addEventListener("click", () => this.installSingleDep(dep, depState, depErrors, renderDeps));
+        }
       }
-    }
+    };
+
+    renderDeps();
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(0));
 
-    body.querySelector("#setup-install-deps")?.addEventListener("click", async () => {
-      const btn = body.querySelector("#setup-install-deps") as HTMLElement;
-      const backBtn = body.querySelector("#setup-back") as HTMLElement;
-      const skipBtn = body.querySelector("#setup-skip") as HTMLElement;
-      const allBtns = [btn, backBtn, skipBtn].filter(Boolean) as HTMLElement[];
-      allBtns.forEach((b) => (b as HTMLButtonElement).disabled = true);
-      btn.textContent = "Checking...";
-
-      const brewDep = deps?.dependencies?.find((d) => d.id === "homebrew");
-      if (brewDep && !brewDep.installed) {
-        this.toast("Homebrew is required to install dependencies. Install it from https://brew.sh, then restart MetalSharp.", "error");
-        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
-        btn.textContent = "Install Missing";
+    body.querySelector("#setup-next")?.addEventListener("click", () => {
+      const allInstalled = deps?.dependencies?.filter((d) => d.required && depState.get(d.id) !== "installed" && !d.installed) ?? [];
+      if (allInstalled.length > 0) {
+        const names = allInstalled.map((d) => d.name).join(", ");
+        this.toast(`Required deps not installed: ${names}. Install them or skip.`, "error");
         return;
       }
-
-      const missing = deps?.dependencies?.filter((d) => !d.installed && d.required) ?? [];
-      if (missing.length === 0) {
-        this.toast("All required dependencies are already installed.", "success");
-        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
-        this.renderSetupStep(2);
-        return;
-      }
-
-      const brewable = missing.filter((d) => d.installCmd?.startsWith("brew "));
-      let anyFailed = false;
-
-      for (const dep of brewable) {
-        btn.textContent = `Installing ${dep.name}...`;
-        const result = await getAPI().installDeps(dep.installCmd);
-        if (!result.ok) {
-          anyFailed = true;
-          this.toast(`Failed to install ${dep.name}: ${result.error}`, "error");
-        } else {
-          this.toast(`${dep.name} installed successfully`, "success");
-        }
-      }
-
-      btn.textContent = "Verifying...";
-      const verify = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
-      const stillMissing = verify?.dependencies?.filter((d) => !d.installed && d.required) ?? [];
-
-      if (anyFailed || stillMissing.length > 0) {
-        const names = stillMissing.map((d) => d.name).join(", ");
-        this.toast(`Some dependencies could not be installed: ${names}. You can retry or skip.`, "error");
-        btn.textContent = "Retry Install";
-        allBtns.forEach((b) => (b as HTMLButtonElement).disabled = false);
-        this.renderSetupDependencies(container);
-        return;
-      }
-
-      this.toast("All dependencies installed and verified!", "success");
       this.renderSetupStep(2);
     });
+  }
 
-    body.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(2));
+  private async installSingleDep(
+    dep: Dependency,
+    depState: Map<string, "pending" | "installed" | "installing" | "failed">,
+    depErrors: Map<string, string>,
+    rerender: () => void
+  ) {
+    depState.set(dep.id, "installing");
+    depErrors.delete(dep.id);
+    rerender();
+
+    const result = await getAPI().installDeps(dep.installCmd);
+    if (result.ok) {
+      depState.set(dep.id, "installed");
+      this.toast(`${dep.name} installed`, "success");
+    } else {
+      depState.set(dep.id, "failed");
+      depErrors.set(dep.id, result.error ?? "Installation failed");
+      this.toast(`Failed to install ${dep.name}`, "error");
+    }
+    rerender();
   }
 
   private async renderSetupDeviceName(container: HTMLElement) {
@@ -774,17 +781,17 @@ class App {
 
     const prep = await this.api<{ ok: boolean; gameType: string }>("POST", "/game/prepare", { appid: game.appid });
 
-    this.toast(`Launching ${game.name}...`, "success");
-
-    const result = await this.api<{ pid: number }>("POST", "/launch", {
-      exePath: `~/.metalsharp/games/${game.appid}`,
-      steamAppId: game.appid,
+    const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; command?: string }>("POST", "/game/launch-auto", {
+      appid: game.appid,
     });
 
-    if (result && typeof result === "object" && "pid" in result) {
-      this.runningPid = (result as { pid: number }).pid;
+    if (launchResult?.ok && launchResult.pid) {
+      this.runningPid = launchResult.pid;
       this.runningAppId = game.appid;
+      this.toast(`Launched ${game.name}`, "success");
       this.renderLibrary();
+    } else {
+      this.toast(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
     }
   }
 
