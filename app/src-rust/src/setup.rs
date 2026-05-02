@@ -116,6 +116,8 @@ pub fn dependencies() -> Value {
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
     let homebrew = check_command("brew");
+    let wine_devel = check_path(&PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"));
+    let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
 
     let all_ok = homebrew && rosetta && xcode_cli && mono && gptk;
 
@@ -178,6 +180,22 @@ pub fn dependencies() -> Value {
                 "installed": steam,
                 "required": false,
                 "installCmd": "https://store.steampowered.com/about/",
+            },
+            {
+                "id": "wine_devel",
+                "name": "Wine (Devel)",
+                "desc": "Wine runtime for 32-bit D3D11 games via DXVK+MoltenVK (Nidhogg 2). Must be Wine Devel (not GPTK) for 32-bit PE support.",
+                "installed": wine_devel,
+                "required": false,
+                "installCmd": "brew install --cask wine-stable",
+            },
+            {
+                "id": "moltenvk",
+                "name": "MoltenVK",
+                "desc": "Vulkan-to-Metal translation layer. Required for DXVK-based games (Nidhogg 2) to translate D3D11 → Vulkan → Metal.",
+                "installed": moltenvk,
+                "required": false,
+                "installCmd": "brew install molten-vk",
             },
         ],
     })
@@ -293,6 +311,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 => "gptk_wine",
+        535520 => "dxvk_wine",
         _ => if is_dotnet { "xna_fna" } else { "native" },
     };
 
@@ -304,6 +323,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => prepare_terrarria(&game_dir, &home)?,
         504230 => prepare_celeste(&game_dir, &home)?,
         312520 => prepare_rain_world(&game_dir, &home)?,
+        535520 => prepare_nidhogg_2(&game_dir, &home)?,
         _ => {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
@@ -490,6 +510,40 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
                 .status();
         }
     }
+    Ok(())
+}
+
+fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+
+    let prefix = home.join(".metalsharp").join("prefix-nidhogg");
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    if !system32.exists() {
+        if wine.exists() {
+            let _ = std::process::Command::new(&wine)
+                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .arg("wineboot")
+                .arg("--init")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
+    for dll in &["d3d11.dll", "dxgi.dll"] {
+        let src = dxvk_dir.join(dll);
+        let dst = game_dir.join(dll);
+        if src.exists() && !dst.exists() {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+
+    let moltenvk_icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
+    if !moltenvk_icd.exists() {
+        return Err("MoltenVK not found — install with: brew install molten-vk".into());
+    }
+
     Ok(())
 }
 
