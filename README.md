@@ -81,6 +81,31 @@ First launch walks you through:
 5. **Steam Login** — credentials sent only to Steam servers
 6. **Done**
 
+### Dependencies page (setup wizard)
+
+Required:
+- **Homebrew** — package manager
+- **Rosetta 2** — x86_64 translation for GPTK Wine and Celeste
+- **Xcode CLI Tools** — clang compiler for building native shims
+- **Mono arm64** — Terraria and arm64 FNA games (`brew install mono`)
+- **GPTK Wine** — D3D→Metal for Unity games (`brew install --cask gcenx/wine/game-porting-toolkit`)
+
+Optional:
+- **SteamCMD** — downloads Windows game depots from Steam
+- **Steam Client (macOS)** — provides native dylibs (libsteam_api, SDL3, FNA3D, FAudio) from macOS game installs
+
+> **Terraria requires the macOS Steam version installed locally.** Its native dylibs (triple-arch libsteam_api, SDL3, FNA3D, FAudio) are copied to the Windows game dir during setup. Without them, Terraria won't launch.
+
+### Auto-setup (per-game)
+
+When you click Install, MetalSharp downloads the game and then runs game-specific setup automatically:
+
+- **Terraria** — copies macOS native libs, builds gdiplus stub (prevents GLib crash), compiles TerrariaLauncher, builds ContentPipeline stub, installs Xact assembly
+- **Celeste** — downloads mono x86_64, builds SDL3/FNA3D x86_64, builds CSteamworks with 609 aliases, builds FMOD stubs, copies steam_api
+- **Rain World** — initializes GPTK Wine prefix
+
+All setup scripts are idempotent — safe to re-run without breaking existing installs.
+
 ---
 
 ## Playing Games
@@ -88,8 +113,8 @@ First launch walks you through:
 ### From the app
 
 1. Open MetalSharp → browse your Steam library
-2. Click **Install** — downloads via SteamCMD
-3. Click **Play** — auto-detects engine, configures runtime, launches
+2. Click **Install** — downloads via SteamCMD, then auto-configures the runtime (native libs, shims, launchers)
+3. Click **Play** — launches with the correct runtime for that game
 
 ### From the command line
 
