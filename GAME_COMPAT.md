@@ -69,6 +69,16 @@
 - **Required**: Wine Devel (`/Applications/Wine Devel.app/`)
 - **Setup script**: `scripts/setup-portal2-deps.sh` — Wine prefix init, Goldberg install
 
+### Ghostrunner (1139900) — external runtime Wine + Vulkan
+- **Rendering**: D3D11 via external runtime Wine built-in Vulkan/D3D11 support — native Metal via MoltenVK
+- **Audio**: Working via external runtime Wine audio bridge
+- **Input**: Working via external runtime Wine input translation + Steam Input
+- **Launch**: external runtime Wine + per-game prefix, DXVK DLLs removed from game dir
+- **Architecture**: 64-bit PE32+ (Unreal Engine 4)
+- **Critical**: Uses external runtime Wine — provides 64-bit Wine runtime with built-in Vulkan renderer
+- **DXVK removed** — external runtime provides its own D3D/Vulkan translation, no external DXVK DLLs needed
+- **Required**: external runtime (`/Applications/external runtime.app/`)
+
 ## In Progress
 
 ### Goat Simulator (265930) — Wine + DXVK d3d9 (blocked)
@@ -107,9 +117,9 @@ Nidhogg_2.exe (32-bit PE32, GameMaker)
     → Apple Metal → GPU
 ```
 
-### external runtime Pipeline (Among Us)
+### external runtime Pipeline (Among Us, Ghostrunner)
 ```
-Among Us.exe (64-bit PE32+, Unity IL2CPP)
+Game.exe (64-bit PE32+, Unity/UE4)
     → external runtime Wine (Win32 API translation)
     → Built-in Vulkan/D3D11 support
     → MoltenVK (Vulkan → Metal)
@@ -125,6 +135,7 @@ Among Us.exe (64-bit PE32+, Unity IL2CPP)
 | Nidhogg 2 | GameMaker audio | via Wine | Working |
 | Among Us | FMOD (Unity) | via external runtime Wine | Working |
 | Portal 2 | Source Engine audio | via Wine | Working |
+| Ghostrunner | Unreal Engine 4 audio | via external runtime Wine | Working |
 
 ### Rendering Pipeline per Game
 | Game | Pipeline | Hops | Notes |
@@ -135,3 +146,4 @@ Among Us.exe (64-bit PE32+, Unity IL2CPP)
 | Nidhogg 2 | D3D11 → DXVK → MoltenVK → Metal | 4 | Cross-compiled DXVK, 32-bit only |
 | Among Us | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit |
 | Portal 2 | D3D9 → wined3d OpenGL | 2 | Wine Devel, 32-bit, Goldberg auth |
+| Ghostrunner | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit UE4 |

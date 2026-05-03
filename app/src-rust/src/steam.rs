@@ -87,7 +87,7 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
     use std::process::Stdio;
 
     let mut child = Command::new(&steamcmd)
-        .args(["+login", username, password, "+quit"])
+        .args(["+login", username, password, "+remember_password", "+quit"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -213,8 +213,6 @@ pub fn get_steamcmd_username() -> Option<String> {
     let config_path = home.join(".metalsharp/cache/steam_config.json");
     let config = std::fs::read_to_string(&config_path).ok()?;
     let map: serde_json::Map<String, Value> = serde_json::from_str(&config).ok()?;
-    let logged_in = map.get("steamcmd_logged_in").and_then(|v| v.as_bool())?;
-    if !logged_in { return None; }
     map.get("steam_username").and_then(|v| v.as_str()).map(String::from)
 }
 
@@ -615,28 +613,30 @@ pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dy
     let dir = install_dir.clone();
     let pf = progress_file.clone();
     let pw = password.map(String::from).or_else(|| get_steamcmd_password());
+    let appid_str = appid.to_string();
 
     std::thread::spawn(move || {
         let username = get_steamcmd_username().unwrap_or_else(|| "anonymous".into());
-        let login_args: Vec<String> = if let Some(ref p) = pw {
-            vec!["+login".into(), username.clone(), p.clone()]
-        } else {
-            vec!["+login".into(), username.clone()]
-        };
+
+        let base_args: Vec<String> = vec![
+            "+@sSteamCmdForcePlatformType".into(),
+            "windows".into(),
+            "+force_install_dir".into(),
+            dir.to_str().unwrap_or("").into(),
+        ];
+        let update_args: Vec<String> = vec![
+            "+app_update".into(),
+            appid_str.clone(),
+            "validate".into(),
+            "+quit".into(),
+        ];
+
+        let login_args: Vec<String> = vec!["+login".into(), username.clone()];
+
         let mut child = match Command::new(&cmd)
-            .args([
-                "+@sSteamCmdForcePlatformType",
-                "windows",
-                "+force_install_dir",
-                dir.to_str().unwrap_or(""),
-            ])
+            .args(&base_args)
             .args(&login_args)
-            .args([
-                "+app_update",
-                &appid.to_string(),
-                "validate",
-                "+quit",
-            ])
+            .args(&update_args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -648,10 +648,22 @@ pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dy
             }
         };
 
+        let mut needs_retry_with_password = false;
+        let mut needs_depot_fallback = false;
+
         if let Some(stdout) = child.stdout.take() {
             use std::io::BufRead;
             let reader = std::io::BufReader::new(stdout);
             for line in reader.lines().flatten() {
+                let lower = line.to_lowercase();
+                if lower.contains("invalid password") || lower.contains("invalid login") || lower.contains("rate limit") {
+                    needs_retry_with_password = true;
+                    break;
+                }
+                if lower.contains("state is 0x202") || lower.contains("no subscription") {
+                    needs_depot_fallback = true;
+                    break;
+                }
                 if let Some(pct) = parse_progress_line(&line) {
                     let _ = std::fs::write(&pf, json!({
                         "appId": appid,
@@ -663,6 +675,136 @@ pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dy
         }
 
         let _ = child.wait();
+
+        if needs_retry_with_password {
+            if let Some(ref p) = pw {
+                let retry_login: Vec<String> = vec!["+login".into(), username.clone(), p.clone(), "+remember_password".into()];
+                let mut retry_child = match Command::new(&cmd)
+                    .args(&base_args)
+                    .args(&retry_login)
+                    .args(&update_args)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(_) => {
+                        let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                        return;
+                    }
+                };
+
+                if let Some(stdout) = retry_child.stdout.take() {
+                    use std::io::BufRead;
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines().flatten() {
+                        let lower = line.to_lowercase();
+                        if lower.contains("state is 0x202") || lower.contains("no subscription") {
+                            needs_depot_fallback = true;
+                            break;
+                        }
+                        if let Some(pct) = parse_progress_line(&line) {
+                            let _ = std::fs::write(&pf, json!({
+                                "appId": appid,
+                                "progress": pct,
+                                "status": "downloading",
+                            }).to_string());
+                        }
+                    }
+                }
+
+                let _ = retry_child.wait();
+            } else {
+                let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                return;
+            }
+        }
+
+        if needs_depot_fallback {
+            let _ = std::fs::write(&pf, json!({
+                "appId": appid,
+                "progress": 0.0,
+                "status": "downloading depots",
+            }).to_string());
+
+            let depot_list = fetch_depots(&cmd, appid);
+            if depot_list.is_empty() {
+                let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                return;
+            }
+
+            let total_download: u64 = depot_list.iter().map(|d| d.download_size).max().unwrap_or(1);
+            let num_depots = depot_list.len();
+            let steamcmd_content = dirs::home_dir()
+                .map(|h| h.join("steamcmd/steamapps/content"))
+                .unwrap_or_else(|| PathBuf::from("/tmp/steamcmd_content"));
+
+            for (i, depot) in depot_list.iter().enumerate() {
+                let _ = std::fs::write(&pf, json!({
+                    "appId": appid,
+                    "progress": (i as f64 / num_depots as f64) * 100.0,
+                    "status": format!("downloading depot {}/{}", i + 1, num_depots),
+                }).to_string());
+
+                let depot_args: Vec<String> = vec![
+                    "+login".into(), username.clone(),
+                    "+download_depot".into(),
+                    appid.to_string(),
+                    depot.depot_id.to_string(),
+                    depot.manifest_gid.clone(),
+                    dir.to_str().unwrap_or("").into(),
+                    "+quit".into(),
+                ];
+
+                let mut depot_child = match Command::new(&cmd)
+                    .args(&depot_args)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(_) => {
+                        let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                        return;
+                    }
+                };
+
+                if let Some(stdout) = depot_child.stdout.take() {
+                    use std::io::BufRead;
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines().flatten() {
+                        if let Some(pct) = parse_progress_line(&line) {
+                            let depot_pct = ((i as f64 + pct / 100.0) / num_depots as f64) * 100.0;
+                            let _ = std::fs::write(&pf, json!({
+                                "appId": appid,
+                                "progress": depot_pct,
+                                "status": format!("downloading depot {}/{}", i + 1, num_depots),
+                            }).to_string());
+                        }
+                    }
+                }
+
+                let _ = depot_child.wait();
+
+                let depot_content = steamcmd_content.join(format!("depot_{}", depot.depot_id));
+                if depot_content.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&depot_content) {
+                        for entry in entries.flatten() {
+                            if let Ok(file_type) = entry.file_type() {
+                                let src = entry.path();
+                                let dst = dir.join(entry.file_name());
+                                if file_type.is_dir() {
+                                    let _ = copy_dir_recursive(&src, &dst);
+                                } else {
+                                    let _ = std::fs::copy(&src, &dst);
+                                }
+                            }
+                        }
+                    }
+                    let _ = std::fs::remove_dir_all(&depot_content);
+                }
+            }
+        }
 
         let _ = std::fs::write(&pf, json!({
             "appId": appid,
@@ -702,6 +844,178 @@ fn parse_progress_line(line: &str) -> Option<f64> {
         return None;
     }
     rest[..end].parse().ok()
+}
+
+struct DepotInfo {
+    depot_id: u32,
+    manifest_gid: String,
+    size: u64,
+    download_size: u64,
+}
+
+fn fetch_depots(cmd: &str, appid: u32) -> Vec<DepotInfo> {
+    let username = get_steamcmd_username().unwrap_or_else(|| "anonymous".into());
+    let appid_str = appid.to_string();
+    let output = match Command::new(cmd)
+        .args(["+login", &username, "+app_info_print", &appid_str, "+quit"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_depots_from_app_info(&stdout)
+}
+
+fn parse_depots_from_app_info(output: &str) -> Vec<DepotInfo> {
+    let mut depots = Vec::new();
+    let mut in_depots = false;
+    let mut current_depot_id: Option<u32> = None;
+    let mut in_manifests = false;
+    let mut in_public = false;
+    let mut current_gid: Option<String> = None;
+    let mut current_size: u64 = 0;
+    let mut current_download: u64 = 0;
+    let mut is_windows = false;
+    let mut brace_depth = 0;
+    let mut depot_brace_depth = 0;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let opens = trimmed.matches('{').count();
+        let closes = trimmed.matches('}').count();
+        let old_depth = brace_depth;
+        brace_depth += opens as i32 - closes as i32;
+
+        if trimmed.starts_with("\"depots\"") && trimmed.contains('{') {
+            in_depots = true;
+            depot_brace_depth = old_depth;
+            continue;
+        }
+
+        if !in_depots {
+            continue;
+        }
+
+        if brace_depth <= depot_brace_depth {
+            in_depots = false;
+            if let Some(did) = current_depot_id.take() {
+                if is_windows {
+                    if let Some(gid) = current_gid.take() {
+                        depots.push(DepotInfo {
+                            depot_id: did,
+                            manifest_gid: gid,
+                            size: current_size,
+                            download_size: current_download,
+                        });
+                    }
+                }
+            }
+            continue;
+        }
+
+        if opens > 0 && closes == 0 && current_depot_id.is_none() {
+            if let Some(did) = parse_quoted_u32(trimmed) {
+                current_depot_id = Some(did);
+                in_manifests = false;
+                in_public = false;
+                current_gid = None;
+                current_size = 0;
+                current_download = 0;
+                is_windows = false;
+            }
+        }
+
+        if current_depot_id.is_some() {
+            if trimmed.starts_with("\"oslist\"") {
+                is_windows = trimmed.contains("windows");
+            }
+            if trimmed.starts_with("\"manifests\"") {
+                in_manifests = true;
+            }
+            if in_manifests && trimmed.starts_with("\"public\"") {
+                in_public = true;
+            }
+            if in_public {
+                if trimmed.starts_with("\"gid\"") {
+                    current_gid = parse_quoted_string(trimmed, "\"gid\"");
+                }
+                if trimmed.starts_with("\"size\"") {
+                    current_size = parse_quoted_u64(trimmed).unwrap_or(0);
+                }
+                if trimmed.starts_with("\"download\"") {
+                    current_download = parse_quoted_u64(trimmed).unwrap_or(0);
+                }
+            }
+            if trimmed == "}" && in_public {
+                in_public = false;
+            }
+            if trimmed == "}" && in_manifests {
+                in_manifests = false;
+            }
+            if trimmed == "}" && current_depot_id.is_some() && !in_manifests && !in_public {
+                if is_windows {
+                    if let Some(gid) = current_gid.take() {
+                        depots.push(DepotInfo {
+                            depot_id: current_depot_id.unwrap(),
+                            manifest_gid: gid,
+                            size: current_size,
+                            download_size: current_download,
+                        });
+                    }
+                }
+                current_depot_id = None;
+            }
+        }
+    }
+
+    depots
+}
+
+fn parse_quoted_u32(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if !s.starts_with('"') { return None; }
+    let end = s[1..].find('"').map(|i| i + 1)?;
+    s[1..end].parse().ok()
+}
+
+fn parse_quoted_string(s: &str, key: &str) -> Option<String> {
+    let after_key = s.find(key)?;
+    let rest = &s[after_key + key.len()..];
+    let rest = rest.trim_start_matches(|c: char| c == '\t' || c == ' ');
+    if !rest.starts_with('"') { return None; }
+    let end = rest[1..].find('"').map(|i| i + 1)?;
+    Some(rest[1..end].to_string())
+}
+
+fn parse_quoted_u64(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let parts: Vec<&str> = s.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+    if parts.len() < 2 { return None; }
+    let val = parts[1].trim().trim_matches('"');
+    val.parse().ok()
+}
+
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            if dst_path.exists() {
+                let src_len = std::fs::metadata(&src_path).map(|m| m.len()).unwrap_or(0);
+                let dst_len = std::fs::metadata(&dst_path).map(|m| m.len()).unwrap_or(1);
+                if src_len == dst_len { continue; }
+            }
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn scan_downloaded_dir(dir: &PathBuf, _appid: u32) -> Vec<serde_json::Value> {
