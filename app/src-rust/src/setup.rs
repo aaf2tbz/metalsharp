@@ -118,6 +118,9 @@ pub fn dependencies() -> Value {
     let homebrew = check_command("brew");
     let wine_devel = check_path(&PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"));
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
+    let crossover = check_path(&PathBuf::from(
+        "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine"
+    ));
 
     let all_ok = homebrew && rosetta && xcode_cli && mono && gptk;
 
@@ -196,6 +199,14 @@ pub fn dependencies() -> Value {
                 "installed": moltenvk,
                 "required": false,
                 "installCmd": "brew install molten-vk",
+            },
+            {
+                "id": "crossover",
+                "name": "CrossOver",
+                "desc": "CrossOver Wine with built-in D3D/Vulkan rendering. Required for Among Us and other Unity 32-bit games that don't work with DXVK+MoltenVK.",
+                "installed": crossover,
+                "required": false,
+                "installCmd": "brew install --cask crossover",
             },
         ],
     })
@@ -516,14 +527,32 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
 
-    let prefix = home.join(".metalsharp").join("prefix-nidhogg");
+    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
+    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     if !system32.exists() {
         if wine.exists() {
+            let prefix_str = prefix.to_string_lossy().to_string();
             let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .env("WINEPREFIX", &prefix_str)
                 .arg("wineboot")
                 .arg("--init")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+
+            let _ = std::process::Command::new(&wine)
+                .env("WINEPREFIX", &prefix_str)
+                .arg("reg")
+                .args(["add", r"HKCU\Software\Wine\X11 Driver", "/v", "Managed", "/d", "N", "/f"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+
+            let _ = std::process::Command::new(&wine)
+                .env("WINEPREFIX", &prefix_str)
+                .arg("reg")
+                .args(["add", r"HKCU\Software\Wine\DllOverrides", "/v", "xinput1_3", "/d", "", "/f"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
@@ -534,7 +563,7 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
     for dll in &["d3d11.dll", "dxgi.dll"] {
         let src = dxvk_dir.join(dll);
         let dst = game_dir.join(dll);
-        if src.exists() && !dst.exists() {
+        if src.exists() {
             std::fs::copy(&src, &dst)?;
         }
     }

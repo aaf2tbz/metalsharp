@@ -201,6 +201,14 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+
+        let _ = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("reg")
+            .args(["add", r"HKCU\Software\Wine\DllOverrides", "/v", "xinput1_3", "/d", "", "/f"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
@@ -378,7 +386,24 @@ fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
-    Command::new("kill").arg(pid.to_string()).output()?;
+    let _ = Command::new("pkill")
+        .args(["-9", "-P", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "UnityCrashHandler"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
     Ok(())
 }
 
@@ -494,6 +519,7 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
         504230 => "setup-celeste-deps.sh",
         312520 => "setup-rainworld-deps.sh",
         535520 => "setup-nidhogg2-deps.sh",
+        945360 => "setup-amongus-deps.sh",
         _ => return Ok(()),
     };
 

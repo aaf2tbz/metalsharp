@@ -70,7 +70,14 @@ else
     git clone --branch "$DXVK_VERSION" --depth 1 https://github.com/doitsujin/dxvk.git "$BUILD_DIR" 2>/dev/null || fail "DXVK clone failed"
 
     info "Applying MoltenVK compatibility patches..."
-    cp "$PATCHED_SRC" "$BUILD_DIR/src/d3d11/dxvk_device_info.cpp"
+    cp "$PATCHED_SRC" "$BUILD_DIR/src/dxvk/dxvk_device_info.cpp"
+
+    PRESENTER_PATCH="$DXVK_SRC/dxvk_presenter.cpp.patch"
+    if [[ -f "$PRESENTER_PATCH" ]]; then
+        cd "$BUILD_DIR"
+        patch -p1 < "$PRESENTER_PATCH" 2>/dev/null || fail "Presenter patch failed"
+        ok "Applied SUBOPTIMAL_KHR fix"
+    fi
 
     mkdir -p "$BUILD_DIR/build-x32"
     cp "$CROSS_FILE" "$BUILD_DIR/build-x32-custom.txt"
@@ -79,7 +86,7 @@ else
     cd "$BUILD_DIR"
     meson setup build-x32 \
         --cross-file build-x32-custom.txt \
-        --buildtype release \
+        --buildtype debugoptimized \
         --strip \
         -Denable_tests=false \
         2>/dev/null || fail "meson setup failed"
@@ -94,24 +101,26 @@ fi
 
 step "4/6: Copying DXVK DLLs to game dir"
 for dll in d3d11.dll dxgi.dll; do
-    if [[ -f "$DXVK_DIR/$dll" ]] && [[ ! -f "$GAME_DIR/$dll" ]]; then
+    if [[ -f "$DXVK_DIR/$dll" ]]; then
         cp "$DXVK_DIR/$dll" "$GAME_DIR/"
         ok "Copied $dll"
-    elif [[ -f "$GAME_DIR/$dll" ]]; then
-        ok "$dll already in game dir"
     else
         fail "$dll not found in $DXVK_DIR"
     fi
 done
 
 step "5/6: Initializing Wine prefix"
-PREFIX="$METALSHARP_HOME/prefix-nidhogg"
+PREFIX="$METALSHARP_HOME/prefix-$GAME_ID"
 if [[ -d "$PREFIX/drive_c/windows/system32" ]]; then
     ok "Wine prefix already initialized"
 else
     info "Creating Wine prefix at $PREFIX..."
     WINEPREFIX="$PREFIX" "$WINE" wineboot --init 2>/dev/null || fail "Wine prefix init failed"
-    ok "Wine prefix created"
+
+    info "Configuring Wine registry..."
+    WINEPREFIX="$PREFIX" "$WINE" reg add "HKCU\\Software\\Wine\\X11 Driver" /v Managed /d N /f >/dev/null 2>&1
+    WINEPREFIX="$PREFIX" "$WINE" reg add "HKCU\\Software\\Wine\\DllOverrides" /v xinput1_3 /d "" /f >/dev/null 2>&1
+    ok "Wine prefix created with DXVK optimizations"
 fi
 
 step "6/6: Writing steam_appid.txt"
