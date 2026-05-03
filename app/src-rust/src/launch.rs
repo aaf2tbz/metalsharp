@@ -39,6 +39,11 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_dxvk_wine(&exe.to_string_lossy(), &game_dir)?;
             Ok((pid, "dxvk_wine"))
         }
+        945360 => {
+            let exe = game_dir.join("Among Us.exe");
+            let pid = launch_dxvk_wine(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "dxvk_wine"))
+        }
         _ => {
             let exe = resolve_game_exe_fallback(&game_dir);
             let game_type = detect_game_type(&game_dir);
@@ -129,13 +134,25 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
         return Err("Wine (devel) not found — install with: brew install --cask wine-crossover || brew install --cask wine-stable".into());
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-nidhogg");
+    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
+    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        let _ = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("wineboot")
+            .arg("--init")
+            .status();
+    }
+
     let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
 
     for dll in &["d3d11.dll", "dxgi.dll"] {
         let src = dxvk_dir.join(dll);
         let dst = game_dir.join(dll);
-        if src.exists() && !dst.exists() {
+        if src.exists() {
             let _ = std::fs::copy(&src, &dst);
         }
     }
@@ -153,8 +170,49 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
-        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEPREFIX", &prefix_str)
         .env("VK_ICD_FILENAMES", moltenvk_icd.to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+        .env("MVK_PRESENT_MODE", "1")
+        .env("DXVK_FRAME_RATE", "60")
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_wine32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+
+    if !wine.exists() {
+        return Err("Wine (devel) not found".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-amongus");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        let status = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("wineboot")
+            .arg("--init")
+            .status()?;
+        if !status.success() {
+            return Err("Failed to initialize Wine prefix".into());
+        }
+    }
+
+    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
+    let dyld = format!(
+        "/opt/homebrew/lib:{}",
+        wine_lib.to_string_lossy()
+    );
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg(exe_path)
         .spawn()?;
@@ -193,10 +251,14 @@ fn detect_game_type(game_dir: &PathBuf) -> &'static str {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_lowercase();
             if name.ends_with(".exe") && !name.contains("setup") {
-                let wine = PathBuf::from(
+                let wine_devel = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+                if wine_devel.exists() {
+                    return "wine32";
+                }
+                let gptk = PathBuf::from(
                     "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
                 );
-                if wine.exists() {
+                if gptk.exists() {
                     return "gptk_wine";
                 }
                 return "native";
