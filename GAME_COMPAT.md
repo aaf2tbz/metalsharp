@@ -57,6 +57,26 @@
 - **Required**: CrossOver (`/Applications/CrossOver.app/`)
 - **Setup script**: `scripts/setup-amongus-deps.sh` — CrossOver prefix init, DXVK DLL removal
 
+### Portal 2 (620) — Wine Devel + Goldberg Emulator
+- **Rendering**: D3D9 via Wine's built-in wined3d OpenGL renderer — no DXVK needed
+- **Audio**: Working via Wine audio bridge
+- **Input**: Working via Wine input translation + Steam Input
+- **Launch**: Wine Devel (11.7) with per-game prefix
+- **Architecture**: 32-bit PE32 (Source Engine) — D3D9 native via wined3d
+- **Steam Auth**: Goldberg Steam Emulator (pre-built from gbe_fork) — bypasses Steam login for offline play
+- **Goldberg DLLs**: `steam_api.dll` (x86) replaces original in `bin/`, `steam_api64.dll` (x64) replaces original in `bin/win64/`
+- **App ID config**: `steam_settings/force_steam_appid.txt` with `620`
+- **Required**: Wine Devel (`/Applications/Wine Devel.app/`)
+- **Setup script**: `scripts/setup-portal2-deps.sh` — Wine prefix init, Goldberg install
+
+## In Progress
+
+### Goat Simulator (265930) — Wine + DXVK d3d9 (blocked)
+- **Rendering**: D3D9 (UE3) — needs DXVK d3d9→Vulkan→MoltenVK translation
+- **Status**: CrossOver launches game window and loading screen, then crashes. DXVK d3d9 loads but fails at Vulkan adapter/queue enumeration through CrossOver's winevulkan.
+- **Blockers**: DXVK d3d9 requires proper winevulkan queue enumeration; CrossOver's wrapper reports device API version 0.0.0 and no graphics queues to external DLLs
+- **Architecture**: 32-bit PE32 (Unreal Engine 3)
+
 ## Architecture Notes
 
 ### FNA Game Pipeline (Terraria, Celeste)
@@ -104,6 +124,7 @@ Among Us.exe (64-bit PE32+, Unity IL2CPP)
 | Rain World | FMOD (Unity) | via GPTK Wine | Working |
 | Nidhogg 2 | GameMaker audio | via Wine | Working |
 | Among Us | FMOD (Unity) | via CrossOver Wine | Working |
+| Portal 2 | Source Engine audio | via Wine | Working |
 
 ### Rendering Pipeline per Game
 | Game | Pipeline | Hops | Notes |
@@ -113,3 +134,4 @@ Among Us.exe (64-bit PE32+, Unity IL2CPP)
 | Rain World | D3D11 → D3DMetal | 2 | Apple GPTK, 64-bit only |
 | Nidhogg 2 | D3D11 → DXVK → MoltenVK → Metal | 4 | Cross-compiled DXVK, 32-bit only |
 | Among Us | D3D11 → CrossOver Vulkan → Metal | 3 | CrossOver Wine, 64-bit |
+| Portal 2 | D3D9 → wined3d OpenGL | 2 | Wine Devel, 32-bit, Goldberg auth |

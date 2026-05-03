@@ -20,6 +20,7 @@ MetalSharp:     Game → D3D → MetalSharp → Metal → GPU                (2 
 | **Rain World** | Unity Mono | GPTK Wine + D3DMetal | Working | Working | M4, macOS 26 |
 | **Nidhogg 2** | GameMaker | Wine + DXVK + MoltenVK | Working | Working | M4, macOS 26 |
 | **Among Us** | Unity IL2CPP | CrossOver Wine + Vulkan | Working | Working | M4, macOS 26 |
+| **Portal 2** | Source Engine | Wine Devel + Goldberg | Working | Working | M4, macOS 26 |
 
 | Game Type | Status | Method |
 |-----------|--------|--------|
@@ -27,6 +28,7 @@ MetalSharp:     Game → D3D → MetalSharp → Metal → GPU                (2 
 | Unity D3D11 (64-bit) | Working | Apple Game Porting Toolkit (D3DMetal) |
 | Unity IL2CPP (32-bit) | Working | CrossOver Wine + Vulkan renderer |
 | GameMaker D3D11 (32-bit) | Working | Wine Devel + DXVK + MoltenVK |
+| Source Engine D3D9 | Working | Wine Devel + Goldberg emulator |
 | D3D9 | In progress | MojoShader SM2.0/SM3.0 → MSL |
 | D3D11 native | In progress | MetalSharp translation layer |
 | D3D12 | In progress | Command queues, descriptor heaps, PSO |
@@ -82,6 +84,7 @@ First launch walks you through:
    - SteamCMD (downloads Windows game depots)
    - CrossOver Wine (Among Us and other Unity 32-bit games)
    - Wine Devel + MoltenVK (Nidhogg 2 and other 32-bit D3D11 games)
+   - Goldberg Steam Emulator (Portal 2 and other Steam-auth games)
 3. **Device Name** — auto-generated (e.g. `Storm-Falcon`) or custom
 4. **Steam API Key** — free from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)
 5. **Steam Login** — credentials sent only to Steam servers
@@ -114,6 +117,7 @@ When you click Install, MetalSharp downloads the game and then runs game-specifi
 - **Rain World** — initializes GPTK Wine prefix
 - **Nidhogg 2** — builds patched DXVK from source (MoltenVK compat patches), initializes Wine Devel prefix with xinput1_3 disabled
 - **Among Us** — initializes CrossOver Wine prefix
+- **Portal 2** — installs Goldberg Steam emulator for offline play
 
 All setup scripts are idempotent — safe to re-run without breaking existing installs.
 
@@ -161,6 +165,7 @@ When you click Play, the Rust backend detects the game by Steam App ID and picks
 | 312520 | Rain World | GPTK wine64 + prefix-312520 |
 | 535520 | Nidhogg 2 | Wine Devel + DXVK + MoltenVK + prefix-535520 |
 | 945360 | Among Us | CrossOver Wine + prefix-945360 |
+| 620 | Portal 2 | Wine Devel + Goldberg + prefix-620 |
 | other | auto | detect via `.metalsharp_prepared` marker |
 
 ---

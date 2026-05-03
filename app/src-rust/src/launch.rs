@@ -44,6 +44,11 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
             Ok((pid, "crossover_wine"))
         }
+        620 => {
+            let exe = game_dir.join("portal2.exe");
+            let pid = launch_wine_devel(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "wine_devel"))
+        }
         _ => {
             let exe = resolve_game_exe_fallback(&game_dir);
             let game_type = detect_game_type(&game_dir);
@@ -120,6 +125,43 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     let child = Command::new(&wine64)
         .current_dir(&game_dir)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+
+    if !wine.exists() {
+        return Err("Wine (devel) not found — install with: brew install --cask wine-crossover".into());
+    }
+
+    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
+    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        let _ = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("wineboot")
+            .arg("--init")
+            .status();
+    }
+
+    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
+    let dyld = format!(
+        "/opt/homebrew/lib:{}",
+        wine_lib.to_string_lossy()
+    );
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg(exe_path)
         .spawn()?;
 
@@ -520,6 +562,7 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
         312520 => "setup-rainworld-deps.sh",
         535520 => "setup-nidhogg2-deps.sh",
         945360 => "setup-amongus-deps.sh",
+        620 => "setup-portal2-deps.sh",
         _ => return Ok(()),
     };
 
