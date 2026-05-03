@@ -35,6 +35,7 @@
     "copyright": "Copyright © 2026 MetalSharp",
     "mac": {
       "category": "public.app-category.games",
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "dmg",

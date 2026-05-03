@@ -31,6 +31,7 @@ class App {
   private downloadingAppId: number | null = null;
   private downloadProgress: number = 0;
   private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private libraryFilter: string = "all";
 
   private steamApiKey: string | null = null;
   private steamcmdLoggedIn: boolean = false;
@@ -75,7 +76,6 @@ class App {
     document.getElementById(`view-${view}`)?.classList.remove("hidden");
 
     if (view === "settings") this.renderSettings();
-    if (view === "store") this.renderStore();
     if (view === "logs") this.renderLogs();
   }
 
@@ -628,6 +628,12 @@ class App {
 
     this.renderGameGrid(lib.games);
 
+    const filterEl = document.getElementById("library-filter") as HTMLSelectElement;
+    if (filterEl && this.libraryFilter !== "all") {
+      filterEl.value = this.libraryFilter;
+      this.filterGames();
+    }
+
     el.querySelector("#btn-scan")?.addEventListener("click", () => this.loadLibrary());
     el.querySelector("#library-search")?.addEventListener("input", () => this.filterGames());
     el.querySelector("#library-filter")?.addEventListener("change", () => this.filterGames());
@@ -637,6 +643,7 @@ class App {
     if (!this.library) return;
     const search = (document.getElementById("library-search") as HTMLInputElement)?.value.toLowerCase() ?? "";
     const filter = (document.getElementById("library-filter") as HTMLSelectElement)?.value ?? "all";
+    this.libraryFilter = filter;
 
     let games = this.library.games;
     if (filter === "installed") games = games.filter(g => g.installed);
@@ -1115,65 +1122,6 @@ class App {
         this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
       } else {
         this.toast("No crash reports found.");
-      }
-    });
-  }
-
-  private renderStore() {
-    const el = document.getElementById("view-store")!;
-
-    el.innerHTML = `
-      <div class="store-header">
-        <h1>Download Games</h1>
-        <p>Enter a Steam App ID to download via SteamCMD</p>
-      </div>
-      <div class="download-form">
-        <input type="text" id="store-appid" placeholder="Steam App ID (e.g. 504230 for Celeste)" />
-        <button class="btn btn-primary" id="btn-download">Download</button>
-      </div>
-      <div id="download-status" style="text-align:center;padding:24px;color:var(--text-dim);font-size:13px;"></div>
-    `;
-
-    el.querySelector("#btn-download")?.addEventListener("click", async () => {
-      const input = el.querySelector("#store-appid") as HTMLInputElement;
-      const appid = parseInt(input.value, 10);
-      if (isNaN(appid)) {
-        this.toast("Enter a valid Steam App ID", "error");
-        return;
-      }
-
-      const status = el.querySelector("#download-status")!;
-      status.innerHTML = `<div class="spinner"></div> Downloading...`;
-
-      const progressInterval = setInterval(async () => {
-        const prog = await this.api<{ progress: number | null; line?: string }>("GET", "/steam/download-progress");
-        if (prog && prog.progress != null) {
-          status.innerHTML = `<div class="spinner"></div> Downloading... ${prog.progress.toFixed(1)}%`;
-        }
-      }, 2000);
-
-      try {
-        const result = await this.api<{ games: unknown[] }>("POST", "/steam/download-game", {
-          steamAppId: appid,
-        });
-
-        clearInterval(progressInterval);
-
-        if (result && typeof result === "object" && "games" in result) {
-          const games = (result as { games: unknown[] }).games;
-          status.innerHTML = `Downloaded ${games.length} executable(s). <a href="#" id="goto-library">View in Library</a>`;
-          el.querySelector("#goto-library")?.addEventListener("click", (e) => {
-            e.preventDefault();
-            this.loadLibrary();
-            this.switchView("library");
-          });
-        } else {
-          this.showError("Download Failed", "The download did not complete successfully. Check the Logs tab for details.");
-          status.innerHTML = `<span style="color:var(--error)">Download failed</span>`;
-        }
-      } catch (e) {
-        clearInterval(progressInterval);
-        this.showError("Download Error", (e as Error).message);
       }
     });
   }
