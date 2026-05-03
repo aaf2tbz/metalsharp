@@ -146,7 +146,8 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             match appid {
                 Some(id) => {
                     app_log(&format!("Starting download: appid {}", id));
-                    match steam::download_game(id as u32) {
+                    let password = body.get("password").and_then(|v| v.as_str()).map(String::from);
+                    match steam::download_game(id as u32, password.as_deref()) {
                         Ok(games) => { app_log(&format!("Download started: appid {}", id)); resp(200, json!({"ok": true, "games": games})) }
                         Err(e) => { app_log(&format!("Download failed: {}", e)); resp(500, json!({"ok": false, "error": e.to_string()})) }
                     }

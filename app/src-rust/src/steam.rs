@@ -166,6 +166,7 @@ pub fn steamcmd_login(username: &str, password: &str) -> Result<Value, Box<dyn s
 
         config.insert("steamcmd_logged_in".into(), json!(true));
         config.insert("steam_username".into(), json!(username));
+        config.insert("steam_password".into(), json!(password));
 
         if let Some(steam_id) = get_steam_id() {
             config.insert("steam_id".into(), json!(steam_id));
@@ -215,6 +216,14 @@ pub fn get_steamcmd_username() -> Option<String> {
     let logged_in = map.get("steamcmd_logged_in").and_then(|v| v.as_bool())?;
     if !logged_in { return None; }
     map.get("steam_username").and_then(|v| v.as_str()).map(String::from)
+}
+
+fn get_steamcmd_password() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let config_path = home.join(".metalsharp/cache/steam_config.json");
+    let config = std::fs::read_to_string(&config_path).ok()?;
+    let map: serde_json::Map<String, Value> = serde_json::from_str(&config).ok()?;
+    map.get("steam_password").and_then(|v| v.as_str()).map(String::from)
 }
 
 pub fn get_api_key() -> Value {
@@ -587,7 +596,7 @@ fn find_metalsharp_launcher() -> Result<String, Box<dyn std::error::Error>> {
     Err("metalsharp_launcher not found".into())
 }
 
-pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dyn std::error::Error>> {
     let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
 
     let home = dirs::home_dir().ok_or("no home dir")?;
@@ -605,17 +614,24 @@ pub fn download_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let cmd = steamcmd;
     let dir = install_dir.clone();
     let pf = progress_file.clone();
+    let pw = password.map(String::from).or_else(|| get_steamcmd_password());
 
     std::thread::spawn(move || {
         let username = get_steamcmd_username().unwrap_or_else(|| "anonymous".into());
+        let login_args: Vec<String> = if let Some(ref p) = pw {
+            vec!["+login".into(), username.clone(), p.clone()]
+        } else {
+            vec!["+login".into(), username.clone()]
+        };
         let mut child = match Command::new(&cmd)
             .args([
                 "+@sSteamCmdForcePlatformType",
                 "windows",
                 "+force_install_dir",
                 dir.to_str().unwrap_or(""),
-                "+login",
-                &username,
+            ])
+            .args(&login_args)
+            .args([
                 "+app_update",
                 &appid.to_string(),
                 "validate",
