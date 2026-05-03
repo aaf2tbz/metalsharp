@@ -27,20 +27,35 @@
 - **Architecture**: 64-bit PE32+ (Unity engine) — D3DMetal works for 64-bit processes
 - **Required**: Game Porting Toolkit (`/Applications/Game Porting Toolkit.app/`)
 
-### Nidhogg 2 (535520) — Wine + DXVK + MoltenVK
+### Nidhogg 2 (535520) — Wine Devel + DXVK + MoltenVK
 - **Rendering**: D3D11 → DXVK (Vulkan) → MoltenVK → Metal — 4-hop translation chain
 - **Audio**: Working — GameMaker audio via Wine
-- **Input**: Working via Wine input translation
+- **Input**: Working via Wine input translation + Steam Input (xinput1_3 disabled via DllOverrides)
 - **Launch**: Wine 11.7 (devel) + `VK_ICD_FILENAMES` pointing to MoltenVK ICD + custom DXVK DLLs in game dir
 - **Architecture**: 32-bit PE32 (GameMaker: Studio) — D3DMetal not available for 32-bit, so DXVK+MoltenVK is required
-- **Custom DXVK**: v2.7.1 cross-compiled from source with 4 MoltenVK compatibility patches:
+- **Custom DXVK**: v2.7.1 cross-compiled from source with 4 MoltenVK compatibility patches + SUBOPTIMAL_KHR ignore + FIFO present mode force:
   - `geometryShader` → optional (Metal has no geometry shaders)
   - `shaderCullDistance` → optional
   - `robustBufferAccess2` + `nullDescriptor` → optional
   - `VK_KHR_pipeline_library` → disabled (MoltenVK lacks support)
+  - `VK_SUBOPTIMAL_KHR` → ignored in acquire and present paths (prevents swapchain recreation flicker)
+  - Present mode → FIFO forced
+- **Shader warmup**: ~45 second flicker/stutter on first launch while MoltenVK compiles SPIR-V→MSL. Stable after that. No fix possible without MoltenVK upstream changes.
 - **Required**: Wine (devel), MoltenVK (`brew install molten-vk`), custom DXVK DLLs (`~/.metalsharp/runtime/dxvk-moltenvk/`)
 - **Setup script**: `scripts/setup-nidhogg2-deps.sh` — builds DXVK from source or copies prebuilt DLLs
 - **Patched source**: `scripts/dxvk/device_info.cpp.patched` — reproducible build artifact
+- **Presenter patch**: `scripts/dxvk/dxvk_presenter.cpp.patch` — SUBOPTIMAL_KHR + FIFO fix
+
+### Among Us (945360) — CrossOver Wine + Vulkan
+- **Rendering**: Unity IL2CPP via CrossOver Wine built-in Vulkan/D3D11 support — native Metal via MoltenVK
+- **Audio**: Working via CrossOver Wine audio bridge
+- **Input**: Working via CrossOver Wine input translation + Steam Input
+- **Launch**: CrossOver Wine (`/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine`) + per-game prefix
+- **Architecture**: 64-bit PE32+ (Unity IL2CPP) — CrossOver provides 64-bit Wine runtime
+- **Critical**: Uses CrossOver Wine (not GPTK or Wine Devel) — CrossOver has better Unity IL2CPP compatibility
+- **DXVK removed** — CrossOver provides its own D3D/Vulkan translation, no DXVK DLLs needed in game dir
+- **Required**: CrossOver (`/Applications/CrossOver.app/`)
+- **Setup script**: `scripts/setup-amongus-deps.sh` — CrossOver prefix init, DXVK DLL removal
 
 ## Architecture Notes
 
@@ -66,8 +81,17 @@ RainWorld.exe (64-bit PE32+, Unity)
 ### DXVK Pipeline (Nidhogg 2)
 ```
 Nidhogg_2.exe (32-bit PE32, GameMaker)
-    → Wine 11.7 (Win32 API translation, 32-bit support)
-    → DXVK d3d11.dll (D3D11 → Vulkan)
+    → Wine 11.7 Devel (Win32 API translation, 32-bit support)
+    → DXVK d3d11.dll (D3D11 → Vulkan, patched for MoltenVK)
+    → MoltenVK (Vulkan → Metal)
+    → Apple Metal → GPU
+```
+
+### CrossOver Pipeline (Among Us)
+```
+Among Us.exe (64-bit PE32+, Unity IL2CPP)
+    → CrossOver Wine (Win32 API translation)
+    → Built-in Vulkan/D3D11 support
     → MoltenVK (Vulkan → Metal)
     → Apple Metal → GPU
 ```
@@ -79,6 +103,7 @@ Nidhogg_2.exe (32-bit PE32, GameMaker)
 | Celeste | FMOD Studio | libfmod.dylib (x86_64) | Working |
 | Rain World | FMOD (Unity) | via GPTK Wine | Working |
 | Nidhogg 2 | GameMaker audio | via Wine | Working |
+| Among Us | FMOD (Unity) | via CrossOver Wine | Working |
 
 ### Rendering Pipeline per Game
 | Game | Pipeline | Hops | Notes |
@@ -87,3 +112,4 @@ Nidhogg_2.exe (32-bit PE32, GameMaker)
 | Celeste | FNA → SDL3 Metal | 1 | x86_64 via Rosetta, full speed |
 | Rain World | D3D11 → D3DMetal | 2 | Apple GPTK, 64-bit only |
 | Nidhogg 2 | D3D11 → DXVK → MoltenVK → Metal | 4 | Cross-compiled DXVK, 32-bit only |
+| Among Us | D3D11 → CrossOver Vulkan → Metal | 3 | CrossOver Wine, 64-bit |
