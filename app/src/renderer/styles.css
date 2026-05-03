@@ -7,30 +7,30 @@
 
 :root {
   --font-main: "PressStart2P", monospace;
-  --bg-deep: #1a1118;
-  --bg-surface: #231a20;
-  --bg-card: #2d2228;
-  --bg-card-hover: #3a2e34;
-  --cream: #f5e6c8;
-  --cream-muted: #c4a882;
-  --orange: #e8943a;
-  --orange-bright: #f0a84e;
-  --orange-dim: #a86828;
-  --violet: #9b7ec8;
-  --violet-light: #c4a8e8;
-  --violet-dim: #6e4f94;
-  --text-primary: #f0e6d8;
-  --text-secondary: #b8a090;
-  --text-dim: #7a6a5e;
-  --border: #3a2e34;
+  --bg-deep: #1a1520;
+  --bg-surface: #221a2d;
+  --bg-card: #2a2038;
+  --bg-card-hover: #352844;
+  --cream: #e8ddf5;
+  --cream-muted: #b0a0c8;
+  --orange: #a78bfa;
+  --orange-bright: #c4b5fd;
+  --orange-dim: #7c3aed;
+  --violet: #a78bfa;
+  --violet-light: #c4b5fd;
+  --violet-dim: #7c3aed;
+  --text-primary: #ede9fe;
+  --text-secondary: #a89cc8;
+  --text-dim: #6b5f8a;
+  --border: #352844;
   --success: #5cb870;
   --error: #d45050;
-  --gradient-main: linear-gradient(135deg, #2d1f18 0%, #231a20 40%, #2a1e30 100%);
-  --gradient-accent: linear-gradient(135deg, var(--orange) 0%, var(--violet) 100%);
-  --gradient-card: linear-gradient(160deg, rgba(232, 148, 58, 0.08) 0%, rgba(155, 126, 200, 0.06) 100%);
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.3);
-  --shadow-glow-orange: 0 0 20px rgba(232, 148, 58, 0.15);
-  --shadow-glow-violet: 0 0 20px rgba(155, 126, 200, 0.15);
+  --gradient-main: linear-gradient(135deg, #1a1520 0%, #221a2d 40%, #1e1530 100%);
+  --gradient-accent: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  --gradient-card: linear-gradient(160deg, rgba(167, 139, 250, 0.08) 0%, rgba(124, 58, 237, 0.04) 100%);
+  --shadow-card: 0 2px 12px rgba(124, 58, 237, 0.12);
+  --shadow-glow-orange: 0 0 20px rgba(167, 139, 250, 0.2);
+  --shadow-glow-violet: 0 0 20px rgba(124, 58, 237, 0.2);
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
@@ -58,12 +58,8 @@ body {
   display: flex;
   height: 100vh;
   position: relative;
-  border: 5px solid transparent;
-  border-radius: 12px;
   overflow: hidden;
-  background-image: linear-gradient(var(--bg-deep), var(--bg-deep)), linear-gradient(135deg, #e8943a, #9b7ec8, #5cb870);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
+  background: var(--bg-deep);
 }
 
 .drag-bar {
@@ -92,7 +88,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 20px 8px 28px;
+  padding: 52px 8px 28px;
   -webkit-app-region: no-drag;
 }
 
@@ -135,12 +131,12 @@ body {
 
 .nav-item:hover {
   color: var(--text-primary);
-  background: rgba(232, 148, 58, 0.08);
+  background: rgba(167, 139, 250, 0.08);
 }
 
 .nav-item.active {
   color: var(--orange-bright);
-  background: rgba(232, 148, 58, 0.12);
+  background: rgba(167, 139, 250, 0.12);
 }
 
 .sidebar-footer {
@@ -287,7 +283,7 @@ body {
 /* Game card */
 .game-card {
   background: var(--gradient-card);
-  border: 2px solid rgba(196, 168, 232, 0.45);
+  border: 2px solid rgba(167, 139, 250, 0.4);
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition: all var(--transition);
@@ -295,8 +291,8 @@ body {
 }
 
 .game-card:hover {
-  border-color: rgba(240, 168, 78, 0.7);
-  box-shadow: var(--shadow-card), 0 0 24px rgba(155, 126, 200, 0.2);
+  border-color: rgba(196, 181, 253, 0.6);
+  box-shadow: var(--shadow-card), 0 0 24px rgba(124, 58, 237, 0.2);
   transform: translateY(-2px);
 }
 
@@ -337,7 +333,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(232, 148, 58, 0.1);
+  background: rgba(167, 139, 250, 0.1);
   border-radius: var(--radius-md);
 }
 
@@ -366,7 +362,7 @@ body {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: rgba(232, 148, 58, 0.12);
+  background: rgba(167, 139, 250, 0.12);
   color: var(--orange);
   border-radius: 4px;
   font-size: 8px;
@@ -438,7 +434,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 14px 0;
-  border-bottom: 1px solid rgba(58, 46, 52, 0.5);
+  border-bottom: 1px solid rgba(53, 40, 68, 0.5);
 }
 
 .settings-row:last-child {
@@ -459,53 +455,6 @@ body {
 .settings-value {
   font-size: 10px;
   color: var(--text-secondary);
-}
-
-/* Store view */
-.store-header {
-  text-align: center;
-  padding: 40px 0 32px;
-}
-
-.store-header h1 {
-  font-size: 24px;
-  font-weight: 700;
-  background: var(--gradient-accent);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.store-header p {
-  color: var(--text-dim);
-  margin-top: 8px;
-  font-size: 11px;
-}
-
-.download-form {
-  display: flex;
-  gap: 12px;
-  max-width: 500px;
-  margin: 24px auto 0;
-}
-
-.download-form input {
-  flex: 1;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 16px;
-  color: var(--text-primary);
-  font-size: 11px;
-  outline: none;
-  transition: border-color var(--transition);
-}
-
-.download-form input::placeholder {
-  color: var(--text-dim);
-}
-
-.download-form input:focus {
-  border-color: var(--orange);
 }
 
 /* Toast */
@@ -574,12 +523,12 @@ body {
 
 /* Running game highlight */
 .game-card.running {
-  border-color: rgba(232, 148, 58, 0.6);
-  box-shadow: var(--shadow-glow-orange), 0 0 24px rgba(155, 126, 200, 0.15);
+  border-color: rgba(167, 139, 250, 0.5);
+  box-shadow: var(--shadow-glow-orange), 0 0 24px rgba(124, 58, 237, 0.15);
 }
 
 .game-card.running .game-card-banner {
-  background: linear-gradient(135deg, rgba(232, 148, 58, 0.1) 0%, var(--bg-card) 100%);
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.1) 0%, var(--bg-card) 100%);
 }
 
 /* Badge */
@@ -989,7 +938,7 @@ body {
   padding: 7px 16px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--orange-dim);
-  background: rgba(232, 148, 58, 0.1);
+  background: rgba(167, 139, 250, 0.1);
   color: var(--orange-bright);
   font-size: 12px;
   font-weight: 600;
@@ -1000,7 +949,7 @@ body {
 }
 
 .setup-dep-install-btn:hover:not(:disabled) {
-  background: rgba(232, 148, 58, 0.2);
+  background: rgba(167, 139, 250, 0.2);
   border-color: var(--orange);
 }
 
@@ -1022,7 +971,7 @@ body {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border: 2px solid rgba(232, 148, 58, 0.3);
+  border: 2px solid rgba(167, 139, 250, 0.3);
   border-top-color: var(--orange);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
