@@ -1,0 +1,26 @@
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -107,14 +107,14 @@ namespace dxvk {
+     // This is a normal occurence, but may be useful for
+     // debugging purposes in case WSI goes wrong somehow.
+-    if (m_acquireStatus != VK_SUCCESS && m_swapchain)
++    if (m_acquireStatus != VK_SUCCESS && m_acquireStatus != VK_SUBOPTIMAL_KHR && m_swapchain)
+       Logger::info(str::format("Presenter: Got ", m_acquireStatus, ", recreating swapchain"));
+ 
+     // If the swap chain is out of date, recreate it and retry. It
+     // is possible that we do not get a new swap chain here, e.g.
+     // because the window is minimized.
+-    if (m_acquireStatus != VK_SUCCESS || !m_swapchain) {
++    if ((m_acquireStatus != VK_SUCCESS && m_acquireStatus != VK_SUBOPTIMAL_KHR) || !m_swapchain) {
+       VkResult vr = recreateSwapChain();
+ 
+       if (vr == VK_NOT_READY && hasSwapchain)
+@@ -241,7 +241,7 @@ namespace dxvk {
+ 
+     std::lock_guard lock(m_surfaceMutex);
+ 
+-    if (status != VK_SUCCESS) {
++    if (status != VK_SUCCESS && status != VK_SUBOPTIMAL_KHR) {
+       Logger::info(str::format("Presenter: Got ", status, ", recreating swapchain"));
+ 
+       m_dirtySwapchain = true;
