@@ -41,8 +41,8 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         }
         945360 => {
             let exe = game_dir.join("Among Us.exe");
-            let pid = launch_dxvk_wine(&exe.to_string_lossy(), &game_dir)?;
-            Ok((pid, "dxvk_wine"))
+            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "crossover_wine"))
         }
         _ => {
             let exe = resolve_game_exe_fallback(&game_dir);
@@ -126,6 +126,54 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     Ok(child.id())
 }
 
+fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let crossover_base = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
+    let wine = crossover_base.join("lib").join("wine").join("x86_64-unix").join("wine");
+
+    if !wine.exists() {
+        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+    }
+
+    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
+    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        let _ = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("wineboot")
+            .arg("--init")
+            .status();
+    }
+
+    for dll in &["d3d11.dll", "dxgi.dll"] {
+        let game_dll = game_dir.join(dll);
+        if game_dll.exists() {
+            let _ = std::fs::remove_file(&game_dll);
+        }
+    }
+
+    let gptk_external = crossover_base.join("lib64").join("apple_gptk").join("external");
+    let crossover_lib64 = crossover_base.join("lib64");
+    let dyld = format!(
+        "{}:{}:/opt/homebrew/lib",
+        gptk_external.to_string_lossy(),
+        crossover_lib64.to_string_lossy()
+    );
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", crossover_base.to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
 fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
@@ -144,6 +192,14 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
             .env("WINEPREFIX", &prefix_str)
             .arg("wineboot")
             .arg("--init")
+            .status();
+
+        let _ = Command::new(&wine)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("reg")
+            .args(["add", r"HKCU\Software\Wine\X11 Driver", "/v", "Managed", "/d", "N", "/f"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status();
     }
 
@@ -175,6 +231,7 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("MVK_PRESENT_MODE", "1")
         .env("DXVK_FRAME_RATE", "60")
+        .env("DXVK_ASYNC", "1")
         .arg(exe_path)
         .spawn()?;
 
