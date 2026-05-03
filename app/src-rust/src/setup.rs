@@ -323,6 +323,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         504230 => "xna_fna_x86",
         312520 => "gptk_wine",
         535520 => "dxvk_wine",
+        945360 | 1139900 => "crossover_wine",
+        620 => "wine_devel",
         _ => if is_dotnet { "xna_fna" } else { "native" },
     };
 
@@ -335,6 +337,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         504230 => prepare_celeste(&game_dir, &home)?,
         312520 => prepare_rain_world(&game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
+        945360 | 1139900 => prepare_crossover_game(&game_dir, &home, appid)?,
+        620 => prepare_portal_2(&game_dir, &home)?,
         _ => {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
@@ -572,6 +576,89 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
     if !moltenvk_icd.exists() {
         return Err("MoltenVK not found — install with: brew install molten-vk".into());
     }
+
+    Ok(())
+}
+
+fn prepare_crossover_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let crossover_base = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
+    let wine = crossover_base.join("lib").join("wine").join("x86_64-unix").join("wine");
+
+    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        if wine.exists() {
+            let _ = std::process::Command::new(&wine)
+                .env("WINEPREFIX", &prefix_str)
+                .arg("wineboot")
+                .arg("--init")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    for dll in &["d3d11.dll", "dxgi.dll"] {
+        let game_dll = game_dir.join(dll);
+        if game_dll.exists() {
+            let _ = std::fs::remove_file(&game_dll);
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_portal_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+    let prefix = home.join(".metalsharp").join("prefix-620");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        if wine.exists() {
+            let _ = std::process::Command::new(&wine)
+                .env("WINEPREFIX", &prefix_str)
+                .arg("wineboot")
+                .arg("--init")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+
+    let bin_dir = game_dir.join("bin");
+    if bin_dir.exists() {
+        let x86_src = goldberg_dir.join("x86").join("steam_api.dll");
+        let x86_dst = bin_dir.join("steam_api.dll");
+        if x86_src.exists() && !x86_dst.with_extension("orig").exists() {
+            if x86_dst.exists() {
+                let _ = std::fs::rename(&x86_dst, bin_dir.join("steam_api.dll.orig"));
+            }
+            let _ = std::fs::copy(&x86_src, &x86_dst);
+        }
+
+        let win64_dir = bin_dir.join("win64");
+        if win64_dir.exists() {
+            let x64_src = goldberg_dir.join("x64").join("steam_api64.dll");
+            let x64_dst = win64_dir.join("steam_api64.dll");
+            if x64_src.exists() && !x64_dst.with_extension("orig").exists() {
+                if x64_dst.exists() {
+                    let _ = std::fs::rename(&x64_dst, win64_dir.join("steam_api64.dll.orig"));
+                }
+                let _ = std::fs::copy(&x64_src, &x64_dst);
+            }
+        }
+    }
+
+    let steam_settings = game_dir.join("bin").join("steam_settings");
+    if !steam_settings.exists() {
+        let _ = std::fs::create_dir_all(&steam_settings);
+    }
+    let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), "620");
 
     Ok(())
 }

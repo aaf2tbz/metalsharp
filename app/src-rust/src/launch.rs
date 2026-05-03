@@ -49,6 +49,16 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_wine_devel(&exe.to_string_lossy(), &game_dir)?;
             Ok((pid, "wine_devel"))
         }
+        1139900 => {
+            let exe = game_dir.join("Ghostrunner.exe");
+            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "crossover_wine"))
+        }
+        2050650 => {
+            let exe = game_dir.join("re4.exe");
+            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
+            Ok((pid, "crossover_wine"))
+        }
         _ => {
             let exe = resolve_game_exe_fallback(&game_dir);
             let game_type = detect_game_type(&game_dir);
