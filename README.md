@@ -23,6 +23,7 @@ MetalSharp wraps the tools that make Windows gaming on Mac possible — Wine, Cr
 | **Portal 2** | Source Engine | Wine Devel + Goldberg emulator | Working |
 | **Ghostrunner** | Unreal Engine 4 | CrossOver Wine + Steam DRM | Working |
 | **Resident Evil 4** | RE Engine | CrossOver Wine + Steam DRM | Working |
+| **Elden Ring** | FromSoftware Engine | CrossOver Wine + MetalFX + Steam DRM | Working (FPS drops in intensive areas) |
 
 Tested on Apple M4, macOS 26.
 
@@ -30,7 +31,7 @@ Tested on Apple M4, macOS 26.
 
 MetalSharp picks the right existing toolchain per game:
 
-**Steam DRM games** (Among Us, Ghostrunner, RE4) — CrossOver Wine runs the Windows Steam client natively. Games install through Steam's interface and launch via `steam://run/` for full DRM authentication. No hacks, no emulators — just Steam running under Wine.
+**Steam DRM games** (Among Us, Ghostrunner, RE4, Elden Ring) — CrossOver Wine runs the Windows Steam client natively. Games install through Steam's interface and launch via `steam://run/` for full DRM authentication. No hacks, no emulators — just Steam running under Wine.
 
 **XNA/FNA games** (Celeste, Terraria) — Run natively via Mono + FNA + SDL3. No Wine, no translation layers. FNA replaces Microsoft's XNA framework, SDL3 handles windowing/input/audio, and Metal handles rendering.
 
@@ -101,6 +102,7 @@ Clicking Play for the first time runs game-specific setup:
 - **Rain World** — initializes GPTK Wine prefix
 - **Nidhogg 2** — copies DXVK DLLs, sets DXVK+MoltenVK environment, creates Wine Devel prefix
 - **Among Us / Ghostrunner / RE4** — launches via Steam DRM (`steam://run/`)
+- **Elden Ring** — launches via Steam DRM with MetalFX upscaling + D3DMetal performance tuning
 - **Portal 2** — installs Goldberg Steam emulator for offline play
 
 ## Directory Layout
