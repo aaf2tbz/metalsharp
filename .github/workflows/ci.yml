@@ -1,4 +1,4 @@
-name: Build & Test
+name: Build & Release
 
 on:
   push:
@@ -8,42 +8,10 @@ on:
     branches: [main]
 
 jobs:
-  build-arm64:
+  build:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
-
-      - name: Build
-        run: cmake --build build -- -j$(sysctl -n hw.ncpu)
-
-      - name: Test
-        working-directory: build
-        run: ctest --output-on-failure
-
-      - name: Package artifacts
-        run: |
-          mkdir -p dist
-          cp build/metalsharp dist/
-          cp build/metalsharp_launcher dist/
-          cp build/*.dylib dist/ 2>/dev/null || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: metalsharp-macos-arm64
-          path: dist/
-
-  build-electron:
-    runs-on: macos-14
-    needs: build-arm64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -60,15 +28,6 @@ jobs:
 
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
-
-      - name: Download native engine
-        uses: actions/download-artifact@v4
-        with:
-          name: metalsharp-macos-arm64
-          path: app/native/
-
-      - name: Set executable permissions
-        run: chmod +x app/native/metalsharp app/native/metalsharp_launcher
 
       - name: Install Electron deps
         run: cd app && npm install
@@ -91,60 +50,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload DMG
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: MetalSharp-dmg
           path: dist/electron/*.dmg
 
   release:
-    needs: [build-arm64, build-electron]
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download ARM64 artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: metalsharp-macos-arm64
-          path: dist-arm64/
-
       - name: Download DMG
         uses: actions/download-artifact@v4
         with:
           name: MetalSharp-dmg
-          path: dist-dmg/
-
-      - name: Create release archives
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p release
-          cd dist-arm64 && zip -r "../release/metalsharp-${VERSION}-macos-arm64.zip" . && cd ..
-          cp dist-dmg/*.dmg release/ 2>/dev/null || true
-          ls -la release/
+          path: release/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
           generate_release_notes: true
-          body: |
-            ## MetalSharp ${{ github.ref_name }}
-
-            ### Downloads
-            - **MetalSharp.dmg** — macOS installer (Apple Silicon). Mount, drag to Applications, launch.
-            - **metalsharp-*-arm64.zip** — ARM64 binaries (native engine, PE loader, shims)
-            - **metalsharp-*-x86_64.zip** — Intel binaries
-
-            ### First Launch
-            The setup wizard walks you through connecting Steam, installing dependencies, and choosing a device name. Then download games from your library and play.
-
-            ### What's New
-            - XNA/FNA native support (Celeste runs on Apple Silicon!)
-            - DMG installer with setup wizard
-            - Auto game runtime configuration
-            - CSteamworks shim for Steamworks.NET
-            - FMOD audio stubs for games without arm64 builds
