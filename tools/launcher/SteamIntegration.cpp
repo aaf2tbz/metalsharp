@@ -7,25 +7,6 @@
 
 namespace metalsharp {
 
-std::string SteamIntegration::findSteamCMD() {
-    const char* home = getenv("HOME");
-    if (!home) return "";
-
-    const char* candidates[] = {
-        "/usr/local/bin/steamcmd",
-        ".steam/steamcmd/steamcmd.sh",
-        "steamcmd/steamcmd.sh",
-    };
-
-    for (const auto* rel : candidates) {
-        std::string path = (rel[0] == '/') ? rel : std::string(home) + "/" + rel;
-        struct stat st{};
-        if (stat(path.c_str(), &st) == 0) return path;
-    }
-
-    return "";
-}
-
 std::string SteamIntegration::findSteamInstallDir() {
     const char* home = getenv("HOME");
     if (!home) return "";
@@ -90,44 +71,6 @@ std::string SteamIntegration::defaultDownloadDir() {
     return "/tmp/metalsharp/games";
 }
 
-bool SteamIntegration::downloadWindowsGame(const std::string& steamcmd, uint32_t appId, const std::string& outputDir) {
-    mkdir(outputDir.c_str(), 0755);
-
-    std::string cmd = steamcmd +
-        " +@sSteamCmdForcePlatformType windows"
-        " +force_install_dir \"" + outputDir + "\""
-        " +login anonymous"
-        " +app_update " + std::to_string(appId) + " validate"
-        " +quit";
-
-    printf("Downloading app %u via SteamCMD...\n", appId);
-    printf("  Command: %s\n", cmd.c_str());
-
-    int result = system(cmd.c_str());
-    if (result != 0) {
-        printf("  SteamCMD failed with code %d\n", result);
-        return false;
-    }
-
-    printf("  Download complete\n");
-    return true;
-}
-
-bool SteamIntegration::downloadDepot(const std::string& steamcmd, uint32_t appId, const std::string& depotId, const std::string& outputDir) {
-    mkdir(outputDir.c_str(), 0755);
-
-    std::string cmd = steamcmd +
-        " +@sSteamCmdForcePlatformType windows"
-        " +login anonymous"
-        " +download_depot " + std::to_string(appId) + " " + depotId +
-        " \"" + outputDir + "\""
-        " +quit";
-
-    printf("Downloading depot %s for app %u...\n", depotId.c_str(), appId);
-    int result = system(cmd.c_str());
-    return result == 0;
-}
-
 std::string SteamIntegration::findGameExecutable(const std::string& gameDir) {
     std::string cmd = "find \"" + gameDir + "\" -maxdepth 2 -name \"*.exe\" -type f 2>/dev/null";
     FILE* pipe = popen(cmd.c_str(), "r");
@@ -142,11 +85,6 @@ std::string SteamIntegration::findGameExecutable(const std::string& gameDir) {
     }
     pclose(pipe);
     return result;
-}
-
-bool SteamIntegration::authenticate(const std::string& steamcmd) {
-    std::string cmd = steamcmd + " +login anonymous +quit";
-    return system(cmd.c_str()) == 0;
 }
 
 }

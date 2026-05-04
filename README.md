@@ -80,7 +80,7 @@ cargo build --release  # Rust backend
 ### Build a DMG
 
 ```bash
-# 1. Bundle dependencies (compresses external runtime, GPTK, Mono, DXVK, SteamCMD, SteamSetup.exe)
+# 1. Bundle dependencies (compresses external runtime, GPTK, Mono, DXVK, SteamSetup.exe)
 ./tools/dmg/create-bundles.sh
 
 # 2. Build the DMG
@@ -93,7 +93,7 @@ npx electron-builder --mac dmg
 
 First launch walks through a 4-step wizard:
 
-1. **Install** — two buttons. "Install Homebrew" opens Terminal for the brew installer. "Install Dependencies" runs everything else automatically (external runtime, GPTK, Rosetta 2, Xcode CLI, Mono, DXVK, SteamCMD, Windows Steam). Bundled archives are extracted with a system auth prompt (Touch ID / password); missing deps fall back to `brew install`. Live progress bar and log throughout.
+1. **Install** — two buttons. "Install Homebrew" opens Terminal for the brew installer. "Install Dependencies" runs everything else automatically (external runtime, GPTK, Rosetta 2, Xcode CLI, Mono, DXVK, Windows Steam). Bundled archives are extracted with a system auth prompt (Touch ID / password); missing deps fall back to `brew install`. Live progress bar and log throughout.
 2. **Steam** — set a device name, optionally enter your Steam Web API key, then click "Launch Steam". MetalSharp starts Windows Steam via external runtime Wine. Log in through the Steam window.
 3. **Done** — library loads, download and play.
 
@@ -132,7 +132,6 @@ The DMG includes all dependencies pre-packaged (~1.1 GB compressed):
 | `wine.tar.zst` | ~225 MB | Wine Stable.app for standalone Wine games |
 | `moltenvk.tar.zst` | ~10 MB | MoltenVK Vulkan→Metal translation layer |
 | `dxvk.tar.zst` | ~3.4 MB | DXVK 1.10.3 D3D→Vulkan DLLs |
-| `steamcmd.tar.zst` | ~2 MB | SteamCMD for library scanning |
 | `SteamSetup.exe` | ~2.3 MB | Windows Steam installer |
 
 No internet required during install — everything extracts from the DMG with a single Touch ID prompt.

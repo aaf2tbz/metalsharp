@@ -135,23 +135,7 @@ else
     fi
 fi
 
-# ── Step 5: SteamCMD (optional) ──
-step "Checking SteamCMD"
-if cmd_exists steamcmd || [[ -f "$HOME/steamcmd/steamcmd.sh" ]]; then
-    ok "SteamCMD found"
-else
-    if confirm "Install SteamCMD? (needed for downloading Windows games via Steam)" "n"; then
-        mkdir -p "$HOME/steamcmd"
-        info "Downloading SteamCMD..."
-        curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz" | tar xz -C "$HOME/steamcmd"
-        ok "SteamCMD installed to ~/steamcmd/"
-    else
-        info "Skipping SteamCMD. Install later from:"
-        echo "  https://developer.valvesoftware.com/wiki/SteamCMD"
-    fi
-fi
-
-# ── Step 6: Build MetalSharp ──
+# ── Step 5: Build MetalSharp ──
 step "Building MetalSharp"
 cd "$METALSHARP_DIR"
 

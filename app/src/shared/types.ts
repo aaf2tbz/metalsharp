@@ -15,7 +15,6 @@ export interface SteamStatus {
   installed: boolean;
   path?: string;
   loginState?: LoginState;
-  steamCmdPath?: string;
   running: boolean;
 }
 

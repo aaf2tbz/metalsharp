@@ -20,7 +20,6 @@ BUNDLES=(
     "moltenvk.tar.zst"
     "mono-arm64.tar.zst"
     "mono-x86.tar.zst"
-    "steamcmd.tar.zst"
     "SteamSetup.exe"
     "wine.tar.zst"
 )

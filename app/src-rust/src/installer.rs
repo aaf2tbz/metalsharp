@@ -83,7 +83,6 @@ fn run_install_all() {
         ("Game Porting Toolkit", Box::new(|home| install_gptk(home))),
         ("Mono x86 Runtime", Box::new(|home| install_mono_x86(home))),
         ("DXVK 1.10.3", Box::new(|home| install_dxvk(home))),
-        ("SteamCMD", Box::new(|home| install_steamcmd(home))),
         ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
         ("Wine Devel", Box::new(|_| install_wine_devel())),
         ("MoltenVK", Box::new(|_| install_moltenvk())),
@@ -317,51 +316,6 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
         return Err("DXVK d3d11.dll not found after extraction".into());
     }
     Ok(true)
-}
-
-fn install_steamcmd(home: &PathBuf) -> Result<bool, String> {
-    let steamcmd_dir = home.join("steamcmd");
-    let steamcmd_sh = steamcmd_dir.join("steamcmd.sh");
-    if steamcmd_sh.exists() {
-        return Ok(false);
-    }
-
-    let _ = fs::create_dir_all(&steamcmd_dir);
-
-    let bundled = find_bundled_archive("steamcmd");
-    if let Some(archive) = bundled {
-        let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-        extract_zst(&archive, &home, "steamcmd")?;
-        if steamcmd_sh.exists() {
-            return Ok(true);
-        }
-    }
-
-    let tar_path = steamcmd_dir.join("steamcmd.tar.gz");
-    let output = Command::new("curl")
-        .args(["-sL", "-o"])
-        .arg(&tar_path)
-        .arg("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz")
-        .output()
-        .map_err(|e| format!("curl failed: {}", e))?;
-
-    if !output.status.success() {
-        return Err("failed to download steamcmd".into());
-    }
-
-    let tar_output = Command::new("tar")
-        .args(["-xzf"])
-        .arg(&tar_path)
-        .arg("-C")
-        .arg(&steamcmd_dir)
-        .output();
-
-    let _ = fs::remove_file(&tar_path);
-
-    match tar_output {
-        Ok(t) if t.status.success() => Ok(true),
-        _ => Err("failed to extract steamcmd".into()),
-    }
 }
 
 fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {

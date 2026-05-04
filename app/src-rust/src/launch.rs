@@ -23,6 +23,24 @@ enum Engine {
     SteamD3DMetalPerf,
 }
 
+pub fn recommended_method_for_appid(appid: u32) -> &'static str {
+    engine_method(get_engine_for_appid(appid))
+}
+
+fn engine_method(engine: Engine) -> &'static str {
+    match engine {
+        Engine::FnaArm64 => "xna_fna_arm64",
+        Engine::FnaX86 => "xna_fna_x86",
+        Engine::GptkWine => "gptk_wine",
+        Engine::DxvkWine => "dxvk_wine",
+        Engine::ExternalRuntimeWine => "external_runtime_wine",
+        Engine::WineDevel => "wine_devel",
+        Engine::SteamBare => "steam",
+        Engine::SteamMetalfx => "steam_metalfx",
+        Engine::SteamD3DMetalPerf => "steam_d3dmetal_perf",
+    }
+}
+
 fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
@@ -197,6 +215,102 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             ])?;
             Ok((pid, "steam_d3dmetal_perf"))
         }
+    }
+}
+
+pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    if method.is_empty() || method == "auto" {
+        return launch_auto(appid);
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let game_dir = crate::setup::resolve_game_dir(appid);
+    let dir = game_dir.as_ref().unwrap_or(&local_dir);
+
+    match method {
+        "xna_fna_arm64" => {
+            let exe = if appid == 105600 {
+                dir.join("TerrariaLauncher.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_fna_arm64(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "xna_fna_arm64"))
+        }
+        "xna_fna_x86" => {
+            let exe = if appid == 504230 {
+                dir.join("Celeste.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "xna_fna_x86"))
+        }
+        "gptk_wine" => {
+            let exe = if appid == 312520 {
+                dir.join("RainWorld.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_gptk(&exe.to_string_lossy())?;
+            Ok((pid, "gptk_wine"))
+        }
+        "dxvk_wine" => {
+            let exe = if appid == 535520 {
+                dir.join("Nidhogg_2.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
+            Ok((pid, "dxvk_wine"))
+        }
+        "external_runtime_wine" => {
+            let exe = if appid == 535520 {
+                dir.join("Nidhogg_2.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_external_runtime_wine(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "external_runtime_wine"))
+        }
+        "wine_devel" => {
+            let exe = if appid == 620 {
+                dir.join("portal2.exe")
+            } else {
+                PathBuf::from(resolve_game_exe_fallback(dir))
+            };
+            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, appid)?;
+            Ok((pid, "wine_devel"))
+        }
+        "steam" => {
+            let pid = launch_via_steam(appid)?;
+            Ok((pid, "steam"))
+        }
+        "steam_metalfx" => {
+            let pid = launch_via_steam_with_env(appid, &[
+                ("D3DM_ENABLE_METALFX", "1"),
+                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                ("MVK_ALLOW_METAL_FENCES", "1"),
+            ])?;
+            Ok((pid, "steam_metalfx"))
+        }
+        "steam_d3dmetal_perf" => {
+            let pid = launch_via_steam_with_env(appid, &[
+                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+            ])?;
+            Ok((pid, "steam_d3dmetal_perf"))
+        }
+        _ => Err(format!("Unknown launch method: {}", method).into()),
     }
 }
 

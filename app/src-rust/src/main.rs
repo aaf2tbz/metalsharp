@@ -116,30 +116,6 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             resp(200, result)
         }
         (Method::Get, "/steam/api-key") => resp(200, steam::get_api_key()),
-        (Method::Get, "/steam/steamcmd-status") => resp(200, steam::steamcmd_status()),
-        (Method::Post, "/steam/steamcmd-login") => {
-            let body = read_body(req);
-            let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
-            let password = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
-            app_log(&format!("SteamCMD login attempt: {}", username));
-            match steam::steamcmd_login(username, password) {
-                Ok(v) => {
-                    if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-                        app_log(&format!("SteamCMD logged in as {}", username));
-                    } else {
-                        app_log("SteamCMD login failed");
-                    }
-                    resp(200, v)
-                }
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
-            }
-        }
-        (Method::Post, "/steam/steamcmd-logout") => {
-            match steam::steamcmd_logout() {
-                Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
-            }
-        }
         (Method::Post, "/steam/save-api-key") => {
             let body = read_body(req);
             let key = body.get("key").and_then(|v| v.as_str()).unwrap_or("");
@@ -198,51 +174,18 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         }
-        (Method::Post, "/steam/download-game") => {
+        (Method::Post, "/steam/view-game") => {
             let body = read_body(req);
-            let appid = body.get("steamAppId").and_then(|v| v.as_u64());
+            let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Starting download: appid {}", id));
-                    let password = body.get("password").and_then(|v| v.as_str()).map(String::from);
-                    match steam::download_game(id as u32, password.as_deref()) {
-                        Ok(games) => { app_log(&format!("Download started: appid {}", id)); resp(200, json!({"ok": true, "games": games})) }
-                        Err(e) => { app_log(&format!("Download failed: {}", e)); resp(500, json!({"ok": false, "error": e.to_string()})) }
+                    app_log(&format!("Opening game in Steam library: appid {}", id));
+                    match steam::view_game_in_steam(id as u32) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 }
-                None => resp(400, json!({"ok": false, "error": "steamAppId required"})),
-            }
-        }
-        (Method::Get, "/steam/download-progress") => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let path = home.join(".metalsharp").join("download_progress.json");
-            if path.exists() {
-                match std::fs::read_to_string(&path) {
-                    Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
-                        Ok(mut v) => {
-                            let appid = v.get("appId").and_then(|a| a.as_u64()).unwrap_or(0) as u32;
-                            let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("idle").to_string();
-                            if status == "complete" || status == "error" {
-                                resp(200, v)
-                            } else {
-                                let dir = home.join(".metalsharp").join("games").join(appid.to_string());
-                                let bytes = dir_size(&dir);
-                                let pct = estimate_progress(bytes);
-                                v["progress"] = json!(pct);
-                                v["bytesDownloaded"] = json!(bytes);
-                                if bytes > 0 && status != "complete" {
-                                    v["status"] = json!("downloading");
-                                }
-                                let _ = std::fs::write(&path, v.to_string());
-                                resp(200, v)
-                            }
-                        }
-                        Err(_) => resp(200, json!({"progress": null, "status": "idle"})),
-                    },
-                    Err(_) => resp(200, json!({"progress": null, "status": "idle"})),
-                }
-            } else {
-                resp(200, json!({"progress": null, "status": "idle"}))
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         }
         (Method::Get, "/logs") => {
@@ -316,8 +259,11 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Auto-launching game: appid {}", id));
-                    match launch::launch_auto(id as u32) {
+                    let launch_method = body.get("launchMethod")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("auto");
+                    app_log(&format!("Auto-launching game: appid {} method {}", id, launch_method));
+                    match launch::launch_with_method(id as u32, launch_method) {
                         Ok((pid, game_type)) => {
                             app_log(&format!("Launched appid {} as {} (pid {})", id, game_type, pid));
                             resp(200, json!({"ok": true, "pid": pid, "gameType": game_type, "appid": id}))
@@ -406,28 +352,6 @@ fn chrono_date() -> String {
         remaining -= md;
     }
     format!("{:04}-{:02}-{:02}", y, mo, remaining + 1)
-}
-
-fn dir_size(dir: &std::path::PathBuf) -> u64 {
-    let mut total: u64 = 0;
-    for entry in walkdir::WalkDir::new(dir).max_depth(6).into_iter().flatten() {
-        if let Ok(m) = entry.metadata() {
-            if m.is_file() {
-                total += m.len();
-            }
-        }
-    }
-    total
-}
-
-fn estimate_progress(bytes: u64) -> f64 {
-    if bytes >= 200_000_000 { 90.0 }
-    else if bytes >= 100_000_000 { 75.0 + ((bytes - 100_000_000) as f64 / 100_000_000.0 * 15.0).min(14.9) }
-    else if bytes >= 50_000_000 { 55.0 + ((bytes - 50_000_000) as f64 / 50_000_000.0 * 20.0).min(19.9) }
-    else if bytes >= 10_000_000 { 25.0 + ((bytes - 10_000_000) as f64 / 40_000_000.0 * 30.0).min(29.9) }
-    else if bytes >= 1_000_000 { 5.0 + ((bytes - 1_000_000) as f64 / 9_000_000.0 * 20.0).min(19.9) }
-    else if bytes > 0 { (bytes as f64 / 1_000_000.0 * 5.0).min(4.9) }
-    else { 0.0 }
 }
 
 fn resolve_game_exe(appid: u32) -> String {
