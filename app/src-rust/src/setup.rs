@@ -179,7 +179,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "wine_devel",
                 "name": "Wine (Devel)",
-                "desc": "Wine runtime for DXVK+MoltenVK games (Nidhogg 2). Must be Wine Devel for 32-bit PE support.",
+                "desc": "Wine runtime for 32-bit PE support (Portal 2).",
                 "installed": wine_devel,
                 "required": false,
                 "installCmd": "brew install --cask wine-stable",
@@ -187,7 +187,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "moltenvk",
                 "name": "MoltenVK",
-                "desc": "Vulkan→Metal translation. Required with Wine Devel for DXVK-based games (Nidhogg 2).",
+                "desc": "Vulkan→Metal translation. Optional, not required for Nidhogg 2 (uses external runtime's bundled MoltenVK).",
                 "installed": moltenvk,
                 "required": false,
                 "installCmd": "brew install molten-vk",
@@ -350,7 +350,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 => "gptk_wine",
-        535520 => "dxvk_wine",
+        535520 => "external runtime_wine",
         945360 | 1139900 => "external runtime_wine",
         620 => "wine_devel",
         _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
@@ -557,52 +557,32 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+    let external runtime_base = PathBuf::from("/Applications/external runtime.app/Contents/SharedSupport/external runtime");
+    let wine = external runtime_base.join("lib").join("wine").join("x86_64-unix").join("wine");
 
-    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
-    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
-    let system32 = prefix.join("drive_c").join("windows").join("system32");
-    if !system32.exists() {
+    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
         if wine.exists() {
             let prefix_str = prefix.to_string_lossy().to_string();
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
+                .env("CX_ROOT", external runtime_base.to_string_lossy().to_string())
                 .arg("wineboot")
                 .arg("--init")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", &prefix_str)
-                .arg("reg")
-                .args(["add", r"HKCU\Software\Wine\X11 Driver", "/v", "Managed", "/d", "N", "/f"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", &prefix_str)
-                .arg("reg")
-                .args(["add", r"HKCU\Software\Wine\DllOverrides", "/v", "xinput1_3", "/d", "", "/f"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
     }
 
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
     for dll in &["d3d11.dll", "dxgi.dll"] {
         let src = dxvk_dir.join(dll);
         let dst = game_dir.join(dll);
         if src.exists() {
             std::fs::copy(&src, &dst)?;
         }
-    }
-
-    let moltenvk_icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
-    if !moltenvk_icd.exists() {
-        return Err("MoltenVK not found — install with: brew install molten-vk".into());
     }
 
     Ok(())
