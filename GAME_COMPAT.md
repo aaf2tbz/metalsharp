@@ -104,6 +104,49 @@
 - **Known issues**: FPS drops in graphically intensive areas (boss fights, open world). No visual glitches.
 - **Required**: external runtime (`/Applications/external runtime.app/`)
 
+### DREDGE (1562430) — external runtime Wine + D3DMetal Perf + Steam DRM
+- **Rendering**: D3D11 via external runtime Wine + D3DMetal performance tuning (async commit, multithreaded, skip barriers)
+- **Audio**: Working via external runtime Wine audio bridge
+- **Input**: Working via external runtime Wine input translation
+- **Launch**: external runtime Wine + `steam://run/` with D3DMetal perf env vars
+- **Architecture**: 64-bit PE32+ (Unity)
+- **Engine auto-detection**: Hardcoded as SteamD3DMetalPerf
+- **Required**: external runtime (`/Applications/external runtime.app/`)
+
+### Sons of the Forest (1326470) — external runtime Wine + D3DMetal Perf + Steam DRM
+- **Rendering**: D3D11/12 via external runtime Wine + D3DMetal performance tuning (async commit, multithreaded, skip barriers)
+- **Audio**: Working via external runtime Wine audio bridge
+- **Input**: Working via external runtime Wine input translation
+- **Launch**: external runtime Wine + `steam://run/` with D3DMetal perf env vars
+- **Architecture**: 64-bit PE32+ (Unity HDRP)
+- **Engine auto-detection**: Hardcoded as SteamD3DMetalPerf
+- **Notes**: Very demanding game — Unity HDRP with heavy terrain rendering and dynamic lighting
+- **Required**: external runtime (`/Applications/external runtime.app/`)
+
+## Engine Auto-Detection
+
+MetalSharp automatically detects the correct engine and launch pipeline for any game:
+
+1. **Known appid match** — hardcoded mapping for ~100 games to the correct engine tier
+2. **Directory fingerprinting** (`detect_engine_from_dir`) — scans game files for engine markers:
+   - `UnityPlayer.dll` / `GameAssembly.dll` → Unity IL2CPP → D3DMetal perf
+   - `Engine/Binaries/` + `.pak` files → Unreal Engine → MetalFX upscaling
+   - `.bdt` / `.bhd` files → FromSoftware → MetalFX upscaling
+   - `*_Data/Managed/` without native PE32 DLLs → .NET/FNA → FNA pipeline
+   - Everything else → D3DMetal perf (safest default)
+3. **steam_appid.txt** written automatically for all games during prepare
+
+| Tier | What gets applied |
+|------|-------------------|
+| FNA arm64 | Native Mono + FNA + SDL3 Metal, no Wine |
+| FNA x86 | Mono x86_64 via Rosetta + FNA + SDL3 Metal |
+| GPTK | Apple Game Porting Toolkit D3D→Metal |
+| DXVK+MoltenVK | Wine Devel + DXVK + MoltenVK (32-bit only) |
+| Wine Devel | Direct Wine + Goldberg emulator (D3D9) |
+| Steam Bare | `steam://run/` only |
+| Steam MetalFX | Steam + MetalFX upscaling + full D3DMetal perf stack |
+| Steam D3DMetal Perf | Steam + async commit, multithreaded, skip barriers, NaN safety |
+
 ## In Progress
 
 ### Goat Simulator (265930) — Wine + DXVK d3d9 (blocked)
@@ -171,6 +214,8 @@ eldenring.exe (64-bit PE32+, FromSoftware engine)
 | Ghostrunner | Unreal Engine 4 audio | via external runtime Wine | Working |
 | RE4 | RE Engine audio | via external runtime Wine | Working |
 | Elden Ring | FromSoftware audio | via external runtime Wine | Working |
+| DREDGE | Unity audio | via external runtime Wine | Working |
+| Sons of the Forest | Unity HDRP audio | via external runtime Wine | Working |
 
 ### Rendering Pipeline per Game
 | Game | Pipeline | Hops | Notes |
@@ -184,3 +229,5 @@ eldenring.exe (64-bit PE32+, FromSoftware engine)
 | Ghostrunner | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit UE4 |
 | RE4 | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit RE Engine |
 | Elden Ring | D3D12 → D3DMetal + MetalFX | 2 | external runtime Wine, MetalFX upscaling, FPS drops in intensive areas |
+| DREDGE | D3D11 → external runtime D3DMetal | 2 | external runtime Wine, D3DMetal perf, auto-detected |
+| Sons of the Forest | D3D11/12 → external runtime D3DMetal | 2 | external runtime Wine, D3DMetal perf, Unity HDRP |

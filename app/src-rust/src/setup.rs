@@ -353,7 +353,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         535520 => "dxvk_wine",
         945360 | 1139900 => "external runtime_wine",
         620 => "wine_devel",
-        _ => if is_dotnet { "xna_fna" } else { "native" },
+        _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
     };
 
     if !marker.exists() {
@@ -699,7 +699,7 @@ fn find_steam_api(home: &PathBuf) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-fn detect_dotnet_game(game_dir: &PathBuf) -> bool {
+pub fn detect_dotnet_game(game_dir: &PathBuf) -> bool {
     if let Ok(entries) = std::fs::read_dir(game_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
