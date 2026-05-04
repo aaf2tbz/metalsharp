@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +46,18 @@ jobs:
 
       - name: Build TypeScript
         run: cd app && npm run build
+
+      - name: Download bundles for DMG
+        run: |
+          mkdir -p app/bundles
+          gh release download bundles \
+            --repo ${{ github.repository }} \
+            --pattern "*.tar.zst" \
+            --pattern "*.exe" \
+            --dir app/bundles \
+            --clobber || echo "No bundles found — building without"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package DMG
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never
