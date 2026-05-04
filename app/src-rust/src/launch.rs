@@ -10,51 +10,164 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Engine {
+    FnaArm64,
+    FnaX86,
+    GptkWine,
+    DxvkWine,
+    WineDevel,
+    SteamBare,
+    SteamMetalfx,
+    SteamD3DMetalPerf,
+}
+
+fn get_engine_for_appid(appid: u32) -> Engine {
+    match appid {
+        105600 => Engine::FnaArm64,
+        504230 => Engine::FnaX86,
+        312520 => Engine::GptkWine,
+        535520 => Engine::DxvkWine,
+        620 => Engine::WineDevel,
+
+        945360 | 1139900 | 2050650 => Engine::SteamBare,
+
+        1245620 => Engine::SteamMetalfx,
+
+        814380 | 1593500 => Engine::SteamMetalfx,
+
+        397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 |
+        1203620 | 1282100 | 750920 | 1172380 | 870780 | 1196590 |
+        1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 |
+        1583230 | 1172470 | 2290180 => Engine::SteamD3DMetalPerf,
+
+        548430 | 892970 | 1313140 | 1623730 | 553850 | 367520 | 413150 |
+        1145360 | 588650 | 1637320 | 1562430 | 1092790 | 1229490 |
+        1971650 | 1809540 | 1237320 | 1326470 | 275850 | 1643320 |
+        379720 | 782330 | 289070 | 1147560 | 1222680 | 252950 |
+        230410 | 252490 | 730 => Engine::SteamD3DMetalPerf,
+
+        _ => {
+            let game_dir = crate::setup::resolve_game_dir(appid);
+            detect_engine_from_dir(&game_dir)
+        }
+    }
+}
+
+fn detect_engine_from_dir(game_dir: &Option<PathBuf>) -> Engine {
+    let dir = match game_dir {
+        Some(d) if d.exists() => d,
+        _ => return Engine::SteamD3DMetalPerf,
+    };
+
+    if crate::setup::detect_dotnet_game(dir) {
+        return Engine::FnaArm64;
+    }
+
+    let has_file = |name: &str| dir.join(name).exists();
+    let has_file_ci = |name: &str| -> bool {
+        let name_lower = name.to_lowercase();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().to_lowercase() == name_lower {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+    let has_dir_ci = |name: &str| -> bool {
+        let name_lower = name.to_lowercase();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.file_name().to_string_lossy().to_lowercase() == name_lower {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+    let has_glob = |pattern: &str| -> bool {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.ends_with(&pattern.to_lowercase()) {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+
+    if has_file_ci("unityplayer.dll") || has_file_ci("gameassembly.dll") {
+        return Engine::SteamD3DMetalPerf;
+    }
+
+    if has_dir_ci("engine") && has_dir_ci("binaries") {
+        return Engine::SteamMetalfx;
+    }
+
+    if has_glob(".pak") || (has_dir_ci("engine") && has_dir_ci("content")) {
+        return Engine::SteamMetalfx;
+    }
+
+    if has_glob(".bdt") || has_glob(".bhd") {
+        return Engine::SteamMetalfx;
+    }
+
+    if has_glob("re_chunk_") || has_file_ci("re2_config.ini") || has_file_ci("re8_config.ini") {
+        return Engine::SteamD3DMetalPerf;
+    }
+
+    if has_file_ci("steam_api64.dll") || has_file_ci("steam_api.dll") {
+        return Engine::SteamD3DMetalPerf;
+    }
+
+    Engine::SteamD3DMetalPerf
+}
+
 pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     let game_dir = crate::setup::resolve_game_dir(appid);
+    let engine = get_engine_for_appid(appid);
 
-    match appid {
-        504230 => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("Celeste.exe");
-            let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
-            Ok((pid, "xna_fna_x86"))
-        }
-        105600 => {
+    match engine {
+        Engine::FnaArm64 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("TerrariaLauncher.exe");
             let pid = launch_fna_arm64(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_arm64"))
         }
-        312520 => {
+        Engine::FnaX86 => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("Celeste.exe");
+            let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "xna_fna_x86"))
+        }
+        Engine::GptkWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("RainWorld.exe");
             let pid = launch_gptk(&exe.to_string_lossy())?;
             Ok((pid, "gptk_wine"))
         }
-        535520 => {
+        Engine::DxvkWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("Nidhogg_2.exe");
-            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, 535520)?;
+            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "dxvk_wine"))
         }
-        945360 | 1139900 => {
-            let pid = launch_via_steam(appid)?;
-            Ok((pid, "steam"))
-        }
-        620 => {
+        Engine::WineDevel => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("portal2.exe");
-            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, 620)?;
+            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "wine_devel"))
         }
-        2050650 => {
+        Engine::SteamBare => {
             let pid = launch_via_steam(appid)?;
             Ok((pid, "steam"))
         }
-        1245620 => {
+        Engine::SteamMetalfx => {
             let pid = launch_via_steam_with_env(appid, &[
                 ("D3DM_ENABLE_METALFX", "1"),
                 ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
@@ -67,9 +180,15 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             ])?;
             Ok((pid, "steam_metalfx"))
         }
-        _ => {
-            let pid = launch_via_steam(appid)?;
-            Ok((pid, "steam"))
+        Engine::SteamD3DMetalPerf => {
+            let pid = launch_via_steam_with_env(appid, &[
+                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+            ])?;
+            Ok((pid, "steam_d3dmetal_perf"))
         }
     }
 }

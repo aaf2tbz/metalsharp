@@ -24,6 +24,8 @@ MetalSharp wraps the tools that make Windows gaming on Mac possible — Wine, Cr
 | **Ghostrunner** | Unreal Engine 4 | CrossOver Wine + Steam DRM | Working |
 | **Resident Evil 4** | RE Engine | CrossOver Wine + Steam DRM | Working |
 | **Elden Ring** | FromSoftware Engine | CrossOver Wine + MetalFX + Steam DRM | Working (FPS drops in intensive areas) |
+| **DREDGE** | Unity | CrossOver Wine + D3DMetal Perf + Steam DRM | Working |
+| **Sons of the Forest** | Unity HDRP | CrossOver Wine + D3DMetal Perf + Steam DRM | Working |
 
 Tested on Apple M4, macOS 26.
 
@@ -103,6 +105,7 @@ Clicking Play for the first time runs game-specific setup:
 - **Nidhogg 2** — copies DXVK DLLs, sets DXVK+MoltenVK environment, creates Wine Devel prefix
 - **Among Us / Ghostrunner / RE4** — launches via Steam DRM (`steam://run/`)
 - **Elden Ring** — launches via Steam DRM with MetalFX upscaling + D3DMetal performance tuning
+- **All other games** — auto-detected engine, launches via Steam DRM with D3DMetal performance tuning
 - **Portal 2** — installs Goldberg Steam emulator for offline play
 
 ## Directory Layout

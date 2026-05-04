@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.0 — 2025-05-03
+
+### Added
+
+- **Engine auto-detection** — unknown games are fingerprinted by scanning game directory for engine markers
+- **DREDGE** support (App ID 1562430) — Unity, auto-detected as SteamD3DMetalPerf
+- **Sons of the Forest** support (App ID 1326470) — Unity HDRP, auto-detected as SteamD3DMetalPerf
+- `detect_engine_from_dir()` — fingerprinter detects Unity, Unreal Engine, FromSoftware, RE Engine, .NET/FNA from file patterns
+- `get_engine_for_appid()` — engine enum routes 100+ known games to the correct pipeline
+- 165 game names mapped from Steam library for proper UI display
+- Five distinct launch tiers: FNA arm64, FNA x86, GPTK, DXVK+MoltenVK, Steam with D3DMetal perf tuning, Steam with MetalFX upscaling
+- `steam_appid.txt` auto-written for all games during prepare_game()
+
+### Changed
+
+- Unknown games default to Steam + D3DMetal performance tuning (async commit, multithreaded, skip barriers, NaN safety)
+- `detect_dotnet_game()` made public for cross-module engine fingerprinting
+- Default game_type for unknown non-.NET games changed from `"native"` to `"steam_d3dmetal_perf"`
+
 ## v0.7.0 — 2025-05-03
 
 ### Added
