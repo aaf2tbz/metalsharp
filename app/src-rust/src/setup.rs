@@ -122,7 +122,7 @@ pub fn dependencies() -> Value {
         "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine"
     ));
 
-    let all_ok = homebrew && rosetta && xcode_cli && mono && gptk;
+    let all_ok = homebrew && rosetta && xcode_cli && crossover;
 
     json!({
         "ok": true,
@@ -131,7 +131,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "homebrew",
                 "name": "Homebrew",
-                "desc": "Package manager — required to install Mono, GPTK, and other dependencies",
+                "desc": "Package manager — required to install other dependencies",
                 "installed": homebrew,
                 "required": true,
                 "installCmd": "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
@@ -139,7 +139,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "rosetta",
                 "name": "Rosetta 2",
-                "desc": "x86_64 translation layer — needed for Celeste (x86 mono) and GPTK Wine (Rain World)",
+                "desc": "x86_64 translation layer — needed for 32-bit Windows games and x86 mono",
                 "installed": rosetta,
                 "required": true,
                 "installCmd": "softwareupdate --install-rosetta --agree-to-license",
@@ -147,47 +147,39 @@ pub fn dependencies() -> Value {
             {
                 "id": "xcode_cli",
                 "name": "Xcode Command Line Tools",
-                "desc": "Provides clang compiler for building native shims (gdiplus stub, CSteamworks, FMOD)",
+                "desc": "Provides clang for building native shims (CSteamworks, gdiplus stub)",
                 "installed": xcode_cli,
                 "required": true,
                 "installCmd": "xcode-select --install",
+            },
+            {
+                "id": "crossover",
+                "name": "CrossOver",
+                "desc": "Wine runtime with built-in D3D/Vulkan→Metal rendering. Runs Windows Steam and launches games with DRM auth.",
+                "installed": crossover,
+                "required": true,
+                "installCmd": "brew install --cask crossover",
             },
             {
                 "id": "mono",
                 "name": "Mono Runtime (arm64)",
                 "desc": "Required for Terraria and other arm64 FNA/XNA games",
                 "installed": mono,
-                "required": true,
+                "required": false,
                 "installCmd": "brew install mono",
             },
             {
                 "id": "gptk",
-                "name": "Game Porting Toolkit (Wine)",
-                "desc": "Apple's D3D→Metal translation + Wine runtime. Required for Unity/D3D games (Rain World)",
+                "name": "Game Porting Toolkit",
+                "desc": "Apple's D3D→Metal translation. Required for Rain World.",
                 "installed": gptk,
-                "required": true,
+                "required": false,
                 "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
-            },
-            {
-                "id": "steamcmd",
-                "name": "SteamCMD",
-                "desc": "Downloads Windows game files from Steam. Required to install games",
-                "installed": steamcmd,
-                "required": false,
-                "installCmd": "script:install-steamcmd.sh",
-            },
-            {
-                "id": "steam",
-                "name": "Steam Client (macOS)",
-                "desc": "Provides native macOS libraries (libsteam_api.dylib, SDL3, FNA3D) needed by Windows FNA games. Install Terraria for macOS to get the best compatibility.",
-                "installed": steam,
-                "required": false,
-                "installCmd": "https://store.steampowered.com/about/",
             },
             {
                 "id": "wine_devel",
                 "name": "Wine (Devel)",
-                "desc": "Wine runtime for 32-bit D3D11 games via DXVK+MoltenVK (Nidhogg 2). Must be Wine Devel (not GPTK) for 32-bit PE support.",
+                "desc": "Wine runtime for DXVK+MoltenVK games (Nidhogg 2). Must be Wine Devel for 32-bit PE support.",
                 "installed": wine_devel,
                 "required": false,
                 "installCmd": "brew install --cask wine-stable",
@@ -195,18 +187,18 @@ pub fn dependencies() -> Value {
             {
                 "id": "moltenvk",
                 "name": "MoltenVK",
-                "desc": "Vulkan-to-Metal translation layer. Required for DXVK-based games (Nidhogg 2) to translate D3D11 → Vulkan → Metal.",
+                "desc": "Vulkan→Metal translation. Required with Wine Devel for DXVK-based games (Nidhogg 2).",
                 "installed": moltenvk,
                 "required": false,
                 "installCmd": "brew install molten-vk",
             },
             {
-                "id": "crossover",
-                "name": "CrossOver",
-                "desc": "CrossOver Wine with built-in D3D/Vulkan rendering. Required for Among Us and other Unity 32-bit games that don't work with DXVK+MoltenVK.",
-                "installed": crossover,
+                "id": "steam",
+                "name": "Steam Client (macOS)",
+                "desc": "Provides native macOS libraries (libsteam_api.dylib) for FNA games. Install Terraria for macOS to get the best compatibility.",
+                "installed": steam,
                 "required": false,
-                "installCmd": "brew install --cask crossover",
+                "installCmd": "https://store.steampowered.com/about/",
             },
         ],
     })
@@ -307,13 +299,49 @@ fn install_steamcmd(home: &PathBuf) -> Value {
     }
 }
 
+pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    if local_dir.join(".metalsharp_prepared").exists() {
+        return Some(local_dir);
+    }
+
+    let wine_steamapps = home
+        .join(".metalsharp")
+        .join("prefix-steam-cx")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    let manifest_path = wine_steamapps.join(format!("appmanifest_{}.acf", appid));
+    if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("\"installdir\"") {
+                let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
+                    let game_dir = wine_steamapps.join("common").join(dir_name);
+                    if game_dir.exists() {
+                        return Some(game_dir);
+                    }
+                }
+            }
+        }
+    }
+
+    if local_dir.exists() {
+        return Some(local_dir);
+    }
+
+    None
+}
+
 pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-
-    if !game_dir.exists() {
-        return Err(format!("game directory not found: {}", game_dir.display()).into());
-    }
+    let game_dir = resolve_game_dir(appid)
+        .ok_or_else(|| format!("game directory not found for appid {}", appid))?;
 
     let marker = game_dir.join(".metalsharp_prepared");
 

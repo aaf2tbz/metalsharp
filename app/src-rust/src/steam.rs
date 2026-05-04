@@ -2,16 +2,26 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Command;
 
+fn cx_wine() -> PathBuf {
+    PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine")
+}
+
+fn cx_root() -> PathBuf {
+    PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver")
+}
+
+fn steam_prefix() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam-cx")
+}
+
+fn steam_exe_path() -> PathBuf {
+    steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+}
+
 pub fn status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
-    let wine_steam_dir = home
-        .join(".metalsharp")
-        .join("prefix")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam");
-
+    let wine_steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
     let wine_steam_exe = wine_steam_dir.join("Steam.exe");
     let windows_installed = wine_steam_exe.exists();
     let windows_path = if windows_installed {
@@ -30,12 +40,8 @@ pub fn status() -> Value {
     let mac_installed = mac_paths.iter().any(|p| p.exists());
 
     let steamcmd = which_steamcmd();
-
-    let running = Command::new("pgrep")
-        .args(["-f", "steam"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let running = is_wine_steam_running();
+    let cx_available = cx_wine().exists();
 
     json!({
         "installed": windows_installed,
@@ -43,8 +49,396 @@ pub fn status() -> Value {
         "login_state": login_state,
         "mac_installed": mac_installed,
         "steam_cmd_path": steamcmd,
-        "running": running
+        "running": running,
+        "crossover_available": cx_available
     })
+}
+
+pub fn is_wine_steam_running() -> bool {
+    let prefix = steam_prefix();
+    Command::new("pgrep")
+        .args(["-f", &prefix.to_string_lossy()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let wine = cx_wine();
+    if !wine.exists() {
+        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+    }
+
+    let exe = steam_exe_path();
+    if !exe.exists() {
+        return Err("Windows Steam not installed — run install first".into());
+    }
+
+    if is_wine_steam_running() {
+        return Ok(json!({"ok": true, "message": "Steam already running"}));
+    }
+
+    let prefix_str = steam_prefix().to_string_lossy().to_string();
+    let cx = cx_root();
+
+    let child = Command::new(&wine)
+        .current_dir(steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam"))
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .arg(&exe)
+        .args(["-no-cef-sandbox", "--disable-gpu", "-console"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true, "pid": child.id()}))
+}
+
+pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let prefix = steam_prefix();
+    let _ = Command::new("pkill")
+        .args(["-f", &prefix.to_string_lossy()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    Ok(json!({"ok": true}))
+}
+
+pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    if !is_wine_steam_running() {
+        launch_wine_steam()?;
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+
+    Ok(json!({"ok": true, "appid": appid, "method": "steam_ui"}))
+}
+
+fn download_game_to_steam_prefix(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    let steamcmd = which_steamcmd().ok_or("steamcmd not found — install with: scripts/install-steamcmd.sh")?;
+
+    let wine_steamapps = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+    std::fs::create_dir_all(&wine_steamapps)?;
+
+    let game_name = resolve_game_name(appid).unwrap_or_else(|| format!("game_{}", appid));
+    let install_dir = wine_steamapps.join("common").join(&game_name);
+    std::fs::create_dir_all(&install_dir)?;
+
+    let progress_file = dirs::home_dir()
+        .map(|h| h.join(".metalsharp").join("download_progress.json"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/metalsharp_download.json"));
+
+    let _ = std::fs::write(&progress_file, serde_json::json!({
+        "appId": appid,
+        "progress": 0.0,
+        "status": "downloading",
+    }).to_string());
+
+    let cmd = steamcmd;
+    let pf = progress_file.clone();
+    let pw = get_steamcmd_password();
+    let appid_str = appid.to_string();
+    let manifest_dir = wine_steamapps.clone();
+    let manifest_game_name = game_name.clone();
+
+    std::thread::spawn(move || {
+        let username = get_steamcmd_username()
+            .or_else(|| get_wine_steam_username())
+            .unwrap_or_else(|| "anonymous".into());
+
+        let base_args: Vec<String> = vec![
+            "+@sSteamCmdForcePlatformType".into(),
+            "windows".into(),
+            "+force_install_dir".into(),
+            install_dir.to_str().unwrap_or("").into(),
+        ];
+        let update_args: Vec<String> = vec![
+            "+app_update".into(),
+            appid_str.clone(),
+            "validate".into(),
+            "+quit".into(),
+        ];
+
+        let login_args: Vec<String> = vec!["+login".into(), username.clone()];
+
+        let mut child = match Command::new(&cmd)
+            .args(&base_args)
+            .args(&login_args)
+            .args(&update_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                return;
+            }
+        };
+
+        let mut needs_retry_with_password = false;
+
+        if let Some(stdout) = child.stdout.take() {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                let lower = line.to_lowercase();
+                if lower.contains("invalid password") || lower.contains("invalid login") || lower.contains("rate limit") {
+                    needs_retry_with_password = true;
+                    break;
+                }
+                if let Some(pct) = parse_progress_line(&line) {
+                    let _ = std::fs::write(&pf, json!({
+                        "appId": appid,
+                        "progress": pct,
+                        "status": "downloading",
+                    }).to_string());
+                }
+            }
+        }
+
+        let _ = child.wait();
+
+        if needs_retry_with_password {
+            if let Some(ref p) = pw {
+                let retry_login: Vec<String> = vec!["+login".into(), username.clone(), p.clone(), "+remember_password".into()];
+                let mut retry_child = match Command::new(&cmd)
+                    .args(&base_args)
+                    .args(&retry_login)
+                    .args(&update_args)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(_) => {
+                        let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error"}).to_string());
+                        return;
+                    }
+                };
+
+                if let Some(stdout) = retry_child.stdout.take() {
+                    use std::io::BufRead;
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines().flatten() {
+                        if let Some(pct) = parse_progress_line(&line) {
+                            let _ = std::fs::write(&pf, json!({
+                                "appId": appid,
+                                "progress": pct,
+                                "status": "downloading",
+                            }).to_string());
+                        }
+                    }
+                }
+
+                let _ = retry_child.wait();
+            } else {
+                let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 0.0, "status": "error", "message": "login required"}).to_string());
+                return;
+            }
+        }
+
+        let _ = std::fs::write(&pf, json!({
+            "appId": appid,
+            "progress": 100.0,
+            "status": "setting_up",
+        }).to_string());
+
+        let has_exe = walkdir::WalkDir::new(&install_dir)
+            .max_depth(3)
+            .into_iter()
+            .flatten()
+            .any(|e| e.path().extension().map(|ext| ext == "exe").unwrap_or(false));
+
+        if has_exe {
+            write_appmanifest(&manifest_dir, appid, &manifest_game_name, &install_dir);
+            let _ = crate::setup::prepare_game(appid);
+
+            if is_wine_steam_running() {
+                let wine = cx_wine();
+                let prefix_str = steam_prefix().to_string_lossy().to_string();
+                let cx = cx_root();
+                let _ = Command::new(&wine)
+                    .env("WINEPREFIX", &prefix_str)
+                    .env("CX_ROOT", cx.to_string_lossy().to_string())
+                    .env("WINEDEBUG", "-all")
+                    .args(["start", &format!("steam://app/{}/", appid)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+        }
+
+        let _ = std::fs::write(&pf, json!({"appId": appid, "progress": 100.0, "status": "complete"}).to_string());
+    });
+
+    Ok(json!({"ok": true, "appId": appid, "status": "started", "method": "steamcmd"}))
+}
+
+fn write_appmanifest(steamapps_dir: &PathBuf, appid: u32, name: &str, install_dir: &PathBuf) {
+    let manifest_path = steamapps_dir.join(format!("appmanifest_{}.acf", appid));
+    if manifest_path.exists() {
+        return;
+    }
+
+    let install_dir_str = install_dir.to_string_lossy();
+    let game_dir_relative = format!("common/{}", name);
+    let bytes_on_disk = walkdir::WalkDir::new(install_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+        .sum::<u64>();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let manifest = format!(
+        "\"AppState\"\n{{\n\t\"appid\"\t\t\"{}\"\n\t\"Universe\"\t\t\"1\"\n\t\"name\"\t\t\"{}\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"{}\"\n\t\"StagingSize\"\t\t\"0\"\n\t\"buildid\"\t\t\"0\"\n\t\"UpdateResult\"\t\t\"0\"\n\t\"TargetBuildID\"\t\t\"0\"\n\t\"AutoUpdateBehavior\"\t\t\"0\"\n\t\"AllowOtherDownloadsWhileRunning\"\t\t\"0\"\n\t\"ScheduledAutoUpdate\"\t\t\"0\"\n\t\"BytesToDownload\"\t\t\"0\"\n\t\"BytesDownloaded\"\t\t\"0\"\n\t\"BytesToStage\"\t\t\"{}\"\n\t\"BytesStaged\"\t\t\"{}\"\n\t\"TargetBuildID\"\t\t\"0\"\n\t\"LastUpdated\"\t\t\"{}\"\n\t\"SizeOnDisk\"\t\t\"{}\"\n}}\n",
+        appid, name, name, bytes_on_disk, bytes_on_disk, now, bytes_on_disk
+    );
+
+    let _ = std::fs::write(&manifest_path, manifest);
+}
+
+fn resolve_game_name(appid: u32) -> Option<String> {
+    let names = [
+        (945360, "Among Us"),
+        (2050650, "RESIDENT EVIL 4  BIOHAZARD RE4"),
+        (504230, "Celeste"),
+        (105600, "Terraria"),
+        (312520, "Rain World"),
+        (535520, "Nidhogg 2"),
+        (620, "Portal 2"),
+        (1139900, "Ghostrunner"),
+    ];
+
+    for &(id, name) in &names {
+        if id == appid {
+            return Some(name.to_string());
+        }
+    }
+
+    let owned = fetch_owned_games(get_steam_id().as_deref()).unwrap_or_default();
+    for (id, name) in owned {
+        if id == appid {
+            return Some(name);
+        }
+    }
+
+    None
+}
+
+fn get_wine_steam_username() -> Option<String> {
+    let vdf = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("config")
+        .join("loginusers.vdf");
+    let contents = std::fs::read_to_string(vdf).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = parse_vdf_value(trimmed, "AccountName") {
+            return Some(name);
+        }
+    }
+    None
+}
+
+pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    let wine = cx_wine();
+    if !wine.exists() {
+        return Err("CrossOver Wine not found".into());
+    }
+    if !is_wine_steam_running() {
+        launch_wine_steam()?;
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if is_wine_steam_running() { break; }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+
+    let prefix_str = steam_prefix().to_string_lossy().to_string();
+    let cx = cx_root();
+    let url = format!("steam://run/{}", appid);
+
+    let child = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .args(["start", &url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true, "pid": child.id(), "appid": appid}))
+}
+
+pub fn get_wine_steam_installed_games() -> Vec<u32> {
+    let steamapps = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    let mut appids = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&steamapps) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("appmanifest_") && name.ends_with(".acf") {
+                if let Some(id_str) = name.strip_prefix("appmanifest_").and_then(|s| s.strip_suffix(".acf")) {
+                    if let Ok(id) = id_str.parse::<u32>() {
+                        appids.push(id);
+                    }
+                }
+            }
+        }
+    }
+    appids
+}
+
+pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let steamapps = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    let _ = crate::launch::kill_game(appid);
+
+    let manifest_path = steamapps.join(format!("appmanifest_{}.acf", appid));
+    if manifest_path.exists() {
+        let contents = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+        let install_dir = contents.lines()
+            .find(|l| l.contains("\"installdir\""))
+            .and_then(|l| {
+                let parts: Vec<&str> = l.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                parts.last().map(|s| s.trim().trim_matches('"').to_string())
+            });
+
+        if let Some(dir_name) = install_dir {
+            let game_dir = steamapps.join("common").join(&dir_name);
+            if game_dir.exists() {
+                let _ = std::fs::remove_dir_all(&game_dir);
+            }
+        }
+        let _ = std::fs::remove_file(&manifest_path);
+    }
+
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    if local_dir.exists() {
+        let _ = std::fs::remove_dir_all(&local_dir);
+    }
+
+    Ok(json!({"ok": true, "appid": appid}))
 }
 
 pub fn steamcmd_status() -> Value {
@@ -272,6 +666,7 @@ pub fn get_steam_id() -> Option<String> {
 pub fn library() -> Value {
     let installed_appids = get_installed_appids();
     let downloaded_appids = get_downloaded_appids();
+    let wine_steam_appids = get_wine_steam_installed_games();
 
     let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
         Ok(games) => games,
@@ -281,7 +676,9 @@ pub fn library() -> Value {
     let games: Vec<Value> = owned
         .iter()
         .map(|(appid, name)| {
-            let is_installed = installed_appids.contains(appid) || downloaded_appids.contains(appid);
+            let is_installed = installed_appids.contains(appid)
+                || downloaded_appids.contains(appid)
+                || wine_steam_appids.contains(appid);
             json!({
                 "appid": appid,
                 "name": name,
@@ -541,18 +938,46 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     if !installer.exists() {
         let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
-        let mut resp = reqwest_https_get(url)?;
-        let mut file = std::fs::File::create(&installer)?;
-        std::io::copy(&mut resp, &mut file)?;
+        let output = Command::new("curl")
+            .args(["-sL", "-o", &installer.to_string_lossy(), url])
+            .status()?;
+        if !output.success() {
+            return Err("Failed to download Steam installer".into());
+        }
     }
 
-    let metalsharp_bin = find_metalsharp_launcher()?;
+    let wine = cx_wine();
+    if !wine.exists() {
+        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+    }
 
-    let child = Command::new(metalsharp_bin)
+    let prefix = steam_prefix();
+    std::fs::create_dir_all(&prefix)?;
+
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let cx = cx_root();
+
+    let _ = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .arg("wineboot")
+        .arg("--init")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let child = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
         .arg(&installer)
+        .args(["/S"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    Ok(format!("Launched Steam installer (pid {})", child.id()))
+    Ok(format!("Launched Steam installer via CrossOver Wine (pid {})", child.id()))
 }
 
 fn reqwest_https_get(url: &str) -> Result<Box<dyn std::io::Read>, Box<dyn std::error::Error>> {
@@ -595,7 +1020,7 @@ fn find_metalsharp_launcher() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dyn std::error::Error>> {
-    let steamcmd = which_steamcmd().ok_or("steamcmd not found")?;
+    let steamcmd = which_steamcmd().ok_or("steamcmd not found — install with: scripts/install-steamcmd.sh")?;
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let install_dir = home.join(".metalsharp").join("games").join(appid.to_string());
@@ -616,7 +1041,9 @@ pub fn download_game(appid: u32, password: Option<&str>) -> Result<Value, Box<dy
     let appid_str = appid.to_string();
 
     std::thread::spawn(move || {
-        let username = get_steamcmd_username().unwrap_or_else(|| "anonymous".into());
+        let username = get_steamcmd_username()
+            .or_else(|| get_wine_steam_username())
+            .unwrap_or_else(|| "anonymous".into());
 
         let base_args: Vec<String> = vec![
             "+@sSteamCmdForcePlatformType".into(),

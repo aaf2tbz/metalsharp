@@ -140,6 +140,51 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             Ok(p) => resp(200, json!({"ok": true, "path": p})),
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
+        (Method::Post, "/steam/launch") => {
+            app_log("Launching Wine Steam...");
+            match steam::launch_wine_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        (Method::Post, "/steam/stop") => {
+            app_log("Stopping Wine Steam...");
+            match steam::stop_wine_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        (Method::Get, "/steam/is-running") => {
+            resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()}))
+        }
+        (Method::Post, "/steam/install-game") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    app_log(&format!("Installing game via Wine Steam: appid {}", id));
+                    match steam::install_game_via_steam(id as u32) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                }
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        }
+        (Method::Post, "/steam/launch-game") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    app_log(&format!("Launching game via Wine Steam: appid {}", id));
+                    match steam::launch_game_via_steam(id as u32) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                }
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        }
         (Method::Post, "/steam/download-game") => {
             let body = read_body(req);
             let appid = body.get("steamAppId").and_then(|v| v.as_u64());
@@ -276,10 +321,31 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
         (Method::Post, "/kill") => {
             let body = read_body(req);
             let pid = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
-            app_log(&format!("Killing process: pid {}", pid));
-            match launch::kill(pid) {
-                Ok(_) => resp(200, json!({"ok": true})),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            app_log(&format!("Killing process: pid {} appid {:?}", pid, appid));
+            if let Some(aid) = appid {
+                match launch::kill_game(aid) {
+                    Ok(_) => resp(200, json!({"ok": true})),
+                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                }
+            } else {
+                match launch::kill(pid) {
+                    Ok(_) => resp(200, json!({"ok": true})),
+                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                }
+            }
+        }
+        (Method::Post, "/steam/uninstall-game") => {
+            let body = read_body(req);
+            match body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32) {
+                Some(appid) => {
+                    app_log(&format!("Uninstalling game: appid {}", appid));
+                    match steam::uninstall_game(appid) {
+                        Ok(r) => resp(200, r),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                }
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         }
         _ => resp(404, json!({"ok": false, "error": "not found"})),

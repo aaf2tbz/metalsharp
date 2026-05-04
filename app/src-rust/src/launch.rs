@@ -12,60 +12,90 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
 
 pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-
-    if !game_dir.exists() {
-        return Err(format!("game directory not found: {}", game_dir.display()).into());
-    }
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let game_dir = crate::setup::resolve_game_dir(appid);
 
     match appid {
         504230 => {
-            let exe = game_dir.join("Celeste.exe");
-            let pid = launch_fna_x86(&exe.to_string_lossy(), &game_dir)?;
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("Celeste.exe");
+            let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_x86"))
         }
         105600 => {
-            let exe = game_dir.join("TerrariaLauncher.exe");
-            let pid = launch_fna_arm64(&exe.to_string_lossy(), &game_dir)?;
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("TerrariaLauncher.exe");
+            let pid = launch_fna_arm64(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_arm64"))
         }
         312520 => {
-            let exe = game_dir.join("RainWorld.exe");
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("RainWorld.exe");
             let pid = launch_gptk(&exe.to_string_lossy())?;
             Ok((pid, "gptk_wine"))
         }
         535520 => {
-            let exe = game_dir.join("Nidhogg_2.exe");
-            let pid = launch_dxvk_wine(&exe.to_string_lossy(), &game_dir)?;
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("Nidhogg_2.exe");
+            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, 535520)?;
             Ok((pid, "dxvk_wine"))
         }
-        945360 => {
-            let exe = game_dir.join("Among Us.exe");
-            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
-            Ok((pid, "crossover_wine"))
+        945360 | 1139900 => {
+            let pid = launch_via_steam(appid)?;
+            Ok((pid, "steam"))
         }
         620 => {
-            let exe = game_dir.join("portal2.exe");
-            let pid = launch_wine_devel(&exe.to_string_lossy(), &game_dir)?;
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("portal2.exe");
+            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, 620)?;
             Ok((pid, "wine_devel"))
         }
-        1139900 => {
-            let exe = game_dir.join("Ghostrunner.exe");
-            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
-            Ok((pid, "crossover_wine"))
-        }
         2050650 => {
-            let exe = game_dir.join("re4.exe");
-            let pid = launch_crossover_wine(&exe.to_string_lossy(), &game_dir)?;
-            Ok((pid, "crossover_wine"))
+            let pid = launch_via_steam(appid)?;
+            Ok((pid, "steam"))
         }
         _ => {
-            let exe = resolve_game_exe_fallback(&game_dir);
-            let game_type = detect_game_type(&game_dir);
+            if game_dir.is_none() {
+                let pid = launch_via_steam(appid)?;
+                return Ok((pid, "steam"));
+            }
+            let dir = game_dir.as_ref().unwrap();
+            let exe = resolve_game_exe_fallback(dir);
+            let game_type = detect_game_type(dir);
             let pid = launch(&exe, game_type)?;
             Ok((pid, game_type))
         }
     }
+}
+
+pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
+    let wine = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine");
+    if !wine.exists() {
+        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !crate::steam::is_wine_steam_running() {
+        crate::steam::launch_wine_steam()?;
+        std::thread::sleep(std::time::Duration::from_secs(15));
+    }
+
+    let cx = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
+    let url = format!("steam://run/{}", appid);
+
+    let child = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .args(["start", &url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(child.id())
 }
 
 fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
@@ -141,7 +171,7 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     Ok(child.id())
 }
 
-fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
 
@@ -149,7 +179,6 @@ fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
         return Err("Wine (devel) not found — install with: brew install --cask wine-crossover".into());
     }
 
-    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
     let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
     let prefix_str = prefix.to_string_lossy().to_string();
 
@@ -226,7 +255,7 @@ fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<
     Ok(child.id())
 }
 
-fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
 
@@ -234,7 +263,6 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
         return Err("Wine (devel) not found — install with: brew install --cask wine-crossover || brew install --cask wine-stable".into());
     }
 
-    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
     let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
     let prefix_str = prefix.to_string_lossy().to_string();
 
@@ -438,12 +466,6 @@ fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = Command::new("pkill")
-        .args(["-9", "-P", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
     let _ = Command::new("kill")
         .args(["-9", &pid.to_string()])
         .stdout(std::process::Stdio::null())
@@ -451,10 +473,83 @@ pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
         .status();
 
     let _ = Command::new("pkill")
+        .args(["-9", "-P", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let _ = Command::new("pkill")
         .args(["-9", "-f", "UnityCrashHandler"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+
+    Ok(())
+}
+
+pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let steam_prefix = home.join(".metalsharp").join("prefix-steam-cx");
+
+    if let Ok(output) = Command::new("pgrep")
+        .args(["-a", "-f", &game_dir.to_string_lossy()])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some(pid_str) = line.split_whitespace().next() {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    let _ = Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .status();
+                }
+            }
+        }
+    }
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "UnityCrashHandler"])
+        .status();
+
+    let steamapps_common = steam_prefix
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps")
+        .join("common");
+
+    let prefixes_to_check = vec![
+        steamapps_common.join("Among Us"),
+        steamapps_common.join("RESIDENT EVIL 4  BIOHAZARD RE4"),
+        steamapps_common.join("Celeste"),
+        steamapps_common.join("Terraria"),
+        steamapps_common.join("Rain World"),
+        steamapps_common.join("Nidhogg 2"),
+        steamapps_common.join("Portal 2"),
+        steamapps_common.join("Ghostrunner"),
+        game_dir.clone(),
+    ];
+
+    for dir in &prefixes_to_check {
+        if dir.exists() {
+            if let Ok(output) = Command::new("pgrep")
+                .args(["-a", "-f", &dir.to_string_lossy()])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    if let Some(pid_str) = line.split_whitespace().next() {
+                        if let Ok(pid) = pid_str.parse::<i32>() {
+                            let _ = Command::new("kill")
+                                .args(["-9", &pid.to_string()])
+                                .status();
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
