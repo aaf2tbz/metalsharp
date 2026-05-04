@@ -79,6 +79,31 @@
 - **DXVK removed** — external runtime provides its own D3D/Vulkan translation, no external DXVK DLLs needed
 - **Required**: external runtime (`/Applications/external runtime.app/`)
 
+### Resident Evil 4 (2050650) — external runtime Wine + Vulkan + Steam DRM
+- **Rendering**: D3D11 via external runtime Wine built-in Vulkan/D3D11 support — native Metal
+- **Audio**: Working via external runtime Wine audio bridge
+- **Input**: Working via external runtime Wine input translation
+- **Launch**: external runtime Wine + `steam://run/` for full Steam DRM authentication
+- **Architecture**: 64-bit PE32+ (RE Engine)
+
+### Elden Ring (1245620) — external runtime Wine + MetalFX + Steam DRM
+- **Rendering**: D3D12 via external runtime Wine + Apple MetalFX spatial upscaling via `D3DM_ENABLE_METALFX=1`
+- **Audio**: Working via external runtime Wine audio bridge
+- **Input**: Working via external runtime Wine input translation + Steam Input
+- **Launch**: external runtime Wine + `steam://run/` with MetalFX and D3DMetal performance tuning
+- **Architecture**: 64-bit PE32+ (FromSoftware custom engine)
+- **Performance env vars**:
+  - `D3DM_ENABLE_METALFX=1` — Apple MetalFX spatial upscaling
+  - `D3DM_ENABLE_ASYNC_COMMIT=1` — async GPU command submission
+  - `D3DM_MULTITHREADED_INTERFACE_ENABLE=1` — multithreaded D3D
+  - `D3DM_IGNORE_D3D11_RENDER_BARRIERS=1` — skip unnecessary sync points
+  - `D3DM_SAMPLE_NAN_TO_ZERO=1` — prevent NaN crashes
+  - `D3DM_FLUSH_POS_INF_TO_NAN=1` — stability
+  - `MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1` — texture swizzle fix
+  - `MVK_ALLOW_METAL_FENCES=1` — Metal fence support
+- **Known issues**: FPS drops in graphically intensive areas (boss fights, open world). No visual glitches.
+- **Required**: external runtime (`/Applications/external runtime.app/`)
+
 ## In Progress
 
 ### Goat Simulator (265930) — Wine + DXVK d3d9 (blocked)
@@ -117,12 +142,20 @@ Nidhogg_2.exe (32-bit PE32, GameMaker)
     → Apple Metal → GPU
 ```
 
-### external runtime Pipeline (Among Us, Ghostrunner)
+### external runtime Pipeline (Among Us, Ghostrunner, RE4, Elden Ring)
 ```
-Game.exe (64-bit PE32+, Unity/UE4)
+Game.exe (64-bit PE32+, Unity/UE4/RE Engine/FromSoftware)
     → external runtime Wine (Win32 API translation)
     → Built-in Vulkan/D3D11 support
     → MoltenVK (Vulkan → Metal)
+    → Apple Metal → GPU
+```
+
+### Elden Ring Pipeline (MetalFX Upscaling)
+```
+eldenring.exe (64-bit PE32+, FromSoftware engine)
+    → external runtime Wine (Win32 API translation)
+    → D3DMetal (D3D12 → Metal, with MetalFX spatial upscaling)
     → Apple Metal → GPU
 ```
 
@@ -136,6 +169,8 @@ Game.exe (64-bit PE32+, Unity/UE4)
 | Among Us | FMOD (Unity) | via external runtime Wine | Working |
 | Portal 2 | Source Engine audio | via Wine | Working |
 | Ghostrunner | Unreal Engine 4 audio | via external runtime Wine | Working |
+| RE4 | RE Engine audio | via external runtime Wine | Working |
+| Elden Ring | FromSoftware audio | via external runtime Wine | Working |
 
 ### Rendering Pipeline per Game
 | Game | Pipeline | Hops | Notes |
@@ -147,3 +182,5 @@ Game.exe (64-bit PE32+, Unity/UE4)
 | Among Us | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit |
 | Portal 2 | D3D9 → wined3d OpenGL | 2 | Wine Devel, 32-bit, Goldberg auth |
 | Ghostrunner | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit UE4 |
+| RE4 | D3D11 → external runtime Vulkan → Metal | 3 | external runtime Wine, 64-bit RE Engine |
+| Elden Ring | D3D12 → D3DMetal + MetalFX | 2 | external runtime Wine, MetalFX upscaling, FPS drops in intensive areas |
