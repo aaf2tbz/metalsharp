@@ -16,6 +16,7 @@ enum Engine {
     FnaX86,
     GptkWine,
     DxvkWine,
+    CrossoverWine,
     WineDevel,
     SteamBare,
     SteamMetalfx,
@@ -27,7 +28,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
         312520 => Engine::GptkWine,
-        535520 => Engine::DxvkWine,
+        535520 => Engine::CrossoverWine,
         620 => Engine::WineDevel,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
@@ -156,6 +157,12 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let exe = dir.join("Nidhogg_2.exe");
             let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "dxvk_wine"))
+        }
+        Engine::CrossoverWine => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = dir.join("Nidhogg_2.exe");
+            let pid = launch_crossover_wine(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "crossover_wine"))
         }
         Engine::WineDevel => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -381,23 +388,16 @@ fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<
         return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
     }
 
-    let appid = game_dir.file_name().unwrap_or_default().to_string_lossy();
-    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        let _ = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("wineboot")
-            .arg("--init")
-            .status();
-    }
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
 
     for dll in &["d3d11.dll", "dxgi.dll"] {
-        let game_dll = game_dir.join(dll);
-        if game_dll.exists() {
-            let _ = std::fs::remove_file(&game_dll);
+        let src = dxvk_dir.join(dll);
+        let dst = game_dir.join(dll);
+        if src.exists() {
+            let _ = std::fs::copy(&src, &dst);
         }
     }
 
@@ -413,7 +413,11 @@ fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("CX_ROOT", crossover_base.to_string_lossy().to_string())
+        .env("WINEDLLOVERRIDES", "d3d11=native,dxgi=native")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+        .env("DXVK_FRAME_RATE", "60")
+        .env("DXVK_ASYNC", "1")
+        .env("MVK_PRESENT_MODE", "1")
         .arg(exe_path)
         .spawn()?;
 
