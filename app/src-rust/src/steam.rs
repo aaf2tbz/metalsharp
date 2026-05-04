@@ -316,6 +316,7 @@ fn resolve_game_name(appid: u32) -> Option<String> {
         (535520, "Nidhogg 2"),
         (620, "Portal 2"),
         (1139900, "Ghostrunner"),
+        (1245620, "ELDEN RING"),
     ];
 
     for &(id, name) in &names {
