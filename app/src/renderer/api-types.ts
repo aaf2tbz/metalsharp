@@ -82,4 +82,5 @@ type MetalsharpAPI = {
   isFirstLaunch: () => Promise<boolean>;
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
+  installHomebrew: () => Promise<{ ok: boolean; error?: string }>;
 };

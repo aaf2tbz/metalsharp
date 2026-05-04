@@ -166,16 +166,14 @@ class App {
 
     switch (step) {
       case 0: this.renderSetupWelcome(wizard); break;
-      case 1: this.renderSetupDependencies(wizard); break;
-      case 2: this.renderSetupDeviceName(wizard); break;
-      case 3: this.renderSetupSteamApiKey(wizard); break;
-      case 4: this.renderSetupSteamInstall(wizard); break;
-      case 5: this.renderSetupComplete(wizard); break;
+      case 1: this.renderSetupInstall(wizard); break;
+      case 2: this.renderSetupSteam(wizard); break;
+      case 3: this.renderSetupComplete(wizard); break;
     }
   }
 
   private renderSetupStepIndicator(container: HTMLElement, current: number) {
-    const steps = ["Welcome", "Dependencies", "Device", "Steam API", "Windows Steam", "Done"];
+    const steps = ["Welcome", "Install", "Steam", "Done"];
     const indicator = document.createElement("div");
     indicator.className = "setup-steps";
 
@@ -250,7 +248,7 @@ class App {
     });
   }
 
-  private async renderSetupDependencies(container: HTMLElement) {
+  private async renderSetupInstall(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 1);
 
     const body = document.createElement("div");
@@ -260,286 +258,274 @@ class App {
     body.innerHTML = `
       <div class="setup-section-header">
         <h1>Install Dependencies</h1>
-        <p>MetalSharp needs a few system libraries to run games. Install each one individually.</p>
+        <p>MetalSharp needs a few system tools and runtimes. Install Homebrew first, then hit the button below.</p>
       </div>
-      <div id="dep-list" class="setup-dep-list"></div>
-      <div class="setup-actions">
+      <div id="install-buttons" class="setup-install-buttons"></div>
+      <div id="install-log-container" class="setup-install-log-container" style="display:none;">
+        <div class="setup-progress-bar-container">
+          <div class="setup-progress-bar" id="install-progress-bar"></div>
+          <span class="setup-progress-label" id="install-progress-label">0%</span>
+        </div>
+        <div class="setup-install-log" id="install-log"></div>
+      </div>
+      <div class="setup-actions" id="install-actions">
         <button class="btn btn-secondary" id="setup-back">Back</button>
-        <button class="btn btn-primary" id="setup-next">Continue</button>
+        <button class="btn btn-primary" id="setup-next" style="display:none;">Continue</button>
       </div>
     `;
 
-    const depList = body.querySelector("#dep-list")!;
-    const deps = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
+    const buttonsDiv = body.querySelector("#install-buttons")!;
+    const logContainer = body.querySelector("#install-log-container") as HTMLElement;
+    const logDiv = body.querySelector("#install-log") as HTMLElement;
+    const progressBar = body.querySelector("#install-progress-bar") as HTMLElement;
+    const progressLabel = body.querySelector("#install-progress-label") as HTMLElement;
+    const nextBtn = body.querySelector("#setup-next") as HTMLElement;
 
-    const depState: Map<string, "pending" | "installed" | "installing" | "failed"> = new Map();
-    const depErrors: Map<string, string> = new Map();
-
-    const renderDeps = () => {
-      depList.innerHTML = "";
-      if (!deps?.dependencies) return;
-
-      for (const dep of deps.dependencies) {
-        const state = depState.get(dep.id) ?? (dep.installed ? "installed" : "pending");
-        const error = depErrors.get(dep.id);
-
-        const row = document.createElement("div");
-        row.className = `setup-dep-row ${state === "installed" ? "installed" : ""} ${state === "installing" ? "installing" : ""} ${state === "failed" ? "install-failed" : ""}`;
-
-        const statusIcon = state === "installed" ? "&#10003;" : state === "installing" ? "&#9679;" : state === "failed" ? "&#10007;" : "&#9675;";
-        const badge = state === "installed"
-          ? '<span class="badge badge-ok">Installed</span>'
-          : state === "installing"
-          ? '<span class="badge badge-warn">Installing...</span>'
-          : state === "failed"
-          ? '<span class="badge badge-warn">Failed</span>'
-          : dep.required
-          ? '<span class="badge badge-warn">Required</span>'
-          : '<span class="badge" style="background:rgba(122,106,94,0.12);color:var(--text-dim)">Optional</span>';
-
-        const btnLabel = state === "installing" ? "Installing..." : state === "failed" ? "Retry" : "Install";
-        const btnDisabled = state === "installed" || state === "installing" ? "disabled" : "";
-
-        row.innerHTML = `
-          <div class="setup-dep-status">${statusIcon}</div>
-          <div class="setup-dep-info">
-            <div class="setup-dep-name">${this.esc(dep.name)}</div>
-            <div class="setup-dep-desc">${this.esc(dep.desc)}</div>
-            ${error ? `<div class="setup-dep-error">${this.esc(error)}</div>` : ""}
-          </div>
-          ${badge}
-          ${state !== "installed" ? `<button class="setup-dep-install-btn ${state}" data-dep-id="${dep.id}" ${btnDisabled}>${btnLabel}</button>` : ""}
-        `;
-        depList.appendChild(row);
-
-        const btn = row.querySelector(`[data-dep-id="${dep.id}"]`);
-        if (btn) {
-          btn.addEventListener("click", () => this.installSingleDep(dep, depState, depErrors, renderDeps));
-        }
-      }
+    const checkBrew = async (): Promise<boolean> => {
+      const deps = await this.api<DependenciesResponse>("GET", "/setup/dependencies");
+      return deps?.dependencies?.find((d) => d.id === "homebrew")?.installed ?? false;
     };
 
-    renderDeps();
+    const hasBrew = await checkBrew();
+
+    if (!hasBrew) {
+      const brewBtn = document.createElement("button");
+      brewBtn.className = "btn btn-primary btn-lg setup-install-btn";
+      brewBtn.id = "btn-install-homebrew";
+      brewBtn.innerHTML = `<span class="setup-install-btn-label">Install Homebrew</span><span class="setup-install-btn-desc">Package manager — required for everything else</span>`;
+      buttonsDiv.appendChild(brewBtn);
+
+      const depBtn = document.createElement("button");
+      depBtn.className = "btn btn-secondary btn-lg setup-install-btn";
+      depBtn.id = "btn-install-deps";
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, SteamCMD, and more</span>`;
+      depBtn.style.opacity = "0.5";
+      depBtn.style.pointerEvents = "none";
+      buttonsDiv.appendChild(depBtn);
+
+      brewBtn.addEventListener("click", async () => {
+        brewBtn.textContent = "Opening Terminal...";
+        (brewBtn as HTMLButtonElement).disabled = true;
+        const result = await getAPI().installHomebrew();
+        if (result.ok) {
+          brewBtn.innerHTML = '<span class="setup-install-btn-label">Homebrew — Terminal Opened</span><span class="setup-install-btn-desc">Complete the install in Terminal, then click below</span>';
+          brewBtn.classList.remove("btn-primary");
+          brewBtn.classList.add("btn-secondary");
+          depBtn.style.opacity = "1";
+          depBtn.style.pointerEvents = "auto";
+          this.toast("Complete the Homebrew install in Terminal, then come back", "success");
+        } else {
+          brewBtn.textContent = "Install Homebrew";
+          (brewBtn as HTMLButtonElement).disabled = false;
+          this.toast(result.error ?? "Homebrew install failed", "error");
+        }
+      });
+
+      depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
+    } else {
+      const depBtn = document.createElement("button");
+      depBtn.className = "btn btn-primary btn-lg setup-install-btn";
+      depBtn.id = "btn-install-deps";
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, SteamCMD, Wine, and more</span>`;
+      buttonsDiv.appendChild(depBtn);
+
+      depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
+    }
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(0));
 
-    body.querySelector("#setup-next")?.addEventListener("click", () => {
-      const allInstalled = deps?.dependencies?.filter((d) => d.required && depState.get(d.id) !== "installed" && !d.installed) ?? [];
-      if (allInstalled.length > 0) {
-        const names = allInstalled.map((d) => d.name).join(", ");
-        this.toast(`Required deps not installed: ${names}. Install them or skip.`, "error");
-        return;
-      }
-      this.renderSetupStep(2);
-    });
+    nextBtn.addEventListener("click", () => this.renderSetupStep(2));
   }
 
-  private async installSingleDep(
-    dep: Dependency,
-    depState: Map<string, "pending" | "installed" | "installing" | "failed">,
-    depErrors: Map<string, string>,
-    rerender: () => void
+  private async startDepInstall(
+    logContainer: HTMLElement,
+    logDiv: HTMLElement,
+    progressBar: HTMLElement,
+    progressLabel: HTMLElement,
+    nextBtn: HTMLElement
   ) {
-    depState.set(dep.id, "installing");
-    depErrors.delete(dep.id);
-    rerender();
-
-    const result = await getAPI().installDeps(dep.installCmd);
-    if (result.ok) {
-      depState.set(dep.id, "installed");
-      this.toast(`${dep.name} installed`, "success");
-    } else {
-      depState.set(dep.id, "failed");
-      depErrors.set(dep.id, result.error ?? "Installation failed");
-      this.toast(`Failed to install ${dep.name}`, "error");
+    const depBtn = document.getElementById("btn-install-deps") as HTMLButtonElement;
+    if (depBtn) {
+      depBtn.disabled = true;
+      depBtn.style.opacity = "0.5";
     }
-    rerender();
+
+    logContainer.style.display = "block";
+    logDiv.innerHTML = "";
+
+    const started = await this.api<{ ok: boolean; error?: string }>("POST", "/setup/install-all");
+    if (!started?.ok) {
+      this.toast(started?.error ?? "Failed to start installation", "error");
+      if (depBtn) { depBtn.disabled = false; depBtn.style.opacity = "1"; }
+      return;
+    }
+
+    const addLog = (text: string, cls: string) => {
+      const line = document.createElement("div");
+      line.className = `setup-log-line ${cls}`;
+      line.textContent = text;
+      logDiv.appendChild(line);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    };
+
+    addLog("Starting installation...", "info");
+
+    const pollInterval = setInterval(async () => {
+      const progress = await this.api<{ step: number; total: number; current: string; status: string; log: string; error: string | null }>("GET", "/setup/install-progress");
+      if (!progress) return;
+
+      const pct = progress.total > 0 ? Math.round((progress.step / progress.total) * 100) : 0;
+      progressBar.style.width = `${pct}%`;
+      progressLabel.textContent = `${pct}%`;
+
+      if (progress.status === "done" || progress.status === "skipped") {
+        if (progress.status === "done") {
+          addLog(`${progress.log}`, "success");
+        } else {
+          addLog(`${progress.log}`, "warn");
+        }
+      } else if (progress.status === "error") {
+        addLog(`${progress.log}`, "error");
+        if (progress.error) {
+          addLog(`Error: ${progress.error}`, "error");
+        }
+      } else if (progress.status === "installing") {
+        const existing = logDiv.querySelector(`[data-step="${progress.step}"]`);
+        if (!existing) {
+          const line = document.createElement("div");
+          line.className = "setup-log-line active";
+          line.dataset.step = String(progress.step);
+          line.textContent = progress.log;
+          logDiv.appendChild(line);
+          logDiv.scrollTop = logDiv.scrollHeight;
+        }
+      } else if (progress.status === "complete") {
+        addLog("All dependencies installed!", "success");
+        clearInterval(pollInterval);
+        progressBar.style.width = "100%";
+        progressLabel.textContent = "100%";
+        nextBtn.style.display = "inline-flex";
+        this.toast("All dependencies installed!", "success");
+        return;
+      } else if (progress.status === "starting") {
+        addLog(progress.log, "info");
+      }
+    }, 500);
+
+    setTimeout(() => clearInterval(pollInterval), 30 * 60 * 1000);
   }
 
-  private async renderSetupDeviceName(container: HTMLElement) {
+  private async renderSetupSteam(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 2);
 
     const body = document.createElement("div");
     body.className = "setup-body";
     container.appendChild(body);
 
-    const defaultName = this.setupDeviceName || "";
+    const generatedName = await this.api<{ name: string }>("GET", "/setup/device-name");
+    const defaultName = this.setupDeviceName || generatedName?.name || "";
+
     body.innerHTML = `
-      <div class="setup-body">
-        <div class="setup-section-header">
-          <h1>Device Name</h1>
-          <p>Choose a name for this device. This helps Steam recognize your machine so you don't need to re-login every session.</p>
+      <div class="setup-section-header">
+        <h1>Set Up Steam</h1>
+        <p>Name your device, then launch Steam and log in. MetalSharp uses Windows Steam via CrossOver to download and authenticate games.</p>
+      </div>
+      <div class="setup-form">
+        <div class="setup-form-group">
+          <label class="setup-label">Device Name</label>
+          <input type="text" id="device-name-input" value="${this.esc(defaultName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
+          <div class="setup-hint">Identifies your machine to Steam for persistent login.</div>
         </div>
-        <div class="setup-form">
-          <div class="setup-form-group">
-            <label class="setup-label">Device Name</label>
-            <input type="text" id="device-name-input" value="${this.esc(defaultName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
-            <div class="setup-hint">This is stored locally and sent to Steam as your machine identifier.</div>
+        <div class="setup-form-group">
+          <label class="setup-label">Steam Web API Key (optional)</label>
+          <input type="password" id="setup-api-key" placeholder="Enter your Steam Web API key..." class="setup-input" />
+          <div class="setup-hint">
+            Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a>
           </div>
-          <div class="setup-form-group">
-            <button class="btn btn-secondary btn-sm" id="regen-name">Generate Random Name</button>
-          </div>
         </div>
-        <div class="setup-actions">
-          <button class="btn btn-secondary" id="setup-back">Back</button>
-          <button class="btn btn-primary" id="setup-next">Continue</button>
-        </div>
+      </div>
+      <div id="steam-launch-status" style="text-align:center;margin:24px 0;">
+        <span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Steam not running</span>
+      </div>
+      <div class="setup-actions">
+        <button class="btn btn-secondary" id="setup-back">Back</button>
+        <button class="btn btn-primary btn-lg" id="btn-launch-steam">Launch Steam</button>
+        <button class="btn btn-primary" id="setup-next" style="display:none;">Continue</button>
       </div>
     `;
 
-    if (!defaultName) {
-      this.api<{ name: string }>("GET", "/setup/device-name").then((result) => {
-        const input = document.getElementById("device-name-input") as HTMLInputElement;
-        if (result?.name && input && !input.value) {
-          input.value = result.name;
-          this.setupDeviceName = result.name;
-        }
-      });
-    }
+    const statusDiv = body.querySelector("#steam-launch-status") as HTMLElement;
+    const launchBtn = body.querySelector("#btn-launch-steam") as HTMLElement;
+    const nextBtn = body.querySelector("#setup-next") as HTMLElement;
+    const nameInput = document.getElementById("device-name-input") as HTMLInputElement;
 
-    container.querySelector("#regen-name")?.addEventListener("click", async () => {
-      const result = await this.api<{ name: string }>("GET", "/setup/device-name");
-      const input = document.getElementById("device-name-input") as HTMLInputElement;
-      if (result?.name && input) input.value = result.name;
+    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(1));
+
+    launchBtn.addEventListener("click", async () => {
+      launchBtn.textContent = "Launching Steam...";
+      (launchBtn as HTMLButtonElement).disabled = true;
+
+      const steamStatus = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+
+      if (steamStatus?.running) {
+        statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+        launchBtn.style.display = "none";
+        nextBtn.style.display = "inline-flex";
+        return;
+      }
+
+      if (!steamStatus?.installed) {
+        statusDiv.innerHTML = '<div class="setup-hint" style="margin-top:8px">Steam not found. Go back and install dependencies first.</div>';
+        launchBtn.textContent = "Launch Steam";
+        (launchBtn as HTMLButtonElement).disabled = false;
+        return;
+      }
+
+      const result = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/steam/launch");
+      if (result?.ok) {
+        this.wineSteamRunning = true;
+        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Waiting for Steam — log in through the Steam window...</span>';
+
+        const pollSteam = setInterval(async () => {
+          const s = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+          if (s?.running) {
+            clearInterval(pollSteam);
+            this.wineSteamRunning = true;
+            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+            launchBtn.style.display = "none";
+            nextBtn.style.display = "inline-flex";
+          }
+        }, 3000);
+
+        setTimeout(() => clearInterval(pollSteam), 120000);
+      } else {
+        this.toast(result?.error ?? "Failed to launch Steam", "error");
+        launchBtn.textContent = "Launch Steam";
+        (launchBtn as HTMLButtonElement).disabled = false;
+      }
     });
 
-    container.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(1));
+    nextBtn.addEventListener("click", async () => {
+      const name = nameInput?.value?.trim() || defaultName;
+      const keyInput = document.getElementById("setup-api-key") as HTMLInputElement;
+      const key = keyInput?.value?.trim();
 
-    container.querySelector("#setup-next")?.addEventListener("click", async () => {
-      const input = document.getElementById("device-name-input") as HTMLInputElement;
-      this.setupDeviceName = input?.value?.trim() || this.setupDeviceName;
+      this.setupDeviceName = name;
+      await this.api("POST", "/setup/save", { step: 2, deviceName: name });
 
-      await this.api("POST", "/setup/save", {
-        step: 2,
-        deviceName: this.setupDeviceName,
-      });
+      if (key) {
+        await this.api("POST", "/steam/save-api-key", { key });
+        this.steamApiKey = key;
+      }
 
       this.renderSetupStep(3);
     });
   }
 
-  private renderSetupSteamApiKey(container: HTMLElement) {
+  private async renderSetupComplete(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 3);
 
-    const body = document.createElement("div");
-    body.className = "setup-body";
-    container.appendChild(body);
-
-    body.innerHTML = `
-      <div class="setup-body">
-        <div class="setup-section-header">
-          <h1>Steam Web API Key</h1>
-          <p>Required to load your full game library (including uninstalled games).</p>
-        </div>
-        <div class="setup-form">
-          <div class="setup-form-group">
-            <label class="setup-label">API Key</label>
-            <input type="password" id="setup-api-key" placeholder="Enter your Steam Web API key..." class="setup-input" />
-            <div class="setup-hint">
-              Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a> — 
-              log in with Steam, fill in any domain name, and copy the key.
-            </div>
-          </div>
-        </div>
-        <div class="setup-actions">
-          <button class="btn btn-secondary" id="setup-back">Back</button>
-          <button class="btn btn-secondary" id="setup-skip">Skip for Now</button>
-          <button class="btn btn-primary" id="setup-next">Save & Continue</button>
-        </div>
-      </div>
-    `;
-
-    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(2));
-
-    body.querySelector("#setup-skip")?.addEventListener("click", () => this.renderSetupStep(4));
-
-    body.querySelector("#setup-next")?.addEventListener("click", async () => {
-      const input = document.getElementById("setup-api-key") as HTMLInputElement;
-      const key = input?.value?.trim();
-      if (!key) {
-        this.toast("Enter your API key or skip", "error");
-        return;
-      }
-
-      await this.api("POST", "/steam/save-api-key", { key });
-      await this.api("POST", "/setup/save", { step: 3, steamApiKeySet: true });
-      this.steamApiKey = key;
-
-      this.toast("API key saved!", "success");
-      this.renderSetupStep(4);
-    });
-  }
-
-  private async renderSetupSteamInstall(container: HTMLElement) {
-    this.renderSetupStepIndicator(container, 4);
-
-    const steamStatus = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
-
-    const body = document.createElement("div");
-    body.className = "setup-body";
-    container.appendChild(body);
-
-    body.innerHTML = `
-      <div class="setup-body">
-        <div class="setup-section-header">
-          <h1>Windows Steam</h1>
-          <p>MetalSharp uses CrossOver Wine to run the Windows Steam client. This handles game downloads and DRM authentication. You'll install games through Steam's interface and launch them from MetalSharp.</p>
-        </div>
-        <div id="setup-steam-install-status" style="text-align:center;margin:30px 0;">
-          ${steamStatus?.installed
-            ? '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Windows Steam is installed</span>'
-            : '<span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Not yet installed</span>'}
-        </div>
-        <div class="setup-actions">
-          <button class="btn btn-secondary" id="setup-back">Back</button>
-          ${steamStatus?.installed
-            ? '<button class="btn btn-primary" id="setup-next">Continue</button>'
-            : '<button class="btn btn-primary" id="setup-install-steam">Install Windows Steam</button>'}
-        </div>
-      </div>
-    `;
-
-    body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
-
-    body.querySelector("#setup-install-steam")?.addEventListener("click", async () => {
-      const btn = body.querySelector("#setup-install-steam") as HTMLElement;
-      btn.textContent = "Installing...";
-      (btn as HTMLButtonElement).disabled = true;
-
-      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/install");
-      if (result?.ok) {
-        this.toast("Steam installer launched — complete the setup in the Steam window, then click Continue", "success");
-        const statusDiv = document.getElementById("setup-steam-install-status")!;
-        statusDiv.innerHTML = '<div class="spinner"></div> Waiting for Steam installation...<br><span style="font-size:12px;color:var(--text-dim)">Complete the Steam installer, then log in.</span>';
-
-        const pollForSteam = setInterval(async () => {
-          const s = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
-          if (s?.installed) {
-            clearInterval(pollForSteam);
-            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Windows Steam is installed</span>';
-            const actions = body.querySelector(".setup-actions")!;
-            actions.innerHTML = `
-              <button class="btn btn-secondary" id="setup-back">Back</button>
-              <button class="btn btn-primary" id="setup-next">Continue</button>
-            `;
-            actions.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
-            actions.querySelector("#setup-next")?.addEventListener("click", () => this.renderSetupStep(5));
-          }
-        }, 3000);
-      } else {
-        this.toast(result?.error ?? "Failed to install Steam", "error");
-        btn.textContent = "Install Windows Steam";
-        (btn as HTMLButtonElement).disabled = false;
-      }
-    });
-
-    body.querySelector("#setup-next")?.addEventListener("click", () => this.renderSetupStep(5));
-  }
-
-  private async renderSetupComplete(container: HTMLElement) {
-    this.renderSetupStepIndicator(container, 5);
-
-    await this.api("POST", "/setup/save", { step: 5, completed: true });
+    await this.api("POST", "/setup/save", { step: 3, completed: true });
 
     const body = document.createElement("div");
     body.className = "setup-body";
@@ -550,7 +536,7 @@ class App {
         <div class="setup-complete">
           <div class="setup-complete-icon">&#10003;</div>
           <h1>You're All Set!</h1>
-          <p>MetalSharp is ready to go. Download games from your library and play them natively on macOS.</p>
+          <p>MetalSharp is ready. Download games from your library and play them natively on macOS.</p>
           <div class="setup-complete-tips">
             <div class="setup-tip">
               <strong>Download a game</strong> — Find it in your Library and click Install.
@@ -571,7 +557,6 @@ class App {
 
     body.querySelector("#setup-finish")?.addEventListener("click", async () => {
       this.hideSetupWizard();
-
       this.steamApiKey = await this.getSteamApiKey();
       const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
       this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;

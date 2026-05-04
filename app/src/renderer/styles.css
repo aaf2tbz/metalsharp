@@ -1008,11 +1008,130 @@ body {
   animation: spin 0.6s linear infinite;
 }
 
-.setup-dep-error {
-  font-size: 11px;
-  color: var(--error);
+ .setup-dep-error {
+   font-size: 11px;
+   color: var(--error);
+   margin-top: 4px;
+   line-height: 1.4;
+ }
+
+.setup-install-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+  margin: 0 auto 24px;
+}
+
+.setup-install-btn {
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 20px 28px;
+  text-align: left;
+  border-radius: var(--radius-md);
+  transition: all 0.15s ease;
+}
+
+.setup-install-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.setup-install-btn-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.setup-install-btn-desc {
+  font-size: 12px;
+  opacity: 0.7;
   margin-top: 4px;
-  line-height: 1.4;
+}
+
+.setup-install-log-container {
+  max-width: 600px;
+  margin: 0 auto 24px;
+}
+
+.setup-progress-bar-container {
+  position: relative;
+  height: 28px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.setup-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--orange), #d4722c);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
+  min-width: 0;
+}
+
+.setup-progress-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+.setup-install-log {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.setup-log-line {
+  padding: 2px 0;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.setup-log-line.active {
+  color: var(--orange);
+  font-weight: 600;
+}
+
+.setup-log-line.success {
+  color: var(--success);
+}
+
+.setup-log-line.success::before {
+  content: "✓ ";
+}
+
+.setup-log-line.warn {
+  color: #c9a04e;
+}
+
+.setup-log-line.warn::before {
+  content: "⊘ ";
+}
+
+.setup-log-line.error {
+  color: var(--error);
+}
+
+.setup-log-line.error::before {
+  content: "✕ ";
+}
+
+.setup-log-line.info {
+  color: var(--text-dim);
 }
 
 .setup-complete {

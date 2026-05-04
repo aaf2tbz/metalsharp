@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -114,6 +114,11 @@
       {
         "from": "native/xinput1_4.dylib",
         "to": "xinput1_4.dylib"
+      },
+      {
+        "from": "bundles/",
+        "to": "bundles/",
+        "filter": ["**/*.tar.zst", "**/*.exe"]
       }
     ],
     "directories": {
