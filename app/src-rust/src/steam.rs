@@ -97,11 +97,52 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 
 pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let prefix = steam_prefix();
+    let prefix_str = prefix.to_string_lossy().to_string();
+
     let _ = Command::new("pkill")
-        .args(["-f", &prefix.to_string_lossy()])
+        .args(["-9", "-f", &prefix_str])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "steamwebhelper.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "steamservice.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "Steam.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "winedevice.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "steamwebhelper.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "winedevice.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
     Ok(json!({"ok": true}))
 }
 

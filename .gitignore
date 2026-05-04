@@ -28,3 +28,5 @@ app/src-rust/target/
 src/fna/FNA/
 src/fna/FNA3D/
 build-x86/
+app/bundles/*.tar.zst
+app/bundles/*.exe
