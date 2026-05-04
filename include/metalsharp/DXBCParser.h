@@ -1,3 +1,12 @@
+/// @file DXBCParser.h
+/// @brief DXBC container and bytecode parser for legacy Direct3D shader blobs.
+///
+/// Parses the DXBC container format used by D3D10–D3D11 shader bytecode, extracting
+/// the shader type (VS/PS/GS/HS/DS/CS), version, input/output signatures with semantic
+/// names, and decoded instruction streams. The ParsedDXBC result feeds into DXBCtoMSL
+/// for source-level translation or into IRConverterBridge when the container embeds
+/// a DXIL payload. Handles operand decoding including index dimensions and write masks.
+
 #pragma once
 
 #include <stdint.h>

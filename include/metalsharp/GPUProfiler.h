@@ -1,3 +1,12 @@
+/// @file GPUProfiler.h
+/// @brief GPU timing and render pass profiling for performance diagnostics.
+///
+/// Tracks per-frame GPU time, draw/compute call counts, triangle counts, and per-pass
+/// timing breakdowns using Metal's GPU timestamp counters. Maintains a rolling history
+/// of frame records for averaging and exposes a StatsCallback for real-time HUD updates.
+/// Can be toggled at runtime and integrates with the frame pacing system for correlated
+/// CPU/GPU timing analysis.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

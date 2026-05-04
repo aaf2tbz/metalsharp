@@ -1,3 +1,7 @@
+/// @file MetalFXUpscaler.mm
+/// @brief MetalFX spatial/temporal upscaling integration.
+///
+/// Wraps Apple's MetalFX framework (MTLFXSpatialScaler / MTLFXTemporalScaler) to provide DLSS-style upscaling from lower-resolution render targets. Supports dynamic resolution scaling with configurable quality presets (quality, balanced, performance).
 #include <metalsharp/MetalFXUpscaler.h>
 #include <metalsharp/Logger.h>
 #include <dlfcn.h>

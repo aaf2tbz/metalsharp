@@ -1,3 +1,7 @@
+/// @file NtdllShim.cpp
+/// @brief NTDLL shims for system time, memory, and handle operations.
+///
+/// Implements NtQuerySystemTime, Rtl* memory functions (RtlZeroMemory, RtlCopyMemory, etc.), and NtClose to cover the ntdll.dll imports that games commonly reference. These are low-level NT native API calls used internally by kernel32.
 #include <metalsharp/NtdllShim.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>

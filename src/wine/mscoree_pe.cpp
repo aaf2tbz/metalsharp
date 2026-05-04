@@ -1,3 +1,7 @@
+/// @file mscoree_pe.cpp
+/// @brief Wine mscoree PE module for .NET CLR hosting shim.
+///
+/// Implements CorBindToRuntimeEx and CLRCreateInstance to satisfy .NET executable loading. Routes actual CLR initialization to the unixlib backend which loads the system Mono runtime for running managed game assemblies.
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>

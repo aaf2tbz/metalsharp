@@ -1,3 +1,10 @@
+/// @file IRConverterBridge.mm
+/// @brief IR converter bridge — Metal-side metallib compilation from DXIL.
+///
+/// Objective-C++ portion that takes IRConverter output and produces MTLLibrary
+/// objects for shader function extraction. Bridges the dylib converter results
+/// into the Metal Objective-C API surface.
+
 #include <metalsharp/IRConverterBridge.h>
 #include <metalsharp/Logger.h>
 #import <Metal/Metal.h>

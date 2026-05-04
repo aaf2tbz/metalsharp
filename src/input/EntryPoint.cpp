@@ -1,3 +1,7 @@
+/// @file EntryPoint.cpp
+/// @brief XInput DLL entry point with COM class factory exports.
+///
+/// Exports DllGetClassObject and DllCanUnloadNow for xinput1_4.dll loading. Routes XInputGetState/XInputSetState calls to the GameControllerBridge.
 #include <metalsharp/GameControllerBridge.h>
 
 using namespace metalsharp;

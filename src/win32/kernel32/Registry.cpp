@@ -1,3 +1,7 @@
+/// @file Registry.cpp
+/// @brief Windows registry simulation with in-memory store and persistence.
+///
+/// Implements a full Windows registry (HKLM, HKCU, etc.) backed by an in-memory tree. Seeds common Steam-related keys at startup and persists the hive to JSON on disk. Registry values are queried by games for install paths, settings, and DRM validation.
 #include <metalsharp/Registry.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

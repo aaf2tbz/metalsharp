@@ -1,3 +1,66 @@
+/// @file IRConverterBridge.cpp
+/// @brief Apple IRConverter dylib bridge — DXIL-to-metallib shader compilation.
+///
+/// Shader Compilation Pipeline
+/// ===========================
+///
+/// MetalSharp supports two shader compilation paths:
+///
+///   Path 1: DXIL → IRConverter → metallib  (preferred, native Apple path)
+///     Game provides DXBC blob
+///       → extractDXILFromDXBC() strips the DXBC container, finds the DXIL chunk
+///       → IRConverter compiles DXIL directly to metallib
+///       → Reflection data extracted: entry point, resource bindings, threadgroup size
+///
+///   Path 2: DXBC → DXBCtoMSL → MSL source → MTLLibrary  (fallback)
+///     Game provides DXBC bytecode
+///       → DXBCParser extracts signatures and instructions
+///       → DXBCtoMSL translates to Metal Shading Language source
+///       → Metal framework compiles MSL to MTLLibrary
+///
+///   ShaderTranslator picks Path 1 if IRConverter is available, Path 2 otherwise.
+///
+/// IRConverter Dylib Loading
+/// =========================
+///
+///   The Apple IRConverter library (libmetalirconverter.dylib) is loaded at runtime
+///   via dlopen/dlsym, not linked at build time. This makes IRConverter optional —
+///   MetalSharp compiles without it and falls back to DXBC→MSL.
+///
+///   Search paths: /usr/local/lib, /opt/metal-shaderconverter/lib, @rpath
+///   ~60 function pointers are resolved: compiler, object, metallib, reflection,
+///   root signature, and ray tracing APIs.
+///
+/// ShaderCompileService (Thread Pool)
+/// ==================================
+///
+///   Asynchronous shader compilation service. Games often compile hundreds of
+///   shaders at load time; this service parallelizes that work across N worker
+///   threads (default: hardware_concurrency / 2).
+///
+///   submit(request) → checks disk cache → enqueues → worker compiles → returns future
+///   Disk cache: {cacheDir}/metallib_cache/{hash}.metallib + .json
+///
+///   Compilation flow per worker:
+///     1. If bytecode is raw DXIL, use directly
+///     2. If DXBC, extract DXIL chunk
+///     3. If extraction fails, return error (needs DXBC→MSL fallback)
+///     4. Call IRConverter compileDXILToMetallib[WithRootSignature]
+///     5. Extract reflection (entry point, resources, compute/vertex/fragment info)
+///     6. Cache result to disk
+///
+/// Shader Model Detection
+/// ======================
+///
+///   detectShaderModel() parses DXBC SHDR/Sheader chunks to extract the major.minor
+///   version token (e.g., SM 6.5 = major=6, minor=5 → returns 65).
+///   getShaderModelCapabilities() maps SM versions to feature flags:
+///     SM 6.0: wave ops, int64
+///     SM 6.1: half precision, barycentrics
+///     SM 6.3: ray tracing
+///     SM 6.5: mesh shaders, sampler feedback
+///     SM 6.6: compute derivatives
+
 #include <metalsharp/IRConverterBridge.h>
 #include <metalsharp/DXBCParser.h>
 #include <metalsharp/Logger.h>

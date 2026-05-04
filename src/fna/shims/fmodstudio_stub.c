@@ -1,3 +1,7 @@
+/// @file fmodstudio_stub.c
+/// @brief FMOD Studio API no-op stubs for FNA games.
+///
+/// Provides empty stub implementations for FMOD Studio API functions (bank loading, event instances, bus management) so games link without FMOD Studio installed. Returns success codes to prevent audio-related crashes.
 #include <string.h>
 #include <stdlib.h>
 

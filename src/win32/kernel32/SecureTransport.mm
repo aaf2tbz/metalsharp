@@ -1,3 +1,7 @@
+/// @file SecureTransport.mm
+/// @brief SSL/TLS via Apple Security framework.
+///
+/// Implements Win32 SecureChannel/Schannel TLS operations using Apple's Security framework. Handles certificate validation, SSL context creation, and encrypted read/write. Required by games that use HTTPS for multiplayer, telemetry, or DRM.
 #include <metalsharp/SecureTransport.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

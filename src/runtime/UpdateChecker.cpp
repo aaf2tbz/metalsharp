@@ -1,3 +1,10 @@
+/// @file UpdateChecker.cpp
+/// @brief Semantic version parsing, comparison, and GitHub release checking.
+///
+/// Implements semver parsing and ordering logic to compare the current MetalSharp
+/// version against the latest GitHub release. Parses release JSON to extract tag
+/// names and download URLs without depending on an HTTP or JSON library.
+
 #include "metalsharp/UpdateChecker.h"
 #include <sstream>
 #include <algorithm>

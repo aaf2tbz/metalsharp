@@ -1,3 +1,7 @@
+/// @file BufferPool.mm
+/// @brief MTLBuffer allocation pool with size-class recycling.
+///
+/// Recycles MTLBuffer allocations by size class to avoid repeated GPU heap allocation. Tracks buffer lifetimes via Metal shareable event fences and returns completed buffers to the free list for reuse. Reduces allocation latency for dynamic vertex/index buffers.
 #include <metalsharp/BufferPool.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

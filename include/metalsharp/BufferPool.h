@@ -1,3 +1,12 @@
+/// @file BufferPool.h
+/// @brief MTLBuffer allocation pool with size-bucketed recycling.
+///
+/// Reduces GPU memory allocation overhead by pooling released MTLBuffer objects and
+/// reusing them for subsequent allocations of similar size. Tracks allocation and reuse
+/// statistics, respects a configurable maximum pool size (default 256MB), and is thread-safe.
+/// Used by the D3D11/D3D12 resource creation path for vertex buffers, index buffers,
+/// constant buffers, and staging resources.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

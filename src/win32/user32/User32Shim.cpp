@@ -1,3 +1,7 @@
+/// @file User32Shim.cpp
+/// @brief user32.dll shim factory for window and message API exports.
+///
+/// Registers user32.dll exports (CreateWindowEx, DefWindowProc, etc.) with the PE loader. Routes window management calls to the WindowManager and provides stubs for dialog, menu, and clipboard functions that games rarely use.
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>

@@ -1,3 +1,7 @@
+/// @file GameControllerBridge.cpp
+/// @brief GameController bridge platform-agnostic interface.
+///
+/// Defines the GameControllerBridge API surface (polling, state conversion, rumble). Platform-specific GameController framework integration is in the .mm counterpart.
 #include <metalsharp/GameControllerBridge.h>
 #include <cstring>
 

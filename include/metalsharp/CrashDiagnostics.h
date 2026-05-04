@@ -1,3 +1,12 @@
+/// @file CrashDiagnostics.h
+/// @brief Low-level crash diagnostics with register dumps and module-relative addressing.
+///
+/// Captures signal type, fault address, and full x86_64 register state at crash time,
+/// resolves the crash RVA relative to the loaded module base, and writes structured
+/// crash dumps to a diagnostics directory. Also produces a full diagnostics bundle
+/// combining crash dumps with system info. Integrates with signal handlers installed
+/// by the runtime to catch SIGSEGV, SIGBUS, and SIGABRT during game execution.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

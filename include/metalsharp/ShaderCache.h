@@ -1,3 +1,12 @@
+/// @file ShaderCache.h
+/// @brief Shader compilation cache with disk-backed persistence and size-bounded eviction.
+///
+/// Caches compiled Metal shader libraries and metallib binaries keyed by bytecode hash,
+/// avoiding repeated DXBC→MSL or DXIL→Metallib compilation across game sessions. Stores
+/// both source-level (MSL) and binary-level (metallib) entries. The cache is bounded by
+/// a configurable maximum size (default 2GB) and evicts least-recently-used entries when
+/// the limit is exceeded. Disk persistence uses per-entry files for fast incremental loads.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

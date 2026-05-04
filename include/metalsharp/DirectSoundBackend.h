@@ -1,3 +1,11 @@
+/// @file DirectSoundBackend.h
+/// @brief DirectSound buffer emulation via CoreAudio playback.
+///
+/// Implements IDirectSoundBuffer-like semantics on top of CoreAudio, providing buffer
+/// creation with WAVEFORMAT, write cursor management, play/stop control, and per-buffer
+/// volume. Each DSBuffer wraps a std::vector ring buffer that feeds into CoreAudioBackend.
+/// Used by the dsound.dll shim to service games that use DirectSound for audio output.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

@@ -1,3 +1,12 @@
+/// @file DXGIOutput.h
+/// @brief Display mode enumeration and Metal-backed window creation.
+///
+/// Implements IDXGIOutput functionality by querying macOS display modes via
+/// CoreGraphics and creating native NSWindow/CAMetalLayer surfaces. The swap
+/// chain depends on this module to resolve render targets and present frames.
+/// Display modes are converted from CGDirectDisplayID to DXGI_FORMAT-compatible
+/// MetalPixelFormat entries for use throughout the D3D→Metal pipeline.
+
 #pragma once
 
 #include <dxgi/DXGI.h>

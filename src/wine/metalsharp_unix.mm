@@ -1,3 +1,7 @@
+/// @file metalsharp_unix.mm
+/// @brief Unix-side MetalSharp D3D11 backend (Objective-C++ Metal implementation).
+///
+/// Implements the Metal backend that receives D3D11 calls from the PE side via unixlib thunks. Creates MTLDevice, MTLCommandQueue, MTLRenderPipelineState, and MTLTexture objects to fulfill D3D11 device, context, and resource requests.
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <AppKit/AppKit.h>

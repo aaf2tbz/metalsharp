@@ -1,3 +1,7 @@
+/// @file gdiplus_stub.c
+/// @brief GDI+ API stubs for Terraria image loading fallback.
+///
+/// Provides stub implementations for GdiplusStartup, GdipCreateBitmapFromFile, and related GDI+ image functions used by the Windows Terraria build. Returns empty bitmaps to prevent crashes when GDI+ is not available on macOS.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

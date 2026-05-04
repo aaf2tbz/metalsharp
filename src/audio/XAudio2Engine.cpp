@@ -1,3 +1,7 @@
+/// @file XAudio2Engine.cpp
+/// @brief XAudio2 engine implementation delegating to CoreAudio backend.
+///
+/// Implements IXAudio2 engine initialization, voice creation, and mastering voice setup. Translates XAudio2 API calls to the CoreAudio backend's AudioUnit pipeline. Manages the XAudio2 processing graph lifecycle.
 #include <metalsharp/XAudio2Engine.h>
 #include <metalsharp/CoreAudioBackend.h>
 #include <metalsharp/Logger.h>

@@ -1,3 +1,10 @@
+/// @file Sampler.mm
+/// @brief Metal sampler creation — MTLSamplerState for texture filtering and addressing.
+///
+/// Objective-C++ implementation wrapping MTLSamplerState creation. Translates D3D11
+/// sampler descriptions (filter mode, address mode, LOD, comparison) to Metal sampler
+/// descriptor configuration.
+
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/FormatTranslation.h>
 #include <d3d/D3D11.h>

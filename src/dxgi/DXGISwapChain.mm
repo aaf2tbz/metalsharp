@@ -1,3 +1,10 @@
+/// @file DXGISwapChain.mm
+/// @brief DXGI swap chain — CAMetalLayer-backed presentation and frame pacing.
+///
+/// Implements IDXGISwapChain using a CAMetalLayer for Metal-backed window presentation.
+/// Handles buffer creation, present calls, resize, and full-screen transitions against
+/// the native macOS windowing system.
+
 #include <metalsharp/DXGI.h>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/Platform.h>

@@ -1,3 +1,9 @@
+/// @file DeferredContext.cpp
+/// @brief D3D11 deferred context — lambda-based command recording and replay.
+///
+/// Records D3D11 rendering commands as captured lambdas for later replay on the
+/// immediate context. Used for multi-threaded command generation.
+
 #include <metalsharp/DeferredContext.h>
 #include <metalsharp/D3D11Device.h>
 #include <cstring>

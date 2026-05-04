@@ -1,3 +1,7 @@
+/// @file CommandBatcher.cpp
+/// @brief Metal command buffer batching for reduced submit overhead.
+///
+/// Groups multiple D3D11 draw calls into fewer Metal command buffers to reduce commit overhead. Tracks render pass boundaries and automatically flushes when the batch size limit or resource hazard is detected.
 #include <metalsharp/CommandBatcher.h>
 #include <metalsharp/Logger.h>
 

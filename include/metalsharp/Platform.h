@@ -1,3 +1,11 @@
+/// @file Platform.h
+/// @brief Foundational Win32/D3D type aliases and COM infrastructure.
+///
+/// Provides the basic types (DWORD, HRESULT, GUID, etc.), HRESULT macros,
+/// COM interface macros (STDMETHOD, PURE), and the IUnknown base class needed
+/// by all D3D shim layers. This is the first header included throughout
+/// MetalSharp — it has no dependencies on other MetalSharp headers.
+
 #pragma once
 
 #include <stdint.h>

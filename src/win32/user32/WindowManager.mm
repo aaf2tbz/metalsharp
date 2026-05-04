@@ -1,3 +1,7 @@
+/// @file WindowManager.mm
+/// @brief HWND-to-NSWindow bridge with Win32 message pump dispatch.
+///
+/// Maps Win32 HWND handles to NSWindow/CAMetalLayer objects for Metal rendering. Implements the Win32 message pump (GetMessage, DispatchMessage, WNDPROC callbacks) and handles window creation, sizing, and input event routing.
 #import <AppKit/AppKit.h>
 #include <metalsharp/WindowManager.h>
 #include <metalsharp/Logger.h>

@@ -1,3 +1,13 @@
+/// @file Win32Types.h
+/// @brief Win32 ABI types and constants for the kernel32/ntdll shim layer.
+///
+/// Defines Win32 handle types, process/memory/file constants, and system
+/// structures (MEMORY_BASIC_INFORMATION, CRITICAL_SECTION, SYSTEM_INFO, etc.)
+/// used by the PE loader and Win32 shims. All types carry the `ms_abi`
+/// calling-convention attribute so they can be called from PE (Windows x86-64)
+/// code running under Wine. Lives in metalsharp::win32 namespace to avoid
+/// colliding with real Win32 headers.
+
 #pragma once
 
 #include <cstdint>

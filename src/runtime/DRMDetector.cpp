@@ -1,3 +1,11 @@
+/// @file DRMDetector.cpp
+/// @brief DRM fingerprinting via byte-pattern signature matching across files and memory.
+///
+/// Maintains a table of 28 known DRM signatures (Denuvo, SteamStub, Arxan, VMProtect,
+/// etc.) and scans game executables and mapped memory for matching byte sequences.
+/// Returns a bitmask of detected DRM systems so the validation pipeline can assess
+/// compatibility impact.
+
 #include <metalsharp/DRMDetector.h>
 #include <metalsharp/Logger.h>
 #include <fstream>

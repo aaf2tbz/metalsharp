@@ -1,3 +1,13 @@
+/// @file ArgumentBufferBinding.h
+/// @brief Metal argument buffer layout construction and resource encoding from root signatures.
+///
+/// Translates D3D12 root signature descriptors into Metal argument buffer layouts that
+/// the GPU can consume. ArgumentBufferManager builds layouts either from IRConverter
+/// reflection data or by parsing root signature bytecode directly, then encodes resource
+/// bindings (CBVs, SRVs, UAVs, samplers), root constants, descriptor table GPU addresses,
+/// and root descriptors into the argument buffer. This is the D3D12→Metal binding bridge
+/// that makes descriptor heaps and root parameters work on Apple Silicon.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

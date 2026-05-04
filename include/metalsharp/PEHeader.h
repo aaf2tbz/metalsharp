@@ -1,3 +1,13 @@
+/// @file PEHeader.h
+/// @brief PE32+ binary format structures and constants.
+///
+/// Bit-exact definitions of all PE/COFF structures needed to parse Windows
+/// executables: DOS header, file header, optional header, section headers,
+/// import/export/relocation/TLS directories, resource directory, and delay
+/// import descriptors. All structures use `#pragma pack(push, 1)` for
+/// correct binary layout. Includes static_assert size checks for critical
+/// headers.
+
 #pragma once
 
 #include <cstdint>

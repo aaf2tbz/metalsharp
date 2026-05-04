@@ -1,3 +1,10 @@
+/// @file CrashReporter.cpp
+/// @brief Crash report generation with file-based persistence.
+///
+/// Assembles structured crash reports including stack traces, system info, and
+/// runtime state, then writes them to a reports directory on disk. Designed to
+/// be safe to call from signal handlers and other constrained contexts.
+
 #include "metalsharp/CrashReporter.h"
 #include <fstream>
 #include <sstream>

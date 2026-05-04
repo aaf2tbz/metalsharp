@@ -1,3 +1,7 @@
+/// @file EntryPoint.cpp
+/// @brief XAudio2 DLL entry point with COM class factory exports.
+///
+/// Exports DllGetClassObject and DllCanUnloadNow so the PE loader can instantiate XAudio2 COM objects. Acts as the xaudio2_9.dll entry point that games load.
 #include <metalsharp/XAudio2Engine.h>
 
 using namespace metalsharp;

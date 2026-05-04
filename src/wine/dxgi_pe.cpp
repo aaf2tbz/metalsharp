@@ -1,3 +1,7 @@
+/// @file dxgi_pe.cpp
+/// @brief Wine DXGI PE module for swap chain and adapter enumeration.
+///
+/// Implements IDXGIFactory, IDXGIAdapter, and IDXGISwapChain COM interfaces. Enumerates real display modes via the unixlib backend and manages swap chain presentation against the game's window (HWND→CAMetalLayer).
 #include <dxgi.h>
 #include <string.h>
 #include <stdint.h>

@@ -1,3 +1,11 @@
+/// @file UpdateChecker.h
+/// @brief GitHub release checker for MetalSharp version updates.
+///
+/// Queries the GitHub releases API for the latest MetalSharp version, parses semver
+/// tags, and compares against the current build version. Returns an UpdateInfo struct
+/// with download URL, release notes, and availability flag. The SettingsManager's
+/// auto-check feature calls this at startup when enabled.
+
 #pragma once
 
 #include <string>

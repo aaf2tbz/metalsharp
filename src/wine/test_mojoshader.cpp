@@ -1,3 +1,7 @@
+/// @file test_mojoshader.cpp
+/// @brief Test for MojoShader bytecode-to-MSL translation with D3D9.
+///
+/// Compiles a simple vertex shader from HLSL bytecode through MojoShader's GLSL profile and verifies the translated output. Validates that fixed-function vertex processing fallbacks work correctly in the D3D9 pipeline.
 #include <windows.h>
 #include <d3d9.h>
 #include <stdio.h>

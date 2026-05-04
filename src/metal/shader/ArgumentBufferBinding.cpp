@@ -1,3 +1,10 @@
+/// @file ArgumentBufferBinding.cpp
+/// @brief Argument buffer layout — Metal argument table mapping from D3D root signatures.
+///
+/// Translates D3D12 root signature and D3D11 shader register bindings into Metal
+/// argument buffer layouts. Handles descriptor table flattening, constant buffer
+/// placement, and sampler/texture binding slot assignment.
+
 #include <metalsharp/ArgumentBufferBinding.h>
 #include <metalsharp/IRConverterBridge.h>
 #include <metalsharp/Logger.h>

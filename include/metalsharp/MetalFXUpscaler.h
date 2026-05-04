@@ -1,3 +1,13 @@
+/// @file MetalFXUpscaler.h
+/// @brief Apple MetalFX spatial upscaler and temporal interpolator integration.
+///
+/// Wraps Apple's MetalFX framework for hardware-accelerated image upscaling (spatial
+/// scaling from a lower render resolution to display resolution) and temporal
+/// interpolation (frame generation using depth and motion vectors). MetalFXUpscaler
+/// handles input/output texture configuration, jitter offsets, and sharpness control.
+/// MetalFXInterpolator provides frame interpolation for higher effective frame rates.
+/// Falls back gracefully when MetalFX is unavailable (older macOS versions).
+
 #pragma once
 
 #include <metalsharp/Platform.h>

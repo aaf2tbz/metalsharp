@@ -1,3 +1,7 @@
+/// @file test_mojoshader2.cpp
+/// @brief Second MojoShader translation test with additional shader profiles.
+///
+/// Tests MojoShader translation with pixel shader bytecode and validates sampler binding and constant table handling. Complements test_mojoshader.cpp with coverage for fragment-stage shader translation.
 #include <windows.h>
 #include <d3d9.h>
 #include <stdio.h>

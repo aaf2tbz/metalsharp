@@ -1,3 +1,7 @@
+/// @file GameControllerBridge.mm
+/// @brief Apple GameController framework integration for XInput translation.
+///
+/// Discovers GCController instances, maps extended gamepad profiles to XINPUT_STATE, and translates button/thumbstick/trigger values. Supports haptic rumble via GCController's motor API where available.
 #include <metalsharp/GameControllerBridge.h>
 #import <GameController/GameController.h>
 #include <cstring>

@@ -1,3 +1,13 @@
+/// @file PipelineState.h
+/// @brief Metal render pipeline state descriptor and creation.
+///
+/// Defines PipelineStateDesc which captures blend state, pixel formats, cull mode,
+/// depth state, and vertex/fragment function references — a flattened representation
+/// of what D3D11_BLEND_DESC, D3D11_DEPTH_STENCIL_DESC, and D3D11_RASTERIZER_DESC
+/// contribute to an MTLRenderPipelineState. PipelineState wraps the compiled Metal
+/// pipeline object and is produced by the D3D11 device when OMSetBlendState and
+/// similar calls flush a state change.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

@@ -1,3 +1,7 @@
+/// @file d3d9_pe.cpp
+/// @brief Wine D3D9 PE module with COM interface forwarding.
+///
+/// Standalone Wine PE-side d3d9.dll that implements IDirect3D9 and IDirect3DDevice9 COM interfaces. Forwards create/execute calls through Wine's unixlib mechanism to a platform-specific rendering backend for legacy D3D9 games.
 #include <d3d9.h>
 #include <d3d9caps.h>
 #include <stdio.h>

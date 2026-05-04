@@ -1,3 +1,55 @@
+/// @file D3D12Device.h
+/// @brief Complete D3D12 API implementation backed by Metal.
+///
+/// D3D12 Object Hierarchy
+/// ======================
+///
+///   D3D12Device (root)
+///   ├── D3D12CommandQueue → MTLCommandQueue
+///   │   └── D3D12GraphicsCommandList → MTLCommandBuffer + MTLRenderCommandEncoder
+///   │       └── Argument buffer encoding (see ArgumentBufferBinding.h)
+///   ├── D3D12DescriptorHeap → Flat array of descriptor structs
+///   │   └── CBV/SRV/UAV/Sampler descriptors → Metal argument buffer slots
+///   ├── D3D12Resource → MTLBuffer or MTLTexture
+///   │   ├── Committed (allocated directly) vs Placed (from heap)
+///   │   └── State tracking (COMMON→GENERIC_READ→COPY_DEST transitions)
+///   ├── D3D12RootSignature → Metal argument table layout
+///   │   └── Maps root parameters (constants, descriptors, tables) to Metal bindings
+///   ├── D3D12PipelineState → MTLRenderPipelineState or MTLComputePipelineState
+///   │   └── Created from compiled metallib shaders (via IRConverter/DXBC→MSL)
+///   ├── D3D12Fence → dispatch_semaphore_t for GPU/CPU synchronization
+///   └── D3D12StateObject → Ray tracing pipeline (stub, future work)
+///
+/// Key Design Decisions
+/// ====================
+///
+///   - All D3D12 COM objects are implemented inline in this header for simplicity.
+///     Each class carries its own refcount and delegates to Metal objects.
+///   - Descriptor heaps are flat arrays; descriptors are indexed by offset.
+///   - Resource barriers are tracked but Metal doesn't have explicit barriers —
+///     we use MTLHeap resource aliasing and encoder-level tracking.
+///   - Root signatures drive Metal argument buffer layout. Each root parameter
+///     maps to a specific binding slot (see ArgumentBufferBinding.cpp).
+///   - Command lists record into MTLCommandBuffer. ExecuteCommandLists submits
+///     them to the MTLCommandQueue.
+///
+/// D3D12 → Metal Mapping
+/// =====================
+///
+///   D3D12 Concept              → Metal Equivalent
+///   ─────────────────────────────────────────────
+///   ID3D12Device               → MTLDevice
+///   ID3D12CommandQueue         → MTLCommandQueue
+///   ID3D12GraphicsCommandList  → MTLCommandBuffer + encoders
+///   ID3D12Resource (buffer)    → MTLBuffer
+///   ID3D12Resource (texture)   → MTLTexture
+///   ID3D12DescriptorHeap       → Argument buffer (MTLBuffer)
+///   ID3D12RootSignature        → Argument table layout descriptor
+///   ID3D12PipelineState        → MTLRenderPipelineState / MTLComputePipelineState
+///   ID3D12Fence                → dispatch_semaphore_t + shared event
+///   ResourceBarrier            → Implicit (Metal tracks resource state)
+///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
+
 #include <d3d/D3D12.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/FormatTranslation.h>

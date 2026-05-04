@@ -1,3 +1,12 @@
+/// @file GameDetector.h
+/// @brief Game detection from Steam, Epic Games Store, GOG, and local directories.
+///
+/// Scans installed game libraries by parsing Steam's libraryfolders.vdf and appinfo
+/// manifests, Epic's .item manifest JSON files, and GOG's product database. Local
+/// detection scans arbitrary directories for Windows executables. Returns DetectedGame
+/// entries with platform IDs, install paths, and executable locations for use by the
+/// launcher and compatibility testing infrastructure.
+
 #pragma once
 
 #include <string>

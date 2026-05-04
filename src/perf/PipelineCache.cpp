@@ -1,3 +1,7 @@
+/// @file PipelineCache.cpp
+/// @brief Render pipeline state cache with LRU eviction.
+///
+/// Caches compiled MTLRenderPipelineState objects keyed by a hash of their descriptor (shader functions, blend state, vertex layout, pixel format). Persists cache entries to disk for warm-start across runs. Uses LRU eviction to bound memory usage.
 #include <metalsharp/PipelineCache.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

@@ -1,3 +1,12 @@
+/// @file Registry.h
+/// @brief Windows registry simulation backed by an in-memory key/value store.
+///
+/// Implements HKEY-based registry operations (open, create, query, set, delete) using
+/// a nested unordered_map structure persisted to disk as a simple key-value file. Seeds
+/// common registry paths that games query at startup (Steam install paths, DirectX version,
+/// display driver info). Thread-safe via mutex. Games that read HKLM\SOFTWARE\... during
+/// initialization are serviced entirely by this shim.
+
 #pragma once
 
 #include <cstdint>

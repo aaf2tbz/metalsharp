@@ -1,3 +1,22 @@
+/// @file ShaderTranslator.h
+/// @brief Unified shader compilation pipeline — picks the best available path.
+///
+/// Shader compilation follows a priority chain:
+///
+///   1. DXIL path (if IRConverter available):
+///      DXBC blob → extract DXIL chunk → IRConverter → metallib → MTLLibrary
+///
+///   2. MSL path (if DXBC→MSL translator available):
+///      DXBC bytecode → DXBCParser → DXBCtoMSL → MSL source string → MTLLibrary
+///
+///   3. Raw MSL path:
+///      Already-MSL source → newLibraryWithSource → MTLLibrary
+///
+/// The translator is owned by D3D11Device and shared across all shader creation
+/// calls (CreateVertexShader, CreatePixelShader, CreateComputeShader, etc.).
+/// Compiled MTLLibraries are cached by ShaderCache using FNV-1a hashing of the
+/// input bytecode to avoid recompilation across frames and sessions.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

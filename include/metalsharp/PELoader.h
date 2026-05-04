@@ -1,3 +1,25 @@
+/// @file PELoader.h
+/// @brief PE32+ loader — loads Windows executables and DLLs on macOS.
+///
+/// PELoader is the heart of MetalSharp's native execution path. It parses
+/// PE32/PE32+ executables, maps sections into memory, processes relocations,
+/// resolves imports (both regular and delayed), handles TLS callbacks, and
+/// dispatches DllMain entry points.
+///
+/// Loading pipeline (in order):
+///   1. parsePE()              — Validate DOS/PE headers, extract optional header
+///   2. mapSections()          — Map raw sections into aligned virtual memory (mmap MAP_JIT)
+///   3. processRelocations()   — Apply base relocation fixups (IMAGE_REL_BASED_DIR64)
+///   4. initCFG()              — Bypass Control Flow Guard (patch to "return TRUE" stub)
+///   5. resolveImports()       — Walk import descriptors, resolve via shims or native DLLs
+///   6. resolveDelayImports()  — Same for delay-loaded DLLs (resolved eagerly)
+///   7. applySectionProtections() — Set mprotect based on section characteristics
+///   8. processTLS()           — Run TLS callbacks for DLL_PROCESS_ATTACH
+///
+/// Import resolution priority: registered shim → loaded PE DLL → load from search path.
+/// Export forwarding is handled recursively.
+/// Shims are registered via registerShim() and take priority over native loading.
+
 #pragma once
 
 #include <string>

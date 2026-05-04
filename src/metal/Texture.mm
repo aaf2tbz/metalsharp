@@ -1,3 +1,10 @@
+/// @file Texture.mm
+/// @brief Metal texture creation — MTLTexture 1D, 2D, and 3D allocation.
+///
+/// Objective-C++ implementation wrapping MTLTexture creation for all dimensionality.
+/// Translates D3D format enums to Metal pixel formats and configures texture descriptors
+/// for render target, depth stencil, and shader resource usage.
+
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/FormatTranslation.h>
 #include <Foundation/Foundation.h>

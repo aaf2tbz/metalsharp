@@ -1,3 +1,7 @@
+/// @file mscoree_unix.c
+/// @brief Unix-side mscoree backend for Mono runtime loading.
+///
+/// Loads the system Mono runtime via dlopen and creates an application domain for executing managed .NET assemblies. Handles assembly resolution, P/Invoke marshaling setup, and entry point invocation for managed game executables.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

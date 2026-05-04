@@ -1,3 +1,10 @@
+/// @file PipelineState.mm
+/// @brief Metal render pipeline state — MTLRenderPipelineState creation and caching.
+///
+/// Objective-C++ implementation that constructs MTLRenderPipelineState objects from
+/// compiled Metal shaders and vertex descriptors. Includes pipeline state caching
+/// keyed on descriptor hash for amortized creation cost.
+
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>

@@ -1,3 +1,7 @@
+/// @file CoreAudioBackend.mm
+/// @brief CoreAudio AudioUnit rendering backend for XAudio2.
+///
+/// Creates and manages an AUAudioUnit (or AudioUnit) render pipeline that accepts PCM float/int16 buffers from XAudio2 voices. Handles sample rate conversion, channel mapping, and ring buffer management for real-time audio output.
 #include <metalsharp/CoreAudioBackend.h>
 #include <metalsharp/Logger.h>
 #include <deque>

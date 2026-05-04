@@ -1,3 +1,12 @@
+/// @file Logger.h
+/// @brief Simple leveled logger with printf-style formatting.
+///
+/// Provides four log levels (Trace, Info, Warn, Error) and macros
+/// (MS_TRACE, MS_INFO, MS_WARN, MS_ERROR) for convenient logging throughout
+/// MetalSharp. Output goes to both stderr and an optional log file.
+/// Set the active level with Logger::setLevel() to suppress lower-priority
+/// messages.
+
 #pragma once
 
 #include <cstdio>

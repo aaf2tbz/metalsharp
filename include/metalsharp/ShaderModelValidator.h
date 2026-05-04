@@ -1,3 +1,12 @@
+/// @file ShaderModelValidator.h
+/// @brief Shader Model 6.6 compute shader validation and warning emitter.
+///
+/// Validates SM 6.6 compute shader parameters against Apple GPU constraints. Emits
+/// warnings when compute shaders use derivatives, quad operations, or texture samples
+/// with multi-dimensional threadgroup sizes (only 1D threadgroups are supported for
+/// these operations on Metal). Also validates that requested wave sizes match Apple's
+/// 32-lane wavefront. All checks are inline and compile-time conditional on SM version.
+
 #pragma once
 
 #include <metalsharp/Logger.h>

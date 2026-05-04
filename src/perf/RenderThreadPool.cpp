@@ -1,3 +1,7 @@
+/// @file RenderThreadPool.cpp
+/// @brief Thread pool for parallel command buffer encoding.
+///
+/// Manages a pool of worker threads that encode Metal command buffers in parallel, splitting draw call batches across threads. Uses work-stealing queues and fence-based synchronization to preserve D3D11 submission order.
 #include <metalsharp/RenderThreadPool.h>
 #include <metalsharp/Logger.h>
 #include <algorithm>

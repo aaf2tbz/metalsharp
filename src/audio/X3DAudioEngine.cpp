@@ -1,3 +1,7 @@
+/// @file X3DAudioEngine.cpp
+/// @brief X3DAudio spatial audio calculations.
+///
+/// Implements X3DAudioCalculate for 3D positional audio: distance attenuation, Doppler pitch shift, panning, and LF/RF matrix calculations. Used by games to place sound sources in 3D space relative to the listener.
 #include <metalsharp/X3DAudioEngine.h>
 #include <metalsharp/Logger.h>
 #include <cmath>

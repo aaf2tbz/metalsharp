@@ -1,3 +1,10 @@
+/// @file SettingsManager.cpp
+/// @brief JSON-based settings persistence with manual string parsing and cache management.
+///
+/// Loads and saves configuration as JSON using hand-written parsing rather than a
+/// third-party library. Keeps an in-memory cache of key-value pairs and supports
+/// clearing the cache to force a re-read from disk on next access.
+
 #include "metalsharp/SettingsManager.h"
 #include <fstream>
 #include <sstream>

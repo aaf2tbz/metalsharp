@@ -1,3 +1,12 @@
+/// @file ImportReporter.h
+/// @brief Tracker for resolved and missing DLL imports during PE loading.
+///
+/// Records every import the PE loader attempts to resolve — both by name and by ordinal —
+/// tracking whether each was satisfied by a shim or left unresolved. Aggregates results
+/// per-module and provides summary generation showing which DLLs have missing functions.
+/// Import reports feed into GameValidator's compatibility assessment and CrashReporter's
+/// diagnostic bundles.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

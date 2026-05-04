@@ -1,3 +1,12 @@
+/// @file DRMDetector.h
+/// @brief Byte-pattern DRM and anti-cheat scanner for game executables.
+///
+/// Scans game EXE files and memory-mapped data against a built-in signature database
+/// to detect DRM systems (Denuvo, VMProtect, SecuROM, Steam Stub) and anti-cheat
+/// drivers (EAC, BattlEye, Ricochet). Returns detection results with confidence scores
+/// and evidence strings. The hasKernelAntiCheat() check is critical for determining
+/// whether a game can run under Wine at all — kernel drivers require a real Windows kernel.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

@@ -1,3 +1,13 @@
+/// @file CompatDatabase.h
+/// @brief Persistent game compatibility database with Platinum–Broken ratings.
+///
+/// Stores per-game compatibility records including D3D version, anti-cheat/DRM status,
+/// missing imports, crash history, average FPS, tester notes, and workarounds. Backed
+/// by a disk-persisted map keyed by game ID. Supports querying by status tier, adding
+/// missing import and crash records, and generating human-readable compatibility reports.
+/// Populated by GameValidator and consumed by the launcher for pre-launch compatibility
+/// checks.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

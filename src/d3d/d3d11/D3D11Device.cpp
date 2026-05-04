@@ -1,3 +1,9 @@
+/// @file D3D11Device.cpp
+/// @brief D3D11 device implementation — resource creation, shader compilation, and state objects.
+///
+/// The central ID3D11Device COM class. Handles creation of buffers, textures, shaders,
+/// views, and all pipeline state objects, delegating to the Metal backend.
+
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/DeferredContext.h>

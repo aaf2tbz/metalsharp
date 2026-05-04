@@ -1,3 +1,10 @@
+/// @file D3D11DeviceContext.mm
+/// @brief D3D11 immediate device context — pipeline state binding, draw calls, and Metal render passes.
+///
+/// The ID3D11DeviceContext implementation that maps D3D11 draw/dispatch calls to Metal
+/// render/compute command encoders, manages pipeline state binding, and submits work to
+/// the Metal command queue.
+
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/DeferredContext.h>

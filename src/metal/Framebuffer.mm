@@ -1,3 +1,10 @@
+/// @file Framebuffer.mm
+/// @brief Metal framebuffer — MTLRenderPassDescriptor for render target configuration.
+///
+/// Objective-C++ implementation wrapping MTLRenderPassDescriptor creation. Configures
+/// color, depth, and stencil attachments for Metal render passes from D3D render target
+/// and depth-stencil view bindings.
+
 #include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
