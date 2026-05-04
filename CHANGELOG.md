@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.0 — 2025-05-03
+## v0.6.0 — 2025-05-03
 
 ### Breaking change: new install flow
 
