@@ -146,17 +146,11 @@ fn install_rosetta() -> Result<(), String> {
 }
 
 fn install_xcode_cli() -> Result<(), String> {
-    let has_clang = Command::new("which")
-        .arg("clang")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if has_clang {
+    if check_command("clang") {
         return Ok(());
     }
 
-    let output = Command::new("xcode-select")
+    let output = Command::new("/usr/bin/xcode-select")
         .args(["--install"])
         .output()
         .map_err(|e| format!("failed to run xcode-select: {}", e))?;
@@ -168,11 +162,7 @@ fn install_xcode_cli() -> Result<(), String> {
 
     for _ in 0..120 {
         std::thread::sleep(Duration::from_secs(5));
-        let check = Command::new("which")
-            .arg("clang")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        let check = check_command("clang");
         if check {
             return Ok(());
         }
@@ -251,7 +241,7 @@ fn install_mono_x86(home: &PathBuf) -> Result<(), String> {
 
 fn install_dxvk(home: &PathBuf) -> Result<(), String> {
     let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
-    if dxvk_dir.join("d3d11.dll").exists() && dxvk_dir.join("dxgi.dll").exists() {
+    if dxvk_dir.join("x32").join("d3d11.dll").exists() {
         return Ok(());
     }
 
@@ -259,8 +249,36 @@ fn install_dxvk(home: &PathBuf) -> Result<(), String> {
 
     let bundled = find_bundled_archive("dxvk");
     if let Some(archive) = bundled {
-        extract_zst(&archive, &dxvk_dir, "dxvk")?;
-        if dxvk_dir.join("d3d11.dll").exists() {
+        let tmp = std::env::temp_dir().join("metalsharp-dxvk-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "dxvk")?;
+
+        let src = tmp.join("dxvk-1.10.3");
+        if !src.exists() {
+            return Err("DXVK archive missing dxvk-1.10.3 directory".into());
+        }
+
+        let x32 = src.join("x32");
+        let x64 = src.join("x64");
+        if x32.exists() {
+            let _ = fs::create_dir_all(dxvk_dir.join("x32"));
+            for entry in fs::read_dir(&x32).map_err(|e| format!("read x32: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), dxvk_dir.join("x32").join(entry.file_name()));
+            }
+        }
+        if x64.exists() {
+            let _ = fs::create_dir_all(dxvk_dir.join("x64"));
+            for entry in fs::read_dir(&x64).map_err(|e| format!("read x64: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), dxvk_dir.join("x64").join(entry.file_name()));
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+
+        if dxvk_dir.join("x32").join("d3d11.dll").exists() {
             return Ok(());
         }
     }
@@ -284,7 +302,6 @@ fn install_dxvk(home: &PathBuf) -> Result<(), String> {
         .arg(&tar_path)
         .arg("-C")
         .arg(&dxvk_dir)
-        .arg("--strip-components=1")
         .output()
         .map_err(|e| format!("tar failed: {}", e))?;
 
@@ -294,7 +311,7 @@ fn install_dxvk(home: &PathBuf) -> Result<(), String> {
         return Err("failed to extract DXVK".into());
     }
 
-    if !dxvk_dir.join("d3d11.dll").exists() {
+    if !dxvk_dir.join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists() {
         return Err("DXVK d3d11.dll not found after extraction".into());
     }
     Ok(())
@@ -311,7 +328,8 @@ fn install_steamcmd(home: &PathBuf) -> Result<(), String> {
 
     let bundled = find_bundled_archive("steamcmd");
     if let Some(archive) = bundled {
-        extract_zst(&archive, &steamcmd_dir, "steamcmd")?;
+        let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+        extract_zst(&archive, &home, "steamcmd")?;
         if steamcmd_sh.exists() {
             return Ok(());
         }
@@ -422,24 +440,61 @@ fn install_windows_steam(home: &PathBuf) -> Result<(), String> {
     }
 }
 
-fn install_mono_arm64() -> Result<(), String> {
-    let has_mono = Command::new("which")
-        .arg("mono")
+fn check_command(cmd: &str) -> bool {
+    let candidates = match cmd {
+        "which" => vec![PathBuf::from("/usr/bin/which")],
+        "mono" => vec![PathBuf::from("/opt/homebrew/bin/mono"), PathBuf::from("/usr/local/bin/mono")],
+        _ => vec![PathBuf::from(cmd)],
+    };
+    for c in &candidates {
+        if c.exists() {
+            return true;
+        }
+    }
+    Command::new("/usr/bin/which")
+        .arg(cmd)
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    if has_mono || PathBuf::from("/opt/homebrew/bin/mono").exists() {
+fn install_mono_arm64() -> Result<(), String> {
+    if check_command("mono") {
         return Ok(());
+    }
+
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let mono_arm64 = home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono");
+    if mono_arm64.exists() {
+        return Ok(());
+    }
+
+    let bundled = find_bundled_archive("mono-arm64");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
+    let _ = fs::create_dir_all(&runtime_dir);
+
+    if let Some(archive) = bundled {
+        extract_zst(&archive, &runtime_dir, "mono-arm64")?;
+        if mono_arm64.exists() {
+            return Ok(());
+        }
     }
 
     brew_install("mono")
 }
 
 fn install_wine_devel() -> Result<(), String> {
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+    let wine = PathBuf::from("/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine");
     if wine.exists() {
         return Ok(());
+    }
+
+    let bundled = find_bundled_archive("wine");
+    if let Some(archive) = bundled {
+        extract_to_applications(&archive, "Wine Stable.app")?;
+        if wine.exists() {
+            return Ok(());
+        }
     }
 
     brew_cask_install("wine-stable")
@@ -451,11 +506,47 @@ fn install_moltenvk() -> Result<(), String> {
         return Ok(());
     }
 
+    let bundled = find_bundled_archive("moltenvk");
+    if let Some(archive) = bundled {
+        let cellar = PathBuf::from("/opt/homebrew/Cellar/molten-vk");
+        let _ = fs::create_dir_all(&cellar);
+        extract_zst(&archive, &cellar, "moltenvk")?;
+        if icd.exists() {
+            return Ok(());
+        }
+    }
+
     brew_install("molten-vk")
 }
 
+fn find_brew() -> Result<PathBuf, String> {
+    let candidates = [
+        PathBuf::from("/opt/homebrew/bin/brew"),
+        PathBuf::from("/usr/local/bin/brew"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            return Ok(c.clone());
+        }
+    }
+    let output = Command::new("which")
+        .arg("brew")
+        .output()
+        .ok();
+    if let Some(o) = output {
+        if o.status.success() {
+            let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+    Err("Homebrew not found — install it first".into())
+}
+
 fn brew_install(package: &str) -> Result<(), String> {
-    let output = Command::new("brew")
+    let brew = find_brew()?;
+    let output = Command::new(&brew)
         .args(["install", package])
         .output()
         .map_err(|e| format!("brew failed: {}", e))?;
@@ -474,20 +565,38 @@ fn brew_install(package: &str) -> Result<(), String> {
 }
 
 fn brew_cask_install(package: &str) -> Result<(), String> {
-    let output = Command::new("brew")
+    let brew = find_brew()?;
+
+    let install_output = Command::new(&brew)
         .args(["install", "--cask", package])
         .output()
         .map_err(|e| format!("brew cask failed: {}", e))?;
 
-    let combined = format!(
+    let install_combined = format!(
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&install_output.stdout),
+        String::from_utf8_lossy(&install_output.stderr)
     );
 
-    if output.status.success() || combined.contains("already installed") || combined.contains("It seems there is already an app") {
+    if install_output.status.success() && !install_combined.contains("already installed") {
+        return Ok(());
+    }
+
+    let reinstall_output = Command::new(&brew)
+        .args(["reinstall", "--cask", package])
+        .output()
+        .map_err(|e| format!("brew cask reinstall failed: {}", e))?;
+
+    let reinstall_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&reinstall_output.stdout),
+        String::from_utf8_lossy(&reinstall_output.stderr)
+    );
+
+    if reinstall_output.status.success() || reinstall_combined.contains("already installed") || reinstall_combined.contains("It seems there is already an app") {
         Ok(())
     } else {
+        let combined = format!("{}\n{}", install_combined, reinstall_combined);
         Err(combined.lines().last().unwrap_or("brew cask install failed").into())
     }
 }

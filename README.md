@@ -108,45 +108,34 @@ First launch walks through a 4-step wizard:
 
 | Component | What it does |
 |-----------|--------------|
-| Rust backend | HTTP API, game launch, Steam integration, dep management |
-| Electron app | Desktop UI, setup wizard, library browser |
+| Rust backend | HTTP API, game launch, Steam integration, background dep installer |
+| Electron app | Desktop UI, setup wizard, library browser, Steam controls |
 | external runtime Wine | Win32 translation + Windows Steam + built-in Vulkan renderer |
 | Apple GPTK | D3D11/12 → Metal via D3DMetal (for games that need it) |
-| DXVK (patched) | D3D9/11 → Vulkan (32-bit games, patched for MoltenVK compat) |
+| DXVK 1.10.3 | D3D9/11 → Vulkan translation (32-bit games) |
 | MoltenVK | Vulkan → Metal (DXVK pipeline) |
 | FNA + SDL3 | XNA compatibility, native Metal rendering (Celeste, Terraria) |
 | Goldberg | Steam API emulation for offline play (Portal 2) |
-
-## Directory Layout
-
-```
-~/.metalsharp/
-├── games/              Downloaded games (by Steam App ID)
-├── runtime/
-│   ├── fna/            FNA assemblies for XNA games
-│   ├── shims/          Native dylibs (FNA3D, SDL3, CSteamworks, FMOD stubs)
-│   ├── mono-x86/       x86_64 Mono runtime (Celeste)
-│   ├── dxvk-moltenvk/  Patched DXVK DLLs (Nidhogg 2)
-│   └── goldberg/       Goldberg Steam emulator DLLs
-├── prefix-steam-cx/    external runtime Wine prefix with Windows Steam + DRM games
-├── prefix-*/           Per-game Wine prefixes (GPTK, Wine Devel)
-├── cache/              Steam config, owned games cache
-└── config.json         Global settings
-```
-
-## Tech Stack
-
-| Component | What it does |
-|-----------|--------------|
-| Rust backend | HTTP API, game launch, SteamCMD, dep management, background installer |
-| Electron app | Desktop UI, setup wizard, library browser |
-| external runtime Wine | Win32 translation + Windows Steam + built-in Vulkan renderer |
-| DXVK 1.10.3 | D3D9/11 → Vulkan translation (Nidhogg 2, Vulkan 1.1 compatible) |
-| Apple GPTK | D3D11/12 → Metal via D3DMetal framework (Rain World) |
-| MoltenVK | Vulkan → Metal (Nidhogg 2) |
-| FNA + SDL3 | XNA compatibility, native rendering (Celeste, Terraria) |
-| Goldberg | Steam API emulation for offline play (Portal 2) |
+| Wine Stable | Standalone Wine for games that don't need external runtime |
 | zstd | Compressed bundle extraction for DMG-packaged dependencies |
+
+## Bundled Dependencies
+
+The DMG includes all dependencies pre-packaged (~1.1 GB compressed):
+
+| Bundle | Size | What it provides |
+|--------|------|------------------|
+| `runtime-bundle.tar.zst` | ~260 MB | external runtime.app with Wine 11.0 + Vulkan renderer |
+| `gptk.tar.zst` | ~308 MB | Game Porting Toolkit.app with D3DMetal |
+| `mono-x86.tar.zst` | ~226 MB | x86_64 Mono 6.12.0 runtime (Celeste, Rosetta games) |
+| `mono-arm64.tar.zst` | ~85 MB | arm64 Mono 6.14.1 runtime (Terraria, native games) |
+| `wine.tar.zst` | ~225 MB | Wine Stable.app for standalone Wine games |
+| `moltenvk.tar.zst` | ~10 MB | MoltenVK Vulkan→Metal translation layer |
+| `dxvk.tar.zst` | ~3.4 MB | DXVK 1.10.3 D3D→Vulkan DLLs |
+| `steamcmd.tar.zst` | ~2 MB | SteamCMD for library scanning |
+| `SteamSetup.exe` | ~2.3 MB | Windows Steam installer |
+
+No internet required during install — everything extracts from the DMG with a single Touch ID prompt.
 
 ## License
 

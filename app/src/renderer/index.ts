@@ -385,10 +385,19 @@ class App {
           addLog(`${progress.log}`, "warn");
         }
       } else if (progress.status === "error") {
-        addLog(`${progress.log}`, "error");
-        if (progress.error) {
-          addLog(`Error: ${progress.error}`, "error");
+        if (!logDiv.querySelector(`[data-error-step="${progress.step}"]`)) {
+          addLog(`${progress.log}`, "error");
+          if (progress.error) {
+            addLog(`Error: ${progress.error}`, "error");
+          }
+          const marker = document.createElement("div");
+          marker.dataset.errorStep = String(progress.step);
+          marker.style.display = "none";
+          logDiv.appendChild(marker);
         }
+        clearInterval(pollInterval);
+        if (depBtn) { depBtn.disabled = false; depBtn.style.opacity = "1"; depBtn.textContent = "Retry"; }
+        return;
       } else if (progress.status === "installing") {
         const existing = logDiv.querySelector(`[data-step="${progress.step}"]`);
         if (!existing) {
@@ -572,23 +581,32 @@ class App {
     const lib = this.library;
 
     if (!lib || lib.games.length === 0) {
+      const steamStatusBadge = this.wineSteamRunning
+        ? '<span class="badge badge-ok" style="margin-left:8px">Steam Running</span>'
+        : this.wineSteamInstalled
+        ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
+        : '';
+
       el.innerHTML = `
         <div class="library-header">
           <div>
             <h1>Library</h1>
-            <p class="subtitle">Loading your Steam library...</p>
+            <p class="subtitle">No games yet ${steamStatusBadge}</p>
           </div>
           <div class="header-actions">
+            <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
+            <input type="text" id="library-search" placeholder="Search games..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;font-size:13px;width:220px;" />
             <button class="btn btn-secondary" id="btn-scan">Refresh</button>
           </div>
         </div>
         <div class="empty-state">
-          <div class="empty-state-icon">&#x2699;</div>
+          <div class="empty-state-icon">&#x1F3AE;</div>
           <h2>No games found</h2>
-          <p>Could not load your Steam library. Check your Steam API key in settings.</p>
+          <p>Add your Steam API key in Settings to load your library, or download a game manually.</p>
         </div>
       `;
       el.querySelector("#btn-scan")?.addEventListener("click", () => this.loadLibrary());
+      el.querySelector("#btn-steam-launch")?.addEventListener("click", () => this.toggleWineSteam());
       return;
     }
 

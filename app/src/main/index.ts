@@ -57,6 +57,7 @@ async function createWindow() {
     minHeight: 600,
     title: "MetalSharp",
     backgroundColor: "#1a1118",
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
