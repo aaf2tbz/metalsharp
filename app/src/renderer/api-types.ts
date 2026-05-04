@@ -14,7 +14,6 @@ interface SteamStatus {
   path?: string;
   login_state?: LoginState;
   mac_installed?: boolean;
-  steam_cmd_path?: string;
   running: boolean;
 }
 
@@ -59,7 +58,6 @@ interface SetupState {
   step: number;
   deviceName: string;
   steamApiKeySet: boolean;
-  steamcmdLoggedIn: boolean;
 }
 
 interface Dependency {

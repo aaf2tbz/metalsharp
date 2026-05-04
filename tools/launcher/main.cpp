@@ -13,13 +13,12 @@
 
 static void printUsage(const char* prog) {
     fprintf(stderr,
-        "Usage: %s [options] <game.exe | --steam <appid>>\n"
+        "Usage: %s [options] <game.exe>\n"
         "\n"
         "Options:\n"
         "  --prefix, -p     Wine prefix directory (default: ~/.metalsharp/prefix)\n"
         "  --width, -W      Window width (default: 1920)\n"
         "  --height, -H     Window height (default: 1080)\n"
-        "  --steam, -s      Download and launch Steam game by app ID\n"
         "  --list-games     List Steam library games\n"
         "  --config, -c     Config file path (default: ~/.metalsharp/metalsharp.toml)\n"
         "  --verbose, -v    Verbose output\n"
@@ -28,13 +27,12 @@ static void printUsage(const char* prog) {
         "  --help, -h       Show this help\n"
         "\n"
         "MetalSharp %s — Direct3D -> Metal translation layer\n"
-        "Downloads Windows game depots via SteamCMD and runs them through Wine + Metal.\n",
+        "Runs Windows game executables through Wine + MetalSharp.\n",
         prog, METALSHARP_VERSION);
 }
 
 int main(int argc, char* argv[]) {
     metalsharp::Config config;
-    uint32_t steamAppId = 0;
     bool listGames = false;
     std::string configPath;
 
@@ -42,7 +40,6 @@ int main(int argc, char* argv[]) {
         {"prefix",      required_argument, nullptr, 'p'},
         {"width",       required_argument, nullptr, 'W'},
         {"height",      required_argument, nullptr, 'H'},
-        {"steam",       required_argument, nullptr, 's'},
         {"list-games",  no_argument,       nullptr, 'l'},
         {"config",      required_argument, nullptr, 'c'},
         {"verbose",     no_argument,       nullptr, 'v'},
@@ -53,12 +50,11 @@ int main(int argc, char* argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:W:H:s:lc:vDfh", longOpts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:W:H:lc:vDfh", longOpts, nullptr)) != -1) {
         switch (opt) {
             case 'p': config.winePrefix = optarg; break;
             case 'W': config.width = atoi(optarg); break;
             case 'H': config.height = atoi(optarg); break;
-            case 's': steamAppId = (uint32_t)atoi(optarg); break;
             case 'l': listGames = true; break;
             case 'c': configPath = optarg; break;
             case 'v': config.verbose = true; break;
@@ -94,33 +90,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (steamAppId > 0) {
-        std::string steamcmd = metalsharp::SteamIntegration::findSteamCMD();
-        if (steamcmd.empty()) {
-            fprintf(stderr, "Error: steamcmd not found. Install from https://developer.valvesoftware.com/wiki/SteamCMD\n");
-            return 1;
-        }
-
-        std::string downloadDir = metalsharp::SteamIntegration::defaultDownloadDir() + "/" + std::to_string(steamAppId);
-        printf("Downloading Windows game (app %u)...\n", steamAppId);
-        printf("  SteamCMD: %s\n", steamcmd.c_str());
-        printf("  Output:   %s\n", downloadDir.c_str());
-
-        if (!metalsharp::SteamIntegration::downloadWindowsGame(steamcmd, steamAppId, downloadDir)) {
-            fprintf(stderr, "Error: download failed\n");
-            return 1;
-        }
-
-        config.executable = metalsharp::SteamIntegration::findGameExecutable(downloadDir);
-        if (config.executable.empty()) {
-            fprintf(stderr, "Error: no .exe found in download directory\n");
-            return 1;
-        }
-        printf("  Executable: %s\n", config.executable.c_str());
-    }
-
     if (config.executable.empty()) {
-        fprintf(stderr, "Error: no executable specified. Use <game.exe> or --steam <appid>\n\n");
+        fprintf(stderr, "Error: no executable specified. Use <game.exe>\n\n");
         printUsage(argv[0]);
         return 1;
     }

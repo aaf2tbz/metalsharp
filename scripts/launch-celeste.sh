@@ -10,7 +10,7 @@ GAME_DIR="$GAMES_DIR/$GAME_ID"
 
 if [[ ! -d "$GAME_DIR" ]]; then
     echo "[metalsharp] Game directory not found: $GAME_DIR"
-    echo "[metalsharp] Download the game first with steamcmd"
+    echo "[metalsharp] Install the game first through Windows Steam in MetalSharp"
     exit 1
 fi
 

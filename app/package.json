@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -118,7 +118,16 @@
       {
         "from": "bundles/",
         "to": "bundles/",
-        "filter": ["**/*.tar.zst", "**/*.exe"]
+        "filter": [
+          "crossover.tar.zst",
+          "dxvk.tar.zst",
+          "gptk.tar.zst",
+          "moltenvk.tar.zst",
+          "mono-arm64.tar.zst",
+          "mono-x86.tar.zst",
+          "SteamSetup.exe",
+          "wine.tar.zst"
+        ]
       }
     ],
     "directories": {

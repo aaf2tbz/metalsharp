@@ -16,7 +16,7 @@ GAME_ID="${1:-312520}"
 GAME_DIR="$GAMES_DIR/$GAME_ID"
 
 if [[ ! -d "$GAME_DIR" ]]; then
-    fail "Game directory not found: $GAME_DIR. Download with steamcmd first."
+    fail "Game directory not found: $GAME_DIR. Install it through Windows Steam in MetalSharp first."
 fi
 
 if [[ ! -f "$GAME_DIR/RainWorld.exe" ]]; then

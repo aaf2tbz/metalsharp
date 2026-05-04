@@ -31,8 +31,8 @@ Build: `./build_fmod_stubs.sh` (outputs `libfmod.dylib`, `libfmodstudio.dylib`)
 
 ## Game Setup (Celeste example)
 
-1. Install game via steamcmd: `steamcmd +login USER PASS +@sSteamCmdForcePlatformType windows +app_update 504230 validate +quit`
-2. Copy Celeste.exe + Content/ to game dir
+1. Install the game through Windows Steam in MetalSharp.
+2. Copy Celeste.exe + Content/ from the Windows Steam game dir
 3. Build FNA as net4.0, copy as all XNA assembly names
 4. Build FNA3D with SDL3 backend
 5. Copy SDL3, CSteamworks shim, FMOD stubs, steam_appid.txt to game dir

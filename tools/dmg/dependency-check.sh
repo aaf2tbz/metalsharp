@@ -57,12 +57,6 @@ echo ""
 info "=== Optional Dependencies ==="
 
 check_cmd wine false || check_cmd wine64 false
-check_cmd steamcmd false || {
-    if [[ -f "$HOME/steamcmd/steamcmd.sh" ]]; then
-        ok "steamcmd found at ~/steamcmd/"
-    fi
-}
-
 if [[ -f "/usr/local/lib/libmetalirconverter.dylib" ]]; then
     ok "libmetalirconverter found"
 else

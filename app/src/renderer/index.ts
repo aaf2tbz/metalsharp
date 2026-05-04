@@ -11,6 +11,8 @@ interface SteamGame {
   state: "installed" | "not_installed" | "downloading";
   cover_url: string;
   header_url: string;
+  size_bytes?: number | null;
+  launch_method?: string;
 }
 
 interface SteamLibrary {
@@ -37,14 +39,15 @@ class App {
   private wineSteamRunning: boolean = false;
   private crossoverAvailable: boolean = false;
   private launchingAppId: number | null = null;
+  private theme: "dark" | "light" = "dark";
 
   private steamApiKey: string | null = null;
-  private steamcmdLoggedIn: boolean = false;
   private setupState: SetupState | null = null;
   private setupStep = 0;
   private setupDeviceName = "";
 
   async init() {
+    this.initTheme();
     this.bindNav();
     await this.checkBackend();
 
@@ -57,8 +60,6 @@ class App {
     await this.loadConfig();
     await this.checkForUpdates();
     this.steamApiKey = await this.getSteamApiKey();
-    const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
-    this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;
     const setupState = await this.api<{ deviceName?: string }>("GET", "/setup/state");
     if (setupState?.deviceName) this.setupDeviceName = setupState.deviceName;
     await this.loadLibrary();
@@ -71,6 +72,29 @@ class App {
         this.switchView(view);
       });
     });
+    document.getElementById("btn-theme")?.addEventListener("click", () => this.toggleTheme());
+  }
+
+  private initTheme() {
+    const saved = localStorage.getItem("metalsharp-theme");
+    this.theme = saved === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = this.theme;
+    this.updateThemeToggle();
+  }
+
+  private toggleTheme() {
+    this.theme = this.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("metalsharp-theme", this.theme);
+    document.documentElement.dataset.theme = this.theme;
+    this.updateThemeToggle();
+  }
+
+  private updateThemeToggle() {
+    const btn = document.getElementById("btn-theme");
+    if (!btn) return;
+    const next = this.theme === "dark" ? "light" : "dark";
+    btn.textContent = this.theme === "dark" ? "Light Mode" : "Dark Mode";
+    btn.setAttribute("title", `Toggle ${next} mode`);
   }
 
   private switchView(view: string) {
@@ -299,7 +323,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-secondary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, SteamCMD, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, Wine, and more</span>`;
       depBtn.style.opacity = "0.5";
       depBtn.style.pointerEvents = "none";
       buttonsDiv.appendChild(depBtn);
@@ -327,7 +351,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-primary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, SteamCMD, Wine, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">CrossOver, GPTK, Mono, DXVK, Wine, and more</span>`;
       buttonsDiv.appendChild(depBtn);
 
       depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
@@ -574,8 +598,6 @@ class App {
     body.querySelector("#setup-finish")?.addEventListener("click", async () => {
       this.hideSetupWizard();
       this.steamApiKey = await this.getSteamApiKey();
-      const cmdStatus = await this.api<{ logged_in: boolean }>("GET", "/steam/steamcmd-status");
-      this.steamcmdLoggedIn = cmdStatus?.logged_in ?? false;
       await this.loadConfig();
       await this.loadLibrary();
     });
@@ -602,7 +624,7 @@ class App {
           </div>
           <div class="header-actions">
             <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
-            <input type="text" id="library-search" placeholder="Search games..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;font-size:13px;width:220px;" />
+            <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
             <button class="btn btn-secondary" id="btn-scan">Refresh</button>
           </div>
         </div>
@@ -634,8 +656,8 @@ class App {
         </div>
         <div class="header-actions">
           <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
-          <input type="text" id="library-search" placeholder="Search games..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;font-size:13px;width:220px;" />
-          <select id="library-filter" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;">
+          <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
+          <select class="control-input control-select" id="library-filter">
             <option value="all">All Games</option>
             <option value="installed">Installed</option>
             <option value="not_installed">Not Installed</option>
@@ -709,21 +731,42 @@ class App {
         <span class="download-pct">${statusText}</span>
       `;
     } else if (isRunning) {
-      actionHtml = `<button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>`;
-    } else if (isLaunching) {
-      actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Launching...</span></div>`;
-    } else if (game.installed) {
       actionHtml = `
-        <div class="game-card-actions-row">
-          <button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>
-          <button class="btn btn-uninstall" data-action="uninstall" data-appid="${game.appid}" title="Uninstall">✕</button>
+        <div class="game-card-actions-stack">
+          <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
+          <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
         </div>
       `;
-    } else if (this.wineSteamInstalled || this.steamcmdLoggedIn) {
-      actionHtml = `<button class="btn btn-install" data-action="install" data-appid="${game.appid}">Install</button>`;
+    } else if (isLaunching) {
+      actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Preparing runtime and launching...</span></div>`;
+    } else if (game.installed) {
+      actionHtml = `
+        <div class="game-card-actions-stack">
+          <div class="game-card-actions-row">
+            <button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>
+            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+          </div>
+          <div class="game-card-actions-row subtle">
+            <select class="launch-method-select" data-appid="${game.appid}" title="${this.esc(this.launchMethodHelp(game))}">
+              ${this.launchMethodOptions(game)}
+            </select>
+            <button class="btn btn-danger btn-card" data-action="uninstall" data-appid="${game.appid}">Uninstall</button>
+          </div>
+        </div>
+      `;
+    } else if (this.wineSteamInstalled) {
+      actionHtml = `
+        <div class="game-card-actions-stack">
+          <button class="btn btn-install" data-action="install" data-appid="${game.appid}">Install</button>
+          <div class="game-card-hint">${this.steamApiKey ? "Installs through Windows Steam" : "Add a Steam API key for full library metadata"}</div>
+        </div>
+      `;
     } else {
       actionHtml = `<span class="badge badge-warn">Setup Steam</span>`;
     }
+
+    const method = this.recommendedLaunchMethod(game);
+    const size = game.size_bytes ? this.formatBytes(game.size_bytes) : null;
 
     card.innerHTML = `
       <div class="game-card-banner">
@@ -733,6 +776,8 @@ class App {
         <div class="game-card-title">${this.esc(game.name)}</div>
         <div class="game-card-meta">
           ${game.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
+          <span class="game-card-platform">${this.esc(this.launchMethodLabel(method))}</span>
+          ${size ? `<span class="game-card-size">${size}</span>` : ""}
         </div>
         <div class="game-card-actions">
           ${actionHtml}
@@ -740,16 +785,79 @@ class App {
       </div>
     `;
 
-    card.querySelector("[data-action]")?.addEventListener("click", (e) => {
-      const btn = e.currentTarget as HTMLElement;
-      const action = btn.dataset.action;
-      if (action === "play") this.launchGame(game);
-      else if (action === "stop") this.stopGame(game);
-      else if (action === "install") this.installGame(game);
-      else if (action === "uninstall") this.uninstallGame(game);
+    card.querySelectorAll("[data-action]").forEach((actionEl) => {
+      actionEl.addEventListener("click", (e) => {
+        const btn = e.currentTarget as HTMLElement;
+        const action = btn.dataset.action;
+        if (action === "play") this.launchGame(game);
+        else if (action === "stop") this.stopGame(game);
+        else if (action === "install") this.installGame(game);
+        else if (action === "uninstall") this.uninstallGame(game);
+        else if (action === "view-steam") this.viewOnSteam(game);
+      });
     });
 
     return card;
+  }
+
+  private defaultLaunchMethod(appid: number): string {
+    if (appid === 105600) return "xna_fna_arm64";
+    if (appid === 504230) return "xna_fna_x86";
+    if (appid === 312520) return "gptk_wine";
+    if (appid === 535520) return "crossover_wine";
+    if (appid === 620) return "wine_devel";
+    if ([945360, 1139900, 2050650].includes(appid)) return "steam";
+    if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
+    return "steam_d3dmetal_perf";
+  }
+
+  private recommendedLaunchMethod(game: SteamGame): string {
+    return game.launch_method ?? this.defaultLaunchMethod(game.appid);
+  }
+
+  private launchMethodLabel(method: string): string {
+    const labels: Record<string, string> = {
+      xna_fna_arm64: "FNA arm64",
+      xna_fna_x86: "FNA x86",
+      gptk_wine: "GPTK Wine",
+      dxvk_wine: "Wine Devel + DXVK",
+      crossover_wine: "CrossOver + DXVK",
+      wine_devel: "Wine Devel",
+      steam: "CrossOver Steam",
+      steam_metalfx: "CrossOver Steam + MetalFX",
+      steam_d3dmetal_perf: "CrossOver Steam + D3DMetal",
+    };
+    return labels[method] ?? "Auto";
+  }
+
+  private launchMethodOptions(game: SteamGame): string {
+    const recommended = this.recommendedLaunchMethod(game);
+    const fallbackMethods = [
+      "steam_d3dmetal_perf",
+      "steam_metalfx",
+      "steam",
+      "crossover_wine",
+      "dxvk_wine",
+      "wine_devel",
+      "gptk_wine",
+      "xna_fna_arm64",
+      "xna_fna_x86",
+    ].filter((method) => method !== recommended);
+
+    const methods = [
+      recommended,
+      ...fallbackMethods,
+    ];
+
+    return methods.map((method, index) => {
+      const prefix = index === 0 ? "Recommended" : "Try";
+      return `<option value="${method}">${this.esc(`${prefix}: ${this.launchMethodLabel(method)}`)}</option>`;
+    }).join("");
+  }
+
+  private launchMethodHelp(game: SteamGame): string {
+    const recommended = this.launchMethodLabel(this.recommendedLaunchMethod(game));
+    return `Recommended: ${recommended}. Try another method only if this game fails to launch.`;
   }
 
   private async installGame(game: SteamGame) {
@@ -803,6 +911,7 @@ class App {
     this.toast(`Launching ${game.name}...`, "success");
     const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; gameType?: string }>("POST", "/game/launch-auto", {
       appid: game.appid,
+      launchMethod: (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ?? "auto",
     });
 
     this.launchingAppId = null;
@@ -816,6 +925,15 @@ class App {
       this.toast(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
       this.renderLibrary();
     }
+  }
+
+  private async viewOnSteam(game: SteamGame) {
+    if (!this.wineSteamRunning) {
+      this.toast("Start Steam first to open the library view", "error");
+      return;
+    }
+    const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/view-game", { appid: game.appid });
+    if (result?.ok) this.toast(`Opened ${game.name} in Steam`, "success");
   }
 
   private async stopGame(game: SteamGame) {
@@ -867,22 +985,6 @@ class App {
         </div>
         <div class="settings-row">
           <div>
-            <div class="settings-label">SteamCMD Login</div>
-            <div class="settings-desc">Required to download Windows game files. Uses your Steam username and password — credentials are sent only to Steam via SteamCMD and never stored.</div>
-          </div>
-          <div class="settings-value">
-            <div id="steamcmd-login-area">
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <input type="text" id="steam-username" placeholder="Steam username" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;width:180px;" />
-                <input type="password" id="steam-password" placeholder="Steam password" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:13px;width:180px;" />
-                <button class="btn btn-primary btn-sm" id="btn-steamcmd-login">Login</button>
-              </div>
-              <div id="steamcmd-status" style="margin-top:6px;"></div>
-            </div>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
             <div class="settings-label">Device Name</div>
             <div class="settings-desc">Identifies this machine to Steam for persistent login</div>
           </div>
@@ -920,24 +1022,6 @@ class App {
           </div>
           <div class="settings-value">
             ${steam?.mac_installed ? `<span class="badge badge-ok">Detected</span>` : `<span class="badge badge-warn">Not Found</span>`}
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">SteamCMD</div>
-            <div class="settings-desc">Alternative download method (not needed if Wine Steam is installed)</div>
-          </div>
-          <div class="settings-value">
-            ${steam?.steam_cmd_path ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Found</span>`}
-          </div>
-        </div>
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">SteamCMD Login</div>
-            <div class="settings-desc">${this.steamcmdLoggedIn ? "Logged in and ready to download" : "Login required to download games (or use Wine Steam)"}</div>
-          </div>
-          <div class="settings-value">
-            ${this.steamcmdLoggedIn ? `<span class="badge badge-ok">Logged In</span>` : `<span class="badge badge-warn">Not Logged In</span>`}
           </div>
         </div>
       </div>
@@ -1085,47 +1169,6 @@ class App {
       this.toast("API key saved — syncing library...", "success");
       await this.loadLibrary();
       this.renderSettings();
-    });
-
-    const initSteamcmdStatus = async () => {
-      const status = await this.api<{ logged_in: boolean; username?: string }>("GET", "/steam/steamcmd-status");
-      const area = document.getElementById("steamcmd-login-area");
-      if (!area) return;
-      if (status?.logged_in && status.username) {
-        area.innerHTML = `
-          <div style="display:flex;gap:8px;align-items:center;">
-            <span class="badge badge-ok">Logged in as ${this.esc(status.username)}</span>
-            <button class="btn btn-secondary btn-sm" id="btn-steamcmd-logout">Logout</button>
-          </div>
-        `;
-        area.querySelector("#btn-steamcmd-logout")?.addEventListener("click", async () => {
-          await this.api("POST", "/steam/steamcmd-logout");
-          this.toast("Logged out of SteamCMD");
-          this.renderSettings();
-        });
-      }
-    };
-    initSteamcmdStatus();
-
-    el.querySelector("#btn-steamcmd-login")?.addEventListener("click", async () => {
-      const username = (document.getElementById("steam-username") as HTMLInputElement)?.value?.trim();
-      const password = (document.getElementById("steam-password") as HTMLInputElement)?.value;
-      if (!username || !password) {
-        this.toast("Enter your Steam username and password", "error");
-        return;
-      }
-      const btn = document.getElementById("btn-steamcmd-login") as HTMLElement;
-      if (btn) btn.textContent = "Logging in...";
-      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password }, 120000);
-      if (result?.ok) {
-        this.steamcmdLoggedIn = true;
-        this.toast("SteamCMD login successful!", "success");
-        this.renderSettings();
-        this.renderLibrary();
-      } else {
-        this.toast(result?.error ?? "Login failed", "error");
-        if (btn) btn.textContent = "Login";
-      }
     });
 
     el.querySelector("#btn-change-device")?.addEventListener("click", async () => {

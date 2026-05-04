@@ -15,7 +15,6 @@ pub fn state() -> Value {
                     "step": cfg.get("step").and_then(|v| v.as_u64()).unwrap_or(0),
                     "deviceName": cfg.get("deviceName").and_then(|v| v.as_str()).unwrap_or(""),
                     "steamApiKeySet": cfg.get("steamApiKeySet").and_then(|v| v.as_bool()).unwrap_or(false),
-                    "steamcmdLoggedIn": cfg.get("steamcmdLoggedIn").and_then(|v| v.as_bool()).unwrap_or(false),
                 });
             }
         }
@@ -27,7 +26,6 @@ pub fn state() -> Value {
         "step": 0,
         "deviceName": "",
         "steamApiKeySet": false,
-        "steamcmdLoggedIn": false,
     })
 }
 
@@ -58,10 +56,6 @@ pub fn save_step(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error:
     if let Some(set) = body.get("steamApiKeySet").and_then(|v| v.as_bool()) {
         cfg.insert("steamApiKeySet".into(), json!(set));
     }
-    if let Some(logged) = body.get("steamcmdLoggedIn").and_then(|v| v.as_bool()) {
-        cfg.insert("steamcmdLoggedIn".into(), json!(logged));
-    }
-
     std::fs::write(&config_path, serde_json::to_string_pretty(&cfg)?)?;
 
     Ok(state())
@@ -111,8 +105,6 @@ pub fn dependencies() -> Value {
         "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
     ));
     let xcode_cli = check_command("clang") || check_command("xcodebuild");
-    let steamcmd = check_path(&home.join("steamcmd/steamcmd.sh"))
-        || check_command("steamcmd");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
     let homebrew = check_command("brew");
@@ -218,7 +210,6 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
         let result = match id {
             "mono" => run_brew_install("mono"),
             "sdl3" => run_brew_install("sdl3"),
-            "steamcmd" => install_steamcmd(&home),
             _ => {
                 json!({"id": id, "ok": false, "error": "unknown dependency"})
             }
@@ -255,47 +246,6 @@ fn run_brew_install(package: &str) -> Value {
             }
         }
         Err(e) => json!({"id": package, "ok": false, "error": e.to_string()}),
-    }
-}
-
-fn install_steamcmd(home: &PathBuf) -> Value {
-    let steamcmd_dir = home.join("steamcmd");
-    let steamcmd_sh = steamcmd_dir.join("steamcmd.sh");
-
-    if steamcmd_sh.exists() {
-        return json!({"id": "steamcmd", "ok": true});
-    }
-
-    let _ = std::fs::create_dir_all(&steamcmd_dir);
-
-    let output = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "-o",
-            steamcmd_dir.join("steamcmd.tar.gz").to_str().unwrap_or(""),
-            "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz",
-        ])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let tar_output = std::process::Command::new("tar")
-                .args([
-                    "-xzf",
-                    steamcmd_dir.join("steamcmd.tar.gz").to_str().unwrap_or(""),
-                    "-C",
-                    steamcmd_dir.to_str().unwrap_or(""),
-                ])
-                .output();
-
-            let _ = std::fs::remove_file(steamcmd_dir.join("steamcmd.tar.gz"));
-
-            match tar_output {
-                Ok(t) if t.status.success() => json!({"id": "steamcmd", "ok": true}),
-                _ => json!({"id": "steamcmd", "ok": false, "error": "failed to extract steamcmd"}),
-            }
-        }
-        _ => json!({"id": "steamcmd", "ok": false, "error": "failed to download steamcmd"}),
     }
 }
 
