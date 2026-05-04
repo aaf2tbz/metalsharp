@@ -192,4 +192,18 @@ function registerIpc() {
       });
     });
   });
+
+  ipcMain.handle("app:install-homebrew", async () => {
+    const { exec } = require("child_process");
+    return new Promise((resolve) => {
+      const script = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
+      exec(`osascript -e 'tell application "Terminal" to do script "${script.replace(/"/g, '\\\\"')}"'`, (err: Error | null) => {
+        if (err) {
+          resolve({ ok: false, error: "Failed to open Terminal for Homebrew install" });
+        } else {
+          resolve({ ok: true, message: "Terminal opened — complete the Homebrew install there" });
+        }
+      });
+    });
+  });
 }

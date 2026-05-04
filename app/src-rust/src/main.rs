@@ -1,3 +1,4 @@
+mod installer;
 mod scan;
 mod setup;
 mod steam;
@@ -73,6 +74,18 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 Ok(v) => resp(200, v),
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
+        }
+        (Method::Post, "/setup/install-all") => {
+            match installer::start_install_all() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        (Method::Get, "/setup/install-progress") => {
+            resp(200, installer::read_progress())
+        }
+        (Method::Get, "/setup/installing") => {
+            resp(200, json!({"installing": installer::is_installing()}))
         }
         (Method::Post, "/game/prepare") => {
             let body = read_body(req);

@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld("metalsharp", {
     ipcRenderer.invoke("app:eject-dmg"),
   installDeps: (command: string) =>
     ipcRenderer.invoke("app:install-deps", command),
+  installHomebrew: () =>
+    ipcRenderer.invoke("app:install-homebrew"),
 });

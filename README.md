@@ -80,6 +80,10 @@ cargo build --release  # Rust backend
 ### Build a DMG
 
 ```bash
+# 1. Bundle dependencies (compresses external runtime, GPTK, Mono, DXVK, SteamCMD, SteamSetup.exe)
+./tools/dmg/create-bundles.sh
+
+# 2. Build the DMG
 cd metalsharp/app
 npm run build
 npx electron-builder --mac dmg
@@ -87,12 +91,11 @@ npx electron-builder --mac dmg
 
 ## Setup
 
-First launch walks through:
+First launch walks through a 4-step wizard:
 
-1. **Dependencies** — installs what's needed (Homebrew, Rosetta 2, Xcode CLI, external runtime). Optional: Mono, GPTK, Wine Devel, MoltenVK, macOS Steam
-2. **Device Name** — gives your machine a name
-3. **Steam API Key** — free from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey), loads your full game library
-4. **Windows Steam** — installs the Windows Steam client via external runtime Wine. Log in with your Steam account. Games are installed through Steam's interface.
+1. **Install** — two buttons. "Install Homebrew" opens Terminal for the brew installer. "Install Dependencies" runs everything else automatically (external runtime, GPTK, Rosetta 2, Xcode CLI, Mono, DXVK, SteamCMD, Windows Steam). Bundled archives are extracted with a system auth prompt (Touch ID / password); missing deps fall back to `brew install`. Live progress bar and log throughout.
+2. **Steam** — set a device name, optionally enter your Steam Web API key, then click "Launch Steam". MetalSharp starts Windows Steam via external runtime Wine. Log in through the Steam window.
+3. **Done** — library loads, download and play.
 
 ### Installing games
 
@@ -130,6 +133,20 @@ First launch walks through:
 ├── cache/              Steam config, owned games cache
 └── config.json         Global settings
 ```
+
+## Tech Stack
+
+| Component | What it does |
+|-----------|--------------|
+| Rust backend | HTTP API, game launch, SteamCMD, dep management, background installer |
+| Electron app | Desktop UI, setup wizard, library browser |
+| external runtime Wine | Win32 translation + Windows Steam + built-in Vulkan renderer |
+| DXVK 1.10.3 | D3D9/11 → Vulkan translation (Nidhogg 2, Vulkan 1.1 compatible) |
+| Apple GPTK | D3D11/12 → Metal via D3DMetal framework (Rain World) |
+| MoltenVK | Vulkan → Metal (Nidhogg 2) |
+| FNA + SDL3 | XNA compatibility, native rendering (Celeste, Terraria) |
+| Goldberg | Steam API emulation for offline play (Portal 2) |
+| zstd | Compressed bundle extraction for DMG-packaged dependencies |
 
 ## License
 
