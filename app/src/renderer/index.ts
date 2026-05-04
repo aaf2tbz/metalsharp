@@ -36,6 +36,7 @@ class App {
   private wineSteamInstalled: boolean = false;
   private wineSteamRunning: boolean = false;
   private external runtimeAvailable: boolean = false;
+  private launchingAppId: number | null = null;
 
   private steamApiKey: string | null = null;
   private steamcmdLoggedIn: boolean = false;
@@ -484,7 +485,13 @@ class App {
       }
 
       if (!steamStatus?.installed) {
-        statusDiv.innerHTML = '<div class="setup-hint" style="margin-top:8px">Steam not found. Go back and install dependencies first.</div>';
+        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer and launching setup...</span>';
+        const installResult = await this.api<{ ok: boolean; path?: string; error?: string }>("POST", "/steam/install");
+        if (installResult?.ok) {
+          statusDiv.innerHTML = '<div class="setup-hint" style="margin-top:8px">Steam setup wizard opened — complete it, then come back and launch Steam.</div>';
+        } else {
+          statusDiv.innerHTML = `<div class="setup-hint" style="margin-top:8px;color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</div>`;
+        }
         launchBtn.textContent = "Launch Steam";
         (launchBtn as HTMLButtonElement).disabled = false;
         return;
@@ -684,6 +691,7 @@ class App {
 
     const isRunning = this.runningAppId === game.appid;
     const isDownloading = this.downloadingAppId === game.appid;
+    const isLaunching = this.launchingAppId === game.appid;
     if (isRunning) card.classList.add("running");
 
     const coverUrl = game.header_url || game.cover_url;
@@ -702,6 +710,8 @@ class App {
       `;
     } else if (isRunning) {
       actionHtml = `<button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>`;
+    } else if (isLaunching) {
+      actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Launching...</span></div>`;
     } else if (game.installed) {
       actionHtml = `
         <div class="game-card-actions-row">
@@ -777,6 +787,9 @@ class App {
     const fnaAppids = [105600, 504230];
     const isFna = fnaAppids.includes(game.appid);
 
+    this.launchingAppId = game.appid;
+    this.renderLibrary();
+
     if (!isFna && this.wineSteamInstalled && !this.wineSteamRunning) {
       this.toast("Starting Steam...", "success");
       await this.api("POST", "/steam/launch");
@@ -792,6 +805,8 @@ class App {
       appid: game.appid,
     });
 
+    this.launchingAppId = null;
+
     if (launchResult?.ok && launchResult.pid) {
       this.runningPid = launchResult.pid;
       this.runningAppId = game.appid;
@@ -799,6 +814,7 @@ class App {
       this.renderLibrary();
     } else {
       this.toast(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
+      this.renderLibrary();
     }
   }
 

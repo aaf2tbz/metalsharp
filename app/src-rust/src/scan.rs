@@ -82,7 +82,7 @@ fn steam_library_paths() -> Vec<PathBuf> {
 
     let wine_steam_dir = home
         .join(".metalsharp")
-        .join("prefix")
+        .join("prefix-steam-cx")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam");

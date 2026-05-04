@@ -55,9 +55,13 @@ pub fn status() -> Value {
 }
 
 pub fn is_wine_steam_running() -> bool {
-    let prefix = steam_prefix();
     Command::new("pgrep")
-        .args(["-f", &prefix.to_string_lossy()])
+        .args(["-f", "Steam.exe"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+        || Command::new("pgrep")
+        .args(["-f", "steam.exe"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -70,8 +74,11 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     let exe = steam_exe_path();
-    if !exe.exists() {
-        return Err("Windows Steam not installed — run install first".into());
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+
+    if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
+        install_steam()?;
+        return Ok(json!({"ok": true, "message": "Steam installer launched — complete setup, then launch again"}));
     }
 
     if is_wine_steam_running() {
@@ -81,13 +88,20 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let prefix_str = steam_prefix().to_string_lossy().to_string();
     let cx = cx_root();
 
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+
     let child = Command::new(&wine)
-        .current_dir(steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam"))
+        .current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("STEAM_RUNTIME", "0")
         .arg(&exe)
-        .args(["-no-cef-sandbox", "--disable-gpu", "-console"])
+        .args([
+            "-no-cef-sandbox",
+            "-noverifyfiles",
+            "-no-dwrite",
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
@@ -96,40 +110,35 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
-    let prefix = steam_prefix();
-    let prefix_str = prefix.to_string_lossy().to_string();
+    let targets = ["Steam.exe", "steam.exe", "steamservice.exe"];
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", &prefix_str])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    for target in &targets {
+        let _ = Command::new("pkill")
+            .args(["-f", target])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "steamwebhelper.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "steamservice.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let still_running = Command::new("pgrep")
+        .args(["-f", "steam.exe"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "Steam.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    if still_running {
+        for target in &targets {
+            let _ = Command::new("pkill")
+                .args(["-9", "-f", target])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "winedevice.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    std::thread::sleep(std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 
     let _ = Command::new("pkill")
         .args(["-9", "-f", "steamwebhelper.exe"])
@@ -595,6 +604,26 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
     appids
 }
 
+fn get_game_name_from_manifest(appid: u32) -> Option<String> {
+    let manifest_path = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps")
+        .join(format!("appmanifest_{}.acf", appid));
+
+    let contents = std::fs::read_to_string(&manifest_path).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("\"name\"") {
+            if let Some((_, val)) = trimmed.split_once('\t') {
+                return Some(val.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let steamapps = steam_prefix()
@@ -860,8 +889,20 @@ pub fn library() -> Value {
     let wine_steam_appids = get_wine_steam_installed_games();
 
     let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
-        Ok(games) => games,
-        Err(_) => vec![],
+        Ok(games) if !games.is_empty() => games,
+        _ => {
+            let mut fallback: Vec<(u32, String)> = Vec::new();
+            for &appid in &wine_steam_appids {
+                let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+                fallback.push((appid, name));
+            }
+            for &appid in &downloaded_appids {
+                if !fallback.iter().any(|(id, _)| *id == appid) {
+                    fallback.push((appid, format!("Game {}", appid)));
+                }
+            }
+            fallback
+        }
     };
 
     let games: Vec<Value> = owned
@@ -1125,16 +1166,32 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let metalsharp_dir = home.join(".metalsharp");
     std::fs::create_dir_all(&metalsharp_dir)?;
 
-    let installer = metalsharp_dir.join("SteamSetup.exe");
+    let steam_dir = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam");
 
-    if !installer.exists() {
-        let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
-        let output = Command::new("curl")
-            .args(["-sL", "-o", &installer.to_string_lossy(), url])
-            .status()?;
-        if !output.success() {
-            return Err("Failed to download Steam installer".into());
+    if steam_dir.join("steamui.dll").exists() && steam_exe_path().exists() {
+        return Ok("Steam already installed".into());
+    }
+
+    let _ = std::fs::remove_dir_all(steam_prefix());
+
+    let installer = metalsharp_dir.join("SteamSetup.exe");
+    let _ = std::fs::remove_file(&installer);
+
+    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
+    let output = Command::new("curl")
+        .args(["-sL", "-o", &installer.to_string_lossy(), url])
+        .status()?;
+    if !output.success() {
+        let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
+        if bundled.exists() {
+            let _ = std::fs::copy(&bundled, &installer);
         }
+    }
+    if !installer.exists() {
+        return Err("Failed to download Steam installer".into());
     }
 
     let wine = cx_wine();
@@ -1163,12 +1220,11 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .arg(&installer)
-        .args(["/S"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    Ok(format!("Launched Steam installer via external runtime Wine (pid {})", child.id()))
+    Ok(format!("Launched Steam installer via external runtime Wine (pid {}) — complete the setup wizard, then launch Steam again", child.id()))
 }
 
 fn reqwest_https_get(url: &str) -> Result<Box<dyn std::io::Read>, Box<dyn std::error::Error>> {

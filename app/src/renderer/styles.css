@@ -534,6 +534,29 @@ body {
   to { transform: rotate(360deg); }
 }
 
+.launching-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.launching-indicator .spinner {
+  width: 18px;
+  height: 18px;
+}
+
+.launching-text {
+  font-size: 13px;
+  color: var(--text-dim);
+  animation: launchPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes launchPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
