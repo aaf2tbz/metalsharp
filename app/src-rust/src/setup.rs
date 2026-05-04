@@ -182,7 +182,7 @@ pub fn dependencies() -> Value {
                 "desc": "Wine runtime for 32-bit PE support (Portal 2).",
                 "installed": wine_devel,
                 "required": false,
-                "installCmd": "brew install --cask wine-stable",
+                "installCmd": "brew install --cask wine@devel",
             },
             {
                 "id": "moltenvk",
@@ -576,12 +576,12 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         }
     }
 
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32");
     for dll in &["d3d11.dll", "dxgi.dll"] {
         let src = dxvk_dir.join(dll);
         let dst = game_dir.join(dll);
         if src.exists() {
-            std::fs::copy(&src, &dst)?;
+            let _ = std::fs::copy(&src, &dst);
         }
     }
 

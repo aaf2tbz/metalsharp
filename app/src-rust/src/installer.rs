@@ -76,7 +76,7 @@ fn run_install_all() {
         }
     };
 
-    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<(), String>>)> = vec![
+    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("Xcode CLI Tools", Box::new(|_| install_xcode_cli())),
         ("CrossOver", Box::new(|home| install_crossover(home))),
@@ -84,7 +84,6 @@ fn run_install_all() {
         ("Mono x86 Runtime", Box::new(|home| install_mono_x86(home))),
         ("DXVK 1.10.3", Box::new(|home| install_dxvk(home))),
         ("SteamCMD", Box::new(|home| install_steamcmd(home))),
-        ("Windows Steam", Box::new(|home| install_windows_steam(home))),
         ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
         ("Wine Devel", Box::new(|_| install_wine_devel())),
         ("MoltenVK", Box::new(|_| install_moltenvk())),
@@ -99,11 +98,14 @@ fn run_install_all() {
         write_progress(step_num, total, name, "installing", &format!("Installing {}...", name), None);
 
         match installer(&home) {
-            Ok(()) => {
-                write_progress(step_num, total, name, "done", &format!("{} installed", name), None);
+            Ok(false) => {
+                write_progress(step_num, total, name, "done", &format!("{} already installed — skipping", name), None);
+            }
+            Ok(true) => {
+                write_progress(step_num, total, name, "done", &format!("{} installed!", name), None);
             }
             Err(e) => {
-                let is_required = i < 8;
+                let is_required = i < 7;
                 if is_required {
                     write_progress(step_num, total, name, "error", &format!("{} failed: {}", name, e), Some(&e));
                     return;
@@ -119,10 +121,10 @@ fn run_install_all() {
     write_progress(total, total, "Complete", "complete", "All dependencies installed!", None);
 }
 
-fn install_rosetta() -> Result<(), String> {
+fn install_rosetta() -> Result<bool, String> {
     let plist = PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist");
     if plist.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let running = Command::new("pgrep")
         .args(["-q", "oahd"])
@@ -130,7 +132,7 @@ fn install_rosetta() -> Result<(), String> {
         .map(|s| s.success())
         .unwrap_or(false);
     if running {
-        return Ok(());
+        return Ok(false);
     }
 
     let output = Command::new("softwareupdate")
@@ -139,15 +141,15 @@ fn install_rosetta() -> Result<(), String> {
         .map_err(|e| format!("failed to run softwareupdate: {}", e))?;
 
     if output.status.success() || String::from_utf8_lossy(&output.stderr).contains("already installed") {
-        Ok(())
+        Ok(true)
     } else {
         Err(format!("rosetta install failed: {}", String::from_utf8_lossy(&output.stderr)))
     }
 }
 
-fn install_xcode_cli() -> Result<(), String> {
+fn install_xcode_cli() -> Result<bool, String> {
     if check_command("clang") {
-        return Ok(());
+        return Ok(false);
     }
 
     let output = Command::new("/usr/bin/xcode-select")
@@ -157,33 +159,33 @@ fn install_xcode_cli() -> Result<(), String> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("already installed") || stderr.contains("command line tools are already installed") {
-        return Ok(());
+        return Ok(false);
     }
 
     for _ in 0..120 {
         std::thread::sleep(Duration::from_secs(5));
         let check = check_command("clang");
         if check {
-            return Ok(());
+            return Ok(true);
         }
     }
 
     Err("timed out waiting for Xcode CLI tools installation (you may need to complete it manually)".into())
 }
 
-fn install_crossover(_home: &PathBuf) -> Result<(), String> {
+fn install_crossover(_home: &PathBuf) -> Result<bool, String> {
     let crossover_wine = PathBuf::from(
         "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine"
     );
     if crossover_wine.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("crossover");
     if let Some(archive) = bundled {
         extract_to_applications(&archive, "CrossOver.app")?;
         if crossover_wine.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
@@ -192,22 +194,22 @@ fn install_crossover(_home: &PathBuf) -> Result<(), String> {
     if !crossover_wine.exists() {
         return Err("CrossOver wine binary not found after installation".into());
     }
-    Ok(())
+    Ok(true)
 }
 
-fn install_gptk(_home: &PathBuf) -> Result<(), String> {
+fn install_gptk(_home: &PathBuf) -> Result<bool, String> {
     let gptk_wine = PathBuf::from(
         "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
     );
     if gptk_wine.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("gptk");
     if let Some(archive) = bundled {
         extract_to_applications(&archive, "Game Porting Toolkit.app")?;
         if gptk_wine.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
@@ -216,13 +218,13 @@ fn install_gptk(_home: &PathBuf) -> Result<(), String> {
     if !gptk_wine.exists() {
         return Err("GPTK wine binary not found after installation".into());
     }
-    Ok(())
+    Ok(true)
 }
 
-fn install_mono_x86(home: &PathBuf) -> Result<(), String> {
+fn install_mono_x86(home: &PathBuf) -> Result<bool, String> {
     let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
     if mono_x86.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("mono-x86");
@@ -232,17 +234,17 @@ fn install_mono_x86(home: &PathBuf) -> Result<(), String> {
     if let Some(archive) = bundled {
         extract_zst(&archive, &runtime_dir, "mono-x86")?;
         if mono_x86.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
     Err("mono x86 not found - no bundled archive available and cannot auto-install".into())
 }
 
-fn install_dxvk(home: &PathBuf) -> Result<(), String> {
+fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
     let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
     if dxvk_dir.join("x32").join("d3d11.dll").exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let _ = fs::create_dir_all(&dxvk_dir);
@@ -279,7 +281,7 @@ fn install_dxvk(home: &PathBuf) -> Result<(), String> {
         let _ = fs::remove_dir_all(&tmp);
 
         if dxvk_dir.join("x32").join("d3d11.dll").exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
@@ -314,14 +316,14 @@ fn install_dxvk(home: &PathBuf) -> Result<(), String> {
     if !dxvk_dir.join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists() {
         return Err("DXVK d3d11.dll not found after extraction".into());
     }
-    Ok(())
+    Ok(true)
 }
 
-fn install_steamcmd(home: &PathBuf) -> Result<(), String> {
+fn install_steamcmd(home: &PathBuf) -> Result<bool, String> {
     let steamcmd_dir = home.join("steamcmd");
     let steamcmd_sh = steamcmd_dir.join("steamcmd.sh");
     if steamcmd_sh.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let _ = fs::create_dir_all(&steamcmd_dir);
@@ -331,7 +333,7 @@ fn install_steamcmd(home: &PathBuf) -> Result<(), String> {
         let home = dirs::home_dir().ok_or("Cannot find home directory")?;
         extract_zst(&archive, &home, "steamcmd")?;
         if steamcmd_sh.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
@@ -357,12 +359,12 @@ fn install_steamcmd(home: &PathBuf) -> Result<(), String> {
     let _ = fs::remove_file(&tar_path);
 
     match tar_output {
-        Ok(t) if t.status.success() => Ok(()),
+        Ok(t) if t.status.success() => Ok(true),
         _ => Err("failed to extract steamcmd".into()),
     }
 }
 
-fn install_windows_steam(home: &PathBuf) -> Result<(), String> {
+fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let steam_exe = home.join(".metalsharp")
         .join("prefix-steam-cx")
         .join("drive_c")
@@ -370,7 +372,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<(), String> {
         .join("Steam")
         .join("Steam.exe");
     if steam_exe.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let crossover_wine = PathBuf::from(
@@ -381,22 +383,22 @@ fn install_windows_steam(home: &PathBuf) -> Result<(), String> {
     }
 
     let installer = home.join(".metalsharp").join("SteamSetup.exe");
-    if !installer.exists() {
+
+    let _ = fs::remove_file(&installer);
+
+    let output = Command::new("curl")
+        .args(["-sL", "-o"])
+        .arg(&installer)
+        .arg("https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe")
+        .output()
+        .map_err(|e| format!("curl failed: {}", e))?;
+    if !output.status.success() {
         let bundled = find_bundled_file("SteamSetup.exe");
         if let Some(bundled) = bundled {
             let _ = fs::copy(&bundled, &installer);
         }
-    }
-
-    if !installer.exists() {
-        let output = Command::new("curl")
-            .args(["-sL", "-o"])
-            .arg(&installer)
-            .arg("https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe")
-            .output()
-            .map_err(|e| format!("curl failed: {}", e))?;
-        if !output.status.success() {
-            return Err("failed to download SteamSetup.exe".into());
+        if !installer.exists() {
+            return Err("failed to download SteamSetup.exe and no bundled fallback".into());
         }
     }
 
@@ -429,12 +431,12 @@ fn install_windows_steam(home: &PathBuf) -> Result<(), String> {
     for _ in 0..90 {
         std::thread::sleep(Duration::from_secs(2));
         if steam_exe.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
     if steam_exe.exists() {
-        Ok(())
+        Ok(true)
     } else {
         Err("Steam.exe not found after installation — may need manual install".into())
     }
@@ -458,15 +460,15 @@ fn check_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn install_mono_arm64() -> Result<(), String> {
+fn install_mono_arm64() -> Result<bool, String> {
     if check_command("mono") {
-        return Ok(());
+        return Ok(false);
     }
 
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     let mono_arm64 = home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono");
     if mono_arm64.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("mono-arm64");
@@ -476,34 +478,34 @@ fn install_mono_arm64() -> Result<(), String> {
     if let Some(archive) = bundled {
         extract_zst(&archive, &runtime_dir, "mono-arm64")?;
         if mono_arm64.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
     brew_install("mono")
 }
 
-fn install_wine_devel() -> Result<(), String> {
-    let wine = PathBuf::from("/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine");
+fn install_wine_devel() -> Result<bool, String> {
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
     if wine.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("wine");
     if let Some(archive) = bundled {
-        extract_to_applications(&archive, "Wine Stable.app")?;
+        extract_to_applications(&archive, "Wine Devel.app")?;
         if wine.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
-    brew_cask_install("wine-stable")
+    brew_cask_install("wine@devel")
 }
 
-fn install_moltenvk() -> Result<(), String> {
+fn install_moltenvk() -> Result<bool, String> {
     let icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
     if icd.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let bundled = find_bundled_archive("moltenvk");
@@ -512,7 +514,7 @@ fn install_moltenvk() -> Result<(), String> {
         let _ = fs::create_dir_all(&cellar);
         extract_zst(&archive, &cellar, "moltenvk")?;
         if icd.exists() {
-            return Ok(());
+            return Ok(true);
         }
     }
 
@@ -544,7 +546,7 @@ fn find_brew() -> Result<PathBuf, String> {
     Err("Homebrew not found — install it first".into())
 }
 
-fn brew_install(package: &str) -> Result<(), String> {
+fn brew_install(package: &str) -> Result<bool, String> {
     let brew = find_brew()?;
     let output = Command::new(&brew)
         .args(["install", package])
@@ -558,13 +560,13 @@ fn brew_install(package: &str) -> Result<(), String> {
     );
 
     if output.status.success() || combined.contains("already installed") {
-        Ok(())
+        Ok(true)
     } else {
         Err(combined.lines().last().unwrap_or("brew install failed").into())
     }
 }
 
-fn brew_cask_install(package: &str) -> Result<(), String> {
+fn brew_cask_install(package: &str) -> Result<bool, String> {
     let brew = find_brew()?;
 
     let install_output = Command::new(&brew)
@@ -579,7 +581,7 @@ fn brew_cask_install(package: &str) -> Result<(), String> {
     );
 
     if install_output.status.success() && !install_combined.contains("already installed") {
-        return Ok(());
+        return Ok(true);
     }
 
     let reinstall_output = Command::new(&brew)
@@ -594,7 +596,7 @@ fn brew_cask_install(package: &str) -> Result<(), String> {
     );
 
     if reinstall_output.status.success() || reinstall_combined.contains("already installed") || reinstall_combined.contains("It seems there is already an app") {
-        Ok(())
+        Ok(true)
     } else {
         let combined = format!("{}\n{}", install_combined, reinstall_combined);
         Err(combined.lines().last().unwrap_or("brew cask install failed").into())

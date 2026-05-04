@@ -348,7 +348,7 @@ fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
 
     if !wine.exists() {
-        return Err("Wine (devel) not found — install with: brew install --cask wine-crossover".into());
+        return Err("Wine (devel) not found — install with: brew install --cask wine@devel".into());
     }
 
     let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
@@ -391,7 +391,7 @@ fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<
     let prefix = home.join(".metalsharp").join("prefix-steam-cx");
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32");
 
     for dll in &["d3d11.dll", "dxgi.dll"] {
         let src = dxvk_dir.join(dll);
@@ -429,7 +429,7 @@ fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u3
     let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
 
     if !wine.exists() {
-        return Err("Wine (devel) not found — install with: brew install --cask wine-crossover || brew install --cask wine-stable".into());
+        return Err("Wine (devel) not found — install with: brew install --cask wine@devel".into());
     }
 
     let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
@@ -766,7 +766,7 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
     let candidates = vec![
-        PathBuf::from("/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine"),
+        PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"),
         PathBuf::from("/opt/homebrew/bin/wine64"),
         PathBuf::from("/opt/homebrew/bin/wine"),
         PathBuf::from("/usr/local/bin/wine64"),
@@ -789,7 +789,7 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
         return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
     }
 
-    Err("wine not found — install with: brew install --cask wine-stable".into())
+    Err("wine not found — install with: brew install --cask wine@devel".into())
 }
 
 fn find_config(name: &str) -> String {
