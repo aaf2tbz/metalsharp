@@ -31,7 +31,11 @@ class App {
   private downloadingAppId: number | null = null;
   private downloadProgress: number = 0;
   private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private pollingForInstall: number | null = null;
   private libraryFilter: string = "all";
+  private wineSteamInstalled: boolean = false;
+  private wineSteamRunning: boolean = false;
+  private external runtimeAvailable: boolean = false;
 
   private steamApiKey: string | null = null;
   private steamcmdLoggedIn: boolean = false;
@@ -122,6 +126,11 @@ class App {
     const scan = await this.api<{ steam: SteamStatus }>("GET", "/scan");
     if (scan) this.steam = scan.steam ?? { installed: false, running: false };
 
+    const steamStatus = await this.api<{ installed: boolean; running: boolean; external runtime_available: boolean }>("GET", "/steam/status");
+    this.wineSteamInstalled = steamStatus?.installed ?? false;
+    this.wineSteamRunning = steamStatus?.running ?? false;
+    this.external runtimeAvailable = steamStatus?.external runtime_available ?? false;
+
     this.renderLibrary();
   }
 
@@ -160,13 +169,13 @@ class App {
       case 1: this.renderSetupDependencies(wizard); break;
       case 2: this.renderSetupDeviceName(wizard); break;
       case 3: this.renderSetupSteamApiKey(wizard); break;
-      case 4: this.renderSetupSteamLogin(wizard); break;
+      case 4: this.renderSetupSteamInstall(wizard); break;
       case 5: this.renderSetupComplete(wizard); break;
     }
   }
 
   private renderSetupStepIndicator(container: HTMLElement, current: number) {
-    const steps = ["Welcome", "Dependencies", "Device", "Steam API", "Steam Login", "Done"];
+    const steps = ["Welcome", "Dependencies", "Device", "Steam API", "Windows Steam", "Done"];
     const indicator = document.createElement("div");
     indicator.className = "setup-steps";
 
@@ -461,8 +470,10 @@ class App {
     });
   }
 
-  private renderSetupSteamLogin(container: HTMLElement) {
+  private async renderSetupSteamInstall(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 4);
+
+    const steamStatus = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
 
     const body = document.createElement("div");
     body.className = "setup-body";
@@ -471,66 +482,58 @@ class App {
     body.innerHTML = `
       <div class="setup-body">
         <div class="setup-section-header">
-          <h1>Steam Login</h1>
-          <p>Log in with Steam to download and run games. Credentials are sent only to Steam — never stored.</p>
+          <h1>Windows Steam</h1>
+          <p>MetalSharp uses external runtime Wine to run the Windows Steam client. This handles game downloads and DRM authentication. You'll install games through Steam's interface and launch them from MetalSharp.</p>
         </div>
-        <div class="setup-form">
-          <div class="setup-form-group">
-            <label class="setup-label">Steam Username</label>
-            <input type="text" id="setup-steam-user" placeholder="Your Steam username" class="setup-input" />
-          </div>
-          <div class="setup-form-group">
-            <label class="setup-label">Steam Password</label>
-            <input type="password" id="setup-steam-pass" placeholder="Your Steam password" class="setup-input" />
-            <div class="setup-hint">Steam Guard will send a confirmation to your mobile app.</div>
-          </div>
-          <div id="setup-login-status"></div>
+        <div id="setup-steam-install-status" style="text-align:center;margin:30px 0;">
+          ${steamStatus?.installed
+            ? '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Windows Steam is installed</span>'
+            : '<span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Not yet installed</span>'}
         </div>
         <div class="setup-actions">
           <button class="btn btn-secondary" id="setup-back">Back</button>
-          <button class="btn btn-secondary" id="setup-skip">Skip for Now</button>
-          <button class="btn btn-primary" id="setup-login">Login</button>
+          ${steamStatus?.installed
+            ? '<button class="btn btn-primary" id="setup-next">Continue</button>'
+            : '<button class="btn btn-primary" id="setup-install-steam">Install Windows Steam</button>'}
         </div>
       </div>
     `;
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
 
-    body.querySelector("#setup-skip")?.addEventListener("click", async () => {
-      await this.api("POST", "/setup/save", { step: 4 });
-      this.renderSetupStep(5);
-    });
-
-    body.querySelector("#setup-login")?.addEventListener("click", async () => {
-      const username = (document.getElementById("setup-steam-user") as HTMLInputElement)?.value?.trim();
-      const password = (document.getElementById("setup-steam-pass") as HTMLInputElement)?.value;
-      const btn = body.querySelector("#setup-login") as HTMLElement;
-      const status = document.getElementById("setup-login-status")!;
-
-      if (!username || !password) {
-        this.toast("Enter your Steam credentials", "error");
-        return;
-      }
-
-      btn.textContent = "Logging in...";
+    body.querySelector("#setup-install-steam")?.addEventListener("click", async () => {
+      const btn = body.querySelector("#setup-install-steam") as HTMLElement;
+      btn.textContent = "Installing...";
       (btn as HTMLButtonElement).disabled = true;
-      status.innerHTML = '<div class="spinner"></div> Connecting to Steam...<br><span style="font-size:12px;color:var(--text-dim)">If prompted, approve the login on your Steam mobile app.</span>';
 
-      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/steamcmd-login", { username, password }, 120000);
-
+      const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/install");
       if (result?.ok) {
-        this.steamcmdLoggedIn = true;
-        await this.api("POST", "/setup/save", { step: 4, steamcmdLoggedIn: true });
-        status.innerHTML = '<span class="badge badge-ok">Connected!</span>';
-        this.toast("Steam login successful!", "success");
+        this.toast("Steam installer launched — complete the setup in the Steam window, then click Continue", "success");
+        const statusDiv = document.getElementById("setup-steam-install-status")!;
+        statusDiv.innerHTML = '<div class="spinner"></div> Waiting for Steam installation...<br><span style="font-size:12px;color:var(--text-dim)">Complete the Steam installer, then log in.</span>';
 
-        setTimeout(() => this.renderSetupStep(5), 800);
+        const pollForSteam = setInterval(async () => {
+          const s = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+          if (s?.installed) {
+            clearInterval(pollForSteam);
+            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Windows Steam is installed</span>';
+            const actions = body.querySelector(".setup-actions")!;
+            actions.innerHTML = `
+              <button class="btn btn-secondary" id="setup-back">Back</button>
+              <button class="btn btn-primary" id="setup-next">Continue</button>
+            `;
+            actions.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(3));
+            actions.querySelector("#setup-next")?.addEventListener("click", () => this.renderSetupStep(5));
+          }
+        }, 3000);
       } else {
-        status.innerHTML = `<span style="color:var(--error)">${this.esc(result?.error ?? "Login failed")}</span>`;
-        btn.textContent = "Login";
+        this.toast(result?.error ?? "Failed to install Steam", "error");
+        btn.textContent = "Install Windows Steam";
         (btn as HTMLButtonElement).disabled = false;
       }
     });
+
+    body.querySelector("#setup-next")?.addEventListener("click", () => this.renderSetupStep(5));
   }
 
   private async renderSetupComplete(container: HTMLElement) {
@@ -607,13 +610,20 @@ class App {
     const installedGames = lib.games.filter(g => g.installed);
     const notInstalled = lib.games.filter(g => !g.installed);
 
+    const steamStatusBadge = this.wineSteamRunning
+      ? '<span class="badge badge-ok" style="margin-left:8px">Steam Running</span>'
+      : this.wineSteamInstalled
+      ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
+      : '';
+
     el.innerHTML = `
       <div class="library-header">
         <div>
           <h1>Library</h1>
-          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed</p>
+          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge}</p>
         </div>
         <div class="header-actions">
+          <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
           <input type="text" id="library-search" placeholder="Search games..." style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;font-size:13px;width:220px;" />
           <select id="library-filter" style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;">
             <option value="all">All Games</option>
@@ -637,6 +647,7 @@ class App {
     el.querySelector("#btn-scan")?.addEventListener("click", () => this.loadLibrary());
     el.querySelector("#library-search")?.addEventListener("input", () => this.filterGames());
     el.querySelector("#library-filter")?.addEventListener("change", () => this.filterGames());
+    el.querySelector("#btn-steam-launch")?.addEventListener("click", () => this.toggleWineSteam());
   }
 
   private filterGames() {
@@ -689,11 +700,16 @@ class App {
     } else if (isRunning) {
       actionHtml = `<button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>`;
     } else if (game.installed) {
-      actionHtml = `<button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>`;
-    } else if (this.steamcmdLoggedIn) {
+      actionHtml = `
+        <div class="game-card-actions-row">
+          <button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>
+          <button class="btn btn-uninstall" data-action="uninstall" data-appid="${game.appid}" title="Uninstall">✕</button>
+        </div>
+      `;
+    } else if (this.wineSteamInstalled || this.steamcmdLoggedIn) {
       actionHtml = `<button class="btn btn-install" data-action="install" data-appid="${game.appid}">Install</button>`;
     } else {
-      actionHtml = `<span class="badge badge-warn">Login required</span>`;
+      actionHtml = `<span class="badge badge-warn">Setup Steam</span>`;
     }
 
     card.innerHTML = `
@@ -715,82 +731,61 @@ class App {
       const btn = e.currentTarget as HTMLElement;
       const action = btn.dataset.action;
       if (action === "play") this.launchGame(game);
-      else if (action === "stop" && this.runningPid) this.stopGame(game);
+      else if (action === "stop") this.stopGame(game);
       else if (action === "install") this.installGame(game);
+      else if (action === "uninstall") this.uninstallGame(game);
     });
 
     return card;
   }
 
   private async installGame(game: SteamGame) {
-    this.downloadingAppId = game.appid;
-    this.downloadProgress = 0;
-
-    const card = document.querySelector(`[data-appid="${game.appid}"]`);
-    if (card) {
-      const actions = card.querySelector(".game-card-actions");
-      if (actions) {
-        actions.innerHTML = `
-          <div class="download-bar"><div class="download-progress" style="width:0%"></div></div>
-          <span class="download-pct">0%</span>
-        `;
-      }
-    }
-
-    this.toast(`Installing ${game.name}...`, "success");
-
-    const result = await this.api<{ ok: boolean }>("POST", "/steam/download-game", {
-      steamAppId: game.appid,
-    });
-
-    if (!result?.ok) {
-      this.toast(`Failed to start download`, "error");
-      this.downloadingAppId = null;
+    if (!this.wineSteamInstalled) {
+      this.toast("Install Windows Steam first (Settings)", "error");
       return;
     }
 
+    if (!this.wineSteamRunning) {
+      this.toast("Starting Steam...", "success");
+      await this.api("POST", "/steam/launch");
+      await new Promise(r => setTimeout(r, 10000));
+      this.wineSteamRunning = true;
+    }
+
+    this.toast(`Open Steam and install ${game.name}. It will appear here when ready.`, "success");
+
     if (this.progressInterval) clearInterval(this.progressInterval);
-    const barEl = () => document.querySelector(`[data-appid="${game.appid}"] .download-progress`) as HTMLElement | null;
-    const pctEl = () => document.querySelector(`[data-appid="${game.appid}"] .download-pct`);
-
+    this.pollingForInstall = game.appid;
     this.progressInterval = setInterval(async () => {
-      try {
-        const res = await getAPI().request("GET", "/steam/download-progress");
-        const prog = (res?.data ?? res) as { progress?: number; status?: string } | null;
-        if (!prog || typeof prog.progress !== "number") return;
-
-        const bar = barEl();
-        const pct = pctEl();
-        if (bar) bar.style.width = `${prog.progress}%`;
-
-        if (prog.status === "setting_up") {
-          if (pct) pct.textContent = "Setting up...";
-        } else if (prog.status === "installing") {
-          if (pct) pct.textContent = "Installing...";
-        } else {
-          if (pct) pct.textContent = `${Math.round(prog.progress)}%`;
-        }
-
-        if (prog.status === "complete") {
+      const lib = await this.api<{ games: SteamGame[] }>("GET", "/steam/library");
+      if (lib?.games) {
+        const installed = lib.games.find((g: SteamGame) => g.appid === game.appid && g.installed);
+        if (installed) {
           if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
-          this.downloadingAppId = null;
+          this.pollingForInstall = null;
           this.toast(`${game.name} installed!`, "success");
           await this.loadLibrary();
-        } else if (prog.status === "error") {
-          if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
-          this.downloadingAppId = null;
-          this.toast(`Download failed`, "error");
         }
-      } catch { }
-    }, 2000);
+      }
+    }, 5000);
   }
 
   private async launchGame(game: SteamGame) {
+    const fnaAppids = [105600, 504230];
+    const isFna = fnaAppids.includes(game.appid);
+
+    if (!isFna && this.wineSteamInstalled && !this.wineSteamRunning) {
+      this.toast("Starting Steam...", "success");
+      await this.api("POST", "/steam/launch");
+      await new Promise(r => setTimeout(r, 10000));
+      this.wineSteamRunning = true;
+    }
+
     this.toast(`Preparing ${game.name}...`, "success");
+    await this.api("POST", "/game/prepare", { appid: game.appid });
 
-    const prep = await this.api<{ ok: boolean; gameType: string }>("POST", "/game/prepare", { appid: game.appid });
-
-    const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; command?: string }>("POST", "/game/launch-auto", {
+    this.toast(`Launching ${game.name}...`, "success");
+    const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; gameType?: string }>("POST", "/game/launch-auto", {
       appid: game.appid,
     });
 
@@ -805,12 +800,23 @@ class App {
   }
 
   private async stopGame(game: SteamGame) {
-    if (!this.runningPid) return;
-    await this.api("POST", "/kill", { pid: this.runningPid });
+    await this.api("POST", "/kill", { pid: this.runningPid, appid: game.appid });
     this.runningPid = null;
     this.runningAppId = null;
     this.toast(`Stopped ${game.name}`);
     this.renderLibrary();
+  }
+
+  private async uninstallGame(game: SteamGame) {
+    if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;
+    this.toast(`Uninstalling ${game.name}...`);
+    const result = await this.api<{ ok: boolean }>("POST", "/steam/uninstall-game", { appid: game.appid });
+    if (result?.ok) {
+      this.toast(`Uninstalled ${game.name}`);
+      this.loadLibrary();
+    } else {
+      this.toast(`Failed to uninstall ${game.name}`, "error");
+    }
   }
 
   private renderSettings() {
@@ -874,6 +880,22 @@ class App {
         <h2>Steam</h2>
         <div class="settings-row">
           <div>
+            <div class="settings-label">Wine Steam (external runtime)</div>
+            <div class="settings-desc">Windows Steam running in external runtime Wine — handles downloads, DRM, and game launches</div>
+          </div>
+          <div class="settings-value">
+            <div style="display:flex;gap:8px;align-items:center;">
+              ${this.wineSteamInstalled
+                ? `<span class="badge badge-ok">Installed</span>`
+                : this.external runtimeAvailable
+                ? `<button class="btn btn-primary btn-sm" id="btn-install-steam">Install Steam</button>`
+                : `<span class="badge badge-warn">external runtime Required</span>`}
+              ${this.wineSteamInstalled ? `<button class="btn btn-secondary btn-sm" id="btn-steam-launch">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
             <div class="settings-label">macOS Steam</div>
             <div class="settings-desc">Native Steam client on this Mac</div>
           </div>
@@ -884,7 +906,7 @@ class App {
         <div class="settings-row">
           <div>
             <div class="settings-label">SteamCMD</div>
-            <div class="settings-desc">Used to download Windows game files</div>
+            <div class="settings-desc">Alternative download method (not needed if Wine Steam is installed)</div>
           </div>
           <div class="settings-value">
             ${steam?.steam_cmd_path ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Found</span>`}
@@ -893,7 +915,7 @@ class App {
         <div class="settings-row">
           <div>
             <div class="settings-label">SteamCMD Login</div>
-            <div class="settings-desc">${this.steamcmdLoggedIn ? "Logged in and ready to download" : "Login required to download games"}</div>
+            <div class="settings-desc">${this.steamcmdLoggedIn ? "Logged in and ready to download" : "Login required to download games (or use Wine Steam)"}</div>
           </div>
           <div class="settings-value">
             ${this.steamcmdLoggedIn ? `<span class="badge badge-ok">Logged In</span>` : `<span class="badge badge-warn">Not Logged In</span>`}
@@ -1099,10 +1121,26 @@ class App {
     });
 
     el.querySelector("#btn-install-steam")?.addEventListener("click", async () => {
-      this.toast("Installing Steam...");
+      this.toast("Installing Steam via external runtime Wine...");
       await this.api("POST", "/steam/install");
+      this.toast("Steam installer launched — wait for it to finish, then start Steam");
       await this.loadLibrary();
       this.renderSettings();
+    });
+
+    el.querySelector("#btn-steam-launch")?.addEventListener("click", async () => {
+      if (this.wineSteamRunning) {
+        await this.api("POST", "/steam/stop");
+        this.wineSteamRunning = false;
+        this.toast("Steam stopped");
+      } else {
+        this.toast("Starting Steam...", "success");
+        await this.api("POST", "/steam/launch");
+        this.wineSteamRunning = true;
+        this.toast("Steam started — log in through the Steam window", "success");
+      }
+      this.renderSettings();
+      this.renderLibrary();
     });
 
     el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {
@@ -1196,6 +1234,39 @@ class App {
       case "local": return "\uD83D\uDD33";
       default: return "\uD83C\uDFAE";
     }
+  }
+
+  private isGameInLocalDir(appid: number): boolean {
+    if (!this.library) return false;
+    return this.library.games.some(g => g.appid === appid && g.installed);
+  }
+
+  private async toggleWineSteam() {
+    if (this.wineSteamRunning) {
+      await this.api("POST", "/steam/stop");
+      this.wineSteamRunning = false;
+      this.toast("Steam stopped");
+    } else {
+      this.toast("Starting Steam...", "success");
+      const result = await this.api<{ ok: boolean }>("POST", "/steam/launch");
+      if (result?.ok) {
+        this.wineSteamRunning = true;
+        this.toast("Steam started — log in through the Steam window", "success");
+      }
+    }
+    this.renderLibrary();
+  }
+
+  private pollWineSteamInstall(game: SteamGame) {
+    const interval = setInterval(async () => {
+      await this.loadLibrary();
+      const installed = this.library?.games.find(g => g.appid === game.appid)?.installed;
+      if (installed) {
+        clearInterval(interval);
+        this.toast(`${game.name} installed!`, "success");
+      }
+    }, 5000);
+    setTimeout(() => clearInterval(interval), 300000);
   }
 
   private esc(s: string): string {

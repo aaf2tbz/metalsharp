@@ -387,6 +387,37 @@ body {
   justify-content: center;
 }
 
+.game-card-actions-row {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.game-card-actions-row .btn-play {
+  flex: 1;
+  text-align: center;
+  justify-content: center;
+}
+
+.btn-uninstall {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.btn-uninstall:hover {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+}
+
 /* Empty state */
 .empty-state {
   display: flex;

@@ -2,14 +2,14 @@
 
 Run Windows games on macOS. One app, no fuss.
 
-MetalSharp takes the existing tools that make Windows gaming on Mac possible — Wine, external runtime, DXVK, MoltenVK, Apple's Game Porting Toolkit, FNA, Mono — and wraps them into a single Electron app with a setup wizard, automatic game configuration, and one-click launch. No manual Wine prefix management. No hunting for DLLs. No editing registry keys.
+MetalSharp wraps the tools that make Windows gaming on Mac possible — Wine, external runtime, DXVK, MoltenVK, Apple's Game Porting Toolkit, FNA, Mono — into a single Electron app with a setup wizard, automatic game configuration, and one-click launch. No manual Wine prefix management. No hunting for DLLs. No editing registry keys.
 
 ## What it does
 
-1. **Browses your Steam library** — shows every game you own
-2. **Downloads games** — uses SteamCMD to pull Windows depots, with cached credentials so you're not re-authenticating every time
-3. **Auto-configures the runtime** — each game gets the right Wine build, graphics pipeline, audio bridge, and Steam auth set up automatically
-4. **Launches with one click** — the backend detects the game by Steam App ID and picks the correct runtime
+1. **Browses your Steam library** — shows every game you own via the Steam Web API
+2. **Runs Windows Steam via external runtime** — installs games through Steam's own interface with full DRM support
+3. **Auto-configures the runtime** — each game gets the right Wine build, graphics pipeline, and audio bridge automatically
+4. **Launches with one click** — the backend detects the game and picks the correct runtime (external runtime, Wine Devel, GPTK, or FNA/Mono)
 
 ## Supported Games
 
@@ -19,21 +19,24 @@ MetalSharp takes the existing tools that make Windows gaming on Mac possible —
 | **Terraria** | XNA/FNA | Mono arm64 + SDL3 Metal + FAudio | Working |
 | **Rain World** | Unity Mono | GPTK Wine + D3DMetal | Working |
 | **Nidhogg 2** | GameMaker | Wine Devel + DXVK + MoltenVK | Working |
-| **Among Us** | Unity IL2CPP | external runtime Wine + Vulkan | Working |
+| **Among Us** | Unity IL2CPP | external runtime Wine + Steam DRM | Working |
 | **Portal 2** | Source Engine | Wine Devel + Goldberg emulator | Working |
-| **Ghostrunner** | Unreal Engine 4 | external runtime Wine + Vulkan | Working |
+| **Ghostrunner** | Unreal Engine 4 | external runtime Wine + Steam DRM | Working |
+| **Resident Evil 4** | RE Engine | external runtime Wine + Steam DRM | Working |
 
 Tested on Apple M4, macOS 26.
 
 ## How games run
 
-MetalSharp doesn't reinvent anything. It picks the right existing toolchain per game:
+MetalSharp picks the right existing toolchain per game:
+
+**Steam DRM games** (Among Us, Ghostrunner, RE4) — external runtime Wine runs the Windows Steam client natively. Games install through Steam's interface and launch via `steam://run/` for full DRM authentication. No hacks, no emulators — just Steam running under Wine.
 
 **XNA/FNA games** (Celeste, Terraria) — Run natively via Mono + FNA + SDL3. No Wine, no translation layers. FNA replaces Microsoft's XNA framework, SDL3 handles windowing/input/audio, and Metal handles rendering.
 
-**Unity games** (Rain World, Among Us, Ghostrunner) — Apple's Game Porting Toolkit or external runtime Wine handle the Windows-to-Mac translation. D3D11 calls go through D3DMetal (Apple's D3D→Metal layer) or external runtime's Vulkan renderer → MoltenVK → Metal.
+**D3D11 games** (Nidhogg 2) — Wine Devel runs the Windows binary, DXVK translates D3D11 to Vulkan, MoltenVK translates Vulkan to Metal. MetalSharp copies DXVK DLLs and sets env vars automatically.
 
-**D3D11 games** (Nidhogg 2) — Wine Devel runs the Windows binary, DXVK translates D3D11 to Vulkan, MoltenVK translates Vulkan to Metal. 4 hops but it works.
+**GPTK games** (Rain World) — Apple's Game Porting Toolkit handles D3D→Metal translation via D3DMetal.
 
 **Source Engine** (Portal 2) — Wine Devel's built-in wined3d handles D3D9 via OpenGL. Goldberg emulator replaces Steam auth for offline play.
 
@@ -77,34 +80,42 @@ npx electron-builder --mac dmg
 
 First launch walks through:
 
-1. **Dependencies** — installs what's needed (Homebrew, Rosetta 2, GPTK, Mono, SDL3, SteamCMD, external runtime, Wine Devel, MoltenVK, Goldberg)
-2. **Steam API Key** — free from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)
-3. **Steam Login** — credentials sent only to Steam servers via SteamCMD
+1. **Dependencies** — installs what's needed (Homebrew, Rosetta 2, Xcode CLI, external runtime). Optional: Mono, GPTK, Wine Devel, MoltenVK, macOS Steam
+2. **Device Name** — gives your machine a name
+3. **Steam API Key** — free from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey), loads your full game library
+4. **Windows Steam** — installs the Windows Steam client via external runtime Wine. Log in with your Steam account. Games are installed through Steam's interface.
+
+### Installing games
+
+1. Click **Install** on any game in your library — MetalSharp starts Windows Steam
+2. In the Steam window, find the game and click Install
+3. MetalSharp detects the installation automatically and shows it as installed
+4. Click **Play** — MetalSharp applies game-specific patches and launches
 
 ### Auto-setup (per-game)
 
-Clicking Install downloads the game and runs game-specific setup:
+Clicking Play for the first time runs game-specific setup:
 
 - **Terraria** — copies macOS native libs, builds launcher, installs Xact assembly
 - **Celeste** — builds SDL3/FNA3D x86_64, CSteamworks shim with 609 aliases, FMOD stubs
 - **Rain World** — initializes GPTK Wine prefix
-- **Nidhogg 2** — builds patched DXVK from source with MoltenVK compat patches
-- **Among Us / Ghostrunner** — initializes external runtime Wine prefix, removes conflicting DXVK DLLs
+- **Nidhogg 2** — copies DXVK DLLs, sets DXVK+MoltenVK environment, creates Wine Devel prefix
+- **Among Us / Ghostrunner / RE4** — launches via Steam DRM (`steam://run/`)
 - **Portal 2** — installs Goldberg Steam emulator for offline play
 
 ## Directory Layout
 
 ```
 ~/.metalsharp/
-├── games/              Downloaded games (by Steam App ID)
+├── games/              Downloaded games (by Steam App ID, for FNA/GPTK games)
 ├── runtime/
 │   ├── fna/            FNA assemblies for XNA games
 │   ├── shims/          Native dylibs (FNA3D, SDL3, CSteamworks, FMOD stubs)
 │   ├── mono-x86/       x86_64 Mono runtime (Celeste)
 │   ├── dxvk-moltenvk/  Patched DXVK DLLs (Nidhogg 2)
-│   ├── vkd3d-proton/   VKD3D-Proton DLLs (D3D12 games)
 │   └── goldberg/       Goldberg Steam emulator DLLs
-├── prefix-*/           Per-game Wine prefixes
+├── prefix-steam-cx/    external runtime Wine prefix with Windows Steam + DRM games
+├── prefix-*/           Per-game Wine prefixes (GPTK, Wine Devel)
 ├── cache/              Steam config, owned games cache
 └── config.json         Global settings
 ```
@@ -115,19 +126,12 @@ Clicking Install downloads the game and runs game-specific setup:
 |-----------|--------------|
 | Rust backend | HTTP API, game launch, SteamCMD, dep management |
 | Electron app | Desktop UI, setup wizard, library browser |
-| DXVK (patched) | D3D9/11 → Vulkan translation (cross-compiled, MoltenVK patches) |
-| VKD3D-Proton | D3D12 → Vulkan translation (cross-compiled) |
-| Apple GPTK | D3D11/12 → Metal via D3DMetal framework |
-| external runtime Wine | Win32 translation with built-in Vulkan renderer |
-| MoltenVK | Vulkan → Metal |
-| FNA + SDL3 | XNA compatibility, native rendering |
-| Goldberg | Steam API emulation for offline play |
-
-## Documentation
-
-- [Game Compatibility](GAME_COMPAT.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [FNA Integration](src/fna/README.md)
+| external runtime Wine | Win32 translation + Windows Steam + built-in Vulkan renderer |
+| DXVK (patched) | D3D9/11 → Vulkan translation (Nidhogg 2) |
+| Apple GPTK | D3D11/12 → Metal via D3DMetal framework (Rain World) |
+| MoltenVK | Vulkan → Metal (Nidhogg 2) |
+| FNA + SDL3 | XNA compatibility, native rendering (Celeste, Terraria) |
+| Goldberg | Steam API emulation for offline play (Portal 2) |
 
 ## License
 
