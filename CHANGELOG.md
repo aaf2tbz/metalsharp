@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.7.0 — 2025-05-03
+
+### Added
+
+- **Elden Ring** support (App ID 1245620) with MetalFX upscaling and D3DMetal performance tuning
+- `launch_via_steam_with_env()` — launches via Steam with custom D3DMetal env vars per game
+- D3DMetal performance env vars: async GPU commit, multithreaded D3D, skip render barriers, NaN safety
+- Elden Ring known issue: FPS drops in graphically intensive areas (boss fights, open world)
+
+### Changed
+
+- Unknown games now default to `launch_via_steam()` instead of fallback exe detection
+- Simplified `launch_auto()` — no more fallback exe resolution for unknown titles
+
 ## v0.6.0 — 2025-05-03
 
 ### Breaking change: new install flow

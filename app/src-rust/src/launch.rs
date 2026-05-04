@@ -54,16 +54,22 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_via_steam(appid)?;
             Ok((pid, "steam"))
         }
+        1245620 => {
+            let pid = launch_via_steam_with_env(appid, &[
+                ("D3DM_ENABLE_METALFX", "1"),
+                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                ("MVK_ALLOW_METAL_FENCES", "1"),
+            ])?;
+            Ok((pid, "steam_metalfx"))
+        }
         _ => {
-            if game_dir.is_none() {
-                let pid = launch_via_steam(appid)?;
-                return Ok((pid, "steam"));
-            }
-            let dir = game_dir.as_ref().unwrap();
-            let exe = resolve_game_exe_fallback(dir);
-            let game_type = detect_game_type(dir);
-            let pid = launch(&exe, game_type)?;
-            Ok((pid, game_type))
+            let pid = launch_via_steam(appid)?;
+            Ok((pid, "steam"))
         }
     }
 }
@@ -90,6 +96,46 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
         .env("WINEPREFIX", &prefix_str)
         .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .args(["start", &url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Result<u32, Box<dyn std::error::Error>> {
+    let wine = PathBuf::from("/Applications/external runtime.app/Contents/SharedSupport/external runtime/lib/wine/x86_64-unix/wine");
+    if !wine.exists() {
+        return Err("external runtime Wine not found — install with: brew install --cask external runtime".into());
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    if !crate::steam::is_wine_steam_running() {
+        crate::steam::launch_wine_steam()?;
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if crate::steam::is_wine_steam_running() { break; }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+
+    let cx = PathBuf::from("/Applications/external runtime.app/Contents/SharedSupport/external runtime");
+    let url = format!("steam://run/{}", appid);
+
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", &prefix_str)
+        .env("CX_ROOT", cx.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all");
+
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+
+    let child = cmd
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
