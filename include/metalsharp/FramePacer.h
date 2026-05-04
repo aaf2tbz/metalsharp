@@ -1,3 +1,13 @@
+/// @file FramePacer.h
+/// @brief Frame timing and VSync mode management for smooth presentation.
+///
+/// Controls the present loop by enforcing target frame times across four present modes:
+/// VSync (synchronized to display), Immediate (uncapped), HalfRateVSync (30Hz lock),
+/// and Adaptive (VSync with tear-free fallback). Tracks frame timing history for
+/// percentile analysis, supports triple buffering configuration, and provides a present
+/// callback hook for swap chain integration. Essential for matching D3D presentation
+/// semantics on Metal's display link model.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

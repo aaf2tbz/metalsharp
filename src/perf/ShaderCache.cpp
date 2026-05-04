@@ -1,3 +1,7 @@
+/// @file ShaderCache.cpp
+/// @brief DXBC-to-MSL shader compilation cache (platform-agnostic logic).
+///
+/// Manages the on-disk shader cache that maps DXBC bytecode hashes to compiled MSL source. Handles cache lookup, insertion, serialization, and stale entry cleanup. Metal-specific compilation lives in the .mm counterpart.
 #include <metalsharp/ShaderCache.h>
 #include <metalsharp/Logger.h>
 #include <fstream>

@@ -1,3 +1,37 @@
+/// @file MetalBackend.h
+/// @brief Metal resource wrappers — the bridge between D3D objects and Metal.
+///
+/// D3D → Metal Resource Mapping
+/// =============================
+///
+///   D3D11/D3D12 Resource    → Metal Object          → Wrapper Class
+///   ──────────────────────────────────────────────────────────────
+///   ID3D11Device / Device   → MTLDevice              → MetalDevice
+///   DeviceContext / CmdList → MTLCommandBuffer        → MetalCommandBuffer
+///   ID3D11Buffer / Resource → MTLBuffer               → MetalBuffer
+///   ID3D11Texture2D / Res   → MTLTexture              → MetalTexture (1D/2D/3D)
+///   ID3D11SamplerState      → MTLSamplerState          → MetalSampler
+///   RenderTarget+Depth      → MTLRenderPassDescriptor  → MetalFramebuffer
+///
+/// Design Principles
+/// =================
+///
+///   - C++ RAII wrappers around Objective-C Metal objects
+///   - .cpp files for portable logic, .mm files for Metal API calls only
+///   - MetalDevice owns the MTLDevice and MTLCommandQueue singleton
+///   - All objects are reference-counted via shared_ptr in the D3D shim layer
+///   - MetalBuffer supports both shared (CPU+GPU) and private (GPU-only) storage
+///   - MetalTexture handles 1D, 2D, and 3D textures with mip level supports
+///   - MetalSampler converts D3D11_SAMPLER_DESC filter/address fields to Metal equivalents
+///   - MetalFramebuffer assembles MTLRenderPassDescriptor from color+depth+stencil attachments
+///
+///   Implementation files are split by type:
+///     src/metal/device/Device.mm — MTLDevice creation
+///     src/metal/Buffer.mm       — MTLBuffer creation + data upload
+///     src/metal/Texture.mm      — MTLTexture 1D/2D/3D creation
+///     src/metal/Sampler.mm      — MTLSamplerState from D3D sampler desc
+///     src/metal/Framebuffer.mm  — MTLRenderPassDescriptor assembly
+
 #pragma once
 
 #include <metalsharp/Platform.h>

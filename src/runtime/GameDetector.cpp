@@ -1,3 +1,11 @@
+/// @file GameDetector.cpp
+/// @brief Multi-platform game library scanning — Steam VDF, Epic manifests, GOG, and local directories.
+///
+/// Parses Steam's libraryfolders.vdf and appmanifest files to enumerate installed
+/// games, reads Epic Games manifest JSON, provides a GOG detection stub, and falls
+/// back to scanning user-specified local directories. Outputs a unified list of
+/// detected game entries regardless of source platform.
+
 #include "metalsharp/GameDetector.h"
 #include <fstream>
 #include <filesystem>

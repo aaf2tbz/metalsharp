@@ -1,3 +1,12 @@
+/// @file RenderThreadPool.h
+/// @brief Thread pool for parallel render task execution and command buffer pooling.
+///
+/// Provides a fixed-size worker thread pool with FIFO task submission, barrier synchronization,
+/// and idle-wait semantics for parallelizing independent render work across multiple threads.
+/// The companion CommandBufferPool recycles MTLCommandBuffer objects to avoid per-frame
+/// allocation overhead. Used by the D3D12 command queue to parallelize command list execution
+/// and by the shader compilation service for background compilation tasks.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

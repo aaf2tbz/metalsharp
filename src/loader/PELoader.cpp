@@ -1,3 +1,74 @@
+/// @file PELoader.cpp
+/// @brief Windows PE executable loader and import resolver.
+///
+/// PE Loading Pipeline
+/// ===================
+///
+/// The loader processes Windows executables in 8 ordered phases:
+///
+///   1. parsePE()      — Validate DOS magic (MZ→0x5A4D), PE signature (PE→0x4550),
+///                        machine type (AMD64 only), and extract optional header fields
+///                        (ImageBase, SectionAlignment, FileAlignment, SizeOfImage).
+///
+///   2. mapSections()  — Allocate virtual memory via mmap(MAP_JIT on macOS for W^X
+///                        compliance). Copy PE headers and each section's raw data from
+///                        file offsets to virtual addresses. Sections are zero-padded to
+///                        SectionAlignment granularity. The delta (actual_base - ImageBase)
+///                        is computed for relocation fixups.
+///
+///   3. processRelocations() — Walk IMAGE_BASE_RELOCATION blocks. For each DIR64 entry
+///                        (type 10), patch the 64-bit value at (pageRVA + offset) by
+///                        adding the delta. ABSOLUTE entries (type 0) are skipped.
+///
+///   4. initCFG()      — Control Flow Guard bypass: patches GuardCFCheckFP and
+///                        GuardCFDispatchFP in the load config directory to point at a
+///                        dynamically-allocated "return TRUE" stub (mov eax,1; ret).
+///                        This allows CFG-instrumented games to run without a real CFG
+///                        bitmap.
+///
+///   5. resolveImports() — Walk IMAGE_IMPORT_DESCRIPTOR array. For each imported DLL:
+///                        a) Check registered shims first (case-insensitive)
+///                        b) Check already-loaded PE DLLs
+///                        c) Attempt to load the DLL from search paths
+///                        Each IAT slot is patched with the resolved function pointer.
+///                        Both name-based and ordinal-based imports are handled.
+///
+///   6. resolveDelayImports() — Same logic as above but for IMAGE_DELAY_IMPORT_DESCRIPTOR.
+///                        Delay-loaded DLLs are resolved eagerly at load time rather than
+///                        on first call, since we can't hook the delay-load thunk.
+///
+///   7. applySectionProtections() — Set mprotect() on each section based on its
+///                        Characteristics flags (EXECUTE/READ/WRITE). A minimum of
+///                        READ|WRITE is enforced to avoid crashes from read-only data.
+///
+///   8. processTLS()   — Walk the TLS callback array from IMAGE_TLS_DIRECTORY64.
+///                        Each callback is invoked with (moduleBase, DLL_PROCESS_ATTACH, nullptr).
+///                        TLS callbacks run before DllMain for DLL dependencies.
+///
+/// Import Resolution Strategy
+/// ==========================
+///
+///   resolveImport(dllName, funcName, ordinal) tries in order:
+///     1. Registered ShimLibrary (m_shims) — MetalSharp's D3D/DXGI/audio/input interceptors
+///     2. Loaded PE DLLs (m_loadedDLLs) — recursively loaded Windows DLLs
+///     3. loadDependency() — search m_searchPaths for the DLL file
+///
+///   Export forwarding is handled: if an export RVA falls within the export directory,
+///   it's a forward string like "NTDLL.RtlAllocateHeap" which is resolved recursively.
+///
+/// DLL Loading
+/// ===========
+///
+///   loadDLL() performs the same pipeline (parse→map→reloc→imports→delays→protect→TLS)
+///   for each dependency, then calls DllMain(moduleBase, DLL_PROCESS_ATTACH, nullptr)
+///   if the DLL has the IMAGE_FILE_DLL characteristic.
+///
+/// Memory Management
+/// =================
+///
+///   All PE images are mmap'd with MAP_PRIVATE|MAP_ANONYMOUS|MAP_JIT.
+///   Destruction unmap()s all loaded modules. The singleton (s_instance) pointer
+///   is set in the constructor and cleared in the destructor.
 #include <metalsharp/PELoader.h>
 #include <metalsharp/PEHeader.h>
 #include <metalsharp/Logger.h>

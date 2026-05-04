@@ -1,3 +1,41 @@
+/// @file Kernel32Shim.cpp
+/// @brief Core kernel32.dll shim — memory, file I/O, and module loading.
+///
+/// The primary kernel32 shim handling the most frequently-called Windows APIs:
+///
+/// Memory Management
+/// =================
+///   VirtualAlloc/VirtualFree — mmap/munmap wrappers with MEM_COMMIT/MEM_RESERVE mapping
+///   HeapCreate/HeapAlloc/HeapFree/HeapDestroy — malloc/free wrappers
+///   GetProcessHeap/HeapSize — Returns a sentinel handle, delegates to malloc_usable_size
+///
+/// Module & Function Resolution
+/// ============================
+///   GetProcAddress — PELoader::getProcAddress for shim and PE DLL resolution
+///   LoadLibraryA/W — PELoader::loadLibrary with DLL search path
+///   FreeLibrary — No-op (PE modules aren't reference-counted)
+///
+/// File I/O
+/// ========
+///   CreateFileA/W — open() with Windows flags→POSIX flags translation
+///   ReadFile/WriteFile — read()/write() via tracked file handle table
+///   CloseHandle — close() for file handles, no-op for others
+///   GetFileSize/SetFilePointer — lseek/fstat based
+///   FindFirstFileA/FindNextFileA — opendir/readdir with Win32 pattern matching
+///
+/// Error Handling
+/// ==============
+///   GetLastError/SetLastError — Thread-local errno proxy
+///   FormatMessageA — Minimal stub returning "Error {code}"
+///
+/// Threading
+/// =========
+///   CreateThread — pthread_create wrapper
+///   WaitForSingleObject — pthread_join for threads, semaphore_wait for handles
+///   Sleep — usleep
+///
+/// This shim is registered first and handles ~40 of the most critical kernel32 exports.
+/// Additional kernel32 functions are in Kernel32Extra.cpp.
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/PELoader.h>

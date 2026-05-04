@@ -1,3 +1,9 @@
+/// @file Device.mm
+/// @brief Metal device creation — MTLDevice initialization and capability queries.
+///
+/// Objective-C++ implementation that wraps MTLDevice creation, queries GPU
+/// capabilities, and exposes the Metal device to the rest of the translation layer.
+
 #include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>

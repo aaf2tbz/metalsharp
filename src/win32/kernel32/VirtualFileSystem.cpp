@@ -1,3 +1,7 @@
+/// @file VirtualFileSystem.cpp
+/// @brief Win32-to-Unix file system translation layer.
+///
+/// Translates Win32 path conventions (backslashes, drive letters) to POSIX paths and implements CreateFile, ReadFile, WriteFile, FindFirstFile/FindNextFile. Manages virtual file handles and maps Win32 file attributes to Unix stat results.
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

@@ -1,3 +1,10 @@
+/// @file ShaderTranslator.mm
+/// @brief Shader compilation pipeline — D3D shader bytecode to Metal function translation.
+///
+/// Orchestrates the full shader compilation pipeline: parses DXBC containers, translates
+/// DXIL bytecode via the IR converter bridge or DXBC-to-MSL fallback, and produces
+/// Metal shader functions ready for pipeline state creation.
+
 #include <metalsharp/ShaderTranslator.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/DXBCParser.h>

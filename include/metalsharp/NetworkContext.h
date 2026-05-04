@@ -1,3 +1,12 @@
+/// @file NetworkContext.h
+/// @brief Winsock (ws2_32.dll) shim mapping BSD sockets to Winsock semantics.
+///
+/// Translates Winsock error codes, socket event masks (FD_READ, FD_WRITE, FD_ACCEPT,
+/// FD_CONNECT, FD_CLOSE), and WSAOVERLAPPED/WSABUF structures to native BSD socket
+/// operations. Manages a socket handle table, named pipe pairs for inter-process
+/// communication, and per-thread WSA error state. The ws2_32 shim delegates all
+/// actual I/O to this context.
+
 #pragma once
 
 #include <cstdint>

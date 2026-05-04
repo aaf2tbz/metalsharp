@@ -1,3 +1,11 @@
+/// @file GameValidator.cpp
+/// @brief Full game validation pipeline: DRM scanning, import checking, and status estimation.
+///
+/// Runs a game through the complete validation sequence — detecting known DRM
+/// signatures, verifying that required imports can be resolved through MetalSharp's
+/// DLL shims, and producing an estimated compatibility status (perfect, partial,
+/// broken). Orchestrates DRMDetector and ImportReporter as pipeline stages.
+
 #include <metalsharp/GameValidator.h>
 #include <metalsharp/ImportReporter.h>
 #include <metalsharp/Logger.h>

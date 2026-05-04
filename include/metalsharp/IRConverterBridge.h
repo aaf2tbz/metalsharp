@@ -1,3 +1,13 @@
+/// @file IRConverterBridge.h
+/// @brief Bridge to Apple's IRConverter dylib for DXIL→Metallib shader compilation.
+///
+/// Dynamically loads Apple's IRConverter shared library (shipped with the Game Porting
+/// Toolkit or Metal toolchain) and exposes its DXIL-to-Metallib compilation pathway.
+/// Handles root signature propagation for D3D12 argument buffer binding, ray tracing
+/// shader compilation with recursion depth limits, and shader model capability queries.
+/// The ShaderCompileService provides a threaded compilation queue with disk-backed
+/// caching to avoid redundant IRConverter invocations at runtime.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

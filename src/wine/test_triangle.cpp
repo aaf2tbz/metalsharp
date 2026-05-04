@@ -1,3 +1,7 @@
+/// @file test_triangle.cpp
+/// @brief End-to-end triangle rendering test via D3D11→Metal pipeline.
+///
+/// The classic 'hello triangle' integration test that creates a D3D11 device, swap chain, vertex buffer, and simple shaders to render a colored triangle. Serves as the primary smoke test for the entire MetalSharp rendering stack.
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>

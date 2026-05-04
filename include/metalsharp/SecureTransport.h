@@ -1,3 +1,11 @@
+/// @file SecureTransport.h
+/// @brief SSL/TLS implementation via Apple's SecureTransport framework.
+///
+/// Wraps Apple's SecureTransport/SSLContext API to provide TLS session management for
+/// games that use HTTPS or encrypted socket connections. Supports session creation,
+/// connect/read/write operations, and cleanup — all mapped from Winsock's SSL patterns
+/// to Apple's native TLS stack. Thread-safe session table keyed by opaque handles.
+
 #pragma once
 
 #include <cstdint>

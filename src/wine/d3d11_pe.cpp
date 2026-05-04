@@ -1,3 +1,7 @@
+/// @file d3d11_pe.cpp
+/// @brief Wine D3D11 PE module with COM interface forwarding.
+///
+/// Standalone Wine PE-side d3d11.dll that implements ID3D11Device and ID3D11DeviceContext COM interfaces. Forwards create/execute calls through Wine's unixlib mechanism to a platform-specific rendering backend.
 #include <d3d11.h>
 #include <dxgi.h>
 #include <string.h>

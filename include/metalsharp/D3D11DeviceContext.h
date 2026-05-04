@@ -1,3 +1,15 @@
+/// @file D3D11DeviceContext.h
+/// @brief D3D11 immediate device context — translates draw calls to Metal.
+///
+/// Implements ID3D11DeviceContext, the main rendering command interface.
+/// Tracks all bound pipeline state (shaders, VBs, IB, blend/rasterizer/DS
+/// state, render targets, viewports) and translates D3D11 draw calls into
+/// Metal render command encoders. The Metal render pass is lazily created
+/// on the first draw or clear call (ensurePipeline/commitDraw).
+///
+/// State slots follow D3D11 limits: 32 VB slots, 8 RTs, 14 CB slots,
+/// 128 SRV slots, 16 sampler slots, 8 CS UAV slots.
+
 #pragma once
 
 #include <d3d/D3D11.h>

@@ -1,3 +1,7 @@
+/// @file test_d3d9.cpp
+/// @brief Integration test for D3D9 device creation and basic rendering.
+///
+/// Creates a Direct3D 9 device and renders a test scene to verify the D3D9→Metal translation pipeline. Validates device capabilities, texture creation, and swap chain presentation under Wine.
 #include <windows.h>
 #include <d3d9.h>
 #include <stdio.h>

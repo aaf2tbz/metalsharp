@@ -1,3 +1,10 @@
+/// @file Buffer.mm
+/// @brief Metal buffer creation — MTLBuffer allocation and management.
+///
+/// Objective-C++ implementation wrapping MTLBuffer creation for vertex, index,
+/// constant, and staging buffers. Handles shared/private/managed memory modes
+/// and CPU-GPU data transfer.
+
 #include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>

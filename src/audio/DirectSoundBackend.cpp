@@ -1,3 +1,7 @@
+/// @file DirectSoundBackend.cpp
+/// @brief DirectSound buffer emulation via CoreAudio ring buffer.
+///
+/// Implements IDirectSound and IDirectSoundBuffer COM interfaces by writing captured audio into the same CoreAudio ring buffer used by XAudio2. Supports primary/secondary buffer semantics and write cursor tracking.
 #include <metalsharp/DirectSoundBackend.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

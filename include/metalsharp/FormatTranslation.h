@@ -1,3 +1,12 @@
+/// @file FormatTranslation.h
+/// @brief DXGI format to Metal pixel format mapping and format property queries.
+///
+/// Central lookup table for translating DXGI_FORMAT values (BC compressed, depth/stencil,
+/// sRGB, float) into their MTLPixelFormat equivalents. Also exposes helper predicates
+/// for querying whether a format is depth, stencil, or block-compressed. Used by the
+/// texture creation path, render target setup, and shader reflection when binding
+/// resources to Metal pipelines.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

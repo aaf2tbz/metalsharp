@@ -1,3 +1,7 @@
+/// @file FramePacer.cpp
+/// @brief Display-linked frame pacing with adaptive rate control.
+///
+/// Regulates frame presentation timing to match the display's refresh rate, preventing tearing and stutter. Uses sleep/spin-wait hybrid for precise V-sync-like pacing without relying on Metal's built-in presentWithin handler.
 #include <metalsharp/FramePacer.h>
 #include <metalsharp/Logger.h>
 #include <chrono>

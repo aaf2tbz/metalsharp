@@ -1,3 +1,7 @@
+/// @file test_d3d11.cpp
+/// @brief Integration test for D3D11 device creation and basic rendering.
+///
+/// Creates a D3D11 device and swap chain, renders test primitives, and validates output against expected results. Runs under Wine with the MetalSharp D3D11 shim to verify end-to-end D3D11→Metal translation.
 #include <windows.h>
 #include <d3d11.h>
 #include <stdio.h>

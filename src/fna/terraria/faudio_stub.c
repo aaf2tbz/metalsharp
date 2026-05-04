@@ -1,3 +1,7 @@
+/// @file faudio_stub.c
+/// @brief FAudio API stubs for Terraria audio fallback.
+///
+/// Provides stub implementations for FAudio functions when the real FAudio library is not available. Allocates dummy objects to prevent null pointer crashes. Used as a fallback when building Terraria without the full FAudio dependency.
 #include <stdint.h>
 #include <stdlib.h>
 

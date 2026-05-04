@@ -1,3 +1,7 @@
+/// @file GPUProfiler.mm
+/// @brief Metal GPU timing profiler with frame-level metrics.
+///
+/// Uses MTLCounterSampleBuffer and Metal timestamp queries to measure GPU execution time per frame and per render pass. Aggregates min/max/average frame times and reports bottlenecks for D3D11 draw call batches.
 #include <metalsharp/GPUProfiler.h>
 #include <metalsharp/Logger.h>
 #import <Metal/Metal.h>

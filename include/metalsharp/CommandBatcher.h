@@ -1,3 +1,12 @@
+/// @file CommandBatcher.h
+/// @brief Draw, dispatch, and copy command batching for reduced Metal encoder overhead.
+///
+/// Accumulates D3D draw calls (Draw, DrawIndexed, DrawInstanced, etc.), compute dispatches,
+/// copy operations, and clear commands into batched vectors that are flushed to Metal encoders
+/// as groups. Batching reduces the per-call overhead of MTLRenderCommandEncoder state transitions
+/// and is especially effective for games that issue many small draw calls. Configurable batch
+/// size with automatic flush at frame boundaries.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

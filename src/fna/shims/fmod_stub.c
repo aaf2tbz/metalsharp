@@ -1,3 +1,7 @@
+/// @file fmod_stub.c
+/// @brief FMOD Core API no-op stubs for FNA games.
+///
+/// Provides empty stub implementations for FMOD Core API functions (System_create, FMOD_System_Init, etc.) so games link without error when FMOD is not available. Returns success codes to prevent crashes from unhandled FMOD calls.
 #include <string.h>
 #include <stdlib.h>
 

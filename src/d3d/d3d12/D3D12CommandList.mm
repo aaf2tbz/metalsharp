@@ -1,3 +1,40 @@
+/// @file D3D12CommandList.mm
+/// @brief D3D12 graphics command list implementation translating to Metal encoders.
+///
+/// Command List Architecture
+/// =========================
+///
+/// The D3D12GraphicsCommandList translates D3D12 rendering commands into Metal
+/// render/blit/compute command encoders on a single MTLCommandBuffer.
+///
+/// Encoder Lifecycle:
+///   Open() → creates MTLCommandBuffer from the device's command queue
+///   ┌─ BeginRenderPass (OMSetRenderTargets) → MTLRenderCommandEncoder
+///   │   SetPipelineState → setRenderPipelineState
+///   │   SetGraphicsRootSignature/Table → encode arguments into MTLBuffer
+///   │   IASetVertexBuffers/IndexBuffer → setVertexBuffer/setBytes
+///   │   DrawInstanced/DrawIndexedInstanced → drawPrimitives/drawIndexedPrimitives
+///   │   ResourceBarrier → no-op or endEncoding+beginEncoding for layout transitions
+///   └─ EndRenderPass → endEncoding
+///   Close() → the command buffer is ready for ExecuteCommandLists
+///
+/// Argument Buffer Encoding:
+///   Each root signature parameter maps to a Metal argument buffer slot.
+///   D3D12 root constants → setBytes (push constants, max 4KB)
+///   D3D12 root descriptors (CBV/SRV/UAV) → setBuffer/setTexture on bind point
+///   D3D12 descriptor tables → encode entire descriptor range into argument buffer
+///
+/// Resource State Tracking:
+///   D3D12 requires explicit ResourceBarrier calls. Metal does not — resource
+///   state is implicit. We track states for correctness but mostly no-op the
+///   barriers. Split barriers are ignored.
+///
+/// Unsupported (stubs):
+///   - Ray tracing (BuildRayTracingAccelerationStructure, DispatchRays)
+///   - Mesh shaders (DispatchMesh)
+///   - Sample feedback (WriteBufferImmediate)
+///   - Bundle command lists (execute inline only)
+
 #include <metalsharp/D3D12Device.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ArgumentBufferBinding.h>

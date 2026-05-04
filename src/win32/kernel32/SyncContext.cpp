@@ -1,3 +1,7 @@
+/// @file SyncContext.cpp
+/// @brief Win32 synchronization primitives via pthreads.
+///
+/// Implements Win32 Events, Mutexes, Semaphores, and critical sections using pthreads and POSIX synchronization primitives. Each Win32 sync object is tracked by handle for CreateEvent/OpenMutex style access.
 #include <metalsharp/SyncContext.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

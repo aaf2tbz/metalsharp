@@ -1,3 +1,15 @@
+/// @file D3D11Device.h
+/// @brief D3D11 device implementation backed by Metal.
+///
+/// Implements ID3D11Device — the primary D3D11 object responsible for
+/// creating GPU resources (buffers, textures, shaders, state objects, views)
+/// and providing the immediate device context. Internally owns a MetalDevice
+/// and a ShaderTranslator for HLSL→MSL compilation.
+///
+/// Resource creation flow:
+///   D3D11 call → Metal resource wrapper (MetalBuffer/MetalTexture/etc.)
+///   Shaders → ShaderTranslator → DXBC/DXIL → MSL → MTLLibrary
+
 #pragma once
 
 #include <d3d/D3D11.h>

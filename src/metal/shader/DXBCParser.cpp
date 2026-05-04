@@ -1,3 +1,10 @@
+/// @file DXBCParser.cpp
+/// @brief DXBC container parser — chunk extraction from D3D shader bytecode blobs.
+///
+/// Parses the DXBC container format used by D3D shader bytecodes. Extracts code chunks,
+/// resource bindings, input/output signatures, and other metadata needed for translation
+/// to Metal shading language.
+
 #include <metalsharp/DXBCParser.h>
 #include <cstring>
 #include <cstdio>

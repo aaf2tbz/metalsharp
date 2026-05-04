@@ -1,3 +1,10 @@
+/// @file CrashDiagnostics.cpp
+/// @brief Crash dump writing with CPU register decoding and stack unwinding.
+///
+/// Captures machine state at the point of a crash — general-purpose registers,
+/// flags, and instruction pointer — and formats them into a human-readable dump
+/// file. Complements CrashReporter with lower-level diagnostic detail.
+
 #include <metalsharp/CrashDiagnostics.h>
 #include <metalsharp/Logger.h>
 #include <fstream>

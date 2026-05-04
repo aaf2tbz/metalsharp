@@ -1,3 +1,11 @@
+/// @file XAudio2Engine.h
+/// @brief XAudio2 API translation layer backed by CoreAudio.
+///
+/// Translates IXAudio2SourceVoice operations (create voice, submit buffer, start, stop,
+/// set volume) into CoreAudioBackend calls. Serves as the core of the xaudio2_9.dll shim,
+/// bridging the XAudio2 mixing graph to a single CoreAudio output stream. Games that
+/// use XAudio2 for playback hit this layer first.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

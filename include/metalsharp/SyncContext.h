@@ -1,3 +1,12 @@
+/// @file SyncContext.h
+/// @brief Win32 synchronization primitives implemented via pthreads.
+///
+/// Provides Events (manual/auto-reset), Mutexes (recursive, with owning thread tracking),
+/// Semaphores (counted), and Thread handles — all built on pthread_mutex, pthread_cond,
+/// and std::atomic. WaitForSingleObject and WaitForMultipleObjects implement the Win32
+/// wait semantics with millisecond timeouts. Named objects are supported for cross-handle
+/// sharing. This replaces the Windows kernel sync infrastructure entirely on macOS.
+
 #pragma once
 
 #include <metalsharp/Win32Types.h>

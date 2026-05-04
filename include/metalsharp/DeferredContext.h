@@ -1,3 +1,15 @@
+/// @file DeferredContext.h
+/// @brief Deferred D3D11 context — records commands for later replay.
+///
+/// Implements ID3D11DeviceContext in deferred mode. Instead of executing
+/// commands immediately, every call is captured as a lambda (CommandList::Cmd)
+/// and stored in a CommandList. When FinishCommandList() is called, the
+/// recorded commands are bundled into an ID3D11CommandList that can be
+/// replayed on the immediate context via ExecuteCommandList().
+///
+/// This matches D3D11's multi-threaded rendering model where worker threads
+/// record commands and the main thread replays them.
+
 #pragma once
 
 #include <d3d/D3D11.h>

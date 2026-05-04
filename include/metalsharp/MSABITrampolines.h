@@ -1,3 +1,13 @@
+/// @file MSABITrampolines.h
+/// @brief MS-ABI trampolines for libc/libm functions.
+///
+/// When PE (Windows x86-64) code calls standard C library functions, the
+/// calling convention differs from System V ABI used on macOS. These inline
+/// trampoline functions wrap every common libc/libm call with
+/// `__attribute__((ms_abi))` so the PE→native transition is seamless.
+/// Used by the PE loader to fill import tables for CRT functions that
+/// Windows games expect to find in msvcrt.dll.
+
 #pragma once
 
 #include <metalsharp/Win32Types.h>

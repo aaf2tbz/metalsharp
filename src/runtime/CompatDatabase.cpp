@@ -1,3 +1,10 @@
+/// @file CompatDatabase.cpp
+/// @brief JSON compatibility database with hand-rolled parser, CRUD operations, and reporting.
+///
+/// Stores per-game compatibility records (status, notes, tested versions) in a JSON
+/// file using a manual parser instead of a JSON library. Provides add/update/remove
+/// operations, lookup by game ID, and generates summary reports for the launcher UI.
+
 #include <metalsharp/CompatDatabase.h>
 #include <metalsharp/Logger.h>
 #include <fstream>

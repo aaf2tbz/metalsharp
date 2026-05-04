@@ -1,3 +1,12 @@
+/// @file VirtualFileSystem.h
+/// @brief Win32-to-Unix path translation and virtualized file handle management.
+///
+/// Implements the file I/O layer that games see when calling CreateFile/ReadFile/WriteFile.
+/// Translates Windows paths (C:\, Z:\) to the Wine prefix directory on the host filesystem,
+/// manages a handle table for files, find-first/find-next enumeration, pipes, and sockets.
+/// Also provides file attribute queries and path normalization. All file operations from
+/// Kernel32Shim flow through this layer.
+
 #pragma once
 
 #include <metalsharp/Win32Types.h>

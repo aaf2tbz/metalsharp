@@ -1,3 +1,7 @@
+/// @file NetworkContext.cpp
+/// @brief Winsock shim for socket handle management and pipe pairs.
+///
+/// Wraps POSIX socket operations behind Win32 SOCKET handles and implements Winsock initialization, socket creation, and named pipe pairs. Provides the networking layer that some games need for multiplayer or DRM.
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/Logger.h>
 #include <cstring>

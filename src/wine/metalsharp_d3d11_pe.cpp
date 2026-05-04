@@ -1,3 +1,7 @@
+/// @file metalsharp_d3d11_pe.cpp
+/// @brief Wine PE-side D3D11 DLL entry point for MetalSharp.
+///
+/// Implements the Windows-side D3D11 COM class factory (DllGetClassObject, DllCanUnloadNow) that Wine loads as d3d11.dll. Marshals D3D11 interface calls across the PE/Unix boundary to the MetalSharp Metal backend via the unixlib thunk.
 #include "metalsharp_unix.h"
 #include <wine/debug.h>
 

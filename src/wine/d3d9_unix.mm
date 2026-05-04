@@ -1,3 +1,7 @@
+/// @file d3d9_unix.mm
+/// @brief Unix-side D3D9 Metal backend (Objective-C++ Metal implementation).
+///
+/// Implements the Metal backend for D3D9 calls received from the PE side. Handles IDirect3DDevice9 draw calls, texture management, fixed-function pipeline emulation via Metal shaders, and swap chain presentation through CAMetalLayer.
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <AppKit/AppKit.h>

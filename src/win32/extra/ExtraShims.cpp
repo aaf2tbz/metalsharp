@@ -1,3 +1,39 @@
+/// @file ExtraShims.cpp
+/// @brief Windows API shim factories — user32, gdi32, advapi32, shell32, and more.
+///
+/// This file provides shim factories for the "long tail" of Windows DLLs that games
+/// load but only use a handful of functions from. Each createXxxShim() function returns
+/// a ShimLibrary with the most commonly-called exports.
+///
+/// DLL Coverage
+/// ============
+///
+///   user32.dll    — MessageBox, SetCursor, ClipCursor, GetCursorPos, SetWindowText
+///   gdi32.dll     — CreateCompatibleDC, SelectObject, GetObjectA, StretchBlt (stubs)
+///   advapi32.dll  — Registry functions (delegates to Registry.cpp), event log stubs
+///   shell32.dll   — CommandLineToArgvW, SHGetFolderPath (maps to macOS dirs)
+///   ole32/oleaut32 — CoInitialize/UnmarshalInterface/VariantChangeType (minimal COM)
+///   crypt32.dll   — Certificate open/close stubs
+///   bcrypt.dll    — BCryptGenRandom (arc4random_buf), BCryptOpenAlgorithmProvider
+///   ws2_32.dll    — WSAStartup/socket/connect/send/recv (delegates to NetworkContext)
+///   psapi.dll     — GetProcessMemoryInfo (stub returning zeros)
+///   version.dll   — GetFileVersionInfoSize/QueryValue (stub)
+///   comctl32.dll  — InitCommonControlsEx (no-op)
+///   winhttp.dll   — WinHttpOpen/Connect/SendRequest (stub)
+///   dinput8.dll   — DirectInput8Create (returns E_NOTIMPL, games use XInput instead)
+///   dwmapi.dll    — DwmIsCompositionEnabled (returns TRUE)
+///   shlwapi.dll   — PathAppend/PathRemoveFileSpec (string manipulation)
+///   secur32.dll   — GetUserNameExA/W (getpwuid)
+///   netapi32.dll  — NetUserGetInfo (stub)
+///
+/// Design Pattern
+/// ==============
+///   Each shim factory creates a ShimLibrary and registers export functions.
+///   Most implementations are lightweight stubs that return success/zero/NULL
+///   to prevent game crashes from unimplemented APIs. Real functionality is
+///   only implemented where games actually depend on it.
+///
+///   Priority: prevent crashes > correct behavior > full API coverage.
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Platform.h>
 #include <metalsharp/Win32Types.h>

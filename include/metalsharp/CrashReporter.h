@@ -1,3 +1,11 @@
+/// @file CrashReporter.h
+/// @brief Crash report collection, persistence, and session-bound diagnostics.
+///
+/// Manages per-game crash reporting sessions, collecting the game log, Metal validation
+/// log, import log, and system info into a structured CrashReport. Reports are saved to
+/// disk and can be retrieved for recent crashes. Used by the launcher to present crash
+/// information to the user and by CompatDatabase to record crash history per game.
+
 #pragma once
 
 #include <string>

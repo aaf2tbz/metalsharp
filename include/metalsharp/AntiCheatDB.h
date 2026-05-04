@@ -1,3 +1,12 @@
+/// @file AntiCheatDB.h
+/// @brief Static database of anti-cheat and DRM system compatibility.
+///
+/// Compile-time constant table mapping known anti-cheat and DRM systems to their
+/// compatibility status under MetalSharp. Kernel-level drivers (EAC, BattlEye, Ricochet)
+/// are marked incompatible since Wine cannot provide kernel access; user-mode systems
+/// (Denuvo, VMProtect, Steam Stub) are marked compatible with noted shim requirements.
+/// Provides inline lookup helpers for the game validation pipeline.
+
 #pragma once
 
 #include <cstdint>

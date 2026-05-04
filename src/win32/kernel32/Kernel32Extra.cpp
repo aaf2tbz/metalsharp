@@ -1,3 +1,50 @@
+/// @file Kernel32Extra.cpp
+/// @brief Extended kernel32.dll shims — process, module, TLS, CPU, and system API emulation.
+///
+/// This file implements the "long tail" of kernel32.dll functions that Windows games
+/// call beyond the basics handled in Kernel32Shim.cpp. Coverage areas:
+///
+/// Module/Process Management
+/// =========================
+///   shim_GetModuleHandleA/W — Returns fake HMODULE for known DLLs, searches loaded DLLs
+///   shim_GetModuleFileNameA/W — Returns "C:\Windows\System32\{dll}" for shims
+///   shim_LoadLibraryA/W — Delegates to PELoader::loadLibrary()
+///   shim_GetProcAddress — Delegates to PELoader::getProcAddress()
+///   shim_CreateProcessA/W — Fork+exec with environment inheritance
+///   shim_ExitProcess — Calls exit()
+///   shim_TerminateProcess — No-op for game compatibility
+///
+/// Thread-Local Storage
+/// ====================
+///   shim_TlsAlloc/TlsGetValue/TlsSetValue/TlsFree — pthread_key_t based implementation
+///   shim_FlsAlloc/FlsGetValue/FlsSetValue/FlsFree — Fiber-local storage (same as TLS)
+///
+/// CPU/System Information
+/// ======================
+///   shim_GetSystemInfo — Reports Apple Silicon as x86_64 (8 cores, 4KB pages)
+///   shim_IsProcessorFeaturePresent — Returns TRUE for common features
+///   shim_GetNativeSystemInfo — Same as GetSystemInfo
+///   __cpuidex — Fake CPUID returning Intel-like results for compatibility
+///
+/// Environment & Debug
+/// ===================
+///   shim_GetEnvironmentVariableA/W — Reads from real environment
+///   shim_SetEnvironmentVariableA/W — Sets in real environment
+///   shim_GetCommandLineA/W — Returns stored command line from launcher
+///   shim_OutputDebugStringA — Forwards to MS_INFO log
+///   shim_IsDebuggerPresent — Returns FALSE
+///   shim_RaiseException — Minimal handling for game exception patterns
+///
+/// Memory & Time
+/// =============
+///   shim_GlobalMemoryStatusEx — Reports real macOS memory stats
+///   shim_GetTickCount/64 — Returns mach_absolute_time-based uptime
+///   shim_QueryPerformanceCounter/Frequency — mach_absolute_time based
+///   shim_GetSystemTime/AsFileTime — Real clock via gettimeofday
+///   shim_Sleep — usleep wrapper
+///
+/// Status: ~70% of commonly-used kernel32 exports implemented. Games that call
+/// obscure kernel32 functions will log "MISSING" in the import resolver.
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/Logger.h>

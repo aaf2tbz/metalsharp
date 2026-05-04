@@ -1,3 +1,7 @@
+/// @file ShaderCache.mm
+/// @brief Metal shader compilation and library caching.
+///
+/// Compiles MSL source strings into MTLLibrary and MTLFunction objects using the Metal device. Caches compiled Metal libraries in memory and synchronizes with the on-disk cache managed by ShaderCache.cpp for cross-session persistence.
 #include <metalsharp/ShaderCache.h>
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>

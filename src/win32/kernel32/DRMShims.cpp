@@ -1,3 +1,7 @@
+/// @file DRMShims.cpp
+/// @brief Anti-DRM detection shims for volume serial, MAC address, and timing.
+///
+/// Spoofs volume serial numbers, MAC addresses, and system timing to bypass DRM checks that validate hardware fingerprints. Also provides anti-debug detection shims to hide the Wine environment from copy protection.
 #include <metalsharp/Win32Types.h>
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Logger.h>

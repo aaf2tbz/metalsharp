@@ -1,3 +1,10 @@
+/// @file Logger.cpp
+/// @brief Logging subsystem initialization, shutdown, and message emission.
+///
+/// Provides the global logger lifecycle used throughout MetalSharp. Log messages
+/// are timestamped and written to a configurable output sink. Thread-safety is
+/// handled internally so callers can log from any context without synchronization.
+
 #include <metalsharp/Logger.h>
 #include <cstring>
 #include <ctime>

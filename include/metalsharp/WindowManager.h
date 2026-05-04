@@ -1,3 +1,13 @@
+/// @file WindowManager.h
+/// @brief HWND-to-NSWindow mapping and Win32 message pump simulation.
+///
+/// Bridges Win32 window management to macOS by mapping HWND handles to NSWindow objects,
+/// implementing CreateWindow/ShowWindow/DestroyWindow semantics, and simulating the Win32
+/// message pump (GetMessage/PeekMessage/DispatchMessage) with queued MSG structs. Window
+/// class registration, window procedures, and standard message types (WM_DESTROY, WM_KEYDOWN,
+/// WM_MOUSEMOVE, etc.) are all handled here. The DXGI swap chain uses this to create its
+/// presentation surface.
+
 #pragma once
 
 #include <metalsharp/Win32Types.h>

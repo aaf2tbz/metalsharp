@@ -1,3 +1,7 @@
+/// @file csteamworks_shim.c
+/// @brief CSteamworks API shim via libsteam_api.dylib.
+///
+/// Implements the CSteamworks (Steamworks C API) functions used by FNA games by forwarding calls to the native libsteam_api.dylib loaded via dlopen. Handles Steam API init/shutdown, achievement, and overlay callbacks.
 #include <stddef.h>
 #include <dlfcn.h>
 #include <stdio.h>

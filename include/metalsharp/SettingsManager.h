@@ -1,3 +1,12 @@
+/// @file SettingsManager.h
+/// @brief Singleton managing render settings, caching, and launch configuration.
+///
+/// Provides a TOML-like configuration layer controlling resolution, window mode,
+/// VSync, Metal validation/GPU capture, upscaling quality, shader/pipeline cache sizes,
+/// Wine prefix path, DLL overrides, crash reporting, and auto-update. Settings are
+/// loaded from disk at startup and saved on change. RenderSettings feeds directly into
+/// FramePacer, ShaderCache, PipelineCache, and MetalFXUpscaler configuration.
+
 #pragma once
 
 #include <string>

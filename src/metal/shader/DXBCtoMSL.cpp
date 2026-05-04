@@ -1,3 +1,10 @@
+/// @file DXBCtoMSL.cpp
+/// @brief DXBC-to-MSL source translator — D3D bytecode to Metal Shading Language conversion.
+///
+/// Translates DXBC shader bytecode into Metal Shading Language (MSL) source code as a
+/// fallback path when the IR converter dylib is unavailable. Handles instruction decoding,
+/// register allocation, and MSL function emission for vertex and pixel shaders.
+
 #include <metalsharp/DXBCtoMSL.h>
 #include <cstdio>
 #include <cstring>

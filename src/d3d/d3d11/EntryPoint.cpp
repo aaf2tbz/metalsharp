@@ -1,3 +1,9 @@
+/// @file EntryPoint.cpp
+/// @brief D3D11 DLL entry points for device creation.
+///
+/// Implements D3D11CreateDevice and D3D11CreateDeviceAndSwapChain, the primary
+/// entry points that games call to obtain an ID3D11Device and immediate context.
+
 #include <d3d/D3D11.h>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/DXGI.h>

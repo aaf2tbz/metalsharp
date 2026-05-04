@@ -1,3 +1,11 @@
+/// @file PEHook.cpp
+/// @brief DLL-to-dylib mapping table and Wine environment configuration for DLL overrides.
+///
+/// Maintains the mapping from Windows DLL names (d3d11, dxgi, etc.) to their
+/// MetalSharp dylib replacements. Sets up WINEPREFIX and WINEDLLOVERRIDES
+/// environment variables so Wine loads MetalSharp's shims instead of the
+/// original Windows DLLs at runtime.
+
 #include <metalsharp/PEHook.h>
 #include <metalsharp/Logger.h>
 #include <cstdlib>

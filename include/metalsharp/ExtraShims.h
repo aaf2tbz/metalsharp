@@ -1,3 +1,13 @@
+/// @file ExtraShims.h
+/// @brief Factory functions for user32, gdi32, advapi32, and other Win32 DLL shims.
+///
+/// Provides ShimLibrary creation for the remaining Win32 DLLs that games commonly import:
+/// user32 (window management), gdi32 (GDI drawing stubs), advapi32 (registry and security),
+/// ws2_32 (networking), shell32 (shell operations), ole32/oleaut32 (COM stubs), crypt32
+/// (crypto), psapi (process info), version (version info), bcrypt (cryptography), comctl32
+/// (common controls), and wsock32 (legacy networking). Also includes helpers for patching
+/// additional kernel32 exports and DRM-specific shims.
+
 #pragma once
 
 #include "PELoader.h"

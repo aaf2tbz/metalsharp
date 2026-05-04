@@ -1,3 +1,10 @@
+/// @file ImportReporter.cpp
+/// @brief Import tracking with record/resolve/query operations and summary generation.
+///
+/// Records PE import entries that games require, tracks which imports MetalSharp can
+/// resolve versus which are missing, and generates a compatibility summary. Used by
+/// the validation pipeline to produce per-game import coverage reports.
+
 #include <metalsharp/ImportReporter.h>
 #include <metalsharp/Logger.h>
 #include <sstream>

@@ -1,3 +1,12 @@
+/// @file DXGI.h
+/// @brief DXGI factory and swap chain implementation backed by Metal.
+///
+/// Implements IDXGIFactory4 and IDXGISwapChain1 COM interfaces. The swap
+/// chain wraps a CAMetalLayer for presentation, managing back buffers as
+/// Metal textures. MetalSwapChain handles the Objective-C Metal layer
+/// interaction (drawable acquisition, presentation), while DXGISwapChainImpl
+/// exposes the DXGI COM interface that D3D games call into.
+
 #pragma once
 
 #include <dxgi/DXGI.h>

@@ -1,3 +1,12 @@
+/// @file PipelineCache.h
+/// @brief Pipeline state object cache with LRU eviction and disk persistence.
+///
+/// Caches compiled MTLRenderPipelineState and MTLComputePipelineState objects keyed by
+/// descriptor hashes to avoid redundant Metal pipeline compilation at runtime. Uses an
+/// LRU eviction policy with a configurable max entry count. Serialized descriptors are
+/// persisted to disk so the cache survives restarts. Hit/miss counters feed into the
+/// GPU profiler for cache efficiency monitoring.
+
 #pragma once
 
 #include <metalsharp/Platform.h>

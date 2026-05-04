@@ -1,3 +1,10 @@
+/// @file DXGIOutput.mm
+/// @brief DXGI output — real display mode enumeration via NSScreen.
+///
+/// Implements IDXGIOutput using AppKit's NSScreen API to enumerate actual display
+/// modes and resolutions. Provides DXGI_MODE_DESC structs populated from real
+/// macOS display configuration.
+
 #include <metalsharp/DXGIOutput.h>
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>

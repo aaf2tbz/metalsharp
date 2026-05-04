@@ -1,3 +1,12 @@
+/// @file CoreAudioBackend.h
+/// @brief CoreAudio-based audio playback backend for XAudio2 emulation.
+///
+/// Wraps Apple's CoreAudio/AudioToolbox APIs to provide a low-latency audio output
+/// path used by the XAudio2 and DirectSound bridges. Handles buffer submission with
+/// format conversion, volume control, pitch shifting via frequency ratio, and play/stop/
+/// pause lifecycle management. This is the single native audio sink that all Windows
+/// audio API shims converge on.
+
 #pragma once
 
 #include <metalsharp/Platform.h>
