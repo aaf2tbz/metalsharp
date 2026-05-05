@@ -37,7 +37,7 @@ class App {
   private libraryFilter: string = "all";
   private wineSteamInstalled: boolean = false;
   private wineSteamRunning: boolean = false;
-  private external runtimeAvailable: boolean = false;
+  private metalsharpWineAvailable: boolean = false;
   private launchingAppId: number | null = null;
   private theme: "dark" | "light" = "dark";
 
@@ -151,10 +151,10 @@ class App {
     const scan = await this.api<{ steam: SteamStatus }>("GET", "/scan");
     if (scan) this.steam = scan.steam ?? { installed: false, running: false };
 
-    const steamStatus = await this.api<{ installed: boolean; running: boolean; external runtime_available: boolean }>("GET", "/steam/status");
+    const steamStatus = await this.api<{ installed: boolean; running: boolean; metalsharp_wine_available: boolean }>("GET", "/steam/status");
     this.wineSteamInstalled = steamStatus?.installed ?? false;
     this.wineSteamRunning = steamStatus?.running ?? false;
-    this.external runtimeAvailable = steamStatus?.external runtime_available ?? false;
+    this.metalsharpWineAvailable = steamStatus?.metalsharp_wine_available ?? false;
 
     this.renderLibrary();
   }
@@ -323,7 +323,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-secondary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">external runtime, GPTK, Mono, DXVK, Wine, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">MetalSharp Wine, GPTK, Mono, DXVK, Wine, and more</span>`;
       depBtn.style.opacity = "0.5";
       depBtn.style.pointerEvents = "none";
       buttonsDiv.appendChild(depBtn);
@@ -351,7 +351,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-primary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">external runtime, GPTK, Mono, DXVK, Wine, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">MetalSharp Wine, GPTK, Mono, DXVK, Wine, and more</span>`;
       buttonsDiv.appendChild(depBtn);
 
       depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
@@ -462,7 +462,7 @@ class App {
     body.innerHTML = `
       <div class="setup-section-header">
         <h1>Set Up Steam</h1>
-        <p>Name your device, then launch Steam and log in. MetalSharp uses Windows Steam via external runtime to download and authenticate games.</p>
+        <p>Name your device, then launch Steam and log in. MetalSharp uses Windows Steam via MetalSharp Wine to download and authenticate games.</p>
       </div>
       <div class="setup-form">
         <div class="setup-form-group">
@@ -804,7 +804,7 @@ class App {
     if (appid === 105600) return "xna_fna_arm64";
     if (appid === 504230) return "xna_fna_x86";
     if (appid === 312520) return "gptk_wine";
-    if (appid === 535520) return "external runtime_wine";
+    if (appid === 535520) return "metalsharp_wine";
     if (appid === 620) return "wine_devel";
     if ([945360, 1139900, 2050650].includes(appid)) return "steam";
     if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
@@ -821,11 +821,11 @@ class App {
       xna_fna_x86: "FNA x86",
       gptk_wine: "GPTK Wine",
       dxvk_wine: "Wine Devel + DXVK",
-      external runtime_wine: "external runtime + DXVK",
+      metalsharp_wine: "MetalSharp Wine + DXVK",
       wine_devel: "Wine Devel",
-      steam: "external runtime Steam",
-      steam_metalfx: "external runtime Steam + MetalFX",
-      steam_d3dmetal_perf: "external runtime Steam + D3DMetal",
+      steam: "MetalSharp Wine Steam",
+      steam_metalfx: "MetalSharp Wine + MetalFX",
+      steam_d3dmetal_perf: "MetalSharp Wine + D3DMetal",
     };
     return labels[method] ?? "Auto";
   }
@@ -836,7 +836,7 @@ class App {
       "steam_d3dmetal_perf",
       "steam_metalfx",
       "steam",
-      "external runtime_wine",
+      "metalsharp_wine",
       "dxvk_wine",
       "wine_devel",
       "gptk_wine",
@@ -1001,16 +1001,16 @@ class App {
         <h2>Steam</h2>
         <div class="settings-row">
           <div>
-            <div class="settings-label">Wine Steam (external runtime)</div>
-            <div class="settings-desc">Windows Steam running in external runtime Wine — handles downloads, DRM, and game launches</div>
+            <div class="settings-label">Wine Steam (MetalSharp)</div>
+            <div class="settings-desc">Windows Steam running in MetalSharp Wine — handles downloads, DRM, and game launches</div>
           </div>
           <div class="settings-value">
             <div style="display:flex;gap:8px;align-items:center;">
               ${this.wineSteamInstalled
                 ? `<span class="badge badge-ok">Installed</span>`
-                : this.external runtimeAvailable
-                ? `<button class="btn btn-primary btn-sm" id="btn-install-steam">Install Steam</button>`
-                : `<span class="badge badge-warn">external runtime Required</span>`}
+                : this.metalsharpWineAvailable
+                    ? `<button class="btn btn-primary btn-sm" id="btn-install-steam">Install Steam</button>`
+                    : `<span class="badge badge-warn">MetalSharp Wine Required</span>`}
               ${this.wineSteamInstalled ? `<button class="btn btn-secondary btn-sm" id="btn-steam-launch">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>` : ''}
             </div>
           </div>
@@ -1183,7 +1183,7 @@ class App {
     });
 
     el.querySelector("#btn-install-steam")?.addEventListener("click", async () => {
-      this.toast("Installing Steam via external runtime Wine...");
+      this.toast("Installing Steam via MetalSharp Wine...");
       await this.api("POST", "/steam/install");
       this.toast("Steam installer launched — wait for it to finish, then start Steam");
       await this.loadLibrary();

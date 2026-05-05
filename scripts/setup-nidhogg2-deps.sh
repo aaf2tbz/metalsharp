@@ -14,19 +14,18 @@ METALSHARP_HOME="${METALSHARP_HOME:-$HOME/.metalsharp}"
 RUNTIME="$METALSHARP_HOME/runtime"
 DXVK_DIR="$RUNTIME/dxvk-1.10.3"
 GAME_ID="${1:-535520}"
-STEAM_PREFIX="$METALSHARP_HOME/prefix-steam-cx"
+STEAM_PREFIX="$METALSHARP_HOME/prefix-steam"
 
 mkdir -p "$RUNTIME"
 
 step() { echo ""; info "── $1 ──"; }
 
-step "1/4: Checking dependencies"
-
-CX_WINE="/Applications/external runtime.app/Contents/SharedSupport/external runtime/lib/wine/x86_64-unix/wine"
-if [[ ! -x "$CX_WINE" ]]; then
-    fail "external runtime Wine not found — install with: brew install --cask external runtime"
+step "1/4: Checking MetalSharp Wine"
+MS_WINE="$RUNTIME/wine/bin/metalsharp-wine"
+if [[ ! -x "$MS_WINE" ]]; then
+    fail "MetalSharp Wine not found — run setup to install the runtime"
 fi
-ok "external runtime Wine found"
+ok "MetalSharp Wine found"
 
 step "2/4: Downloading DXVK 1.10.3 (Vulkan 1.1 compatible)"
 if [[ -f "$DXVK_DIR/d3d11.dll" ]] && [[ -f "$DXVK_DIR/dxgi.dll" ]]; then
@@ -65,6 +64,5 @@ echo "$GAME_ID" > "$GAME_DIR/steam_appid.txt"
 ok "steam_appid.txt written"
 
 echo ""
-ok "Nidhogg 2 external runtime+DXVK runtime ready!"
-info "Launch with: external runtime Wine + DXVK 1.10.3 (appid $GAME_ID)"
-info "No flickering, 60fps, Vulkan 1.1 compatible with external runtime's bundled MoltenVK"
+ok "Nidhogg 2 MetalSharp Wine + DXVK runtime ready!"
+info "Launch with: MetalSharp Wine + DXVK 1.10.3 (appid $GAME_ID)"

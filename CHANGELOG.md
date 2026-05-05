@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.14.0 — 2026-05-05
+
+### Added
+
+- From-source MetalSharp Wine 11.0 build — built from external runtime's open-source Wine patches with gnutls TLS, custom mscompatdb rules engine, MoltenVK, and freetype
+- Clean-room mscompatdb.so — custom rules engine that loads game patches from `share/metalsharp/rules.json`, zero proprietary code
+- gnutls support — Wine can now complete TLS handshakes for Steam login
+- 168 compatibility rules — Steam WebHelper GPU fix, game-specific env vars, dll overrides, and command line patches
+- Single `wine.tar.zst` bundle — replaces the old Wine Devel + GPTK overlay assembly with a single pre-built runtime
+
+### Changed
+
+- MetalSharp Wine installed from bundled `wine.tar.zst` instead of assembling from Wine Devel + GPTK overlays
+- All Wine commands now set `DYLD_FALLBACK_LIBRARY_PATH` to the Wine lib directory for gnutls/MoltenVK/freetype resolution
+- Game setup scripts updated to use MetalSharp Wine instead of external runtime
+- Removed DXVK DLL removal from `prepare_metalsharp_game()` — MetalSharp Wine handles D3D natively
+- Removed `runtime-bundle.tar.zst` from bundle list — no longer needed
+
+### Removed
+
+- external runtime dependency — MetalSharp now uses its own from-source Wine build
+- `find_gptk_wine_path()` — no longer needed for Wine runtime assembly
+
 ## v0.8.0 — 2025-05-03
 
 ### Added
@@ -26,14 +49,14 @@
 
 ### Breaking change: new install flow
 
-Games are now installed through the Windows Steam client running under external runtime Wine. Full Steam DRM support.
+Games are now installed through the Windows Steam client running under MetalSharp Wine. Full Steam DRM support.
 
 - Install: click Install → Steam opens → install from Steam's interface
 - Play: MetalSharp detects the game and launches via `steam://run/` with per-game patches
 
 ### Added
 
-- Windows Steam integration — external runtime Wine runs the full Windows Steam client
+- Windows Steam integration — MetalSharp Wine runs the full Windows Steam client
 - Steam DRM support — Among Us, Ghostrunner, RE4 launch with real Steam auth
 - Resident Evil 4 support (App ID 2050650)
 - Uninstall button — removes game files and appmanifest from Wine Steam prefix

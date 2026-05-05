@@ -79,7 +79,7 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("Xcode CLI Tools", Box::new(|_| install_xcode_cli())),
-        ("external runtime", Box::new(|home| install_external runtime(home))),
+        ("MetalSharp Wine", Box::new(|home| install_metalsharp_wine(home))),
         ("Game Porting Toolkit", Box::new(|home| install_gptk(home))),
         ("Mono x86 Runtime", Box::new(|home| install_mono_x86(home))),
         ("DXVK 1.10.3", Box::new(|home| install_dxvk(home))),
@@ -172,28 +172,24 @@ fn install_xcode_cli() -> Result<bool, String> {
     Err("timed out waiting for Xcode CLI tools installation (you may need to complete it manually)".into())
 }
 
-fn install_external runtime(_home: &PathBuf) -> Result<bool, String> {
-    let external runtime_wine = PathBuf::from(
-        "/Applications/external runtime.app/Contents/SharedSupport/external runtime/lib/wine/x86_64-unix/wine"
-    );
-    if external runtime_wine.exists() {
+fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
+    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    if ms_wine.exists() {
         return Ok(false);
     }
 
-    let bundled = find_bundled_archive("external runtime");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
+    let _ = fs::create_dir_all(&runtime_dir);
+
+    let bundled = find_bundled_archive("wine");
     if let Some(archive) = bundled {
-        extract_to_applications(&archive, "external runtime.app")?;
-        if external runtime_wine.exists() {
+        extract_zst(&archive, &runtime_dir, "wine")?;
+        if ms_wine.exists() {
             return Ok(true);
         }
     }
 
-    brew_cask_install("external runtime")?;
-
-    if !external runtime_wine.exists() {
-        return Err("external runtime wine binary not found after installation".into());
-    }
-    Ok(true)
+    Err("MetalSharp Wine not found — no bundled wine.tar.zst available".into())
 }
 
 fn install_gptk(_home: &PathBuf) -> Result<bool, String> {
@@ -320,7 +316,7 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
 
 fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let steam_exe = home.join(".metalsharp")
-        .join("prefix-steam-cx")
+        .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam")
@@ -329,11 +325,9 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let external runtime_wine = PathBuf::from(
-        "/Applications/external runtime.app/Contents/SharedSupport/external runtime/lib/wine/x86_64-unix/wine"
-    );
-    if !external runtime_wine.exists() {
-        return Err("external runtime Wine not found — cannot install Steam".into());
+    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    if !ms_wine.exists() {
+        return Err("MetalSharp Wine not found — cannot install Steam".into());
     }
 
     let installer = home.join(".metalsharp").join("SteamSetup.exe");
@@ -356,14 +350,15 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let _ = fs::create_dir_all(&prefix);
 
-    let cx_root = PathBuf::from("/Applications/external runtime.app/Contents/SharedSupport/external runtime");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let dyld = ms_root.join("lib").to_string_lossy().to_string();
 
-    let _ = Command::new(&external runtime_wine)
+    let _ = Command::new(&ms_wine)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-        .env("CX_ROOT", cx_root.to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("WINEDEBUG", "-all")
         .arg("wineboot")
         .arg("--init")
@@ -371,9 +366,9 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         .stderr(std::process::Stdio::null())
         .status();
 
-    let _ = Command::new(&external runtime_wine)
+    let _ = Command::new(&ms_wine)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-        .env("CX_ROOT", cx_root.to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("WINEDEBUG", "-all")
         .arg(&installer)
         .args(["/S"])

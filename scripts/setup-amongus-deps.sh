@@ -18,24 +18,24 @@ mkdir -p "$GAME_DIR"
 
 step() { echo ""; info "── $1 ──"; }
 
-step "1/3: Checking external runtime Wine"
-CX_WINE="/Applications/external runtime.app/Contents/SharedSupport/external runtime/lib/wine/x86_64-unix/wine"
-if [[ ! -x "$CX_WINE" ]]; then
-    fail "external runtime Wine not found — install with: brew install --cask external runtime"
+step "1/3: Checking MetalSharp Wine"
+MS_WINE="$METALSHARP_HOME/runtime/wine/bin/metalsharp-wine"
+if [[ ! -x "$MS_WINE" ]]; then
+    fail "MetalSharp Wine not found — run setup to install the runtime"
 fi
-ok "external runtime Wine found"
+ok "MetalSharp Wine found"
 
 step "2/3: Initializing Wine prefix"
-PREFIX="$METALSHARP_HOME/prefix-$GAME_ID"
+PREFIX="$METALSHARP_HOME/prefix-steam"
 if [[ -d "$PREFIX/drive_c/windows/system32" ]]; then
     ok "Wine prefix already initialized"
 else
-    info "Creating external runtime Wine prefix at $PREFIX..."
-    WINEPREFIX="$PREFIX" "$CX_WINE" wineboot --init 2>/dev/null || fail "Wine prefix init failed"
+    info "Creating MetalSharp Wine prefix at $PREFIX..."
+    WINEPREFIX="$PREFIX" "$MS_WINE" wineboot --init 2>/dev/null || fail "Wine prefix init failed"
     ok "Wine prefix created"
 fi
 
-step "3/3: Removing DXVK DLLs (external runtime provides its own D3D stack)"
+step "3/3: Removing DXVK DLLs (MetalSharp Wine provides its own D3D stack)"
 for dll in d3d11.dll dxgi.dll; do
     if [[ -f "$GAME_DIR/$dll" ]]; then
         rm "$GAME_DIR/$dll"
@@ -46,4 +46,4 @@ done
 echo "$GAME_ID" > "$GAME_DIR/steam_appid.txt"
 
 echo ""
-ok "Among Us external runtime Wine runtime ready!"
+ok "Among Us MetalSharp Wine runtime ready!"
