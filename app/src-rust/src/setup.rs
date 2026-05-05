@@ -505,6 +505,7 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = game_dir;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = ms_root.join("bin").join("wine");
 
@@ -521,15 +522,6 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
-        }
-    }
-
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32");
-    for dll in &["d3d11.dll", "dxgi.dll"] {
-        let src = dxvk_dir.join(dll);
-        let dst = game_dir.join(dll);
-        if src.exists() {
-            let _ = std::fs::copy(&src, &dst);
         }
     }
 
