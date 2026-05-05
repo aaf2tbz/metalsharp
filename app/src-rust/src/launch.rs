@@ -46,7 +46,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
         312520 => Engine::GptkWine,
-        535520 => Engine::MetalsharpWine,
+        535520 => Engine::SteamBare,
         620 => Engine::WineDevel,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
@@ -178,8 +178,8 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         }
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("Nidhogg_2.exe");
-            let pid = launch_metalsharp_wine(&exe.to_string_lossy(), dir)?;
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
         }
         Engine::WineDevel => {
@@ -266,12 +266,8 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
             Ok((pid, "dxvk_wine"))
         }
         "metalsharp_wine" => {
-            let exe = if appid == 535520 {
-                dir.join("Nidhogg_2.exe")
-            } else {
-                PathBuf::from(resolve_game_exe_fallback(dir))
-            };
-            let pid = launch_metalsharp_wine(&exe.to_string_lossy(), dir)?;
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
         }
         "wine_devel" => {
