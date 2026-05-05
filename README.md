@@ -1,6 +1,6 @@
 # MetalSharp
 
-Play your Steam Windows games on macOS. One app, one click. First Beta Release (V0.15.0) Is LIVE!
+Play your Steam Windows games on macOS. One app, one click. First Beta Release (V0.15.1) Is LIVE!
 
 MetalSharp is a macOS app that combines the tools that make Windows gaming on Mac work — Wine, Apple's Game Porting Toolkit, DXVK, MoltenVK, FNA — into a single Electron app with a setup wizard, automatic game configuration, and one-click launch. It figures out the best way to run each game so you don't have to.
 
