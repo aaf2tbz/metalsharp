@@ -804,7 +804,7 @@ class App {
     if (appid === 105600) return "xna_fna_arm64";
     if (appid === 504230) return "xna_fna_x86";
     if (appid === 312520) return "gptk_wine";
-    if (appid === 535520) return "metalsharp_wine";
+    if (appid === 535520) return "steam";
     if (appid === 620) return "wine_devel";
     if ([945360, 1139900, 2050650].includes(appid)) return "steam";
     if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
