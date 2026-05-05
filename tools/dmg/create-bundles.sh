@@ -14,7 +14,6 @@ echo ""
 mkdir -p "$BUNDLE_DIR"
 
 BUNDLES=(
-    "crossover.tar.zst"
     "dxvk.tar.zst"
     "gptk.tar.zst"
     "moltenvk.tar.zst"

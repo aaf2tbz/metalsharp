@@ -42,7 +42,7 @@ fn detect_windows_steam() -> Option<Game> {
     let home = dirs::home_dir()?;
     let steam_exe = home
         .join(".metalsharp")
-        .join("prefix")
+        .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam")
@@ -82,7 +82,7 @@ fn steam_library_paths() -> Vec<PathBuf> {
 
     let wine_steam_dir = home
         .join(".metalsharp")
-        .join("prefix-steam-cx")
+        .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam");

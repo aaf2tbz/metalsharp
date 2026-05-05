@@ -110,11 +110,9 @@ pub fn dependencies() -> Value {
     let homebrew = check_command("brew");
     let wine_devel = check_path(&PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"));
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
-    let crossover = check_path(&PathBuf::from(
-        "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine"
-    ));
+    let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"));
 
-    let all_ok = homebrew && rosetta && xcode_cli && crossover;
+    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine;
 
     json!({
         "ok": true,
@@ -145,12 +143,12 @@ pub fn dependencies() -> Value {
                 "installCmd": "xcode-select --install",
             },
             {
-                "id": "crossover",
-                "name": "CrossOver",
-                "desc": "Wine runtime with built-in D3D/Vulkan→Metal rendering. Runs Windows Steam and launches games with DRM auth.",
-                "installed": crossover,
+                "id": "metalsharp_wine",
+                "name": "MetalSharp Wine",
+                "desc": "From-source Wine 11.0 with gnutls TLS, custom rules engine, and MoltenVK. Runs Windows Steam and launches games with DRM auth.",
+                "installed": metalsharp_wine,
                 "required": true,
-                "installCmd": "brew install --cask crossover",
+                "installCmd": "metalsharp-setup-wine",
             },
             {
                 "id": "mono",
@@ -179,7 +177,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "moltenvk",
                 "name": "MoltenVK",
-                "desc": "Vulkan→Metal translation. Optional, not required for Nidhogg 2 (uses CrossOver's bundled MoltenVK).",
+                "desc": "Vulkan→Metal translation. Optional fallback graphics backend.",
                 "installed": moltenvk,
                 "required": false,
                 "installCmd": "brew install molten-vk",
@@ -259,7 +257,7 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
 
     let wine_steamapps = home
         .join(".metalsharp")
-        .join("prefix-steam-cx")
+        .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam")
@@ -300,8 +298,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 => "gptk_wine",
-        535520 => "crossover_wine",
-        945360 | 1139900 => "crossover_wine",
+        535520 => "metalsharp_wine",
+        945360 | 1139900 => "metalsharp_wine",
         620 => "wine_devel",
         _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
     };
@@ -315,7 +313,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         504230 => prepare_celeste(&game_dir, &home)?,
         312520 => prepare_rain_world(&game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
-        945360 | 1139900 => prepare_crossover_game(&game_dir, &home, appid)?,
+        945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 => prepare_portal_2(&game_dir, &home)?,
         _ => {
             if is_dotnet {
@@ -507,17 +505,17 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let crossover_base = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
-    let wine = crossover_base.join("lib").join("wine").join("x86_64-unix").join("wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("wine");
 
-    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     if !prefix.exists() {
         std::fs::create_dir_all(&prefix)?;
         if wine.exists() {
             let prefix_str = prefix.to_string_lossy().to_string();
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
-                .env("CX_ROOT", crossover_base.to_string_lossy().to_string())
+                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
@@ -538,9 +536,9 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
     Ok(())
 }
 
-fn prepare_crossover_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let crossover_base = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
-    let wine = crossover_base.join("lib").join("wine").join("x86_64-unix").join("wine");
+fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("wine");
 
     let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
     let prefix_str = prefix.to_string_lossy().to_string();
@@ -550,18 +548,12 @@ fn prepare_crossover_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Res
         if wine.exists() {
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
+                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
-        }
-    }
-
-    for dll in &["d3d11.dll", "dxgi.dll"] {
-        let game_dll = game_dir.join(dll);
-        if game_dll.exists() {
-            let _ = std::fs::remove_file(&game_dll);
         }
     }
 

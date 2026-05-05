@@ -119,7 +119,6 @@
         "from": "bundles/",
         "to": "bundles/",
         "filter": [
-          "crossover.tar.zst",
           "dxvk.tar.zst",
           "gptk.tar.zst",
           "moltenvk.tar.zst",

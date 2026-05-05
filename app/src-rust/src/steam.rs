@@ -2,21 +2,21 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Command;
 
-fn cx_wine() -> PathBuf {
-    PathBuf::from(
-        "/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine",
-    )
-}
-
-fn cx_root() -> PathBuf {
-    PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver")
+fn ms_wine() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine")
+        .join("bin")
+        .join("metalsharp-wine")
 }
 
 fn steam_prefix() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()
         .join(".metalsharp")
-        .join("prefix-steam-cx")
+        .join("prefix-steam")
 }
 
 fn steam_exe_path() -> PathBuf {
@@ -52,7 +52,7 @@ pub fn status() -> Value {
     let mac_installed = mac_paths.iter().any(|p| p.exists());
 
     let running = is_wine_steam_running();
-    let cx_available = cx_wine().exists();
+    let ms_available = ms_wine().exists();
 
     json!({
         "installed": windows_installed,
@@ -60,7 +60,7 @@ pub fn status() -> Value {
         "login_state": login_state,
         "mac_installed": mac_installed,
         "running": running,
-        "crossover_available": cx_available
+        "metalsharp_wine_available": ms_available
     })
 }
 
@@ -78,10 +78,10 @@ pub fn is_wine_steam_running() -> bool {
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
-    let wine = cx_wine();
+    let wine = ms_wine();
     if !wine.exists() {
         return Err(
-            "CrossOver Wine not found — install with: brew install --cask crossover".into(),
+            "MetalSharp Wine not found — run the MetalSharp runtime setup first".into(),
         );
     }
 
@@ -103,7 +103,12 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
-    let cx = cx_root();
+
+    let ms_root = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine");
 
     let steam_dir = steam_prefix()
         .join("drive_c")
@@ -113,8 +118,8 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let child = Command::new(&wine)
         .current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
         .env("STEAM_RUNTIME", "0")
         .arg(&exe)
         .args(["-no-cef-sandbox", "-noverifyfiles", "-no-dwrite"])
@@ -181,9 +186,9 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
 }
 
 pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
-    let wine = cx_wine();
+    let wine = ms_wine();
     if !wine.exists() {
-        return Err("CrossOver Wine not found".into());
+        return Err("MetalSharp Wine not found".into());
     }
     if !is_wine_steam_running() {
         launch_wine_steam()?;
@@ -197,13 +202,18 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
     }
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
-    let cx = cx_root();
     let url = format!("steam://run/{}", appid);
+
+    let ms_root = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine");
 
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -213,22 +223,27 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
 }
 
 pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
-    let wine = cx_wine();
+    let wine = ms_wine();
     if !wine.exists() {
-        return Err("CrossOver Wine not found".into());
+        return Err("MetalSharp Wine not found".into());
     }
     if !is_wine_steam_running() {
         return Err("Steam is not running".into());
     }
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
-    let cx = cx_root();
     let url = format!("steam://nav/games/details/{}", appid);
+
+    let ms_root = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine");
 
     Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -602,7 +617,7 @@ fn detect_login_state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let mac_path = home.join("Library/Application Support/Steam/config/loginusers.vdf");
     let wine_path =
-        home.join(".metalsharp/prefix/drive_c/Program Files (x86)/Steam/config/loginusers.vdf");
+        home.join(".metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf");
 
     let contents = std::fs::read_to_string(&mac_path)
         .or_else(|_| std::fs::read_to_string(&wine_path))
@@ -677,10 +692,10 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         return Err("Failed to download Steam installer".into());
     }
 
-    let wine = cx_wine();
+    let wine = ms_wine();
     if !wine.exists() {
         return Err(
-            "CrossOver Wine not found — install with: brew install --cask crossover".into(),
+            "MetalSharp Wine not found — run the MetalSharp runtime setup first".into(),
         );
     }
 
@@ -688,12 +703,18 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&prefix)?;
 
     let prefix_str = prefix.to_string_lossy().to_string();
-    let cx = cx_root();
+
+    let ms_root = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine");
+    let dyld = ms_root.join("lib").to_string_lossy().to_string();
 
     let _ = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
@@ -702,12 +723,12 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg(&installer)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    Ok(format!("Launched Steam installer via CrossOver Wine (pid {}) — complete the setup wizard, then launch Steam again", child.id()))
+    Ok(format!("Launched Steam installer via MetalSharp Wine (pid {}) — complete the setup wizard, then launch Steam again", child.id()))
 }

@@ -21,7 +21,7 @@ step() { echo ""; info "── $1 ──"; }
 step "1/4: Checking Wine Devel"
 WINE="/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"
 if [[ ! -x "$WINE" ]]; then
-    fail "Wine Devel not found — install with: brew install --cask wine-crossover"
+    fail "Wine Devel not found — install with: brew install --cask wine@devel"
 fi
 ok "Wine Devel found"
 

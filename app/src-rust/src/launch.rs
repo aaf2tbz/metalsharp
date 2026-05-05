@@ -16,7 +16,7 @@ enum Engine {
     FnaX86,
     GptkWine,
     DxvkWine,
-    CrossoverWine,
+    MetalsharpWine,
     WineDevel,
     SteamBare,
     SteamMetalfx,
@@ -33,7 +33,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::FnaX86 => "xna_fna_x86",
         Engine::GptkWine => "gptk_wine",
         Engine::DxvkWine => "dxvk_wine",
-        Engine::CrossoverWine => "crossover_wine",
+        Engine::MetalsharpWine => "metalsharp_wine",
         Engine::WineDevel => "wine_devel",
         Engine::SteamBare => "steam",
         Engine::SteamMetalfx => "steam_metalfx",
@@ -46,7 +46,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
         312520 => Engine::GptkWine,
-        535520 => Engine::CrossoverWine,
+        535520 => Engine::MetalsharpWine,
         620 => Engine::WineDevel,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
@@ -176,11 +176,11 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "dxvk_wine"))
         }
-        Engine::CrossoverWine => {
+        Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("Nidhogg_2.exe");
-            let pid = launch_crossover_wine(&exe.to_string_lossy(), dir)?;
-            Ok((pid, "crossover_wine"))
+            let pid = launch_metalsharp_wine(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "metalsharp_wine"))
         }
         Engine::WineDevel => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -265,14 +265,14 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
             let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "dxvk_wine"))
         }
-        "crossover_wine" => {
+        "metalsharp_wine" => {
             let exe = if appid == 535520 {
                 dir.join("Nidhogg_2.exe")
             } else {
                 PathBuf::from(resolve_game_exe_fallback(dir))
             };
-            let pid = launch_crossover_wine(&exe.to_string_lossy(), dir)?;
-            Ok((pid, "crossover_wine"))
+            let pid = launch_metalsharp_wine(&exe.to_string_lossy(), dir)?;
+            Ok((pid, "metalsharp_wine"))
         }
         "wine_devel" => {
             let exe = if appid == 620 {
@@ -315,13 +315,13 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
 }
 
 pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
-    let wine = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine");
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
     if !wine.exists() {
-        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
     }
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
 
     if !crate::steam::is_wine_steam_running() {
@@ -329,12 +329,10 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_secs(15));
     }
 
-    let cx = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
     let url = format!("steam://run/{}", appid);
 
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
@@ -345,13 +343,13 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
 }
 
 pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Result<u32, Box<dyn std::error::Error>> {
-    let wine = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/lib/wine/x86_64-unix/wine");
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
     if !wine.exists() {
-        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
     }
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
 
     if !crate::steam::is_wine_steam_running() {
@@ -363,12 +361,10 @@ pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Resu
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    let cx = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
     let url = format!("steam://run/{}", appid);
 
     let mut cmd = Command::new(&wine);
     cmd.env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", cx.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all");
 
     for (key, val) in extra_env {
@@ -493,45 +489,24 @@ fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u
     Ok(child.id())
 }
 
-fn launch_crossover_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let crossover_base = PathBuf::from("/Applications/CrossOver.app/Contents/SharedSupport/CrossOver");
-    let wine = crossover_base.join("lib").join("wine").join("x86_64-unix").join("wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
 
     if !wine.exists() {
-        return Err("CrossOver Wine not found — install with: brew install --cask crossover".into());
+        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32");
-
-    for dll in &["d3d11.dll", "dxgi.dll"] {
-        let src = dxvk_dir.join(dll);
-        let dst = game_dir.join(dll);
-        if src.exists() {
-            let _ = std::fs::copy(&src, &dst);
-        }
-    }
-
-    let gptk_external = crossover_base.join("lib64").join("apple_gptk").join("external");
-    let crossover_lib64 = crossover_base.join("lib64");
-    let dyld = format!(
-        "{}:{}:/opt/homebrew/lib",
-        gptk_external.to_string_lossy(),
-        crossover_lib64.to_string_lossy()
-    );
+    let dyld = ms_root.join("lib").to_string_lossy().to_string();
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
-        .env("CX_ROOT", crossover_base.to_string_lossy().to_string())
-        .env("WINEDLLOVERRIDES", "d3d11=native,dxgi=native")
+        .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env("DXVK_FRAME_RATE", "60")
-        .env("DXVK_ASYNC", "1")
-        .env("MVK_PRESENT_MODE", "1")
         .arg(exe_path)
         .spawn()?;
 
@@ -775,7 +750,7 @@ pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
 pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-    let steam_prefix = home.join(".metalsharp").join("prefix-steam-cx");
+    let steam_prefix = home.join(".metalsharp").join("prefix-steam");
 
     if let Ok(output) = Command::new("pgrep")
         .args(["-a", "-f", &game_dir.to_string_lossy()])
