@@ -298,7 +298,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 => "gptk_wine",
-        535520 => "metalsharp_wine",
+        535520 => "dxvk_metalsharp_wine",
         945360 | 1139900 => "metalsharp_wine",
         620 => "wine_devel",
         _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
@@ -505,20 +505,24 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = game_dir;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("wine");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32");
+    for dll in &["d3d11.dll", "dxgi.dll"] {
+        let src = dxvk_dir.join(dll);
+        let dst = game_dir.join(dll);
+        if src.exists() {
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
 
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        if wine.exists() {
-            let prefix_str = prefix.to_string_lossy().to_string();
+    if wine.exists() && prefix.join("drive_c").exists() {
+        let prefix_str = prefix.to_string_lossy().to_string();
+        for dll in &["d3d11", "dxgi"] {
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
-                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
-                .arg("wineboot")
-                .arg("--init")
+                .args(["reg", "add", r"HKCU\Software\Wine\DllOverrides", "/v", dll, "/d", "native", "/f"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();

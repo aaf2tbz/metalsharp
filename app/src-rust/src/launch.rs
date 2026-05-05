@@ -16,6 +16,7 @@ enum Engine {
     FnaX86,
     GptkWine,
     DxvkWine,
+    DxvkMetalsharpWine,
     MetalsharpWine,
     WineDevel,
     SteamBare,
@@ -33,6 +34,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::FnaX86 => "xna_fna_x86",
         Engine::GptkWine => "gptk_wine",
         Engine::DxvkWine => "dxvk_wine",
+        Engine::DxvkMetalsharpWine => "dxvk_metalsharp_wine",
         Engine::MetalsharpWine => "metalsharp_wine",
         Engine::WineDevel => "wine_devel",
         Engine::SteamBare => "steam",
@@ -46,7 +48,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
         312520 => Engine::GptkWine,
-        535520 => Engine::SteamBare,
+        535520 => Engine::DxvkMetalsharpWine,
         620 => Engine::WineDevel,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
@@ -176,6 +178,22 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
             Ok((pid, "dxvk_wine"))
         }
+        Engine::DxvkMetalsharpWine => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            for dll in &["d3d11.dll", "dxgi.dll"] {
+                let src = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32").join(dll);
+                let dst = dir.join(dll);
+                if src.exists() {
+                    let _ = std::fs::copy(&src, &dst);
+                }
+            }
+            let pid = launch_via_steam_with_env(appid, &[
+                ("DXVK_FRAME_RATE", "60"),
+                ("DXVK_ASYNC", "1"),
+                ("MVK_PRESENT_MODE", "1"),
+            ])?;
+            Ok((pid, "dxvk_metalsharp_wine"))
+        }
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
@@ -269,6 +287,22 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
+        }
+        "dxvk_metalsharp_wine" => {
+            for dll in &["d3d11.dll", "dxgi.dll"] {
+                let home = dirs::home_dir().ok_or("no home dir")?;
+                let src = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32").join(dll);
+                let dst = dir.join(dll);
+                if src.exists() {
+                    let _ = std::fs::copy(&src, &dst);
+                }
+            }
+            let pid = launch_via_steam_with_env(appid, &[
+                ("DXVK_FRAME_RATE", "60"),
+                ("DXVK_ASYNC", "1"),
+                ("MVK_PRESENT_MODE", "1"),
+            ])?;
+            Ok((pid, "dxvk_metalsharp_wine"))
         }
         "wine_devel" => {
             let exe = if appid == 620 {
@@ -488,7 +522,8 @@ fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u
 fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
+    let wine = ms_root.join("bin").join("wineloader");
+    let wineserver = ms_root.join("bin").join("wineserver");
 
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
@@ -496,14 +531,26 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let dyld = ms_root.join("lib").to_string_lossy().to_string();
+    let ms_root_str = ms_root.to_string_lossy().to_string();
+    let ms_lib = ms_root.join("lib").to_string_lossy().to_string();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
+        .env("MS_ROOT", &ms_root_str)
+        .env("CX_ROOT", &ms_root_str)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .arg(exe_path)
+        .env("WINESERVER", wineserver.to_string_lossy().to_string())
+        .env("WINELOADER", wine.to_string_lossy().to_string())
+        .env("WINEDLLPATH", format!("{}/x86_64-windows:{}/i386-windows", &ms_lib, &ms_lib))
+        .env("WINEDATADIR", format!("{}/share", &ms_root_str))
+        .env("DYLD_FALLBACK_LIBRARY_PATH", format!("{}:{}/x86_64-unix", &ms_lib, &ms_lib))
+        .arg(&exe_name)
         .spawn()?;
 
     Ok(child.id())
