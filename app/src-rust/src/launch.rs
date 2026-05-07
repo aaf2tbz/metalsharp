@@ -41,7 +41,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
-        312520 => Engine::GptkWine,
+        375520 => Engine::GptkWine,
         535520 | 391540 => Engine::MetalsharpWine,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
@@ -392,23 +392,35 @@ fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
 
 fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine64 = PathBuf::from(
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let gptk_wine64 = PathBuf::from(
         "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
     );
-
-    if !wine64.exists() {
+    if !gptk_wine64.exists() {
         return Err("GPTK wine64 not found — install with: brew install --cask gcenx/wine/game-porting-toolkit".into());
     }
 
     let prefix = home.join(".metalsharp").join("prefix-gptk");
     let prefix_str = prefix.to_string_lossy().to_string();
     let game_dir = PathBuf::from(exe_path).parent().ok_or("no parent dir")?.to_path_buf();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
-    let child = Command::new(&wine64)
+    let child = Command::new(&wine)
         .current_dir(&game_dir)
+        .env("MS_BACKEND", "gptk")
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .arg(exe_path)
+        .arg(&exe_name)
         .spawn()?;
 
     Ok(child.id())
