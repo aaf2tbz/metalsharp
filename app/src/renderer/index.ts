@@ -799,7 +799,7 @@ class App {
         <div class="game-card-title">${this.esc(game.name)}</div>
         <div class="game-card-meta">
           ${game.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
-          <span class="game-card-platform">${this.esc(this.launchMethodLabel(method))}</span>
+          <span class="game-card-platform">Native</span>
           ${size ? `<span class="game-card-size">${size}</span>` : ""}
         </div>
         <div class="game-card-actions">
