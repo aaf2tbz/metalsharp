@@ -826,7 +826,7 @@ class App {
   private defaultLaunchMethod(appid: number): string {
     if (appid === 105600) return "xna_fna_arm64";
     if (appid === 504230) return "xna_fna_x86";
-    if (appid === 312520) return "gptk_wine";
+    if (appid === 375520) return "gptk_wine";
     if (appid === 535520) return "metalsharp_wine";
     if (appid === 391540) return "metalsharp_wine";
     if ([945360, 1139900, 2050650].includes(appid)) return "steam";
@@ -838,45 +838,23 @@ class App {
     return game.launch_method ?? this.defaultLaunchMethod(game.appid);
   }
 
-  private launchMethodLabel(method: string): string {
-    const labels: Record<string, string> = {
-      xna_fna_arm64: "FNA arm64",
-      xna_fna_x86: "FNA x86",
-      gptk_wine: "GPTK Wine",
-      metalsharp_wine: "MetalSharp Wine",
-      steam: "MetalSharp Wine Steam",
-      steam_metalfx: "MetalSharp Wine + MetalFX",
-      steam_d3dmetal_perf: "MetalSharp Wine + D3DMetal",
-    };
-    return labels[method] ?? "Auto";
-  }
-
   private launchMethodOptions(game: SteamGame): string {
     const recommended = this.recommendedLaunchMethod(game);
-    const fallbackMethods = [
-      "steam_d3dmetal_perf",
-      "steam_metalfx",
-      "steam",
-      "metalsharp_wine",
-      "gptk_wine",
-      "xna_fna_arm64",
-      "xna_fna_x86",
-    ].filter((method) => method !== recommended);
+    const isMetalFx = ["steam_metalfx", "steam_d3dmetal_perf"].includes(recommended);
 
-    const methods = [
-      recommended,
-      ...fallbackMethods,
-    ];
+    let options = `<option value="native">Native (Recommended)</option>`;
 
-    return methods.map((method, index) => {
-      const prefix = index === 0 ? "Recommended" : "Try";
-      return `<option value="${method}">${this.esc(`${prefix}: ${this.launchMethodLabel(method)}`)}</option>`;
-    }).join("");
+    if (isMetalFx) {
+      options += `<option value="native_metalfx_low">Native + MetalFX (Low)</option>`;
+      options += `<option value="native_metalfx_medium">Native + MetalFX (Medium)</option>`;
+      options += `<option value="native_metalfx_high">Native + MetalFX (High)</option>`;
+    }
+
+    return options;
   }
 
   private launchMethodHelp(game: SteamGame): string {
-    const recommended = this.launchMethodLabel(this.recommendedLaunchMethod(game));
-    return `Recommended: ${recommended}. Try another method only if this game fails to launch.`;
+    return `Select launch mode. Native uses our recommended pipeline. MetalFX adds spatial upscaling.`;
   }
 
   private async installGame(game: SteamGame) {
@@ -928,9 +906,10 @@ class App {
     await this.api("POST", "/game/prepare", { appid: game.appid });
 
     this.toast(`Launching ${game.name}...`, "success");
+    const selectedMethod = (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ?? "native";
     const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; gameType?: string }>("POST", "/game/launch-auto", {
       appid: game.appid,
-      launchMethod: (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ?? "auto",
+      launchMethod: selectedMethod,
     });
 
     this.launchingAppId = null;
