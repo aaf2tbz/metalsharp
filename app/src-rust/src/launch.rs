@@ -41,7 +41,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
-        375520 => Engine::GptkWine,
+        312520 | 375520 => Engine::GptkWine,
         535520 | 391540 => Engine::MetalsharpWine,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
