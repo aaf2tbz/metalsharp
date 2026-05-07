@@ -99,20 +99,13 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
 
-    let ms_root = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".metalsharp")
-        .join("runtime")
-        .join("wine");
-
     let child = Command::new(&wine)
         .current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
         .env("STEAM_RUNTIME", "0")
         .arg(&exe)
-        .args(["-no-cef-sandbox", "-noverifyfiles", "-no-dwrite"])
+        .args(["-no-cef-sandbox", "--disable-gpu", "-noverifyfiles", "-no-dwrite"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
