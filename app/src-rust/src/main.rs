@@ -146,6 +146,12 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
         (Method::Get, "/steam/is-running") => {
             resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()}))
         }
+        (Method::Get, "/steam/watch-steamapps") => {
+            match steam::watch_steamapps() {
+                Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
+                None => resp(200, json!({"ok": true, "new_appids": []})),
+            }
+        }
         (Method::Post, "/steam/install-game") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());

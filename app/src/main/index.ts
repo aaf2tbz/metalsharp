@@ -25,6 +25,7 @@ function ensureShellPath() {
 
 let mainWindow: BrowserWindow | null = null;
 let bridge: RustBridge;
+let steamappsWatcher: fs.FSWatcher | null = null;
 
 function getMetalsharpDir(): string {
   return path.join(require("os").homedir(), ".metalsharp");
@@ -43,7 +44,7 @@ function isFirstLaunch(): boolean {
 
 function ensureMetalsharpDirs() {
   const base = getMetalsharpDir();
-  const dirs = ["games", "cache", "logs", "runtime/fna", "runtime/shims", "runtime/mono-x86", "prefix-gptk"];
+  const dirs = ["games", "cache", "logs", "runtime/fna", "runtime/shims", "runtime/mono-x86", "runtime/dxvk-1.10.3"];
   for (const d of dirs) {
     fs.mkdirSync(path.join(base, d), { recursive: true });
   }
@@ -70,6 +71,45 @@ async function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
+function startSteamappsWatcher() {
+  const steamappsDir = path.join(
+    getMetalsharpDir(),
+    "prefix-steam",
+    "drive_c",
+    "Program Files (x86)",
+    "Steam",
+    "steamapps"
+  );
+
+  if (!fs.existsSync(steamappsDir)) return;
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    steamappsWatcher = fs.watch(steamappsDir, (eventType, filename) => {
+      if (!filename) return;
+      if (filename.startsWith("appmanifest_") && filename.endsWith(".acf")) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("steamapps:changed");
+          }
+        }, 2000);
+      }
+    });
+  } catch {
+    // steamapps dir may not exist yet
+  }
+}
+
+function cleanup() {
+  if (steamappsWatcher) {
+    steamappsWatcher.close();
+    steamappsWatcher = null;
+  }
+  bridge?.stop();
+}
+
 app.whenReady().then(async () => {
   ensureMetalsharpDirs();
   bridge = new RustBridge();
@@ -78,6 +118,7 @@ app.whenReady().then(async () => {
   registerIpc();
 
   await createWindow();
+  startSteamappsWatcher();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -85,8 +126,12 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  bridge?.stop();
+  cleanup();
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  cleanup();
 });
 
 function registerIpc() {
@@ -173,7 +218,7 @@ function registerIpc() {
         if (!settled) {
           settled = true;
           proc.kill();
-          resolve({ ok: false, error: "Installation timed out after 10 minutes. Try running the command manually in Terminal." });
+          resolve({ ok: false, error: "Installation timed out after 10 minutes." });
         }
       }, 10 * 60 * 1000);
 
