@@ -176,12 +176,12 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let runtime_dir = home.join(".metalsharp").join("runtime");
-    let _ = fs::create_dir_all(&runtime_dir);
+    let wine_dir = home.join(".metalsharp").join("runtime").join("wine");
+    let _ = fs::create_dir_all(&wine_dir);
 
     let bundled = find_bundled_archive("wine");
     if let Some(archive) = bundled {
-        extract_zst(&archive, &runtime_dir, "wine")?;
+        extract_zst(&archive, &wine_dir, "wine")?;
         if ms_wine.exists() {
             return Ok(true);
         }
