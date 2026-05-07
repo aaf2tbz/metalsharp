@@ -15,10 +15,7 @@ enum Engine {
     FnaArm64,
     FnaX86,
     GptkWine,
-    DxvkWine,
-    DxvkMetalsharpWine,
     MetalsharpWine,
-    WineDevel,
     SteamBare,
     SteamMetalfx,
     SteamD3DMetalPerf,
@@ -33,10 +30,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::FnaArm64 => "xna_fna_arm64",
         Engine::FnaX86 => "xna_fna_x86",
         Engine::GptkWine => "gptk_wine",
-        Engine::DxvkWine => "dxvk_wine",
-        Engine::DxvkMetalsharpWine => "dxvk_metalsharp_wine",
         Engine::MetalsharpWine => "metalsharp_wine",
-        Engine::WineDevel => "wine_devel",
         Engine::SteamBare => "steam",
         Engine::SteamMetalfx => "steam_metalfx",
         Engine::SteamD3DMetalPerf => "steam_d3dmetal_perf",
@@ -48,8 +42,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
         312520 => Engine::GptkWine,
-        535520 => Engine::DxvkMetalsharpWine,
-        620 => Engine::WineDevel,
+        535520 | 391540 => Engine::MetalsharpWine,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
 
@@ -85,7 +78,6 @@ fn detect_engine_from_dir(game_dir: &Option<PathBuf>) -> Engine {
         return Engine::FnaArm64;
     }
 
-    let has_file = |name: &str| dir.join(name).exists();
     let has_file_ci = |name: &str| -> bool {
         let name_lower = name.to_lowercase();
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -140,6 +132,10 @@ fn detect_engine_from_dir(game_dir: &Option<PathBuf>) -> Engine {
         return Engine::SteamD3DMetalPerf;
     }
 
+    if has_file_ci("d3dx9_43.dll") {
+        return Engine::MetalsharpWine;
+    }
+
     if has_file_ci("steam_api64.dll") || has_file_ci("steam_api.dll") {
         return Engine::SteamD3DMetalPerf;
     }
@@ -168,43 +164,15 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         }
         Engine::GptkWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("RainWorld.exe");
-            let pid = launch_gptk(&exe.to_string_lossy())?;
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_gptk(&exe)?;
             Ok((pid, "gptk_wine"))
-        }
-        Engine::DxvkWine => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("Nidhogg_2.exe");
-            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
-            Ok((pid, "dxvk_wine"))
-        }
-        Engine::DxvkMetalsharpWine => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            for dll in &["d3d11.dll", "dxgi.dll"] {
-                let src = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32").join(dll);
-                let dst = dir.join(dll);
-                if src.exists() {
-                    let _ = std::fs::copy(&src, &dst);
-                }
-            }
-            let pid = launch_via_steam_with_env(appid, &[
-                ("DXVK_FRAME_RATE", "60"),
-                ("DXVK_ASYNC", "1"),
-                ("MVK_PRESENT_MODE", "1"),
-            ])?;
-            Ok((pid, "dxvk_metalsharp_wine"))
         }
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
-        }
-        Engine::WineDevel => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("portal2.exe");
-            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, appid)?;
-            Ok((pid, "wine_devel"))
         }
         Engine::SteamBare => {
             let pid = launch_via_steam(appid)?;
@@ -266,52 +234,14 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
             Ok((pid, "xna_fna_x86"))
         }
         "gptk_wine" => {
-            let exe = if appid == 312520 {
-                dir.join("RainWorld.exe")
-            } else {
-                PathBuf::from(resolve_game_exe_fallback(dir))
-            };
-            let pid = launch_gptk(&exe.to_string_lossy())?;
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_gptk(&exe)?;
             Ok((pid, "gptk_wine"))
-        }
-        "dxvk_wine" => {
-            let exe = if appid == 535520 {
-                dir.join("Nidhogg_2.exe")
-            } else {
-                PathBuf::from(resolve_game_exe_fallback(dir))
-            };
-            let pid = launch_dxvk_wine(&exe.to_string_lossy(), dir, appid)?;
-            Ok((pid, "dxvk_wine"))
         }
         "metalsharp_wine" => {
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
-        }
-        "dxvk_metalsharp_wine" => {
-            for dll in &["d3d11.dll", "dxgi.dll"] {
-                let home = dirs::home_dir().ok_or("no home dir")?;
-                let src = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32").join(dll);
-                let dst = dir.join(dll);
-                if src.exists() {
-                    let _ = std::fs::copy(&src, &dst);
-                }
-            }
-            let pid = launch_via_steam_with_env(appid, &[
-                ("DXVK_FRAME_RATE", "60"),
-                ("DXVK_ASYNC", "1"),
-                ("MVK_PRESENT_MODE", "1"),
-            ])?;
-            Ok((pid, "dxvk_metalsharp_wine"))
-        }
-        "wine_devel" => {
-            let exe = if appid == 620 {
-                dir.join("portal2.exe")
-            } else {
-                PathBuf::from(resolve_game_exe_fallback(dir))
-            };
-            let pid = launch_wine_devel(&exe.to_string_lossy(), dir, appid)?;
-            Ok((pid, "wine_devel"))
         }
         "steam" => {
             let pid = launch_via_steam(appid)?;
@@ -348,7 +278,7 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
     if !wine.exists() {
-        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
+        return Err("MetalSharp Wine not found".into());
     }
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
@@ -376,7 +306,7 @@ pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Resu
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
     if !wine.exists() {
-        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
+        return Err("MetalSharp Wine not found".into());
     }
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
@@ -415,7 +345,7 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
     let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
 
     if !mono_x86.exists() {
-        return Err("x86_64 mono not found — run setup-celeste-deps.sh first".into());
+        return Err("x86 mono not found — run setup first".into());
     }
 
     let mono_config = find_config("celeste-x86-mono.config");
@@ -443,7 +373,6 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
 }
 
 fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
     let mono_config = find_config("terraria-mono.config");
     let dyld = format!(
         "{}:/opt/homebrew/lib",
@@ -471,7 +400,7 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
         return Err("GPTK wine64 not found — install with: brew install --cask gcenx/wine/game-porting-toolkit".into());
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-gptk");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let game_dir = PathBuf::from(exe_path).parent().ok_or("no parent dir")?.to_path_buf();
 
     let child = Command::new(&wine64)
@@ -483,56 +412,17 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
     Ok(child.id())
 }
 
-fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-
-    if !wine.exists() {
-        return Err("Wine (devel) not found — install with: brew install --cask wine@devel".into());
-    }
-
-    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
-    let prefix_str = prefix.to_string_lossy().to_string();
-
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        let _ = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("wineboot")
-            .arg("--init")
-            .status();
-    }
-
-    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
-    let dyld = format!(
-        "/opt/homebrew/lib:{}",
-        wine_lib.to_string_lossy()
-    );
-
-    let child = Command::new(&wine)
-        .current_dir(game_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .arg(exe_path)
-        .spawn()?;
-
-    Ok(child.id())
-}
-
 fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("wineloader");
-    let wineserver = ms_root.join("bin").join("wineserver");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
 
     if !wine.exists() {
-        return Err("MetalSharp Wine not found — run the MetalSharp runtime setup first".into());
+        return Err("MetalSharp Wine not found — run setup first".into());
     }
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let ms_root_str = ms_root.to_string_lossy().to_string();
-    let ms_lib = ms_root.join("lib").to_string_lossy().to_string();
     let exe_name = std::path::Path::new(exe_path)
         .file_name()
         .unwrap_or_default()
@@ -541,126 +431,9 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
-        .env("MS_ROOT", &ms_root_str)
-        .env("CX_ROOT", &ms_root_str)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINESERVER", wineserver.to_string_lossy().to_string())
-        .env("WINELOADER", wine.to_string_lossy().to_string())
-        .env("WINEDLLPATH", format!("{}/x86_64-windows:{}/i386-windows", &ms_lib, &ms_lib))
-        .env("WINEDATADIR", format!("{}/share", &ms_root_str))
-        .env("DYLD_FALLBACK_LIBRARY_PATH", format!("{}:{}/x86_64-unix", &ms_lib, &ms_lib))
         .arg(&exe_name)
-        .spawn()?;
-
-    Ok(child.id())
-}
-
-fn launch_dxvk_wine(exe_path: &str, game_dir: &PathBuf, appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-
-    if !wine.exists() {
-        return Err("Wine (devel) not found — install with: brew install --cask wine@devel".into());
-    }
-
-    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
-    let prefix_str = prefix.to_string_lossy().to_string();
-
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        let _ = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("wineboot")
-            .arg("--init")
-            .status();
-
-        let _ = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("reg")
-            .args(["add", r"HKCU\Software\Wine\X11 Driver", "/v", "Managed", "/d", "N", "/f"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
-        let _ = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("reg")
-            .args(["add", r"HKCU\Software\Wine\DllOverrides", "/v", "xinput1_3", "/d", "", "/f"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-moltenvk");
-
-    for dll in &["d3d11.dll", "dxgi.dll"] {
-        let src = dxvk_dir.join(dll);
-        let dst = game_dir.join(dll);
-        if src.exists() {
-            let _ = std::fs::copy(&src, &dst);
-        }
-    }
-
-    let moltenvk_icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
-    if !moltenvk_icd.exists() {
-        return Err("MoltenVK ICD not found — install with: brew install molten-vk".into());
-    }
-
-    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
-    let dyld = format!(
-        "/opt/homebrew/lib:{}",
-        wine_lib.to_string_lossy()
-    );
-
-    let child = Command::new(&wine)
-        .current_dir(game_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("VK_ICD_FILENAMES", moltenvk_icd.to_string_lossy().to_string())
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env("MVK_PRESENT_MODE", "1")
-        .env("DXVK_FRAME_RATE", "60")
-        .env("DXVK_ASYNC", "1")
-        .arg(exe_path)
-        .spawn()?;
-
-    Ok(child.id())
-}
-
-fn launch_wine32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-
-    if !wine.exists() {
-        return Err("Wine (devel) not found".into());
-    }
-
-    let prefix = home.join(".metalsharp").join("prefix-amongus");
-    let prefix_str = prefix.to_string_lossy().to_string();
-
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        let status = Command::new(&wine)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("wineboot")
-            .arg("--init")
-            .status()?;
-        if !status.success() {
-            return Err("Failed to initialize Wine prefix".into());
-        }
-    }
-
-    let wine_lib = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/lib");
-    let dyld = format!(
-        "/opt/homebrew/lib:{}",
-        wine_lib.to_string_lossy()
-    );
-
-    let child = Command::new(&wine)
-        .current_dir(game_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .arg(exe_path)
         .spawn()?;
 
     Ok(child.id())
@@ -683,87 +456,6 @@ fn resolve_game_exe_fallback(game_dir: &PathBuf) -> String {
         }
     }
     game_dir.to_string_lossy().to_string()
-}
-
-fn detect_game_type(game_dir: &PathBuf) -> &'static str {
-    let marker = game_dir.join(".metalsharp_prepared");
-    if let Ok(content) = std::fs::read_to_string(&marker) {
-        if content.contains("is_dotnet=true") {
-            return "xna_fna";
-        }
-    }
-
-    if let Ok(entries) = std::fs::read_dir(game_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.ends_with(".exe") && !name.contains("setup") {
-                let wine_devel = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-                if wine_devel.exists() {
-                    return "wine32";
-                }
-                let gptk = PathBuf::from(
-                    "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
-                );
-                if gptk.exists() {
-                    return "gptk_wine";
-                }
-                return "native";
-            }
-        }
-    }
-
-    "native"
-}
-
-fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = find_wine()?;
-    let prefix = home.join(".metalsharp").join("prefix");
-    let prefix_str = prefix.to_string_lossy().to_string();
-
-    ensure_wine_prefix(&prefix)?;
-
-    let child = Command::new(&wine)
-        .env("WINEPREFIX", &prefix_str)
-        .arg(exe_path)
-        .spawn()?;
-
-    Ok(child.id())
-}
-
-fn launch_via_fna_mono(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
-    let mono = find_mono()?;
-    let exe = PathBuf::from(exe_path);
-    let game_dir = exe.parent().ok_or("no parent dir for exe")?;
-
-    let child = Command::new(&mono)
-        .current_dir(game_dir)
-        .env("DYLD_LIBRARY_PATH", ".")
-        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
-        .arg(&exe)
-        .spawn()?;
-
-    Ok(child.id())
-}
-
-fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
-    let candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/mono"),
-        PathBuf::from("/usr/local/bin/mono"),
-    ];
-
-    for c in candidates {
-        if c.exists() {
-            return Ok(c.to_string_lossy().to_string());
-        }
-    }
-
-    let which = Command::new("which").arg("mono").output()?;
-    if which.status.success() {
-        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
-    }
-
-    Err("mono not found — install with: brew install mono".into())
 }
 
 pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
@@ -793,47 +485,16 @@ pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
 pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-    let steam_prefix = home.join(".metalsharp").join("prefix-steam");
 
-    if let Ok(output) = Command::new("pgrep")
-        .args(["-a", "-f", &game_dir.to_string_lossy()])
-        .output()
-    {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some(pid_str) = line.split_whitespace().next() {
-                if let Ok(pid) = pid_str.parse::<i32>() {
-                    let _ = Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .status();
-                }
-            }
-        }
-    }
+    let resolved = crate::setup::resolve_game_dir(appid);
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "UnityCrashHandler"])
-        .status();
+    let dirs_to_check = if let Some(ref rd) = resolved {
+        vec![rd.clone(), game_dir.clone()]
+    } else {
+        vec![game_dir.clone()]
+    };
 
-    let steamapps_common = steam_prefix
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps")
-        .join("common");
-
-    let prefixes_to_check = vec![
-        steamapps_common.join("Among Us"),
-        steamapps_common.join("RESIDENT EVIL 4  BIOHAZARD RE4"),
-        steamapps_common.join("Celeste"),
-        steamapps_common.join("Terraria"),
-        steamapps_common.join("Rain World"),
-        steamapps_common.join("Nidhogg 2"),
-        steamapps_common.join("Portal 2"),
-        steamapps_common.join("Ghostrunner"),
-        game_dir.clone(),
-    ];
-
-    for dir in &prefixes_to_check {
+    for dir in &dirs_to_check {
         if dir.exists() {
             if let Ok(output) = Command::new("pgrep")
                 .args(["-a", "-f", &dir.to_string_lossy()])
@@ -852,7 +513,22 @@ pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "UnityCrashHandler"])
+        .status();
+
     Ok(())
+}
+
+pub fn get_config() -> Value {
+    let native_available = find_metalsharp_native().is_ok();
+    let mono_available = find_mono().is_ok();
+
+    json!({
+        "ok": true,
+        "native_available": native_available,
+        "mono_available": mono_available,
+    })
 }
 
 fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
@@ -862,7 +538,6 @@ fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
         PathBuf::from("/Applications/MetalSharp.app/Contents/Resources/metalsharp"),
         home.join(".metalsharp/metalsharp"),
         home.join("metalsharp/build/metalsharp"),
-        home.join("metalsharp/build/metalsharp_native"),
         PathBuf::from("/usr/local/bin/metalsharp"),
         PathBuf::from("/opt/homebrew/bin/metalsharp"),
     ];
@@ -873,83 +548,7 @@ fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
 
-    let which = Command::new("which").arg("metalsharp").output()?;
-    if which.status.success() {
-        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
-    }
-
-    Err("metalsharp binary not found — build with: cmake --build build".into())
-}
-
-pub fn get_config() -> Value {
-    let native_available = find_metalsharp_native().is_ok();
-    let mono_available = find_mono().is_ok();
-    let wine_available = find_wine().is_ok();
-
-    json!({
-        "ok": true,
-        "native_available": native_available,
-        "mono_available": mono_available,
-        "wine_available": wine_available,
-    })
-}
-
-fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-
-    let candidates = vec![
-        PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"),
-        PathBuf::from("/opt/homebrew/bin/wine64"),
-        PathBuf::from("/opt/homebrew/bin/wine"),
-        PathBuf::from("/usr/local/bin/wine64"),
-        PathBuf::from("/usr/local/bin/wine"),
-    ];
-
-    for c in candidates {
-        if c.exists() {
-            return Ok(c.to_string_lossy().to_string());
-        }
-    }
-
-    let which = Command::new("which").arg("wine64").output()?;
-    if which.status.success() {
-        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
-    }
-
-    let which = Command::new("which").arg("wine").output()?;
-    if which.status.success() {
-        return Ok(String::from_utf8_lossy(&which.stdout).trim().to_string());
-    }
-
-    Err("wine not found — install with: brew install --cask wine@devel".into())
-}
-
-fn find_config(name: &str) -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    let candidates = vec![
-        home.join("metalsharp").join("configs").join(name),
-        home.join(".metalsharp").join("configs").join(name),
-    ];
-    for c in candidates {
-        if c.exists() {
-            return c.to_string_lossy().to_string();
-        }
-    }
-    home.join("metalsharp").join("configs").join(name).to_string_lossy().to_string()
-}
-
-fn find_shims_dir() -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    let candidates = vec![
-        home.join(".metalsharp").join("runtime").join("shims"),
-        home.join(".metalsharp").join("shims"),
-    ];
-    for c in candidates {
-        if c.exists() {
-            return c.to_string_lossy().to_string();
-        }
-    }
-    home.join(".metalsharp").join("runtime").join("shims").to_string_lossy().to_string()
+    Err("metalsharp binary not found".into())
 }
 
 fn find_scripts_dir() -> Option<PathBuf> {
@@ -968,7 +567,6 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
         312520 => "setup-rainworld-deps.sh",
         535520 => "setup-nidhogg2-deps.sh",
         945360 => "setup-amongus-deps.sh",
-        620 => "setup-portal2-deps.sh",
         _ => return Ok(()),
     };
 
@@ -1005,6 +603,71 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
+    let candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/mono"),
+        PathBuf::from("/usr/local/bin/mono"),
+    ];
+
+    for c in candidates {
+        if c.exists() {
+            return Ok(c.to_string_lossy().to_string());
+        }
+    }
+
+    Err("mono not found — install with: brew install mono".into())
+}
+
+fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+
+    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    if ms_wine.exists() {
+        return Ok(ms_wine.to_string_lossy().to_string());
+    }
+
+    let candidates = vec![
+        PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"),
+        PathBuf::from("/opt/homebrew/bin/wine64"),
+    ];
+
+    for c in candidates {
+        if c.exists() {
+            return Ok(c.to_string_lossy().to_string());
+        }
+    }
+
+    Err("wine not found".into())
+}
+
+fn find_config(name: &str) -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join("metalsharp").join("configs").join(name),
+        home.join(".metalsharp").join("configs").join(name),
+    ];
+    for c in candidates {
+        if c.exists() {
+            return c.to_string_lossy().to_string();
+        }
+    }
+    home.join("metalsharp").join("configs").join(name).to_string_lossy().to_string()
+}
+
+fn find_shims_dir() -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join(".metalsharp").join("runtime").join("shims"),
+        home.join(".metalsharp").join("shims"),
+    ];
+    for c in candidates {
+        if c.exists() {
+            return c.to_string_lossy().to_string();
+        }
+    }
+    home.join(".metalsharp").join("runtime").join("shims").to_string_lossy().to_string()
+}
+
 pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     if system32.exists() {
@@ -1029,4 +692,35 @@ pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Er
 
 pub fn set_config(_mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(get_config())
+}
+
+fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = find_wine()?;
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    ensure_wine_prefix(&prefix)?;
+
+    let child = Command::new(&wine)
+        .env("WINEPREFIX", &prefix_str)
+        .arg(exe_path)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_via_fna_mono(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let mono = find_mono()?;
+    let exe = PathBuf::from(exe_path);
+    let game_dir = exe.parent().ok_or("no parent dir for exe")?;
+
+    let child = Command::new(&mono)
+        .current_dir(game_dir)
+        .env("DYLD_LIBRARY_PATH", ".")
+        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
+        .arg(&exe)
+        .spawn()?;
+
+    Ok(child.id())
 }

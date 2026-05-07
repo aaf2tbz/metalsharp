@@ -84,8 +84,6 @@ fn run_install_all() {
         ("Mono x86 Runtime", Box::new(|home| install_mono_x86(home))),
         ("DXVK 1.10.3", Box::new(|home| install_dxvk(home))),
         ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
-        ("Wine Devel", Box::new(|_| install_wine_devel())),
-        ("MoltenVK", Box::new(|_| install_moltenvk())),
     ];
 
     let total = steps.len();
@@ -237,7 +235,7 @@ fn install_mono_x86(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-2.4");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
     if dxvk_dir.join("x32").join("d3d11.dll").exists() {
         return Ok(false);
     }
@@ -251,9 +249,9 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
         let _ = fs::create_dir_all(&tmp);
         extract_zst(&archive, &tmp, "dxvk")?;
 
-        let src = tmp.join("dxvk-2.4");
+        let src = tmp.join("dxvk-1.10.3");
         if !src.exists() {
-            return Err("DXVK archive missing dxvk-2.4 directory".into());
+            return Err("DXVK archive missing dxvk-1.10.3 directory".into());
         }
 
         let x32 = src.join("x32");
@@ -280,7 +278,7 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    let url = "https://github.com/doitsujin/dxvk/releases/download/v2.4/dxvk-2.4.tar.gz";
+    let url = "https://github.com/doitsujin/dxvk/releases/download/v1.10.3/dxvk-1.10.3.tar.gz";
     let tar_path = dxvk_dir.join("dxvk.tar.gz");
 
     let output = Command::new("curl")
@@ -308,7 +306,7 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
         return Err("failed to extract DXVK".into());
     }
 
-    if !dxvk_dir.join("dxvk-2.4").join("x32").join("d3d11.dll").exists() {
+    if !dxvk_dir.join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists() {
         return Err("DXVK d3d11.dll not found after extraction".into());
     }
     Ok(true)

@@ -80,9 +80,7 @@ pub fn is_wine_steam_running() -> bool {
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
-        return Err(
-            "MetalSharp Wine not found — run the MetalSharp runtime setup first".into(),
-        );
+        return Err("MetalSharp Wine not found".into());
     }
 
     let exe = steam_exe_path();
@@ -93,9 +91,7 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 
     if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
         install_steam()?;
-        return Ok(
-            json!({"ok": true, "message": "Steam installer launched — complete setup, then launch again"}),
-        );
+        return Ok(json!({"ok": true, "message": "Steam installer launched — complete setup, then launch again"}));
     }
 
     if is_wine_steam_running() {
@@ -109,11 +105,6 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .join(".metalsharp")
         .join("runtime")
         .join("wine");
-
-    let steam_dir = steam_prefix()
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam");
 
     let child = Command::new(&wine)
         .current_dir(&steam_dir)
@@ -131,47 +122,51 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
-    let targets = ["Steam.exe", "steam.exe", "steamservice.exe"];
+    let targets = [
+        "Steam.exe", "steam.exe", "steamservice.exe",
+        "steamwebhelper.exe", "winedevice.exe",
+    ];
 
     for target in &targets {
         let _ = Command::new("pkill")
-            .args(["-f", target])
+            .args(["-9", "-f", target])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
     }
 
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "wineserver"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "wineloader"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     let still_running = Command::new("pgrep")
-        .args(["-f", "steam.exe"])
+        .args(["-f", "Steam.exe"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
     if still_running {
         for target in &targets {
-            let _ = Command::new("pkill")
-                .args(["-9", "-f", target])
+            let _ = Command::new("killall")
+                .args(["-9", target])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
-
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
-
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "steamwebhelper.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "winedevice.exe"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
 
     Ok(json!({"ok": true}))
 }
@@ -694,9 +689,7 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let wine = ms_wine();
     if !wine.exists() {
-        return Err(
-            "MetalSharp Wine not found — run the MetalSharp runtime setup first".into(),
-        );
+        return Err("MetalSharp Wine not found".into());
     }
 
     let prefix = steam_prefix();
@@ -731,4 +724,46 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .spawn()?;
 
     Ok(format!("Launched Steam installer via MetalSharp Wine (pid {}) — complete the setup wizard, then launch Steam again", child.id()))
+}
+
+pub fn watch_steamapps() -> Option<String> {
+    let steamapps = steam_prefix()
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    if !steamapps.exists() {
+        return None;
+    }
+
+    let current = get_wine_steam_installed_games();
+    let cached_path = dirs::home_dir()?.join(".metalsharp").join("cache").join("wine_steam_appids.cache");
+
+    let cached: Vec<u32> = if cached_path.exists() {
+        std::fs::read_to_string(&cached_path)
+            .ok()
+            .map(|s| s.lines().filter_map(|l| l.parse::<u32>().ok()).collect())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let mut new_appids = Vec::new();
+    for &id in &current {
+        if !cached.contains(&id) {
+            new_appids.push(id);
+        }
+    }
+
+    let _ = std::fs::write(
+        &cached_path,
+        current.iter().map(|id| id.to_string()).collect::<Vec<_>>().join("\n"),
+    );
+
+    if new_appids.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&new_appids).unwrap_or_default())
+    }
 }
