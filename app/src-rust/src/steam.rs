@@ -357,17 +357,26 @@ pub fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn get_steam_id() -> Option<String> {
     let home = dirs::home_dir()?;
-    let mac_path = home.join("Library/Application Support/Steam/config/loginusers.vdf");
-    let contents = std::fs::read_to_string(&mac_path).ok()?;
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('"') && trimmed.chars().filter(|c| *c == '"').count() == 2 {
-            let id = trimmed.trim_matches('"').trim();
-            if id.starts_with("7656") {
-                return Some(id.to_string());
+
+    let paths = vec![
+        home.join("Library/Application Support/Steam/config/loginusers.vdf"),
+        home.join(".metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf"),
+    ];
+
+    for mac_path in &paths {
+        if let Ok(contents) = std::fs::read_to_string(mac_path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('"') && trimmed.chars().filter(|c| *c == '"').count() == 2 {
+                    let id = trimmed.trim_matches('"').trim();
+                    if id.starts_with("7656") {
+                        return Some(id.to_string());
+                    }
+                }
             }
         }
     }
+
     None
 }
 
