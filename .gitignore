@@ -30,3 +30,6 @@ src/fna/FNA3D/
 build-x86/
 app/bundles/*.tar.zst
 app/bundles/*.exe
+
+# Code intelligence
+.graphiq/
