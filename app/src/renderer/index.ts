@@ -505,17 +505,29 @@ class App {
       }
 
       if (!steamStatus?.installed) {
-        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading and installing Windows Steam...</span>';
-        const installResult = await this.api<{ ok: boolean; path?: string; error?: string }>("POST", "/steam/install");
-        if (installResult?.ok) {
-          statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed — launching...</span>';
-          this.wineSteamInstalled = true;
-        } else {
+        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
+        const installResult = await this.api<{ ok: boolean; path?: string; error?: string; message?: string }>("POST", "/steam/install");
+        if (!installResult?.ok) {
           statusDiv.innerHTML = `<span style="color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</span>`;
           installBtn.textContent = "Retry Install";
           (installBtn as HTMLButtonElement).disabled = false;
           return;
         }
+
+        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window...</span>';
+
+        const pollInstall = setInterval(async () => {
+          const s = await checkSteamStatus();
+          if (s?.installed || s?.running) {
+            clearInterval(pollInstall);
+            this.wineSteamInstalled = true;
+            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
+            installBtn.textContent = "Launch Steam";
+            (installBtn as HTMLButtonElement).disabled = false;
+          }
+        }, 3000);
+        setTimeout(() => { clearInterval(pollInstall); }, 300000);
+        return;
       }
 
       statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';

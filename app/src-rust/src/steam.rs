@@ -90,8 +90,7 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .join("Steam");
 
     if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
-        install_steam()?;
-        return Ok(json!({"ok": true, "message": "Steam installer launched — complete setup, then launch again"}));
+        return Err("Steam is not installed — use the setup wizard to install it first".into());
     }
 
     if is_wine_steam_running() {
