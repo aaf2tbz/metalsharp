@@ -15,8 +15,6 @@ mkdir -p "$BUNDLE_DIR"
 
 BUNDLES=(
     "dxvk.tar.zst"
-    "gptk.tar.zst"
-    "moltenvk.tar.zst"
     "mono-arm64.tar.zst"
     "mono-x86.tar.zst"
     "SteamSetup.exe"
