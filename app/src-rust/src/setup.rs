@@ -505,30 +505,19 @@ fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-2.4").join("x32");
-    for dll in &["d3d11.dll", "dxgi.dll"] {
-        let src = dxvk_dir.join(dll);
-        let dst = game_dir.join(dll);
-        if src.exists() {
-            let _ = std::fs::copy(&src, &dst);
+    let dxmt_builtins = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("wine").join("i386-windows");
+    if !dxmt_builtins.join("d3d11.dll.bak").exists() {
+        let dxmt_src = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt").join("i386-windows");
+        if dxmt_src.join("d3d11.dll").exists() {
+            for dll in &["d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
+                let builtin = dxmt_builtins.join(dll);
+                if builtin.exists() && !builtin.with_extension("dll.bak").exists() {
+                    let _ = std::fs::rename(&builtin, builtin.with_extension("dll.bak"));
+                }
+                let _ = std::fs::copy(dxmt_src.join(dll), &dxmt_builtins.join(dll));
+            }
         }
     }
-
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
-    let prefix = home.join(".metalsharp").join("prefix-steam");
-    if wine.exists() && prefix.join("drive_c").exists() {
-        let prefix_str = prefix.to_string_lossy().to_string();
-        for dll in &["d3d11", "dxgi"] {
-            let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", &prefix_str)
-                .args(["reg", "add", r"HKCU\Software\Wine\DllOverrides", "/v", dll, "/d", "native", "/f"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-    }
-
     Ok(())
 }
 

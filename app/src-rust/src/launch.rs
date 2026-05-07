@@ -400,12 +400,14 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
         return Err("GPTK wine64 not found — install with: brew install --cask gcenx/wine/game-porting-toolkit".into());
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = home.join(".metalsharp").join("prefix-gptk");
+    let prefix_str = prefix.to_string_lossy().to_string();
     let game_dir = PathBuf::from(exe_path).parent().ok_or("no parent dir")?.to_path_buf();
 
     let child = Command::new(&wine64)
         .current_dir(&game_dir)
-        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
         .arg(exe_path)
         .spawn()?;
 

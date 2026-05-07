@@ -359,8 +359,7 @@ class App {
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(0));
 
-    nextBtn.addEventListener("click", () => this.renderSetupStep(2));
-  }
+    nextBtn.addEventListener("click", () => this.renderSetupStep(2));  }
 
   private async startDepInstall(
     logContainer: HTMLElement,
@@ -456,108 +455,92 @@ class App {
     body.className = "setup-body";
     container.appendChild(body);
 
-    const generatedName = await this.api<{ name: string }>("GET", "/setup/device-name");
-    const defaultName = this.setupDeviceName || generatedName?.name || "";
-
     body.innerHTML = `
       <div class="setup-section-header">
-        <h1>Set Up Steam</h1>
-        <p>Name your device, then launch Steam and log in. MetalSharp uses Windows Steam via MetalSharp Wine to download and authenticate games.</p>
+        <h1>Install Steam</h1>
+        <p>MetalSharp will download and install Windows Steam. Complete the setup in the Steam window, then click Continue.</p>
       </div>
-      <div class="setup-form">
-        <div class="setup-form-group">
-          <label class="setup-label">Device Name</label>
-          <input type="text" id="device-name-input" value="${this.esc(defaultName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
-          <div class="setup-hint">Identifies your machine to Steam for persistent login.</div>
-        </div>
-        <div class="setup-form-group">
-          <label class="setup-label">Steam Web API Key (optional)</label>
-          <input type="password" id="setup-api-key" placeholder="Enter your Steam Web API key..." class="setup-input" />
-          <div class="setup-hint">
-            Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a>
-          </div>
-        </div>
-      </div>
-      <div id="steam-launch-status" style="text-align:center;margin:24px 0;">
-        <span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Steam not running</span>
+      <div id="steam-install-status" style="text-align:center;margin:24px 0;">
+        <span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Steam not installed</span>
       </div>
       <div class="setup-actions">
         <button class="btn btn-secondary" id="setup-back">Back</button>
-        <button class="btn btn-primary btn-lg" id="btn-launch-steam">Launch Steam</button>
+        <button class="btn btn-primary btn-lg" id="btn-install-steam">Install Steam</button>
         <button class="btn btn-primary" id="setup-next" style="display:none;">Continue</button>
       </div>
     `;
 
-    const statusDiv = body.querySelector("#steam-launch-status") as HTMLElement;
-    const launchBtn = body.querySelector("#btn-launch-steam") as HTMLElement;
+    const statusDiv = body.querySelector("#steam-install-status") as HTMLElement;
+    const installBtn = body.querySelector("#btn-install-steam") as HTMLElement;
     const nextBtn = body.querySelector("#setup-next") as HTMLElement;
-    const nameInput = document.getElementById("device-name-input") as HTMLInputElement;
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(1));
 
-    launchBtn.addEventListener("click", async () => {
-      launchBtn.textContent = "Launching Steam...";
-      (launchBtn as HTMLButtonElement).disabled = true;
+    const checkSteamStatus = async () => {
+      const s = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+      return s;
+    };
 
-      const steamStatus = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+    const initialStatus = await checkSteamStatus();
+    if (initialStatus?.running) {
+      statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+      installBtn.style.display = "none";
+      nextBtn.style.display = "inline-flex";
+    } else if (initialStatus?.installed) {
+      statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is installed</span>';
+      installBtn.textContent = "Launch Steam";
+    }
+
+    installBtn.addEventListener("click", async () => {
+      installBtn.textContent = "Installing Steam...";
+      (installBtn as HTMLButtonElement).disabled = true;
+
+      const steamStatus = await checkSteamStatus();
 
       if (steamStatus?.running) {
         statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-        launchBtn.style.display = "none";
+        installBtn.style.display = "none";
         nextBtn.style.display = "inline-flex";
         return;
       }
 
       if (!steamStatus?.installed) {
-        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer and launching setup...</span>';
+        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading and installing Windows Steam...</span>';
         const installResult = await this.api<{ ok: boolean; path?: string; error?: string }>("POST", "/steam/install");
         if (installResult?.ok) {
-          statusDiv.innerHTML = '<div class="setup-hint" style="margin-top:8px">Steam setup wizard opened — complete it, then come back and launch Steam.</div>';
+          statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed — launching...</span>';
+          this.wineSteamInstalled = true;
         } else {
-          statusDiv.innerHTML = `<div class="setup-hint" style="margin-top:8px;color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</div>`;
+          statusDiv.innerHTML = `<span style="color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</span>`;
+          installBtn.textContent = "Retry Install";
+          (installBtn as HTMLButtonElement).disabled = false;
+          return;
         }
-        launchBtn.textContent = "Launch Steam";
-        (launchBtn as HTMLButtonElement).disabled = false;
-        return;
       }
 
-      const result = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/steam/launch");
-      if (result?.ok) {
+      statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';
+      const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/steam/launch");
+      if (launchResult?.ok) {
         this.wineSteamRunning = true;
-        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Waiting for Steam — log in through the Steam window...</span>';
-
         const pollSteam = setInterval(async () => {
-          const s = await this.api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+          const s = await checkSteamStatus();
           if (s?.running) {
             clearInterval(pollSteam);
-            this.wineSteamRunning = true;
             statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-            launchBtn.style.display = "none";
+            installBtn.style.display = "none";
             nextBtn.style.display = "inline-flex";
           }
         }, 3000);
-
         setTimeout(() => clearInterval(pollSteam), 120000);
       } else {
-        this.toast(result?.error ?? "Failed to launch Steam", "error");
-        launchBtn.textContent = "Launch Steam";
-        (launchBtn as HTMLButtonElement).disabled = false;
+        statusDiv.innerHTML = `<span style="color:var(--error)">${launchResult?.error ?? "Failed to launch Steam"}</span>`;
+        installBtn.textContent = "Launch Steam";
+        (installBtn as HTMLButtonElement).disabled = false;
       }
     });
 
     nextBtn.addEventListener("click", async () => {
-      const name = nameInput?.value?.trim() || defaultName;
-      const keyInput = document.getElementById("setup-api-key") as HTMLInputElement;
-      const key = keyInput?.value?.trim();
-
-      this.setupDeviceName = name;
-      await this.api("POST", "/setup/save", { step: 2, deviceName: name });
-
-      if (key) {
-        await this.api("POST", "/steam/save-api-key", { key });
-        this.steamApiKey = key;
-      }
-
+      await this.api("POST", "/setup/save", { step: 2 });
       this.renderSetupStep(3);
     });
   }
@@ -565,7 +548,8 @@ class App {
   private async renderSetupComplete(container: HTMLElement) {
     this.renderSetupStepIndicator(container, 3);
 
-    await this.api("POST", "/setup/save", { step: 3, completed: true });
+    const generatedName = await this.api<{ name: string }>("GET", "/setup/device-name");
+    const defaultName = this.setupDeviceName || generatedName?.name || "";
 
     const body = document.createElement("div");
     body.className = "setup-body";
@@ -576,16 +560,30 @@ class App {
         <div class="setup-complete">
           <div class="setup-complete-icon">&#10003;</div>
           <h1>You're All Set!</h1>
-          <p>MetalSharp is ready. Download games from your library and play them natively on macOS.</p>
+          <p>MetalSharp is ready. Open your library, start Steam, and download games.</p>
+          <div class="setup-form" style="max-width:400px;margin:0 auto 24px;">
+            <div class="setup-form-group">
+              <label class="setup-label">Device Name</label>
+              <input type="text" id="device-name-input" value="${this.esc(defaultName)}" placeholder="e.g. Swift-Falcon" class="setup-input" />
+              <div class="setup-hint">Identifies your machine to Steam for persistent login.</div>
+            </div>
+            <div class="setup-form-group">
+              <label class="setup-label">Steam Web API Key (optional)</label>
+              <input type="password" id="setup-api-key" placeholder="Enter your Steam Web API key..." class="setup-input" />
+              <div class="setup-hint">
+                Loads your full game library. Get a free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank" style="color:var(--orange)">steamcommunity.com/dev/apikey</a>
+              </div>
+            </div>
+          </div>
           <div class="setup-complete-tips">
+            <div class="setup-tip">
+              <strong>Start Steam</strong> — Click "Start Steam" in your Library, then log in through the Steam window.
+            </div>
             <div class="setup-tip">
               <strong>Download a game</strong> — Find it in your Library and click Install.
             </div>
             <div class="setup-tip">
-              <strong>First launch</strong> — MetalSharp auto-configures the runtime (FNA, shims, etc.) for each game.
-            </div>
-            <div class="setup-tip">
-              <strong>No audio?</strong> — Some games use FMOD which has no arm64 macOS build. Audio stubs are applied automatically.
+              <strong>First launch</strong> — MetalSharp auto-configures the runtime for each game.
             </div>
           </div>
           <div class="setup-actions" style="justify-content:center;margin-top:32px;">
@@ -596,6 +594,19 @@ class App {
     `;
 
     body.querySelector("#setup-finish")?.addEventListener("click", async () => {
+      const nameInput = document.getElementById("device-name-input") as HTMLInputElement;
+      const keyInput = document.getElementById("setup-api-key") as HTMLInputElement;
+      const name = nameInput?.value?.trim() || defaultName;
+      const key = keyInput?.value?.trim();
+
+      this.setupDeviceName = name;
+      await this.api("POST", "/setup/save", { step: 3, deviceName: name, completed: true });
+
+      if (key) {
+        await this.api("POST", "/steam/save-api-key", { key });
+        this.steamApiKey = key;
+      }
+
       this.hideSetupWizard();
       this.steamApiKey = await this.getSteamApiKey();
       await this.loadConfig();
@@ -804,8 +815,8 @@ class App {
     if (appid === 105600) return "xna_fna_arm64";
     if (appid === 504230) return "xna_fna_x86";
     if (appid === 312520) return "gptk_wine";
-    if (appid === 535520) return "dxvk_metalsharp_wine";
-    if (appid === 620) return "wine_devel";
+    if (appid === 535520) return "metalsharp_wine";
+    if (appid === 391540) return "metalsharp_wine";
     if ([945360, 1139900, 2050650].includes(appid)) return "steam";
     if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
     return "steam_d3dmetal_perf";
@@ -820,10 +831,7 @@ class App {
       xna_fna_arm64: "FNA arm64",
       xna_fna_x86: "FNA x86",
       gptk_wine: "GPTK Wine",
-      dxvk_wine: "Wine Devel + DXVK",
       metalsharp_wine: "MetalSharp Wine",
-      dxvk_metalsharp_wine: "MetalSharp Wine + DXVK",
-      wine_devel: "Wine Devel",
       steam: "MetalSharp Wine Steam",
       steam_metalfx: "MetalSharp Wine + MetalFX",
       steam_d3dmetal_perf: "MetalSharp Wine + D3DMetal",
@@ -838,9 +846,6 @@ class App {
       "steam_metalfx",
       "steam",
       "metalsharp_wine",
-      "dxvk_metalsharp_wine",
-      "dxvk_wine",
-      "wine_devel",
       "gptk_wine",
       "xna_fna_arm64",
       "xna_fna_x86",
