@@ -241,8 +241,8 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 "games": games,
             }))
         }
-        (Method::Get, "/rules/:appid") => {
-            let parts: Vec<&str> = url.split('/').collect();
+        (Method::Get, u) if u.starts_with("/rules/") && u != "/rules/list" && u != "/rules/reload" => {
+            let parts: Vec<&str> = u.split('/').collect();
             if let Some(appid_str) = parts.get(2) {
                 if let Ok(appid) = appid_str.parse::<u32>() {
                     let r = rules();

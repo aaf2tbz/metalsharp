@@ -294,27 +294,28 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let marker = game_dir.join(".metalsharp_prepared");
 
     let is_dotnet = detect_dotnet_game(&game_dir);
-    let game_type = match appid {
-        105600 => "xna_fna_arm64",
-        504230 => "xna_fna_x86",
-        312520 => "gptk_wine",
-        535520 => "dxvk_metalsharp_wine",
-        945360 | 1139900 => "metalsharp_wine",
-        620 => "wine_devel",
-        _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
-    };
+
+    let rules = crate::rules::Rules::load();
+    let rule = rules.find(appid);
+    let game_type = rule
+        .as_ref()
+        .map(|r| if r.method.is_empty() { r.engine.clone() } else { r.method.clone() })
+        .unwrap_or_else(|| if is_dotnet { "xna_fna".into() } else { "steam_d3dmetal_perf".into() });
+
+    let setup_key = rule.as_ref().map(|r| r.setup.clone()).unwrap_or_else(|| "none".into());
 
     if !marker.exists() {
         let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     }
 
-    match appid {
-        105600 => prepare_terrarria(&game_dir, &home)?,
-        504230 => prepare_celeste(&game_dir, &home)?,
-        312520 => prepare_rain_world(&game_dir, &home)?,
-        535520 => prepare_nidhogg_2(&game_dir, &home)?,
-        945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
-        620 => prepare_portal_2(&game_dir, &home)?,
+    match setup_key.as_str() {
+        "fna_terrarria" => prepare_terrarria(&game_dir, &home)?,
+        "fna_celeste" => prepare_celeste(&game_dir, &home)?,
+        "gptk_prefix" => prepare_rain_world(&game_dir, &home)?,
+        "dxmt_system_swap" => prepare_nidhogg_2(&game_dir, &home)?,
+        "metalsharp_prefix" => prepare_metalsharp_game(&game_dir, &home, appid)?,
+        "portal2_goldberg" => prepare_portal_2(&game_dir, &home)?,
+        "remove_dxmt_from_game_dir" => remove_dxmt_from_game_dir(&game_dir)?,
         _ => {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
@@ -595,6 +596,17 @@ fn prepare_portal_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn st
     }
     let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), "620");
 
+    Ok(())
+}
+
+fn remove_dxmt_from_game_dir(game_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let dxmt_dlls = ["d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"];
+    for dll in &dxmt_dlls {
+        let path = game_dir.join(dll);
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
     Ok(())
 }
 
