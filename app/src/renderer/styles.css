@@ -727,6 +727,16 @@ body {
   color: var(--orange);
 }
 
+.badge-error {
+  background: rgba(220, 60, 60, 0.14);
+  color: #dc3c3c;
+}
+
+.badge-info {
+  background: rgba(100, 160, 255, 0.12);
+  color: #64a0ff;
+}
+
 .error-dialog {
   position: fixed;
   inset: 0;

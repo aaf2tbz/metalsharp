@@ -142,6 +142,36 @@ impl Rules {
             .unwrap_or_default()
     }
 
+    pub fn update_game(&self, updated: GameRule) -> Result<(), String> {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let user_dir = home.join(".metalsharp").join("configs");
+        let _ = std::fs::create_dir_all(&user_dir);
+        let user_path = user_dir.join("rules.toml");
+
+        let mut user_config = if user_path.exists() {
+            std::fs::read_to_string(&user_path)
+                .ok()
+                .and_then(|s| toml::from_str(&s).ok())
+                .unwrap_or_default()
+        } else {
+            RulesConfig::default()
+        };
+
+        if let Some(idx) = user_config.game.iter().position(|g| g.appid == updated.appid) {
+            user_config.game[idx] = updated;
+        } else {
+            user_config.game.push(updated);
+        }
+
+        let toml_str = toml::to_string_pretty(&user_config)
+            .map_err(|e| format!("serialize error: {}", e))?;
+        std::fs::write(&user_path, toml_str)
+            .map_err(|e| format!("write error: {}", e))?;
+
+        self.reload();
+        Ok(())
+    }
+
     pub fn list_global(&self) -> GlobalConfig {
         self.rules
             .read()

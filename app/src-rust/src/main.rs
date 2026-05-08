@@ -277,6 +277,22 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 "total": rules().list_all().len(),
             }))
         }
+        (Method::Post, "/rules/update") => {
+            let body = read_body(req);
+            match serde_json::from_value::<crate::rules::GameRule>(json!(body)) {
+                Ok(game_rule) => {
+                    let appid = game_rule.appid;
+                    match rules().update_game(game_rule) {
+                        Ok(()) => resp(200, json!({
+                            "ok": true,
+                            "appid": appid,
+                        })),
+                        Err(e) => resp(500, json!({"ok": false, "error": e})),
+                    }
+                }
+                Err(e) => resp(400, json!({"ok": false, "error": format!("invalid rule: {}", e)})),
+            }
+        }
         (Method::Post, "/config") => {
             let body = read_body(req);
             let mode = body.get("launchMode").and_then(|v| v.as_str()).unwrap_or("native");

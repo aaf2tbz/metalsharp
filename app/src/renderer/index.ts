@@ -13,6 +13,8 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  rule_status?: string | null;
+  rule_notes?: string | null;
 }
 
 interface SteamLibrary {
@@ -147,6 +149,18 @@ class App {
   private async loadLibrary() {
     const lib = await this.api<SteamLibrary>("GET", "/steam/library");
     if (lib) this.library = lib;
+
+    const rulesData = await this.api<{ games: { appid: number; status?: string | null; notes?: string | null }[] }>("GET", "/rules/list");
+    if (rulesData?.games && this.library) {
+      const rulesMap = new Map(rulesData.games.map((g) => [g.appid, g]));
+      for (const game of this.library.games) {
+        const rule = rulesMap.get(game.appid);
+        if (rule) {
+          game.rule_status = rule.status ?? null;
+          game.rule_notes = rule.notes ?? null;
+        }
+      }
+    }
 
     const scan = await this.api<{ steam: SteamStatus }>("GET", "/scan");
     if (scan) this.steam = scan.steam ?? { installed: false, running: false };
@@ -791,6 +805,17 @@ class App {
     const method = this.recommendedLaunchMethod(game);
     const size = game.size_bytes ? this.formatBytes(game.size_bytes) : null;
 
+    let statusBadge = "";
+    if (game.rule_status === "d3d12_incomplete") {
+      statusBadge = `<span class="badge badge-error">Black Screen</span>`;
+    } else if (game.rule_status === "working") {
+      statusBadge = `<span class="badge badge-ok">Verified</span>`;
+    } else if (game.installed) {
+      statusBadge = `<span class="badge badge-ok">Installed</span>`;
+    }
+
+    const methodBadge = `<span class="badge badge-info">${method}</span>`;
+
     card.innerHTML = `
       <div class="game-card-banner">
         ${bannerContent}
@@ -799,7 +824,8 @@ class App {
         <div class="game-card-title">${this.esc(game.name)}</div>
         <div class="game-card-meta">
           ${game.installed ? `<span class="badge badge-ok">Installed</span>` : `<span class="badge badge-warn">Not Installed</span>`}
-          <span class="game-card-platform">Native</span>
+          ${statusBadge}
+          ${methodBadge}
           ${size ? `<span class="game-card-size">${size}</span>` : ""}
         </div>
         <div class="game-card-actions">
@@ -823,38 +849,49 @@ class App {
     return card;
   }
 
-  private defaultLaunchMethod(appid: number): string {
-    if (appid === 105600) return "xna_fna_arm64";
-    if (appid === 504230) return "xna_fna_x86";
-    if (appid === 375520) return "gptk_wine";
-    if (appid === 535520) return "metalsharp_wine";
-    if (appid === 391540) return "metalsharp_wine";
-    if ([945360, 1139900, 2050650].includes(appid)) return "steam";
-    if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
-    return "steam_d3dmetal_perf";
-  }
-
   private recommendedLaunchMethod(game: SteamGame): string {
-    return game.launch_method ?? this.defaultLaunchMethod(game.appid);
+    return game.launch_method ?? "steam_d3dmetal_perf";
   }
 
   private launchMethodOptions(game: SteamGame): string {
     const recommended = this.recommendedLaunchMethod(game);
-    const isMetalFx = ["steam_metalfx", "steam_d3dmetal_perf"].includes(recommended);
+    const allMethods: [string, string][] = [
+      ["steam_d3dmetal_perf", "D3DMetal (Recommended)"],
+      ["steam_metalfx", "D3DMetal + MetalFX"],
+      ["steam", "Steam (Default)"],
+      ["metalsharp_wine", "MetalSharp Wine"],
+      ["gptk_wine", "GPTK Wine"],
+      ["d3dmetal_wine", "D3DMetal Wine"],
+      ["wine_devel", "Wine Devel"],
+      ["xna_fna_arm64", "FNA (arm64)"],
+      ["xna_fna_x86", "FNA (x86)"],
+    ];
 
-    let options = `<option value="native">Native (Recommended)</option>`;
+    const labels: Record<string, string> = {};
+    for (const [key, label] of allMethods) labels[key] = label;
 
-    if (isMetalFx) {
-      options += `<option value="native_metalfx_low">Native + MetalFX (Low)</option>`;
-      options += `<option value="native_metalfx_medium">Native + MetalFX (Medium)</option>`;
-      options += `<option value="native_metalfx_high">Native + MetalFX (High)</option>`;
+    let options = "";
+    for (const [key, label] of allMethods) {
+      if (key === recommended) {
+        options += `<option value="${key}" selected>${label}</option>`;
+      } else {
+        options += `<option value="${key}">${label}</option>`;
+      }
+    }
+
+    if (["steam_d3dmetal_perf", "steam_metalfx"].includes(recommended)) {
+      options += `<option value="native_metalfx_low">MetalFX (Low)</option>`;
+      options += `<option value="native_metalfx_medium">MetalFX (Medium)</option>`;
+      options += `<option value="native_metalfx_high">MetalFX (High)</option>`;
     }
 
     return options;
   }
 
   private launchMethodHelp(game: SteamGame): string {
-    return `Select launch mode. Native uses our recommended pipeline. MetalFX adds spatial upscaling.`;
+    const method = this.recommendedLaunchMethod(game);
+    const notes = game.rule_notes ?? "No additional notes.";
+    return `Method: ${method}. ${notes}`;
   }
 
   private async installGame(game: SteamGame) {
