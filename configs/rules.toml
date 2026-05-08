@@ -1,0 +1,748 @@
+# MetalSharp Game Rules — defines how each game is prepared and launched
+# Rules are matched by appid. Fallback detection uses file heuristics.
+# User overrides: ~/.metalsharp/configs/rules.toml (takes precedence)
+
+[global]
+default_method = "steam_d3dmetal_perf"
+default_prefix = "steam"
+
+# ── FNA/XNA Games (Mono Runtime) ──────────────────────────────────────
+
+[[game]]
+appid = 105600
+name = "Terraria"
+engine = "fna_arm64"
+method = "xna_fna_arm64"
+setup = "fna_terrarria"
+exe = "TerrariaLauncher.exe"
+prefix = "steam"
+notes = "arm64 mono + FAudio, no Wine needed"
+
+[game.env]
+FNA3D_DRIVER = "OpenGL"
+MONO_CONFIG = "terraria-mono.config"
+
+[[game]]
+appid = 504230
+name = "Celeste"
+engine = "fna_x86"
+method = "xna_fna_x86"
+setup = "fna_celeste"
+exe = "Celeste.exe"
+prefix = "steam"
+notes = "x86_64 mono via Rosetta + FMOD 1.10"
+
+[game.env]
+FNA3D_DRIVER = "OpenGL"
+METAL_DEVICE_WRAPPER_TYPE = "0"
+
+# ── GPTK (Apple Game Porting Toolkit) ────────────────────────────────
+
+[[game]]
+appid = 312520
+name = "Rain World"
+engine = "gptk_wine"
+method = "gptk_wine"
+setup = "gptk_prefix"
+prefix = "gptk"
+notes = "Requires GPTK Wine, uses GPTK D3D11→Metal"
+
+[[game]]
+appid = 375520
+name = "Rain World (Alt)"
+engine = "gptk_wine"
+method = "gptk_wine"
+setup = "gptk_prefix"
+prefix = "gptk"
+notes = "Alternate Rain World appid"
+
+# ── MetalSharp Wine + DXMT ────────────────────────────────────────────
+
+[[game]]
+appid = 535520
+name = "Nidhogg 2"
+engine = "metalsharp_wine"
+method = "metalsharp_wine"
+setup = "dxmt_system_swap"
+prefix = "steam"
+notes = "DXMT DLLs swapped into system dir (not game dir)"
+
+[[game]]
+appid = 391540
+name = "Hotline Miami 2"
+engine = "metalsharp_wine"
+method = "metalsharp_wine"
+setup = "none"
+prefix = "steam"
+
+# ── Steam Direct Launch ───────────────────────────────────────────────
+
+[[game]]
+appid = 945360
+name = "Among Us"
+engine = "steam_bare"
+method = "steam"
+setup = "remove_dxmt_from_game_dir"
+prefix = "steam"
+notes = "DXMT DLLs must NOT be in game dir"
+
+[[game]]
+appid = 1139900
+name = "Among Us (Alt)"
+engine = "steam_bare"
+method = "steam"
+setup = "remove_dxmt_from_game_dir"
+prefix = "steam"
+
+# ── D3DMetal (Apple D3D12→Metal) ──────────────────────────────────────
+
+[[game]]
+appid = 2050650
+name = "Resident Evil 4"
+engine = "d3dmetal_wine"
+method = "d3dmetal_wine"
+setup = "none"
+prefix = "steam"
+status = "d3d12_incomplete"
+notes = "D3DMetal D3D12 incomplete — black screen. Needs our own D3D12→Metal layer."
+
+[game.env]
+MS_BACKEND = "d3dmetal"
+WINEDEBUG = "-all"
+
+# ── Steam + MetalFX ───────────────────────────────────────────────────
+
+[[game]]
+appid = 1245620
+name = "Monster Hunter Rise"
+engine = "steam_metalfx"
+method = "steam_metalfx"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_METALFX = "1"
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE = "1"
+MVK_ALLOW_METAL_FENCES = "1"
+
+[[game]]
+appid = 814380
+name = "Elden Ring"
+engine = "steam_metalfx"
+method = "steam_metalfx"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_METALFX = "1"
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE = "1"
+MVK_ALLOW_METAL_FENCES = "1"
+
+[[game]]
+appid = 1593500
+name = "Elden Ring (Alt)"
+engine = "steam_metalfx"
+method = "steam_metalfx"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_METALFX = "1"
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE = "1"
+MVK_ALLOW_METAL_FENCES = "1"
+
+# ── Steam + D3DMetal Perf (default for most games) ────────────────────
+
+[[game]]
+appid = 397540
+name = "Hollow Knight"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 298110
+name = "Cuphead"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 552520
+name = "Hades"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1091500
+name = "Hades II"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1868140
+name = "Lies of P"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1551360
+name = "Palworld"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1716740
+name = "Helldivers 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1203620
+name = "Armored Core VI"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1282100
+name = "Baldur's Gate 3"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 750920
+name = "Persona 5 Royal"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1172380
+name = "Cyberpunk 2077"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 870780
+name = "Red Dead Redemption 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1196590
+name = "GTA V"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1236300
+name = "Sekiro"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1888160
+name = "Like a Dragon: Infinite Wealth"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 976310
+name = "Lethal Company"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 2767030
+name = "Content Warning"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 292030
+name = "Dark Souls III"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 990080
+name = "Mortuary Assistant"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1583230
+name = "Phasmophobia"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 1172470
+name = "Starfield"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+[[game]]
+appid = 2290180
+name = "Dragon's Dogma 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[game.env]
+D3DM_ENABLE_ASYNC_COMMIT = "1"
+D3DM_MULTITHREADED_INTERFACE_ENABLE = "1"
+D3DM_IGNORE_D3D11_RENDER_BARRIERS = "1"
+D3DM_SAMPLE_NAN_TO_ZERO = "1"
+D3DM_FLUSH_POS_INF_TO_NAN = "1"
+
+# ── Bulk D3D12/Unreal/Unity — default perf pipeline ───────────────────
+
+[[game]]
+appid = 548430
+name = "Deep Rock Galactic"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 892970
+name = "Valheim"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1313140
+name = " Sons Of The Forest"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1623730
+name = "Sons Of The Forest"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 553850
+name = "Phasmophobia"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 367520
+name = "Golf With Your Friends"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 413150
+name = "The Medium"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1145360
+name = "A Plague Tale: Requiem"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 588650
+name = "Ghostrunner"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1637320
+name = "Chivalry 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1562430
+name = "Dying Light 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1092790
+name = "Inscryption"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1229490
+name = "The Quarry"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1971650
+name = "Alan Wake 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1809540
+name = "Wo Long: Fallen Dynasty"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1237320
+name = "Wo Long: Fallen Dynasty"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1326470
+name = "Dead Space Remake"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 275850
+name = "Forza Horizon 5"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1643320
+name = "Hogwarts Legacy"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 379720
+name = "Nier: Automata"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 782330
+name = "Subnautica"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 289070
+name = "Satisfactory"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1147560
+name = "Dying Light 2 (Alt)"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 1222680
+name = "Marvel's Midnight Suns"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 252950
+name = "Dark Souls: Remastered"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 230410
+name = "Dark Souls II"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 252490
+name = "Dark Souls: Prepare to Die Edition"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+[[game]]
+appid = 730
+name = "Counter-Strike 2"
+engine = "steam_d3dmetal_perf"
+method = "steam_d3dmetal_perf"
+setup = "none"
+prefix = "steam"
+
+# ── Wine Devel ─────────────────────────────────────────────────────────
+
+[[game]]
+appid = 620
+name = "Portal 2"
+engine = "wine_devel"
+method = "wine_devel"
+setup = "portal2_goldberg"
+prefix = "620"
+notes = "Wine Devel + Goldberg emulator, separate prefix"
+
+# ── Fallback Detection ────────────────────────────────────────────────
+# Games not in rules.toml are detected by file heuristics:
+#   unityplayer.dll / gameassembly.dll → steam_d3dmetal_perf
+#   engine/ + binaries/ → steam_metalfx (Unreal)
+#   *.pak / engine/ + content/ → steam_metalfx (Unreal)
+#   *.bdt / *.bhd → steam_metalfx (Denuvo)
+#   re_chunk_* / re2_config.ini / re8_config.ini → steam_d3dmetal_perf (RE Engine)
+#   d3dx9_43.dll → metalsharp_wine
+#   steam_api64.dll / steam_api.dll → steam_d3dmetal_perf
+#   *.dll with _data/Managed/ (no native PE) → fna_arm64
+#   otherwise → steam_d3dmetal_perf

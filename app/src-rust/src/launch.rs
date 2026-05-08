@@ -10,176 +10,72 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Engine {
-    FnaArm64,
-    FnaX86,
-    GptkWine,
-    MetalsharpWine,
-    SteamBare,
-    SteamMetalfx,
-    SteamD3DMetalPerf,
+fn rules() -> &'static crate::rules::Rules {
+    static RULES: std::sync::OnceLock<crate::rules::Rules> = std::sync::OnceLock::new();
+    RULES.get_or_init(crate::rules::Rules::load)
 }
 
-pub fn recommended_method_for_appid(appid: u32) -> &'static str {
-    engine_method(get_engine_for_appid(appid))
+pub fn recommended_method_for_appid(appid: u32) -> String {
+    rules().find_method(appid)
 }
 
-fn engine_method(engine: Engine) -> &'static str {
-    match engine {
-        Engine::FnaArm64 => "xna_fna_arm64",
-        Engine::FnaX86 => "xna_fna_x86",
-        Engine::GptkWine => "gptk_wine",
-        Engine::MetalsharpWine => "metalsharp_wine",
-        Engine::SteamBare => "steam",
-        Engine::SteamMetalfx => "steam_metalfx",
-        Engine::SteamD3DMetalPerf => "steam_d3dmetal_perf",
+pub fn get_engine_for_appid(appid: u32) -> String {
+    if let Some(rule) = rules().find(appid) {
+        return rule.engine;
     }
+    let game_dir = crate::setup::resolve_game_dir(appid);
+    crate::rules::detect_engine_from_dir(&game_dir)
 }
 
-fn get_engine_for_appid(appid: u32) -> Engine {
-    match appid {
-        105600 => Engine::FnaArm64,
-        504230 => Engine::FnaX86,
-        312520 | 375520 => Engine::GptkWine,
-        535520 | 391540 => Engine::MetalsharpWine,
-
-        945360 | 1139900 | 2050650 => Engine::SteamBare,
-
-        1245620 => Engine::SteamMetalfx,
-
-        814380 | 1593500 => Engine::SteamMetalfx,
-
-        397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 |
-        1203620 | 1282100 | 750920 | 1172380 | 870780 | 1196590 |
-        1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 |
-        1583230 | 1172470 | 2290180 => Engine::SteamD3DMetalPerf,
-
-        548430 | 892970 | 1313140 | 1623730 | 553850 | 367520 | 413150 |
-        1145360 | 588650 | 1637320 | 1562430 | 1092790 | 1229490 |
-        1971650 | 1809540 | 1237320 | 1326470 | 275850 | 1643320 |
-        379720 | 782330 | 289070 | 1147560 | 1222680 | 252950 |
-        230410 | 252490 | 730 => Engine::SteamD3DMetalPerf,
-
-        _ => {
-            let game_dir = crate::setup::resolve_game_dir(appid);
-            detect_engine_from_dir(&game_dir)
-        }
-    }
-}
-
-fn detect_engine_from_dir(game_dir: &Option<PathBuf>) -> Engine {
-    let dir = match game_dir {
-        Some(d) if d.exists() => d,
-        _ => return Engine::SteamD3DMetalPerf,
-    };
-
-    if crate::setup::detect_dotnet_game(dir) {
-        return Engine::FnaArm64;
-    }
-
-    let has_file_ci = |name: &str| -> bool {
-        let name_lower = name.to_lowercase();
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().to_lowercase() == name_lower {
-                    return true;
-                }
-            }
-        }
-        false
-    };
-    let has_dir_ci = |name: &str| -> bool {
-        let name_lower = name.to_lowercase();
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() && entry.file_name().to_string_lossy().to_lowercase() == name_lower {
-                    return true;
-                }
-            }
-        }
-        false
-    };
-    let has_glob = |pattern: &str| -> bool {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if name.ends_with(&pattern.to_lowercase()) {
-                    return true;
-                }
-            }
-        }
-        false
-    };
-
-    if has_file_ci("unityplayer.dll") || has_file_ci("gameassembly.dll") {
-        return Engine::SteamD3DMetalPerf;
-    }
-
-    if has_dir_ci("engine") && has_dir_ci("binaries") {
-        return Engine::SteamMetalfx;
-    }
-
-    if has_glob(".pak") || (has_dir_ci("engine") && has_dir_ci("content")) {
-        return Engine::SteamMetalfx;
-    }
-
-    if has_glob(".bdt") || has_glob(".bhd") {
-        return Engine::SteamMetalfx;
-    }
-
-    if has_glob("re_chunk_") || has_file_ci("re2_config.ini") || has_file_ci("re8_config.ini") {
-        return Engine::SteamD3DMetalPerf;
-    }
-
-    if has_file_ci("d3dx9_43.dll") {
-        return Engine::MetalsharpWine;
-    }
-
-    if has_file_ci("steam_api64.dll") || has_file_ci("steam_api.dll") {
-        return Engine::SteamD3DMetalPerf;
-    }
-
-    Engine::SteamD3DMetalPerf
-}
-
-pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+pub fn launch_auto(appid: u32) -> Result<(u32, String), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     let game_dir = crate::setup::resolve_game_dir(appid);
-    let engine = get_engine_for_appid(appid);
+    let method = rules().find_method(appid);
+    let env = rules().find_env(appid);
+    let dir = game_dir.as_ref().unwrap_or(&local_dir);
 
-    match engine {
-        Engine::FnaArm64 => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("TerrariaLauncher.exe");
+    match method.as_str() {
+        "xna_fna_arm64" => {
+            let exe_name = rules().find_exe(appid)
+                .unwrap_or_else(|| "TerrariaLauncher.exe".into());
+            let exe = dir.join(&exe_name);
             let pid = launch_fna_arm64(&exe.to_string_lossy(), dir)?;
-            Ok((pid, "xna_fna_arm64"))
+            Ok((pid, method))
         }
-        Engine::FnaX86 => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = dir.join("Celeste.exe");
+        "xna_fna_x86" => {
+            let exe_name = rules().find_exe(appid)
+                .unwrap_or_else(|| "Celeste.exe".into());
+            let exe = dir.join(&exe_name);
             let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
-            Ok((pid, "xna_fna_x86"))
+            Ok((pid, method))
         }
-        Engine::GptkWine => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+        "gptk_wine" => {
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_gptk(&exe)?;
-            Ok((pid, "gptk_wine"))
+            Ok((pid, method))
         }
-        Engine::MetalsharpWine => {
-            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+        "metalsharp_wine" => {
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_metalsharp_wine(&exe, dir)?;
-            Ok((pid, "metalsharp_wine"))
+            Ok((pid, method))
         }
-        Engine::SteamBare => {
+        "d3dmetal_wine" => {
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_d3dmetal_wine(&exe, dir)?;
+            Ok((pid, method))
+        }
+        "wine_devel" => {
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_wine_devel(&exe, dir)?;
+            Ok((pid, method))
+        }
+        "steam" => {
             let pid = launch_via_steam(appid)?;
-            Ok((pid, "steam"))
+            Ok((pid, method))
         }
-        Engine::SteamMetalfx => {
-            let pid = launch_via_steam_with_env(appid, &[
+        "steam_metalfx" => {
+            let mut env_vars: Vec<(&str, &str)> = vec![
                 ("D3DM_ENABLE_METALFX", "1"),
                 ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
                 ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
@@ -188,10 +84,32 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
                 ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
                 ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
                 ("MVK_ALLOW_METAL_FENCES", "1"),
-            ])?;
-            Ok((pid, "steam_metalfx"))
+            ];
+            for (k, _) in &env {
+                if let Some(ov) = env.get(k) {
+                    env_vars.push((k.as_str(), ov.as_str()));
+                }
+            }
+            let pid = launch_via_steam_with_env(appid, &env_vars)?;
+            Ok((pid, method))
         }
-        Engine::SteamD3DMetalPerf => {
+        "steam_d3dmetal_perf" => {
+            let mut env_vars: Vec<(&str, &str)> = vec![
+                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+            ];
+            for (k, _) in &env {
+                if let Some(ov) = env.get(k) {
+                    env_vars.push((k.as_str(), ov.as_str()));
+                }
+            }
+            let pid = launch_via_steam_with_env(appid, &env_vars)?;
+            Ok((pid, method))
+        }
+        _ => {
             let pid = launch_via_steam_with_env(appid, &[
                 ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
                 ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
@@ -199,12 +117,12 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
                 ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
                 ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
             ])?;
-            Ok((pid, "steam_d3dmetal_perf"))
+            Ok((pid, method))
         }
     }
 }
 
-pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, String), Box<dyn std::error::Error>> {
     if method.is_empty() || method == "auto" || method == "native" {
         return launch_auto(appid);
     }
@@ -227,7 +145,7 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
                 ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
                 ("MVK_ALLOW_METAL_FENCES", "1"),
             ])?;
-            Ok((pid, "native_metalfx_low"))
+            Ok((pid, "native_metalfx_low".into()))
         }
         "native_metalfx_medium" => {
             let pid = launch_via_steam_with_env(appid, &[
@@ -241,7 +159,7 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
                 ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
                 ("MVK_ALLOW_METAL_FENCES", "1"),
             ])?;
-            Ok((pid, "native_metalfx_medium"))
+            Ok((pid, "native_metalfx_medium".into()))
         }
         "native_metalfx_high" => {
             let pid = launch_via_steam_with_env(appid, &[
@@ -255,7 +173,7 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
                 ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
                 ("MVK_ALLOW_METAL_FENCES", "1"),
             ])?;
-            Ok((pid, "native_metalfx_high"))
+            Ok((pid, "native_metalfx_high".into()))
         }
         _ => Err(format!("Unknown launch method: {}", method).into()),
     }
@@ -423,6 +341,63 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
     }
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .arg(&exe_name)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_d3dmetal_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(game_dir)
+        .env("MS_BACKEND", "d3dmetal")
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all");
+
+    let child = cmd
+        .arg(&exe_name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_wine_devel(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
+    if !wine.exists() {
+        return Err("Wine Devel not found — install with: brew install --cask wine@devel".into());
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let prefix = home.join(".metalsharp").join("prefix-620");
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = std::path::Path::new(exe_path)
         .file_name()

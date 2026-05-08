@@ -3,10 +3,18 @@ mod scan;
 mod setup;
 mod steam;
 mod launch;
+mod rules;
 
 use serde_json::json;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
+
+use rules::Rules;
+
+fn rules() -> &'static Rules {
+    static RULES: std::sync::OnceLock<Rules> = std::sync::OnceLock::new();
+    RULES.get_or_init(Rules::load)
+}
 
 fn main() {
     let port = std::env::var("METALSHARP_PORT").unwrap_or_else(|_| "9274".into());
@@ -222,6 +230,53 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             resp(200, json!({"ok": true, "logs": entries}))
         }
         (Method::Get, "/config") => resp(200, launch::get_config()),
+        (Method::Get, "/rules/list") => {
+            let r = rules();
+            let games = r.list_all();
+            let global = r.list_global();
+            resp(200, json!({
+                "ok": true,
+                "global": global,
+                "total": games.len(),
+                "games": games,
+            }))
+        }
+        (Method::Get, "/rules/:appid") => {
+            let parts: Vec<&str> = url.split('/').collect();
+            if let Some(appid_str) = parts.get(2) {
+                if let Ok(appid) = appid_str.parse::<u32>() {
+                    let r = rules();
+                    if let Some(game) = r.find(appid) {
+                        resp(200, json!({
+                            "ok": true,
+                            "game": game,
+                        }))
+                    } else {
+                        let engine = launch::get_engine_for_appid(appid);
+                        let method = r.find_method(appid);
+                        resp(200, json!({
+                            "ok": true,
+                            "detected": true,
+                            "appid": appid,
+                            "engine": engine,
+                            "method": method,
+                        }))
+                    }
+                } else {
+                    resp(400, json!({"ok": false, "error": "invalid appid"}))
+                }
+            } else {
+                resp(400, json!({"ok": false, "error": "appid required"}))
+            }
+        }
+        (Method::Post, "/rules/reload") => {
+            let reloaded = rules().reload();
+            resp(200, json!({
+                "ok": true,
+                "reloaded": reloaded,
+                "total": rules().list_all().len(),
+            }))
+        }
         (Method::Post, "/config") => {
             let body = read_body(req);
             let mode = body.get("launchMode").and_then(|v| v.as_str()).unwrap_or("native");
