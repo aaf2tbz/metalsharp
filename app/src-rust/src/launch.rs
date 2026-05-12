@@ -41,10 +41,10 @@ fn engine_method(engine: Engine) -> &'static str {
 
 fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
-        105600 => Engine::FnaArm64,
-        504230 => Engine::FnaX86,
-        312520 | 375520 => Engine::DxmtMetal,
-        535520 | 391540 => Engine::Wined3d32,
+         105600 => Engine::FnaArm64,
+         504230 => Engine::FnaX86,
+         312520 | 375520 => Engine::DxmtMetal,
+         535520 | 391540 => Engine::Wined3d32,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
 
@@ -402,12 +402,23 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
         .to_string_lossy()
         .to_string();
 
+    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_dxmt = ms_root.join("lib").join("dxmt").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_path = format!("{}:{}", dyld_wine, dyld_dxmt);
+
+    let dxmt_x64 = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let game = game_dir.as_path();
+    let _ = std::fs::copy(dxmt_x64.join("d3d11.dll"), game.join("d3d11.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("dxgi.dll"), game.join("dxgi.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
+
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
         .arg(&exe_name)
         .spawn()?;
 

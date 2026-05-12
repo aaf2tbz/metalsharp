@@ -23,7 +23,7 @@ Games are auto-detected by scanning their install directory for engine markers (
 
 | Game | Pipeline | Status |
 |------|----------|--------|
-| Rain World | MetalSharp Wine + DXMT Metal (native) | Working |
+| Rain World | MetalSharp Wine + DXMT Metal | Working |
 | Nidhogg 2 | MetalSharp Wine + WineD3D OpenGL | Working |
 | Undertale | MetalSharp Wine + wined3d | Working |
 | Resident Evil 4 | MetalSharp Wine + Steam DRM | Working |
