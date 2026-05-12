@@ -183,6 +183,10 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     let bundle = find_bundled_file("metalsharp_bundle.tar.zst");
     if let Some(archive) = bundle {
         extract_zst(&archive, &runtime_dir, "bundle")?;
+        let bundle2 = find_bundled_file("metalsharp_bundle2.tar.zst");
+        if let Some(archive2) = bundle2 {
+            let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
+        }
         if ms_wine.exists() {
             return Ok(true);
         }

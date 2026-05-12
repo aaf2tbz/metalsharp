@@ -56,6 +56,7 @@ jobs:
             --pattern "*.exe" \
             --dir app/bundles \
             --clobber || echo "No bundles found — building without"
+          ls -lh app/bundles/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
