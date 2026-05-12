@@ -298,6 +298,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 => "dxmt_metal",
+        2050650 | 3164500 => "dxmt_metal12",
         535520 => "wined3d_32",
         945360 | 1139900 => "metalsharp_wine",
         620 => "wine_devel",
@@ -312,6 +313,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => prepare_terrarria(&game_dir, &home)?,
         504230 => prepare_celeste(&game_dir, &home)?,
         312520 => prepare_rain_world(&game_dir, &home)?,
+        2050650 | 3164500 => prepare_dxmt_metal12(&game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 => prepare_portal_2(&game_dir, &home)?,
@@ -491,6 +493,14 @@ fn prepare_rain_world(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn
     let marker = game_dir.join(".metalsharp_prepared");
     if !marker.exists() {
         let _ = std::fs::write(&marker, "dxmt_metal");
+    }
+    Ok(())
+}
+
+fn prepare_dxmt_metal12(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let marker = game_dir.join(".metalsharp_prepared");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, "dxmt_metal12");
     }
     Ok(())
 }
