@@ -15,6 +15,7 @@ enum Engine {
     FnaArm64,
     FnaX86,
     DxmtMetal,
+    DxmtMetal12,
     Wined3d32,
     MetalsharpWine,
     SteamBare,
@@ -31,6 +32,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::FnaArm64 => "xna_fna_arm64",
         Engine::FnaX86 => "xna_fna_x86",
         Engine::DxmtMetal => "dxmt_metal",
+        Engine::DxmtMetal12 => "dxmt_metal12",
         Engine::Wined3d32 => "wined3d_32",
         Engine::MetalsharpWine => "metalsharp_wine",
         Engine::SteamBare => "steam",
@@ -46,7 +48,9 @@ fn get_engine_for_appid(appid: u32) -> Engine {
          312520 | 375520 => Engine::DxmtMetal,
          535520 | 391540 => Engine::Wined3d32,
 
-        945360 | 1139900 | 2050650 => Engine::SteamBare,
+        2050650 | 3164500 => Engine::DxmtMetal12,
+
+        945360 | 1139900 => Engine::SteamBare,
 
         1245620 => Engine::SteamMetalfx,
 
@@ -169,6 +173,12 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_dxmt_metal(&exe, dir)?;
             Ok((pid, "dxmt_metal"))
+        }
+        Engine::DxmtMetal12 => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_dxmt_metal12(&exe, dir)?;
+            Ok((pid, "dxmt_metal12"))
         }
         Engine::Wined3d32 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -418,6 +428,47 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
+        .arg(&exe_name)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_dxmt_metal12(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_dxmt = ms_root.join("lib").join("dxmt").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_path = format!("{}:{}", dyld_wine, dyld_dxmt);
+
+    let dxmt_x64 = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let game = game_dir.as_path();
+    let _ = std::fs::copy(dxmt_x64.join("d3d12.dll"), game.join("d3d12.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("d3d11.dll"), game.join("d3d11.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("dxgi.dll"), game.join("dxgi.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
+    let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
         .arg(&exe_name)
         .spawn()?;
