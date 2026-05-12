@@ -420,7 +420,21 @@ pub fn library() -> Value {
         }
     };
 
-    let games: Vec<Value> = owned
+    let owned_appids: Vec<u32> = owned.iter().map(|(id, _)| *id).collect();
+    let mut all_games = owned;
+    for &appid in &wine_steam_appids {
+        if !owned_appids.contains(&appid) {
+            let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+            all_games.push((appid, name));
+        }
+    }
+    for &appid in &downloaded_appids {
+        if !all_games.iter().any(|(id, _)| *id == appid) {
+            all_games.push((appid, format!("Game {}", appid)));
+        }
+    }
+
+    let games: Vec<Value> = all_games
         .iter()
         .map(|(appid, name)| {
             let is_installed = installed_appids.contains(appid)

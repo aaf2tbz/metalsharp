@@ -44,11 +44,13 @@ fn engine_method(engine: Engine) -> &'static str {
 fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
          105600 => Engine::FnaArm64,
-         504230 => Engine::FnaX86,
-         312520 | 375520 => Engine::DxmtMetal,
+         504230 => Engine::SteamD3DMetalPerf,
+         265930 => Engine::SteamD3DMetalPerf,
+         312520 | 375520 | 848450 => Engine::DxmtMetal,
          535520 | 391540 => Engine::Wined3d32,
 
-        2050650 | 3164500 => Engine::DxmtMetal12,
+        2050650 | 1583230 => Engine::SteamD3DMetalPerf,
+        3164500 => Engine::DxmtMetal,
 
         945360 | 1139900 => Engine::SteamBare,
 
@@ -59,7 +61,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 |
         1203620 | 1282100 | 750920 | 1172380 | 870780 | 1196590 |
         1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 |
-        1583230 | 1172470 | 2290180 => Engine::SteamD3DMetalPerf,
+        1172470 | 2290180 | 620 => Engine::SteamD3DMetalPerf,
 
         548430 | 892970 | 1313140 | 1623730 | 553850 | 367520 | 413150 |
         1145360 | 588650 | 1637320 | 1562430 | 1092790 | 1229490 |
@@ -126,7 +128,11 @@ fn detect_engine_from_dir(game_dir: &Option<PathBuf>) -> Engine {
         return Engine::SteamMetalfx;
     }
 
-    if has_glob(".pak") || (has_dir_ci("engine") && has_dir_ci("content")) {
+    if has_glob(".pak") {
+        return Engine::SteamD3DMetalPerf;
+    }
+
+    if has_dir_ci("engine") && has_dir_ci("content") {
         return Engine::SteamMetalfx;
     }
 
@@ -209,17 +215,28 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             ])?;
             Ok((pid, "steam_metalfx"))
         }
-        Engine::SteamD3DMetalPerf => {
-            let pid = launch_via_steam_with_env(appid, &[
-                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-            ])?;
-            Ok((pid, "steam_d3dmetal_perf"))
-        }
-    }
+         Engine::SteamD3DMetalPerf => {
+             let gptk_dll = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-windows";
+             let gptk_dyld = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix";
+             let ms_root = dirs::home_dir().ok_or("no home dir")?.join(".metalsharp").join("runtime").join("wine");
+             let ms_dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+             let dyld = format!("{}:{}", gptk_dyld, ms_dyld);
+             let wine_dll_path = format!("{}:{}",
+                 gptk_dll,
+                 ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy()
+             );
+             let pid = launch_via_steam_with_env(appid, &[
+                 ("WINEDLLPATH", &wine_dll_path),
+                 ("DYLD_FALLBACK_LIBRARY_PATH", &dyld),
+                 ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                 ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                 ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                 ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                 ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+             ])?;
+             Ok((pid, "steam_d3dmetal_perf"))
+         }
+     }
 }
 
 pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -423,12 +440,21 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
     let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
     let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
 
+    let shader_cache_base = home.join(".metalsharp").join("shader-cache");
+    let game_cache_dir = shader_cache_base.join(&exe_name);
+    let _ = std::fs::create_dir_all(&game_cache_dir);
+    let shader_cache_path = game_cache_dir.to_string_lossy().to_string();
+    let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
+        .env("DXMT_SHADER_CACHE_PATH", format!("{}/", shader_cache_path))
+        .env("DXMT_CONFIG_FILE", &dxmt_config_file)
+        .env("DXMT_METALFX_SPATIAL_SWAPCHAIN", "1")
         .arg(&exe_name)
         .spawn()?;
 
@@ -464,12 +490,21 @@ fn launch_dxmt_metal12(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dy
     let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
     let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
 
+    let shader_cache_base = home.join(".metalsharp").join("shader-cache");
+    let game_cache_dir = shader_cache_base.join(&exe_name);
+    let _ = std::fs::create_dir_all(&game_cache_dir);
+    let shader_cache_path = game_cache_dir.to_string_lossy().to_string();
+    let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
+        .env("DXMT_SHADER_CACHE_PATH", &shader_cache_path)
+        .env("DXMT_CONFIG_FILE", &dxmt_config_file)
+        .env("DXMT_METALFX_SPATIAL_SWAPCHAIN", "1")
         .arg(&exe_name)
         .spawn()?;
 
