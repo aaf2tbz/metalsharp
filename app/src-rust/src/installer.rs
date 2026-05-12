@@ -79,10 +79,8 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("Xcode CLI Tools", Box::new(|_| install_xcode_cli())),
-        ("MetalSharp Wine", Box::new(|home| install_metalsharp_wine(home))),
+        ("MetalSharp Bundle", Box::new(|home| install_metalsharp_bundle(home))),
         ("Game Porting Toolkit", Box::new(|home| install_gptk(home))),
-        ("Mono x86 Runtime", Box::new(|home| install_mono_x86(home))),
-        ("DXVK 1.10.3", Box::new(|home| install_dxvk(home))),
         ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -168,6 +166,90 @@ fn install_xcode_cli() -> Result<bool, String> {
     }
 
     Err("timed out waiting for Xcode CLI tools installation (you may need to complete it manually)".into())
+}
+
+fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
+    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
+    let _ = fs::create_dir_all(&runtime_dir);
+
+    let already_installed = ms_wine.exists()
+        && home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono").exists()
+        && home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
+    if already_installed {
+        return Ok(false);
+    }
+
+    let bundle = find_bundled_file("metalsharp_bundle.tar.zst");
+    if let Some(archive) = bundle {
+        extract_zst(&archive, &runtime_dir, "bundle")?;
+        if ms_wine.exists() {
+            return Ok(true);
+        }
+    }
+
+    let fallback_wine = find_bundled_archive("wine");
+    if let Some(archive) = fallback_wine {
+        let wine_dir = runtime_dir.join("wine");
+        let _ = fs::create_dir_all(&wine_dir);
+        extract_zst(&archive, &wine_dir, "wine")?;
+        if ms_wine.exists() {
+            let _ = install_mono_x86_fallback(home);
+            let _ = install_dxvk_fallback(home);
+            return Ok(true);
+        }
+    }
+
+    Err("MetalSharp runtime not found — no bundled metalsharp_bundle.tar.zst available".into())
+}
+
+fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
+    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
+    if mono_x86.exists() {
+        return Ok(false);
+    }
+    let bundled = find_bundled_archive("mono-x86");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
+    if let Some(archive) = bundled {
+        extract_zst(&archive, &runtime_dir, "mono-x86")?;
+        if mono_x86.exists() {
+            return Ok(true);
+        }
+    }
+    Err("mono x86 fallback not found".into())
+}
+
+fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
+    if dxvk_dir.join("x32").join("d3d11.dll").exists() {
+        return Ok(false);
+    }
+    let _ = fs::create_dir_all(&dxvk_dir);
+    let bundled = find_bundled_archive("dxvk");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-dxvk-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "dxvk")?;
+        let src = tmp.join("dxvk-1.10.3");
+        if src.exists() {
+            for subdir in &["x32", "x64"] {
+                let s = src.join(subdir);
+                if s.exists() {
+                    let _ = fs::create_dir_all(dxvk_dir.join(subdir));
+                    for entry in fs::read_dir(&s).map_err(|e| format!("read {}: {}", subdir, e))? {
+                        let entry = entry.map_err(|e| e.to_string())?;
+                        let _ = fs::copy(entry.path(), dxvk_dir.join(subdir).join(entry.file_name()));
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&tmp);
+        if dxvk_dir.join("x32").join("d3d11.dll").exists() {
+            return Ok(true);
+        }
+    }
+    Err("DXVK fallback not found".into())
 }
 
 fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {

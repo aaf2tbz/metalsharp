@@ -14,7 +14,8 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
 enum Engine {
     FnaArm64,
     FnaX86,
-    GptkWine,
+    DxmtMetal,
+    Wined3d32,
     MetalsharpWine,
     SteamBare,
     SteamMetalfx,
@@ -29,7 +30,8 @@ fn engine_method(engine: Engine) -> &'static str {
     match engine {
         Engine::FnaArm64 => "xna_fna_arm64",
         Engine::FnaX86 => "xna_fna_x86",
-        Engine::GptkWine => "gptk_wine",
+        Engine::DxmtMetal => "dxmt_metal",
+        Engine::Wined3d32 => "wined3d_32",
         Engine::MetalsharpWine => "metalsharp_wine",
         Engine::SteamBare => "steam",
         Engine::SteamMetalfx => "steam_metalfx",
@@ -41,8 +43,8 @@ fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
         504230 => Engine::FnaX86,
-        312520 | 375520 => Engine::GptkWine,
-        535520 | 391540 => Engine::MetalsharpWine,
+        312520 | 375520 => Engine::DxmtMetal,
+        535520 | 391540 => Engine::Wined3d32,
 
         945360 | 1139900 | 2050650 => Engine::SteamBare,
 
@@ -162,11 +164,17 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_x86"))
         }
-        Engine::GptkWine => {
+        Engine::DxmtMetal => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
-            let pid = launch_gptk(&exe)?;
-            Ok((pid, "gptk_wine"))
+            let pid = launch_dxmt_metal(&exe, dir)?;
+            Ok((pid, "dxmt_metal"))
+        }
+        Engine::Wined3d32 => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_wined3d_32(&exe, dir)?;
+            Ok((pid, "wined3d_32"))
         }
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -377,7 +385,7 @@ fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
     Ok(child.id())
 }
 
-fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = ms_root.join("bin").join("metalsharp-wine");
@@ -386,16 +394,8 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let gptk_wine64 = PathBuf::from(
-        "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
-    );
-    if !gptk_wine64.exists() {
-        return Err("GPTK wine64 not found — install with: brew install --cask gcenx/wine/game-porting-toolkit".into());
-    }
-
-    let prefix = home.join(".metalsharp").join("prefix-gptk");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let game_dir = PathBuf::from(exe_path).parent().ok_or("no parent dir")?.to_path_buf();
     let exe_name = std::path::Path::new(exe_path)
         .file_name()
         .unwrap_or_default()
@@ -403,10 +403,40 @@ fn launch_gptk(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
         .to_string();
 
     let child = Command::new(&wine)
-        .current_dir(&game_dir)
-        .env("MS_BACKEND", "gptk")
+        .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+        .arg(&exe_name)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = std::path::Path::new(exe_path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "dxgi,d3d11=b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
         .arg(&exe_name)
         .spawn()?;
 
@@ -434,6 +464,7 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
         .arg(&exe_name)
         .spawn()?;
 
