@@ -1,6 +1,6 @@
 # MetalSharp Wine Architecture
 
-MetalSharp Wine is a custom Wine 11.0 runtime that runs Windows applications on macOS via Rosetta 2 (x86_64). It replaces the old multi-runtime assembly (Wine Devel + GPTK overlays + external runtime) with a single self-contained tree at `~/.metalsharp/runtime/wine/`.
+MetalSharp Wine is a custom Wine 11.5 runtime that runs Windows applications on macOS via Rosetta 2 (x86_64). It replaces the old multi-runtime assembly (Wine Devel + GPTK overlays + external runtime) with a single self-contained tree at `~/.metalsharp/runtime/wine/`.
 
 ## Runtime layout
 
@@ -93,7 +93,7 @@ Game routing is handled by:
 
 ## What came from external runtime
 
-MetalSharp Wine is built from external runtime's open-source Wine patches (Wine 11.0). The contributions include:
+MetalSharp Wine is built from Wine 11.5 upstream source with 7 custom patches (patches A-G). The contributions include:
 - gnutls TLS support (Steam login)
 - freetype font rendering
 - macOS-specific fixes (macdrv, DIEM, CEF compatibility)

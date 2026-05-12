@@ -104,8 +104,10 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .arg(&exe)
-        .args(["-no-cef-sandbox", "--disable-gpu", "-noverifyfiles", "-no-dwrite"])
+        .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
@@ -263,6 +265,21 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
         }
     }
     appids
+}
+
+fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
+    let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
+    let original = cef_dir.join("steamwebhelper.exe");
+    let real = cef_dir.join("steamwebhelper_real.exe");
+
+    if !original.exists() {
+        return;
+    }
+
+    if real.exists() {
+        let _ = std::fs::remove_file(&real);
+    }
+    let _ = std::fs::rename(&original, &real);
 }
 
 fn get_game_name_from_manifest(appid: u32) -> Option<String> {
@@ -714,6 +731,8 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+
+    deploy_steamwebhelper_wrapper(&steam_dir);
 
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)

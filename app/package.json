@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -116,15 +116,12 @@
         "to": "xinput1_4.dylib"
       },
       {
-        "from": "bundles/",
-        "to": "bundles/",
-        "filter": [
-          "dxvk.tar.zst",
-          "mono-arm64.tar.zst",
-          "mono-x86.tar.zst",
-          "SteamSetup.exe",
-          "wine.tar.zst"
-        ]
+        "from": "bundles/metalsharp_bundle.tar.zst",
+        "to": "bundles/metalsharp_bundle.tar.zst"
+      },
+      {
+        "from": "bundles/SteamSetup.exe",
+        "to": "bundles/SteamSetup.exe"
       }
     ],
     "directories": {

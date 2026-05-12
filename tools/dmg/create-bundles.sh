@@ -14,11 +14,8 @@ echo ""
 mkdir -p "$BUNDLE_DIR"
 
 BUNDLES=(
-    "dxvk.tar.zst"
-    "mono-arm64.tar.zst"
-    "mono-x86.tar.zst"
+    "metalsharp_bundle.tar.zst"
     "SteamSetup.exe"
-    "wine.tar.zst"
 )
 
 for bundle in "${BUNDLES[@]}"; do

@@ -2,16 +2,18 @@
 
 Play Windows Steam games on macOS. One app, one click.
 
-MetalSharp bundles a custom Wine runtime with DXMT (D3D→Metal translation), DXVK, FNA, and Apple GPTK support into a single Electron app with a setup wizard and one-click launch. It picks the right backend for each game automatically.
+MetalSharp bundles a custom Wine 11.5 runtime with DXMT (D3D→Metal translation), DXVK, FNA, and Apple GPTK support into a single Electron app with a setup wizard and one-click launch. It picks the right backend for each game automatically.
 
 ## How games run
 
 | Backend | How it works | Used for |
 |---------|-------------|----------|
-| **DXMT builtins** | DXMT D3D11/DXGI DLLs baked into the Wine runtime's `i386-windows/` — no override configuration needed | 32-bit D3D11 games (Nidhogg 2) |
+| **DXMT Metal** | DXMT D3D11/D3D12/DXGI built into Wine as builtins — native Metal rendering, no GPTK or Vulkan needed | 64-bit D3D11 games (Rain World) |
+| **WineD3D OpenGL** | Wine's built-in wined3d with OpenGL backend | 32-bit D3D11 games (Nidhogg 2) |
+| **DXMT builtins** | DXMT D3D11/DXGI DLLs baked into `i386-windows/` — no override configuration needed | 32-bit D3D11 games (Nidhogg 2) |
 | **Wine D3DMetal** | Wine's built-in wined3d → D3DMetal pipeline | Simple D3D9 games (Undertale) |
 | **Steam DRM** | Windows Steam runs under MetalSharp Wine — games install and launch through Steam's own interface with full DRM auth | 64-bit Steam games (RE4, Among Us, Ghostrunner, Elden Ring, DREDGE, Sons of the Forest) |
-| **Apple GPTK** | Apple's Game Porting Toolkit D3D→Metal translation | Games needing GPTK (Rain World) |
+| **Apple GPTK** | Apple's Game Porting Toolkit D3D→Metal translation | Games needing GPTK |
 | **DXVK 1.10.3** | D3D9/11 → Vulkan → MoltenVK → Metal fallback | Games that need Vulkan intermediaries |
 | **FNA + SDL3** | Native Mono + FNA + SDL3 Metal rendering — no Wine | XNA/FNA games (Celeste, Terraria) |
 
@@ -21,20 +23,27 @@ Games are auto-detected by scanning their install directory for engine markers (
 
 | Game | Pipeline | Status |
 |------|----------|--------|
+| Rain World | MetalSharp Wine + DXMT Metal (native) | Working |
+| Nidhogg 2 | MetalSharp Wine + WineD3D OpenGL | Working |
+| Undertale | MetalSharp Wine + wined3d | Working |
 | Resident Evil 4 | MetalSharp Wine + Steam DRM | Working |
 | Among Us | MetalSharp Wine + Steam DRM | Working |
 | Ghostrunner | MetalSharp Wine + Steam DRM | Working |
 | Elden Ring | MetalSharp Wine + MetalFX + Steam DRM | Working |
 | DREDGE | MetalSharp Wine + D3DMetal Perf + Steam DRM | Working |
 | Sons of the Forest | MetalSharp Wine + D3DMetal Perf + Steam DRM | Working |
-| Rain World | GPTK Wine + D3DMetal | Working |
-| Nidhogg 2 | MetalSharp Wine + DXMT builtins | Working |
-| Undertale | MetalSharp Wine + wined3d | Working |
 | Celeste | Mono x86_64 + FNA + SDL3 Metal + FMOD | Working |
 | Terraria | Mono arm64 + FNA + SDL3 Metal + FAudio | Working |
 | Portal 2 | Wine Devel + Goldberg | Working |
 
 Tested on Apple M4, macOS 26.
+
+## What's new in Beta 3 (v0.17.0)
+
+- **DXMT Metal-native D3D11** — 64-bit games render through Metal directly via DXMT, no GPTK dependency
+- **Wine 11.5 from source** — 7 custom patches (mscompatdb loader, macdrv_functions export, RTLD_GLOBAL loading, client_cocoa_view compat, CEF GL context, Apple bridge, runtime root)
+- **All-in-one runtime bundle** — single `metalsharp_bundle.tar.zst` (899MB) with Wine + DXMT + DXVK + Mono
+- **Two proven game pipelines** — Rain World (64-bit DXMT Metal), Nidhogg 2 (32-bit WineD3D OpenGL)
 
 ## Install
 
@@ -44,7 +53,7 @@ Download the DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases)
 
 First launch walks through a setup wizard:
 
-1. **Install dependencies** — extracts MetalSharp Wine, DXVK, Mono runtimes from the bundled archives (one Touch ID prompt). Falls back to `brew install` for Rosetta 2 and Xcode CLI tools.
+1. **Install dependencies** — extracts the MetalSharp runtime bundle (one Touch ID prompt). Falls back to `brew install` for Rosetta 2 and Xcode CLI tools.
 2. **Launch Steam** — MetalSharp starts Windows Steam via Wine. Log in through the Steam window.
 3. **Done** — your library loads. Install and play games.
 
@@ -98,13 +107,13 @@ ctest --output-on-failure
 |-------|-----------|
 | Desktop app | Electron + TypeScript |
 | Backend | Rust HTTP server (Actix) |
-| Wine runtime | MetalSharp Wine 11.0 (from-source, gnutls TLS, DXMT builtins) |
+| Wine runtime | MetalSharp Wine 11.5 (from-source, gnutls TLS, DXMT builtins, 7 custom patches) |
 | D3D→Metal | DXMT v0.80+10 (LLVM 15 + Metal toolchain) |
 | D3D→Vulkan | DXVK 1.10.3 |
 | Vulkan→Metal | MoltenVK (via Homebrew) |
 | XNA/FNA | FNA + SDL3 + Mono |
 | Apple D3D | Game Porting Toolkit D3DMetal |
-| Bundles | zstd-compressed archives, extracted at install |
+| Bundles | Single zstd-compressed all-in-one archive |
 
 ## Architecture
 
@@ -123,7 +132,7 @@ app/
 │   │   ├── index.ts    App lifecycle, backend management, steamapps watcher
 │   │   └── preload.ts  IPC bridge to renderer
 │   └── renderer/       Electron renderer — UI, library browser, setup wizard
-└── bundles/            Pre-packaged deps (wine.tar.zst, dxvk.tar.zst, etc.)
+└── bundles/            Pre-packaged deps (metalsharp_bundle.tar.zst)
 
 src/                    Native engine (C++/ObjC++, CMake build)
 ├── metal/              Metal backend — device, shaders, command buffers
@@ -146,14 +155,11 @@ configs/                Mono DLL maps for FNA games
 
 ## Bundled dependencies
 
-The DMG ships with all runtimes pre-packaged. No internet required during install.
+The DMG ships with all runtimes pre-packaged in a single archive. No internet required during install.
 
 | Bundle | Contents |
 |--------|----------|
-| `wine.tar.zst` | MetalSharp Wine 11.0 with DXMT i386 builtins, gnutls, wined3d |
-| `dxvk.tar.zst` | DXVK 1.10.3 x32 + x64 DLLs |
-| `mono-x86.tar.zst` | x86_64 Mono 6.12.0 (Celeste, Rosetta games) |
-| `mono-arm64.tar.zst` | arm64 Mono 6.14.1 (Terraria, native games) |
+| `metalsharp_bundle.tar.zst` | MetalSharp Wine 11.5 with DXMT Metal D3D11/D3D12 builtins, gnutls, wined3d, DXVK 1.10.3, Mono x86 + arm64 |
 | `SteamSetup.exe` | Windows Steam installer |
 
 ## License

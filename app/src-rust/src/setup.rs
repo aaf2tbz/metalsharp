@@ -145,7 +145,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "metalsharp_wine",
                 "name": "MetalSharp Wine",
-                "desc": "From-source Wine 11.0 with gnutls TLS, custom rules engine, and MoltenVK. Runs Windows Steam and launches games with DRM auth.",
+                "desc": "From-source Wine 11.5 with DXMT Metal D3D11, gnutls TLS, MoltenVK. Runs Windows Steam and launches games with native Metal rendering.",
                 "installed": metalsharp_wine,
                 "required": true,
                 "installCmd": "metalsharp-setup-wine",
@@ -297,8 +297,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let game_type = match appid {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
-        312520 => "gptk_wine",
-        535520 => "dxvk_metalsharp_wine",
+        312520 => "dxmt_metal",
+        535520 => "wined3d_32",
         945360 | 1139900 => "metalsharp_wine",
         620 => "wine_devel",
         _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
@@ -487,36 +487,18 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
     Ok(())
 }
 
-fn prepare_rain_world(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let wine64 = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64");
-    if wine64.exists() {
-        let prefix = home.join(".metalsharp").join("prefix-gptk");
-        let system32 = prefix.join("drive_c").join("windows").join("system32");
-        if !system32.exists() {
-            let _ = std::process::Command::new(&wine64)
-                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-                .arg("wineboot")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
+fn prepare_rain_world(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let marker = game_dir.join(".metalsharp_prepared");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, "dxmt_metal");
     }
     Ok(())
 }
 
-fn prepare_nidhogg_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let dxmt_builtins = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("wine").join("i386-windows");
-    if !dxmt_builtins.join("d3d11.dll.bak").exists() {
-        let dxmt_src = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt").join("i386-windows");
-        if dxmt_src.join("d3d11.dll").exists() {
-            for dll in &["d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
-                let builtin = dxmt_builtins.join(dll);
-                if builtin.exists() && !builtin.with_extension("dll.bak").exists() {
-                    let _ = std::fs::rename(&builtin, builtin.with_extension("dll.bak"));
-                }
-                let _ = std::fs::copy(dxmt_src.join(dll), &dxmt_builtins.join(dll));
-            }
-        }
+fn prepare_nidhogg_2(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let marker = game_dir.join(".metalsharp_prepared");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, "wined3d_32");
     }
     Ok(())
 }
@@ -533,13 +515,18 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
         if wine.exists() {
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
-                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
+                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
+    }
+
+    let marker = game_dir.join(".metalsharp_prepared");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, format!("metalsharp_wine_{}", appid));
     }
 
     Ok(())
