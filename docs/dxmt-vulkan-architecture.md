@@ -1,8 +1,8 @@
 # DXMT & Vulkan Architecture
 
-MetalSharp uses two D3D translation pipelines to render Windows games on macOS Metal: **DXMT** (D3D→Metal, direct) and **DXVK + MoltenVK** (D3D→Vulkan→Metal, indirect). DXMT is the primary path. The DXVK pipeline is a fallback for games that need Vulkan intermediaries.
+MetalSharp uses two D3D translation pipelines: **DXMT** (D3D→Metal, direct) and **DXVK + MoltenVK** (D3D→Vulkan→Metal, indirect). DXMT is the primary path.
 
-## Pipeline overview
+## Pipeline Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -28,151 +28,132 @@ MetalSharp uses two D3D translation pipelines to render Windows games on macOS M
 
 ## DXMT — Direct D3D to Metal
 
-DXMT (DX Metal Translation) is the primary graphics pipeline. It translates Direct3D 11 calls directly to Metal command buffers with no Vulkan intermediary. Built from source with LLVM 15 and Apple's Metal toolchain.
+DXMT translates Direct3D 11/12 calls directly to Metal command buffers. No Vulkan intermediary.
 
-### How DXMT works
+### How It Works
 
 ```
 Game creates D3D11 device
-  → loads d3d11.dll (DXMT PE DLL, 5.4MB i386 / 5.1MB x86_64)
-    → DXMT d3d11.dll creates a Metal device (MTLDevice)
-      → D3D11 calls generate Metal command buffers via winemetal.so
-        → Command buffers submitted to Metal command queue
+  → loads d3d11.dll (DXMT PE DLL, copied to game dir by Rust backend)
+    → DXMT d3d11.dll creates MTLDevice via winemetal.so
+      → D3D11 calls generate Metal command buffers
+        → Command buffers submitted to Metal queue
           → Metal framework executes on GPU
 ```
 
-The PE DLL (`d3d11.dll`) is the D3D11 API surface — it implements ID3D11Device, ID3D11DeviceContext, etc. The heavy lifting happens in `winemetal.so` (31MB, Mach-O x86_64), which is the unix-side bridge that creates and manages Metal resources.
+### DXMT Components
 
-### DXMT components
+| File | Architecture | Role |
+|------|-------------|------|
+| `d3d11.dll` | PE32+ (x86_64) | D3D11 device, context, resources |
+| `dxgi.dll` | PE32+ (x86_64) | DXGI factory, adapter, swap chain |
+| `d3d10core.dll` | PE32+ (x86_64) | D3D10 core — some games need it |
+| `d3d12.dll` | PE32+ (x86_64) | D3D12 (for DxmtMetal12 engine) |
+| `winemetal.dll` | PE32+ (x86_64) | PE→unix bridge |
+| `winemetal.so` | Mach-O x86_64 | Metal command buffer bridge (47MB) |
 
-| File | Architecture | Size | Role |
-|------|-------------|------|------|
-| `d3d11.dll` | PE32 (i386) | 5.4MB | D3D11 device, context, resources for 32-bit games |
-| `dxgi.dll` | PE32 (i386) | 1.8MB | DXGI factory, adapter, swap chain for 32-bit games |
-| `d3d10core.dll` | PE32 (i386) | 1.4MB | D3D10 core — some games create D3D10 devices |
-| `winemetal.dll` | PE32 (i386) | 68KB | PE→unix bridge for winemetal.so |
-| `d3d11.dll` | PE32+ (x86_64) | 5.1MB | D3D11 for 64-bit games |
-| `dxgi.dll` | PE32+ (x86_64) | 1.8MB | DXGI for 64-bit games |
-| `d3d10core.dll` | PE32+ (x86_64) | 1.5MB | D3D10 core for 64-bit |
-| `nvapi64.dll` | PE32+ (x86_64) | 1.8KB | NVIDIA API shim |
-| `nvngx.dll` | PE32+ (x86_64) | 1.5MB | NGX (DLSS) shim — no-op on macOS |
-| `winemetal.dll` | PE32+ (x86_64) | 72KB | PE→unix bridge for 64-bit |
-| `winemetal.so` | Mach-O x86_64 | 31MB | Metal command buffer bridge (unix side) |
+### winemetal.so — The Unix Bridge
 
-### winemetal.so — the unix bridge
+Single unix binary. No i386-unix version exists (Metal has no 32-bit macOS API). Works for both 32-bit and 64-bit PE clients:
+- Exports `__wine_unix_call_funcs` for 64-bit
+- Exports `__wine_unix_call_wow64_funcs` with full `thunk32_*` implementations for 32-bit
+- Wine's ntdll loader looks for unix .so in `x86_64-unix/` using `current_machine` (host arch), not PE target machine
 
-`winemetal.so` is the only unix (.so) binary in DXMT. There is no i386-unix version and none can be built on macOS. This works because:
+### 64-bit DLL Injection
 
-1. All unix .so modules in MetalSharp Wine are x86_64
-2. Wine's WoW64 layer handles the 32-bit PE → 64-bit unix .so transition
-3. When a 32-bit game's `d3d11.dll` calls into `winemetal.dll`, the PE bridge forwards to `winemetal.so` (x86_64), and WoW64 handles the bit-width transition
+The Rust backend copies DXMT PE DLLs into the game directory on every launch. This is needed because:
+- 64-bit Wine builtins (`x86_64-windows/d3d11.dll`) are Wine's D3DMetal — Steam needs these
+- DXMT must be loaded from game dir with `WINEDLLOVERRIDES=n,b`
+- `winebuild --builtin` post-processing ensures proper Wine builtin marking
 
-The DYLD path must include DXMT's unix directory for the dynamic linker to find `winemetal.so`:
+### MetalFX Spatial Upscaling
+
+Enabled via `DXMT_METALFX_SPATIAL_SWAPCHAIN=1` env var. DXMT checks `supportsFXSpatialScaler()` on the MTLDevice. Config in `dxmt.conf`:
+- `d3d11.metalSpatialUpscaleFactor = 2.0` — game renders at half resolution, MetalFX upscales to native
+- Reduces GPU workload significantly on supported hardware (Apple M-series)
+
+### Shader Cache
+
+DXMT has two cache systems:
+
+**Shader cache** (`DXMT_SHADER_CACHE_PATH`):
+- Stores compiled Metal shaders in `.db` files (SQLite-based via WMT::CacheWriter/CacheReader)
+- Per-game under `~/.metalsharp/shader-cache/<exename>/`
+- File format: `shaders_<metal_version>.db` (e.g., `shaders_320.db`)
+- `DXMT_SHADER_CACHE=0` disables
+- Path must start with `/` — if set, DXMT uses it directly (no exe name subdirectory appended)
+
+**Metal PSO cache** (automatic):
+- Set in `dxgi.cpp` `InitializeMetalCachePath()` → `dxmt/<exename>/com.apple.metal`
+- `DXMT_USE_DEFAULT_METAL_CACHE=1` skips custom path
+
+### DXMT Config
+
+File: `~/.metalsharp/runtime/wine/etc/dxmt.conf` (set via `DXMT_CONFIG_FILE` env var):
+
 ```
-DYLD_FALLBACK_LIBRARY_PATH=...:$MS_LIB/dxmt/x86_64-unix:...
+d3d11.metalSpatialUpscaleFactor = 2.0
+d3d11.preferredMaxFrameRate = 60
+d3d11.maxFeatureLevel = 12_1
 ```
 
-### DXMT i386 builtins
+All config options documented in DXMT source: `dxmt-src/docs/CUSTOMIZATION.md`
 
-For 32-bit games, the DXMT i386 PE DLLs are installed directly into Wine's `i386-windows/` directory, replacing Wine's original builtins:
+## DXVK + MoltenVK — Vulkan Pipeline
 
-```
-i386-windows/
-  d3d11.dll       → DXMT (5.4MB, was Wine builtin ~2MB)
-  dxgi.dll        → DXMT (1.8MB)
-  d3d10core.dll   → DXMT (1.4MB)
-  winemetal.dll   → DXMT bridge (68KB)
-  (originals saved as .bak)
-```
-
-This is necessary because Wine's WoW64 implementation has a bug where `WINEDLLOVERRIDES=native` fails for 32-bit processes on macOS — the DLL search path resolves as null. By replacing the builtins directly, Wine loads DXMT without needing the override mechanism.
-
-64-bit builtins are **not** replaced. Steam itself is 64-bit and needs Wine's original D3DMetal builtins to render its UI. For 64-bit games that need DXMT, the `metalsharp-wine` wrapper copies DXMT's x86_64 PE DLLs into the game directory and uses `WINEDLLOVERRIDES`, which works correctly for 64-bit processes.
-
-### Backend selection
-
-The `metalsharp-wine` wrapper dispatches based on `MS_BACKEND`:
-
-| `MS_BACKEND` | What happens |
-|---------------|-------------|
-| (unset/default) | Runs Wine with builtins as-is. DXMT i386 builtins are already in place for 32-bit. 64-bit uses Wine's D3DMetal. |
-| `dxmt` | Copies DXMT PE DLLs into `MS_GAME_DIR`, sets `WINEDLLOVERRIDES=d3d11,dxgi,d3d10core=native`. Used for 64-bit games that need DXMT specifically. |
-| `dxmt_dxvk` | Same as `dxmt` but adds DXVK env vars: `DXVK_FRAME_RATE=60`, `MVK_PRESENT_MODE=1`, `DXVK_ASYNC=1`. |
-| `dxvk` | Sets `WINEDLLOVERRIDES=d3d9=native`. For D3D9 games that should use DXVK instead of wined3d. |
-| `gptk` | Bypasses MetalSharp Wine entirely — execs Apple's GPTK wine64 directly. |
-
-## DXVK + MoltenVK — Vulkan intermediary pipeline
-
-DXVK translates Direct3D 9/10/11 calls to Vulkan. MoltenVK translates Vulkan calls to Metal. This is the fallback path — it adds a Vulkan layer between D3D and Metal, which introduces overhead but supports games that don't work with direct D3D→Metal translation.
-
-### Pipeline
+Fallback path. D3D → Vulkan → Metal. Extra translation hop but wider compatibility.
 
 ```
 Game D3D11 calls
-  → DXVK d3d11.dll (translates D3D → Vulkan)
-    → MoltenVK libMoltenVK.dylib (translates Vulkan → Metal)
+  → DXVK d3d11.dll (D3D → Vulkan)
+    → MoltenVK (Vulkan → Metal)
       → Metal framework
 ```
 
 ### Why DXVK 1.10.3 (not 2.x)
 
-DXVK 2.x requires Vulkan 1.3 features. MoltenVK on macOS supports Vulkan 1.1 (some 1.2). DXVK 1.10.3 is the last version that works reliably with MoltenVK's Vulkan 1.1 support.
+DXVK 2.x requires Vulkan 1.3. MoltenVK supports Vulkan 1.1 (some 1.2). DXVK 1.10.3 is the last version compatible.
 
-### DXVK layout
+### DXVK Layout
 
 ```
 ~/.metalsharp/runtime/dxvk-1.10.3/
-├── x32/
-│   ├── d3d11.dll      (3.5MB, D3D11 → Vulkan)
-│   ├── d3d10core.dll  (D3D10 → Vulkan)
-│   ├── d3d9.dll       (D3D9 → Vulkan)
-│   └── dxgi.dll       (DXGI → Vulkan)
-└── x64/
-    ├── d3d11.dll
-    ├── d3d10core.dll
-    ├── d3d9.dll
-    └── dxgi.dll
+├── x32/   (32-bit: d3d11, d3d10core, d3d9, dxgi)
+└── x64/   (64-bit: d3d11, d3d10core, d3d9, dxgi)
 ```
 
-DXVK DLLs are **not** placed in Wine's builtin directories. They're copied into individual game directories by the setup scripts when needed, with `WINEDLLOVERRIDES` set to load them as native DLLs.
+Not placed in Wine's builtin dirs. Copied into game directories when needed.
 
 ### MoltenVK
 
-MoltenVK is installed via Homebrew (`brew install moltenvk`), not bundled. It provides:
-- Vulkan instance/device creation → MTLDevice
-- Vulkan command buffers → Metal command buffers
-- Vulkan image views → Metal textures
-- Vulkan pipeline objects → Metal render pipelines
+Installed via Homebrew (`brew install moltenvk`). Not bundled.
 
-Environment for the DXVK pipeline:
+Env for DXVK pipeline:
 ```
 VK_ICD_FILENAMES=/opt/homebrew/share/vulkan/icd.d/MoltenVK_icd.json
-MVK_PRESENT_MODE=1         # FIFO (vsync)
-DXVK_FRAME_RATE=60         # Frame rate limiter
-DXVK_ASYNC=1               # Async pipeline compilation
+MVK_PRESENT_MODE=1
+DXVK_FRAME_RATE=60
+DXVK_ASYNC=1
 ```
 
-## Comparison: DXMT vs DXVK+MoltenVK
+## Comparison
 
 | Aspect | DXMT | DXVK + MoltenVK |
 |--------|------|-----------------|
-| Translation hops | D3D → Metal (1 hop) | D3D → Vulkan → Metal (2 hops) |
-| Latency | Lower | Higher (extra translation layer) |
-| Compatibility | Works for most D3D11 games | Wider D3D9/10/11 coverage |
-| Vulkan requirement | No | Yes (MoltenVK needed) |
-| DXVK version | N/A | 1.10.3 (Vulkan 1.1 limit) |
-| 32-bit support | Via i386 builtins (no override needed) | Via WINEDLLOVERRIDES (works for 32-bit with DXVK) |
-| Shader compilation | DXBC/DXIL → MSL directly | DXBC → SPIR-V → MSL |
-| Metal feature access | Direct (Metal 3+) | Limited to what MoltenVK exposes |
+| Translation | D3D → Metal (1 hop) | D3D → Vulkan → Metal (2 hops) |
+| Latency | Lower | Higher |
+| Shader path | DXBC/DXIL → MSL direct | DXBC → SPIR-V → MSL |
+| Metal features | Direct access (Metal 3+) | Limited to MoltenVK surface |
+| 32-bit support | Via WoW64 thunks | Via WINEDLLOVERRIDES |
+| Vulkan needed | No | Yes |
 
-## When each pipeline is used
+## Current Usage
 
 | Game | Pipeline | Why |
 |------|----------|-----|
-| Nidhogg 2 | DXMT builtins | 32-bit D3D11 game, DXMT handles it directly |
-| Undertale | Wine wined3d | Simple D3D9 game, no DXVK/DXMT needed |
-| Rain World | Apple GPTK | Works best with Apple's D3DMetal |
-| RE4, Among Us, etc. | Wine D3DMetal (64-bit builtins) | 64-bit games, Steam DRM, Wine's built-in D3DMetal works |
-| Future D3D9 games needing DXVK | DXVK + MoltenVK | DXVK's D3D9 support is more complete than wined3d |
-
-The default path for unknown games is Wine's built-in D3DMetal (64-bit) or DXMT builtins (32-bit). DXVK+MoltenVK is only used when a game specifically needs it.
+| Rain World | DXMT Metal | 64-bit D3D11, primary path |
+| Schedule I | DXMT Metal | 64-bit D3D11, Unity |
+| Subnautica BZ | DXMT Metal | 64-bit D3D11 |
+| Nidhogg 2 | WineD3D OpenGL | 32-bit, no 32-bit Metal API |
+| Portal 2 | Wine D3DMetal | Steam DRM, Wine builtins |
+| RE4 | Wine D3DMetal | Steam DRM, blocked on DXMT injection |
