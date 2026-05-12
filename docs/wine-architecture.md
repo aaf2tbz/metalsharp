@@ -1,8 +1,8 @@
 # MetalSharp Wine Architecture
 
-MetalSharp Wine is a custom Wine 11.5 runtime that runs Windows applications on macOS via Rosetta 2 (x86_64). It replaces the old multi-runtime assembly (Wine Devel + GPTK overlays + CrossOver) with a single self-contained tree at `~/.metalsharp/runtime/wine/`.
+MetalSharp Wine is a custom Wine 11.5 runtime that runs Windows applications on macOS via Rosetta 2 (x86_64). Single self-contained tree at `~/.metalsharp/runtime/wine/`.
 
-## Runtime layout
+## Runtime Layout
 
 ```
 ~/.metalsharp/runtime/wine/
@@ -15,88 +15,105 @@ MetalSharp Wine is a custom Wine 11.5 runtime that runs Windows applications on 
 │   ├── wine/
 │   │   ├── x86_64-unix/    Unix .so modules (ntdll.so, opengl32.so, etc.)
 │   │   │                       Includes mscompatdb.so.disabled (dead rules engine)
-│   │   ├── x86_64-windows/ 64-bit PE DLLs (Wine builtins — untouched)
-│   │   │                       d3d11.dll = Wine's D3DMetal-backed builtin (4.5MB)
-│   │   └── i386-windows/   32-bit PE DLLs (DXMT builtins replace originals)
-│   │                           d3d11.dll = DXMT (5.4MB, replaces Wine builtin)
-│   │                           dxgi.dll  = DXMT (1.8MB)
-│   │                           d3d10core.dll = DXMT (1.4MB)
-│   │                           winemetal.dll = DXMT bridge (68KB)
+│   │   ├── x86_64-windows/ 64-bit PE DLLs (Wine builtins)
+│   │   └── i386-windows/   32-bit PE DLLs
+│   │                           DXMT builtins for d3d11/dxgi/d3d10core/winemetal
 │   │                           Originals backed up as .bak
 │   └── dxmt/
-│       ├── x86_64-unix/    winemetal.so (31MB, Mach-O x86_64)
-│       │                       Metal command buffer bridge — the only .so
-│       │                       DXMT produces. No i386-unix version exists.
-│       ├── x86_64-windows/ 64-bit DXMT PE DLLs (d3d11, dxgi, nvapi64, nvngx)
-│       └── i386-windows/   32-bit DXMT PE DLLs (d3d11, dxgi, d3d10core, winemetal)
+│       ├── x86_64-unix/    winemetal.so (47MB, Mach-O x86_64)
+│       │                       Metal command buffer bridge
+│       │                       Exports __wine_unix_call_wow64_funcs for 32-bit
+│       └── x86_64-windows/ 64-bit DXMT PE DLLs
+│           d3d11.dll (72MB), dxgi.dll (20MB), d3d10core.dll (14MB)
+│           d3d12.dll (36MB), winemetal.dll (269KB)
+├── etc/
+│   └── dxmt.conf           DXMT config (MetalFX upscaling, framerate cap)
 └── share/
     └── wine/               Wine data files (fonts, inf, nls)
 ```
 
-## How it works
+## How It Works
 
-### WoW64 architecture
+### WoW64 Architecture
 
-MetalSharp Wine uses WoW64 (Windows on Windows 64) to run 32-bit Windows PE binaries on the 64-bit Wine server:
+MetalSharp Wine uses WoW64 to run 32-bit Windows PE binaries on the 64-bit Wine server:
 
 ```
 32-bit PE game (e.g., Nidhogg 2)
   → loads i386-windows/d3d11.dll (DXMT, PE32)
     → DXMT DLL calls into winemetal.so (x86_64-unix, Mach-O)
-      → winemetal.so creates Metal command buffers
-        → Metal framework renders to screen
+      → Wine's WoW64 handles 32→64 bit transition
+        → winemetal.so creates Metal command buffers
+          → Metal framework renders to screen
 ```
 
-There is **no i386-unix directory**. All unix .so modules are x86_64 only. When a 32-bit PE DLL needs to call into a unix .so, Wine's WoW64 layer handles the 32→64 bit transition. This is why `winemetal.so` is the only DXMT unix binary — it's always x86_64 regardless of whether the game is 32 or 64-bit.
+There is **no i386-unix directory**. All unix .so modules are x86_64 only. `winemetal.so` exports `__wine_unix_call_wow64_funcs` with full `thunk32_*` implementations for 32-bit PE clients.
 
-### The CrossOver WoW64 bug and the builtin fix
+### DXMT DLL Injection for 64-bit Games
 
-Wine's `WINEDLLOVERRIDES=d3d11=native` tells Wine to load a DLL from the game directory instead of its builtins. For 64-bit processes this works fine. For 32-bit processes on macOS, Wine's `load_path` resolves as `(null)` when searching for native overrides — a WoW64 bug inherited from CrossOver's patches. This means `status c0000135` (DLL not found) for any native override in a 32-bit process.
+For DxmtMetal games (Rain World, Schedule I, Subnautica BZ), the Rust backend copies DXMT PE DLLs directly into the game directory on every launch:
 
-**The fix:** Replace Wine's builtin DLLs in `i386-windows/` directly with DXMT's versions. Wine loads builtins from its own directory without the override mechanism, so the bug is bypassed entirely. The original Wine builtins are preserved as `.bak` files.
-
-The 64-bit builtins are left untouched — `WINEDLLOVERRIDES` works correctly for 64-bit processes, and Steam itself is 64-bit and needs Wine's original D3DMetal builtins.
-
-### DYLD_FALLBACK_LIBRARY_PATH
-
-The `winemetal.so` unix library lives outside Wine's standard search paths. The wrapper exports:
-
-```
-DYLD_FALLBACK_LIBRARY_PATH="$MS_LIB:$MS_LIB/wine/x86_64-unix:$MS_LIB/dxmt/x86_64-unix:..."
+```rust
+std::fs::copy(dxmt_x64.join("d3d11.dll"), game.join("d3d11.dll"));
+std::fs::copy(dxmt_x64.join("dxgi.dll"), game.join("dxgi.dll"));
+std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
+std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
 ```
 
-Without this, the PE→unix bridge can't locate `winemetal.so` at runtime and D3D11 device creation fails.
+With `WINEDLLOVERRIDES="dxgi,d3d11,d3d10core,winemetal=n,b"`, Wine loads these from the game dir instead of its builtins. The `winebuild --builtin` post-processing ensures they're loaded as proper Wine builtins, not native overrides.
 
-## Environment variables
+### Why mscompatdb Is Dead
 
-The `metalsharp-wine` wrapper sets these before dispatching to the backend:
+The old `mscompatdb.so` hooked ntdll syscalls for per-game overrides. Fragile — broke when Wine's syscall patterns changed. Now disabled (`.so.disabled`).
+
+Game routing is handled entirely by the Rust backend in `launch.rs`.
+
+## Environment Variables
+
+The `metalsharp-wine` wrapper sets:
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-| `MS_ROOT` | `~/.metalsharp/runtime/wine` | Base of the Wine tree |
-| `CX_ROOT` | Same as `MS_ROOT` | Back-compat — some Wine patches check this |
-| `WINEPREFIX` | `~/.metalsharp/prefix-steam` | Default prefix (overridable) |
-| `WINEDLLPATH` | `lib/wine/x86_64-windows:lib/wine/i386-windows` | Where Wine finds PE builtins |
-| `WINELOADER` | `bin/wineloader` | Which Wine binary to use |
-| `WINESERVER` | `bin/wineserver` | Which wineserver to use |
-| `DYLD_FALLBACK_LIBRARY_PATH` | Includes `lib/`, `lib/wine/x86_64-unix/`, `lib/dxmt/x86_64-unix/` | Unix .so resolution |
-| `MS_BACKEND` | User-set | Selects graphics backend |
+| `MS_ROOT` | `~/.metalsharp/runtime/wine` | Base of Wine tree |
+| `CX_ROOT` | Same as `MS_ROOT` | Back-compat for Wine patches |
+| `WINEPREFIX` | `~/.metalsharp/prefix-steam` | Default prefix |
+| `WINEDLLPATH` | `lib/wine/x86_64-windows:lib/wine/i386-windows` | PE builtin search |
+| `WINELOADER` | `bin/wineloader` | Wine binary |
+| `WINESERVER` | `bin/wineserver` | Wine server |
+| `DYLD_FALLBACK_LIBRARY_PATH` | Includes `lib/wine/x86_64-unix/`, `lib/dxmt/x86_64-unix/` | Unix .so resolution |
 
-## Why mscompatdb is dead
+## DYLD_FALLBACK_LIBRARY_PATH
 
-The old `mscompatdb.so` was a rules engine that hooked `ntdll` syscalls to apply per-game DLL overrides, env vars, and command line patches. It was fragile — the ntdll hooking approach broke when Wine's internal syscall patterns changed between versions. It's now disabled (`.so.disabled`).
+Critical for DXMT — `winemetal.so` lives outside Wine's standard search paths. Without it:
 
-Game routing is handled by:
-1. **`launch.rs`** — Rust code that maps app IDs to engine types and sets the right env vars
-2. **`metalsharp-wine` wrapper** — the `MS_BACKEND` env var selects the graphics pipeline
-3. **DXMT i386 builtins** — no DLL override configuration needed for 32-bit games
+```
+DYLD_FALLBACK_LIBRARY_PATH="$MS_LIB/wine/x86_64-unix:$MS_LIB/dxmt/x86_64-unix:..."
+```
 
-## What came from CrossOver
+The PE→unix bridge can't locate `winemetal.so` and D3D11 device creation fails.
 
-MetalSharp Wine is built from Wine 11.5 upstream source with 7 custom patches (patches A-G). The contributions include:
+## Wine Prefix
+
+Single shared prefix at `~/.metalsharp/prefix-steam/`:
+- Steam installed inside it (`drive_c/Program Files (x86)/Steam/`)
+- External SSD Steam library mapped as F: drive
+- `steamwebhelper.exe` wrapper deployed for CEF rendering (re-deploy after Steam auto-updates)
+
+## Building Wine 11.5
+
+From upstream source with 7 custom patches (A-G). Key build details:
+- MinGW GCC for PE cross-compilation
+- `-fno-function-sections` (MinGW 15.2 linker drops symbols with `-ffunction-sections`)
+- `__attribute__((used))` on specific exports
+- Bison 3.8+ required (Homebrew, not macOS system bison 2.3)
+- freetype 2.13.3, gnutls, MoltenVK linked
+
+## What Came From CrossOver
+
+MetalSharp Wine is built from Wine 11.5 upstream source with 7 custom patches. Contributions include:
 - gnutls TLS support (Steam login)
 - freetype font rendering
 - macOS-specific fixes (macdrv, DIEM, CEF compatibility)
-- The WoW64 implementation used for 32-bit game support
+- WoW64 implementation for 32-bit game support
 
-No CrossOver proprietary code is included. `cxcompatdb.so` and CrossOver's bottle system are not used.
+No CrossOver proprietary code. `cxcompatdb.so` and CrossOver's bottle system are not used.

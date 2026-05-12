@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.18.0 — 2026-05-12
+
+Performance optimizations, GPTK D3DMetal integration for Steam DRM games, 7 games confirmed working.
+
+### Added
+
+- **GPTK D3DMetal for Steam DRM games** — `SteamD3DMetalPerf` now sets `WINEDLLPATH` to include GPTK's `x86_64-windows/` dir and `DYLD_FALLBACK_LIBRARY_PATH` to include GPTK's `x86_64-unix/`, loading Apple's D3DMetal d3d11.dll instead of WineD3D for Steam-launched games
+- **Per-game DXMT shader cache** — `DXMT_SHADER_CACHE_PATH` set to `~/.metalsharp/shader-cache/<exename>/` for persistent shader caching, eliminating recompilation stutter on subsequent launches
+- **MetalFX 2x spatial upscaling** — `DXMT_METALFX_SPATIAL_SWAPCHAIN=1` env var + `d3d11.metalSpatialUpscaleFactor = 2.0` in `dxmt.conf`, games render at half resolution with MetalFX upscaling to native
+- **DXMT config file** — `~/.metalsharp/runtime/wine/etc/dxmt.conf` with MetalFX 2x, 60fps cap (`d3d11.preferredMaxFrameRate`), feature level 12_1
+- **MetalFX env vars on DxmtMetal and DxmtMetal12** — shader cache path, config file, and MetalFX swapchain flag added to both D3D11 and D3D12 launch paths
+- **`metalsharp_bundle2.tar.zst`** — pre-built shims (SDL3, FNA3D, FMOD stubs, CSteamworks, steam_api) and DXMT config, extracted alongside main bundle by installer
+- **Portal 2 (appid 620)** — explicitly mapped to `SteamD3DMetalPerf`, was auto-detected as `SteamMetalfx` (inert D3DM env vars)
+- **Goat Simulator (appid 265930)** — mapped to `SteamD3DMetalPerf`, 32-bit UE3 D3D9 via Wine's 32-bit stack
+- **Celeste (appid 504230)** — mapped to `SteamD3DMetalPerf` (was `FnaX86`). Steam Celeste exe references XNA Framework, not FNA managed DLLs. Works via Steam DRM + GPTK D3DMetal
+- **Subnautica BZ (appid 848450)** — added to `DxmtMetal` explicit map
+- **Schedule I (appid 3164500)** — moved from `DxmtMetal12` to `DxmtMetal` (D3D11 only, no D3D12 needed)
+- **High on Life (appid 1583230)** — mapped to `SteamD3DMetalPerf` with GPTK D3DMetal
+- **Games Supported doc** — `docs/GAMES-SUPPORTED.md` with full game compatibility, launch methods, recommended settings
+- **Library merge** — wine-steam installed games merged into owned games list in `library()`, fixes games not appearing if Steam API doesn't report them
+
+### Changed
+
+- **Auto-detection: `.pak` files route to `SteamD3DMetalPerf`** — was `SteamMetalfx` (D3DMetal env vars). Source engine games get GPTK D3DMetal now
+- **`SteamD3DMetalPerf` uses GPTK D3DMetal** — `WINEDLLPATH` prepended with GPTK's DLL dir so Wine loads Apple's d3d11.dll. Previous D3DM_* env vars were inert (no D3DMetal framework in our Wine builtins)
+- **Installer extracts bundle2** — `install_metalsharp_bundle()` now extracts `metalsharp_bundle2.tar.zst` after main bundle, installing shims and DXMT config
+- **CI downloads all .tar.zst** — GitHub Actions downloads all archives from `bundles` release including new bundle2
+
+### Removed
+
+- `SteamDxmtMetal` engine variant — Steam DRM + DXMT injection via env vars didn't propagate to Steam's child process
+
+### Known Issues
+
+- **High on Life**: Crashes after loading screen with GPTK D3DMetal. UE4 compatibility limitation
+- **RE4**: Crashes with GPTK D3DMetal. Needs investigation
+- **DXVK 32-bit**: Feature level 0 — all D3D feature levels unsupported through Wine's Vulkan WoW64 thunks
+- **Steam auto-updates overwrite steamwebhelper wrapper** — must re-deploy after updates
+
 ## v0.17.0 — 2026-05-11
 
 Beta 3. DXMT Metal-native D3D11 rendering, eliminating the GPTK dependency for 64-bit games. Wine 11.5 from source with 7 custom patches. Single all-in-one runtime bundle.
