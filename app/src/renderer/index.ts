@@ -241,6 +241,14 @@ class App {
     setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
   }
 
+  private async loadCacheSizes() {
+    const result = await this.api<{ ok: boolean; shader_cache: { bytes: number; files: number }; pipeline_cache: { bytes: number; files: number } }>("GET", "/cache/size");
+    if (result?.ok) {
+      this.shaderCacheBytes = result.shader_cache.bytes;
+      this.pipelineCacheBytes = result.pipeline_cache.bytes;
+    }
+  }
+
   private async loadLibrary() {
     const lib = await this.api<SteamLibrary>("GET", "/steam/library");
     if (lib) this.library = lib;
@@ -1134,12 +1142,16 @@ class App {
     }
   }
 
+  private shaderCacheBytes: number = -1;
+  private pipelineCacheBytes: number = -1;
+
   private renderSettings() {
     const el = document.getElementById("view-settings")!;
     const steam = this.steam;
     const cfg = this.config;
 
     const savedKey = this.steamApiKey;
+    this.loadCacheSizes();
 
     el.innerHTML = `
       <div class="library-header">
@@ -1267,6 +1279,7 @@ class App {
             <div class="settings-desc">Persist compiled shaders to disk for faster loading</div>
           </div>
           <div class="settings-value">
+            <span id="shader-cache-size" class="badge badge-ok" style="margin-right:8px;">${this.shaderCacheBytes >= 0 ? this.formatBytes(this.shaderCacheBytes) : "..."}</span>
             <button class="btn btn-secondary btn-sm" id="btn-clear-shader-cache">Clear Cache</button>
           </div>
         </div>
@@ -1276,6 +1289,7 @@ class App {
             <div class="settings-desc">Persist compiled pipeline state objects</div>
           </div>
           <div class="settings-value">
+            <span id="pipeline-cache-size" class="badge badge-ok" style="margin-right:8px;">${this.pipelineCacheBytes >= 0 ? this.formatBytes(this.pipelineCacheBytes) : "..."}</span>
             <button class="btn btn-secondary btn-sm" id="btn-clear-pipeline-cache">Clear Cache</button>
           </div>
         </div>
@@ -1399,13 +1413,27 @@ class App {
     });
 
     el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {
-      await this.api("POST", "/cache/clear", { type: "shader" });
-      this.toast("Shader cache cleared");
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "shader" });
+      if (result?.ok) {
+        this.toast(`Shader cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`);
+      } else {
+        this.toast("Shader cache cleared");
+      }
+      this.shaderCacheBytes = 0;
+      const badge = document.getElementById("shader-cache-size");
+      if (badge) badge.textContent = "0 B";
     });
 
     el.querySelector("#btn-clear-pipeline-cache")?.addEventListener("click", async () => {
-      await this.api("POST", "/cache/clear", { type: "pipeline" });
-      this.toast("Pipeline cache cleared");
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "pipeline" });
+      if (result?.ok) {
+        this.toast(`Pipeline cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`);
+      } else {
+        this.toast("Pipeline cache cleared");
+      }
+      this.pipelineCacheBytes = 0;
+      const badge = document.getElementById("pipeline-cache-size");
+      if (badge) badge.textContent = "0 B";
     });
 
     el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {

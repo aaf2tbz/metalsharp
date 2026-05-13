@@ -399,6 +399,84 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Post, "/cache/clear") => {
+            let body = read_body(req);
+            let cache_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("shader");
+            let home = dirs::home_dir().unwrap_or_default();
+            let base = home.join(".metalsharp").join("shader-cache");
+            let target = match cache_type {
+                "pipeline" => base.clone(),
+                _ => base.clone(),
+            };
+            let mut total_bytes: u64 = 0;
+            let mut file_count: u32 = 0;
+            if target.exists() {
+                if let Ok(entries) = std::fs::read_dir(&target) {
+                    for entry in entries.flatten() {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.is_dir() {
+                                if let Ok(walk) = std::fs::read_dir(entry.path()) {
+                                    for f in walk.flatten() {
+                                        if let Ok(m) = f.metadata() {
+                                            if m.is_file() {
+                                                total_bytes += m.len();
+                                                file_count += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if meta.is_file() {
+                                total_bytes += meta.len();
+                                file_count += 1;
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&target);
+                let _ = std::fs::create_dir_all(&target);
+            }
+            app_log(&format!("Cleared {} cache: {} files, {} bytes", cache_type, file_count, total_bytes));
+            resp(200, json!({
+                "ok": true,
+                "cache_type": cache_type,
+                "files_removed": file_count,
+                "bytes_freed": total_bytes,
+            }))
+        },
+        (Method::Get, "/cache/size") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let base = home.join(".metalsharp").join("shader-cache");
+            let mut shader_bytes: u64 = 0;
+            let mut shader_files: u32 = 0;
+            if base.exists() {
+                if let Ok(entries) = std::fs::read_dir(&base) {
+                    for entry in entries.flatten() {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.is_dir() {
+                                if let Ok(walk) = std::fs::read_dir(entry.path()) {
+                                    for f in walk.flatten() {
+                                        if let Ok(m) = f.metadata() {
+                                            if m.is_file() {
+                                                shader_bytes += m.len();
+                                                shader_files += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if meta.is_file() {
+                                shader_bytes += meta.len();
+                                shader_files += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            resp(200, json!({
+                "ok": true,
+                "shader_cache": {"bytes": shader_bytes, "files": shader_files},
+                "pipeline_cache": {"bytes": 0, "files": 0},
+            }))
+        },
         _ => resp(404, json!({"ok": false, "error": "not found"})),
     }
 }
