@@ -83,7 +83,31 @@ fn run_install_all() {
 
     let total = steps.len();
 
-    write_progress(0, total, "Starting...", "starting", "Preparing to install dependencies...", None);
+    write_progress(0, total, "Starting...", "starting", "Verifying prerequisites...", None);
+
+    if !check_command("tar") {
+        write_progress(
+            0,
+            total,
+            "Prerequisites",
+            "error",
+            "tar not found — macOS should have this. Is your system intact?",
+            Some("tar command not found"),
+        );
+        return;
+    }
+
+    if !check_command("brew") {
+        write_progress(
+            0,
+            total,
+            "Homebrew",
+            "error",
+            "Homebrew is required but not installed. Please install it first from the setup wizard.",
+            Some("Homebrew not installed — install from https://brew.sh"),
+        );
+        return;
+    }
 
     for (i, (name, installer)) in steps.iter().enumerate() {
         let step_num = i + 1;
@@ -208,7 +232,17 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
             let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
         }
         if ms_wine.exists() {
-            return Ok(true);
+            let wine_check = Command::new(&ms_wine).arg("--version").output();
+            match wine_check {
+                Ok(o) if o.status.success() => return Ok(true),
+                Ok(o) => {
+                    return Err(format!(
+                        "Wine binary exists but --version failed: {}",
+                        String::from_utf8_lossy(&o.stderr)
+                    ))
+                },
+                Err(e) => return Err(format!("Wine binary exists but cannot execute: {}", e)),
+            }
         }
     }
 

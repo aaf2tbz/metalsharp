@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 
 fn ms_wine() -> PathBuf {
     dirs::home_dir()
@@ -39,6 +42,7 @@ pub fn status() -> Value {
 
     let running = is_wine_steam_running();
     let ms_available = ms_wine().exists();
+    let installing = is_installing_steam();
 
     json!({
         "installed": windows_installed,
@@ -46,13 +50,18 @@ pub fn status() -> Value {
         "login_state": login_state,
         "mac_installed": mac_installed,
         "running": running,
-        "metalsharp_wine_available": ms_available
+        "metalsharp_wine_available": ms_available,
+        "installing": installing
     })
 }
 
 pub fn is_wine_steam_running() -> bool {
     Command::new("pgrep").args(["-f", "Steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
         || Command::new("pgrep").args(["-f", "steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+pub fn is_installing_steam() -> bool {
+    STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
@@ -686,15 +695,34 @@ fn parse_vdf_value(line: &str, key: &str) -> Option<String> {
 }
 
 pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let metalsharp_dir = home.join(".metalsharp");
-    std::fs::create_dir_all(&metalsharp_dir)?;
-
     let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
 
     if steam_dir.join("steamui.dll").exists() && steam_exe_path().exists() {
         return Ok("Steam already installed".into());
     }
+
+    if STEAM_INSTALLING.load(Ordering::SeqCst) {
+        return Ok("Steam installation already in progress".into());
+    }
+
+    if STEAM_INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Ok("Steam installation already in progress".into());
+    }
+
+    std::thread::spawn(move || {
+        let _ = run_install_steam();
+        STEAM_INSTALLING.store(false, Ordering::SeqCst);
+    });
+
+    Ok("Steam installation started — polling /steam/status for completion".into())
+}
+
+fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let metalsharp_dir = home.join(".metalsharp");
+    std::fs::create_dir_all(&metalsharp_dir)?;
+
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
 
     let _ = std::fs::remove_dir_all(steam_prefix());
 
@@ -742,7 +770,7 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
     );
 
-    let _ = Command::new(&wine)
+    let wineboot_result = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
@@ -752,7 +780,24 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stderr(std::process::Stdio::null())
         .status();
 
-    let child = Command::new(&wine)
+    if wineboot_result.is_err() {
+        return Err("wineboot --init failed — MetalSharp Wine may not be properly installed".into());
+    }
+
+    let windows_dir = prefix.join("drive_c").join("windows").join("system32");
+    let mut wineboot_ok = false;
+    for _ in 0..30 {
+        if windows_dir.exists() {
+            wineboot_ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    if !wineboot_ok {
+        return Err("wineboot --init timed out — Wine prefix was not created within 60 seconds".into());
+    }
+
+    let _child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
@@ -761,10 +806,20 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    std::thread::sleep(std::time::Duration::from_secs(30));
-    deploy_steamwebhelper_wrapper(&steam_dir);
+    let steam_exe = steam_dir.join("Steam.exe");
+    let steam_ui_dll = steam_dir.join("steamui.dll");
+    for _ in 0..70 {
+        if steam_exe.exists() && steam_ui_dll.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 
-    Ok(format!("Launched Steam installer via MetalSharp Wine (pid {}) — complete the setup wizard, then launch Steam again. CEF wrapper will be deployed on first Steam launch.", child.id()))
+    if steam_exe.exists() && steam_ui_dll.exists() {
+        deploy_steamwebhelper_wrapper(&steam_dir);
+    }
+
+    Ok("Steam install thread complete".into())
 }
 
 pub fn watch_steamapps() -> Option<String> {
