@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld("metalsharp", {
   installDeps: (command: string) => ipcRenderer.invoke("app:install-deps", command),
   installHomebrew: () => ipcRenderer.invoke("app:install-homebrew"),
   onSteamappsChanged: (callback: () => void) => ipcRenderer.on("steamapps:changed", callback),
+  openInFinder: (path: string) => ipcRenderer.invoke("app:open-in-finder", path),
 });

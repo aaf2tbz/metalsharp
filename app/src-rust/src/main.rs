@@ -60,8 +60,9 @@ fn main() {
 fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
     let method = req.method().clone();
     let url = req.url().to_string();
+    let path = url.split('?').next().unwrap_or(&url);
 
-    match (method, url.as_str()) {
+    match (method, path) {
         (Method::Get, "/status") => {
             app_log("Backend status checked");
             resp(
@@ -237,6 +238,56 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             }
             resp(200, json!({"ok": true, "logs": entries}))
         },
+        (Method::Get, "/logs/stream") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let log_dir = home.join(".metalsharp").join("logs");
+            let url_str = req.url().to_string();
+            let after: usize = url_str
+                .split("after=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let log_path = log_dir.join(format!("{}.log", chrono_date()));
+            if let Ok(content) = std::fs::read_to_string(&log_path) {
+                let all_lines: Vec<&str> = content.lines().collect();
+                let total = all_lines.len();
+                let new_lines: Vec<&str> = if after < total { all_lines[after..].to_vec() } else { Vec::new() };
+                resp(
+                    200,
+                    json!({
+                        "ok": true,
+                        "total": total,
+                        "lines": new_lines,
+                    }),
+                )
+            } else {
+                resp(200, json!({"ok": true, "total": 0, "lines": []}))
+            }
+        },
+        (Method::Get, "/logs/crash-reports") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let mut reports = Vec::new();
+            let game_base = home.join(".metalsharp").join("games");
+            if let Ok(rd) = std::fs::read_dir(&game_base) {
+                for entry in rd.flatten() {
+                    if entry.path().is_dir() {
+                        let appid = entry.file_name().to_string_lossy().to_string();
+                        let _ = scan_crash_files(&entry.path(), &appid, &mut reports);
+                    }
+                }
+            }
+            let prefix = home.join(".metalsharp").join("prefix-steam").join("drive_c");
+            let _ = scan_crash_files(&prefix, "system", &mut reports);
+            reports.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
+                b.get("timestamp")
+                    .unwrap_or(&json!(""))
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(a.get("timestamp").unwrap_or(&json!("")).as_str().unwrap_or(""))
+            });
+            resp(200, json!({"ok": true, "reports": reports}))
+        },
         (Method::Get, "/config") => resp(200, launch::get_config()),
         (Method::Post, "/config") => {
             let body = read_body(req);
@@ -290,14 +341,18 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             match appid {
                 Some(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    app_log(&format!("Auto-launching game: appid {} method {}", id, launch_method));
+                    let engine_desc = launch::engine_description_for_appid(id as u32);
+                    app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
                     match launch::launch_with_method(id as u32, launch_method) {
                         Ok((pid, game_type)) => {
-                            app_log(&format!("Launched appid {} as {} (pid {})", id, game_type, pid));
-                            resp(200, json!({"ok": true, "pid": pid, "gameType": game_type, "appid": id}))
+                            app_log(&format!("[LAUNCHED] appid {} | pid {} | engine: {}", id, pid, game_type));
+                            resp(
+                                200,
+                                json!({"ok": true, "pid": pid, "gameType": game_type, "appid": id, "engine": engine_desc}),
+                            )
                         },
                         Err(e) => {
-                            app_log(&format!("Auto-launch failed: {}", e));
+                            app_log(&format!("[LAUNCH FAILED] appid {} | error: {}", id, e));
                             resp(500, json!({"ok": false, "error": e.to_string()}))
                         },
                     }
@@ -309,15 +364,24 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             let body = read_body(req);
             let pid = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
             let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
-            app_log(&format!("Killing process: pid {} appid {:?}", pid, appid));
+            app_log(&format!("[STOP] pid {} appid {:?}", pid, appid));
             if let Some(aid) = appid {
                 match launch::kill_game(aid) {
-                    Ok(_) => resp(200, json!({"ok": true})),
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    Ok(_) => {
+                        app_log(&format!("[STOPPED] appid {}", aid));
+                        resp(200, json!({"ok": true}))
+                    },
+                    Err(e) => {
+                        app_log(&format!("[STOP FAILED] appid {} | error: {}", aid, e));
+                        resp(500, json!({"ok": false, "error": e.to_string()}))
+                    },
                 }
             } else {
                 match launch::kill(pid) {
-                    Ok(_) => resp(200, json!({"ok": true})),
+                    Ok(_) => {
+                        app_log(&format!("[STOPPED] pid {}", pid));
+                        resp(200, json!({"ok": true}))
+                    },
                     Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                 }
             }
@@ -435,4 +499,41 @@ fn read_body(req: &mut tiny_http::Request) -> serde_json::Map<String, serde_json
     let mut buf = Vec::new();
     let _ = req.as_reader().read_to_end(&mut buf);
     serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&buf).unwrap_or_default()
+}
+
+fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
+    let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            let is_crash = crash_patterns.iter().any(|p| name.contains(p));
+            if is_crash {
+                let metadata = std::fs::metadata(&path).ok();
+                let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                let modified = metadata.and_then(|m| m.modified().ok());
+                let timestamp = modified
+                    .map(|t| {
+                        let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                        let secs = d.as_secs();
+                        let h = (secs / 3600) % 24;
+                        let m = (secs / 60) % 60;
+                        let s = secs % 60;
+                        format!("{:02}:{:02}:{:02}", h, m, s)
+                    })
+                    .unwrap_or_else(|| "unknown".into());
+                reports.push(json!({
+                    "file": path.to_string_lossy(),
+                    "name": entry.file_name().to_string_lossy().to_string(),
+                    "source": source,
+                    "timestamp": timestamp,
+                    "size_bytes": size,
+                }));
+            }
+            if path.is_dir() {
+                let sub_source = source.to_string();
+                scan_crash_files(&path, &sub_source, reports);
+            }
+        }
+    }
 }

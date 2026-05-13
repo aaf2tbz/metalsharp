@@ -287,4 +287,14 @@ function registerIpc() {
       );
     });
   });
+
+  ipcMain.handle("app:open-in-finder", async (_e, inputPath: string) => {
+    const home = require("os").homedir();
+    const resolved = inputPath.replace(/^~/, home);
+    const fullPath = path.resolve(resolved);
+    if (!fs.existsSync(fullPath)) {
+      fs.mkdirSync(fullPath, { recursive: true });
+    }
+    shell.openPath(fullPath);
+  });
 }

@@ -96,4 +96,5 @@ type MetalsharpAPI = {
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;
+  openInFinder: (path: string) => Promise<void>;
 };
