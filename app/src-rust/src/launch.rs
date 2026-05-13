@@ -175,13 +175,13 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         Engine::DxmtMetal => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
-            let pid = launch_dxmt_metal(&exe, dir)?;
+            let pid = launch_dxmt_metal(appid, &exe, dir)?;
             Ok((pid, "dxmt_metal"))
         },
         Engine::DxmtMetal12 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
-            let pid = launch_dxmt_metal12(&exe, dir)?;
+            let pid = launch_dxmt_metal12(appid, &exe, dir)?;
             Ok((pid, "dxmt_metal12"))
         },
         Engine::Wined3d32 => {
@@ -418,7 +418,7 @@ fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn s
     Ok(child.id())
 }
 
-fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_dxmt_metal(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = ms_root.join("bin").join("metalsharp-wine");
@@ -442,10 +442,9 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
     let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
     let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
 
-    let shader_cache_base = home.join(".metalsharp").join("shader-cache");
-    let game_cache_dir = shader_cache_base.join(&exe_name);
-    let _ = std::fs::create_dir_all(&game_cache_dir);
-    let shader_cache_path = game_cache_dir.to_string_lossy().to_string();
+    let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxmt-metal").join(appid.to_string());
+    let _ = std::fs::create_dir_all(&shader_cache_base);
+    let shader_cache_path = shader_cache_base.to_string_lossy().to_string();
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let child = Command::new(&wine)
@@ -463,7 +462,7 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
     Ok(child.id())
 }
 
-fn launch_dxmt_metal12(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn launch_dxmt_metal12(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = ms_root.join("bin").join("metalsharp-wine");
@@ -488,10 +487,9 @@ fn launch_dxmt_metal12(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dy
     let _ = std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
     let _ = std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
 
-    let shader_cache_base = home.join(".metalsharp").join("shader-cache");
-    let game_cache_dir = shader_cache_base.join(&exe_name);
-    let _ = std::fs::create_dir_all(&game_cache_dir);
-    let shader_cache_path = game_cache_dir.to_string_lossy().to_string();
+    let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxmt-metal12").join(appid.to_string());
+    let _ = std::fs::create_dir_all(&shader_cache_base);
+    let shader_cache_path = shader_cache_base.to_string_lossy().to_string();
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let child = Command::new(&wine)
