@@ -27,6 +27,21 @@ pub fn recommended_method_for_appid(appid: u32) -> &'static str {
     engine_method(get_engine_for_appid(appid))
 }
 
+pub fn engine_description_for_appid(appid: u32) -> &'static str {
+    let engine = get_engine_for_appid(appid);
+    match engine {
+        Engine::FnaArm64 => "FNA (ARM64) — Mono + OpenGL/Metal",
+        Engine::FnaX86 => "FNA (x86) — Mono + OpenGL/Metal",
+        Engine::DxmtMetal => "DXMT D3D11 → Metal — native Metal translation",
+        Engine::DxmtMetal12 => "DXMT D3D12 → Metal — native Metal translation",
+        Engine::Wined3d32 => "WineD3D (32-bit) — CPU fallback renderer",
+        Engine::MetalsharpWine => "MetalSharp Wine — bare Wine",
+        Engine::SteamBare => "Steam Native — macOS native launch",
+        Engine::SteamMetalfx => "D3DMetal + MetalFX — spatial upscaling",
+        Engine::SteamD3DMetalPerf => "D3DMetal Perf — Apple D3D→Metal with optimizations",
+    }
+}
+
 fn engine_method(engine: Engine) -> &'static str {
     match engine {
         Engine::FnaArm64 => "xna_fna_arm64",

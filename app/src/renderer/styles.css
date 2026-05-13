@@ -1492,3 +1492,37 @@ body {
   font-size: 11px;
   margin-top: 8px;
 }
+
+/* Log Events */
+.log-line {
+  padding: 1px 0;
+  border-left: 3px solid transparent;
+  padding-left: 8px;
+  margin: 1px 0;
+}
+
+.log-line.log-event-launch {
+  border-left-color: var(--success);
+  color: var(--success);
+}
+
+.log-line.log-event-stop {
+  border-left-color: var(--orange);
+  color: var(--orange);
+}
+
+.log-line.log-event-error {
+  border-left-color: var(--error);
+  color: var(--error);
+  font-weight: 600;
+}
+
+.log-line.log-event-engine {
+  border-left-color: var(--violet-light);
+  color: var(--violet-light);
+}
+
+.log-line.log-event-warn {
+  border-left-color: #e8a840;
+  color: #e8a840;
+}
