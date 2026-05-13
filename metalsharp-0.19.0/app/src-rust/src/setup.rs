@@ -255,24 +255,29 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
         return Some(local_dir);
     }
 
-    let wine_steamapps = home
-        .join(".metalsharp")
-        .join("prefix-steam")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+    let mut all_steamapps: Vec<PathBuf> = Vec::new();
 
-    let manifest_path = wine_steamapps.join(format!("appmanifest_{}.acf", appid));
-    if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("\"installdir\"") {
-                let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
-                if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
-                    let game_dir = wine_steamapps.join("common").join(dir_name);
-                    if game_dir.exists() {
-                        return Some(game_dir);
+    let mac_dirs = vec![
+        home.join("Library/Application Support/Steam/steamapps"),
+        home.join(".steam/steam/steamapps"),
+        home.join(".local/share/Steam/steamapps"),
+    ];
+    all_steamapps.extend(mac_dirs.into_iter().filter(|d| d.exists()));
+    all_steamapps.extend(crate::scan::wine_steam_library_paths());
+
+    for steamapps in &all_steamapps {
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("\"installdir\"") {
+                    let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                    if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
+                        let game_dir = steamapps.join("common").join(dir_name);
+                        if game_dir.exists() {
+                            return Some(game_dir);
+                        }
                     }
                 }
             }
