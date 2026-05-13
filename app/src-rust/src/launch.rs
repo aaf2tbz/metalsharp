@@ -17,6 +17,7 @@ enum Engine {
     DxmtMetal,
     DxmtMetal12,
     Wined3d32,
+    DxvkMetal32,
     MetalsharpWine,
     SteamBare,
     SteamMetalfx,
@@ -35,6 +36,7 @@ pub fn engine_description_for_appid(appid: u32) -> &'static str {
         Engine::DxmtMetal => "DXMT D3D11 → Metal — native Metal translation",
         Engine::DxmtMetal12 => "DXMT D3D12 → Metal — native Metal translation",
         Engine::Wined3d32 => "WineD3D (32-bit) — CPU fallback renderer",
+        Engine::DxvkMetal32 => "DXVK D3D9 → MoltenVK → Metal — 32-bit Vulkan translation",
         Engine::MetalsharpWine => "MetalSharp Wine — bare Wine",
         Engine::SteamBare => "Steam Native — macOS native launch",
         Engine::SteamMetalfx => "D3DMetal + MetalFX — spatial upscaling",
@@ -49,6 +51,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::DxmtMetal => "dxmt_metal",
         Engine::DxmtMetal12 => "dxmt_metal12",
         Engine::Wined3d32 => "wined3d_32",
+        Engine::DxvkMetal32 => "dxvk_metal32",
         Engine::MetalsharpWine => "metalsharp_wine",
         Engine::SteamBare => "steam",
         Engine::SteamMetalfx => "steam_metalfx",
@@ -60,7 +63,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
         504230 => Engine::SteamD3DMetalPerf,
-        265930 => Engine::SteamD3DMetalPerf,
+        265930 | 620 => Engine::DxvkMetal32,
         312520 | 375520 | 848450 => Engine::DxmtMetal,
         535520 | 391540 => Engine::Wined3d32,
 
@@ -74,7 +77,7 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         814380 | 1593500 => Engine::SteamMetalfx,
 
         397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 | 1203620 | 1282100 | 750920 | 1172380
-        | 870780 | 1196590 | 1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 | 1172470 | 2290180 | 620 => {
+        | 870780 | 1196590 | 1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 | 1172470 | 2290180 => {
             Engine::SteamD3DMetalPerf
         },
 
@@ -204,6 +207,12 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_wined3d_32(&exe, dir)?;
             Ok((pid, "wined3d_32"))
+        },
+        Engine::DxvkMetal32 => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_dxvk_metal32(appid, &exe, dir)?;
+            Ok((pid, "dxvk_metal32"))
         },
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -544,6 +553,70 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
             "DYLD_FALLBACK_LIBRARY_PATH",
             ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
         )
+        .arg(&exe_name)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_dxvk_metal32(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    let dxvk_i386 = ms_root.join("lib").join("dxvk").join("i386-windows");
+    let game = game_dir.as_path();
+
+    let (exe_name, work_dir, d3d9_target) = match appid {
+        620 => {
+            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("bin").join("d3d9.dll"));
+            (String::from("portal2.exe"), game_dir.clone(), game.join("bin"))
+        },
+        265930 => {
+            let bin = game.join("Binaries").join("Win32");
+            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"));
+            (String::from("GoatGame-Win32-Shipping.exe"), bin.clone(), bin)
+        },
+        _ => {
+            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("d3d9.dll"));
+            let exe = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
+            (exe, game_dir.clone(), game.join("."))
+        },
+    };
+
+    let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
+    let _ = std::fs::create_dir_all(&shader_cache_base);
+
+    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+    let moltenvk_icd_str = if moltenvk_icd.exists() {
+        moltenvk_icd.to_string_lossy().to_string()
+    } else {
+        ms_root
+            .join("etc")
+            .join("etc")
+            .join("vulkan")
+            .join("icd.d")
+            .join("MoltenVK_icd.json")
+            .to_string_lossy()
+            .to_string()
+    };
+
+    let child = Command::new(&wine)
+        .current_dir(&work_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_wine)
+        .env("VK_ICD_FILENAMES", &moltenvk_icd_str)
+        .env("DXVK_STATE_CACHE_PATH", format!("{}/", shader_cache_base.to_string_lossy()))
         .arg(&exe_name)
         .spawn()?;
 
