@@ -1,3 +1,0 @@
-[submodule "src/wine/mojoshader"]
-	path = src/wine/mojoshader
-	url = https://github.com/icculus/mojoshader.git

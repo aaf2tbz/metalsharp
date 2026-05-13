@@ -266,10 +266,8 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
     let mut appids = Vec::new();
 
-    let search_dirs = crate::setup::resolve_all_steamapps_dirs();
-
-    for steamapps in &search_dirs {
-        if let Ok(entries) = std::fs::read_dir(steamapps) {
+    for steamapps in crate::scan::wine_steam_library_paths() {
+        if let Ok(entries) = std::fs::read_dir(&steamapps) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with("appmanifest_") && name.ends_with(".acf") {
@@ -287,6 +285,7 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
             }
         }
     }
+
     appids
 }
 
@@ -370,53 +369,52 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 }
 
 fn get_game_name_from_manifest(appid: u32) -> Option<String> {
-    let manifest_path = steam_prefix()
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps")
-        .join(format!("appmanifest_{}.acf", appid));
+    let manifest_name = format!("appmanifest_{}.acf", appid);
 
-    let contents = std::fs::read_to_string(&manifest_path).ok()?;
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("\"name\"") {
-            if let Some((_, val)) = trimmed.split_once('\t') {
-                return Some(val.trim().trim_matches('"').to_string());
+    for steamapps in crate::scan::wine_steam_library_paths() {
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("\"name\"") {
+                    if let Some((_, val)) = trimmed.split_once('\t') {
+                        return Some(val.trim().trim_matches('"').to_string());
+                    }
+                }
             }
         }
     }
+
     None
 }
 
 pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let steamapps = steam_prefix()
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+    let manifest_name = format!("appmanifest_{}.acf", appid);
 
     let _ = crate::launch::kill_game(appid);
 
-    let manifest_path = steamapps.join(format!("appmanifest_{}.acf", appid));
-    if manifest_path.exists() {
-        let contents = std::fs::read_to_string(&manifest_path).unwrap_or_default();
-        let install_dir = contents
-            .lines()
-            .find(|l| l.contains("\"installdir\""))
-            .and_then(|l| {
-                let parts: Vec<&str> = l.splitn(2, |c: char| c == '\t' || c == ' ').collect();
-                parts.last().map(|s| s.trim().trim_matches('"').to_string())
-            });
+    for steamapps in crate::scan::wine_steam_library_paths() {
+        let manifest_path = steamapps.join(&manifest_name);
+        if manifest_path.exists() {
+            let contents = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+            let install_dir = contents
+                .lines()
+                .find(|l| l.contains("\"installdir\""))
+                .and_then(|l| {
+                    let parts: Vec<&str> = l.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                    parts.last().map(|s| s.trim().trim_matches('"').to_string())
+                });
 
-        if let Some(dir_name) = install_dir {
-            let game_dir = steamapps.join("common").join(&dir_name);
-            if game_dir.exists() {
-                let _ = std::fs::remove_dir_all(&game_dir);
+            if let Some(dir_name) = install_dir {
+                let game_dir = steamapps.join("common").join(&dir_name);
+                if game_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&game_dir);
+                }
             }
+            let _ = std::fs::remove_file(&manifest_path);
+            break;
         }
-        let _ = std::fs::remove_file(&manifest_path);
     }
 
     let local_dir = home
@@ -700,13 +698,16 @@ fn get_installed_appids() -> Vec<u32> {
     let home = dirs::home_dir().unwrap_or_default();
     let mut appids = Vec::new();
 
-    let steamapps_dirs = vec![
+    let mac_dirs = vec![
         home.join("Library/Application Support/Steam/steamapps"),
         home.join(".steam/steam/steamapps"),
         home.join(".local/share/Steam/steamapps"),
     ];
 
-    for dir in steamapps_dirs {
+    let mut all_dirs: Vec<PathBuf> = mac_dirs.into_iter().filter(|d| d.exists()).collect();
+    all_dirs.extend(crate::scan::wine_steam_library_paths());
+
+    for dir in all_dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -716,7 +717,9 @@ fn get_installed_appids() -> Vec<u32> {
                         .and_then(|s| s.strip_suffix(".acf"))
                     {
                         if let Ok(id) = id_str.parse::<u32>() {
-                            appids.push(id);
+                            if !appids.contains(&id) {
+                                appids.push(id);
+                            }
                         }
                     }
                 }
