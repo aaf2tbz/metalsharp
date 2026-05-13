@@ -88,7 +88,7 @@ pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
-    let mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
+    let _mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
     let rosetta = check_rosetta();
     let gptk = check_path(&PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"));
     let xcode_cli = check_command("clang") || check_command("xcodebuild");
@@ -188,7 +188,7 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
+    let _home = dirs::home_dir().ok_or("no home dir")?;
     let mut results = Vec::new();
 
     for id in ids {
@@ -259,7 +259,7 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
             for line in contents.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("\"installdir\"") {
-                    let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                    let parts: Vec<&str> = trimmed.splitn(2, ['\t', ' ']).collect();
                     if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
                         let game_dir = steamapps.join("common").join(dir_name);
                         if game_dir.exists() {
