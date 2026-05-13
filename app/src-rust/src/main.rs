@@ -22,6 +22,7 @@ mod launch;
 mod scan;
 mod setup;
 mod steam;
+mod updater;
 
 use serde_json::json;
 use std::sync::Arc;
@@ -36,7 +37,7 @@ fn main() {
     }));
 
     eprintln!("metalsharp-backend listening on {}", addr);
-    app_log(&format!("MetalSharp v0.1.0 backend started on {}", addr));
+    app_log(&format!("MetalSharp v{} backend started on {}", env!("CARGO_PKG_VERSION"), addr));
 
     let cors_header = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
     let json_header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
@@ -67,19 +68,16 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 200,
                 json!({
                     "ok": true,
-                    "version": "0.1.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }),
             )
         },
-        (Method::Get, "/update/check") => resp(
-            200,
-            json!({
-                "ok": true,
-                "current": "0.1.0",
-                "latest": "0.1.0",
-                "updateAvailable": false
-            }),
-        ),
+        (Method::Get, "/update/check") => resp(200, updater::check_for_update()),
+        (Method::Post, "/update/start") => match updater::start_update() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+        },
+        (Method::Get, "/update/progress") => resp(200, updater::read_update_progress()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
