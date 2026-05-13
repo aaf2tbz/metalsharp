@@ -69,7 +69,7 @@ fn find_dmg_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
 }
 
 pub fn check_for_update() -> serde_json::Value {
-    let config = ureq::config::Config::builder().user_agent(&format!("MetalSharp/{}", CURRENT_VERSION)).build();
+    let config = ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", CURRENT_VERSION)).build();
     let agent = ureq::Agent::new_with_config(config);
 
     let mut resp = match agent.get(REPO_API).call() {
@@ -231,7 +231,7 @@ fn run_update() {
 }
 
 fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
-    let config = ureq::config::Config::builder().user_agent(&format!("MetalSharp/{}", CURRENT_VERSION)).build();
+    let config = ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", CURRENT_VERSION)).build();
     let agent = ureq::Agent::new_with_config(config);
 
     let resp = agent.get(url).call().map_err(|e| format!("HTTP request failed: {}", e))?;
