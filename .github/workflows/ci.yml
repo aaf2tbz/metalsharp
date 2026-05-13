@@ -23,14 +23,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Verify Rust toolchain
-        run: rustup show && cargo --version
-
-      - name: Install Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app/src-rust
-
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
 
