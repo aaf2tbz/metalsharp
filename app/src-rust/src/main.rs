@@ -436,12 +436,15 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 let _ = std::fs::create_dir_all(&target);
             }
             app_log(&format!("Cleared {} cache: {} files, {} bytes", cache_type, file_count, total_bytes));
-            resp(200, json!({
-                "ok": true,
-                "cache_type": cache_type,
-                "files_removed": file_count,
-                "bytes_freed": total_bytes,
-            }))
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "cache_type": cache_type,
+                    "files_removed": file_count,
+                    "bytes_freed": total_bytes,
+                }),
+            )
         },
         (Method::Get, "/cache/size") => {
             let home = dirs::home_dir().unwrap_or_default();
@@ -471,11 +474,14 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                     }
                 }
             }
-            resp(200, json!({
-                "ok": true,
-                "shader_cache": {"bytes": shader_bytes, "files": shader_files},
-                "pipeline_cache": {"bytes": 0, "files": 0},
-            }))
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "shader_cache": {"bytes": shader_bytes, "files": shader_files},
+                    "pipeline_cache": {"bytes": 0, "files": 0},
+                }),
+            )
         },
         _ => resp(404, json!({"ok": false, "error": "not found"})),
     }
