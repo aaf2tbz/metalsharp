@@ -1386,3 +1386,109 @@ body {
 .btn-install:hover {
   background: var(--violet-light);
 }
+
+/* Update Dialog */
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.update-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.update-dialog {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 36px 40px;
+  max-width: 440px;
+  text-align: center;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(20px);
+}
+
+.update-dialog-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--gradient-accent);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  box-shadow: var(--shadow-glow-violet);
+}
+
+.update-dialog-title {
+  color: var(--text-primary);
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.update-dialog-version {
+  color: var(--orange-bright);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.update-dialog-current {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.update-dialog-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.update-dialog-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.update-progress-container {
+  margin: 24px 0 16px;
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-deep);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: var(--gradient-accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.update-progress-label {
+  color: var(--orange-bright);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.update-progress-message {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-top: 8px;
+}

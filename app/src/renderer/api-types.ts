@@ -30,11 +30,21 @@ interface AppConfig {
 }
 
 interface UpdateStatus {
+  ok: boolean;
   available: boolean;
   current_version: string;
   latest_version: string;
   download_url: string;
   release_notes: string;
+  release_name: string;
+  error?: string;
+}
+
+interface UpdateProgress {
+  status: string;
+  percent: number;
+  message: string;
+  error: string | null;
 }
 
 interface CrashReportSummary {

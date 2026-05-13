@@ -151,6 +151,90 @@ class App {
   private async checkForUpdates() {
     const result = await this.api<UpdateStatus>("GET", "/update/check");
     if (result) this.updateStatus = result;
+
+    if (result?.ok && result.available) {
+      this.showUpdatePrompt(result);
+    }
+  }
+
+  private showUpdatePrompt(status: UpdateStatus) {
+    const overlay = document.createElement("div");
+    overlay.className = "update-overlay";
+    overlay.id = "update-overlay";
+    document.body.appendChild(overlay);
+
+    overlay.innerHTML = `
+      <div class="update-dialog-backdrop"></div>
+      <div class="update-dialog">
+        <div class="update-dialog-icon">M</div>
+        <h2 class="update-dialog-title">Update Available</h2>
+        <p class="update-dialog-version">v${this.esc(status.latest_version)} <span class="update-dialog-current">(current: v${this.esc(status.current_version)})</span></p>
+        <p class="update-dialog-desc">A new version of MetalSharp is available. Update now to get the latest features and fixes.</p>
+        <div class="update-dialog-actions">
+          <button class="btn btn-secondary" id="update-dismiss">Not Now</button>
+          <button class="btn btn-primary" id="update-accept">Install Update</button>
+        </div>
+      </div>
+    `;
+
+    overlay.querySelector("#update-dismiss")?.addEventListener("click", () => overlay.remove());
+    overlay.querySelector(".update-dialog-backdrop")?.addEventListener("click", () => overlay.remove());
+    overlay.querySelector("#update-accept")?.addEventListener("click", () => {
+      overlay.remove();
+      this.startUpdateFlow();
+    });
+  }
+
+  private async startUpdateFlow() {
+    const overlay = document.createElement("div");
+    overlay.className = "update-overlay";
+    overlay.id = "update-progress-overlay";
+    document.body.appendChild(overlay);
+
+    overlay.innerHTML = `
+      <div class="update-dialog-backdrop"></div>
+      <div class="update-dialog update-dialog-progress">
+        <div class="update-dialog-icon">M</div>
+        <h2 class="update-dialog-title">Updating MetalSharp</h2>
+        <div class="update-progress-container">
+          <div class="update-progress-bar">
+            <div class="update-progress-fill" id="update-progress-fill"></div>
+          </div>
+          <span class="update-progress-label" id="update-progress-label">Starting...</span>
+        </div>
+        <p class="update-progress-message" id="update-progress-message">Preparing update...</p>
+      </div>
+    `;
+
+    const started = await this.api<{ ok: boolean; error?: string }>("POST", "/update/start");
+    if (!started?.ok) {
+      overlay.remove();
+      this.toast(started?.error ?? "Failed to start update", "error");
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      const progress = await this.api<UpdateProgress>("GET", "/update/progress");
+      if (!progress) return;
+
+      const fill = document.getElementById("update-progress-fill") as HTMLElement;
+      const label = document.getElementById("update-progress-label") as HTMLElement;
+      const message = document.getElementById("update-progress-message") as HTMLElement;
+
+      if (fill) fill.style.width = `${progress.percent}%`;
+      if (label) label.textContent = `${progress.percent}%`;
+      if (message) message.textContent = progress.message;
+
+      if (progress.status === "error") {
+        clearInterval(pollInterval);
+        overlay.remove();
+        this.toast(`Update failed: ${progress.error ?? "unknown error"}`, "error");
+      } else if (progress.status === "complete") {
+        clearInterval(pollInterval);
+      }
+    }, 500);
+
+    setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
   }
 
   private async loadLibrary() {
@@ -1202,15 +1286,15 @@ class App {
           <div class="settings-value">Enabled</div>
         </div>
         ${
-          this.updateStatus?.available
+          this.updateStatus?.ok && this.updateStatus?.available
             ? `
         <div class="settings-row">
           <div>
             <div class="settings-label">Update Available</div>
-            <div class="settings-desc">v${this.esc(this.updateStatus.latest_version)} (current: v${this.esc(this.updateStatus.current_version)})</div>
+            <div class="settings-desc">v${this.esc(this.updateStatus.latest_version)} is available (current: v${this.esc(this.updateStatus.current_version)})</div>
           </div>
           <div class="settings-value">
-            <a href="${this.updateStatus.download_url}" target="_blank" class="btn btn-primary btn-sm">Download</a>
+            <button class="btn btn-primary btn-sm" id="btn-install-update">Install Update</button>
           </div>
         </div>
         `
@@ -1218,10 +1302,19 @@ class App {
         <div class="settings-row">
           <div>
             <div class="settings-label">Version</div>
-            <div class="settings-desc">You're up to date</div>
+            <div class="settings-desc">${this.updateStatus?.ok ? "You're up to date" : "Could not check for updates"}</div>
           </div>
           <div class="settings-value">
-            <span class="badge badge-ok">v${this.updateStatus?.current_version ?? "0.1.0"}</span>
+            <span class="badge ${this.updateStatus?.ok ? "badge-ok" : "badge-warn"}">v${this.updateStatus?.current_version ?? "unknown"}</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Check Now</div>
+            <div class="settings-desc">Manually check for updates</div>
+          </div>
+          <div class="settings-value">
+            <button class="btn btn-secondary btn-sm" id="btn-check-update">Check for Updates</button>
           </div>
         </div>
         `
@@ -1306,6 +1399,23 @@ class App {
         this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
       } else {
         this.toast("No crash reports found.");
+      }
+    });
+
+    el.querySelector("#btn-install-update")?.addEventListener("click", () => {
+      this.startUpdateFlow();
+    });
+
+    el.querySelector("#btn-check-update")?.addEventListener("click", async () => {
+      this.toast("Checking for updates...", "success");
+      await this.checkForUpdates();
+      this.renderSettings();
+      if (this.updateStatus?.ok && this.updateStatus?.available) {
+        this.showUpdatePrompt(this.updateStatus);
+      } else if (this.updateStatus?.ok) {
+        this.toast("You're up to date!", "success");
+      } else {
+        this.toast(this.updateStatus?.error ?? "Could not check for updates", "error");
       }
     });
   }
