@@ -5,10 +5,10 @@
 /// color, depth, and stencil attachments for Metal render passes from D3D render target
 /// and depth-stencil view bindings.
 
-#include <metalsharp/MetalBackend.h>
+#include <array>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
-#include <array>
+#include <metalsharp/MetalBackend.h>
 
 namespace metalsharp {
 
@@ -23,10 +23,13 @@ MetalFramebuffer::MetalFramebuffer() : m_impl(new Impl()) {
     m_impl->descriptor = [[MTLRenderPassDescriptor alloc] init];
 }
 
-MetalFramebuffer::~MetalFramebuffer() { delete m_impl; }
+MetalFramebuffer::~MetalFramebuffer() {
+    delete m_impl;
+}
 
 void MetalFramebuffer::setColorAttachment(uint32_t index, MetalTexture* texture) {
-    if (index >= 8 || !texture) return;
+    if (index >= 8 || !texture)
+        return;
     id<MTLTexture> mtlTex = (__bridge id<MTLTexture>)texture->nativeTexture();
     m_impl->colorAttachments[index] = mtlTex;
     m_impl->descriptor.colorAttachments[index].texture = mtlTex;
@@ -35,7 +38,8 @@ void MetalFramebuffer::setColorAttachment(uint32_t index, MetalTexture* texture)
 }
 
 void MetalFramebuffer::setDepthAttachment(MetalTexture* texture) {
-    if (!texture) return;
+    if (!texture)
+        return;
     id<MTLTexture> mtlTex = (__bridge id<MTLTexture>)texture->nativeTexture();
     m_impl->depthAttachment = mtlTex;
     m_impl->descriptor.depthAttachment.texture = mtlTex;
@@ -44,7 +48,8 @@ void MetalFramebuffer::setDepthAttachment(MetalTexture* texture) {
 }
 
 void MetalFramebuffer::setStencilAttachment(MetalTexture* texture) {
-    if (!texture) return;
+    if (!texture)
+        return;
     id<MTLTexture> mtlTex = (__bridge id<MTLTexture>)texture->nativeTexture();
     m_impl->stencilAttachment = mtlTex;
     m_impl->descriptor.stencilAttachment.texture = mtlTex;
@@ -56,4 +61,4 @@ void* MetalFramebuffer::nativeRenderPassDescriptor() const {
     return (__bridge void*)m_impl->descriptor;
 }
 
-}
+} // namespace metalsharp

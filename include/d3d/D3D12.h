@@ -4,15 +4,22 @@
 
 static const GUID IID_ID3D12Object = {0xc4fec28f, 0x7966, 0x4e14, {0x8a, 0x15, 0x79, 0x57, 0x1c, 0x60, 0x9d, 0xab}};
 static const GUID IID_ID3D12Device = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x29, 0x48, 0x31, 0x1a, 0x47}};
-static const GUID IID_ID3D12CommandQueue = {0x0ec870a6, 0x5d7e, 0x4c22, {0xa4, 0x89, 0x7a, 0xb2, 0x27, 0x6a, 0x3a, 0x0a}};
-static const GUID IID_ID3D12CommandAllocator = {0x6102dee4, 0xaf59, 0x4b09, {0xb6, 0x59, 0xbd, 0x02, 0x62, 0x8e, 0x22, 0x4a}};
-static const GUID IID_ID3D12GraphicsCommandList = {0x5b160d0f, 0xac1b, 0x4185, {0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0xd3}};
+static const GUID IID_ID3D12CommandQueue = {
+    0x0ec870a6, 0x5d7e, 0x4c22, {0xa4, 0x89, 0x7a, 0xb2, 0x27, 0x6a, 0x3a, 0x0a}};
+static const GUID IID_ID3D12CommandAllocator = {
+    0x6102dee4, 0xaf59, 0x4b09, {0xb6, 0x59, 0xbd, 0x02, 0x62, 0x8e, 0x22, 0x4a}};
+static const GUID IID_ID3D12GraphicsCommandList = {
+    0x5b160d0f, 0xac1b, 0x4185, {0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0xd3}};
 static const GUID IID_ID3D12Resource = {0x696442be, 0xa72e, 0x4056, {0xbc, 0x83, 0x34, 0x96, 0x4d, 0x34, 0xe2, 0xf3}};
-static const GUID IID_ID3D12DescriptorHeap = {0x8efb471d, 0x616c, 0x4f49, {0x90, 0xf7, 0x12, 0x76, 0x30, 0x56, 0x31, 0x8d}};
-static const GUID IID_ID3D12RootSignature = {0xc54a6b66, 0x72df, 0x4ee8, {0x8b, 0xe5, 0xa9, 0x46, 0xa1, 0x42, 0x12, 0x32}};
-static const GUID IID_ID3D12PipelineState = {0x765a30f3, 0xf624, 0x4c6f, {0xa8, 0x28, 0xac, 0xe9, 0x48, 0x62, 0x44, 0x5e}};
+static const GUID IID_ID3D12DescriptorHeap = {
+    0x8efb471d, 0x616c, 0x4f49, {0x90, 0xf7, 0x12, 0x76, 0x30, 0x56, 0x31, 0x8d}};
+static const GUID IID_ID3D12RootSignature = {
+    0xc54a6b66, 0x72df, 0x4ee8, {0x8b, 0xe5, 0xa9, 0x46, 0xa1, 0x42, 0x12, 0x32}};
+static const GUID IID_ID3D12PipelineState = {
+    0x765a30f3, 0xf624, 0x4c6f, {0xa8, 0x28, 0xac, 0xe9, 0x48, 0x62, 0x44, 0x5e}};
 static const GUID IID_ID3D12Fence = {0x0a753dcf, 0xc4d8, 0x4b91, {0x9d, 0x7f, 0x41, 0x5e, 0xfb, 0x14, 0x8c, 0x5f}};
-static const GUID IID_ID3D12CommandSignature = {0xc36a797c, 0xec80, 0x4f0a, {0x89, 0x64, 0x02, 0xe1, 0x31, 0x74, 0x70, 0xb4}};
+static const GUID IID_ID3D12CommandSignature = {
+    0xc36a797c, 0xec80, 0x4f0a, {0x89, 0x64, 0x02, 0xe1, 0x31, 0x74, 0x70, 0xb4}};
 
 typedef UINT64 D3D12_GPU_VIRTUAL_ADDRESS;
 
@@ -71,11 +78,24 @@ constexpr UINT D3D12_TILE_RANGE_FLAG_NULL = 1;
 constexpr UINT D3D12_TILE_RANGE_FLAG_SKIP = 2;
 constexpr UINT D3D12_TILE_RANGE_FLAG_REUSE_SINGLE_TILE = 4;
 
-struct D3D12_TILE_REGION_SIZE { UINT NumTiles; UINT Width; UINT Height; UINT Depth; BOOL bUseBox; };
+struct D3D12_TILE_REGION_SIZE {
+    UINT NumTiles;
+    UINT Width;
+    UINT Height;
+    UINT Depth;
+    BOOL bUseBox;
+};
 
-struct D3D12_TILED_RESOURCE_COORDINATE { UINT X; UINT Y; UINT Z; UINT Subresource; };
+struct D3D12_TILED_RESOURCE_COORDINATE {
+    UINT X;
+    UINT Y;
+    UINT Z;
+    UINT Subresource;
+};
 
-struct D3D12_TILE_RANGE_FLAGS { UINT Flags; };
+struct D3D12_TILE_RANGE_FLAGS {
+    UINT Flags;
+};
 
 struct D3D12_PACKED_MIP_INFO {
     UINT NumStandardMips;
@@ -232,22 +252,58 @@ constexpr UINT DXGI_FORMAT_R32_UINT = 42;
 constexpr UINT DXGI_FORMAT_R8_UNORM = 61;
 constexpr UINT DXGI_FORMAT_R8G8_UNORM = 49;
 
-struct D3D12_HEAP_PROPERTIES { UINT Type; UINT CPUPageProperty; UINT MemoryPoolPreference; UINT CreationNodeMask; UINT VisibleNodeMask; };
-
-struct D3D12_RESOURCE_DESC {
-    UINT Dimension; UINT64 Alignment; UINT64 Width; UINT Height;
-    UINT DepthOrArraySize; UINT MipLevels; UINT Format;
-    struct { UINT Count; UINT Quality; } SampleDesc;
-    UINT Layout; UINT Flags;
+struct D3D12_HEAP_PROPERTIES {
+    UINT Type;
+    UINT CPUPageProperty;
+    UINT MemoryPoolPreference;
+    UINT CreationNodeMask;
+    UINT VisibleNodeMask;
 };
 
-struct D3D12_DESCRIPTOR_HEAP_DESC { UINT Type; UINT NumDescriptors; UINT Flags; UINT NodeMask; };
+struct D3D12_RESOURCE_DESC {
+    UINT Dimension;
+    UINT64 Alignment;
+    UINT64 Width;
+    UINT Height;
+    UINT DepthOrArraySize;
+    UINT MipLevels;
+    UINT Format;
+    struct {
+        UINT Count;
+        UINT Quality;
+    } SampleDesc;
+    UINT Layout;
+    UINT Flags;
+};
 
-struct D3D12_ROOT_CONSTANTS { UINT ShaderRegister; UINT RegisterSpace; UINT Num32BitValues; };
-struct D3D12_ROOT_DESCRIPTOR { UINT ShaderRegister; UINT RegisterSpace; };
-struct D3D12_DESCRIPTOR_RANGE { UINT RangeType; UINT NumDescriptors; UINT BaseShaderRegister; UINT RegisterSpace; UINT OffsetInDescriptorsFromTableStart; };
+struct D3D12_DESCRIPTOR_HEAP_DESC {
+    UINT Type;
+    UINT NumDescriptors;
+    UINT Flags;
+    UINT NodeMask;
+};
 
-struct D3D12_ROOT_DESCRIPTOR_TABLE { UINT NumDescriptorRanges; const D3D12_DESCRIPTOR_RANGE* pDescriptorRanges; };
+struct D3D12_ROOT_CONSTANTS {
+    UINT ShaderRegister;
+    UINT RegisterSpace;
+    UINT Num32BitValues;
+};
+struct D3D12_ROOT_DESCRIPTOR {
+    UINT ShaderRegister;
+    UINT RegisterSpace;
+};
+struct D3D12_DESCRIPTOR_RANGE {
+    UINT RangeType;
+    UINT NumDescriptors;
+    UINT BaseShaderRegister;
+    UINT RegisterSpace;
+    UINT OffsetInDescriptorsFromTableStart;
+};
+
+struct D3D12_ROOT_DESCRIPTOR_TABLE {
+    UINT NumDescriptorRanges;
+    const D3D12_DESCRIPTOR_RANGE* pDescriptorRanges;
+};
 
 struct D3D12_ROOT_PARAMETER {
     UINT ParameterType;
@@ -258,52 +314,128 @@ struct D3D12_ROOT_PARAMETER {
 };
 
 struct D3D12_STATIC_SAMPLER_DESC {
-    UINT Filter; UINT AddressU; UINT AddressV; UINT AddressW;
-    FLOAT MipLODBias; UINT MaxAnisotropy; UINT ComparisonFunc;
-    UINT BorderColor; FLOAT MinLOD; FLOAT MaxLOD;
-    UINT ShaderRegister; UINT RegisterSpace; UINT ShaderVisibility;
+    UINT Filter;
+    UINT AddressU;
+    UINT AddressV;
+    UINT AddressW;
+    FLOAT MipLODBias;
+    UINT MaxAnisotropy;
+    UINT ComparisonFunc;
+    UINT BorderColor;
+    FLOAT MinLOD;
+    FLOAT MaxLOD;
+    UINT ShaderRegister;
+    UINT RegisterSpace;
+    UINT ShaderVisibility;
 };
 
 struct D3D12_ROOT_SIGNATURE_DESC {
-    UINT NumParameters; const D3D12_ROOT_PARAMETER* pParameters;
-    UINT NumStaticSamplers; const D3D12_STATIC_SAMPLER_DESC* pStaticSamplers;
+    UINT NumParameters;
+    const D3D12_ROOT_PARAMETER* pParameters;
+    UINT NumStaticSamplers;
+    const D3D12_STATIC_SAMPLER_DESC* pStaticSamplers;
     UINT Flags;
 };
 
 struct D3D12_BLEND_DESC {
-    BOOL AlphaToCoverageEnable; BOOL IndependentBlendEnable;
-    struct RT { BOOL BlendEnable; BOOL LogicOpEnable; UINT SrcBlend; UINT DestBlend; UINT BlendOp; UINT SrcBlendAlpha; UINT DestBlendAlpha; UINT BlendOpAlpha; UINT LogicOp; UINT RenderTargetWriteMask; };
+    BOOL AlphaToCoverageEnable;
+    BOOL IndependentBlendEnable;
+    struct RT {
+        BOOL BlendEnable;
+        BOOL LogicOpEnable;
+        UINT SrcBlend;
+        UINT DestBlend;
+        UINT BlendOp;
+        UINT SrcBlendAlpha;
+        UINT DestBlendAlpha;
+        UINT BlendOpAlpha;
+        UINT LogicOp;
+        UINT RenderTargetWriteMask;
+    };
     RT RenderTarget[8];
 };
 
 struct D3D12_RASTERIZER_DESC {
-    UINT FillMode; UINT CullMode; BOOL FrontCounterClockwise;
-    INT DepthBias; FLOAT DepthBiasClamp; FLOAT SlopeScaledDepthBias;
-    BOOL DepthClipEnable; BOOL MultisampleEnable; BOOL AntialiasedLineEnable;
-    UINT ForcedSampleCount; BOOL ConservativeRaster;
+    UINT FillMode;
+    UINT CullMode;
+    BOOL FrontCounterClockwise;
+    INT DepthBias;
+    FLOAT DepthBiasClamp;
+    FLOAT SlopeScaledDepthBias;
+    BOOL DepthClipEnable;
+    BOOL MultisampleEnable;
+    BOOL AntialiasedLineEnable;
+    UINT ForcedSampleCount;
+    BOOL ConservativeRaster;
 };
 
 struct D3D12_DEPTH_STENCIL_DESC {
-    BOOL DepthEnable; UINT DepthWriteMask; UINT DepthFunc;
-    BOOL StencilEnable; UINT StencilReadMask; UINT StencilWriteMask;
-    struct Face { UINT StencilFailOp; UINT StencilDepthFailOp; UINT StencilPassOp; UINT StencilFunc; } FrontFace, BackFace;
+    BOOL DepthEnable;
+    UINT DepthWriteMask;
+    UINT DepthFunc;
+    BOOL StencilEnable;
+    UINT StencilReadMask;
+    UINT StencilWriteMask;
+    struct Face {
+        UINT StencilFailOp;
+        UINT StencilDepthFailOp;
+        UINT StencilPassOp;
+        UINT StencilFunc;
+    } FrontFace, BackFace;
 };
 
 struct D3D12_INPUT_ELEMENT_DESC {
-    const char* SemanticName; UINT SemanticIndex; UINT Format;
-    UINT InputSlot; UINT AlignedByteOffset; UINT InputSlotClass; UINT InstanceDataStepRate;
+    const char* SemanticName;
+    UINT SemanticIndex;
+    UINT Format;
+    UINT InputSlot;
+    UINT AlignedByteOffset;
+    UINT InputSlotClass;
+    UINT InstanceDataStepRate;
 };
 
-struct D3D12_VIEWPORT { FLOAT TopLeftX; FLOAT TopLeftY; FLOAT Width; FLOAT Height; FLOAT MinDepth; FLOAT MaxDepth; };
-struct D3D12_RECT { LONG left; LONG top; LONG right; LONG bottom; };
-struct D3D12_RANGE { SIZE_T Begin; SIZE_T End; };
+struct D3D12_VIEWPORT {
+    FLOAT TopLeftX;
+    FLOAT TopLeftY;
+    FLOAT Width;
+    FLOAT Height;
+    FLOAT MinDepth;
+    FLOAT MaxDepth;
+};
+struct D3D12_RECT {
+    LONG left;
+    LONG top;
+    LONG right;
+    LONG bottom;
+};
+struct D3D12_RANGE {
+    SIZE_T Begin;
+    SIZE_T End;
+};
 
-struct D3D12_VERTEX_BUFFER_VIEW { D3D12_GPU_VIRTUAL_ADDRESS BufferLocation; UINT SizeInBytes; UINT StrideInBytes; };
-struct D3D12_INDEX_BUFFER_VIEW { D3D12_GPU_VIRTUAL_ADDRESS BufferLocation; UINT SizeInBytes; UINT Format; };
-struct D3D12_GPU_DESCRIPTOR_HANDLE { UINT64 ptr; };
-struct D3D12_CPU_DESCRIPTOR_HANDLE { UINT64 ptr; };
+struct D3D12_VERTEX_BUFFER_VIEW {
+    D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;
+    UINT SizeInBytes;
+    UINT StrideInBytes;
+};
+struct D3D12_INDEX_BUFFER_VIEW {
+    D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;
+    UINT SizeInBytes;
+    UINT Format;
+};
+struct D3D12_GPU_DESCRIPTOR_HANDLE {
+    UINT64 ptr;
+};
+struct D3D12_CPU_DESCRIPTOR_HANDLE {
+    UINT64 ptr;
+};
 
-struct D3D12_COMMAND_SIGNATURE_DESC { UINT ByteStride; UINT NumArgumentDescs; const void* pArgumentDescs; UINT NodeMask; };
+struct D3D12_COMMAND_SIGNATURE_DESC {
+    UINT ByteStride;
+    UINT NumArgumentDescs;
+    const void* pArgumentDescs;
+    UINT NodeMask;
+};
 
 struct D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS {
     UINT Type;
@@ -384,7 +516,7 @@ struct D3D12_STATE_OBJECT_DESC {
 };
 
 class ID3D12Object : public IUnknown {
-public:
+  public:
     STDMETHOD(GetPrivateData)(const GUID& guid, UINT* pDataSize, void* pData) { return E_NOTIMPL; }
     STDMETHOD(SetPrivateData)(const GUID& guid, UINT DataSize, const void* pData) { return E_NOTIMPL; }
     STDMETHOD(SetPrivateDataInterface)(const GUID& guid, const IUnknown* pData) { return E_NOTIMPL; }
@@ -392,7 +524,7 @@ public:
 };
 
 class ID3D12Fence : public ID3D12Object {
-public:
+  public:
     STDMETHOD(GetCompletedValue)(UINT64* pValue) PURE;
     STDMETHOD(SetEventOnCompletion)(UINT64 Value, HANDLE hEvent) PURE;
     STDMETHOD(Signal)(UINT64 Value) PURE;
@@ -407,12 +539,19 @@ struct D3D12_GLOBAL_ROOT_SIGNATURE {
 struct D3D12_LOCAL_ROOT_SIGNATURE {
     ID3D12RootSignature* pRootSignature;
 };
-class ID3D12PipelineState : public ID3D12Object { public: virtual void* __metalRenderPipelineState() const { return nullptr; } virtual void* __metalComputePipelineState() const { return nullptr; } };
+class ID3D12PipelineState : public ID3D12Object {
+  public:
+    virtual void* __metalRenderPipelineState() const { return nullptr; }
+    virtual void* __metalComputePipelineState() const { return nullptr; }
+};
 class ID3D12CommandSignature : public ID3D12Object {};
-class ID3D12CommandAllocator : public ID3D12Object { public: STDMETHOD(Reset)() PURE; };
+class ID3D12CommandAllocator : public ID3D12Object {
+  public:
+    STDMETHOD(Reset)() PURE;
+};
 
 class ID3D12Resource : public ID3D12Object {
-public:
+  public:
     STDMETHOD(Map)(UINT Subresource, const D3D12_RANGE* pReadRange, void** ppData) PURE;
     STDMETHOD(Unmap)(UINT Subresource, const D3D12_RANGE* pWrittenRange) PURE;
     STDMETHOD(GetDesc)(D3D12_RESOURCE_DESC* pDesc) PURE;
@@ -423,10 +562,16 @@ public:
     virtual void __setResourceState(UINT state) {}
 };
 
-struct D3D12_RESOURCE_BARRIER { UINT Type; UINT Flags; UINT StateBefore; UINT StateAfter; ID3D12Resource* pResource; };
+struct D3D12_RESOURCE_BARRIER {
+    UINT Type;
+    UINT Flags;
+    UINT StateBefore;
+    UINT StateAfter;
+    ID3D12Resource* pResource;
+};
 
 class ID3D12DescriptorHeap : public ID3D12Object {
-public:
+  public:
     virtual D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() { return {0}; }
     virtual D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() { return {0}; }
     virtual UINT __getDescriptorCount() const { return 0; }
@@ -434,12 +579,12 @@ public:
 };
 
 class ID3D12CommandList : public ID3D12Object {
-public:
+  public:
     virtual void __execute(void* metalDevice) {}
 };
 
 class ID3D12CommandQueue : public ID3D12Object {
-public:
+  public:
     STDMETHOD(ExecuteCommandLists)(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) PURE;
     STDMETHOD(Signal)(ID3D12Fence* pFence, UINT64 Value) PURE;
     STDMETHOD(Wait)(ID3D12Fence* pFence, UINT64 Value) PURE;
@@ -447,11 +592,16 @@ public:
 
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC {
     ID3D12RootSignature* pRootSignature;
-    const void* VS; SIZE_T VSsize;
-    const void* PS; SIZE_T PSsize;
-    const void* GS; SIZE_T GSsize;
-    const void* DS; SIZE_T DSsize;
-    const void* HS; SIZE_T HSsize;
+    const void* VS;
+    SIZE_T VSsize;
+    const void* PS;
+    SIZE_T PSsize;
+    const void* GS;
+    SIZE_T GSsize;
+    const void* DS;
+    SIZE_T DSsize;
+    const void* HS;
+    SIZE_T HSsize;
     UINT StreamOutput;
     D3D12_BLEND_DESC BlendState;
     UINT SampleMask;
@@ -463,11 +613,14 @@ struct D3D12_GRAPHICS_PIPELINE_STATE_DESC {
     UINT NumRenderTargets;
     UINT RTVFormats[8];
     UINT DSVFormat;
-    struct { UINT Count; UINT Quality; } SampleDesc;
+    struct {
+        UINT Count;
+        UINT Quality;
+    } SampleDesc;
 };
 
 class ID3D12GraphicsCommandList : public ID3D12CommandList {
-public:
+  public:
     STDMETHOD(Close)() PURE;
     STDMETHOD(Reset)(ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState) PURE;
     STDMETHOD(IASetPrimitiveTopology)(UINT PrimitiveTopology) PURE;
@@ -476,70 +629,113 @@ public:
     STDMETHOD(SetPipelineState)(ID3D12PipelineState* pPipelineState) PURE;
     STDMETHOD(SetGraphicsRootSignature)(ID3D12RootSignature* pRootSignature) PURE;
     STDMETHOD(SetGraphicsRootDescriptorTable)(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) PURE;
-    STDMETHOD(SetGraphicsRootConstantBufferView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
-    STDMETHOD(SetGraphicsRootShaderResourceView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
-    STDMETHOD(SetGraphicsRootUnorderedAccessView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
-    STDMETHOD(SetGraphicsRoot32BitConstants)(UINT RootParameterIndex, UINT Num32BitValues, const void* pData, UINT DestOffsetIn32BitValues) PURE;
-    STDMETHOD(OMSetRenderTargets)(UINT NumRenderTargetDescriptors, const D3D12_CPU_DESCRIPTOR_HANDLE* pRenderTargetDescriptors, BOOL RTsSingleHandleToDescriptorRange, const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor) PURE;
+    STDMETHOD(SetGraphicsRootConstantBufferView)(UINT RootParameterIndex,
+                                                 D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetGraphicsRootShaderResourceView)(UINT RootParameterIndex,
+                                                 D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetGraphicsRootUnorderedAccessView)(UINT RootParameterIndex,
+                                                  D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetGraphicsRoot32BitConstants)(UINT RootParameterIndex, UINT Num32BitValues, const void* pData,
+                                             UINT DestOffsetIn32BitValues) PURE;
+    STDMETHOD(OMSetRenderTargets)(UINT NumRenderTargetDescriptors,
+                                  const D3D12_CPU_DESCRIPTOR_HANDLE* pRenderTargetDescriptors,
+                                  BOOL RTsSingleHandleToDescriptorRange,
+                                  const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor) PURE;
     STDMETHOD(OMSetStencilRef)(UINT StencilRef) PURE;
     STDMETHOD(OMSetBlendFactor)(const FLOAT BlendFactor[4]) PURE;
     STDMETHOD(RSSetViewports)(UINT NumViewports, const D3D12_VIEWPORT* pViewports) PURE;
     STDMETHOD(RSSetScissorRects)(UINT NumRects, const D3D12_RECT* pRects) PURE;
-    STDMETHOD(ClearRenderTargetView)(D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView, const FLOAT ColorRGBA[4], UINT NumRects, const D3D12_RECT* pRects) PURE;
-    STDMETHOD(ClearDepthStencilView)(D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil, UINT NumRects, const D3D12_RECT* pRects) PURE;
-    STDMETHOD(DrawInstanced)(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation) PURE;
-    STDMETHOD(DrawIndexedInstanced)(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation, INT BaseVertexLocation, UINT StartInstanceLocation) PURE;
+    STDMETHOD(ClearRenderTargetView)(D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView, const FLOAT ColorRGBA[4],
+                                     UINT NumRects, const D3D12_RECT* pRects) PURE;
+    STDMETHOD(ClearDepthStencilView)(D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView, UINT ClearFlags, FLOAT Depth,
+                                     UINT8 Stencil, UINT NumRects, const D3D12_RECT* pRects) PURE;
+    STDMETHOD(DrawInstanced)(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation,
+                             UINT StartInstanceLocation) PURE;
+    STDMETHOD(DrawIndexedInstanced)(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation,
+                                    INT BaseVertexLocation, UINT StartInstanceLocation) PURE;
     STDMETHOD(Dispatch)(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) PURE;
     STDMETHOD(CopyResource)(ID3D12Resource* pDstResource, ID3D12Resource* pSrcResource) PURE;
-    STDMETHOD(CopyBufferRegion)(ID3D12Resource* pDstResource, UINT64 DstOffset, ID3D12Resource* pSrcResource, UINT64 SrcOffset, UINT64 NumBytes) PURE;
-    STDMETHOD(CopyTextureRegion)(const void* pDst, UINT DstX, UINT DstY, UINT DstZ, ID3D12Resource* pSrcResource, UINT SrcSubresource, const void* pSrcBox) PURE;
+    STDMETHOD(CopyBufferRegion)(ID3D12Resource* pDstResource, UINT64 DstOffset, ID3D12Resource* pSrcResource,
+                                UINT64 SrcOffset, UINT64 NumBytes) PURE;
+    STDMETHOD(CopyTextureRegion)(const void* pDst, UINT DstX, UINT DstY, UINT DstZ, ID3D12Resource* pSrcResource,
+                                 UINT SrcSubresource, const void* pSrcBox) PURE;
     STDMETHOD(ResourceBarrier)(UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers) PURE;
     STDMETHOD(SetDescriptorHeaps)(UINT NumDescriptorHeaps, ID3D12DescriptorHeap* const* ppDescriptorHeaps) PURE;
     STDMETHOD(IASetInputLayout)(UINT NumElements, const D3D12_INPUT_ELEMENT_DESC* pInputElementDescs) PURE;
     STDMETHOD(Map)(ID3D12Resource* pResource, UINT Subresource, const D3D12_RANGE* pReadRange, void** ppData) PURE;
     STDMETHOD(Unmap)(ID3D12Resource* pResource, UINT Subresource, const D3D12_RANGE* pWrittenRange) PURE;
-    STDMETHOD(ExecuteIndirect)(ID3D12CommandSignature* pCommandSignature, UINT MaxCommandCount, ID3D12Resource* pCommandBuffer, UINT64 CommandBufferOffset, ID3D12Resource* pCountBuffer, UINT64 CountBufferOffset) PURE;
+    STDMETHOD(ExecuteIndirect)(ID3D12CommandSignature* pCommandSignature, UINT MaxCommandCount,
+                               ID3D12Resource* pCommandBuffer, UINT64 CommandBufferOffset, ID3D12Resource* pCountBuffer,
+                               UINT64 CountBufferOffset) PURE;
 
-    STDMETHOD(CopyTiles)(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinate, const D3D12_TILE_REGION_SIZE* pTileRegionSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) PURE;
+    STDMETHOD(CopyTiles)(ID3D12Resource* pTiledResource,
+                         const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinate,
+                         const D3D12_TILE_REGION_SIZE* pTileRegionSize, ID3D12Resource* pBuffer,
+                         UINT64 BufferStartOffset, UINT Flags) PURE;
 
     STDMETHOD(DispatchRays)(const D3D12_DISPATCH_RAYS_DESC* pDesc) PURE;
-    STDMETHOD(BuildRaytracingAccelerationStructure)(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc, UINT NumPostbuildInfoDescs, const void* pPostbuildInfoDescs) PURE;
-    STDMETHOD(CopyRaytracingAccelerationStructure)(UINT64 DestAccelerationStructureData, UINT64 SourceAccelerationStructureData, UINT Mode) PURE;
-    STDMETHOD(EmitRaytracingAccelerationStructurePostbuildInfo)(const void* pDesc, UINT NumAccelerationStructures, const UINT64* pAccelerationStructureData) PURE;
+    STDMETHOD(BuildRaytracingAccelerationStructure)(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc,
+                                                    UINT NumPostbuildInfoDescs, const void* pPostbuildInfoDescs) PURE;
+    STDMETHOD(CopyRaytracingAccelerationStructure)(UINT64 DestAccelerationStructureData,
+                                                   UINT64 SourceAccelerationStructureData, UINT Mode) PURE;
+    STDMETHOD(EmitRaytracingAccelerationStructurePostbuildInfo)(const void* pDesc, UINT NumAccelerationStructures,
+                                                                const UINT64* pAccelerationStructureData) PURE;
     STDMETHOD(DispatchMesh)(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) PURE;
     STDMETHOD(SetComputeRootSignature)(ID3D12RootSignature* pRootSignature) PURE;
-    STDMETHOD(SetComputeRoot32BitConstants)(UINT RootParameterIndex, UINT Num32BitValues, const void* pData, UINT DestOffsetIn32BitValues) PURE;
+    STDMETHOD(SetComputeRoot32BitConstants)(UINT RootParameterIndex, UINT Num32BitValues, const void* pData,
+                                            UINT DestOffsetIn32BitValues) PURE;
     STDMETHOD(SetComputeRootDescriptorTable)(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) PURE;
     STDMETHOD(SetComputeRootConstantBufferView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
     STDMETHOD(SetComputeRootShaderResourceView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
-    STDMETHOD(SetComputeRootUnorderedAccessView)(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
+    STDMETHOD(SetComputeRootUnorderedAccessView)(UINT RootParameterIndex,
+                                                 D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) PURE;
 };
 
 class ID3D12Device : public ID3D12Object {
-public:
+  public:
     STDMETHOD(CreateCommandQueue)(const void* pDesc, REFIID riid, void** ppCommandQueue) PURE;
     STDMETHOD(CreateCommandAllocator)(UINT type, REFIID riid, void** ppCommandAllocator) PURE;
-    STDMETHOD(CreateCommandList)(UINT nodeMask, UINT type, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState, REFIID riid, void** ppCommandList) PURE;
-    STDMETHOD(CreateRenderTargetView)(ID3D12Resource* pResource, const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
-    STDMETHOD(CreateDepthStencilView)(ID3D12Resource* pResource, const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
-    STDMETHOD(CreateShaderResourceView)(ID3D12Resource* pResource, const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
-    STDMETHOD(CreateUnorderedAccessView)(ID3D12Resource* pResource, ID3D12Resource* pCounterResource, const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
+    STDMETHOD(CreateCommandList)(UINT nodeMask, UINT type, ID3D12CommandAllocator* pAllocator,
+                                 ID3D12PipelineState* pInitialState, REFIID riid, void** ppCommandList) PURE;
+    STDMETHOD(CreateRenderTargetView)(ID3D12Resource* pResource, const void* pDesc,
+                                      D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
+    STDMETHOD(CreateDepthStencilView)(ID3D12Resource* pResource, const void* pDesc,
+                                      D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
+    STDMETHOD(CreateShaderResourceView)(ID3D12Resource* pResource, const void* pDesc,
+                                        D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
+    STDMETHOD(CreateUnorderedAccessView)(ID3D12Resource* pResource, ID3D12Resource* pCounterResource, const void* pDesc,
+                                         D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
     STDMETHOD(CreateConstantBufferView)(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
-    STDMETHOD(CreateCommittedResource)(const D3D12_HEAP_PROPERTIES* pHeapProperties, UINT HeapFlags, const D3D12_RESOURCE_DESC* pDesc, UINT InitialResourceState, const void* pOptimizedClearValue, REFIID riid, void** ppvResource) PURE;
-    STDMETHOD(CreateDescriptorHeap)(const D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc, REFIID riid, void** ppvDescriptorHeap) PURE;
-    STDMETHOD(CreateRootSignature)(UINT nodeMask, const void* pBlobWithRootSignature, SIZE_T blobLengthInBytes, REFIID riid, void** ppvRootSignature) PURE;
-    STDMETHOD(CreateGraphicsPipelineState)(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid, void** ppPipelineState) PURE;
+    STDMETHOD(CreateCommittedResource)(const D3D12_HEAP_PROPERTIES* pHeapProperties, UINT HeapFlags,
+                                       const D3D12_RESOURCE_DESC* pDesc, UINT InitialResourceState,
+                                       const void* pOptimizedClearValue, REFIID riid, void** ppvResource) PURE;
+    STDMETHOD(CreateDescriptorHeap)(const D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc, REFIID riid,
+                                    void** ppvDescriptorHeap) PURE;
+    STDMETHOD(CreateRootSignature)(UINT nodeMask, const void* pBlobWithRootSignature, SIZE_T blobLengthInBytes,
+                                   REFIID riid, void** ppvRootSignature) PURE;
+    STDMETHOD(CreateGraphicsPipelineState)(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid,
+                                           void** ppPipelineState) PURE;
     STDMETHOD(CreateComputePipelineState)(const void* pDesc, REFIID riid, void** ppPipelineState) PURE;
     STDMETHOD(CreateFence)(UINT64 InitialValue, UINT Flags, REFIID riid, void** ppFence) PURE;
-    STDMETHOD(CreateCommandSignature)(const D3D12_COMMAND_SIGNATURE_DESC* pDesc, ID3D12RootSignature* pRootSignature, REFIID riid, void** ppCommandSignature) PURE;
+    STDMETHOD(CreateCommandSignature)(const D3D12_COMMAND_SIGNATURE_DESC* pDesc, ID3D12RootSignature* pRootSignature,
+                                      REFIID riid, void** ppCommandSignature) PURE;
     STDMETHOD(CreateSampler)(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
     STDMETHOD_(UINT, GetDescriptorHandleIncrementSize)(UINT DescriptorHeapType) PURE;
 
-    STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions, const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates, const D3D12_TILE_REGION_SIZE* pTileRegionSizes, BOOL bSingleTile) PURE;
-    STDMETHOD(GetResourceTiling)(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource, D3D12_PACKED_MIP_INFO* pPackedMipDesc, D3D12_TILE_SHAPE* pStandardTileShapeForNonPackedMips, UINT* pNumSubresourceTilings, UINT FirstSubresourceTilingToGet, D3D12_SUBRESOURCE_TILING* pSubresourceTilingsForNonPackedMips) PURE;
-    STDMETHOD_(UINT64, GetTiledResourceSize)(UINT64 Width, UINT Height, UINT DepthOrArraySize, UINT Format, UINT MipLevels) PURE;
-    STDMETHOD(CreateSamplerFeedback)(ID3D12Resource* pTargetResource, UINT FeedbackType, REFIID riid, void** ppFeedbackResource) PURE;
-    STDMETHOD(WriteSamplerFeedback)(ID3D12Resource* pTargetResource, ID3D12Resource* pFeedbackResource, UINT FeedbackType) PURE;
+    STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions,
+                            const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates,
+                            const D3D12_TILE_REGION_SIZE* pTileRegionSizes, BOOL bSingleTile) PURE;
+    STDMETHOD(GetResourceTiling)(ID3D12Resource* pTiledResource, UINT* pNumTilesForResource,
+                                 D3D12_PACKED_MIP_INFO* pPackedMipDesc,
+                                 D3D12_TILE_SHAPE* pStandardTileShapeForNonPackedMips, UINT* pNumSubresourceTilings,
+                                 UINT FirstSubresourceTilingToGet,
+                                 D3D12_SUBRESOURCE_TILING* pSubresourceTilingsForNonPackedMips) PURE;
+    STDMETHOD_(UINT64, GetTiledResourceSize)(UINT64 Width, UINT Height, UINT DepthOrArraySize, UINT Format,
+                                             UINT MipLevels) PURE;
+    STDMETHOD(CreateSamplerFeedback)(ID3D12Resource* pTargetResource, UINT FeedbackType, REFIID riid,
+                                     void** ppFeedbackResource) PURE;
+    STDMETHOD(WriteSamplerFeedback)(ID3D12Resource* pTargetResource, ID3D12Resource* pFeedbackResource,
+                                    UINT FeedbackType) PURE;
     STDMETHOD(ResolveSamplerFeedback)(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) PURE;
 
     STDMETHOD(CreateStateObject)(const void* pDesc, REFIID riid, void** ppStateObject) PURE;
@@ -562,7 +758,9 @@ struct D3D12_RAYTRACING_GEOMETRY_DESC {
     } Triangles;
 };
 
-struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS { UINT Flags; };
+struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS {
+    UINT Flags;
+};
 
 struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO {
     UINT64 ResultDataMaxSizeInBytes;
@@ -571,12 +769,12 @@ struct D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO {
 };
 
 class ID3D12StateObject : public ID3D12Object {
-public:
+  public:
     virtual void* __metalRTPipeline() const { return nullptr; }
 };
 
 class ID3D12StateObjectProperties : public IUnknown {
-public:
+  public:
     virtual void* GetShaderIdentifier(const char* pExportName) = 0;
     virtual UINT64 GetRaytracingAccelerationStructureGPUAddress(ID3D12Resource* pAS) = 0;
 };

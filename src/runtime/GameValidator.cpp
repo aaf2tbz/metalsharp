@@ -6,11 +6,11 @@
 /// DLL shims, and producing an estimated compatibility status (perfect, partial,
 /// broken). Orchestrates DRMDetector and ImportReporter as pipeline stages.
 
+#include <cstring>
 #include <metalsharp/GameValidator.h>
 #include <metalsharp/ImportReporter.h>
 #include <metalsharp/Logger.h>
 #include <sstream>
-#include <cstring>
 
 namespace metalsharp {
 
@@ -37,7 +37,8 @@ std::string GameValidator::generateGameId(const std::string& exePath) const {
     std::string filename = (slash != std::string::npos) ? exePath.substr(slash + 1) : exePath;
 
     for (auto& c : filename) {
-        if (c == '.' || c == ' ' || c == '\\') c = '_';
+        if (c == '.' || c == ' ' || c == '\\')
+            c = '_';
     }
     return filename;
 }
@@ -56,19 +57,19 @@ CompatStatus GameValidator::estimateStatus(const ValidationResult& result) const
 
     size_t criticalMissing = 0;
     for (const auto& imp : result.missingImports) {
-        if (imp.dll.find("d3d") != std::string::npos ||
-            imp.dll.find("D3D") != std::string::npos ||
-            imp.dll.find("dxgi") != std::string::npos ||
-            imp.dll.find("DXGI") != std::string::npos ||
-            imp.dll.find("kernel32") != std::string::npos ||
-            imp.dll.find("user32") != std::string::npos) {
+        if (imp.dll.find("d3d") != std::string::npos || imp.dll.find("D3D") != std::string::npos ||
+            imp.dll.find("dxgi") != std::string::npos || imp.dll.find("DXGI") != std::string::npos ||
+            imp.dll.find("kernel32") != std::string::npos || imp.dll.find("user32") != std::string::npos) {
             criticalMissing++;
         }
     }
 
-    if (criticalMissing > 5) return CompatStatus::Broken;
-    if (criticalMissing > 0) return CompatStatus::Bronze;
-    if (result.missingImports.size() > 20) return CompatStatus::Silver;
+    if (criticalMissing > 5)
+        return CompatStatus::Broken;
+    if (criticalMissing > 0)
+        return CompatStatus::Bronze;
+    if (result.missingImports.size() > 20)
+        return CompatStatus::Silver;
     return CompatStatus::Gold;
 }
 
@@ -91,8 +92,8 @@ ValidationResult GameValidator::validate(const std::string& exePath, const std::
         bool anyDetected = false;
         for (const auto& d : result.drmResults) {
             if (d.detected) {
-                report << "  DETECTED: " << d.name << " [" << d.type
-                       << "] (confidence: " << (int)(d.confidence * 100) << "%)\n";
+                report << "  DETECTED: " << d.name << " [" << d.type << "] (confidence: " << (int)(d.confidence * 100)
+                       << "%)\n";
                 anyDetected = true;
             }
         }
@@ -146,8 +147,8 @@ ValidationResult GameValidator::quickCheck(const std::string& exePath) {
     auto& detector = DRMDetector::instance();
     result.drmResults = detector.scanFile(exePath);
     result.canLaunch = detector.isCompatible(result.drmResults);
-    result.suggestedStatus = detector.hasKernelAntiCheat(result.drmResults)
-        ? CompatStatus::Broken : CompatStatus::Untested;
+    result.suggestedStatus =
+        detector.hasKernelAntiCheat(result.drmResults) ? CompatStatus::Broken : CompatStatus::Untested;
 
     return result;
 }
@@ -179,4 +180,4 @@ std::string GameValidator::generateFullReport(const std::string& gameId) const {
     return CompatDatabase::instance().generateReport(gameId);
 }
 
-}
+} // namespace metalsharp

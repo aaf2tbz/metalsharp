@@ -46,7 +46,7 @@ struct PipelineStateDesc {
 };
 
 class PipelineState {
-public:
+  public:
     static PipelineState* create(MetalDevice& device, const PipelineStateDesc& desc);
     ~PipelineState();
 
@@ -55,7 +55,7 @@ public:
     PipelineState(const PipelineState&) = delete;
     PipelineState& operator=(const PipelineState&) = delete;
 
-private:
+  private:
     PipelineState();
     bool init(MetalDevice& device, const PipelineStateDesc& desc);
 
@@ -63,4 +63,4 @@ private:
     Impl* m_impl;
 };
 
-}
+} // namespace metalsharp

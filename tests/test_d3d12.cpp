@@ -1,15 +1,21 @@
-#include <metalsharp/D3D12Device.h>
-#include <d3d/D3D12.h>
 #include <cstdio>
 #include <cstring>
+#include <d3d/D3D12.h>
+#include <metalsharp/D3D12Device.h>
 
 static int g_pass = 0;
 static int g_fail = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); g_pass++; } \
-    else { printf("  [FAIL] %s\n", msg); g_fail++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            g_pass++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            g_fail++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== MetalSharp D3D12 Tests ===\n\n");
@@ -29,7 +35,8 @@ int main() {
     printf("\n--- Command Allocator ---\n");
     ID3D12CommandAllocator* cmdAlloc = nullptr;
     if (device) {
-        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, (void**)&cmdAlloc);
+        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator,
+                                            (void**)&cmdAlloc);
         CHECK(SUCCEEDED(hr) && cmdAlloc, "CreateCommandAllocator");
         if (cmdAlloc) {
             hr = cmdAlloc->Reset();
@@ -40,7 +47,8 @@ int main() {
     printf("\n--- Command List ---\n");
     ID3D12GraphicsCommandList* cmdList = nullptr;
     if (device && cmdAlloc) {
-        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&cmdList);
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr,
+                                       IID_ID3D12GraphicsCommandList, (void**)&cmdList);
         CHECK(SUCCEEDED(hr) && cmdList, "CreateCommandList");
     }
 
@@ -82,7 +90,8 @@ int main() {
         bufDesc.Layout = 0;
         bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-        hr = device->CreateCommittedResource(&heapProps, 0, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_ID3D12Resource, (void**)&uploadBuffer);
+        hr = device->CreateCommittedResource(&heapProps, 0, &bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                             IID_ID3D12Resource, (void**)&uploadBuffer);
         CHECK(SUCCEEDED(hr) && uploadBuffer, "CreateCommittedResource (upload buffer)");
 
         if (uploadBuffer) {
@@ -126,12 +135,14 @@ int main() {
         texDesc.Layout = 0;
         texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-        hr = device->CreateCommittedResource(&heapProps, 0, &texDesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_ID3D12Resource, (void**)&rtTexture);
+        hr = device->CreateCommittedResource(&heapProps, 0, &texDesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
+                                             IID_ID3D12Resource, (void**)&rtTexture);
         CHECK(SUCCEEDED(hr) && rtTexture, "CreateCommittedResource (render target texture)");
 
         if (rtTexture) {
             CHECK(rtTexture->__metalTexturePtr() != nullptr, "Texture has Metal texture backing");
-            CHECK(rtTexture->__getResourceState() == D3D12_RESOURCE_STATE_RENDER_TARGET, "Initial resource state correct");
+            CHECK(rtTexture->__getResourceState() == D3D12_RESOURCE_STATE_RENDER_TARGET,
+                  "Initial resource state correct");
         }
     }
 
@@ -145,11 +156,13 @@ int main() {
         barrier.pResource = rtTexture;
 
         ID3D12GraphicsCommandList* freshList = nullptr;
-        device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&freshList);
+        device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList,
+                                  (void**)&freshList);
         if (freshList) {
             hr = freshList->ResourceBarrier(1, &barrier);
             CHECK(SUCCEEDED(hr), "ResourceBarrier");
-            CHECK(rtTexture->__getResourceState() == D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, "Resource state updated after barrier");
+            CHECK(rtTexture->__getResourceState() == D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                  "Resource state updated after barrier");
             freshList->Close();
             freshList->Release();
         }
@@ -180,7 +193,8 @@ int main() {
 
         FLOAT clearColor[4] = {0.2f, 0.3f, 0.4f, 1.0f};
         ID3D12GraphicsCommandList* clearList = nullptr;
-        device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&clearList);
+        device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList,
+                                  (void**)&clearList);
         if (clearList) {
             hr = clearList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
             CHECK(SUCCEEDED(hr), "ClearRenderTargetView");
@@ -256,17 +270,28 @@ int main() {
         CHECK(inc == 1, "GetDescriptorHandleIncrementSize returns 1");
     }
 
-    if (pso) pso->Release();
-    if (cmdSig) cmdSig->Release();
-    if (fence) fence->Release();
-    if (rootSig) rootSig->Release();
-    if (rtvHeap) rtvHeap->Release();
-    if (rtTexture) rtTexture->Release();
-    if (uploadBuffer) uploadBuffer->Release();
-    if (cmdList) cmdList->Release();
-    if (cmdAlloc) cmdAlloc->Release();
-    if (cmdQueue) cmdQueue->Release();
-    if (device) device->Release();
+    if (pso)
+        pso->Release();
+    if (cmdSig)
+        cmdSig->Release();
+    if (fence)
+        fence->Release();
+    if (rootSig)
+        rootSig->Release();
+    if (rtvHeap)
+        rtvHeap->Release();
+    if (rtTexture)
+        rtTexture->Release();
+    if (uploadBuffer)
+        uploadBuffer->Release();
+    if (cmdList)
+        cmdList->Release();
+    if (cmdAlloc)
+        cmdAlloc->Release();
+    if (cmdQueue)
+        cmdQueue->Release();
+    if (device)
+        device->Release();
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

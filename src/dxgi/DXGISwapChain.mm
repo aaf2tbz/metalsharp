@@ -5,18 +5,18 @@
 /// Handles buffer creation, present calls, resize, and full-screen transitions against
 /// the native macOS windowing system.
 
-#include <metalsharp/DXGI.h>
 #include <metalsharp/D3D11Device.h>
+#include <metalsharp/DXGI.h>
 #include <metalsharp/Platform.h>
 #ifdef METALSHARP_NATIVE_LOADER
 #include <metalsharp/WindowManager.h>
 #endif
 #include <AppKit/AppKit.h>
+#include <cstdio>
+#include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
 #include <QuartzCore/QuartzCore.h>
-#include <cstring>
-#include <cstdio>
 
 namespace metalsharp {
 
@@ -31,7 +31,9 @@ struct MetalSwapChain::Impl {
 };
 
 MetalSwapChain::MetalSwapChain() : m_impl(new Impl()) {}
-MetalSwapChain::~MetalSwapChain() { delete m_impl; }
+MetalSwapChain::~MetalSwapChain() {
+    delete m_impl;
+}
 
 bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount) {
     m_impl->device = (__bridge id<MTLDevice>)device.nativeDevice();
@@ -59,8 +61,8 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
             m_impl->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
             m_impl->layer.framebufferOnly = NO;
             m_impl->layer.frame = view.bounds;
-            m_impl->layer.drawableSize = CGSizeMake(width > 0 ? width : view.bounds.size.width,
-                                                      height > 0 ? height : view.bounds.size.height);
+            m_impl->layer.drawableSize =
+                CGSizeMake(width > 0 ? width : view.bounds.size.width, height > 0 ? height : view.bounds.size.height);
             view.wantsLayer = YES;
             view.layer = m_impl->layer;
 
@@ -74,7 +76,8 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
     return true;
 }
 
-MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount) {
+MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32_t width, uint32_t height,
+                                       uint32_t bufferCount) {
     auto* chain = new MetalSwapChain();
     if (!chain->init(device, window, width, height, bufferCount)) {
         delete chain;
@@ -84,11 +87,13 @@ MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32
 }
 
 void MetalSwapChain::present(uint32_t syncInterval) {
-    if (!m_impl->layer) return;
+    if (!m_impl->layer)
+        return;
 
     @autoreleasepool {
         m_impl->currentDrawable = [m_impl->layer nextDrawable];
-        if (!m_impl->currentDrawable) return;
+        if (!m_impl->currentDrawable)
+            return;
 
         id<MTLCommandBuffer> cmdBuffer = [m_impl->commandQueue commandBuffer];
         [cmdBuffer presentDrawable:m_impl->currentDrawable];
@@ -111,7 +116,8 @@ void* MetalSwapChain::getCurrentDrawable() {
 
 void* MetalSwapChain::getCurrentTexture() {
     id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)getCurrentDrawable();
-    if (!drawable) return nullptr;
+    if (!drawable)
+        return nullptr;
     return (__bridge void*)drawable.texture;
 }
 
@@ -136,14 +142,27 @@ struct DXGISwapChainBackBuffer : public ID3D11Texture2D {
     uint32_t height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 
-    HRESULT QueryInterface(REFIID, void** ppv) override { AddRef(); *ppv = this; return S_OK; }
+    HRESULT QueryInterface(REFIID, void** ppv) override {
+        AddRef();
+        *ppv = this;
+        return S_OK;
+    }
     ULONG AddRef() override { return ++refCount; }
-    ULONG Release() override { ULONG c = --refCount; if (c == 0) delete this; return c; }
+    ULONG Release() override {
+        ULONG c = --refCount;
+        if (c == 0)
+            delete this;
+        return c;
+    }
     HRESULT GetDevice(ID3D11Device** ppDevice) override { return E_NOTIMPL; }
     HRESULT GetPrivateData(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
     HRESULT SetPrivateData(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
     HRESULT SetPrivateDataInterface(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    HRESULT GetType(UINT* pType) override { if (pType) *pType = D3D11_RESOURCE_DIMENSION_TEXTURE2D; return S_OK; }
+    HRESULT GetType(UINT* pType) override {
+        if (pType)
+            *pType = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
+        return S_OK;
+    }
     HRESULT SetEvictionPriority(UINT) override { return S_OK; }
     UINT GetEvictionPriority() override { return 0; }
     void GetDesc(struct D3D11_TEXTURE2D_DESC* pDesc) override {
@@ -169,8 +188,10 @@ DXGISwapChainImpl::~DXGISwapChainImpl() {
     }
 }
 
-HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_t width, uint32_t height, uint32_t bufferCount, DXGI_FORMAT format, IDXGISwapChain** ppSwapChain) {
-    if (!ppSwapChain || !metalDevice) return E_POINTER;
+HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_t width, uint32_t height,
+                                  uint32_t bufferCount, DXGI_FORMAT format, IDXGISwapChain** ppSwapChain) {
+    if (!ppSwapChain || !metalDevice)
+        return E_POINTER;
 
     auto* swapChain = new DXGISwapChainImpl();
     swapChain->m_metalDevice = metalDevice;
@@ -180,8 +201,7 @@ HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_
     swapChain->m_format = format;
     swapChain->m_bufferCount = bufferCount;
 
-    swapChain->m_metalSwapChain.reset(
-        MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount));
+    swapChain->m_metalSwapChain.reset(MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount));
 
     if (!swapChain->m_metalSwapChain) {
         delete swapChain;
@@ -193,24 +213,38 @@ HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_
 }
 
 HRESULT DXGISwapChainImpl::QueryInterface(REFIID riid, void** ppvObject) {
-    if (!ppvObject) return E_POINTER;
+    if (!ppvObject)
+        return E_POINTER;
     AddRef();
     *ppvObject = this;
     return S_OK;
 }
 
-ULONG DXGISwapChainImpl::AddRef() { return ++m_refCount; }
+ULONG DXGISwapChainImpl::AddRef() {
+    return ++m_refCount;
+}
 ULONG DXGISwapChainImpl::Release() {
     ULONG c = --m_refCount;
-    if (c == 0) delete this;
+    if (c == 0)
+        delete this;
     return c;
 }
 
-HRESULT DXGISwapChainImpl::GetDevice(const GUID& riid, void** ppDevice) { return E_NOTIMPL; }
-HRESULT DXGISwapChainImpl::GetPrivateData(const GUID&, UINT*, void*) { return E_NOTIMPL; }
-HRESULT DXGISwapChainImpl::SetPrivateData(const GUID&, UINT, const void*) { return E_NOTIMPL; }
-HRESULT DXGISwapChainImpl::SetPrivateDataInterface(const GUID&, const IUnknown*) { return E_NOTIMPL; }
-HRESULT DXGISwapChainImpl::GetParent(const GUID& riid, void** ppParent) { return E_NOTIMPL; }
+HRESULT DXGISwapChainImpl::GetDevice(const GUID& riid, void** ppDevice) {
+    return E_NOTIMPL;
+}
+HRESULT DXGISwapChainImpl::GetPrivateData(const GUID&, UINT*, void*) {
+    return E_NOTIMPL;
+}
+HRESULT DXGISwapChainImpl::SetPrivateData(const GUID&, UINT, const void*) {
+    return E_NOTIMPL;
+}
+HRESULT DXGISwapChainImpl::SetPrivateDataInterface(const GUID&, const IUnknown*) {
+    return E_NOTIMPL;
+}
+HRESULT DXGISwapChainImpl::GetParent(const GUID& riid, void** ppParent) {
+    return E_NOTIMPL;
+}
 
 HRESULT DXGISwapChainImpl::Present(UINT SyncInterval, UINT Flags) {
     if (m_metalSwapChain) {
@@ -221,11 +255,14 @@ HRESULT DXGISwapChainImpl::Present(UINT SyncInterval, UINT Flags) {
 }
 
 HRESULT DXGISwapChainImpl::GetBuffer(UINT Buffer, const GUID& riid, void** ppSurface) {
-    if (!ppSurface) return E_POINTER;
-    if (!m_metalSwapChain) return E_FAIL;
+    if (!ppSurface)
+        return E_POINTER;
+    if (!m_metalSwapChain)
+        return E_FAIL;
 
     void* texPtr = m_metalSwapChain->getCurrentTexture();
-    if (!texPtr) return E_FAIL;
+    if (!texPtr)
+        return E_FAIL;
 
     auto* backBuffer = new DXGISwapChainBackBuffer();
     backBuffer->metalTexture = texPtr;
@@ -260,13 +297,16 @@ HRESULT DXGISwapChainImpl::SetFullscreenState(INT Fullscreen, IDXGIOutput* pTarg
     return S_OK;
 }
 HRESULT DXGISwapChainImpl::GetFullscreenState(INT* pFullscreen, IDXGIOutput** ppTarget) {
-    if (pFullscreen) *pFullscreen = FALSE;
-    if (ppTarget) *ppTarget = nullptr;
+    if (pFullscreen)
+        *pFullscreen = FALSE;
+    if (ppTarget)
+        *ppTarget = nullptr;
     return S_OK;
 }
 
 HRESULT DXGISwapChainImpl::GetDesc(void* pDesc) {
-    if (!pDesc) return E_POINTER;
+    if (!pDesc)
+        return E_POINTER;
     auto* desc = static_cast<DXGI_SWAP_CHAIN_DESC*>(pDesc);
     memset(desc, 0, sizeof(DXGI_SWAP_CHAIN_DESC));
     desc->BufferDesc.Width = m_width;
@@ -280,9 +320,12 @@ HRESULT DXGISwapChainImpl::GetDesc(void* pDesc) {
     return S_OK;
 }
 
-HRESULT DXGISwapChainImpl::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
-    if (BufferCount > 0) m_bufferCount = BufferCount;
-    if (NewFormat != DXGI_FORMAT_UNKNOWN) m_format = NewFormat;
+HRESULT DXGISwapChainImpl::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
+                                         UINT SwapChainFlags) {
+    if (BufferCount > 0)
+        m_bufferCount = BufferCount;
+    if (NewFormat != DXGI_FORMAT_UNKNOWN)
+        m_format = NewFormat;
 
     if (m_metalSwapChain) {
         uint32_t newW = Width > 0 ? Width : m_width;
@@ -300,11 +343,18 @@ HRESULT DXGISwapChainImpl::ResizeBuffers(UINT BufferCount, UINT Width, UINT Heig
     return S_OK;
 }
 
-HRESULT DXGISwapChainImpl::ResizeTarget(const DXGI_MODE_DESC* pNewTargetParameters) { return S_OK; }
-HRESULT DXGISwapChainImpl::GetContainingOutput(IDXGIOutput** ppOutput) { return E_NOTIMPL; }
-HRESULT DXGISwapChainImpl::GetFrameStatistics(void* pStats) { return E_NOTIMPL; }
+HRESULT DXGISwapChainImpl::ResizeTarget(const DXGI_MODE_DESC* pNewTargetParameters) {
+    return S_OK;
+}
+HRESULT DXGISwapChainImpl::GetContainingOutput(IDXGIOutput** ppOutput) {
+    return E_NOTIMPL;
+}
+HRESULT DXGISwapChainImpl::GetFrameStatistics(void* pStats) {
+    return E_NOTIMPL;
+}
 HRESULT DXGISwapChainImpl::GetLastPresentCount(UINT* pLastPresentCount) {
-    if (pLastPresentCount) *pLastPresentCount = 0;
+    if (pLastPresentCount)
+        *pLastPresentCount = 0;
     return S_OK;
 }
 
@@ -312,4 +362,4 @@ HRESULT DXGISwapChainImpl::Present1(UINT SyncInterval, UINT PresentFlags, const 
     return Present(SyncInterval, PresentFlags);
 }
 
-}
+} // namespace metalsharp

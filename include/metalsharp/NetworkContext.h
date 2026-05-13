@@ -10,10 +10,10 @@
 #pragma once
 
 #include <cstdint>
-#include <unordered_map>
-#include <string>
-#include <mutex>
 #include <functional>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace metalsharp {
 namespace win32 {
@@ -66,7 +66,10 @@ struct WSAOVERLAPPED {
     void* Internal;
     void* InternalHigh;
     union {
-        struct { void* Offset; void* OffsetHigh; };
+        struct {
+            void* Offset;
+            void* OffsetHigh;
+        };
         void* Pointer;
     };
     void* hEvent;
@@ -85,7 +88,7 @@ struct PipeInstance {
 };
 
 class NetworkContext {
-public:
+  public:
     static NetworkContext& instance();
 
     int allocSocket(int fd);
@@ -107,7 +110,7 @@ public:
 
     void initialize();
 
-private:
+  private:
     NetworkContext() = default;
 
     struct SocketEntry {
@@ -126,5 +129,5 @@ private:
     static thread_local uint32_t t_wsaError;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

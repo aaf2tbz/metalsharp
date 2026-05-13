@@ -6,6 +6,4 @@
 
 #include <metalsharp/MetalBackend.h>
 
-namespace metalsharp {
-
-}
+namespace metalsharp {}

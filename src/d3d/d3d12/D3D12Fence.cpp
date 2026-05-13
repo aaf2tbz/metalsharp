@@ -6,5 +6,4 @@
 
 #include <metalsharp/Platform.h>
 
-namespace metalsharp {
-}
+namespace metalsharp {}

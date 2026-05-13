@@ -17,5 +17,5 @@ ShimLibrary createD3D11Shim();
 ShimLibrary createD3D12Shim();
 ShimLibrary createDxgiShim();
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

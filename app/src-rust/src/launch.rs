@@ -43,11 +43,11 @@ fn engine_method(engine: Engine) -> &'static str {
 
 fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
-         105600 => Engine::FnaArm64,
-         504230 => Engine::SteamD3DMetalPerf,
-         265930 => Engine::SteamD3DMetalPerf,
-         312520 | 375520 | 848450 => Engine::DxmtMetal,
-         535520 | 391540 => Engine::Wined3d32,
+        105600 => Engine::FnaArm64,
+        504230 => Engine::SteamD3DMetalPerf,
+        265930 => Engine::SteamD3DMetalPerf,
+        312520 | 375520 | 848450 => Engine::DxmtMetal,
+        535520 | 391540 => Engine::Wined3d32,
 
         2050650 | 1583230 => Engine::SteamD3DMetalPerf,
         3164500 => Engine::DxmtMetal,
@@ -58,21 +58,19 @@ fn get_engine_for_appid(appid: u32) -> Engine {
 
         814380 | 1593500 => Engine::SteamMetalfx,
 
-        397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 |
-        1203620 | 1282100 | 750920 | 1172380 | 870780 | 1196590 |
-        1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 |
-        1172470 | 2290180 | 620 => Engine::SteamD3DMetalPerf,
+        397540 | 298110 | 552520 | 1091500 | 1868140 | 1551360 | 1716740 | 1203620 | 1282100 | 750920 | 1172380
+        | 870780 | 1196590 | 1236300 | 1888160 | 976310 | 2767030 | 292030 | 990080 | 1172470 | 2290180 | 620 => {
+            Engine::SteamD3DMetalPerf
+        },
 
-        548430 | 892970 | 1313140 | 1623730 | 553850 | 367520 | 413150 |
-        1145360 | 588650 | 1637320 | 1562430 | 1092790 | 1229490 |
-        1971650 | 1809540 | 1237320 | 1326470 | 275850 | 1643320 |
-        379720 | 782330 | 289070 | 1147560 | 1222680 | 252950 |
-        230410 | 252490 | 730 => Engine::SteamD3DMetalPerf,
+        548430 | 892970 | 1313140 | 1623730 | 553850 | 367520 | 413150 | 1145360 | 588650 | 1637320 | 1562430
+        | 1092790 | 1229490 | 1971650 | 1809540 | 1237320 | 1326470 | 275850 | 1643320 | 379720 | 782330 | 289070
+        | 1147560 | 1222680 | 252950 | 230410 | 252490 | 730 => Engine::SteamD3DMetalPerf,
 
         _ => {
             let game_dir = crate::setup::resolve_game_dir(appid);
             detect_engine_from_dir(&game_dir)
-        }
+        },
     }
 }
 
@@ -167,76 +165,80 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let exe = dir.join("TerrariaLauncher.exe");
             let pid = launch_fna_arm64(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_arm64"))
-        }
+        },
         Engine::FnaX86 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = dir.join("Celeste.exe");
             let pid = launch_fna_x86(&exe.to_string_lossy(), dir)?;
             Ok((pid, "xna_fna_x86"))
-        }
+        },
         Engine::DxmtMetal => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_dxmt_metal(&exe, dir)?;
             Ok((pid, "dxmt_metal"))
-        }
+        },
         Engine::DxmtMetal12 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_dxmt_metal12(&exe, dir)?;
             Ok((pid, "dxmt_metal12"))
-        }
+        },
         Engine::Wined3d32 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_wined3d_32(&exe, dir)?;
             Ok((pid, "wined3d_32"))
-        }
+        },
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let exe = resolve_game_exe_fallback(dir);
             let pid = launch_metalsharp_wine(&exe, dir)?;
             Ok((pid, "metalsharp_wine"))
-        }
+        },
         Engine::SteamBare => {
             let pid = launch_via_steam(appid)?;
             Ok((pid, "steam"))
-        }
+        },
         Engine::SteamMetalfx => {
-            let pid = launch_via_steam_with_env(appid, &[
-                ("D3DM_ENABLE_METALFX", "1"),
-                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
-                ("MVK_ALLOW_METAL_FENCES", "1"),
-            ])?;
+            let pid = launch_via_steam_with_env(
+                appid,
+                &[
+                    ("D3DM_ENABLE_METALFX", "1"),
+                    ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                    ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                    ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                    ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                    ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                    ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                    ("MVK_ALLOW_METAL_FENCES", "1"),
+                ],
+            )?;
             Ok((pid, "steam_metalfx"))
-        }
-         Engine::SteamD3DMetalPerf => {
-             let gptk_dll = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-windows";
-             let gptk_dyld = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix";
-             let ms_root = dirs::home_dir().ok_or("no home dir")?.join(".metalsharp").join("runtime").join("wine");
-             let ms_dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
-             let dyld = format!("{}:{}", gptk_dyld, ms_dyld);
-             let wine_dll_path = format!("{}:{}",
-                 gptk_dll,
-                 ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy()
-             );
-             let pid = launch_via_steam_with_env(appid, &[
-                 ("WINEDLLPATH", &wine_dll_path),
-                 ("DYLD_FALLBACK_LIBRARY_PATH", &dyld),
-                 ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                 ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                 ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                 ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                 ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-             ])?;
-             Ok((pid, "steam_d3dmetal_perf"))
-         }
-     }
+        },
+        Engine::SteamD3DMetalPerf => {
+            let gptk_dll = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-windows";
+            let gptk_dyld = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix";
+            let ms_root = dirs::home_dir().ok_or("no home dir")?.join(".metalsharp").join("runtime").join("wine");
+            let ms_dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+            let dyld = format!("{}:{}", gptk_dyld, ms_dyld);
+            let wine_dll_path =
+                format!("{}:{}", gptk_dll, ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy());
+            let pid = launch_via_steam_with_env(
+                appid,
+                &[
+                    ("WINEDLLPATH", &wine_dll_path),
+                    ("DYLD_FALLBACK_LIBRARY_PATH", &dyld),
+                    ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                    ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                    ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                    ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                    ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                ],
+            )?;
+            Ok((pid, "steam_d3dmetal_perf"))
+        },
+    }
 }
 
 pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -251,47 +253,56 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
 
     match method {
         "native_metalfx_low" => {
-            let pid = launch_via_steam_with_env(appid, &[
-                ("D3DM_ENABLE_METALFX", "1"),
-                ("D3DM_METALFX_QUALITY", "low"),
-                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
-                ("MVK_ALLOW_METAL_FENCES", "1"),
-            ])?;
+            let pid = launch_via_steam_with_env(
+                appid,
+                &[
+                    ("D3DM_ENABLE_METALFX", "1"),
+                    ("D3DM_METALFX_QUALITY", "low"),
+                    ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                    ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                    ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                    ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                    ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                    ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                    ("MVK_ALLOW_METAL_FENCES", "1"),
+                ],
+            )?;
             Ok((pid, "native_metalfx_low"))
-        }
+        },
         "native_metalfx_medium" => {
-            let pid = launch_via_steam_with_env(appid, &[
-                ("D3DM_ENABLE_METALFX", "1"),
-                ("D3DM_METALFX_QUALITY", "medium"),
-                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
-                ("MVK_ALLOW_METAL_FENCES", "1"),
-            ])?;
+            let pid = launch_via_steam_with_env(
+                appid,
+                &[
+                    ("D3DM_ENABLE_METALFX", "1"),
+                    ("D3DM_METALFX_QUALITY", "medium"),
+                    ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                    ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                    ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                    ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                    ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                    ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                    ("MVK_ALLOW_METAL_FENCES", "1"),
+                ],
+            )?;
             Ok((pid, "native_metalfx_medium"))
-        }
+        },
         "native_metalfx_high" => {
-            let pid = launch_via_steam_with_env(appid, &[
-                ("D3DM_ENABLE_METALFX", "1"),
-                ("D3DM_METALFX_QUALITY", "high"),
-                ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
-                ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
-                ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
-                ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
-                ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
-                ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
-                ("MVK_ALLOW_METAL_FENCES", "1"),
-            ])?;
+            let pid = launch_via_steam_with_env(
+                appid,
+                &[
+                    ("D3DM_ENABLE_METALFX", "1"),
+                    ("D3DM_METALFX_QUALITY", "high"),
+                    ("D3DM_ENABLE_ASYNC_COMMIT", "1"),
+                    ("D3DM_MULTITHREADED_INTERFACE_ENABLE", "1"),
+                    ("D3DM_IGNORE_D3D11_RENDER_BARRIERS", "1"),
+                    ("D3DM_SAMPLE_NAN_TO_ZERO", "1"),
+                    ("D3DM_FLUSH_POS_INF_TO_NAN", "1"),
+                    ("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1"),
+                    ("MVK_ALLOW_METAL_FENCES", "1"),
+                ],
+            )?;
             Ok((pid, "native_metalfx_high"))
-        }
+        },
         _ => Err(format!("Unknown launch method: {}", method).into()),
     }
 }
@@ -338,7 +349,9 @@ pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Resu
         crate::steam::launch_wine_steam()?;
         for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            if crate::steam::is_wine_steam_running() { break; }
+            if crate::steam::is_wine_steam_running() {
+                break;
+            }
         }
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
@@ -346,18 +359,14 @@ pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Resu
     let url = format!("steam://run/{}", appid);
 
     let mut cmd = Command::new(&wine);
-    cmd.env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all");
+    cmd.env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all");
 
     for (key, val) in extra_env {
         cmd.env(key, val);
     }
 
-    let child = cmd
-        .args(["start", &url])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let child =
+        cmd.args(["start", &url]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
 
     Ok(child.id())
 }
@@ -396,10 +405,7 @@ fn launch_fna_x86(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std
 
 fn launch_fna_arm64(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
     let mono_config = find_config("terraria-mono.config");
-    let dyld = format!(
-        "{}:/opt/homebrew/lib",
-        game_dir.to_string_lossy()
-    );
+    let dyld = format!("{}:/opt/homebrew/lib", game_dir.to_string_lossy());
 
     let child = Command::new("mono")
         .current_dir(game_dir)
@@ -423,11 +429,7 @@ fn launch_dxmt_metal(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe_name = std::path::Path::new(exe_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let exe_name = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
     let dyld_dxmt = ms_root.join("lib").join("dxmt").join("x86_64-unix").to_string_lossy().to_string();
@@ -472,11 +474,7 @@ fn launch_dxmt_metal12(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dy
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe_name = std::path::Path::new(exe_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let exe_name = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
     let dyld_dxmt = ms_root.join("lib").join("dxmt").join("x86_64-unix").to_string_lossy().to_string();
@@ -522,18 +520,17 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe_name = std::path::Path::new(exe_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let exe_name = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "dxgi,d3d11=b;gameoverlayrenderer,gameoverlayrenderer64=d")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+        )
         .arg(&exe_name)
         .spawn()?;
 
@@ -551,17 +548,16 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe_name = std::path::Path::new(exe_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let exe_name = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     let child = Command::new(&wine)
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+        )
         .arg(&exe_name)
         .spawn()?;
 
@@ -617,24 +613,16 @@ pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
 
     let resolved = crate::setup::resolve_game_dir(appid);
 
-    let dirs_to_check = if let Some(ref rd) = resolved {
-        vec![rd.clone(), game_dir.clone()]
-    } else {
-        vec![game_dir.clone()]
-    };
+    let dirs_to_check =
+        if let Some(ref rd) = resolved { vec![rd.clone(), game_dir.clone()] } else { vec![game_dir.clone()] };
 
     for dir in &dirs_to_check {
         if dir.exists() {
-            if let Ok(output) = Command::new("pgrep")
-                .args(["-a", "-f", &dir.to_string_lossy()])
-                .output()
-            {
+            if let Ok(output) = Command::new("pgrep").args(["-a", "-f", &dir.to_string_lossy()]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if let Some(pid_str) = line.split_whitespace().next() {
                         if let Ok(pid) = pid_str.parse::<i32>() {
-                            let _ = Command::new("kill")
-                                .args(["-9", &pid.to_string()])
-                                .status();
+                            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
                         }
                     }
                 }
@@ -642,9 +630,7 @@ pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "UnityCrashHandler"])
-        .status();
+    let _ = Command::new("pkill").args(["-9", "-f", "UnityCrashHandler"]).status();
 
     Ok(())
 }
@@ -682,10 +668,7 @@ fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
 
 fn find_scripts_dir() -> Option<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
-    let candidates = vec![
-        home.join("metalsharp").join("scripts"),
-        home.join(".metalsharp").join("scripts"),
-    ];
+    let candidates = vec![home.join("metalsharp").join("scripts"), home.join(".metalsharp").join("scripts")];
     candidates.into_iter().find(|p| p.exists())
 }
 
@@ -733,10 +716,7 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
 }
 
 fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
-    let candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/mono"),
-        PathBuf::from("/usr/local/bin/mono"),
-    ];
+    let candidates = vec![PathBuf::from("/opt/homebrew/bin/mono"), PathBuf::from("/usr/local/bin/mono")];
 
     for c in candidates {
         if c.exists() {
@@ -771,10 +751,8 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
 
 fn find_config(name: &str) -> String {
     let home = dirs::home_dir().unwrap_or_default();
-    let candidates = vec![
-        home.join("metalsharp").join("configs").join(name),
-        home.join(".metalsharp").join("configs").join(name),
-    ];
+    let candidates =
+        vec![home.join("metalsharp").join("configs").join(name), home.join(".metalsharp").join("configs").join(name)];
     for c in candidates {
         if c.exists() {
             return c.to_string_lossy().to_string();
@@ -785,10 +763,8 @@ fn find_config(name: &str) -> String {
 
 fn find_shims_dir() -> String {
     let home = dirs::home_dir().unwrap_or_default();
-    let candidates = vec![
-        home.join(".metalsharp").join("runtime").join("shims"),
-        home.join(".metalsharp").join("shims"),
-    ];
+    let candidates =
+        vec![home.join(".metalsharp").join("runtime").join("shims"), home.join(".metalsharp").join("shims")];
     for c in candidates {
         if c.exists() {
             return c.to_string_lossy().to_string();
@@ -831,10 +807,7 @@ fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
 
     ensure_wine_prefix(&prefix)?;
 
-    let child = Command::new(&wine)
-        .env("WINEPREFIX", &prefix_str)
-        .arg(exe_path)
-        .spawn()?;
+    let child = Command::new(&wine).env("WINEPREFIX", &prefix_str).arg(exe_path).spawn()?;
 
     Ok(child.id())
 }

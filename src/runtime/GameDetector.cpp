@@ -7,11 +7,11 @@
 /// detected game entries regardless of source platform.
 
 #include "metalsharp/GameDetector.h"
-#include <fstream>
-#include <filesystem>
-#include <sstream>
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #ifdef __APPLE__
 #include <sys/stat.h>
@@ -23,19 +23,28 @@ namespace fs = std::filesystem;
 
 std::string GameDetector::platformToString(GamePlatform p) {
     switch (p) {
-        case GamePlatform::Steam: return "steam";
-        case GamePlatform::EpicGamesStore: return "epic";
-        case GamePlatform::GOG: return "gog";
-        case GamePlatform::Local: return "local";
-        default: return "unknown";
+    case GamePlatform::Steam:
+        return "steam";
+    case GamePlatform::EpicGamesStore:
+        return "epic";
+    case GamePlatform::GOG:
+        return "gog";
+    case GamePlatform::Local:
+        return "local";
+    default:
+        return "unknown";
     }
 }
 
 GamePlatform GameDetector::platformFromString(const std::string& s) {
-    if (s == "steam") return GamePlatform::Steam;
-    if (s == "epic") return GamePlatform::EpicGamesStore;
-    if (s == "gog") return GamePlatform::GOG;
-    if (s == "local") return GamePlatform::Local;
+    if (s == "steam")
+        return GamePlatform::Steam;
+    if (s == "epic")
+        return GamePlatform::EpicGamesStore;
+    if (s == "gog")
+        return GamePlatform::GOG;
+    if (s == "local")
+        return GamePlatform::Local;
     return GamePlatform::Unknown;
 }
 
@@ -46,20 +55,19 @@ bool GameDetector::fileExists(const std::string& path) {
 int64_t GameDetector::calculateDirSize(const std::string& dir) {
     int64_t total = 0;
     try {
-        for (const auto& entry : fs::recursive_directory_iterator(dir,
-                     fs::directory_options::skip_permission_denied)) {
+        for (const auto& entry : fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied)) {
             if (entry.is_regular_file()) {
                 total += static_cast<int64_t>(entry.file_size());
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
     return total;
 }
 
 std::string GameDetector::findGameExe(const std::string& dir) {
     try {
-        for (const auto& entry : fs::recursive_directory_iterator(dir,
-                     fs::directory_options::skip_permission_denied)) {
+        for (const auto& entry : fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied)) {
             if (entry.is_regular_file()) {
                 auto path = entry.path();
                 if (path.extension() == ".exe") {
@@ -67,7 +75,8 @@ std::string GameDetector::findGameExe(const std::string& dir) {
                 }
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
     return "";
 }
 
@@ -90,10 +99,12 @@ std::string GameDetector::findSteamLibraryDirs(const std::string& steamInstallDi
 
 std::vector<DetectedGame> GameDetector::parseSteamLibraryFolders(const std::string& vdfPath) {
     std::vector<DetectedGame> games;
-    if (!fileExists(vdfPath)) return games;
+    if (!fileExists(vdfPath))
+        return games;
 
     std::ifstream f(vdfPath);
-    if (!f.is_open()) return games;
+    if (!f.is_open())
+        return games;
 
     std::string line;
     std::vector<std::string> libraryPaths;
@@ -122,16 +133,19 @@ std::vector<DetectedGame> GameDetector::parseSteamLibraryFolders(const std::stri
 std::vector<DetectedGame> GameDetector::scanSteamApps(const std::string& libraryDir) {
     std::vector<DetectedGame> games;
     std::string steamapps = libraryDir + "/steamapps";
-    if (!fs::exists(steamapps)) return games;
+    if (!fs::exists(steamapps))
+        return games;
 
     try {
         for (const auto& entry : fs::directory_iterator(steamapps)) {
-            if (!entry.is_regular_file()) continue;
+            if (!entry.is_regular_file())
+                continue;
             auto name = entry.path().filename().string();
             if (name.find("appmanifest_") == 0 && name.find(".acf") != std::string::npos) {
                 auto acfPath = entry.path().string();
                 std::ifstream af(acfPath);
-                if (!af.is_open()) continue;
+                if (!af.is_open())
+                    continue;
 
                 DetectedGame game;
                 game.platform = GamePlatform::Steam;
@@ -139,18 +153,24 @@ std::vector<DetectedGame> GameDetector::scanSteamApps(const std::string& library
                 std::string aline;
                 while (std::getline(af, aline)) {
                     auto trim = [](std::string s) {
-                        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-                        while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) s.pop_back();
+                        while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+                            s.erase(s.begin());
+                        while (!s.empty() &&
+                               (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n'))
+                            s.pop_back();
                         return s;
                     };
 
                     auto extractValue = [&trim](const std::string& l, const std::string& key) -> std::string {
                         auto p = l.find(key);
-                        if (p == std::string::npos) return "";
+                        if (p == std::string::npos)
+                            return "";
                         auto s = l.find('\"', p + key.length());
-                        if (s == std::string::npos) return "";
+                        if (s == std::string::npos)
+                            return "";
                         auto e = l.find('\"', s + 1);
-                        if (e == std::string::npos) return "";
+                        if (e == std::string::npos)
+                            return "";
                         return l.substr(s + 1, e - s - 1);
                     };
 
@@ -175,7 +195,8 @@ std::vector<DetectedGame> GameDetector::scanSteamApps(const std::string& library
                 }
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
 
     return games;
 }
@@ -184,7 +205,8 @@ std::vector<DetectedGame> GameDetector::detectSteam() {
     std::vector<DetectedGame> games;
 
     const char* home = std::getenv("HOME");
-    if (!home) return games;
+    if (!home)
+        return games;
 
     std::string steamDir;
     std::string possiblePaths[] = {
@@ -200,7 +222,8 @@ std::vector<DetectedGame> GameDetector::detectSteam() {
         }
     }
 
-    if (steamDir.empty()) return games;
+    if (steamDir.empty())
+        return games;
 
     std::string vdfPath = findSteamLibraryDirs(steamDir);
     if (fileExists(vdfPath)) {
@@ -217,24 +240,30 @@ std::vector<DetectedGame> GameDetector::detectSteam() {
 
 std::string GameDetector::findEpicManifestDir() {
     const char* home = std::getenv("HOME");
-    if (!home) return "";
+    if (!home)
+        return "";
 
     std::string path = std::string(home) + "/Library/Application Support/Epic/Epic Games Launcher/Data/Manifests";
-    if (fileExists(path)) return path;
+    if (fileExists(path))
+        return path;
     return "";
 }
 
 std::vector<DetectedGame> GameDetector::parseEpicManifests(const std::string& manifestDir) {
     std::vector<DetectedGame> games;
-    if (manifestDir.empty()) return games;
+    if (manifestDir.empty())
+        return games;
 
     try {
         for (const auto& entry : fs::directory_iterator(manifestDir)) {
-            if (!entry.is_regular_file()) continue;
-            if (entry.path().extension() != ".item") continue;
+            if (!entry.is_regular_file())
+                continue;
+            if (entry.path().extension() != ".item")
+                continue;
 
             std::ifstream f(entry.path());
-            if (!f.is_open()) continue;
+            if (!f.is_open())
+                continue;
 
             DetectedGame game;
             game.platform = GamePlatform::EpicGamesStore;
@@ -243,11 +272,14 @@ std::vector<DetectedGame> GameDetector::parseEpicManifests(const std::string& ma
             while (std::getline(f, line)) {
                 auto extractString = [](const std::string& l, const std::string& key) -> std::string {
                     auto p = l.find(key);
-                    if (p == std::string::npos) return "";
+                    if (p == std::string::npos)
+                        return "";
                     auto s = l.find('\"', p + key.length());
-                    if (s == std::string::npos) return "";
+                    if (s == std::string::npos)
+                        return "";
                     auto e = l.find('\"', s + 1);
-                    if (e == std::string::npos) return "";
+                    if (e == std::string::npos)
+                        return "";
                     return l.substr(s + 1, e - s - 1);
                 };
 
@@ -270,7 +302,8 @@ std::vector<DetectedGame> GameDetector::parseEpicManifests(const std::string& ma
                 games.push_back(game);
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
 
     return games;
 }
@@ -281,10 +314,12 @@ std::vector<DetectedGame> GameDetector::detectEpic() {
 
 std::string GameDetector::findGOGDbPath() {
     const char* home = std::getenv("HOME");
-    if (!home) return "";
+    if (!home)
+        return "";
 
     std::string path = std::string(home) + "/Library/Application Support/GOG.com/Galaxy/Communities";
-    if (fileExists(path)) return path;
+    if (fileExists(path))
+        return path;
     return "";
 }
 
@@ -298,12 +333,13 @@ std::vector<DetectedGame> GameDetector::detectGOG() {
 
 std::vector<DetectedGame> GameDetector::scanLocalDir(const std::string& dir) {
     std::vector<DetectedGame> games;
-    if (!fileExists(dir)) return games;
+    if (!fileExists(dir))
+        return games;
 
     try {
-        for (const auto& entry : fs::directory_iterator(dir,
-                     fs::directory_options::skip_permission_denied)) {
-            if (!entry.is_directory()) continue;
+        for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied)) {
+            if (!entry.is_directory())
+                continue;
 
             DetectedGame game;
             game.id = "local_" + entry.path().filename().string();
@@ -317,17 +353,19 @@ std::vector<DetectedGame> GameDetector::scanLocalDir(const std::string& dir) {
                 games.push_back(game);
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
 
     return games;
 }
 
 std::vector<DetectedGame> GameDetector::detectLocal() {
     const char* home = std::getenv("HOME");
-    if (!home) return {};
+    if (!home)
+        return {};
 
     std::string gameDir = std::string(home) + "/.metalsharp/games";
     return scanLocalDir(gameDir);
 }
 
-}
+} // namespace metalsharp

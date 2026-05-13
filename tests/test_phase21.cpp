@@ -1,23 +1,28 @@
-#include <metalsharp/ShaderCache.h>
-#include <metalsharp/PipelineCache.h>
+#include <cstdio>
+#include <cstring>
 #include <metalsharp/FramePacer.h>
 #include <metalsharp/GPUProfiler.h>
 #include <metalsharp/MetalFXUpscaler.h>
+#include <metalsharp/PipelineCache.h>
 #include <metalsharp/RenderThreadPool.h>
-#include <cstdio>
-#include <cstring>
-#include <vector>
+#include <metalsharp/ShaderCache.h>
 #include <thread>
+#include <vector>
 
 using namespace metalsharp;
 
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-55s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-55s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 // 21.1 Shader Cache
 static bool test_shader_cache_hash_consistency() {
@@ -299,9 +304,7 @@ static bool test_gpu_profiler_callback() {
     profiler.setEnabled(true);
 
     bool callbackFired = false;
-    profiler.setStatsCallback([&callbackFired](const GPUProfiler::FrameStats& s) {
-        callbackFired = true;
-    });
+    profiler.setStatsCallback([&callbackFired](const GPUProfiler::FrameStats& s) { callbackFired = true; });
 
     profiler.beginFrame();
     profiler.endFrame();
@@ -349,7 +352,8 @@ int main() {
     TEST(gpu_profiler_callback);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

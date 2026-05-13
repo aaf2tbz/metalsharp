@@ -6,7 +6,7 @@
 namespace metalsharp {
 
 class WinePrefix {
-public:
+  public:
     explicit WinePrefix(const std::string& path);
     ~WinePrefix();
 
@@ -24,10 +24,10 @@ public:
 
     static std::string defaultPrefixPath();
 
-private:
+  private:
     std::string m_path;
     bool m_initialized = false;
     std::vector<std::string> m_dllOverrides;
 };
 
-}
+} // namespace metalsharp

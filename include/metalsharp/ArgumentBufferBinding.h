@@ -10,14 +10,14 @@
 
 #pragma once
 
+#include <cstdint>
+#include <metalsharp/IRConverterBridge.h>
 #include <metalsharp/Platform.h>
 #include <metalsharp/ShaderStage.h>
-#include <metalsharp/IRConverterBridge.h>
-#include <cstdint>
-#include <vector>
-#include <unordered_map>
-#include <string>
 #include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace metalsharp {
 
@@ -46,59 +46,31 @@ struct ArgumentBufferLayout {
 };
 
 class ArgumentBufferManager {
-public:
+  public:
     static ArgumentBufferManager& instance();
 
-    ArgumentBufferLayout buildLayoutFromReflection(
-        const IRConverterReflection& reflection,
-        ShaderStage stage
-    );
+    ArgumentBufferLayout buildLayoutFromReflection(const IRConverterReflection& reflection, ShaderStage stage);
 
-    ArgumentBufferLayout buildLayoutFromRootSignature(
-        const void* rootSignatureData,
-        size_t rootSignatureSize
-    );
+    ArgumentBufferLayout buildLayoutFromRootSignature(const void* rootSignatureData, size_t rootSignatureSize);
 
-    bool encodeResource(
-        const ArgumentBufferLayout& layout,
-        uint32_t rootParameterIndex,
-        void* argumentBufferData,
-        size_t argumentBufferSize,
-        const void* resourceData,
-        size_t resourceDataSize
-    );
+    bool encodeResource(const ArgumentBufferLayout& layout, uint32_t rootParameterIndex, void* argumentBufferData,
+                        size_t argumentBufferSize, const void* resourceData, size_t resourceDataSize);
 
-    bool encodeRootConstants(
-        const ArgumentBufferLayout& layout,
-        uint32_t rootParameterIndex,
-        void* argumentBufferData,
-        size_t argumentBufferSize,
-        const uint32_t* constants,
-        uint32_t numConstants
-    );
+    bool encodeRootConstants(const ArgumentBufferLayout& layout, uint32_t rootParameterIndex, void* argumentBufferData,
+                             size_t argumentBufferSize, const uint32_t* constants, uint32_t numConstants);
 
-    bool encodeDescriptorTable(
-        const ArgumentBufferLayout& layout,
-        uint32_t rootParameterIndex,
-        void* argumentBufferData,
-        size_t argumentBufferSize,
-        uint64_t gpuAddress
-    );
+    bool encodeDescriptorTable(const ArgumentBufferLayout& layout, uint32_t rootParameterIndex,
+                               void* argumentBufferData, size_t argumentBufferSize, uint64_t gpuAddress);
 
-    bool encodeRootDescriptor(
-        const ArgumentBufferLayout& layout,
-        uint32_t rootParameterIndex,
-        void* argumentBufferData,
-        size_t argumentBufferSize,
-        uint64_t gpuAddress
-    );
+    bool encodeRootDescriptor(const ArgumentBufferLayout& layout, uint32_t rootParameterIndex, void* argumentBufferData,
+                              size_t argumentBufferSize, uint64_t gpuAddress);
 
     ArgumentBufferManager(const ArgumentBufferManager&) = delete;
     ArgumentBufferManager& operator=(const ArgumentBufferManager&) = delete;
 
-private:
+  private:
     ArgumentBufferManager() = default;
     std::mutex m_mutex;
 };
 
-}
+} // namespace metalsharp

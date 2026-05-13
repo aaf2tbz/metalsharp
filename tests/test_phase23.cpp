@@ -1,10 +1,10 @@
+#include <cstdio>
+#include <cstring>
 #include <metalsharp/CompatDatabase.h>
-#include <metalsharp/ImportReporter.h>
 #include <metalsharp/CrashDiagnostics.h>
 #include <metalsharp/DRMDetector.h>
 #include <metalsharp/GameValidator.h>
-#include <cstdio>
-#include <cstring>
+#include <metalsharp/ImportReporter.h>
 #include <vector>
 
 using namespace metalsharp;
@@ -12,10 +12,15 @@ using namespace metalsharp;
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-55s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-55s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 // 23.1 CompatDatabase
 static bool test_compat_status_roundtrip() {
@@ -65,9 +70,12 @@ static bool test_compat_query_by_status() {
     db.init("/tmp/metalsharp_test/compat.json");
 
     GameEntry e1, e2, e3;
-    e1.gameId = "g1"; e1.status = CompatStatus::Platinum;
-    e2.gameId = "g2"; e2.status = CompatStatus::Gold;
-    e3.gameId = "g3"; e3.status = CompatStatus::Platinum;
+    e1.gameId = "g1";
+    e1.status = CompatStatus::Platinum;
+    e2.gameId = "g2";
+    e2.status = CompatStatus::Gold;
+    e3.gameId = "g3";
+    e3.status = CompatStatus::Platinum;
 
     db.addOrUpdate(e1);
     db.addOrUpdate(e2);
@@ -161,8 +169,7 @@ static bool test_compat_report_generation() {
     db.addOrUpdate(entry);
 
     std::string report = db.generateReport("report_test");
-    bool ok = report.find("Report Game") != std::string::npos &&
-              report.find("Gold") != std::string::npos;
+    bool ok = report.find("Report Game") != std::string::npos && report.find("Gold") != std::string::npos;
 
     db.shutdown();
     return ok;
@@ -178,9 +185,7 @@ static bool test_import_reporter_record() {
     reporter.recordImport("d3d11.dll", "CreateDevice", true);
     reporter.recordImport("d3d11.dll", "MissingFeature", false);
 
-    return reporter.totalCount() == 4 &&
-           reporter.resolvedCount() == 2 &&
-           reporter.missingCount() == 2;
+    return reporter.totalCount() == 4 && reporter.resolvedCount() == 2 && reporter.missingCount() == 2;
 }
 
 static bool test_import_reporter_ordinal() {
@@ -214,8 +219,7 @@ static bool test_import_reporter_summary() {
     reporter.recordImport("test.dll", "Func2", false);
 
     std::string summary = reporter.generateSummary();
-    return summary.find("Total:") != std::string::npos &&
-           summary.find("Missing:") != std::string::npos;
+    return summary.find("Total:") != std::string::npos && summary.find("Missing:") != std::string::npos;
 }
 
 // 23.3 CrashDiagnostics
@@ -255,12 +259,14 @@ static bool test_crash_diagnostics_timestamp() {
 static bool test_drm_detector_memory_denuvo() {
     auto& detector = DRMDetector::instance();
 
-    const char* fakeExe = "SomeBinary\x44\x65\x6E\x75\x76\x6F""MoreData";
+    const char* fakeExe = "SomeBinary\x44\x65\x6E\x75\x76\x6F"
+                          "MoreData";
     auto results = detector.scanMemory(reinterpret_cast<const uint8_t*>(fakeExe), strlen(fakeExe));
 
     bool foundDenuvo = false;
     for (const auto& d : results) {
-        if (d.name == "Denuvo Anti-Tamper" && d.detected) foundDenuvo = true;
+        if (d.name == "Denuvo Anti-Tamper" && d.detected)
+            foundDenuvo = true;
     }
     return foundDenuvo;
 }
@@ -273,7 +279,8 @@ static bool test_drm_detector_memory_steam() {
 
     bool foundSteam = false;
     for (const auto& d : results) {
-        if (d.name == "Steam Stub" && d.detected) foundSteam = true;
+        if (d.name == "Steam Stub" && d.detected)
+            foundSteam = true;
     }
     return foundSteam;
 }
@@ -281,8 +288,8 @@ static bool test_drm_detector_memory_steam() {
 static bool test_drm_detector_kernel_anticheat() {
     auto& detector = DRMDetector::instance();
 
-    const uint8_t fakeExe[] = {'E','a','s','y','A','n','t','i','C','h','e','a','t',
-                                0x00, 'B','i','n','a','r','y'};
+    const uint8_t fakeExe[] = {'E', 'a', 's', 'y',  'A', 'n', 't', 'i', 'C', 'h',
+                               'e', 'a', 't', 0x00, 'B', 'i', 'n', 'a', 'r', 'y'};
     auto results = detector.scanMemory(fakeExe, sizeof(fakeExe));
 
     return detector.hasKernelAntiCheat(results) && !detector.isCompatible(results);
@@ -371,7 +378,8 @@ int main() {
     TEST(game_validator_validate_clean);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

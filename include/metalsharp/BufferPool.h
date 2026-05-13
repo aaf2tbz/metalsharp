@@ -9,10 +9,10 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
-#include <vector>
 #include <cstdint>
+#include <metalsharp/Platform.h>
 #include <mutex>
+#include <vector>
 
 namespace metalsharp {
 
@@ -23,7 +23,7 @@ struct BufferPoolEntry {
 };
 
 class BufferPool {
-public:
+  public:
     static BufferPool& instance();
 
     void init(void* metalDevice);
@@ -39,7 +39,7 @@ public:
 
     void setMaxPoolSize(uint64_t maxBytes) { m_maxPoolSize = maxBytes; }
 
-private:
+  private:
     BufferPool() = default;
 
     void* createBuffer(size_t size);
@@ -54,4 +54,4 @@ private:
     std::mutex m_mutex;
 };
 
-}
+} // namespace metalsharp

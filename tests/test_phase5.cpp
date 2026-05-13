@@ -1,22 +1,28 @@
-#include <metalsharp/ShaderCache.h>
-#include <metalsharp/PipelineCache.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <metalsharp/BufferPool.h>
+#include <metalsharp/CommandBatcher.h>
 #include <metalsharp/FramePacer.h>
 #include <metalsharp/GPUProfiler.h>
-#include <metalsharp/CommandBatcher.h>
 #include <metalsharp/MetalFXUpscaler.h>
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
+#include <metalsharp/PipelineCache.h>
+#include <metalsharp/ShaderCache.h>
 #include <vector>
 
 static int passed = 0;
 static int failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); passed++; } \
-    else { printf("  [FAIL] %s\n", msg); failed++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            passed++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            failed++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== Phase 5 Performance Tests ===\n\n");
@@ -28,17 +34,17 @@ int main() {
         cache.init(tmpDir);
 
         const char* testData = "test shader data";
-        uint64_t hash = metalsharp::ShaderCache::computeHash(
-            reinterpret_cast<const uint8_t*>(testData), strlen(testData));
+        uint64_t hash =
+            metalsharp::ShaderCache::computeHash(reinterpret_cast<const uint8_t*>(testData), strlen(testData));
         CHECK(hash != 0, "Compute hash returns non-zero");
 
-        uint64_t sameHash = metalsharp::ShaderCache::computeHash(
-            reinterpret_cast<const uint8_t*>(testData), strlen(testData));
+        uint64_t sameHash =
+            metalsharp::ShaderCache::computeHash(reinterpret_cast<const uint8_t*>(testData), strlen(testData));
         CHECK(hash == sameHash, "Same input produces same hash");
 
         const char* otherData = "different data";
-        uint64_t otherHash = metalsharp::ShaderCache::computeHash(
-            reinterpret_cast<const uint8_t*>(otherData), strlen(otherData));
+        uint64_t otherHash =
+            metalsharp::ShaderCache::computeHash(reinterpret_cast<const uint8_t*>(otherData), strlen(otherData));
         CHECK(hash != otherHash, "Different input produces different hash");
 
         metalsharp::CachedShader lookup;
@@ -177,9 +183,7 @@ int main() {
         CHECK(batcher.batchSize() == 0, "Batch size is 0 initially");
 
         int executeCount = 0;
-        batcher.setExecuteFunction([&executeCount](const metalsharp::BatchedCommand& cmd) {
-            executeCount++;
-        });
+        batcher.setExecuteFunction([&executeCount](const metalsharp::BatchedCommand& cmd) { executeCount++; });
 
         batcher.beginFrame();
 

@@ -9,9 +9,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <metalsharp/Platform.h>
 #include <string>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -31,7 +31,7 @@ struct CrashInfo {
 };
 
 class CrashDiagnostics {
-public:
+  public:
     static CrashDiagnostics& instance();
 
     void init(const std::string& diagDir);
@@ -48,7 +48,7 @@ public:
 
     uint32_t crashCount() const { return m_crashCount; }
 
-private:
+  private:
     CrashDiagnostics() = default;
 
     std::string m_diagDir;
@@ -60,4 +60,4 @@ private:
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

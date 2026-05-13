@@ -26,7 +26,9 @@
   --border: rgba(221, 214, 254, 0.22);
   --success: #5cb870;
   --error: #d45050;
-  --gradient-main: radial-gradient(circle at 22% 10%, rgba(196, 181, 253, 0.22), transparent 34%), linear-gradient(135deg, rgba(43, 32, 64, 0.94) 0%, rgba(32, 23, 49, 0.92) 48%, rgba(52, 39, 76, 0.9) 100%);
+  --gradient-main:
+    radial-gradient(circle at 22% 10%, rgba(196, 181, 253, 0.22), transparent 34%),
+    linear-gradient(135deg, rgba(43, 32, 64, 0.94) 0%, rgba(32, 23, 49, 0.92) 48%, rgba(52, 39, 76, 0.9) 100%);
   --gradient-accent: linear-gradient(135deg, #7c3aed 0%, #a78bfa 48%, #c4b5fd 100%);
   --gradient-card: linear-gradient(160deg, rgba(196, 181, 253, 0.16) 0%, rgba(124, 58, 237, 0.07) 100%);
   --shadow-card: 0 18px 50px rgba(31, 18, 55, 0.22);
@@ -56,7 +58,9 @@
   --text-dim: #8b78a0;
   --text-muted: #8b78a0;
   --border: rgba(124, 58, 237, 0.16);
-  --gradient-main: radial-gradient(circle at 18% 8%, rgba(167, 139, 250, 0.28), transparent 32%), linear-gradient(135deg, #fbf8ff 0%, #f1eaff 48%, #ffffff 100%);
+  --gradient-main:
+    radial-gradient(circle at 18% 8%, rgba(167, 139, 250, 0.28), transparent 32%),
+    linear-gradient(135deg, #fbf8ff 0%, #f1eaff 48%, #ffffff 100%);
   --gradient-card: linear-gradient(160deg, rgba(255, 255, 255, 0.82) 0%, rgba(238, 231, 255, 0.56) 100%);
   --shadow-card: 0 18px 44px rgba(83, 56, 128, 0.13);
 }
@@ -232,7 +236,10 @@ body {
   font-size: 10px;
   min-height: 38px;
   outline: none;
-  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+  transition:
+    border-color var(--transition),
+    background var(--transition),
+    box-shadow var(--transition);
 }
 
 .control-input:focus {
@@ -248,8 +255,12 @@ body {
   width: 150px;
 }
 
-.view { display: block; }
-.view.hidden { display: none; }
+.view {
+  display: block;
+}
+.view.hidden {
+  display: none;
+}
 
 /* Library header */
 .library-header {
@@ -373,7 +384,9 @@ body {
 
 .game-card:hover {
   border-color: rgba(196, 181, 253, 0.6);
-  box-shadow: var(--shadow-card), 0 0 24px rgba(124, 58, 237, 0.2);
+  box-shadow:
+    var(--shadow-card),
+    0 0 24px rgba(124, 58, 237, 0.2);
   transform: translateY(-2px);
 }
 
@@ -636,8 +649,14 @@ body {
 }
 
 @keyframes slideUp {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* Loading spinner */
@@ -652,7 +671,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .launching-indicator {
@@ -674,8 +695,13 @@ body {
 }
 
 @keyframes launchPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* Scrollbar */
@@ -699,7 +725,9 @@ body {
 /* Running game highlight */
 .game-card.running {
   border-color: rgba(167, 139, 250, 0.5);
-  box-shadow: var(--shadow-glow-orange), 0 0 24px rgba(124, 58, 237, 0.15);
+  box-shadow:
+    var(--shadow-glow-orange),
+    0 0 24px rgba(124, 58, 237, 0.15);
 }
 
 .game-card.running .game-card-banner {
@@ -846,7 +874,7 @@ body {
   justify-content: center;
   padding: 24px 40px;
   gap: 0;
-  background: rgba(0,0,0,0.2);
+  background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid var(--border);
 }
 
@@ -1152,12 +1180,12 @@ body {
   animation: spin 0.6s linear infinite;
 }
 
- .setup-dep-error {
-   font-size: 11px;
-   color: var(--error);
-   margin-top: 4px;
-   line-height: 1.4;
- }
+.setup-dep-error {
+  font-size: 11px;
+  color: var(--error);
+  margin-top: 4px;
+  line-height: 1.4;
+}
 
 .setup-install-buttons {
   display: flex;
@@ -1179,7 +1207,7 @@ body {
 
 .setup-install-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .setup-install-btn-label {
@@ -1224,7 +1252,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .setup-install-log {
@@ -1234,7 +1262,7 @@ body {
   padding: 12px 16px;
   max-height: 240px;
   overflow-y: auto;
-  font-family: 'SF Mono', Menlo, monospace;
+  font-family: "SF Mono", Menlo, monospace;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1242,7 +1270,7 @@ body {
 .setup-log-line {
   padding: 2px 0;
   color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255,255,255,0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .setup-log-line.active {

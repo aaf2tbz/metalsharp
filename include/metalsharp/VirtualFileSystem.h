@@ -9,26 +9,16 @@
 
 #pragma once
 
+#include <dirent.h>
 #include <metalsharp/Win32Types.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <dirent.h>
 
 namespace metalsharp {
 namespace win32 {
 
-enum class HandleType : uint8_t {
-    File,
-    Find,
-    Event,
-    Mutex,
-    Semaphore,
-    Thread,
-    Pipe,
-    Socket,
-    Null
-};
+enum class HandleType : uint8_t { File, Find, Event, Mutex, Semaphore, Thread, Pipe, Socket, Null };
 
 struct FileState {
     int fd;
@@ -49,7 +39,7 @@ struct HandleEntry {
 };
 
 class VirtualFileSystem {
-public:
+  public:
     static VirtualFileSystem& instance();
 
     void setPrefix(const std::string& prefix);
@@ -61,8 +51,8 @@ public:
     HandleEntry* getHandle(HANDLE h);
     bool closeHandle(HANDLE h);
 
-    HANDLE createFile(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
-        DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes);
+    HANDLE createFile(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition,
+                      DWORD dwFlagsAndAttributes);
     BOOL readFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead, DWORD* lpNumberOfBytesRead);
     BOOL writeFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite, DWORD* lpNumberOfBytesWritten);
     DWORD getFileSize(HANDLE hFile, DWORD* lpFileSizeHigh);
@@ -84,7 +74,7 @@ public:
 
     HANDLE registerPipeFd(int fd);
 
-private:
+  private:
     VirtualFileSystem();
 
     std::string m_prefix;
@@ -92,5 +82,5 @@ private:
     std::unordered_map<uintptr_t, HandleEntry> m_handles;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

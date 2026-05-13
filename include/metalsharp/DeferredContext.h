@@ -14,15 +14,15 @@
 
 #include <d3d/D3D11.h>
 #include <functional>
-#include <vector>
 #include <memory>
+#include <vector>
 
 namespace metalsharp {
 
 class D3D11Device;
 
 class CommandList final : public ID3D11CommandList {
-public:
+  public:
     using Cmd = std::function<void(ID3D11DeviceContext*)>;
 
     STDMETHOD(QueryInterface)(REFIID riid, void** ppvObject) override;
@@ -36,17 +36,18 @@ public:
 
     void record(Cmd cmd) { m_commands.push_back(std::move(cmd)); }
     void replay(ID3D11DeviceContext* target) {
-        for (auto& cmd : m_commands) cmd(target);
+        for (auto& cmd : m_commands)
+            cmd(target);
     }
     void clear() { m_commands.clear(); }
 
-private:
+  private:
     ULONG m_refCount = 1;
     std::vector<Cmd> m_commands;
 };
 
 class DeferredContext final : public ID3D11DeviceContext {
-public:
+  public:
     explicit DeferredContext(D3D11Device& device);
 
     STDMETHOD(QueryInterface)(REFIID riid, void** ppvObject) override;
@@ -82,7 +83,9 @@ public:
     STDMETHOD(Dispatch)(UINT, UINT, UINT) override;
 
     STDMETHOD(OMSetRenderTargets)(UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*) override;
-    STDMETHOD(OMSetRenderTargetsAndUnorderedAccessViews)(UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*, UINT, UINT, ID3D11UnorderedAccessView* const*, const UINT*) override;
+    STDMETHOD(OMSetRenderTargetsAndUnorderedAccessViews)(UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*,
+                                                         UINT, UINT, ID3D11UnorderedAccessView* const*,
+                                                         const UINT*) override;
     STDMETHOD(OMSetBlendState)(ID3D11BlendState*, const FLOAT[4], UINT) override;
     STDMETHOD(OMSetDepthStencilState)(ID3D11DepthStencilState*, UINT) override;
 
@@ -104,7 +107,8 @@ public:
     STDMETHOD(GenerateMips)(ID3D11ShaderResourceView*) override;
     STDMETHOD(CopyResource)(ID3D11Resource*, ID3D11Resource*) override;
     STDMETHOD(UpdateSubresource)(ID3D11Resource*, UINT, const void*, const void*, UINT, UINT) override;
-    STDMETHOD(CopySubresourceRegion)(ID3D11Resource*, UINT, UINT, UINT, UINT, ID3D11Resource*, UINT, const void*) override;
+    STDMETHOD(CopySubresourceRegion)(ID3D11Resource*, UINT, UINT, UINT, UINT, ID3D11Resource*, UINT,
+                                     const void*) override;
     STDMETHOD(ResolveSubresource)(ID3D11Resource*, UINT, ID3D11Resource*, UINT, DXGI_FORMAT) override;
     STDMETHOD(Begin)(ID3D11Query*) override;
     STDMETHOD(End)(ID3D11Query*) override;
@@ -114,10 +118,10 @@ public:
     STDMETHOD(FinishCommandList)(INT, ID3D11CommandList**) override;
     STDMETHOD(ExecuteCommandList)(ID3D11CommandList*, INT) override;
 
-private:
-    template<typename F>
-    void record(F&& fn) {
-        if (m_commandList) m_commandList->record(std::forward<F>(fn));
+  private:
+    template <typename F> void record(F&& fn) {
+        if (m_commandList)
+            m_commandList->record(std::forward<F>(fn));
     }
 
     ULONG m_refCount = 1;
@@ -125,4 +129,4 @@ private:
     CommandList* m_commandList = new CommandList();
 };
 
-}
+} // namespace metalsharp

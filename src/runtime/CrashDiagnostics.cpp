@@ -5,11 +5,11 @@
 /// flags, and instruction pointer — and formats them into a human-readable dump
 /// file. Complements CrashReporter with lower-level diagnostic detail.
 
+#include <ctime>
+#include <fstream>
 #include <metalsharp/CrashDiagnostics.h>
 #include <metalsharp/Logger.h>
-#include <fstream>
 #include <sstream>
-#include <ctime>
 #include <sys/stat.h>
 
 namespace metalsharp {
@@ -52,7 +52,8 @@ std::string CrashDiagnostics::formatTimestamp(uint64_t epoch) {
 }
 
 void CrashDiagnostics::writeCrashDump(const CrashInfo& info) {
-    if (!m_initialized) return;
+    if (!m_initialized)
+        return;
 
     m_crashCount++;
 
@@ -73,11 +74,21 @@ void CrashDiagnostics::writeCrashDump(const CrashInfo& info) {
     file << "Signal:     " << info.signal << " (";
 
     switch (info.signal) {
-        case 11: file << "SIGSEGV"; break;
-        case 10: file << "SIGBUS"; break;
-        case 6:  file << "SIGABRT"; break;
-        case 8:  file << "SIGFPE"; break;
-        default: file << "unknown"; break;
+    case 11:
+        file << "SIGSEGV";
+        break;
+    case 10:
+        file << "SIGBUS";
+        break;
+    case 6:
+        file << "SIGABRT";
+        break;
+    case 8:
+        file << "SIGFPE";
+        break;
+    default:
+        file << "unknown";
+        break;
     }
     file << ")\n";
 
@@ -110,11 +121,13 @@ void CrashDiagnostics::writeCrashDump(const CrashInfo& info) {
 }
 
 void CrashDiagnostics::writeDiagnosticsBundle() {
-    if (!m_initialized) return;
+    if (!m_initialized)
+        return;
 
     std::string bundlePath = m_diagDir + "/diagnostics.txt";
     std::ofstream file(bundlePath);
-    if (!file.is_open()) return;
+    if (!file.is_open())
+        return;
 
     file << "=== MetalSharp Diagnostics Bundle ===\n";
     file << "Generated: " << formatTimestamp(static_cast<uint64_t>(time(nullptr))) << "\n\n";
@@ -131,4 +144,4 @@ void CrashDiagnostics::writeDiagnosticsBundle() {
     MS_INFO("CrashDiagnostics: diagnostics bundle written to %s", bundlePath.c_str());
 }
 
-}
+} // namespace metalsharp

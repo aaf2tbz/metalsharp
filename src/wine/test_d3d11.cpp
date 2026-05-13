@@ -1,17 +1,23 @@
 /// @file test_d3d11.cpp
 /// @brief Integration test for D3D11 device creation and basic rendering.
 ///
-/// Creates a D3D11 device and swap chain, renders test primitives, and validates output against expected results. Runs under Wine with the MetalSharp D3D11 shim to verify end-to-end D3D11→Metal translation.
-#include <windows.h>
+/// Creates a D3D11 device and swap chain, renders test primitives, and validates output against expected results. Runs
+/// under Wine with the MetalSharp D3D11 shim to verify end-to-end D3D11→Metal translation.
 #include <d3d11.h>
 #include <stdio.h>
+#include <windows.h>
 
 static int g_pass = 0;
 static int g_fail = 0;
 
 static void check(const char* name, BOOL cond) {
-    if (cond) { printf("  PASS: %s\n", name); g_pass++; }
-    else      { printf("  FAIL: %s\n", name); g_fail++; }
+    if (cond) {
+        printf("  PASS: %s\n", name);
+        g_pass++;
+    } else {
+        printf("  FAIL: %s\n", name);
+        g_fail++;
+    }
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
@@ -21,8 +27,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     ID3D11DeviceContext* context = NULL;
     D3D_FEATURE_LEVEL featureLevel;
 
-    HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
-                                    D3D11_SDK_VERSION, &device, &featureLevel, &context);
+    HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &device,
+                                   &featureLevel, &context);
     printf("[Device] hr=0x%08X device=%p ctx=%p fl=0x%X\n", (unsigned)hr, device, context, featureLevel);
     check("D3D11CreateDevice", SUCCEEDED(hr) && device && context);
 
@@ -34,7 +40,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     // --- Test 1: CreateBuffer with initial data ---
     printf("\n--- Test 1: CreateBuffer ---\n");
     {
-        float verts[] = { 0.0f, 0.5f, 0.5f, -0.5f, -0.5f, -0.5f };
+        float verts[] = {0.0f, 0.5f, 0.5f, -0.5f, -0.5f, -0.5f};
         D3D11_BUFFER_DESC desc = {};
         desc.ByteWidth = sizeof(verts);
         desc.Usage = D3D11_USAGE_DEFAULT;
@@ -69,7 +75,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         printf("  hr=0x%08X buffer=%p\n", (unsigned)hr, buf);
         check("CreateBuffer (dynamic const) returns S_OK", SUCCEEDED(hr));
         check("Buffer pointer non-NULL", buf != NULL);
-        if (buf) buf->Release();
+        if (buf)
+            buf->Release();
     }
 
     // --- Test 3: CreateBuffer large ---
@@ -84,7 +91,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         hr = device->CreateBuffer(&desc, NULL, &buf);
         printf("  hr=0x%08X buffer=%p\n", (unsigned)hr, buf);
         check("CreateBuffer (1MB) returns S_OK", SUCCEEDED(hr));
-        if (buf) buf->Release();
+        if (buf)
+            buf->Release();
     }
 
     // --- Test 4: CreateTexture2D (render target) ---
@@ -105,7 +113,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         printf("  hr=0x%08X texture=%p\n", (unsigned)hr, tex);
         check("CreateTexture2D (RT) returns S_OK", SUCCEEDED(hr));
         check("Texture pointer non-NULL", tex != NULL);
-        if (tex) tex->Release();
+        if (tex)
+            tex->Release();
     }
 
     // --- Test 5: CreateTexture2D (depth stencil) ---
@@ -125,7 +134,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         hr = device->CreateTexture2D(&desc, NULL, &tex);
         printf("  hr=0x%08X texture=%p\n", (unsigned)hr, tex);
         check("CreateTexture2D (DS) returns S_OK", SUCCEEDED(hr));
-        if (tex) tex->Release();
+        if (tex)
+            tex->Release();
     }
 
     // --- Test 6: CreateTexture2D (staging / CPU access) ---
@@ -145,7 +155,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         hr = device->CreateTexture2D(&desc, NULL, &tex);
         printf("  hr=0x%08X texture=%p\n", (unsigned)hr, tex);
         check("CreateTexture2D (staging) returns S_OK", SUCCEEDED(hr));
-        if (tex) tex->Release();
+        if (tex)
+            tex->Release();
     }
 
     // --- Test 7: CreateRenderTargetView ---
@@ -169,7 +180,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
             printf("  hr=0x%08X rtv=%p\n", (unsigned)hr, rtv);
             check("CreateRenderTargetView returns S_OK", SUCCEEDED(hr));
             check("RTV pointer non-NULL", rtv != NULL);
-            if (rtv) rtv->Release();
+            if (rtv)
+                rtv->Release();
             tex->Release();
         } else {
             check("CreateRenderTargetView (no texture)", FALSE);
@@ -188,10 +200,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
             desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
             hr = device->CreateBuffer(&desc, NULL, &bufs[i]);
             printf("  buf[%d]=%p hr=0x%08X\n", i, bufs[i], (unsigned)hr);
-            if (FAILED(hr) || !bufs[i]) all_ok = FALSE;
+            if (FAILED(hr) || !bufs[i])
+                all_ok = FALSE;
         }
         check("All 4 buffers created", all_ok);
-        for (int i = 0; i < 4; i++) if (bufs[i]) bufs[i]->Release();
+        for (int i = 0; i < 4; i++)
+            if (bufs[i])
+                bufs[i]->Release();
     }
 
     context->Release();

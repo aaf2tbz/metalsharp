@@ -9,10 +9,10 @@
 
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <metalsharp/Platform.h>
 #include <vector>
-#include <functional>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -45,7 +45,7 @@ struct BatchedCommand {
 };
 
 class CommandBatcher {
-public:
+  public:
     static CommandBatcher& instance();
 
     void init();
@@ -65,7 +65,7 @@ public:
     using ExecuteFn = std::function<void(const BatchedCommand&)>;
     void setExecuteFunction(ExecuteFn fn);
 
-private:
+  private:
     CommandBatcher() = default;
 
     std::vector<BatchedCommand> m_batch;
@@ -76,4 +76,4 @@ private:
     ExecuteFn m_execute;
 };
 
-}
+} // namespace metalsharp

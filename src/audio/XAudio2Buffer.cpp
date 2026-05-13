@@ -4,5 +4,4 @@
 /// Placeholder for XAUDIO2_BUFFER allocation, recycling, and format conversion. Buffer pool logic will be added here.
 #include <metalsharp/Platform.h>
 
-namespace metalsharp {
-}
+namespace metalsharp {}

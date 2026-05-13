@@ -1,7 +1,8 @@
 /// @file XInputEngine.cpp
 /// @brief XInput API shim delegating to GameController bridge.
 ///
-/// Implements XInputGetState, XInputSetState, and XInputGetCapabilities by polling the GameControllerBridge singleton. Converts controller connection/disconnection events into XInput's device index model.
+/// Implements XInputGetState, XInputSetState, and XInputGetCapabilities by polling the GameControllerBridge singleton.
+/// Converts controller connection/disconnection events into XInput's device index model.
 #include <metalsharp/GameControllerBridge.h>
 
 namespace metalsharp {
@@ -16,4 +17,4 @@ static void ensureInit() {
     }
 }
 
-}
+} // namespace metalsharp

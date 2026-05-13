@@ -13,7 +13,7 @@ struct SteamGame {
 };
 
 class SteamIntegration {
-public:
+  public:
     static std::string findSteamInstallDir();
     static std::vector<SteamGame> enumerateLibrary(const std::string& steamDir);
     static std::string findGameExecutable(const std::string& gameDir);
@@ -21,4 +21,4 @@ public:
     static std::string defaultDownloadDir();
 };
 
-}
+} // namespace metalsharp

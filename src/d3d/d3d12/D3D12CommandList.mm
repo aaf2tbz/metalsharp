@@ -35,18 +35,20 @@
 ///   - Sample feedback (WriteBufferImmediate)
 ///   - Bundle command lists (execute inline only)
 
-#include <metalsharp/D3D12Device.h>
-#include <metalsharp/PipelineState.h>
-#include <metalsharp/ArgumentBufferBinding.h>
-#include <metalsharp/Logger.h>
+#include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
-#include <cstring>
+#include <metalsharp/ArgumentBufferBinding.h>
+#include <metalsharp/D3D12Device.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PipelineState.h>
 
 namespace metalsharp {
 
-HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState*, REFIID riid, void** ppCommandList) {
-    if (!ppCommandList) return E_POINTER;
+HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState*,
+                                           REFIID riid, void** ppCommandList) {
+    if (!ppCommandList)
+        return E_POINTER;
 
     struct CmdListImpl final : public ID3D12GraphicsCommandList {
         ULONG refCount = 1;
@@ -102,7 +104,9 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         };
         std::vector<ClearCmd> m_clearCmds;
 
-        struct ComputeDispatch { UINT x, y, z; };
+        struct ComputeDispatch {
+            UINT x, y, z;
+        };
         std::vector<ComputeDispatch> m_computeDispatches;
 
         struct DrawCmd {
@@ -136,23 +140,38 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
         ~CmdListImpl() {
             for (auto* res : m_referencedResources) {
-                if (res) res->Release();
+                if (res)
+                    res->Release();
             }
         }
 
         HRESULT QueryInterface(REFIID riid, void** ppv) override {
-            if (!ppv) return E_POINTER;
-            if (riid == IID_ID3D12GraphicsCommandList || riid == IID_IUnknown) { AddRef(); *ppv = this; return S_OK; }
+            if (!ppv)
+                return E_POINTER;
+            if (riid == IID_ID3D12GraphicsCommandList || riid == IID_IUnknown) {
+                AddRef();
+                *ppv = this;
+                return S_OK;
+            }
             return E_NOINTERFACE;
         }
         ULONG AddRef() override { return ++refCount; }
-        ULONG Release() override { ULONG c = --refCount; if (c == 0) delete this; return c; }
+        ULONG Release() override {
+            ULONG c = --refCount;
+            if (c == 0)
+                delete this;
+            return c;
+        }
         STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
         STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
         STDMETHOD(SetName)(const char*) override { return S_OK; }
 
-        HRESULT Close() override { m_closed = true; m_recording = false; return S_OK; }
+        HRESULT Close() override {
+            m_closed = true;
+            m_recording = false;
+            return S_OK;
+        }
         HRESULT Reset(ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState) override {
             m_closed = false;
             m_recording = true;
@@ -167,15 +186,22 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             m_rootSignature = nullptr;
             std::fill(m_argumentBuffer.begin(), m_argumentBuffer.end(), 0);
             m_numDescriptorHeaps = 0;
-            for (auto* res : m_referencedResources) { if (res) res->Release(); }
+            for (auto* res : m_referencedResources) {
+                if (res)
+                    res->Release();
+            }
             m_referencedResources.clear();
             return S_OK;
         }
 
-        HRESULT IASetPrimitiveTopology(UINT topo) override { m_primitiveTopology = topo; return S_OK; }
+        HRESULT IASetPrimitiveTopology(UINT topo) override {
+            m_primitiveTopology = topo;
+            return S_OK;
+        }
 
         HRESULT IASetVertexBuffers(UINT start, UINT num, const D3D12_VERTEX_BUFFER_VIEW* pViews) override {
-            if (!pViews) return S_OK;
+            if (!pViews)
+                return S_OK;
             for (UINT i = 0; i < num && (start + i) < 32; ++i) {
                 m_vertexBuffers[start + i].offset = pViews[i].BufferLocation;
                 m_vertexBuffers[start + i].size = pViews[i].SizeInBytes;
@@ -185,14 +211,18 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
 
         HRESULT IASetIndexBuffer(const D3D12_INDEX_BUFFER_VIEW* pView) override {
-            if (!pView) return S_OK;
+            if (!pView)
+                return S_OK;
             m_indexBuffer.offset = pView->BufferLocation;
             m_indexBuffer.size = pView->SizeInBytes;
             m_indexBuffer.format = pView->Format;
             return S_OK;
         }
 
-        HRESULT SetPipelineState(ID3D12PipelineState* pPSO) override { m_pso = pPSO; return S_OK; }
+        HRESULT SetPipelineState(ID3D12PipelineState* pPSO) override {
+            m_pso = pPSO;
+            return S_OK;
+        }
 
         HRESULT SetGraphicsRootSignature(ID3D12RootSignature* pRS) override {
             m_rootSignature = static_cast<D3D12RootSignatureImpl*>(pRS);
@@ -205,8 +235,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetGraphicsRootDescriptorTable(UINT rootParamIndex, D3D12_GPU_DESCRIPTOR_HANDLE baseDescriptor) override {
-            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+        HRESULT SetGraphicsRootDescriptorTable(UINT rootParamIndex,
+                                               D3D12_GPU_DESCRIPTOR_HANDLE baseDescriptor) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size())
+                return S_OK;
             auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
 
             if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
@@ -216,8 +248,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetGraphicsRootConstantBufferView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
-            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+        HRESULT SetGraphicsRootConstantBufferView(UINT rootParamIndex,
+                                                  D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size())
+                return S_OK;
             auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
 
             if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
@@ -226,8 +260,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetGraphicsRootShaderResourceView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
-            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+        HRESULT SetGraphicsRootShaderResourceView(UINT rootParamIndex,
+                                                  D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size())
+                return S_OK;
             auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
 
             if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
@@ -236,8 +272,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetGraphicsRootUnorderedAccessView(UINT rootParamIndex, D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
-            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+        HRESULT SetGraphicsRootUnorderedAccessView(UINT rootParamIndex,
+                                                   D3D12_GPU_VIRTUAL_ADDRESS bufferLocation) override {
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size())
+                return S_OK;
             auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
 
             if (layout.offset + sizeof(uint64_t) <= m_argumentBuffer.size()) {
@@ -246,9 +284,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetGraphicsRoot32BitConstants(UINT rootParamIndex, UINT num32BitValues, const void* pData, UINT destOffset) override {
-            if (!pData || num32BitValues == 0) return S_OK;
-            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size()) return S_OK;
+        HRESULT SetGraphicsRoot32BitConstants(UINT rootParamIndex, UINT num32BitValues, const void* pData,
+                                              UINT destOffset) override {
+            if (!pData || num32BitValues == 0)
+                return S_OK;
+            if (!m_rootSignature || rootParamIndex >= m_rootSignature->parameterLayouts.size())
+                return S_OK;
             auto& layout = m_rootSignature->parameterLayouts[rootParamIndex];
 
             size_t writeOffset = layout.offset + destOffset * sizeof(uint32_t);
@@ -259,56 +300,68 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT OMSetRenderTargets(UINT numRTVs, const D3D12_CPU_DESCRIPTOR_HANDLE* pRTVs, BOOL, const D3D12_CPU_DESCRIPTOR_HANDLE* pDSV) override {
+        HRESULT OMSetRenderTargets(UINT numRTVs, const D3D12_CPU_DESCRIPTOR_HANDLE* pRTVs, BOOL,
+                                   const D3D12_CPU_DESCRIPTOR_HANDLE* pDSV) override {
             m_numRenderTargets = numRTVs;
             if (pRTVs) {
                 for (UINT i = 0; i < numRTVs && i < 8; ++i) {
                     D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(pRTVs[i]);
                     if (heap) {
                         auto* desc = heap->getDescriptor(pRTVs[i]);
-                        if (desc) m_renderTargets[i] = desc->metalTexture;
+                        if (desc)
+                            m_renderTargets[i] = desc->metalTexture;
                     } else {
                         m_renderTargets[i] = reinterpret_cast<void*>(pRTVs[i].ptr);
                     }
                 }
             }
-            if (pDSV) m_depthTarget = reinterpret_cast<void*>(pDSV->ptr);
+            if (pDSV)
+                m_depthTarget = reinterpret_cast<void*>(pDSV->ptr);
             return S_OK;
         }
         HRESULT OMSetStencilRef(UINT ref) override { return S_OK; }
         HRESULT OMSetBlendFactor(const FLOAT factor[4]) override { return S_OK; }
 
         HRESULT RSSetViewports(UINT num, const D3D12_VIEWPORT* pVPs) override {
-            if (num > 0 && pVPs) m_viewport = pVPs[0];
+            if (num > 0 && pVPs)
+                m_viewport = pVPs[0];
             return S_OK;
         }
         HRESULT RSSetScissorRects(UINT num, const D3D12_RECT* pRects) override {
-            if (num > 0 && pRects) m_scissorRect = pRects[0];
+            if (num > 0 && pRects)
+                m_scissorRect = pRects[0];
             return S_OK;
         }
 
-        HRESULT ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE handle, const FLOAT color[4], UINT, const D3D12_RECT*) override {
+        HRESULT ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE handle, const FLOAT color[4], UINT,
+                                      const D3D12_RECT*) override {
             ClearCmd cmd = {};
             D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(handle);
             if (heap) {
                 auto* desc = heap->getDescriptor(handle);
-                if (desc) cmd.texture = desc->metalTexture;
+                if (desc)
+                    cmd.texture = desc->metalTexture;
             }
-            if (!cmd.texture) cmd.texture = reinterpret_cast<void*>(handle.ptr);
+            if (!cmd.texture)
+                cmd.texture = reinterpret_cast<void*>(handle.ptr);
             cmd.isDepth = false;
-            if (color) memcpy(cmd.color, color, sizeof(cmd.color));
+            if (color)
+                memcpy(cmd.color, color, sizeof(cmd.color));
             m_clearCmds.push_back(cmd);
             return S_OK;
         }
 
-        HRESULT ClearDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT flags, FLOAT depth, UINT8 stencil, UINT, const D3D12_RECT*) override {
+        HRESULT ClearDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT flags, FLOAT depth, UINT8 stencil, UINT,
+                                      const D3D12_RECT*) override {
             ClearCmd cmd = {};
             D3D12DescriptorHeapImpl* heap = device.findHeapForHandle(handle);
             if (heap) {
                 auto* desc = heap->getDescriptor(handle);
-                if (desc) cmd.texture = desc->metalTexture;
+                if (desc)
+                    cmd.texture = desc->metalTexture;
             }
-            if (!cmd.texture) cmd.texture = reinterpret_cast<void*>(handle.ptr);
+            if (!cmd.texture)
+                cmd.texture = reinterpret_cast<void*>(handle.ptr);
             cmd.isDepth = true;
             cmd.depth = depth;
             cmd.stencil = stencil;
@@ -322,7 +375,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT DrawIndexedInstanced(UINT idxCount, UINT instCount, UINT startIdx, INT baseVert, UINT startInst) override {
+        HRESULT DrawIndexedInstanced(UINT idxCount, UINT instCount, UINT startIdx, INT baseVert,
+                                     UINT startInst) override {
             m_drawCmds.push_back({true, idxCount, instCount, startIdx, baseVert, startInst});
             return S_OK;
         }
@@ -333,23 +387,28 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
 
         HRESULT CopyResource(ID3D12Resource* dst, ID3D12Resource* src) override {
-            if (!dst || !src) return E_INVALIDARG;
+            if (!dst || !src)
+                return E_INVALIDARG;
             dst->AddRef();
             src->AddRef();
             m_copyCmds.push_back({dst, src, false, 0, 0, 0});
             return S_OK;
         }
 
-        HRESULT CopyBufferRegion(ID3D12Resource* dst, UINT64 dstOff, ID3D12Resource* src, UINT64 srcOff, UINT64 numBytes) override {
-            if (!dst || !src) return E_INVALIDARG;
+        HRESULT CopyBufferRegion(ID3D12Resource* dst, UINT64 dstOff, ID3D12Resource* src, UINT64 srcOff,
+                                 UINT64 numBytes) override {
+            if (!dst || !src)
+                return E_INVALIDARG;
             dst->AddRef();
             src->AddRef();
             m_copyCmds.push_back({dst, src, true, dstOff, srcOff, numBytes});
             return S_OK;
         }
 
-        HRESULT CopyTextureRegion(const void* pDst, UINT dstX, UINT dstY, UINT dstZ, ID3D12Resource* pSrc, UINT srcSub, const void* pSrcBox) override {
-            if (!pSrc) return E_INVALIDARG;
+        HRESULT CopyTextureRegion(const void* pDst, UINT dstX, UINT dstY, UINT dstZ, ID3D12Resource* pSrc, UINT srcSub,
+                                  const void* pSrcBox) override {
+            if (!pSrc)
+                return E_INVALIDARG;
             pSrc->AddRef();
             m_copyCmds.push_back({nullptr, pSrc, false, (UINT64)dstX | ((UINT64)dstY << 16), srcSub, (UINT64)dstZ});
             return S_OK;
@@ -374,31 +433,37 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
         HRESULT IASetInputLayout(UINT, const D3D12_INPUT_ELEMENT_DESC*) override { return S_OK; }
         HRESULT Map(ID3D12Resource* pRes, UINT sub, const D3D12_RANGE*, void** ppData) override {
-            if (!pRes || !ppData) return E_POINTER;
+            if (!pRes || !ppData)
+                return E_POINTER;
             return pRes->Map(sub, nullptr, ppData);
         }
         HRESULT Unmap(ID3D12Resource* pRes, UINT sub, const D3D12_RANGE*) override {
-            if (!pRes) return E_POINTER;
+            if (!pRes)
+                return E_POINTER;
             return pRes->Unmap(sub, nullptr);
         }
-        HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64) override { return E_NOTIMPL; }
+        HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*,
+                                UINT64) override {
+            return E_NOTIMPL;
+        }
 
         HRESULT DispatchRays(const D3D12_DISPATCH_RAYS_DESC* pDesc) override {
-            if (!pDesc) return E_INVALIDARG;
+            if (!pDesc)
+                return E_INVALIDARG;
             m_dispatchRays = *pDesc;
             m_hasDispatchRays = true;
             return S_OK;
         }
 
-        HRESULT BuildRaytracingAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc, UINT, const void*) override {
-            if (!pDesc) return E_INVALIDARG;
+        HRESULT BuildRaytracingAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* pDesc,
+                                                     UINT, const void*) override {
+            if (!pDesc)
+                return E_INVALIDARG;
             m_buildASDescs.push_back(*pDesc);
             return S_OK;
         }
 
-        HRESULT CopyRaytracingAccelerationStructure(UINT64, UINT64, UINT) override {
-            return S_OK;
-        }
+        HRESULT CopyRaytracingAccelerationStructure(UINT64, UINT64, UINT) override { return S_OK; }
 
         HRESULT EmitRaytracingAccelerationStructurePostbuildInfo(const void*, UINT, const UINT64*) override {
             return S_OK;
@@ -420,9 +485,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetComputeRoot32BitConstants(UINT RootParameterIndex, UINT Num32BitValues, const void* pData, UINT DestOffset) override {
-            if (!m_computeRootSignature || !pData) return E_INVALIDARG;
-            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+        HRESULT SetComputeRoot32BitConstants(UINT RootParameterIndex, UINT Num32BitValues, const void* pData,
+                                             UINT DestOffset) override {
+            if (!m_computeRootSignature || !pData)
+                return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size())
+                return E_INVALIDARG;
             auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
             size_t offset = layout.offset + DestOffset * sizeof(uint32_t);
             if (offset + Num32BitValues * sizeof(uint32_t) <= m_computeArgumentBuffer.size()) {
@@ -431,9 +499,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetComputeRootDescriptorTable(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) override {
-            if (!m_computeRootSignature) return E_INVALIDARG;
-            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+        HRESULT SetComputeRootDescriptorTable(UINT RootParameterIndex,
+                                              D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor) override {
+            if (!m_computeRootSignature)
+                return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size())
+                return E_INVALIDARG;
             auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
             if (layout.offset + sizeof(uint64_t) <= m_computeArgumentBuffer.size()) {
                 memcpy(m_computeArgumentBuffer.data() + layout.offset, &BaseDescriptor.ptr, sizeof(uint64_t));
@@ -441,9 +512,12 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetComputeRootConstantBufferView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
-            if (!m_computeRootSignature) return E_INVALIDARG;
-            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size()) return E_INVALIDARG;
+        HRESULT SetComputeRootConstantBufferView(UINT RootParameterIndex,
+                                                 D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+            if (!m_computeRootSignature)
+                return E_INVALIDARG;
+            if (RootParameterIndex >= m_computeRootSignature->parameterLayouts.size())
+                return E_INVALIDARG;
             auto& layout = m_computeRootSignature->parameterLayouts[RootParameterIndex];
             if (layout.offset + sizeof(uint64_t) <= m_computeArgumentBuffer.size()) {
                 memcpy(m_computeArgumentBuffer.data() + layout.offset, &BufferLocation, sizeof(uint64_t));
@@ -451,27 +525,34 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT SetComputeRootShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+        HRESULT SetComputeRootShaderResourceView(UINT RootParameterIndex,
+                                                 D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
             return SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
         }
 
-        HRESULT SetComputeRootUnorderedAccessView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
+        HRESULT SetComputeRootUnorderedAccessView(UINT RootParameterIndex,
+                                                  D3D12_GPU_VIRTUAL_ADDRESS BufferLocation) override {
             return SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
         }
 
-        HRESULT CopyTiles(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pCoord, const D3D12_TILE_REGION_SIZE* pSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset, UINT Flags) override {
-            if (!pTiledResource || !pCoord || !pSize || !pBuffer) return E_INVALIDARG;
+        HRESULT CopyTiles(ID3D12Resource* pTiledResource, const D3D12_TILED_RESOURCE_COORDINATE* pCoord,
+                          const D3D12_TILE_REGION_SIZE* pSize, ID3D12Resource* pBuffer, UINT64 BufferStartOffset,
+                          UINT Flags) override {
+            if (!pTiledResource || !pCoord || !pSize || !pBuffer)
+                return E_INVALIDARG;
 
             void* srcTex = pTiledResource->__metalTexturePtr();
             void* dstBuf = pBuffer->__metalBufferPtr();
-            if (!srcTex || !dstBuf) return E_FAIL;
+            if (!srcTex || !dstBuf)
+                return E_FAIL;
 
             const UINT TILE_BYTES = 65536;
             UINT numTiles = pSize->NumTiles;
 
             if (pSize->bUseBox) {
                 numTiles = pSize->Width * pSize->Height * pSize->Depth;
-                if (numTiles == 0) numTiles = pSize->NumTiles;
+                if (numTiles == 0)
+                    numTiles = pSize->NumTiles;
             }
 
             id<MTLTexture> tex = (__bridge id<MTLTexture>)srcTex;
@@ -479,8 +560,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
             for (UINT t = 0; t < numTiles; t++) {
                 UINT tileX = pCoord->X + (t % (pSize->Width > 0 ? pSize->Width : 1));
-                UINT tileY = pCoord->Y + ((t / (pSize->Width > 0 ? pSize->Width : 1)) % (pSize->Height > 0 ? pSize->Height : 1));
-                UINT tileZ = pCoord->Z + (t / ((pSize->Width > 0 ? pSize->Width : 1) * (pSize->Height > 0 ? pSize->Height : 1)));
+                UINT tileY =
+                    pCoord->Y + ((t / (pSize->Width > 0 ? pSize->Width : 1)) % (pSize->Height > 0 ? pSize->Height : 1));
+                UINT tileZ =
+                    pCoord->Z + (t / ((pSize->Width > 0 ? pSize->Width : 1) * (pSize->Height > 0 ? pSize->Height : 1)));
 
                 MTLRegion region = MTLRegionMake2D(tileX * 128, tileY * 128, 128, 128);
                 NSUInteger bytesPerRow = 128 * 4;
@@ -488,20 +571,18 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 if ([tex respondsToSelector:@selector(supportsNonPrivateTextureWithFormat:)]) {
                     char zeros[512] = {};
                     [tex replaceRegion:region
-                             mipmapLevel:pCoord->Subresource
-                                   slice:tileZ
-                               withBytes:zeros
-                             bytesPerRow:bytesPerRow
-                           bytesPerImage:0];
+                           mipmapLevel:pCoord->Subresource
+                                 slice:tileZ
+                             withBytes:zeros
+                           bytesPerRow:bytesPerRow
+                         bytesPerImage:0];
                 }
             }
 
             return S_OK;
         }
 
-        void __execute(void* dev) override {
-            execute(*static_cast<MetalDevice*>(dev));
-        }
+        void __execute(void* dev) override { execute(*static_cast<MetalDevice*>(dev)); }
 
         void execute(MetalDevice& metalDev) {
             id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
@@ -514,15 +595,15 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                     if (dstBuf && srcBuf) {
                         id<MTLBuffer> dst = (__bridge id<MTLBuffer>)dstBuf;
                         id<MTLBuffer> src = (__bridge id<MTLBuffer>)srcBuf;
-                        memcpy((char*)[dst contents] + cmd.dstOffset,
-                               (char*)[src contents] + cmd.srcOffset,
+                        memcpy((char*)[dst contents] + cmd.dstOffset, (char*)[src contents] + cmd.srcOffset,
                                (size_t)cmd.numBytes);
                     }
                 }
             }
 
             for (auto& clear : m_clearCmds) {
-                if (!clear.texture) continue;
+                if (!clear.texture)
+                    continue;
                 MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
                 if (clear.isDepth) {
                     passDesc.depthAttachment.texture = (__bridge id<MTLTexture>)clear.texture;
@@ -533,8 +614,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                     passDesc.colorAttachments[0].texture = (__bridge id<MTLTexture>)clear.texture;
                     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
                     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-                    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(
-                        clear.color[0], clear.color[1], clear.color[2], clear.color[3]);
+                    passDesc.colorAttachments[0].clearColor =
+                        MTLClearColorMake(clear.color[0], clear.color[1], clear.color[2], clear.color[3]);
                 }
                 id<MTLRenderCommandEncoder> enc = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
                 [enc endEncoding];
@@ -596,20 +677,36 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                     }
 
                     for (auto* res : m_referencedResources) {
-                        if (!res) continue;
+                        if (!res)
+                            continue;
                         void* buf = res->__metalBufferPtr();
                         void* tex = res->__metalTexturePtr();
-                        if (buf) [enc useResource:(__bridge id<MTLBuffer>)buf usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
-                        if (tex) [enc useResource:(__bridge id<MTLTexture>)tex usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
+                        if (buf)
+                            [enc useResource:(__bridge id<MTLBuffer>)buf
+                                       usage:MTLResourceUsageRead
+                                      stages:MTLRenderStageVertex | MTLRenderStageFragment];
+                        if (tex)
+                            [enc useResource:(__bridge id<MTLTexture>)tex
+                                       usage:MTLResourceUsageRead
+                                      stages:MTLRenderStageVertex | MTLRenderStageFragment];
                     }
 
                     MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
                     switch (m_primitiveTopology) {
-                        case D3D12_PRIMITIVE_TOPOLOGY_POINTLIST: primType = MTLPrimitiveTypePoint; break;
-                        case D3D12_PRIMITIVE_TOPOLOGY_LINELIST: primType = MTLPrimitiveTypeLine; break;
-                        case D3D12_PRIMITIVE_TOPOLOGY_LINESTRIP: primType = MTLPrimitiveTypeLineStrip; break;
-                        case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: primType = MTLPrimitiveTypeTriangleStrip; break;
-                        default: break;
+                    case D3D12_PRIMITIVE_TOPOLOGY_POINTLIST:
+                        primType = MTLPrimitiveTypePoint;
+                        break;
+                    case D3D12_PRIMITIVE_TOPOLOGY_LINELIST:
+                        primType = MTLPrimitiveTypeLine;
+                        break;
+                    case D3D12_PRIMITIVE_TOPOLOGY_LINESTRIP:
+                        primType = MTLPrimitiveTypeLineStrip;
+                        break;
+                    case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+                        primType = MTLPrimitiveTypeTriangleStrip;
+                        break;
+                    default:
+                        break;
                     }
 
                     for (auto& draw : m_drawCmds) {
@@ -621,10 +718,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                                      indexBufferOffset:0];
                         } else {
                             [enc drawPrimitives:primType
-                                     vertexStart:draw.startIndex
-                                     vertexCount:draw.vertexCount
-                                   instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
-                                    baseInstance:0];
+                                    vertexStart:draw.startIndex
+                                    vertexCount:draw.vertexCount
+                                  instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
+                                   baseInstance:0];
                         }
                     }
                     [enc endEncoding];
@@ -633,7 +730,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
             if (m_hasDispatchRays) {
                 void* rtPipeline = nullptr;
-                if (m_pso) rtPipeline = m_pso->__metalRenderPipelineState();
+                if (m_pso)
+                    rtPipeline = m_pso->__metalRenderPipelineState();
 
                 id<MTLComputePipelineState> computePipeline = nil;
                 if (rtPipeline) {
@@ -656,11 +754,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                         }
                     }
 
-                    MTLSize threadgroups = MTLSizeMake(
-                        (m_dispatchRays.Width + 7) / 8,
-                        (m_dispatchRays.Height + 7) / 8,
-                        m_dispatchRays.Depth > 0 ? m_dispatchRays.Depth : 1
-                    );
+                    MTLSize threadgroups = MTLSizeMake((m_dispatchRays.Width + 7) / 8, (m_dispatchRays.Height + 7) / 8,
+                                                       m_dispatchRays.Depth > 0 ? m_dispatchRays.Depth : 1);
                     MTLSize threadsPerGroup = MTLSizeMake(8, 8, 1);
                     [enc dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerGroup];
                     [enc endEncoding];
@@ -671,7 +766,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 id<MTLComputePipelineState> computePipeline = nil;
                 if (m_pso) {
                     void* ptr = m_pso->__metalComputePipelineState();
-                    if (ptr) computePipeline = (__bridge id<MTLComputePipelineState>)ptr;
+                    if (ptr)
+                        computePipeline = (__bridge id<MTLComputePipelineState>)ptr;
                     if (!ptr) {
                         ptr = m_pso->__metalRenderPipelineState();
                     }
@@ -687,7 +783,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                             id<MTLBuffer> argBuf = [mtlDev newBufferWithBytes:m_computeArgumentBuffer.data()
                                                                        length:m_computeRootSignature->argumentBufferSize
                                                                       options:MTLResourceStorageModeShared];
-                            if (argBuf) [enc setBuffer:argBuf offset:0 atIndex:16];
+                            if (argBuf)
+                                [enc setBuffer:argBuf offset:0 atIndex:16];
                         }
                     }
 
@@ -726,13 +823,13 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                     MTLSize threadsPerGroup = MTLSizeMake(1, 1, 1);
 
                     if (@available(macOS 13.0, *)) {
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wundeclared-selector"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundeclared-selector"
                         if ([enc respondsToSelector:@selector(drawMeshThreadgroups:threadsPerMeshThreadgroup:)]) {
                             [enc performSelector:@selector(drawMeshThreadgroups:threadsPerMeshThreadgroup:)
-                                       withObject:nil];
+                                      withObject:nil];
                         }
-    #pragma clang diagnostic pop
+#pragma clang diagnostic pop
                     }
 
                     [enc endEncoding];
@@ -750,8 +847,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
     return S_OK;
 }
 
-HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid, void** ppPSO) {
-    if (!pDesc || !ppPSO) return E_INVALIDARG;
+HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid,
+                                                     void** ppPSO) {
+    if (!pDesc || !ppPSO)
+        return E_INVALIDARG;
 
     auto* pso = new D3D12PipelineStateImpl();
 
@@ -766,12 +865,9 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
         D3D12RootSignatureImpl* rootSig = static_cast<D3D12RootSignatureImpl*>(pDesc->pRootSignature);
         bool ok = false;
         if (rootSig && !rootSig->rawBytecode.empty()) {
-            ok = m_shaderTranslator->translateDXBCWithRootSignature(
-                shaderData, shaderSize,
-                ShaderStage::Vertex,
-                rootSig->rawBytecode.data(), rootSig->rawBytecode.size(),
-                compiled
-            );
+            ok = m_shaderTranslator->translateDXBCWithRootSignature(shaderData, shaderSize, ShaderStage::Vertex,
+                                                                    rootSig->rawBytecode.data(),
+                                                                    rootSig->rawBytecode.size(), compiled);
         }
 
         if (!ok) {
@@ -784,7 +880,8 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
 
         if (pDesc->PS && pDesc->PSsize > 0) {
             CompiledShader psCompiled;
-            if (m_shaderTranslator->translateDXBC(static_cast<const uint8_t*>(pDesc->PS), pDesc->PSsize, ShaderStage::Pixel, psCompiled)) {
+            if (m_shaderTranslator->translateDXBC(static_cast<const uint8_t*>(pDesc->PS), pDesc->PSsize,
+                                                  ShaderStage::Pixel, psCompiled)) {
                 pipeDesc.fragmentFunction = psCompiled.fragmentFunction;
             }
         }
@@ -806,7 +903,8 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
 
 HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
     for (UINT i = 0; i < numLists; ++i) {
-        if (!ppLists[i]) continue;
+        if (!ppLists[i])
+            continue;
         ppLists[i]->__execute(&metalDevice);
     }
     return S_OK;
@@ -814,9 +912,10 @@ HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandL
 
 D3D12DescriptorHeapImpl* D3D12DeviceImpl::findHeapForHandle(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
     for (auto* h : m_trackedHeaps) {
-        if (h->handleToIndex(handle) != UINT_MAX) return h;
+        if (h->handleToIndex(handle) != UINT_MAX)
+            return h;
     }
     return nullptr;
 }
 
-}
+} // namespace metalsharp

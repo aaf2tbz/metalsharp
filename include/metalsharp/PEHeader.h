@@ -10,8 +10,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace metalsharp {
 
@@ -36,7 +36,7 @@ struct IMAGE_DOS_HEADER {
     uint16_t e_oemid;
     uint16_t e_oeminfo;
     uint16_t e_res2[10];
-    int32_t  e_lfanew;
+    int32_t e_lfanew;
 };
 
 static_assert(sizeof(IMAGE_DOS_HEADER) == 64);
@@ -58,8 +58,8 @@ struct IMAGE_DATA_DIRECTORY {
 
 struct IMAGE_OPTIONAL_HEADER64 {
     uint16_t Magic;
-    uint8_t  MajorLinkerVersion;
-    uint8_t  MinorLinkerVersion;
+    uint8_t MajorLinkerVersion;
+    uint8_t MinorLinkerVersion;
     uint32_t SizeOfCode;
     uint32_t SizeOfInitializedData;
     uint32_t SizeOfUninitializedData;
@@ -92,7 +92,7 @@ struct IMAGE_OPTIONAL_HEADER64 {
 static_assert(sizeof(IMAGE_OPTIONAL_HEADER64) == 240);
 
 struct IMAGE_SECTION_HEADER {
-    uint8_t  Name[8];
+    uint8_t Name[8];
     uint32_t VirtualSize;
     uint32_t VirtualAddress;
     uint32_t SizeOfRawData;
@@ -118,7 +118,7 @@ struct IMAGE_THUNK_DATA64 {
 
 struct IMAGE_IMPORT_BY_NAME {
     uint16_t Hint;
-    uint8_t  Name[1];
+    uint8_t Name[1];
 };
 
 struct IMAGE_BASE_RELOCATION {
@@ -183,33 +183,33 @@ struct IMAGE_DELAY_IMPORT_DESCRIPTOR {
 
 #pragma pack(pop)
 
-constexpr uint16_t IMAGE_DOS_SIGNATURE     = 0x5A4D;
-constexpr uint32_t IMAGE_PE_SIGNATURE      = 0x00004550;
+constexpr uint16_t IMAGE_DOS_SIGNATURE = 0x5A4D;
+constexpr uint32_t IMAGE_PE_SIGNATURE = 0x00004550;
 constexpr uint16_t IMAGE_FILE_MACHINE_AMD64 = 0x8664;
-constexpr uint16_t IMAGE_FILE_MACHINE_I386  = 0x014C;
-constexpr uint16_t IMAGE_FILE_DLL          = 0x2000;
+constexpr uint16_t IMAGE_FILE_MACHINE_I386 = 0x014C;
+constexpr uint16_t IMAGE_FILE_DLL = 0x2000;
 
 constexpr uint16_t IMAGE_OPTIONAL_MAGIC_PE32PLUS = 0x20B;
-constexpr uint16_t IMAGE_OPTIONAL_MAGIC_PE32     = 0x10B;
+constexpr uint16_t IMAGE_OPTIONAL_MAGIC_PE32 = 0x10B;
 
 constexpr uint32_t IMAGE_SCN_MEM_EXECUTE = 0x20000000;
-constexpr uint32_t IMAGE_SCN_MEM_READ    = 0x40000000;
-constexpr uint32_t IMAGE_SCN_MEM_WRITE   = 0x80000000;
-constexpr uint32_t IMAGE_SCN_CNT_CODE    = 0x00000020;
+constexpr uint32_t IMAGE_SCN_MEM_READ = 0x40000000;
+constexpr uint32_t IMAGE_SCN_MEM_WRITE = 0x80000000;
+constexpr uint32_t IMAGE_SCN_CNT_CODE = 0x00000020;
 constexpr uint32_t IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040;
 constexpr uint32_t IMAGE_SCN_CNT_UNINITIALIZED_DATA = 0x00000080;
 
 constexpr uint32_t IMAGE_REL_BASED_ABSOLUTE = 0;
-constexpr uint32_t IMAGE_REL_BASED_DIR64    = 10;
+constexpr uint32_t IMAGE_REL_BASED_DIR64 = 10;
 
-constexpr int DIRECTORY_EXPORT    = 0;
-constexpr int DIRECTORY_IMPORT    = 1;
-constexpr int DIRECTORY_RESOURCE  = 2;
+constexpr int DIRECTORY_EXPORT = 0;
+constexpr int DIRECTORY_IMPORT = 1;
+constexpr int DIRECTORY_RESOURCE = 2;
 constexpr int DIRECTORY_EXCEPTION = 3;
-constexpr int DIRECTORY_SECURITY  = 4;
+constexpr int DIRECTORY_SECURITY = 4;
 constexpr int DIRECTORY_BASERELOC = 5;
-constexpr int DIRECTORY_DEBUG     = 6;
-constexpr int DIRECTORY_TLS       = 9;
+constexpr int DIRECTORY_DEBUG = 6;
+constexpr int DIRECTORY_TLS = 9;
 constexpr int DIRECTORY_LOAD_CONFIG = 10;
 constexpr int DIRECTORY_DELAY_IMPORT = 13;
 
@@ -218,4 +218,4 @@ constexpr uint32_t DLL_THREAD_ATTACH = 2;
 constexpr uint32_t DLL_THREAD_DETACH = 3;
 constexpr uint32_t DLL_PROCESS_DETACH = 0;
 
-}
+} // namespace metalsharp

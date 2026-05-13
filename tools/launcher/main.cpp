@@ -1,6 +1,6 @@
-#include "WinePrefix.h"
 #include "Config.h"
 #include "SteamIntegration.h"
+#include "WinePrefix.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,22 +13,22 @@
 
 static void printUsage(const char* prog) {
     fprintf(stderr,
-        "Usage: %s [options] <game.exe>\n"
-        "\n"
-        "Options:\n"
-        "  --prefix, -p     Wine prefix directory (default: ~/.metalsharp/prefix)\n"
-        "  --width, -W      Window width (default: 1920)\n"
-        "  --height, -H     Window height (default: 1080)\n"
-        "  --list-games     List Steam library games\n"
-        "  --config, -c     Config file path (default: ~/.metalsharp/metalsharp.toml)\n"
-        "  --verbose, -v    Verbose output\n"
-        "  --debug-metal    Enable Metal validation\n"
-        "  --fullscreen, -f Fullscreen mode\n"
-        "  --help, -h       Show this help\n"
-        "\n"
-        "MetalSharp %s — Direct3D -> Metal translation layer\n"
-        "Runs Windows game executables through Wine + MetalSharp.\n",
-        prog, METALSHARP_VERSION);
+            "Usage: %s [options] <game.exe>\n"
+            "\n"
+            "Options:\n"
+            "  --prefix, -p     Wine prefix directory (default: ~/.metalsharp/prefix)\n"
+            "  --width, -W      Window width (default: 1920)\n"
+            "  --height, -H     Window height (default: 1080)\n"
+            "  --list-games     List Steam library games\n"
+            "  --config, -c     Config file path (default: ~/.metalsharp/metalsharp.toml)\n"
+            "  --verbose, -v    Verbose output\n"
+            "  --debug-metal    Enable Metal validation\n"
+            "  --fullscreen, -f Fullscreen mode\n"
+            "  --help, -h       Show this help\n"
+            "\n"
+            "MetalSharp %s — Direct3D -> Metal translation layer\n"
+            "Runs Windows game executables through Wine + MetalSharp.\n",
+            prog, METALSHARP_VERSION);
 }
 
 int main(int argc, char* argv[]) {
@@ -37,35 +37,50 @@ int main(int argc, char* argv[]) {
     std::string configPath;
 
     static struct option longOpts[] = {
-        {"prefix",      required_argument, nullptr, 'p'},
-        {"width",       required_argument, nullptr, 'W'},
-        {"height",      required_argument, nullptr, 'H'},
-        {"list-games",  no_argument,       nullptr, 'l'},
-        {"config",      required_argument, nullptr, 'c'},
-        {"verbose",     no_argument,       nullptr, 'v'},
-        {"debug-metal", no_argument,       nullptr, 'D'},
-        {"fullscreen",  no_argument,       nullptr, 'f'},
-        {"help",        no_argument,       nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}
-    };
+        {"prefix", required_argument, nullptr, 'p'}, {"width", required_argument, nullptr, 'W'},
+        {"height", required_argument, nullptr, 'H'}, {"list-games", no_argument, nullptr, 'l'},
+        {"config", required_argument, nullptr, 'c'}, {"verbose", no_argument, nullptr, 'v'},
+        {"debug-metal", no_argument, nullptr, 'D'},  {"fullscreen", no_argument, nullptr, 'f'},
+        {"help", no_argument, nullptr, 'h'},         {nullptr, 0, nullptr, 0}};
 
     int opt;
     while ((opt = getopt_long(argc, argv, "p:W:H:lc:vDfh", longOpts, nullptr)) != -1) {
         switch (opt) {
-            case 'p': config.winePrefix = optarg; break;
-            case 'W': config.width = atoi(optarg); break;
-            case 'H': config.height = atoi(optarg); break;
-            case 'l': listGames = true; break;
-            case 'c': configPath = optarg; break;
-            case 'v': config.verbose = true; break;
-            case 'D': config.debugMetal = true; break;
-            case 'f': config.fullscreen = true; break;
-            case 'h': printUsage(argv[0]); return 0;
-            default: printUsage(argv[0]); return 1;
+        case 'p':
+            config.winePrefix = optarg;
+            break;
+        case 'W':
+            config.width = atoi(optarg);
+            break;
+        case 'H':
+            config.height = atoi(optarg);
+            break;
+        case 'l':
+            listGames = true;
+            break;
+        case 'c':
+            configPath = optarg;
+            break;
+        case 'v':
+            config.verbose = true;
+            break;
+        case 'D':
+            config.debugMetal = true;
+            break;
+        case 'f':
+            config.fullscreen = true;
+            break;
+        case 'h':
+            printUsage(argv[0]);
+            return 0;
+        default:
+            printUsage(argv[0]);
+            return 1;
         }
     }
 
-    if (configPath.empty()) configPath = metalsharp::Config::defaultConfigPath();
+    if (configPath.empty())
+        configPath = metalsharp::Config::defaultConfigPath();
     config.load(configPath);
 
     if (optind < argc) {
@@ -133,13 +148,13 @@ int main(int argc, char* argv[]) {
     }
 
     setenv("WINEPREFIX", config.winePrefix.c_str(), 1);
-    setenv("WINEDLLOVERRIDES",
-        "d3d11=native;d3d12=native;dxgi=native;xaudio2_9=native;xinput1_4=native", 1);
+    setenv("WINEDLLOVERRIDES", "d3d11=native;d3d12=native;dxgi=native;xaudio2_9=native;xinput1_4=native", 1);
 
     printf("\nLaunching %s via MetalSharp...\n", config.executable.c_str());
 
     std::string launchCmd = "wine \"" + config.executable + "\"";
-    if (config.verbose) printf("  Command: %s\n", launchCmd.c_str());
+    if (config.verbose)
+        printf("  Command: %s\n", launchCmd.c_str());
 
     return system(launchCmd.c_str());
 }

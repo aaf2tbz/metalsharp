@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
 #include <cstdint>
+#include <metalsharp/Platform.h>
 
 namespace metalsharp {
 
@@ -24,7 +24,7 @@ struct XAudio2WaveFormat {
 };
 
 class CoreAudioBackend {
-public:
+  public:
     CoreAudioBackend();
     ~CoreAudioBackend();
 
@@ -46,8 +46,8 @@ public:
 
     struct Impl;
 
-private:
+  private:
     Impl* m_impl;
 };
 
-}
+} // namespace metalsharp

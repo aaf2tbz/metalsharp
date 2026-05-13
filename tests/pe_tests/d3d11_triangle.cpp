@@ -1,8 +1,8 @@
-#include <windows.h>
-#include <d3d11.h>
-#include <dxgi.h>
 #include <cstdio>
 #include <cstdlib>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <windows.h>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -17,25 +17,27 @@ static ID3D11PixelShader* g_ps = nullptr;
 static ID3D11InputLayout* g_layout = nullptr;
 static ID3D11Buffer* g_vb = nullptr;
 
-static const char vs_src[] =
-    "float4 VS(float3 pos : POSITION) : SV_POSITION {"
-    "  return float4(pos, 1.0);"
-    "}";
+static const char vs_src[] = "float4 VS(float3 pos : POSITION) : SV_POSITION {"
+                             "  return float4(pos, 1.0);"
+                             "}";
 
-static const char ps_src[] =
-    "float4 PS() : SV_TARGET {"
-    "  return float4(0.2, 0.6, 1.0, 1.0);"
-    "}";
+static const char ps_src[] = "float4 PS() : SV_TARGET {"
+                             "  return float4(0.2, 0.6, 1.0, 1.0);"
+                             "}";
 
 static float vertices[] = {
-     0.0f,  0.5f, 0.0f,
-     0.5f, -0.5f, 0.0f,
-    -0.5f, -0.5f, 0.0f,
+    0.0f, 0.5f, 0.0f, 0.5f, -0.5f, 0.0f, -0.5f, -0.5f, 0.0f,
 };
 
 static LRESULT WINAPI WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
-    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) { PostQuitMessage(0); return 0; }
+    if (msg == WM_DESTROY) {
+        PostQuitMessage(0);
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) {
+        PostQuitMessage(0);
+        return 0;
+    }
     return DefWindowProcW(wnd, msg, wp, lp);
 }
 
@@ -58,9 +60,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int show) {
     wc.lpszClassName = L"MetalSharpTest";
     RegisterClassW(&wc);
 
-    HWND wnd = CreateWindowExW(0, L"MetalSharpTest", L"MetalSharp D3D11 Triangle",
-        WS_OVERLAPPEDWINDOW, 100, 100, 800, 600,
-        nullptr, nullptr, inst, nullptr);
+    HWND wnd = CreateWindowExW(0, L"MetalSharpTest", L"MetalSharp D3D11 Triangle", WS_OVERLAPPEDWINDOW, 100, 100, 800,
+                               600, nullptr, nullptr, inst, nullptr);
     ShowWindow(wnd, show);
     UpdateWindow(wnd);
 
@@ -83,9 +84,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int show) {
     scDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
     D3D_FEATURE_LEVEL featureLevel;
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE,
-        nullptr, 0, nullptr, 0, D3D11_SDK_VERSION,
-        &scDesc, &g_swapChain, &g_device, &featureLevel, &g_context);
+    HRESULT hr =
+        D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION,
+                                      &scDesc, &g_swapChain, &g_device, &featureLevel, &g_context);
 
     if (FAILED(hr)) {
         char buf[256];
@@ -100,7 +101,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int show) {
     vbDesc.ByteWidth = sizeof(vertices);
     vbDesc.Usage = D3D11_USAGE_DEFAULT;
     vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vbData = { vertices, 0, 0 };
+    D3D11_SUBRESOURCE_DATA vbData = {vertices, 0, 0};
     g_device->CreateBuffer(&vbDesc, &vbData, &g_vb);
 
     UINT stride = 12;
@@ -108,10 +109,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int show) {
     g_context->IASetVertexBuffers(0, 1, &g_vb, &stride, &offset);
     g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+    D3D11_VIEWPORT vp = {0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f};
     g_context->RSSetViewports(1, &vp);
 
-    float clearColor[4] = { 0.05f, 0.05f, 0.1f, 1.0f };
+    float clearColor[4] = {0.05f, 0.05f, 0.1f, 1.0f};
 
     OutputDebugStringA("MetalSharp PE test: entering render loop\n");
 
@@ -137,14 +138,22 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int show) {
 
     OutputDebugStringA("MetalSharp PE test: shutting down\n");
 
-    if (g_rtView) g_rtView->Release();
-    if (g_vb) g_vb->Release();
-    if (g_layout) g_layout->Release();
-    if (g_vs) g_vs->Release();
-    if (g_ps) g_ps->Release();
-    if (g_swapChain) g_swapChain->Release();
-    if (g_context) g_context->Release();
-    if (g_device) g_device->Release();
+    if (g_rtView)
+        g_rtView->Release();
+    if (g_vb)
+        g_vb->Release();
+    if (g_layout)
+        g_layout->Release();
+    if (g_vs)
+        g_vs->Release();
+    if (g_ps)
+        g_ps->Release();
+    if (g_swapChain)
+        g_swapChain->Release();
+    if (g_context)
+        g_context->Release();
+    if (g_device)
+        g_device->Release();
 
     return 0;
 }

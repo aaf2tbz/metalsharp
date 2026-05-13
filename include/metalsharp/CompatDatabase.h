@@ -10,11 +10,11 @@
 
 #pragma once
 
+#include <cstdint>
 #include <metalsharp/Platform.h>
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <cstdint>
+#include <vector>
 
 namespace metalsharp {
 
@@ -64,7 +64,7 @@ struct GameEntry {
 };
 
 class CompatDatabase {
-public:
+  public:
     static CompatDatabase& instance();
 
     bool init(const std::string& dbPath);
@@ -91,7 +91,7 @@ public:
 
     std::string generateReport(const std::string& gameId) const;
 
-private:
+  private:
     CompatDatabase() = default;
 
     std::unordered_map<std::string, GameEntry> m_entries;
@@ -99,4 +99,4 @@ private:
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

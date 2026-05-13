@@ -1,7 +1,9 @@
 /// @file faudio_stub.c
 /// @brief FAudio API stubs for Terraria audio fallback.
 ///
-/// Provides stub implementations for FAudio functions when the real FAudio library is not available. Allocates dummy objects to prevent null pointer crashes. Used as a fallback when building Terraria without the full FAudio dependency.
+/// Provides stub implementations for FAudio functions when the real FAudio library is not available. Allocates dummy
+/// objects to prevent null pointer crashes. Used as a fallback when building Terraria without the full FAudio
+/// dependency.
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -38,8 +40,7 @@ uint32_t FAudio_CommitChanges(void* a, uint32_t b) {
 uint32_t FAudioLinkedVersion(void) {
     return 0;
 }
-void FAudioVoice_DestroyVoice(void* a) {
-}
+void FAudioVoice_DestroyVoice(void* a) {}
 uint32_t FAudioVoice_SetVolume(void* a, float b, uint32_t c) {
     return 0;
 }
@@ -76,19 +77,14 @@ uint32_t FAudioVoice_SetFilterParameters(void* a, void* b, uint32_t c) {
 uint32_t FAudioVoice_SetOutputFilterParameters(void* a, void* b, void* c, uint32_t d) {
     return 0;
 }
-void FAudioVoice_GetVoiceDetails(void* a, void* b) {
-}
+void FAudioVoice_GetVoiceDetails(void* a, void* b) {}
 void FAudioVoice_GetVolume(void* a, float* b) {
     *b = 1.0f;
 }
-void FAudioVoice_GetChannelVolumes(void* a, uint32_t b, float* c) {
-}
-void FAudioVoice_GetFilterParameters(void* a, void* b) {
-}
-void FAudioVoice_GetOutputFilterParameters(void* a, void* b, void* c) {
-}
-void FAudioVoice_GetOutputMatrix(void* a, void* b, uint32_t c, uint32_t d, float* e) {
-}
+void FAudioVoice_GetChannelVolumes(void* a, uint32_t b, float* c) {}
+void FAudioVoice_GetFilterParameters(void* a, void* b) {}
+void FAudioVoice_GetOutputFilterParameters(void* a, void* b, void* c) {}
+void FAudioVoice_GetOutputMatrix(void* a, void* b, uint32_t c, uint32_t d, float* e) {}
 uint32_t FAudioVoice_DestroyVoiceSafeEXT(void* a) {
     return 0;
 }
@@ -100,18 +96,14 @@ uint32_t FAudio_CreateSubmixVoice(void* a, void** b, uint32_t c, uint32_t d, uin
     *b = malloc(64);
     return 0;
 }
-void FAudio_StopEngine(void* a) {
-}
-void FAudio_GetPerformanceData(void* a, void* b) {
-}
-void FAudio_SetDebugConfiguration(void* a, void* b, void* c) {
-}
+void FAudio_StopEngine(void* a) {}
+void FAudio_GetPerformanceData(void* a, void* b) {}
+void FAudio_SetDebugConfiguration(void* a, void* b, void* c) {}
 void FAudio_GetProcessingQuantum(void* a, uint32_t* b, uint32_t* c) {
     *b = 1;
     *c = 48000;
 }
-void FAudio_UnregisterForCallbacks(void* a, void* b) {
-}
+void FAudio_UnregisterForCallbacks(void* a, void* b) {}
 uint32_t FAudio_RegisterForCallbacks(void* a, void* b) {
     return 0;
 }
@@ -142,18 +134,15 @@ uint32_t FAudioSourceVoice_SetSourceSampleRate(void* a, uint32_t b) {
 uint32_t FAudioSourceVoice_Discontinuity(void* a) {
     return 0;
 }
-void FAudioSourceVoice_GetState(void* a, void* b, uint32_t c) {
-}
+void FAudioSourceVoice_GetState(void* a, void* b, uint32_t c) {}
 void FAudioSourceVoice_GetFrequencyRatio(void* a, float* b) {
     *b = 1.0f;
 }
-void F3DAudioInitialize(uint32_t a, float b, void* c) {
-}
+void F3DAudioInitialize(uint32_t a, float b, void* c) {}
 uint32_t F3DAudioInitialize8(uint32_t a, float b, void* c) {
     return 0;
 }
-void F3DAudioCalculate(void* a, void* b, void* c, uint32_t d, void* e) {
-}
+void F3DAudioCalculate(void* a, void* b, void* c, uint32_t d, void* e) {}
 uint32_t FACTCreateEngine(uint32_t a, void** b) {
     *b = malloc(64);
     return 0;
@@ -165,16 +154,14 @@ uint32_t FACTCreateEngineWithCustomAllocatorEXT(uint32_t a, void** b, void* c, v
 uint32_t FACTAudioEngine_Initialize(void* a, void* b) {
     return 0;
 }
-void FACTAudioEngine_DoWork(void* a) {
-}
+void FACTAudioEngine_DoWork(void* a) {}
 uint32_t FACTAudioEngine_GetFinalMixFormat(void* a, void* b) {
     return 0;
 }
 float FACTAudioEngine_GetGlobalVariable(void* a, uint16_t b) {
     return 0.0f;
 }
-void FACTAudioEngine_SetGlobalVariable(void* a, uint16_t b, float c) {
-}
+void FACTAudioEngine_SetGlobalVariable(void* a, uint16_t b, float c) {}
 uint32_t FACTAudioEngine_GetRendererCount(void* a, uint16_t* b) {
     *b = 1;
     return 0;
@@ -188,15 +175,12 @@ uint16_t FACTAudioEngine_GetCategory(void* a, const char* b) {
 uint16_t FACTAudioEngine_GetGlobalVariableIndex(void* a, const char* b) {
     return 0;
 }
-void FACTAudioEngine_Pause(void* a, uint16_t b, int c) {
-}
-void FACTAudioEngine_SetVolume(void* a, uint16_t b, float c) {
-}
+void FACTAudioEngine_Pause(void* a, uint16_t b, int c) {}
+void FACTAudioEngine_SetVolume(void* a, uint16_t b, float c) {}
 uint32_t FACTAudioEngine_ShutDown(void* a) {
     return 0;
 }
-void FACTAudioEngine_Stop(void* a, uint16_t b, uint32_t c) {
-}
+void FACTAudioEngine_Stop(void* a, uint16_t b, uint32_t c) {}
 void* FACTAudioEngine_CreateSoundBank(void* a, void* b, uint32_t c, uint32_t d, uint32_t e, void** f) {
     *f = malloc(64);
     return 0;
@@ -213,7 +197,8 @@ void* FACTAudioEngine_PrepareWave(void* a, uint16_t b, void* c, uint32_t d, uint
     *g = malloc(64);
     return 0;
 }
-void* FACTAudioEngine_PrepareInMemoryWave(void* a, uint16_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f, void** g) {
+void* FACTAudioEngine_PrepareInMemoryWave(void* a, uint16_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f,
+                                          void** g) {
     *g = malloc(64);
     return 0;
 }
@@ -392,5 +377,4 @@ void* FAudio_memopen(void* a, int b) {
 void* FAudio_memptr(void* a, int b) {
     return NULL;
 }
-void FAudio_close(void* a) {
-}
+void FAudio_close(void* a) {}

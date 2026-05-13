@@ -1,14 +1,15 @@
 /// @file SyncContext.cpp
 /// @brief Win32 synchronization primitives via pthreads.
 ///
-/// Implements Win32 Events, Mutexes, Semaphores, and critical sections using pthreads and POSIX synchronization primitives. Each Win32 sync object is tracked by handle for CreateEvent/OpenMutex style access.
-#include <metalsharp/SyncContext.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
-#include <unistd.h>
+/// Implements Win32 Events, Mutexes, Semaphores, and critical sections using pthreads and POSIX synchronization
+/// primitives. Each Win32 sync object is tracked by handle for CreateEvent/OpenMutex style access.
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/SyncContext.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 namespace metalsharp {
 namespace win32 {
@@ -46,7 +47,8 @@ void* SyncContext::createEvent(bool manualReset, bool initialState, const std::s
     sh.name = name;
     m_handles[handle] = sh;
 
-    if (!name.empty()) m_namedHandles[name] = handle;
+    if (!name.empty())
+        m_namedHandles[name] = handle;
 
     return reinterpret_cast<void*>(static_cast<intptr_t>(handle));
 }
@@ -54,7 +56,8 @@ void* SyncContext::createEvent(bool manualReset, bool initialState, const std::s
 bool SyncContext::setEvent(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end() || it->second.type != SyncHandleType::Event) return false;
+    if (it == m_handles.end() || it->second.type != SyncHandleType::Event)
+        return false;
 
     auto* evt = static_cast<SyncEventState*>(it->second.data);
     pthread_mutex_lock(&evt->mutex);
@@ -71,7 +74,8 @@ bool SyncContext::setEvent(void* handle) {
 bool SyncContext::resetEvent(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end() || it->second.type != SyncHandleType::Event) return false;
+    if (it == m_handles.end() || it->second.type != SyncHandleType::Event)
+        return false;
 
     auto* evt = static_cast<SyncEventState*>(it->second.data);
     pthread_mutex_lock(&evt->mutex);
@@ -113,7 +117,8 @@ void* SyncContext::createMutex(bool initialOwner, const std::string& name) {
     sh.name = name;
     m_handles[handle] = sh;
 
-    if (!name.empty()) m_namedHandles[name] = handle;
+    if (!name.empty())
+        m_namedHandles[name] = handle;
 
     return reinterpret_cast<void*>(static_cast<intptr_t>(handle));
 }
@@ -121,10 +126,12 @@ void* SyncContext::createMutex(bool initialOwner, const std::string& name) {
 bool SyncContext::releaseMutex(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end() || it->second.type != SyncHandleType::Mutex) return false;
+    if (it == m_handles.end() || it->second.type != SyncHandleType::Mutex)
+        return false;
 
     auto* mtx = static_cast<SyncMutexState*>(it->second.data);
-    if (mtx->owningThread != (DWORD)(uintptr_t)pthread_self()) return false;
+    if (mtx->owningThread != (DWORD)(uintptr_t)pthread_self())
+        return false;
 
     mtx->recursionCount--;
     if (mtx->recursionCount == 0) {
@@ -158,7 +165,8 @@ void* SyncContext::createSemaphore(int32_t initialCount, int32_t maxCount, const
     sh.name = name;
     m_handles[handle] = sh;
 
-    if (!name.empty()) m_namedHandles[name] = handle;
+    if (!name.empty())
+        m_namedHandles[name] = handle;
 
     return reinterpret_cast<void*>(static_cast<intptr_t>(handle));
 }
@@ -166,13 +174,16 @@ void* SyncContext::createSemaphore(int32_t initialCount, int32_t maxCount, const
 bool SyncContext::releaseSemaphore(void* handle, int32_t releaseCount, int32_t* prevCount) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end() || it->second.type != SyncHandleType::Semaphore) return false;
+    if (it == m_handles.end() || it->second.type != SyncHandleType::Semaphore)
+        return false;
 
     auto* sem = static_cast<SyncSemaphoreState*>(it->second.data);
     pthread_mutex_lock(&sem->mutex);
-    if (prevCount) *prevCount = sem->count;
+    if (prevCount)
+        *prevCount = sem->count;
     sem->count += releaseCount;
-    if (sem->count > sem->maxCount) sem->count = sem->maxCount;
+    if (sem->count > sem->maxCount)
+        sem->count = sem->maxCount;
     for (int32_t i = 0; i < releaseCount; i++) {
         pthread_cond_signal(&sem->cond);
     }
@@ -204,7 +215,8 @@ void* SyncContext::createThread(pthread_t thread) {
 SyncThreadState* SyncContext::getThreadState(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end() || it->second.type != SyncHandleType::Thread) return nullptr;
+    if (it == m_handles.end() || it->second.type != SyncHandleType::Thread)
+        return nullptr;
     return static_cast<SyncThreadState*>(it->second.data);
 }
 
@@ -290,9 +302,10 @@ uint32_t SyncContext::waitForMutex(SyncMutexState* mtx, uint32_t ms) {
             mtx->recursionCount++;
             return 0;
         }
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start).count();
-        if ((uint32_t)elapsed >= ms) break;
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        if ((uint32_t)elapsed >= ms)
+            break;
         usleep(1000);
     }
     return 258;
@@ -339,7 +352,8 @@ uint32_t SyncContext::waitForSemaphore(SyncSemaphoreState* sem, uint32_t ms) {
 }
 
 uint32_t SyncContext::waitForThread(SyncThreadState* thr, uint32_t ms) {
-    if (thr->joined.load()) return 0;
+    if (thr->joined.load())
+        return 0;
 
     if (ms == 0xFFFFFFFF) {
         pthread_mutex_lock(&thr->joinMutex);
@@ -384,24 +398,26 @@ uint32_t SyncContext::waitForThread(SyncThreadState* thr, uint32_t ms) {
 uint32_t SyncContext::waitForSingleObject(void* handle, uint32_t milliseconds) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end()) return 0xFFFFFFFF;
+    if (it == m_handles.end())
+        return 0xFFFFFFFF;
 
     switch (it->second.type) {
-        case SyncHandleType::Event:
-            return waitForEvent(static_cast<SyncEventState*>(it->second.data), milliseconds);
-        case SyncHandleType::Mutex:
-            return waitForMutex(static_cast<SyncMutexState*>(it->second.data), milliseconds);
-        case SyncHandleType::Semaphore:
-            return waitForSemaphore(static_cast<SyncSemaphoreState*>(it->second.data), milliseconds);
-        case SyncHandleType::Thread:
-            return waitForThread(static_cast<SyncThreadState*>(it->second.data), milliseconds);
-        default:
-            return 0xFFFFFFFF;
+    case SyncHandleType::Event:
+        return waitForEvent(static_cast<SyncEventState*>(it->second.data), milliseconds);
+    case SyncHandleType::Mutex:
+        return waitForMutex(static_cast<SyncMutexState*>(it->second.data), milliseconds);
+    case SyncHandleType::Semaphore:
+        return waitForSemaphore(static_cast<SyncSemaphoreState*>(it->second.data), milliseconds);
+    case SyncHandleType::Thread:
+        return waitForThread(static_cast<SyncThreadState*>(it->second.data), milliseconds);
+    default:
+        return 0xFFFFFFFF;
     }
 }
 
 uint32_t SyncContext::waitForMultipleObjects(uint32_t count, void** handles, bool waitAll, uint32_t milliseconds) {
-    if (count == 0) return 0xFFFFFFFF;
+    if (count == 0)
+        return 0xFFFFFFFF;
 
     if (waitAll) {
         for (uint32_t i = 0; i < count; i++) {
@@ -409,9 +425,11 @@ uint32_t SyncContext::waitForMultipleObjects(uint32_t count, void** handles, boo
             if (milliseconds != 0xFFFFFFFF) {
                 auto start = std::chrono::steady_clock::now();
                 uint32_t result = waitForSingleObject(handles[i], milliseconds);
-                if (result != 0) return 0xFFFFFFFF;
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - start).count();
+                if (result != 0)
+                    return 0xFFFFFFFF;
+                auto elapsed =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+                        .count();
                 if (milliseconds > (uint32_t)elapsed) {
                     milliseconds -= (uint32_t)elapsed;
                 } else {
@@ -419,7 +437,8 @@ uint32_t SyncContext::waitForMultipleObjects(uint32_t count, void** handles, boo
                 }
             } else {
                 uint32_t result = waitForSingleObject(handles[i], 0xFFFFFFFF);
-                if (result != 0) return 0xFFFFFFFF;
+                if (result != 0)
+                    return 0xFFFFFFFF;
             }
         }
         return 0;
@@ -433,52 +452,58 @@ uint32_t SyncContext::waitForMultipleObjects(uint32_t count, void** handles, boo
             std::lock_guard<std::mutex> lock(m_mutex);
             for (uint32_t i = 0; i < count; i++) {
                 auto it = m_handles.find((intptr_t)handles[i]);
-                if (it == m_handles.end()) continue;
+                if (it == m_handles.end())
+                    continue;
 
                 bool signaled = false;
                 switch (it->second.type) {
-                    case SyncHandleType::Event: {
-                        auto* evt = static_cast<SyncEventState*>(it->second.data);
-                        pthread_mutex_lock(&evt->mutex);
-                        signaled = evt->signaled;
-                        if (signaled && !evt->manualReset) evt->signaled = false;
-                        pthread_mutex_unlock(&evt->mutex);
-                        break;
-                    }
-                    case SyncHandleType::Semaphore: {
-                        auto* sem = static_cast<SyncSemaphoreState*>(it->second.data);
-                        pthread_mutex_lock(&sem->mutex);
-                        signaled = sem->count > 0;
-                        if (signaled) sem->count--;
-                        pthread_mutex_unlock(&sem->mutex);
-                        break;
-                    }
-                    case SyncHandleType::Thread: {
-                        auto* thr = static_cast<SyncThreadState*>(it->second.data);
-                        signaled = thr->finished.load();
-                        break;
-                    }
-                    case SyncHandleType::Mutex: {
-                        auto* mtx = static_cast<SyncMutexState*>(it->second.data);
-                        if (pthread_mutex_trylock(&mtx->mutex) == 0) {
-                            mtx->owningThread = (DWORD)(uintptr_t)pthread_self();
-                            mtx->recursionCount++;
-                            signaled = true;
-                        }
-                        break;
-                    }
-                    default:
-                        break;
+                case SyncHandleType::Event: {
+                    auto* evt = static_cast<SyncEventState*>(it->second.data);
+                    pthread_mutex_lock(&evt->mutex);
+                    signaled = evt->signaled;
+                    if (signaled && !evt->manualReset)
+                        evt->signaled = false;
+                    pthread_mutex_unlock(&evt->mutex);
+                    break;
                 }
-                if (signaled) return i;
+                case SyncHandleType::Semaphore: {
+                    auto* sem = static_cast<SyncSemaphoreState*>(it->second.data);
+                    pthread_mutex_lock(&sem->mutex);
+                    signaled = sem->count > 0;
+                    if (signaled)
+                        sem->count--;
+                    pthread_mutex_unlock(&sem->mutex);
+                    break;
+                }
+                case SyncHandleType::Thread: {
+                    auto* thr = static_cast<SyncThreadState*>(it->second.data);
+                    signaled = thr->finished.load();
+                    break;
+                }
+                case SyncHandleType::Mutex: {
+                    auto* mtx = static_cast<SyncMutexState*>(it->second.data);
+                    if (pthread_mutex_trylock(&mtx->mutex) == 0) {
+                        mtx->owningThread = (DWORD)(uintptr_t)pthread_self();
+                        mtx->recursionCount++;
+                        signaled = true;
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+                if (signaled)
+                    return i;
             }
         }
 
-        if (totalMs == 0) return 258;
+        if (totalMs == 0)
+            return 258;
         if (totalMs != 0xFFFFFFFF) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start).count();
-            if ((uint32_t)elapsed >= totalMs) return 258;
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+            if ((uint32_t)elapsed >= totalMs)
+                return 258;
             usleep(1000);
         } else {
             usleep(1000);
@@ -489,38 +514,39 @@ uint32_t SyncContext::waitForMultipleObjects(uint32_t count, void** handles, boo
 void SyncContext::destroyHandle(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_handles.find((intptr_t)handle);
-    if (it == m_handles.end()) return;
+    if (it == m_handles.end())
+        return;
 
     switch (it->second.type) {
-        case SyncHandleType::Event: {
-            auto* evt = static_cast<SyncEventState*>(it->second.data);
-            pthread_mutex_destroy(&evt->mutex);
-            pthread_cond_destroy(&evt->cond);
-            delete evt;
-            break;
-        }
-        case SyncHandleType::Mutex: {
-            auto* mtx = static_cast<SyncMutexState*>(it->second.data);
-            pthread_mutex_destroy(&mtx->mutex);
-            delete mtx;
-            break;
-        }
-        case SyncHandleType::Semaphore: {
-            auto* sem = static_cast<SyncSemaphoreState*>(it->second.data);
-            pthread_mutex_destroy(&sem->mutex);
-            pthread_cond_destroy(&sem->cond);
-            delete sem;
-            break;
-        }
-        case SyncHandleType::Thread: {
-            auto* thr = static_cast<SyncThreadState*>(it->second.data);
-            pthread_mutex_destroy(&thr->joinMutex);
-            pthread_cond_destroy(&thr->joinCond);
-            delete thr;
-            break;
-        }
-        default:
-            break;
+    case SyncHandleType::Event: {
+        auto* evt = static_cast<SyncEventState*>(it->second.data);
+        pthread_mutex_destroy(&evt->mutex);
+        pthread_cond_destroy(&evt->cond);
+        delete evt;
+        break;
+    }
+    case SyncHandleType::Mutex: {
+        auto* mtx = static_cast<SyncMutexState*>(it->second.data);
+        pthread_mutex_destroy(&mtx->mutex);
+        delete mtx;
+        break;
+    }
+    case SyncHandleType::Semaphore: {
+        auto* sem = static_cast<SyncSemaphoreState*>(it->second.data);
+        pthread_mutex_destroy(&sem->mutex);
+        pthread_cond_destroy(&sem->cond);
+        delete sem;
+        break;
+    }
+    case SyncHandleType::Thread: {
+        auto* thr = static_cast<SyncThreadState*>(it->second.data);
+        pthread_mutex_destroy(&thr->joinMutex);
+        pthread_cond_destroy(&thr->joinCond);
+        delete thr;
+        break;
+    }
+    default:
+        break;
     }
 
     if (!it->second.name.empty()) {
@@ -529,5 +555,5 @@ void SyncContext::destroyHandle(void* handle) {
     m_handles.erase(it);
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

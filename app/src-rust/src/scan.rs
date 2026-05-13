@@ -172,7 +172,7 @@ fn parse_acf(contents: &str) -> Option<(u32, String, String)> {
                 "appid" => appid = v.parse().ok(),
                 "name" => name = Some(v.to_string()),
                 "installdir" => install_dir = Some(v.to_string()),
-                _ => {}
+                _ => {},
             }
         }
     }
@@ -250,7 +250,10 @@ fn find_exe_in_dir(dir: &PathBuf) -> Option<String> {
                     continue;
                 }
                 let lower = name.to_lowercase();
-                let matches_name = lower.starts_with("rain") || lower.starts_with("terraria") || lower.starts_with("hl2") || lower == "game.exe";
+                let matches_name = lower.starts_with("rain")
+                    || lower.starts_with("terraria")
+                    || lower.starts_with("hl2")
+                    || lower == "game.exe";
                 if matches_name {
                     return Some(entry.path().to_string_lossy().to_string());
                 }

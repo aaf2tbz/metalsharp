@@ -1,12 +1,12 @@
-#include "metalsharp/GameDetector.h"
 #include "metalsharp/CrashReporter.h"
-#include "metalsharp/UpdateChecker.h"
+#include "metalsharp/GameDetector.h"
 #include "metalsharp/SettingsManager.h"
+#include "metalsharp/UpdateChecker.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -16,17 +16,17 @@ namespace fs = std::filesystem;
 static int g_pass = 0;
 static int g_fail = 0;
 
-#define TEST(name)                                              \
-    do {                                                        \
-        printf("  TEST: %-50s", #name);                         \
-        fflush(stdout);                                         \
-        if (name()) {                                           \
-            printf("PASS\n");                                   \
-            g_pass++;                                           \
-        } else {                                                \
-            printf("FAIL\n");                                   \
-            g_fail++;                                           \
-        }                                                       \
+#define TEST(name)                                                                                                     \
+    do {                                                                                                               \
+        printf("  TEST: %-50s", #name);                                                                                \
+        fflush(stdout);                                                                                                \
+        if (name()) {                                                                                                  \
+            printf("PASS\n");                                                                                          \
+            g_pass++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("FAIL\n");                                                                                          \
+            g_fail++;                                                                                                  \
+        }                                                                                                              \
     } while (0)
 
 static bool game_detector_platform_strings() {
@@ -61,10 +61,12 @@ static bool game_detector_detect_all() {
 
 static bool game_detector_local_scan() {
     const char* home = std::getenv("HOME");
-    if (!home) return true;
+    if (!home)
+        return true;
 
     std::string testDir = std::string(home) + "/.metalsharp/games";
-    if (!fs::exists(testDir)) return true;
+    if (!fs::exists(testDir))
+        return true;
 
     auto games = metalsharp::GameDetector::detectLocal();
     for (const auto& g : games) {
@@ -208,7 +210,8 @@ static bool update_checker_user_agent() {
 }
 
 static bool update_checker_parse_release() {
-    std::string json = R"({"tag_name":"v0.2.0","html_url":"https://github.com/test/repo/releases/tag/v0.2.0","zipball_url":"https://github.com/test/repo/zipball/v0.2.0","body":"Release notes here"})";
+    std::string json =
+        R"({"tag_name":"v0.2.0","html_url":"https://github.com/test/repo/releases/tag/v0.2.0","zipball_url":"https://github.com/test/repo/zipball/v0.2.0","body":"Release notes here"})";
 
     auto current = metalsharp::Version::parse("0.1.0");
     auto info = metalsharp::UpdateChecker::parseGitHubRelease(json, current);
@@ -225,7 +228,8 @@ static bool update_checker_parse_release() {
 }
 
 static bool update_checker_no_update() {
-    std::string json = R"({"tag_name":"v0.1.0","html_url":"https://github.com/test/repo","zipball_url":"https://github.com/test/repo/zipball","body":""})";
+    std::string json =
+        R"({"tag_name":"v0.1.0","html_url":"https://github.com/test/repo","zipball_url":"https://github.com/test/repo/zipball","body":""})";
 
     auto current = metalsharp::Version::parse("0.1.0");
     auto info = metalsharp::UpdateChecker::parseGitHubRelease(json, current);
