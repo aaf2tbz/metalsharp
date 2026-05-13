@@ -1,26 +1,29 @@
 /// @file VirtualFileSystem.cpp
 /// @brief Win32-to-Unix file system translation layer.
 ///
-/// Translates Win32 path conventions (backslashes, drive letters) to POSIX paths and implements CreateFile, ReadFile, WriteFile, FindFirstFile/FindNextFile. Manages virtual file handles and maps Win32 file attributes to Unix stat results.
-#include <metalsharp/VirtualFileSystem.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
+/// Translates Win32 path conventions (backslashes, drive letters) to POSIX paths and implements CreateFile, ReadFile,
+/// WriteFile, FindFirstFile/FindNextFile. Manages virtual file handles and maps Win32 file attributes to Unix stat
+/// results.
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <fnmatch.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/VirtualFileSystem.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <dirent.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <errno.h>
-#include <fnmatch.h>
-#include <algorithm>
 
 namespace metalsharp {
 namespace win32 {
 
 static std::string toLower(std::string s) {
-    for (auto& c : s) c = tolower(c);
+    for (auto& c : s)
+        c = tolower(c);
     return s;
 }
 
@@ -64,7 +67,8 @@ void VirtualFileSystem::setPrefix(const std::string& prefix) {
 }
 
 std::string VirtualFileSystem::winToHost(const std::string& winPath) {
-    if (winPath.empty()) return "";
+    if (winPath.empty())
+        return "";
 
     std::string path = winPath;
 
@@ -73,7 +77,8 @@ std::string VirtualFileSystem::winToHost(const std::string& winPath) {
     }
 
     for (auto& c : path) {
-        if (c == '\\') c = '/';
+        if (c == '\\')
+            c = '/';
     }
 
     if (path.size() >= 2 && path[1] == ':') {
@@ -113,68 +118,87 @@ std::string VirtualFileSystem::hostToWin(const std::string& hostPath) {
 HANDLE VirtualFileSystem::allocHandle(HandleType type, void* data) {
     uintptr_t h = m_nextHandle;
     m_nextHandle += 4;
-    if (m_nextHandle < 0x00010000) m_nextHandle = 0x00010000;
+    if (m_nextHandle < 0x00010000)
+        m_nextHandle = 0x00010000;
     m_handles[h] = {type, data};
     return reinterpret_cast<HANDLE>(h);
 }
 
 HandleEntry* VirtualFileSystem::getHandle(HANDLE h) {
     auto it = m_handles.find(reinterpret_cast<uintptr_t>(h));
-    if (it == m_handles.end()) return nullptr;
+    if (it == m_handles.end())
+        return nullptr;
     return &it->second;
 }
 
 bool VirtualFileSystem::closeHandle(HANDLE h) {
     auto it = m_handles.find(reinterpret_cast<uintptr_t>(h));
-    if (it == m_handles.end()) return false;
+    if (it == m_handles.end())
+        return false;
 
     HandleEntry& entry = it->second;
     switch (entry.type) {
-        case HandleType::File: {
-            auto* fs = static_cast<FileState*>(entry.data);
-            if (fs->fd >= 0) close(fs->fd);
-            delete fs;
-            break;
-        }
-        case HandleType::Find: {
-            auto* fnd = static_cast<FindState*>(entry.data);
-            if (fnd->dir) closedir(fnd->dir);
-            delete fnd;
-            break;
-        }
-        default:
-            break;
+    case HandleType::File: {
+        auto* fs = static_cast<FileState*>(entry.data);
+        if (fs->fd >= 0)
+            close(fs->fd);
+        delete fs;
+        break;
+    }
+    case HandleType::Find: {
+        auto* fnd = static_cast<FindState*>(entry.data);
+        if (fnd->dir)
+            closedir(fnd->dir);
+        delete fnd;
+        break;
+    }
+    default:
+        break;
     }
 
     m_handles.erase(it);
     return true;
 }
 
-HANDLE VirtualFileSystem::createFile(const char* lpFileName, DWORD dwDesiredAccess,
-    DWORD dwShareMode, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes) {
-    if (!lpFileName) return INVALID_HANDLE_VALUE;
+HANDLE VirtualFileSystem::createFile(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+                                     DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes) {
+    if (!lpFileName)
+        return INVALID_HANDLE_VALUE;
 
     std::string hostPath = winToHost(lpFileName);
 
-    MS_INFO("VFS: CreateFile(\"%s\" -> \"%s\", access=0x%X, disp=%u)",
-        lpFileName, hostPath.c_str(), dwDesiredAccess, dwCreationDisposition);
+    MS_INFO("VFS: CreateFile(\"%s\" -> \"%s\", access=0x%X, disp=%u)", lpFileName, hostPath.c_str(), dwDesiredAccess,
+            dwCreationDisposition);
 
     int flags = 0;
     bool readOnly = !(dwDesiredAccess & 0x40000000);
     bool writeAccess = (dwDesiredAccess & 0x40000000) != 0;
     bool readAccess = (dwDesiredAccess & 0x80000000) != 0;
 
-    if (readAccess && writeAccess) flags = O_RDWR;
-    else if (writeAccess) flags = O_WRONLY;
-    else if (readAccess) flags = O_RDONLY;
-    else flags = O_RDONLY;
+    if (readAccess && writeAccess)
+        flags = O_RDWR;
+    else if (writeAccess)
+        flags = O_WRONLY;
+    else if (readAccess)
+        flags = O_RDONLY;
+    else
+        flags = O_RDONLY;
 
     switch (dwCreationDisposition) {
-        case 1: flags |= O_CREAT | O_EXCL; break;
-        case 2: flags |= O_CREAT | O_TRUNC; break;
-        case 3: break;
-        case 4: flags |= O_CREAT; break;
-        case 5: flags |= O_TRUNC; break;
+    case 1:
+        flags |= O_CREAT | O_EXCL;
+        break;
+    case 2:
+        flags |= O_CREAT | O_TRUNC;
+        break;
+    case 3:
+        break;
+    case 4:
+        flags |= O_CREAT;
+        break;
+    case 5:
+        flags |= O_TRUNC;
+        break;
     }
 
     if (writeAccess || (flags & O_CREAT)) {
@@ -193,77 +217,99 @@ HANDLE VirtualFileSystem::createFile(const char* lpFileName, DWORD dwDesiredAcce
 
 BOOL VirtualFileSystem::readFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead, DWORD* lpNumberOfBytesRead) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     ssize_t bytesRead = read(fs->fd, lpBuffer, nNumberOfBytesToRead);
     if (bytesRead < 0) {
-        if (lpNumberOfBytesRead) *lpNumberOfBytesRead = 0;
+        if (lpNumberOfBytesRead)
+            *lpNumberOfBytesRead = 0;
         return 0;
     }
 
     fs->position += bytesRead;
-    if (lpNumberOfBytesRead) *lpNumberOfBytesRead = static_cast<DWORD>(bytesRead);
+    if (lpNumberOfBytesRead)
+        *lpNumberOfBytesRead = static_cast<DWORD>(bytesRead);
     return 1;
 }
 
-BOOL VirtualFileSystem::writeFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite, DWORD* lpNumberOfBytesWritten) {
+BOOL VirtualFileSystem::writeFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite,
+                                  DWORD* lpNumberOfBytesWritten) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     ssize_t bytesWritten = write(fs->fd, lpBuffer, nNumberOfBytesToWrite);
     if (bytesWritten < 0) {
-        if (lpNumberOfBytesWritten) *lpNumberOfBytesWritten = 0;
+        if (lpNumberOfBytesWritten)
+            *lpNumberOfBytesWritten = 0;
         return 0;
     }
 
     fs->position += bytesWritten;
-    if (lpNumberOfBytesWritten) *lpNumberOfBytesWritten = static_cast<DWORD>(bytesWritten);
+    if (lpNumberOfBytesWritten)
+        *lpNumberOfBytesWritten = static_cast<DWORD>(bytesWritten);
     return 1;
 }
 
 DWORD VirtualFileSystem::getFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
     auto* entry = getHandle(hFile);
     if (!entry || entry->type != HandleType::File) {
-        if (lpFileSizeHigh) *lpFileSizeHigh = 0;
+        if (lpFileSizeHigh)
+            *lpFileSizeHigh = 0;
         return 0xFFFFFFFF;
     }
 
     auto* fs = static_cast<FileState*>(entry->data);
     struct stat st;
     if (fstat(fs->fd, &st) != 0) {
-        if (lpFileSizeHigh) *lpFileSizeHigh = 0;
+        if (lpFileSizeHigh)
+            *lpFileSizeHigh = 0;
         return 0xFFFFFFFF;
     }
 
-    if (lpFileSizeHigh) *lpFileSizeHigh = static_cast<DWORD>(st.st_size >> 32);
+    if (lpFileSizeHigh)
+        *lpFileSizeHigh = static_cast<DWORD>(st.st_size >> 32);
     return static_cast<DWORD>(st.st_size & 0xFFFFFFFF);
 }
 
 BOOL VirtualFileSystem::getFileSizeEx(HANDLE hFile, int64_t* lpFileSize) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     struct stat st;
-    if (fstat(fs->fd, &st) != 0) return 0;
+    if (fstat(fs->fd, &st) != 0)
+        return 0;
 
-    if (lpFileSize) *lpFileSize = st.st_size;
+    if (lpFileSize)
+        *lpFileSize = st.st_size;
     return 1;
 }
 
-DWORD VirtualFileSystem::setFilePointer(HANDLE hFile, LONG lDistanceToMove, LONG* lpDistanceToMoveHigh, DWORD dwMoveMethod) {
+DWORD VirtualFileSystem::setFilePointer(HANDLE hFile, LONG lDistanceToMove, LONG* lpDistanceToMoveHigh,
+                                        DWORD dwMoveMethod) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0xFFFFFFFF;
+    if (!entry || entry->type != HandleType::File)
+        return 0xFFFFFFFF;
 
     auto* fs = static_cast<FileState*>(entry->data);
     int whence;
     switch (dwMoveMethod) {
-        case 0: whence = SEEK_SET; break;
-        case 1: whence = SEEK_CUR; break;
-        case 2: whence = SEEK_END; break;
-        default: return 0xFFFFFFFF;
+    case 0:
+        whence = SEEK_SET;
+        break;
+    case 1:
+        whence = SEEK_CUR;
+        break;
+    case 2:
+        whence = SEEK_END;
+        break;
+    default:
+        return 0xFFFFFFFF;
     }
 
     off_t offset = lDistanceToMove;
@@ -273,36 +319,49 @@ DWORD VirtualFileSystem::setFilePointer(HANDLE hFile, LONG lDistanceToMove, LONG
     }
 
     off_t result = lseek(fs->fd, offset, whence);
-    if (result == (off_t)-1) return 0xFFFFFFFF;
+    if (result == (off_t)-1)
+        return 0xFFFFFFFF;
 
     fs->position = result;
     return static_cast<DWORD>(result & 0xFFFFFFFF);
 }
 
-BOOL VirtualFileSystem::setFilePointerEx(HANDLE hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, DWORD dwMoveMethod) {
+BOOL VirtualFileSystem::setFilePointerEx(HANDLE hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer,
+                                         DWORD dwMoveMethod) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     int whence;
     switch (dwMoveMethod) {
-        case 0: whence = SEEK_SET; break;
-        case 1: whence = SEEK_CUR; break;
-        case 2: whence = SEEK_END; break;
-        default: return 0;
+    case 0:
+        whence = SEEK_SET;
+        break;
+    case 1:
+        whence = SEEK_CUR;
+        break;
+    case 2:
+        whence = SEEK_END;
+        break;
+    default:
+        return 0;
     }
 
     off_t result = lseek(fs->fd, liDistanceToMove, whence);
-    if (result == (off_t)-1) return 0;
+    if (result == (off_t)-1)
+        return 0;
 
     fs->position = result;
-    if (lpNewFilePointer) *lpNewFilePointer = result;
+    if (lpNewFilePointer)
+        *lpNewFilePointer = result;
     return 1;
 }
 
 BOOL VirtualFileSystem::flushFileBuffers(HANDLE hFile) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     return fsync(fs->fd) == 0 ? 1 : 0;
@@ -310,23 +369,30 @@ BOOL VirtualFileSystem::flushFileBuffers(HANDLE hFile) {
 
 DWORD VirtualFileSystem::getFileType(HANDLE hFile) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     struct stat st;
-    if (fstat(fs->fd, &st) != 0) return 0;
+    if (fstat(fs->fd, &st) != 0)
+        return 0;
 
-    if (S_ISREG(st.st_mode)) return 0x0001;
-    if (S_ISCHR(st.st_mode)) return 0x0002;
-    if (S_ISDIR(st.st_mode)) return 0x0001;
+    if (S_ISREG(st.st_mode))
+        return 0x0001;
+    if (S_ISCHR(st.st_mode))
+        return 0x0002;
+    if (S_ISDIR(st.st_mode))
+        return 0x0001;
     return 0x0001;
 }
 
 static void fillWin32FindData(void* lpFindFileData, const char* name, bool isDir, int64_t fileSize) {
     uint8_t* data = static_cast<uint8_t*>(lpFindFileData);
     DWORD attrs = 0x80;
-    if (isDir) attrs |= 0x10;
-    if (name[0] == '.') attrs |= 0x02;
+    if (isDir)
+        attrs |= 0x10;
+    if (name[0] == '.')
+        attrs |= 0x02;
     memcpy(data, &attrs, 4);
 
     uint64_t ft = 0;
@@ -357,7 +423,8 @@ HANDLE VirtualFileSystem::findFirstFileW(const char* pattern, void* lpFindFileDa
         glob = hostPattern;
     }
 
-    if (glob.empty()) glob = "*";
+    if (glob.empty())
+        glob = "*";
 
     DIR* d = opendir(dir.c_str());
     if (!d) {
@@ -378,10 +445,12 @@ HANDLE VirtualFileSystem::findFirstFileW(const char* pattern, void* lpFindFileDa
 
 BOOL VirtualFileSystem::findNextFileW(HANDLE hFindFile, void* lpFindFileData) {
     auto* entry = getHandle(hFindFile);
-    if (!entry || entry->type != HandleType::Find) return 0;
+    if (!entry || entry->type != HandleType::Find)
+        return 0;
 
     auto* fnd = static_cast<FindState*>(entry->data);
-    if (!fnd->dir) return 0;
+    if (!fnd->dir)
+        return 0;
 
     struct dirent* de;
     while ((de = readdir(fnd->dir)) != nullptr) {
@@ -409,23 +478,29 @@ BOOL VirtualFileSystem::findClose(HANDLE hFindFile) {
 DWORD VirtualFileSystem::getFileAttributes(const std::string& path) {
     std::string host = winToHost(path);
     struct stat st;
-    if (stat(host.c_str(), &st) != 0) return 0xFFFFFFFF;
+    if (stat(host.c_str(), &st) != 0)
+        return 0xFFFFFFFF;
 
     DWORD attrs = 0x80;
-    if (S_ISDIR(st.st_mode)) attrs |= 0x10;
-    if (path[0] == '.' || path.find("/.") != std::string::npos) attrs |= 0x02;
-    if (!(st.st_mode & S_IWUSR)) attrs |= 0x01;
+    if (S_ISDIR(st.st_mode))
+        attrs |= 0x10;
+    if (path[0] == '.' || path.find("/.") != std::string::npos)
+        attrs |= 0x02;
+    if (!(st.st_mode & S_IWUSR))
+        attrs |= 0x01;
     return attrs;
 }
 
 BOOL VirtualFileSystem::getFileAttributesEx(const std::string& path, void* lpFileInformation) {
     std::string host = winToHost(path);
     struct stat st;
-    if (stat(host.c_str(), &st) != 0) return 0;
+    if (stat(host.c_str(), &st) != 0)
+        return 0;
 
     uint8_t* data = static_cast<uint8_t*>(lpFileInformation);
     DWORD attrs = 0x80;
-    if (S_ISDIR(st.st_mode)) attrs |= 0x10;
+    if (S_ISDIR(st.st_mode))
+        attrs |= 0x10;
     memcpy(data, &attrs, 4);
 
     uint64_t ft = static_cast<uint64_t>(st.st_mtime) * 10000000ULL + 116444736000000000ULL;
@@ -440,16 +515,19 @@ BOOL VirtualFileSystem::getFileAttributesEx(const std::string& path, void* lpFil
 
 BOOL VirtualFileSystem::getFileInformationByHandle(HANDLE hFile, void* lpFileInformation) {
     auto* entry = getHandle(hFile);
-    if (!entry || entry->type != HandleType::File) return 0;
+    if (!entry || entry->type != HandleType::File)
+        return 0;
 
     auto* fs = static_cast<FileState*>(entry->data);
     struct stat st;
-    if (fstat(fs->fd, &st) != 0) return 0;
+    if (fstat(fs->fd, &st) != 0)
+        return 0;
 
     uint8_t* data = static_cast<uint8_t*>(lpFileInformation);
     memset(data, 0, 52);
     DWORD attrs = 0x80;
-    if (S_ISDIR(st.st_mode)) attrs |= 0x10;
+    if (S_ISDIR(st.st_mode))
+        attrs |= 0x10;
     memcpy(data, &attrs, 4);
     uint64_t ft = static_cast<uint64_t>(st.st_mtime) * 10000000ULL + 116444736000000000ULL;
     memcpy(data + 4, &ft, 8);
@@ -466,11 +544,13 @@ BOOL VirtualFileSystem::getFileInformationByHandle(HANDLE hFile, void* lpFileInf
 }
 
 std::string VirtualFileSystem::getFullPathName(const std::string& path) {
-    if (path.empty()) return "";
+    if (path.empty())
+        return "";
 
     std::string result = path;
     for (auto& c : result) {
-        if (c == '\\') c = '/';
+        if (c == '\\')
+            c = '/';
     }
 
     if (result.size() >= 2 && result[1] == ':') {
@@ -492,5 +572,5 @@ HANDLE VirtualFileSystem::registerPipeFd(int fd) {
     return allocHandle(HandleType::Pipe, state);
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

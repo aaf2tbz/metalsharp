@@ -6,5 +6,4 @@
 
 #include <metalsharp/PipelineState.h>
 
-namespace metalsharp {
-}
+namespace metalsharp {}

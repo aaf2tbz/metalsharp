@@ -5,11 +5,11 @@
 /// modes and resolutions. Provides DXGI_MODE_DESC structs populated from real
 /// macOS display configuration.
 
-#include <metalsharp/DXGIOutput.h>
 #import <AppKit/AppKit.h>
-#import <Metal/Metal.h>
-#import <QuartzCore/QuartzCore.h>
 #include <CoreGraphics/CoreGraphics.h>
+#import <Metal/Metal.h>
+#include <metalsharp/DXGIOutput.h>
+#import <QuartzCore/QuartzCore.h>
 
 namespace metalsharp {
 
@@ -39,7 +39,8 @@ std::vector<DisplayMode> DXGIOutputImpl::enumerateDisplayModes() {
         uint32_t w = (uint32_t)CGDisplayModeGetWidth(mode);
         uint32_t h = (uint32_t)CGDisplayModeGetHeight(mode);
         double refresh = CGDisplayModeGetRefreshRate(mode);
-        if (refresh == 0) refresh = 60.0;
+        if (refresh == 0)
+            refresh = 60.0;
 
         bool dup = false;
         for (auto& m : modes) {
@@ -64,13 +65,15 @@ std::vector<DisplayMode> DXGIOutputImpl::enumerateDisplayModes() {
 DisplayMode DXGIOutputImpl::getCurrentDisplayMode() {
     CGDirectDisplayID mainDisplay = CGMainDisplayID();
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(mainDisplay);
-    if (!mode) return {1920, 1080, 60, 87};
+    if (!mode)
+        return {1920, 1080, 60, 87};
 
     DisplayMode dm;
     dm.width = (uint32_t)CGDisplayModeGetWidth(mode);
     dm.height = (uint32_t)CGDisplayModeGetHeight(mode);
     dm.refreshRate = (uint32_t)CGDisplayModeGetRefreshRate(mode);
-    if (dm.refreshRate == 0) dm.refreshRate = 60;
+    if (dm.refreshRate == 0)
+        dm.refreshRate = 60;
     dm.format = 87;
     CGDisplayModeRelease(mode);
     return dm;
@@ -79,16 +82,13 @@ DisplayMode DXGIOutputImpl::getCurrentDisplayMode() {
 bool DXGIOutputImpl::createWindow(void* parent, uint32_t width, uint32_t height, void** outWindow) {
     @autoreleasepool {
         NSRect frame = NSMakeRect(0, 0, width, height);
-        NSWindowStyleMask style = NSWindowStyleMaskTitled |
-                                  NSWindowStyleMaskClosable |
-                                  NSWindowStyleMaskMiniaturizable |
-                                  NSWindowStyleMaskResizable;
+        NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
 
-        NSWindow* window = [[NSWindow alloc]
-            initWithContentRect:frame
-                      styleMask:style
-                        backing:NSBackingStoreBuffered
-                          defer:NO];
+        NSWindow* window = [[NSWindow alloc] initWithContentRect:frame
+                                                       styleMask:style
+                                                         backing:NSBackingStoreBuffered
+                                                           defer:NO];
 
         [window setTitle:@"MetalSharp"];
         [window center];
@@ -104,7 +104,8 @@ bool DXGIOutputImpl::createWindow(void* parent, uint32_t width, uint32_t height,
 bool DXGIOutputImpl::createMetalLayer(void* window, void** outLayer) {
     @autoreleasepool {
         NSView* view = (__bridge NSView*)window;
-        if (!view) return false;
+        if (!view)
+            return false;
 
         CAMetalLayer* layer = [CAMetalLayer layer];
         layer.frame = view.bounds;
@@ -121,4 +122,4 @@ bool DXGIOutputImpl::createMetalLayer(void* window, void** outLayer) {
     }
 }
 
-}
+} // namespace metalsharp

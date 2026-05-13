@@ -33,11 +33,14 @@ struct XInputCapabilities {
     BYTE SubType;
     WORD Flags;
     XInputGamepad Gamepad;
-    struct Vibration { WORD wLeftMotorSpeed; WORD wRightMotorSpeed; } Vibration;
+    struct Vibration {
+        WORD wLeftMotorSpeed;
+        WORD wRightMotorSpeed;
+    } Vibration;
 };
 
 class GameControllerBridge {
-public:
+  public:
     GameControllerBridge();
     ~GameControllerBridge();
 
@@ -47,7 +50,7 @@ public:
     bool setState(uint32_t index, uint16_t leftMotor, uint16_t rightMotor);
     bool getCapabilities(uint32_t index, XInputCapabilities* pCaps);
 
-private:
+  private:
     struct Impl;
     static constexpr uint32_t MAX_CONTROLLERS = 4;
     XInputState m_states[MAX_CONTROLLERS] = {};
@@ -55,4 +58,4 @@ private:
     Impl* m_impl;
 };
 
-}
+} // namespace metalsharp

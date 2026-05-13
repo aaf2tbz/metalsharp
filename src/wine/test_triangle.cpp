@@ -1,13 +1,14 @@
 /// @file test_triangle.cpp
 /// @brief End-to-end triangle rendering test via D3D11→Metal pipeline.
 ///
-/// The classic 'hello triangle' integration test that creates a D3D11 device, swap chain, vertex buffer, and simple shaders to render a colored triangle. Serves as the primary smoke test for the entire MetalSharp rendering stack.
-#include <windows.h>
+/// The classic 'hello triangle' integration test that creates a D3D11 device, swap chain, vertex buffer, and simple
+/// shaders to render a colored triangle. Serves as the primary smoke test for the entire MetalSharp rendering stack.
 #include <d3d11.h>
 #include <dxgi.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <windows.h>
 
 static const char msl_source[] =
     "using namespace metal;\n"
@@ -27,16 +28,24 @@ static int g_pass = 0;
 static int g_fail = 0;
 
 static void check(const char* name, BOOL cond) {
-    if (cond) { printf("  PASS: %s\n", name); g_pass++; }
-    else      { printf("  FAIL: %s\n", name); g_fail++; }
+    if (cond) {
+        printf("  PASS: %s\n", name);
+        g_pass++;
+    } else {
+        printf("  FAIL: %s\n", name);
+        g_fail++;
+    }
 }
 
 static void build_shader_bytecode(const char* func_name, void* out, int* out_len) {
     uint8_t* p = (uint8_t*)out;
-    memcpy(p, "MSL", 4); p += 4;
+    memcpy(p, "MSL", 4);
+    p += 4;
     int name_len = (int)strlen(func_name);
-    memcpy(p, func_name, name_len + 1); p += name_len + 1;
-    memcpy(p, msl_source, sizeof(msl_source)); p += sizeof(msl_source);
+    memcpy(p, func_name, name_len + 1);
+    p += name_len + 1;
+    memcpy(p, msl_source, sizeof(msl_source));
+    p += sizeof(msl_source);
     *out_len = (int)(p - (uint8_t*)out);
 }
 
@@ -61,8 +70,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     scDesc.Windowed = TRUE;
     scDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0,
-        NULL, 0, D3D11_SDK_VERSION, &scDesc, &swapchain, &device, &fl, &ctx);
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION,
+                                               &scDesc, &swapchain, &device, &fl, &ctx);
     printf("[Device] hr=0x%08X dev=%p ctx=%p sc=%p fl=0x%X\n", (unsigned)hr, device, ctx, swapchain, fl);
     check("D3D11CreateDeviceAndSwapChain", SUCCEEDED(hr) && device && ctx && swapchain);
 
@@ -82,9 +91,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     check("CreateRenderTargetView", SUCCEEDED(hr) && rtv);
 
     float vertices[] = {
-         0.0f,  0.5f, 0.0f,
-         0.5f, -0.5f, 0.0f,
-        -0.5f, -0.5f, 0.0f,
+        0.0f, 0.5f, 0.0f, 0.5f, -0.5f, 0.0f, -0.5f, -0.5f, 0.0f,
     };
 
     ID3D11Buffer* vertexBuffer = NULL;
@@ -98,14 +105,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     printf("[VB] hr=0x%08X buf=%p\n", (unsigned)hr, vertexBuffer);
     check("CreateBuffer (vertex)", SUCCEEDED(hr) && vertexBuffer);
 
-    char vs_bc[4096]; int vs_len;
+    char vs_bc[4096];
+    int vs_len;
     build_shader_bytecode("vs_main", vs_bc, &vs_len);
     ID3D11VertexShader* vs = NULL;
     hr = device->CreateVertexShader(vs_bc, vs_len, NULL, &vs);
     printf("[VS] hr=0x%08X vs=%p\n", (unsigned)hr, vs);
     check("CreateVertexShader (MSL)", SUCCEEDED(hr) && vs);
 
-    char ps_bc[4096]; int ps_len;
+    char ps_bc[4096];
+    int ps_len;
     build_shader_bytecode("ps_main", ps_bc, &ps_len);
     ID3D11PixelShader* ps = NULL;
     hr = device->CreatePixelShader(ps_bc, ps_len, NULL, &ps);
@@ -113,14 +122,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     check("CreatePixelShader (MSL)", SUCCEEDED(hr) && ps);
 
     ID3D11InputLayout* inputLayout = NULL;
-    D3D11_INPUT_ELEMENT_DESC layoutDesc = { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 };
+    D3D11_INPUT_ELEMENT_DESC layoutDesc = {
+        "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0};
     hr = device->CreateInputLayout(&layoutDesc, 1, vs_bc, vs_len, &inputLayout);
     printf("[Layout] hr=0x%08X layout=%p\n", (unsigned)hr, inputLayout);
     check("CreateInputLayout", SUCCEEDED(hr));
 
     printf("\n--- Render Loop (60 frames) ---\n");
     for (int frame = 0; frame < 60; frame++) {
-        float clearColor[4] = { 0.1f, 0.1f, 0.15f, 1.0f };
+        float clearColor[4] = {0.1f, 0.1f, 0.15f, 1.0f};
         ctx->ClearRenderTargetView(rtv, clearColor);
 
         ctx->OMSetRenderTargets(1, &rtv, NULL);
@@ -134,7 +144,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
         ctx->VSSetShader(vs, NULL, 0);
         ctx->PSSetShader(ps, NULL, 0);
 
-        D3D11_VIEWPORT vp = { 0, 0, 800, 600, 0, 1 };
+        D3D11_VIEWPORT vp = {0, 0, 800, 600, 0, 1};
         ctx->RSSetViewports(1, &vp);
 
         ctx->Draw(3, 0);
@@ -152,15 +162,24 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show) {
     }
 
     printf("\n--- Cleanup ---\n");
-    if (inputLayout) inputLayout->Release();
-    if (ps) ps->Release();
-    if (vs) vs->Release();
-    if (vertexBuffer) vertexBuffer->Release();
-    if (rtv) rtv->Release();
-    if (backBuffer) backBuffer->Release();
-    if (swapchain) swapchain->Release();
-    if (ctx) ctx->Release();
-    if (device) device->Release();
+    if (inputLayout)
+        inputLayout->Release();
+    if (ps)
+        ps->Release();
+    if (vs)
+        vs->Release();
+    if (vertexBuffer)
+        vertexBuffer->Release();
+    if (rtv)
+        rtv->Release();
+    if (backBuffer)
+        backBuffer->Release();
+    if (swapchain)
+        swapchain->Release();
+    if (ctx)
+        ctx->Release();
+    if (device)
+        device->Release();
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

@@ -9,10 +9,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <metalsharp/Platform.h>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -25,7 +25,7 @@ struct DRMDetection {
 };
 
 class DRMDetector {
-public:
+  public:
     static DRMDetector& instance();
 
     std::vector<DRMDetection> scanFile(const std::string& exePath);
@@ -35,7 +35,7 @@ public:
     bool isCompatible(const std::vector<DRMDetection>& results) const;
     std::string summary(const std::vector<DRMDetection>& results) const;
 
-private:
+  private:
     DRMDetector() = default;
 
     struct Signature {
@@ -48,8 +48,7 @@ private:
 
     static const Signature kSignatures[];
 
-    bool matchPattern(const uint8_t* data, size_t dataLen,
-                       const char* pattern, size_t patternLen) const;
+    bool matchPattern(const uint8_t* data, size_t dataLen, const char* pattern, size_t patternLen) const;
 };
 
-}
+} // namespace metalsharp

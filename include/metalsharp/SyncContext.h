@@ -9,25 +9,19 @@
 
 #pragma once
 
-#include <metalsharp/Win32Types.h>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <metalsharp/Win32Types.h>
+#include <mutex>
+#include <pthread.h>
 #include <string>
 #include <unordered_map>
-#include <mutex>
-#include <atomic>
-#include <pthread.h>
-#include <condition_variable>
 
 namespace metalsharp {
 namespace win32 {
 
-enum class SyncHandleType : uint8_t {
-    Event,
-    Mutex,
-    Semaphore,
-    Thread,
-    Timer
-};
+enum class SyncHandleType : uint8_t { Event, Mutex, Semaphore, Thread, Timer };
 
 struct SyncEventState {
     pthread_mutex_t mutex;
@@ -65,7 +59,7 @@ struct SyncHandle {
 };
 
 class SyncContext {
-public:
+  public:
     static SyncContext& instance();
 
     void* createEvent(bool manualReset, bool initialState, const std::string& name);
@@ -88,7 +82,7 @@ public:
 
     void initialize();
 
-private:
+  private:
     SyncContext() = default;
 
     uint32_t waitForEvent(SyncEventState* evt, uint32_t ms);
@@ -102,5 +96,5 @@ private:
     int m_nextHandle = 10000;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

@@ -1,22 +1,23 @@
 /// @file DRMShims.cpp
 /// @brief Anti-DRM detection shims for volume serial, MAC address, and timing.
 ///
-/// Spoofs volume serial numbers, MAC addresses, and system timing to bypass DRM checks that validate hardware fingerprints. Also provides anti-debug detection shims to hide the Wine environment from copy protection.
-#include <metalsharp/Win32Types.h>
-#include <metalsharp/PELoader.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
+/// Spoofs volume serial numbers, MAC addresses, and system timing to bypass DRM checks that validate hardware
+/// fingerprints. Also provides anti-debug detection shims to hide the Wine environment from copy protection.
 #include <chrono>
-#include <ctime>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PELoader.h>
+#include <metalsharp/Win32Types.h>
 
 #ifdef __APPLE__
-#include <sys/sysctl.h>
+#include <ifaddrs.h>
 #include <mach/mach_time.h>
 #include <net/if.h>
 #include <net/if_dl.h>
-#include <ifaddrs.h>
+#include <sys/sysctl.h>
 #endif
 
 namespace metalsharp {
@@ -25,8 +26,8 @@ namespace win32 {
 static const uint8_t STABLE_MAC[6] = {0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E};
 static const uint32_t STABLE_DISK_SERIAL = 0xABCDEF12;
 
-static BOOL MSABI shim_GetSystemFirmwareTable(DWORD FirmwareTableProviderSignature,
-    DWORD FirmwareTableID, void* pFirmwareTableBuffer, DWORD BufferSize) {
+static BOOL MSABI shim_GetSystemFirmwareTable(DWORD FirmwareTableProviderSignature, DWORD FirmwareTableID,
+                                              void* pFirmwareTableBuffer, DWORD BufferSize) {
 
     if (BufferSize == 0 && pFirmwareTableBuffer == nullptr) {
         return 0;
@@ -47,23 +48,10 @@ static BOOL MSABI shim_GetSystemFirmwareTable(DWORD FirmwareTableProviderSignatu
         };
 
         static const uint8_t fakeSMBIOS[] = {
-            0x00,
-            0x03, 0x04,
-            0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x01, 0x1F,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00,
-            0x02, 0x08,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00,
-            0x03, 0x17,
-            0x01, 0x02, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00,
-            'A', 'p', 'p', 'l', 'e', ' ', 'I', 'n', 'c', '.', '\0',
-            'M', 'a', 'c', 'B', 'o', 'o', 'k', ' ', 'P', 'r', 'o', '\0',
-            '\0',
+            0x00, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x02, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x17, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 'A',  'p',  'p',  'l',  'e',  ' ',  'I',  'n',  'c',  '.',  '\0',
+            'M',  'a',  'c',  'B',  'o',  'o',  'k',  ' ',  'P',  'r',  'o',  '\0', '\0',
         };
 
         uint32_t totalSize = sizeof(RawSMBIOSData) - 1 + sizeof(fakeSMBIOS);
@@ -90,7 +78,8 @@ static BOOL MSABI shim_GetSystemFirmwareTable(DWORD FirmwareTableProviderSignatu
 }
 
 static uint32_t MSABI shim_GetAdaptersInfo(void* pAdapterInfo, uint32_t* pOutBufLen) {
-    if (!pOutBufLen) return 111;
+    if (!pOutBufLen)
+        return 111;
 
     struct IP_ADAPTER_INFO_LAYOUT {
         void* Next;
@@ -133,9 +122,11 @@ static uint32_t MSABI shim_GetAdaptersInfo(void* pAdapterInfo, uint32_t* pOutBuf
 }
 
 static uint32_t MSABI shim_GetAdaptersAddresses(uint32_t Family, uint32_t Flags, void* Reserved,
-    void* pAdapterAddresses, uint32_t* pOutBufLen) {
-    if (!pOutBufLen) return 111;
-    if (Reserved) return 87;
+                                                void* pAdapterAddresses, uint32_t* pOutBufLen) {
+    if (!pOutBufLen)
+        return 111;
+    if (Reserved)
+        return 87;
 
     uint32_t needed = 256;
     if (!pAdapterAddresses || *pOutBufLen < needed) {
@@ -171,7 +162,8 @@ static uint32_t MSABI shim_GetAdaptersAddresses(uint32_t Family, uint32_t Flags,
 }
 
 static void MSABI shim_GetLocalTime(void* lpSystemTime) {
-    if (!lpSystemTime) return;
+    if (!lpSystemTime)
+        return;
 
     auto now = std::chrono::system_clock::now();
     time_t t = std::chrono::system_clock::to_time_t(now);
@@ -196,48 +188,57 @@ static DWORD MSABI shim_timeGetTime() {
     return static_cast<DWORD>(ms.count());
 }
 
-static DWORD MSABI shim_timeBeginPeriod(UINT) { return 0; }
-static DWORD MSABI shim_timeEndPeriod(UINT) { return 0; }
+static DWORD MSABI shim_timeBeginPeriod(UINT) {
+    return 0;
+}
+static DWORD MSABI shim_timeEndPeriod(UINT) {
+    return 0;
+}
 
-static BOOL MSABI shim_DeviceIoControl_DRM(HANDLE hDevice, DWORD dwIoControlCode,
-    void* lpInBuffer, DWORD nInBufferSize, void* lpOutBuffer, DWORD nOutBufferSize,
-    DWORD* lpBytesReturned, void* lpOverlapped) {
+static BOOL MSABI shim_DeviceIoControl_DRM(HANDLE hDevice, DWORD dwIoControlCode, void* lpInBuffer, DWORD nInBufferSize,
+                                           void* lpOutBuffer, DWORD nOutBufferSize, DWORD* lpBytesReturned,
+                                           void* lpOverlapped) {
 
-    if (lpBytesReturned) *lpBytesReturned = 0;
+    if (lpBytesReturned)
+        *lpBytesReturned = 0;
 
     switch (dwIoControlCode) {
-        case 0x00074008:
-        case 0x0007C028:
-        case 0x0004D014: {
-            if (lpOutBuffer && nOutBufferSize >= 4) {
-                uint32_t serial = STABLE_DISK_SERIAL;
-                memcpy(lpOutBuffer, &serial, 4);
-                if (lpBytesReturned) *lpBytesReturned = 4;
-            }
-            return 1;
+    case 0x00074008:
+    case 0x0007C028:
+    case 0x0004D014: {
+        if (lpOutBuffer && nOutBufferSize >= 4) {
+            uint32_t serial = STABLE_DISK_SERIAL;
+            memcpy(lpOutBuffer, &serial, 4);
+            if (lpBytesReturned)
+                *lpBytesReturned = 4;
         }
-        case 0x0007404C:
-        case 0x00074060: {
-            if (lpOutBuffer && nOutBufferSize >= 512) {
-                memset(lpOutBuffer, 0, 512);
-                auto* out = static_cast<uint8_t*>(lpOutBuffer);
-                memcpy(out, "MetalSharp", 10);
-                out[20] = 0x01;
-                out[21] = 0x00;
-                out[22] = 0x01;
-                out[23] = 0x00;
-                if (lpBytesReturned) *lpBytesReturned = 512;
-            }
-            return 1;
+        return 1;
+    }
+    case 0x0007404C:
+    case 0x00074060: {
+        if (lpOutBuffer && nOutBufferSize >= 512) {
+            memset(lpOutBuffer, 0, 512);
+            auto* out = static_cast<uint8_t*>(lpOutBuffer);
+            memcpy(out, "MetalSharp", 10);
+            out[20] = 0x01;
+            out[21] = 0x00;
+            out[22] = 0x01;
+            out[23] = 0x00;
+            if (lpBytesReturned)
+                *lpBytesReturned = 512;
         }
-        default:
-            return 0;
+        return 1;
+    }
+    default:
+        return 0;
     }
 }
 
-static void MSABI shim_RaiseException_Fixed(DWORD dwExceptionCode, DWORD dwExceptionFlags,
-    DWORD nNumberOfArguments, void* lpArguments) {
-    (void)dwExceptionFlags; (void)nNumberOfArguments; (void)lpArguments;
+static void MSABI shim_RaiseException_Fixed(DWORD dwExceptionCode, DWORD dwExceptionFlags, DWORD nNumberOfArguments,
+                                            void* lpArguments) {
+    (void)dwExceptionFlags;
+    (void)nNumberOfArguments;
+    (void)lpArguments;
     MS_INFO("PELoader: RaiseException(0x%08X) — dispatching to VEH chain", dwExceptionCode);
 
     struct FakeExceptionRecord {
@@ -264,7 +265,7 @@ static void MSABI shim_RaiseException_Fixed(DWORD dwExceptionCode, DWORD dwExcep
                 struct FakePointers {
                     FakeExceptionRecord* ExceptionRecord;
                     void* ContextRecord;
-                } pointers = { &record, nullptr };
+                } pointers = {&record, nullptr};
 
                 typedef int32_t (*VEHHandler)(void*);
                 auto veh = reinterpret_cast<VEHHandler>(handler);
@@ -281,7 +282,7 @@ static void MSABI shim_RaiseException_Fixed(DWORD dwExceptionCode, DWORD dwExcep
         struct FakePointers {
             void* ExceptionRecord;
             void* ContextRecord;
-        } pointers = { &record, nullptr };
+        } pointers = {&record, nullptr};
 
         typedef void* (*FilterFunc)(void*);
         auto filter = reinterpret_cast<FilterFunc>(s_unhandledExceptionFilter);
@@ -294,9 +295,7 @@ static void MSABI shim_RaiseException_Fixed(DWORD dwExceptionCode, DWORD dwExcep
 }
 
 void addDRMShims(ShimLibrary& kernel32, ShimLibrary& winmm) {
-    auto fn = [](void* ptr) -> ExportedFunction {
-        return [ptr]() -> void* { return ptr; };
-    };
+    auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
 
     kernel32.functions["GetSystemFirmwareTable"] = fn((void*)shim_GetSystemFirmwareTable);
     kernel32.functions["GetAdaptersInfo"] = fn((void*)shim_GetAdaptersInfo);
@@ -326,5 +325,5 @@ void addDRMShims(ShimLibrary& kernel32, ShimLibrary& winmm) {
     winmm.functions["waveOutUnprepareHeader"] = fn((void*)nullptr);
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

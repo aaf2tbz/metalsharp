@@ -1,22 +1,25 @@
 /// @file ShaderCache.mm
 /// @brief Metal shader compilation and library caching.
 ///
-/// Compiles MSL source strings into MTLLibrary and MTLFunction objects using the Metal device. Caches compiled Metal libraries in memory and synchronizes with the on-disk cache managed by ShaderCache.cpp for cross-session persistence.
-#include <metalsharp/ShaderCache.h>
-#import <Metal/Metal.h>
+/// Compiles MSL source strings into MTLLibrary and MTLFunction objects using the Metal device. Caches compiled Metal
+/// libraries in memory and synchronizes with the on-disk cache managed by ShaderCache.cpp for cross-session
+/// persistence.
 #import <Foundation/Foundation.h>
-#include <metalsharp/Logger.h>
 #include <fstream>
+#import <Metal/Metal.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/ShaderCache.h>
 
 namespace metalsharp {
 
 bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
     std::ifstream file(path);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
-    std::string source((std::istreambuf_iterator<char>(file)),
-                        std::istreambuf_iterator<char>());
-    if (source.empty()) return false;
+    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (source.empty())
+        return false;
 
     CachedShader entry;
     entry.hash = hash;
@@ -33,7 +36,8 @@ bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
             NSArray<NSString*>* names = [library functionNames];
             for (NSString* name in names) {
                 id<MTLFunction> func = [library newFunctionWithName:name];
-                if (!func) continue;
+                if (!func)
+                    continue;
 
                 std::string nameStr = [name UTF8String];
                 if (nameStr.find("vertex") != std::string::npos || nameStr == "vs" || nameStr == "VS") {
@@ -47,8 +51,8 @@ bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
                 }
             }
         } else if (error) {
-            MS_WARN("ShaderCache: failed to precompile %s: %s",
-                    path.c_str(), [[error localizedDescription] UTF8String]);
+            MS_WARN("ShaderCache: failed to precompile %s: %s", path.c_str(),
+                    [[error localizedDescription] UTF8String]);
         }
     }
 
@@ -56,4 +60,4 @@ bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
     return true;
 }
 
-}
+} // namespace metalsharp

@@ -1,6 +1,6 @@
-import { ChildProcess, spawn } from "child_process";
-import * as path from "path";
+import { type ChildProcess, spawn } from "child_process";
 import * as http from "http";
+import * as path from "path";
 
 function getShellPath(): string {
   const home = process.env.HOME || "";
@@ -38,7 +38,11 @@ export class RustBridge {
     }
 
     this.proc = spawn(binPath, [], {
-      env: { ...process.env, PATH: shellPath, METALSHARP_PORT: String(this.port) },
+      env: {
+        ...process.env,
+        PATH: shellPath,
+        METALSHARP_PORT: String(this.port),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

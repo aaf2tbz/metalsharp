@@ -9,9 +9,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -37,7 +37,7 @@ struct DetectedGame {
 };
 
 class GameDetector {
-public:
+  public:
     static std::vector<DetectedGame> detectAll();
     static std::vector<DetectedGame> detectSteam();
     static std::vector<DetectedGame> detectEpic();
@@ -51,7 +51,7 @@ public:
     static std::string findEpicManifestDir();
     static std::string findGOGDbPath();
 
-private:
+  private:
     static std::vector<DetectedGame> parseSteamLibraryFolders(const std::string& vdfPath);
     static std::vector<DetectedGame> scanSteamApps(const std::string& libraryDir);
     static std::vector<DetectedGame> parseEpicManifests(const std::string& manifestDir);
@@ -62,4 +62,4 @@ private:
     static bool fileExists(const std::string& path);
 };
 
-}
+} // namespace metalsharp

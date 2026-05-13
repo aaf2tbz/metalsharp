@@ -6,21 +6,16 @@
 /// environment variables so Wine loads MetalSharp's shims instead of the
 /// original Windows DLLs at runtime.
 
-#include <metalsharp/PEHook.h>
-#include <metalsharp/Logger.h>
 #include <cstdlib>
 #include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PEHook.h>
 
 namespace metalsharp {
 
-const char* PEHook::DYLIB_MAPPINGS[] = {
-    "d3d11.dll",    "d3d11.dylib",
-    "d3d12.dll",    "d3d12.dylib",
-    "dxgi.dll",     "dxgi.dylib",
-    "xaudio2_9.dll","xaudio2_9.dylib",
-    "xinput1_4.dll","xinput1_4.dylib",
-    nullptr
-};
+const char* PEHook::DYLIB_MAPPINGS[] = {"d3d11.dll",     "d3d11.dylib",     "d3d12.dll",     "d3d12.dylib",
+                                        "dxgi.dll",      "dxgi.dylib",      "xaudio2_9.dll", "xaudio2_9.dylib",
+                                        "xinput1_4.dll", "xinput1_4.dylib", nullptr};
 
 std::vector<DylibMapping> PEHook::getDylibMappings() {
     std::vector<DylibMapping> mappings;
@@ -45,9 +40,7 @@ bool PEHook::injectDylibs(const std::string& winePrefix) {
 bool PEHook::setupEnvironment(const std::string& winePrefix, bool debugMetal) {
     setenv("WINEPREFIX", winePrefix.c_str(), 1);
 
-    setenv("WINEDLLOVERRIDES",
-        "d3d11=native;d3d12=native;dxgi=native;xaudio2_9=native;xinput1_4=native",
-        1);
+    setenv("WINEDLLOVERRIDES", "d3d11=native;d3d12=native;dxgi=native;xaudio2_9=native;xinput1_4=native", 1);
 
     setenv("METALSHARP_WINE_PREFIX", winePrefix.c_str(), 1);
 
@@ -60,4 +53,4 @@ bool PEHook::setupEnvironment(const std::string& winePrefix, bool debugMetal) {
     return true;
 }
 
-}
+} // namespace metalsharp

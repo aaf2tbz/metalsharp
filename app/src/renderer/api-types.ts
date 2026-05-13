@@ -76,7 +76,12 @@ interface DependenciesResponse {
 }
 
 type MetalsharpAPI = {
-  request: (method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => Promise<BackendResponse>;
+  request: (
+    method: string,
+    url: string,
+    body?: Record<string, unknown>,
+    timeoutMs?: number,
+  ) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;

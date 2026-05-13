@@ -1,15 +1,17 @@
 /// @file Registry.cpp
 /// @brief Windows registry simulation with in-memory store and persistence.
 ///
-/// Implements a full Windows registry (HKLM, HKCU, etc.) backed by an in-memory tree. Seeds common Steam-related keys at startup and persists the hive to JSON on disk. Registry values are queried by games for install paths, settings, and DRM validation.
-#include <metalsharp/Registry.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
-#include <cstdio>
-#include <fstream>
-#include <sstream>
+/// Implements a full Windows registry (HKLM, HKCU, etc.) backed by an in-memory tree. Seeds common Steam-related keys
+/// at startup and persists the hive to JSON on disk. Registry values are queried by games for install paths, settings,
+/// and DRM validation.
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <metalsharp/Logger.h>
+#include <metalsharp/Registry.h>
+#include <sstream>
 
 namespace metalsharp {
 namespace win32 {
@@ -22,32 +24,43 @@ Registry& Registry::instance() {
 }
 
 std::string Registry::keyToString(HKEY hKey) {
-    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000000))) return "HKEY_CLASSES_ROOT";
-    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000001))) return "HKEY_CURRENT_USER";
-    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000002))) return "HKEY_LOCAL_MACHINE";
-    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000003))) return "HKEY_USERS";
-    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000005))) return "HKEY_CURRENT_CONFIG";
+    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000000)))
+        return "HKEY_CLASSES_ROOT";
+    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000001)))
+        return "HKEY_CURRENT_USER";
+    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000002)))
+        return "HKEY_LOCAL_MACHINE";
+    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000003)))
+        return "HKEY_USERS";
+    if (hKey == reinterpret_cast<HKEY>(static_cast<intptr_t>(0x80000005)))
+        return "HKEY_CURRENT_CONFIG";
 
     auto it = m_openKeys.find(hKey);
-    if (it != m_openKeys.end()) return it->second;
+    if (it != m_openKeys.end())
+        return it->second;
     return "";
 }
 
 std::string Registry::normalizePath(HKEY hKey, const std::string& subKey) {
     std::string root = keyToString(hKey);
-    if (root.empty()) return "";
+    if (root.empty())
+        return "";
 
     std::string path = subKey;
     for (auto& c : path) {
-        if (c == '\\') c = '/';
+        if (c == '\\')
+            c = '/';
     }
 
-    while (!path.empty() && path[0] == '/') path.erase(0, 1);
-    while (!path.empty() && path.back() == '/') path.pop_back();
+    while (!path.empty() && path[0] == '/')
+        path.erase(0, 1);
+    while (!path.empty() && path.back() == '/')
+        path.pop_back();
 
     std::string result = root + "/" + path;
     std::string lower;
-    for (auto c : result) lower += tolower(c);
+    for (auto c : result)
+        lower += tolower(c);
     return lower;
 }
 
@@ -201,13 +214,15 @@ LONG Registry::openKeyEx(HKEY hKey, const std::string& subKey, DWORD, DWORD, HKE
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = normalizePath(hKey, subKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     MS_INFO("Registry: OpenKey(\"%s\")", path.c_str());
 
     HKEY newKey = reinterpret_cast<HKEY>(m_nextKey);
     m_nextKey += 4;
-    if (m_nextKey < 0xA000) m_nextKey = 0xA000;
+    if (m_nextKey < 0xA000)
+        m_nextKey = 0xA000;
 
     m_openKeys[newKey] = path;
 
@@ -215,15 +230,18 @@ LONG Registry::openKeyEx(HKEY hKey, const std::string& subKey, DWORD, DWORD, HKE
         m_store[path] = {};
     }
 
-    if (result) *result = newKey;
+    if (result)
+        *result = newKey;
     return ERROR_SUCCESS;
 }
 
-LONG Registry::createKeyEx(HKEY hKey, const std::string& subKey, DWORD, char*, DWORD, DWORD, void*, HKEY* phkResult, void*) {
+LONG Registry::createKeyEx(HKEY hKey, const std::string& subKey, DWORD, char*, DWORD, DWORD, void*, HKEY* phkResult,
+                           void*) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = normalizePath(hKey, subKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     MS_INFO("Registry: CreateKey(\"%s\")", path.c_str());
 
@@ -233,10 +251,12 @@ LONG Registry::createKeyEx(HKEY hKey, const std::string& subKey, DWORD, char*, D
 
     HKEY newKey = reinterpret_cast<HKEY>(m_nextKey);
     m_nextKey += 4;
-    if (m_nextKey < 0xA000) m_nextKey = 0xA000;
+    if (m_nextKey < 0xA000)
+        m_nextKey = 0xA000;
 
     m_openKeys[newKey] = path;
-    if (phkResult) *phkResult = newKey;
+    if (phkResult)
+        *phkResult = newKey;
     return ERROR_SUCCESS;
 }
 
@@ -250,10 +270,12 @@ LONG Registry::queryValue(HKEY hKey, const std::string& valueName, DWORD* lpType
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = keyToString(hKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     std::string lowerPath;
-    for (auto c : path) lowerPath += tolower(c);
+    for (auto c : path)
+        lowerPath += tolower(c);
 
     auto it = m_store.find(lowerPath);
     if (it == m_store.end()) {
@@ -262,13 +284,15 @@ LONG Registry::queryValue(HKEY hKey, const std::string& valueName, DWORD* lpType
     }
 
     std::string lookupName = valueName;
-    for (auto& c : lookupName) c = tolower(c);
+    for (auto& c : lookupName)
+        c = tolower(c);
 
     auto vit = it->second.find(lookupName);
     if (vit == it->second.end()) {
         if (lookupName.empty()) {
             RegistryValue empty = {1, {0, 0}};
-            if (lpType) *lpType = empty.type;
+            if (lpType)
+                *lpType = empty.type;
             if (lpcbData) {
                 if (lpData && *lpcbData >= empty.data.size()) {
                     memcpy(lpData, empty.data.data(), empty.data.size());
@@ -282,10 +306,11 @@ LONG Registry::queryValue(HKEY hKey, const std::string& valueName, DWORD* lpType
     }
 
     const RegistryValue& val = vit->second;
-    MS_INFO("Registry: QueryValue(\"%s\\%s\") -> type=%u, size=%zu",
-        lowerPath.c_str(), lookupName.c_str(), val.type, val.data.size());
+    MS_INFO("Registry: QueryValue(\"%s\\%s\") -> type=%u, size=%zu", lowerPath.c_str(), lookupName.c_str(), val.type,
+            val.data.size());
 
-    if (lpType) *lpType = val.type;
+    if (lpType)
+        *lpType = val.type;
     if (lpcbData) {
         DWORD needed = static_cast<DWORD>(val.data.size());
         if (lpData && *lpcbData >= needed) {
@@ -303,13 +328,16 @@ LONG Registry::setValue(HKEY hKey, const std::string& valueName, DWORD dwType, c
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = keyToString(hKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     std::string lowerPath;
-    for (auto c : path) lowerPath += tolower(c);
+    for (auto c : path)
+        lowerPath += tolower(c);
 
     std::string lookupName = valueName;
-    for (auto& c : lookupName) c = tolower(c);
+    for (auto& c : lookupName)
+        c = tolower(c);
 
     RegistryValue val;
     val.type = dwType;
@@ -320,8 +348,7 @@ LONG Registry::setValue(HKEY hKey, const std::string& valueName, DWORD dwType, c
 
     m_store[lowerPath][lookupName] = std::move(val);
 
-    MS_INFO("Registry: SetValue(\"%s\\%s\", type=%u, size=%u)",
-        lowerPath.c_str(), lookupName.c_str(), dwType, cbData);
+    MS_INFO("Registry: SetValue(\"%s\\%s\", type=%u, size=%u)", lowerPath.c_str(), lookupName.c_str(), dwType, cbData);
     return ERROR_SUCCESS;
 }
 
@@ -329,16 +356,20 @@ LONG Registry::deleteValue(HKEY hKey, const std::string& valueName) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = keyToString(hKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     std::string lowerPath;
-    for (auto c : path) lowerPath += tolower(c);
+    for (auto c : path)
+        lowerPath += tolower(c);
 
     std::string lookupName = valueName;
-    for (auto& c : lookupName) c = tolower(c);
+    for (auto& c : lookupName)
+        c = tolower(c);
 
     auto it = m_store.find(lowerPath);
-    if (it == m_store.end()) return ERROR_FILE_NOT_FOUND;
+    if (it == m_store.end())
+        return ERROR_FILE_NOT_FOUND;
     it->second.erase(lookupName);
     return ERROR_SUCCESS;
 }
@@ -347,10 +378,12 @@ LONG Registry::deleteKey(HKEY hKey, const std::string& subKey) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::string path = normalizePath(hKey, subKey);
-    if (path.empty()) return ERROR_PATH_NOT_FOUND;
+    if (path.empty())
+        return ERROR_PATH_NOT_FOUND;
 
     std::string lowerPath;
-    for (auto c : path) lowerPath += tolower(c);
+    for (auto c : path)
+        lowerPath += tolower(c);
 
     m_store.erase(lowerPath);
     return ERROR_SUCCESS;
@@ -358,21 +391,25 @@ LONG Registry::deleteKey(HKEY hKey, const std::string& subKey) {
 
 void Registry::saveToFile(const std::string& path) {
     std::ofstream out(path);
-    if (!out.is_open()) return;
+    if (!out.is_open())
+        return;
 
     out << "{\n";
     bool firstKey = true;
     for (auto& [keyPath, values] : m_store) {
-        if (!firstKey) out << ",\n";
+        if (!firstKey)
+            out << ",\n";
         firstKey = false;
         out << "  \"" << keyPath << "\": {\n";
         bool firstVal = true;
         for (auto& [name, val] : values) {
-            if (!firstVal) out << ",\n";
+            if (!firstVal)
+                out << ",\n";
             firstVal = false;
             out << "    \"" << name << "\": {\"type\": " << val.type << ", \"data\": [";
             for (size_t i = 0; i < val.data.size(); i++) {
-                if (i > 0) out << ", ";
+                if (i > 0)
+                    out << ", ";
                 out << static_cast<int>(val.data[i]);
             }
             out << "]}";
@@ -386,38 +423,52 @@ void Registry::saveToFile(const std::string& path) {
 
 void Registry::loadFromFile(const std::string& path) {
     std::ifstream in(path);
-    if (!in.is_open()) return;
+    if (!in.is_open())
+        return;
 
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
 
     size_t pos = 0;
     auto skipWS = [&]() {
-        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\n' || content[pos] == '\r' || content[pos] == '\t')) pos++;
+        while (pos < content.size() &&
+               (content[pos] == ' ' || content[pos] == '\n' || content[pos] == '\r' || content[pos] == '\t'))
+            pos++;
     };
     auto expect = [&](char c) -> bool {
         skipWS();
-        if (pos < content.size() && content[pos] == c) { pos++; return true; }
+        if (pos < content.size() && content[pos] == c) {
+            pos++;
+            return true;
+        }
         return false;
     };
     auto readString = [&]() -> std::string {
         skipWS();
-        if (pos >= content.size() || content[pos] != '"') return "";
+        if (pos >= content.size() || content[pos] != '"')
+            return "";
         pos++;
         std::string result;
         while (pos < content.size() && content[pos] != '"') {
-            if (content[pos] == '\\' && pos + 1 < content.size()) { pos++; result += content[pos]; }
-            else result += content[pos];
+            if (content[pos] == '\\' && pos + 1 < content.size()) {
+                pos++;
+                result += content[pos];
+            } else
+                result += content[pos];
             pos++;
         }
-        if (pos < content.size()) pos++;
+        if (pos < content.size())
+            pos++;
         return result;
     };
     auto readNumber = [&]() -> int {
         skipWS();
         int n = 0;
         bool neg = false;
-        if (pos < content.size() && content[pos] == '-') { neg = true; pos++; }
+        if (pos < content.size() && content[pos] == '-') {
+            neg = true;
+            pos++;
+        }
         while (pos < content.size() && content[pos] >= '0' && content[pos] <= '9') {
             n = n * 10 + (content[pos] - '0');
             pos++;
@@ -425,49 +476,77 @@ void Registry::loadFromFile(const std::string& path) {
         return neg ? -n : n;
     };
 
-    if (!expect('{')) return;
+    if (!expect('{'))
+        return;
 
     while (pos < content.size()) {
         skipWS();
-        if (content[pos] == '}') break;
+        if (content[pos] == '}')
+            break;
 
         std::string keyPath = readString();
-        if (keyPath.empty()) break;
+        if (keyPath.empty())
+            break;
 
-        if (!expect(':')) break;
-        if (!expect('{')) break;
+        if (!expect(':'))
+            break;
+        if (!expect('{'))
+            break;
 
         std::unordered_map<std::string, RegistryValue> values;
 
         while (pos < content.size()) {
             skipWS();
-            if (content[pos] == '}') { pos++; break; }
-            if (content[pos] == ',') { pos++; continue; }
+            if (content[pos] == '}') {
+                pos++;
+                break;
+            }
+            if (content[pos] == ',') {
+                pos++;
+                continue;
+            }
 
             std::string valName = readString();
-            if (valName.empty()) break;
+            if (valName.empty())
+                break;
 
-            if (!expect(':')) break;
-            if (!expect('{')) break;
+            if (!expect(':'))
+                break;
+            if (!expect('{'))
+                break;
 
             RegistryValue rv;
 
             while (pos < content.size()) {
                 skipWS();
-                if (content[pos] == '}') { pos++; break; }
-                if (content[pos] == ',') { pos++; continue; }
+                if (content[pos] == '}') {
+                    pos++;
+                    break;
+                }
+                if (content[pos] == ',') {
+                    pos++;
+                    continue;
+                }
 
                 std::string fieldName = readString();
-                if (!expect(':')) break;
+                if (!expect(':'))
+                    break;
 
                 if (fieldName == "type") {
                     rv.type = static_cast<DWORD>(readNumber());
                 } else if (fieldName == "data") {
-                    if (!expect('[')) break;
+                    if (!expect('['))
+                        break;
                     while (pos < content.size()) {
                         skipWS();
-                        if (content[pos] == ']') { pos++; break; }
-                        if (content[pos] == ',') { pos++; continue; }
+                        if (content[pos] == ']') {
+                            pos++;
+                            break;
+                        }
+                        if (content[pos] == ',') {
+                            pos++;
+                            continue;
+                        }
                         rv.data.push_back(static_cast<BYTE>(readNumber()));
                     }
                 }
@@ -478,11 +557,12 @@ void Registry::loadFromFile(const std::string& path) {
 
         m_store[keyPath] = std::move(values);
         skipWS();
-        if (pos < content.size() && content[pos] == ',') pos++;
+        if (pos < content.size() && content[pos] == ',')
+            pos++;
     }
 
     MS_INFO("Registry: Loaded from %s", path.c_str());
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

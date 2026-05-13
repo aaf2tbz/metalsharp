@@ -6,12 +6,12 @@
 /// be safe to call from signal handlers and other constrained contexts.
 
 #include "metalsharp/CrashReporter.h"
-#include <fstream>
-#include <sstream>
-#include <filesystem>
-#include <ctime>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <random>
+#include <sstream>
 
 namespace metalsharp {
 
@@ -60,7 +60,8 @@ void CrashReporter::endSession(int exitCode) {
 
 std::string CrashReporter::getReportsDir() {
     const char* home = std::getenv("HOME");
-    if (!home) return "/tmp/metalsharp/crashes";
+    if (!home)
+        return "/tmp/metalsharp/crashes";
     return std::string(home) + "/.metalsharp/crashes";
 }
 
@@ -104,7 +105,8 @@ CrashReport CrashReporter::collectReport() {
 
     auto readFileIfExists = [&](const std::string& path) -> std::string {
         std::ifstream f(path);
-        if (!f.is_open()) return "";
+        if (!f.is_open())
+            return "";
         std::ostringstream buf;
         buf << f.rdbuf();
         return buf.str();
@@ -119,8 +121,7 @@ CrashReport CrashReporter::collectReport() {
                 auto mtime = fs::last_write_time(entry);
                 auto epoch = static_cast<int64_t>(
 #if __cplusplus >= 202002L
-                    std::chrono::duration_cast<std::chrono::seconds>(
-                        mtime.time_since_epoch()).count()
+                    std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count()
 #else
                     0
 #endif
@@ -145,7 +146,8 @@ CrashReport CrashReporter::collectReport() {
 std::vector<CrashReport> CrashReporter::getRecentReports(int count) {
     std::vector<CrashReport> reports;
     std::string dir = getReportsDir();
-    if (!fs::exists(dir)) return reports;
+    if (!fs::exists(dir))
+        return reports;
 
     try {
         std::vector<fs::path> files;
@@ -155,26 +157,32 @@ std::vector<CrashReport> CrashReporter::getRecentReports(int count) {
             }
         }
 
-        std::sort(files.begin(), files.end(), [](const fs::path& a, const fs::path& b) {
-            return fs::last_write_time(a) > fs::last_write_time(b);
-        });
+        std::sort(files.begin(), files.end(),
+                  [](const fs::path& a, const fs::path& b) { return fs::last_write_time(a) > fs::last_write_time(b); });
 
         int loaded = 0;
         for (const auto& f : files) {
-            if (loaded >= count) break;
+            if (loaded >= count)
+                break;
 
             std::ifstream file(f);
-            if (!file.is_open()) continue;
+            if (!file.is_open())
+                continue;
 
             CrashReport report;
             report.id = f.stem().string();
             std::string line;
             while (std::getline(file, line)) {
-                if (line.find("timestamp: ") == 0) report.timestamp = line.substr(11);
-                else if (line.find("game: ") == 0) report.gameName = line.substr(6);
-                else if (line.find("exe: ") == 0) report.exePath = line.substr(5);
-                else if (line.find("exit_code: ") == 0) report.exitCode = std::stoi(line.substr(11));
-                else if (line.find("fault_address: ") == 0) report.faultAddress = std::stoull(line.substr(15), nullptr, 16);
+                if (line.find("timestamp: ") == 0)
+                    report.timestamp = line.substr(11);
+                else if (line.find("game: ") == 0)
+                    report.gameName = line.substr(6);
+                else if (line.find("exe: ") == 0)
+                    report.exePath = line.substr(5);
+                else if (line.find("exit_code: ") == 0)
+                    report.exitCode = std::stoi(line.substr(11));
+                else if (line.find("fault_address: ") == 0)
+                    report.faultAddress = std::stoull(line.substr(15), nullptr, 16);
                 else if (line == "--- system ---") {
                     std::ostringstream sys;
                     while (std::getline(file, line) && line != "--- end ---") {
@@ -187,7 +195,8 @@ std::vector<CrashReport> CrashReporter::getRecentReports(int count) {
             reports.push_back(report);
             loaded++;
         }
-    } catch (...) {}
+    } catch (...) {
+    }
 
     return reports;
 }
@@ -198,7 +207,8 @@ bool CrashReporter::saveReport(const CrashReport& report) {
 
     std::string path = dir + "/" + report.id + ".crash";
     std::ofstream f(path);
-    if (!f.is_open()) return false;
+    if (!f.is_open())
+        return false;
 
     f << "id: " << report.id << "\n";
     f << "timestamp: " << report.timestamp << "\n";
@@ -230,4 +240,4 @@ bool CrashReporter::deleteReport(const std::string& id) {
     return fs::remove(path);
 }
 
-}
+} // namespace metalsharp

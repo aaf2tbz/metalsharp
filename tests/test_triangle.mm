@@ -1,12 +1,12 @@
-#include <metalsharp/D3D11Device.h>
-#include <metalsharp/D3D11DeviceContext.h>
-#include <d3d/D3D11.h>
 #include <AppKit/AppKit.h>
-#include <Metal/Metal.h>
-#include <QuartzCore/QuartzCore.h>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
+#include <d3d/D3D11.h>
+#include <Metal/Metal.h>
+#include <metalsharp/D3D11Device.h>
+#include <metalsharp/D3D11DeviceContext.h>
+#include <QuartzCore/QuartzCore.h>
 
 static const char* kTriangleMSL = R"msl(
 #include <metal_stdlib>
@@ -76,9 +76,9 @@ int main() {
         printf("[OK] Pixel shader compiled (MSL)\n");
 
         Vertex vertices[] = {
-            {  0.0f,  0.5f, 0.0f,   1.0f, 0.0f, 0.0f, 1.0f },
-            { -0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f, 1.0f },
-            {  0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f, 1.0f },
+            {0.0f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+            {-0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+            {0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f},
         };
 
         D3D11_BUFFER_DESC vbDesc = {};
@@ -105,7 +105,7 @@ int main() {
         ctx->VSSetShader(vs, nullptr, 0);
         ctx->PSSetShader(ps, nullptr, 0);
 
-        D3D11_VIEWPORT vp = { 800, 600 };
+        D3D11_VIEWPORT vp = {800, 600};
         ctx->RSSetViewports(1, &vp);
 
         hr = ctx->Draw(3, 0);

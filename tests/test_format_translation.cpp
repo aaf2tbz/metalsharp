@@ -1,6 +1,6 @@
-#include <metalsharp/FormatTranslation.h>
-#include <cstdio>
 #include <cassert>
+#include <cstdio>
+#include <metalsharp/FormatTranslation.h>
 
 int main() {
     using namespace metalsharp;

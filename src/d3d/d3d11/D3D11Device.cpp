@@ -4,31 +4,50 @@
 /// The central ID3D11Device COM class. Handles creation of buffers, textures, shaders,
 /// views, and all pipeline state objects, delegating to the Metal backend.
 
+#include <cstring>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/DeferredContext.h>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/PipelineState.h>
-#include <cstring>
 #include <vector>
 
 namespace metalsharp {
 
-#define MS_COM_BODY() \
-    ULONG refCount = 1; \
-    HRESULT QueryInterface(REFIID riid, void** ppv) override { \
-        if (!ppv) return E_POINTER; \
-        AddRef(); *ppv = this; return S_OK; \
-    } \
-    ULONG AddRef() override { return ++refCount; } \
-    ULONG Release() override { ULONG c = --refCount; if (c == 0) delete this; return c; } \
-    STDMETHOD(GetDevice)(ID3D11Device**) override { return E_NOTIMPL; } \
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; } \
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; } \
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
+#define MS_COM_BODY()                                                                                                  \
+    ULONG refCount = 1;                                                                                                \
+    HRESULT QueryInterface(REFIID riid, void** ppv) override {                                                         \
+        if (!ppv)                                                                                                      \
+            return E_POINTER;                                                                                          \
+        AddRef();                                                                                                      \
+        *ppv = this;                                                                                                   \
+        return S_OK;                                                                                                   \
+    }                                                                                                                  \
+    ULONG AddRef() override {                                                                                          \
+        return ++refCount;                                                                                             \
+    }                                                                                                                  \
+    ULONG Release() override {                                                                                         \
+        ULONG c = --refCount;                                                                                          \
+        if (c == 0)                                                                                                    \
+            delete this;                                                                                               \
+        return c;                                                                                                      \
+    }                                                                                                                  \
+    STDMETHOD(GetDevice)(ID3D11Device**) override {                                                                    \
+        return E_NOTIMPL;                                                                                              \
+    }                                                                                                                  \
+    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override {                                                    \
+        return E_NOTIMPL;                                                                                              \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override {                                               \
+        return E_NOTIMPL;                                                                                              \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override {                                        \
+        return E_NOTIMPL;                                                                                              \
+    }
 
 HRESULT D3D11Device::create(D3D11Device** ppDevice) {
-    if (!ppDevice) return E_POINTER;
+    if (!ppDevice)
+        return E_POINTER;
     auto* device = new D3D11Device();
     device->m_metalDevice = std::unique_ptr<MetalDevice>(MetalDevice::create());
     if (!device->m_metalDevice) {
@@ -45,7 +64,8 @@ D3D11Device::D3D11Device() = default;
 D3D11Device::~D3D11Device() = default;
 
 HRESULT D3D11Device::QueryInterface(REFIID riid, void** ppvObject) {
-    if (!ppvObject) return E_POINTER;
+    if (!ppvObject)
+        return E_POINTER;
     if (riid == __uuidof(IUnknown) || riid == __uuidof(ID3D11Device)) {
         AddRef();
         *ppvObject = this;
@@ -54,23 +74,33 @@ HRESULT D3D11Device::QueryInterface(REFIID riid, void** ppvObject) {
     return E_NOINTERFACE;
 }
 
-ULONG D3D11Device::AddRef() { return ++m_refCount; }
+ULONG D3D11Device::AddRef() {
+    return ++m_refCount;
+}
 
 ULONG D3D11Device::Release() {
     ULONG count = --m_refCount;
-    if (count == 0) delete this;
+    if (count == 0)
+        delete this;
     return count;
 }
 
-HRESULT D3D11Device::CreateBuffer(const D3D11_BUFFER_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Buffer** ppBuffer) {
-    if (!pDesc || !ppBuffer) return E_INVALIDARG;
+HRESULT D3D11Device::CreateBuffer(const D3D11_BUFFER_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData,
+                                  ID3D11Buffer** ppBuffer) {
+    if (!pDesc || !ppBuffer)
+        return E_INVALIDARG;
     size_t size = pDesc->ByteWidth;
     MetalBuffer* metalBuf = MetalBuffer::create(*m_metalDevice, size, pInitialData ? pInitialData->pSysMem : nullptr);
-    if (!metalBuf) return E_OUTOFMEMORY;
+    if (!metalBuf)
+        return E_OUTOFMEMORY;
 
     struct Impl : public ID3D11Buffer {
         MS_COM_BODY()
-        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_BUFFER; return S_OK; }
+        STDMETHOD(GetType)(UINT* p) override {
+            if (p)
+                *p = D3D11_RESOURCE_DIMENSION_BUFFER;
+            return S_OK;
+        }
         STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
         STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
         std::unique_ptr<MetalBuffer> metalBuffer;
@@ -88,22 +118,31 @@ HRESULT D3D11Device::CreateBuffer(const D3D11_BUFFER_DESC* pDesc, const D3D11_SU
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) {
-    if (!pDesc || !ppTexture2D) return E_INVALIDARG;
+HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData,
+                                     ID3D11Texture2D** ppTexture2D) {
+    if (!pDesc || !ppTexture2D)
+        return E_INVALIDARG;
 
     uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
     uint32_t usage = 0;
-    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
-    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
+    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+        usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x8;
 
     uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
     uint32_t sampleCount = pDesc->SampleDesc.Count > 0 ? pDesc->SampleDesc.Count : 1;
 
-    MetalTexture* tex = MetalTexture::create2D(*m_metalDevice, pDesc->Width, pDesc->Height, metalFmt, usage, mipLevels, sampleCount);
-    if (!tex) return E_OUTOFMEMORY;
+    MetalTexture* tex =
+        MetalTexture::create2D(*m_metalDevice, pDesc->Width, pDesc->Height, metalFmt, usage, mipLevels, sampleCount);
+    if (!tex)
+        return E_OUTOFMEMORY;
 
     if (pInitialData) {
         tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, pDesc->Height);
@@ -111,12 +150,19 @@ HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3
 
     struct Impl : public ID3D11Texture2D {
         MS_COM_BODY()
-        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_TEXTURE2D; return S_OK; }
+        STDMETHOD(GetType)(UINT* p) override {
+            if (p)
+                *p = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
+            return S_OK;
+        }
         STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
         STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
         std::unique_ptr<MetalTexture> metalTexture;
         D3D11_TEXTURE2D_DESC desc;
-        void GetDesc(D3D11_TEXTURE2D_DESC* p) override { if(p) *p = desc; }
+        void GetDesc(D3D11_TEXTURE2D_DESC* p) override {
+            if (p)
+                *p = desc;
+        }
         void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
         UINT __getResourceDimension() const override { return D3D11_RESOURCE_DIMENSION_TEXTURE2D; }
         UINT __getCPUAccessFlags() const override { return desc.CPUAccessFlags; }
@@ -130,21 +176,29 @@ HRESULT D3D11Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, const D3
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture1D** ppTexture1D) {
-    if (!pDesc || !ppTexture1D) return E_INVALIDARG;
+HRESULT D3D11Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData,
+                                     ID3D11Texture1D** ppTexture1D) {
+    if (!pDesc || !ppTexture1D)
+        return E_INVALIDARG;
 
     uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
     uint32_t usage = 0;
-    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
-    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
+    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+        usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x8;
 
     uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
 
     MetalTexture* tex = MetalTexture::create1D(*m_metalDevice, pDesc->Width, metalFmt, usage, mipLevels);
-    if (!tex) return E_OUTOFMEMORY;
+    if (!tex)
+        return E_OUTOFMEMORY;
 
     if (pInitialData) {
         tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, 1);
@@ -152,12 +206,19 @@ HRESULT D3D11Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* pDesc, const D3
 
     struct Impl : public ID3D11Texture1D {
         MS_COM_BODY()
-        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_TEXTURE1D; return S_OK; }
+        STDMETHOD(GetType)(UINT* p) override {
+            if (p)
+                *p = D3D11_RESOURCE_DIMENSION_TEXTURE1D;
+            return S_OK;
+        }
         STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
         STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
         std::unique_ptr<MetalTexture> metalTexture;
         D3D11_TEXTURE1D_DESC desc;
-        void GetDesc(D3D11_TEXTURE1D_DESC* p) override { if(p) *p = desc; }
+        void GetDesc(D3D11_TEXTURE1D_DESC* p) override {
+            if (p)
+                *p = desc;
+        }
         void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
         UINT __getResourceDimension() const override { return D3D11_RESOURCE_DIMENSION_TEXTURE1D; }
         UINT __getCPUAccessFlags() const override { return desc.CPUAccessFlags; }
@@ -171,34 +232,51 @@ HRESULT D3D11Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* pDesc, const D3
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture3D** ppTexture3D) {
-    if (!pDesc || !ppTexture3D) return E_INVALIDARG;
+HRESULT D3D11Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData,
+                                     ID3D11Texture3D** ppTexture3D) {
+    if (!pDesc || !ppTexture3D)
+        return E_INVALIDARG;
 
     uint32_t metalFmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
     uint32_t usage = 0;
-    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) usage |= 0x1;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x2;
-    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS) usage |= 0x4;
-    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE) usage |= 0x8;
+    if (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL)
+        usage |= 0x1;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x2;
+    if (pDesc->BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+        usage |= 0x4;
+    if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+        usage |= 0x8;
 
     uint32_t mipLevels = pDesc->MipLevels > 0 ? pDesc->MipLevels : 1;
 
-    MetalTexture* tex = MetalTexture::create3D(*m_metalDevice, pDesc->Width, pDesc->Height, pDesc->Depth, metalFmt, usage, mipLevels);
-    if (!tex) return E_OUTOFMEMORY;
+    MetalTexture* tex =
+        MetalTexture::create3D(*m_metalDevice, pDesc->Width, pDesc->Height, pDesc->Depth, metalFmt, usage, mipLevels);
+    if (!tex)
+        return E_OUTOFMEMORY;
 
     if (pInitialData) {
-        tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, pDesc->Height, pDesc->Depth);
+        tex->uploadData(0, 0, pInitialData->pSysMem, pInitialData->SysMemPitch, pDesc->Width, pDesc->Height,
+                        pDesc->Depth);
     }
 
     struct Impl : public ID3D11Texture3D {
         MS_COM_BODY()
-        STDMETHOD(GetType)(UINT* p) override { if(p) *p = D3D11_RESOURCE_DIMENSION_TEXTURE3D; return S_OK; }
+        STDMETHOD(GetType)(UINT* p) override {
+            if (p)
+                *p = D3D11_RESOURCE_DIMENSION_TEXTURE3D;
+            return S_OK;
+        }
         STDMETHOD(SetEvictionPriority)(UINT) override { return S_OK; }
         STDMETHOD_(UINT, GetEvictionPriority)() override { return 0; }
         std::unique_ptr<MetalTexture> metalTexture;
         D3D11_TEXTURE3D_DESC desc;
-        void GetDesc(D3D11_TEXTURE3D_DESC* p) override { if(p) *p = desc; }
+        void GetDesc(D3D11_TEXTURE3D_DESC* p) override {
+            if (p)
+                *p = desc;
+        }
         void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
         UINT __getResourceDimension() const override { return D3D11_RESOURCE_DIMENSION_TEXTURE3D; }
         UINT __getCPUAccessFlags() const override { return desc.CPUAccessFlags; }
@@ -212,8 +290,10 @@ HRESULT D3D11Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* pDesc, const D3
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11VertexShader** ppVertexShader) {
-    if (!pShaderBytecode || !ppVertexShader) return E_INVALIDARG;
+HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*,
+                                        ID3D11VertexShader** ppVertexShader) {
+    if (!pShaderBytecode || !ppVertexShader)
+        return E_INVALIDARG;
 
     struct Impl : public ID3D11VertexShader {
         MS_COM_BODY()
@@ -222,9 +302,8 @@ HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T Byte
     };
 
     CompiledShader compiled;
-    if (!m_shaderTranslator->compileMSL(
-            reinterpret_cast<const char*>(pShaderBytecode),
-            "vertexShader", "fragmentShader", compiled)) {
+    if (!m_shaderTranslator->compileMSL(reinterpret_cast<const char*>(pShaderBytecode), "vertexShader",
+                                        "fragmentShader", compiled)) {
         return E_FAIL;
     }
 
@@ -234,8 +313,10 @@ HRESULT D3D11Device::CreateVertexShader(const void* pShaderBytecode, SIZE_T Byte
     return S_OK;
 }
 
-HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*, ID3D11PixelShader** ppPixelShader) {
-    if (!pShaderBytecode || !ppPixelShader) return E_INVALIDARG;
+HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage*,
+                                       ID3D11PixelShader** ppPixelShader) {
+    if (!pShaderBytecode || !ppPixelShader)
+        return E_INVALIDARG;
 
     struct Impl : public ID3D11PixelShader {
         MS_COM_BODY()
@@ -244,9 +325,8 @@ HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T Bytec
     };
 
     CompiledShader compiled;
-    if (!m_shaderTranslator->compileMSL(
-            reinterpret_cast<const char*>(pShaderBytecode),
-            "vertexShader", "fragmentShader", compiled)) {
+    if (!m_shaderTranslator->compileMSL(reinterpret_cast<const char*>(pShaderBytecode), "vertexShader",
+                                        "fragmentShader", compiled)) {
         return E_FAIL;
     }
 
@@ -256,11 +336,17 @@ HRESULT D3D11Device::CreatePixelShader(const void* pShaderBytecode, SIZE_T Bytec
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateGeometryShader(const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11GeometryShader**) { return E_NOTIMPL; }
-HRESULT D3D11Device::CreateComputeShader(const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11ComputeShader**) { return E_NOTIMPL; }
+HRESULT D3D11Device::CreateGeometryShader(const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11GeometryShader**) {
+    return E_NOTIMPL;
+}
+HRESULT D3D11Device::CreateComputeShader(const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11ComputeShader**) {
+    return E_NOTIMPL;
+}
 
-HRESULT D3D11Device::CreateInputLayout(const void* pInputElementDescs, UINT NumElements, const void*, SIZE_T, ID3D11InputLayout** ppInputLayout) {
-    if (!pInputElementDescs || !ppInputLayout || NumElements == 0) return E_INVALIDARG;
+HRESULT D3D11Device::CreateInputLayout(const void* pInputElementDescs, UINT NumElements, const void*, SIZE_T,
+                                       ID3D11InputLayout** ppInputLayout) {
+    if (!pInputElementDescs || !ppInputLayout || NumElements == 0)
+        return E_INVALIDARG;
 
     struct Impl : public ID3D11InputLayout {
         MS_COM_BODY()
@@ -276,10 +362,13 @@ HRESULT D3D11Device::CreateInputLayout(const void* pInputElementDescs, UINT NumE
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateRenderTargetView(ID3D11Resource* pResource, const void* pDesc, ID3D11RenderTargetView** ppRTView) {
-    if (!pResource || !ppRTView) return E_INVALIDARG;
+HRESULT D3D11Device::CreateRenderTargetView(ID3D11Resource* pResource, const void* pDesc,
+                                            ID3D11RenderTargetView** ppRTView) {
+    if (!pResource || !ppRTView)
+        return E_INVALIDARG;
     void* texPtr = pResource->__metalTexturePtr();
-    if (!texPtr) return E_FAIL;
+    if (!texPtr)
+        return E_FAIL;
 
     struct Impl : public ID3D11RenderTargetView {
         MS_COM_BODY()
@@ -296,10 +385,13 @@ HRESULT D3D11Device::CreateRenderTargetView(ID3D11Resource* pResource, const voi
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateDepthStencilView(ID3D11Resource* pResource, const void* pDesc, ID3D11DepthStencilView** ppDSView) {
-    if (!pResource || !ppDSView) return E_INVALIDARG;
+HRESULT D3D11Device::CreateDepthStencilView(ID3D11Resource* pResource, const void* pDesc,
+                                            ID3D11DepthStencilView** ppDSView) {
+    if (!pResource || !ppDSView)
+        return E_INVALIDARG;
     void* texPtr = pResource->__metalTexturePtr();
-    if (!texPtr) return E_FAIL;
+    if (!texPtr)
+        return E_FAIL;
 
     struct Impl : public ID3D11DepthStencilView {
         MS_COM_BODY()
@@ -316,8 +408,10 @@ HRESULT D3D11Device::CreateDepthStencilView(ID3D11Resource* pResource, const voi
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateShaderResourceView(ID3D11Resource* pResource, const void* pDesc, ID3D11ShaderResourceView** ppSRView) {
-    if (!pResource || !ppSRView) return E_INVALIDARG;
+HRESULT D3D11Device::CreateShaderResourceView(ID3D11Resource* pResource, const void* pDesc,
+                                              ID3D11ShaderResourceView** ppSRView) {
+    if (!pResource || !ppSRView)
+        return E_INVALIDARG;
     void* texPtr = pResource->__metalTexturePtr();
     void* bufPtr = pResource->__metalBufferPtr();
 
@@ -339,8 +433,10 @@ HRESULT D3D11Device::CreateShaderResourceView(ID3D11Resource* pResource, const v
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateUnorderedAccessView(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) {
-    if (!pResource || !ppUAView) return E_INVALIDARG;
+HRESULT D3D11Device::CreateUnorderedAccessView(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc,
+                                               ID3D11UnorderedAccessView** ppUAView) {
+    if (!pResource || !ppUAView)
+        return E_INVALIDARG;
     void* texPtr = pResource->__metalTexturePtr();
     void* bufPtr = pResource->__metalBufferPtr();
 
@@ -363,19 +459,22 @@ HRESULT D3D11Device::CreateUnorderedAccessView(ID3D11Resource* pResource, const 
 }
 
 HRESULT D3D11Device::CreateSamplerState(const void* pSamplerDesc, ID3D11SamplerState** ppSamplerState) {
-    if (!pSamplerDesc || !ppSamplerState) return E_INVALIDARG;
+    if (!pSamplerDesc || !ppSamplerState)
+        return E_INVALIDARG;
     auto* desc = static_cast<const D3D11_SAMPLER_DESC*>(pSamplerDesc);
 
-    auto* sampler = MetalSampler::create(*m_metalDevice,
-        desc->Filter, desc->AddressU, desc->AddressV, desc->AddressW,
-        desc->MipLODBias, desc->MaxAnisotropy, desc->ComparisonFunc);
-    if (!sampler) return E_OUTOFMEMORY;
+    auto* sampler = MetalSampler::create(*m_metalDevice, desc->Filter, desc->AddressU, desc->AddressV, desc->AddressW,
+                                         desc->MipLODBias, desc->MaxAnisotropy, desc->ComparisonFunc);
+    if (!sampler)
+        return E_OUTOFMEMORY;
 
     struct Impl : public ID3D11SamplerState {
         MS_COM_BODY()
         std::unique_ptr<MetalSampler> metalSampler;
         D3D11_SAMPLER_DESC desc;
-        void* __metalSamplerState() const override { return metalSampler ? metalSampler->nativeSamplerState() : nullptr; }
+        void* __metalSamplerState() const override {
+            return metalSampler ? metalSampler->nativeSamplerState() : nullptr;
+        }
     };
 
     auto* impl = new Impl();
@@ -386,7 +485,8 @@ HRESULT D3D11Device::CreateSamplerState(const void* pSamplerDesc, ID3D11SamplerS
 }
 
 HRESULT D3D11Device::CreateRasterizerState(const void* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) {
-    if (!pRasterizerDesc || !ppRasterizerState) return E_INVALIDARG;
+    if (!pRasterizerDesc || !ppRasterizerState)
+        return E_INVALIDARG;
     auto* desc = static_cast<const D3D11_RASTERIZER_DESC*>(pRasterizerDesc);
 
     struct Impl : public ID3D11RasterizerState {
@@ -406,8 +506,10 @@ HRESULT D3D11Device::CreateRasterizerState(const void* pRasterizerDesc, ID3D11Ra
     return S_OK;
 }
 
-HRESULT D3D11Device::CreateDepthStencilState(const void* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) {
-    if (!pDepthStencilDesc || !ppDepthStencilState) return E_INVALIDARG;
+HRESULT D3D11Device::CreateDepthStencilState(const void* pDepthStencilDesc,
+                                             ID3D11DepthStencilState** ppDepthStencilState) {
+    if (!pDepthStencilDesc || !ppDepthStencilState)
+        return E_INVALIDARG;
     auto* desc = static_cast<const D3D11_DEPTH_STENCIL_DESC*>(pDepthStencilDesc);
 
     struct Impl : public ID3D11DepthStencilState {
@@ -428,7 +530,8 @@ HRESULT D3D11Device::CreateDepthStencilState(const void* pDepthStencilDesc, ID3D
 }
 
 HRESULT D3D11Device::CreateBlendState(const void* pBlendStateDesc, ID3D11BlendState** ppBlendState) {
-    if (!pBlendStateDesc || !ppBlendState) return E_INVALIDARG;
+    if (!pBlendStateDesc || !ppBlendState)
+        return E_INVALIDARG;
     auto* desc = static_cast<const D3D11_BLEND_DESC*>(pBlendStateDesc);
 
     struct Impl : public ID3D11BlendState {
@@ -441,7 +544,9 @@ HRESULT D3D11Device::CreateBlendState(const void* pBlendStateDesc, ID3D11BlendSt
         UINT __getSrcBlendAlpha(UINT i) const override { return desc.RenderTarget[i < 8 ? i : 0].SrcBlendAlpha; }
         UINT __getDestBlendAlpha(UINT i) const override { return desc.RenderTarget[i < 8 ? i : 0].DestBlendAlpha; }
         UINT __getBlendOpAlpha(UINT i) const override { return desc.RenderTarget[i < 8 ? i : 0].BlendOpAlpha; }
-        UINT __getRenderTargetWriteMask(UINT i) const override { return desc.RenderTarget[i < 8 ? i : 0].RenderTargetWriteMask; }
+        UINT __getRenderTargetWriteMask(UINT i) const override {
+            return desc.RenderTarget[i < 8 ? i : 0].RenderTargetWriteMask;
+        }
         INT __getAlphaToCoverageEnable() const override { return desc.AlphaToCoverageEnable; }
     };
 
@@ -452,12 +557,16 @@ HRESULT D3D11Device::CreateBlendState(const void* pBlendStateDesc, ID3D11BlendSt
 }
 
 HRESULT D3D11Device::CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) {
-    if (!pQueryDesc || !ppQuery) return E_INVALIDARG;
+    if (!pQueryDesc || !ppQuery)
+        return E_INVALIDARG;
 
     struct Impl : public ID3D11Query {
         MS_COM_BODY()
         D3D11_QUERY_DESC desc;
-        void GetDesc(D3D11_QUERY_DESC* p) override { if(p) *p = desc; }
+        void GetDesc(D3D11_QUERY_DESC* p) override {
+            if (p)
+                *p = desc;
+        }
         UINT __getQueryType() const override { return desc.Query; }
     };
 
@@ -468,7 +577,8 @@ HRESULT D3D11Device::CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query
 }
 
 HRESULT D3D11Device::CreatePredicate(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) {
-    if (!pPredicateDesc || !ppPredicate) return E_INVALIDARG;
+    if (!pPredicateDesc || !ppPredicate)
+        return E_INVALIDARG;
 
     struct Impl : public ID3D11Predicate {
         MS_COM_BODY()
@@ -486,15 +596,17 @@ void D3D11Device::GetImmediateContext(ID3D11DeviceContext** ppImmediateContext) 
 }
 
 HRESULT D3D11Device::CreateDeferredContext(UINT, ID3D11DeviceContext** ppDeferredContext) {
-    if (!ppDeferredContext) return E_POINTER;
+    if (!ppDeferredContext)
+        return E_POINTER;
     *ppDeferredContext = new DeferredContext(*this);
     return S_OK;
 }
 
 HRESULT D3D11Device::GetDeviceFeatureLevel(UINT* pFeatureLevel) {
-    if (!pFeatureLevel) return E_POINTER;
+    if (!pFeatureLevel)
+        return E_POINTER;
     *pFeatureLevel = 0xb000;
     return S_OK;
 }
 
-}
+} // namespace metalsharp

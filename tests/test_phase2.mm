@@ -1,17 +1,23 @@
-#include <metalsharp/D3D11Device.h>
-#include <metalsharp/D3D11DeviceContext.h>
-#include <d3d/D3D11.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <d3d/D3D11.h>
+#include <metalsharp/D3D11Device.h>
+#include <metalsharp/D3D11DeviceContext.h>
 
 static int g_pass = 0;
 static int g_fail = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); g_pass++; } \
-    else { printf("  [FAIL] %s\n", msg); g_fail++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            g_pass++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            g_fail++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 static const char* kMSL = R"msl(
 #include <metal_stdlib>
@@ -184,8 +190,8 @@ int main() {
 
     {
         D3D11_INPUT_ELEMENT_DESC elements[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
         };
         ID3D11InputLayout* layout = nullptr;
         hr = device->CreateInputLayout(elements, 2, kMSL, strlen(kMSL), &layout);
@@ -236,16 +242,16 @@ int main() {
         }
 
         FLOAT clear_color[4] = {0.1f, 0.1f, 0.1f, 1.0f};
-        if (rtv) ctx->ClearRenderTargetView(rtv, clear_color);
+        if (rtv)
+            ctx->ClearRenderTargetView(rtv, clear_color);
 
-        struct Vertex { float x,y,z; float r,g,b,a; };
+        struct Vertex {
+            float x, y, z;
+            float r, g, b, a;
+        };
         Vertex verts[6] = {
-            {-0.5f, 0.5f, 0.0f, 1,0,0,1},
-            { 0.5f, 0.5f, 0.0f, 0,1,0,1},
-            {-0.5f,-0.5f, 0.0f, 0,0,1,1},
-            { 0.5f,-0.5f, 0.0f, 1,1,0,1},
-            {-0.5f,-0.5f, 0.0f, 0,1,1,1},
-            { 0.5f,-0.5f, 0.0f, 1,0,1,1},
+            {-0.5f, 0.5f, 0.0f, 1, 0, 0, 1}, {0.5f, 0.5f, 0.0f, 0, 1, 0, 1},   {-0.5f, -0.5f, 0.0f, 0, 0, 1, 1},
+            {0.5f, -0.5f, 0.0f, 1, 1, 0, 1}, {-0.5f, -0.5f, 0.0f, 0, 1, 1, 1}, {0.5f, -0.5f, 0.0f, 1, 0, 1, 1},
         };
 
         D3D11_BUFFER_DESC vbDesc = {};
@@ -253,7 +259,7 @@ int main() {
         vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
         vbDesc.Usage = D3D11_USAGE_DEFAULT;
 
-        D3D11_SUBRESOURCE_DATA initData = { verts };
+        D3D11_SUBRESOURCE_DATA initData = {verts};
         ID3D11Buffer* vb = nullptr;
         hr = device->CreateBuffer(&vbDesc, &initData, &vb);
         CHECK(SUCCEEDED(hr) && vb, "CreateBuffer (vertex buffer for draw test)");
@@ -276,16 +282,22 @@ int main() {
             hr = ctx->Draw(6, 0);
             CHECK(SUCCEEDED(hr), "Draw(6 vertices) — two triangles");
 
-            if (vs) vs->Release();
-            if (ps) ps->Release();
+            if (vs)
+                vs->Release();
+            if (ps)
+                ps->Release();
             vb->Release();
         }
     }
 
-    if (rtv) rtv->Release();
-    if (rtTexture) rtTexture->Release();
-    if (srv) srv->Release();
-    if (srTexture) srTexture->Release();
+    if (rtv)
+        rtv->Release();
+    if (rtTexture)
+        rtTexture->Release();
+    if (srv)
+        srv->Release();
+    if (srTexture)
+        srTexture->Release();
     ctx->Release();
     device->Release();
 

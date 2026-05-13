@@ -9,10 +9,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <metalsharp/Platform.h>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -25,7 +25,7 @@ struct ImportReport {
 };
 
 class ImportReporter {
-public:
+  public:
     static ImportReporter& instance();
 
     void beginModule(const std::string& modulePath);
@@ -45,11 +45,11 @@ public:
     std::string generateSummary() const;
     void clear();
 
-private:
+  private:
     ImportReporter() = default;
 
     std::vector<ImportReport> m_reports;
     std::string m_currentModule;
 };
 
-}
+} // namespace metalsharp

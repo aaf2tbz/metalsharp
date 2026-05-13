@@ -1,14 +1,20 @@
-#include <d3d/D3D12.h>
 #include <cstdio>
 #include <cstring>
+#include <d3d/D3D12.h>
 
 static int passed = 0;
 static int failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); passed++; } \
-    else { printf("  [FAIL] %s\n", msg); failed++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            passed++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            failed++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== Tiled Resources & Sampler Feedback Tests ===\n\n");
@@ -16,7 +22,10 @@ int main() {
     {
         printf("--- D3D12_TILED_RESOURCE_COORDINATE ---\n");
         D3D12_TILED_RESOURCE_COORDINATE coord{};
-        coord.X = 4; coord.Y = 2; coord.Z = 1; coord.Subresource = 3;
+        coord.X = 4;
+        coord.Y = 2;
+        coord.Z = 1;
+        coord.Subresource = 3;
         CHECK(coord.X == 4, "X coordinate set");
         CHECK(coord.Y == 2, "Y coordinate set");
         CHECK(coord.Z == 1, "Z coordinate set");
@@ -26,7 +35,11 @@ int main() {
     {
         printf("\n--- D3D12_TILE_REGION_SIZE ---\n");
         D3D12_TILE_REGION_SIZE region{};
-        region.NumTiles = 16; region.Width = 4; region.Height = 4; region.Depth = 1; region.bUseBox = TRUE;
+        region.NumTiles = 16;
+        region.Width = 4;
+        region.Height = 4;
+        region.Depth = 1;
+        region.bUseBox = TRUE;
         CHECK(region.NumTiles == 16, "NumTiles set");
         CHECK(region.Width == 4, "Width set");
         CHECK(region.Height == 4, "Height set");
@@ -38,8 +51,10 @@ int main() {
     {
         printf("\n--- D3D12_PACKED_MIP_INFO ---\n");
         D3D12_PACKED_MIP_INFO info{};
-        info.NumStandardMips = 8; info.NumPackedMips = 2;
-        info.NumTilesForPackedMips = 1; info.StartTileIndexInOverallResource = 64;
+        info.NumStandardMips = 8;
+        info.NumPackedMips = 2;
+        info.NumTilesForPackedMips = 1;
+        info.StartTileIndexInOverallResource = 64;
         CHECK(info.NumStandardMips == 8, "NumStandardMips set");
         CHECK(info.NumPackedMips == 2, "NumPackedMips set");
         CHECK(info.NumTilesForPackedMips == 1, "NumTilesForPackedMips set");
@@ -49,7 +64,9 @@ int main() {
     {
         printf("\n--- D3D12_TILE_SHAPE ---\n");
         D3D12_TILE_SHAPE shape{};
-        shape.WidthInTexels = 128; shape.HeightInTexels = 128; shape.DepthInTexels = 1;
+        shape.WidthInTexels = 128;
+        shape.HeightInTexels = 128;
+        shape.DepthInTexels = 1;
         CHECK(shape.WidthInTexels == 128, "Tile width is 128 texels");
         CHECK(shape.HeightInTexels == 128, "Tile height is 128 texels");
         CHECK(shape.DepthInTexels == 1, "Tile depth is 1");
@@ -59,8 +76,11 @@ int main() {
     {
         printf("\n--- D3D12_SUBRESOURCE_TILING ---\n");
         D3D12_SUBRESOURCE_TILING tiling{};
-        tiling.WidthInTiles = 16; tiling.HeightInTiles = 8; tiling.DepthInTiles = 1;
-        tiling.StartTileIndexInOverallResource = 0; tiling.NumTiles = 128;
+        tiling.WidthInTiles = 16;
+        tiling.HeightInTiles = 8;
+        tiling.DepthInTiles = 1;
+        tiling.StartTileIndexInOverallResource = 0;
+        tiling.NumTiles = 128;
         CHECK(tiling.WidthInTiles == 16, "WidthInTiles set");
         CHECK(tiling.HeightInTiles == 8, "HeightInTiles set");
         CHECK(tiling.DepthInTiles == 1, "DepthInTiles set");
@@ -116,8 +136,12 @@ int main() {
         UINT totalMips = 13;
         UINT totalTiles = 0;
         for (UINT mip = 0; mip < totalMips; mip++) {
-            UINT w = 4096 >> mip; if (w == 0) w = 1;
-            UINT h = 4096 >> mip; if (h == 0) h = 1;
+            UINT w = 4096 >> mip;
+            if (w == 0)
+                w = 1;
+            UINT h = 4096 >> mip;
+            if (h == 0)
+                h = 1;
             UINT tw = (w + 127) / 128;
             UINT th = (h + 127) / 128;
             totalTiles += tw * th;
@@ -132,7 +156,10 @@ int main() {
         UINT mips = 9;
         UINT packedMips = 0;
         for (UINT i = 0; i < mips; i++) {
-            if (w < 128 && h < 128) { packedMips = mips - i; break; }
+            if (w < 128 && h < 128) {
+                packedMips = mips - i;
+                break;
+            }
             w = w > 1 ? w >> 1 : 1;
             h = h > 1 ? h >> 1 : 1;
         }

@@ -1,13 +1,14 @@
 /// @file FramePacer.cpp
 /// @brief Display-linked frame pacing with adaptive rate control.
 ///
-/// Regulates frame presentation timing to match the display's refresh rate, preventing tearing and stutter. Uses sleep/spin-wait hybrid for precise V-sync-like pacing without relying on Metal's built-in presentWithin handler.
+/// Regulates frame presentation timing to match the display's refresh rate, preventing tearing and stutter. Uses
+/// sleep/spin-wait hybrid for precise V-sync-like pacing without relying on Metal's built-in presentWithin handler.
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <metalsharp/FramePacer.h>
 #include <metalsharp/Logger.h>
-#include <chrono>
 #include <thread>
-#include <cmath>
-#include <algorithm>
 
 namespace metalsharp {
 
@@ -26,11 +27,12 @@ void FramePacer::init(double targetFPS) {
     m_frameTimeAccum = 0;
     m_currentFPS = 0;
     m_frameTimeHistory.resize(120, 0);
-    MS_INFO("FramePacer initialized: target %.1f FPS (%.2f ms), present mode: %s",
-            targetFPS, m_targetFrameTime * 1000.0,
-            m_presentMode == PresentMode::VSync ? "VSync" :
-            m_presentMode == PresentMode::Immediate ? "Immediate" :
-            m_presentMode == PresentMode::HalfRateVSync ? "HalfRateVSync" : "Adaptive");
+    MS_INFO("FramePacer initialized: target %.1f FPS (%.2f ms), present mode: %s", targetFPS,
+            m_targetFrameTime * 1000.0,
+            m_presentMode == PresentMode::VSync           ? "VSync"
+            : m_presentMode == PresentMode::Immediate     ? "Immediate"
+            : m_presentMode == PresentMode::HalfRateVSync ? "HalfRateVSync"
+                                                          : "Adaptive");
 }
 
 void FramePacer::shutdown() {
@@ -38,7 +40,8 @@ void FramePacer::shutdown() {
 }
 
 void FramePacer::beginFrame() {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -46,7 +49,8 @@ void FramePacer::beginFrame() {
 }
 
 void FramePacer::endFrame() {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -78,8 +82,10 @@ void FramePacer::endFrame() {
 }
 
 void FramePacer::waitForVSync() {
-    if (!m_initialized || !m_enabled) return;
-    if (m_presentMode == PresentMode::Immediate) return;
+    if (!m_initialized || !m_enabled)
+        return;
+    if (m_presentMode == PresentMode::Immediate)
+        return;
 
     double elapsed = m_lastFrameEnd - m_lastFrameStart;
     double remaining = m_targetFrameTime - elapsed;
@@ -95,7 +101,8 @@ void FramePacer::waitForVSync() {
 }
 
 double FramePacer::computePresentTime() const {
-    if (m_presentMode == PresentMode::Immediate) return 0;
+    if (m_presentMode == PresentMode::Immediate)
+        return 0;
 
     double target = m_targetFrameTime;
     if (m_presentMode == PresentMode::HalfRateVSync) {
@@ -135,7 +142,8 @@ void FramePacer::setPresentMode(PresentMode mode) {
 }
 
 double FramePacer::getFrameTimePercentile(double percentile) const {
-    if (m_frameTimeHistory.empty()) return 0;
+    if (m_frameTimeHistory.empty())
+        return 0;
 
     std::vector<double> sorted = m_frameTimeHistory;
     std::sort(sorted.begin(), sorted.end());
@@ -144,4 +152,4 @@ double FramePacer::getFrameTimePercentile(double percentile) const {
     return sorted[idx];
 }
 
-}
+} // namespace metalsharp

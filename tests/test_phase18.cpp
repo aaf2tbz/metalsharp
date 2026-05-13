@@ -1,22 +1,28 @@
-#include <metalsharp/D3D12Device.h>
+#include <cassert>
 #include <cstdio>
 #include <cstring>
-#include <cassert>
+#include <metalsharp/D3D12Device.h>
 
 using namespace metalsharp;
 
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-50s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-50s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 static bool test_d3d12_device_create() {
     D3D12DeviceImpl* device = nullptr;
     HRESULT hr = D3D12DeviceImpl::create(&device);
-    if (FAILED(hr) || !device) return false;
+    if (FAILED(hr) || !device)
+        return false;
     device->Release();
     return true;
 }
@@ -24,7 +30,8 @@ static bool test_d3d12_device_create() {
 static bool test_d3d12_create_command_queue() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* queue = nullptr;
     HRESULT hr = device->CreateCommandQueue(nullptr, IID_ID3D12CommandQueue, &queue);
@@ -35,7 +42,8 @@ static bool test_d3d12_create_command_queue() {
 static bool test_d3d12_create_command_allocator() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     HRESULT hr = device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
@@ -46,7 +54,8 @@ static bool test_d3d12_create_command_allocator() {
 static bool test_d3d12_create_root_signature_empty() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     uint8_t blob[16] = {};
     uint32_t version = 1, numParams = 0, numStatic = 0, flags = 0;
@@ -64,7 +73,8 @@ static bool test_d3d12_create_root_signature_empty() {
 static bool test_d3d12_root_signature_parameters() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     struct {
         uint32_t version;
@@ -91,14 +101,15 @@ static bool test_d3d12_root_signature_parameters() {
 
     void* rsPtr = nullptr;
     HRESULT hr = device->CreateRootSignature(0, &blob, sizeof(blob), IID_ID3D12RootSignature, &rsPtr);
-    if (FAILED(hr)) { device->Release(); return false; }
+    if (FAILED(hr)) {
+        device->Release();
+        return false;
+    }
 
     auto* rs = static_cast<D3D12RootSignatureImpl*>(rsPtr);
-    bool ok = rs->numParameters == 1 &&
-              rs->parameters.size() == 1 &&
+    bool ok = rs->numParameters == 1 && rs->parameters.size() == 1 &&
               rs->parameters[0].ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
-              rs->parameters[0].Constants.Num32BitValues == 4 &&
-              rs->argumentBufferSize > 0 &&
+              rs->parameters[0].Constants.Num32BitValues == 4 && rs->argumentBufferSize > 0 &&
               rs->parameterLayouts.size() == 1;
 
     rs->Release();
@@ -109,7 +120,8 @@ static bool test_d3d12_root_signature_parameters() {
 static bool test_d3d12_root_signature_layout_offsets() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     struct {
         uint32_t version;
@@ -140,10 +152,8 @@ static bool test_d3d12_root_signature_layout_offsets() {
     device->CreateRootSignature(0, &blob, sizeof(blob), IID_ID3D12RootSignature, &rsPtr);
     auto* rs = static_cast<D3D12RootSignatureImpl*>(rsPtr);
 
-    bool ok = rs->parameterLayouts.size() == 2 &&
-              rs->parameterLayouts[0].offset == 0 &&
-              rs->parameterLayouts[1].offset >= sizeof(uint64_t) &&
-              rs->parameterLayouts[1].offset % 16 == 0;
+    bool ok = rs->parameterLayouts.size() == 2 && rs->parameterLayouts[0].offset == 0 &&
+              rs->parameterLayouts[1].offset >= sizeof(uint64_t) && rs->parameterLayouts[1].offset % 16 == 0;
 
     rs->Release();
     device->Release();
@@ -153,7 +163,8 @@ static bool test_d3d12_root_signature_layout_offsets() {
 static bool test_d3d12_descriptor_heap_create() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     D3D12_DESCRIPTOR_HEAP_DESC desc = {};
     desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -171,7 +182,8 @@ static bool test_d3d12_descriptor_heap_copy() {
     D3D12DescriptorHeapImpl heap(&heapDesc);
 
     auto* desc = heap.getDescriptorByIndex(0);
-    if (!desc) return false;
+    if (!desc)
+        return false;
     desc->gpuAddress = 0xDEADBEEF;
     desc->bufferSize = 256;
     desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -187,13 +199,15 @@ static bool test_d3d12_descriptor_heap_copy() {
 static bool test_d3d12_create_command_list() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
 
     void* cmdList = nullptr;
-    HRESULT hr = device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdList);
+    HRESULT hr = device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr,
+                                           IID_ID3D12GraphicsCommandList, &cmdList);
     device->Release();
     return SUCCEEDED(hr) && cmdList != nullptr;
 }
@@ -201,7 +215,8 @@ static bool test_d3d12_create_command_list() {
 static bool test_d3d12_root_binding_constants() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     struct {
         uint32_t version = 1;
@@ -224,7 +239,8 @@ static bool test_d3d12_root_binding_constants() {
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     cmdList->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(rs));
@@ -242,7 +258,8 @@ static bool test_d3d12_root_binding_constants() {
 static bool test_d3d12_root_binding_cbv() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     struct {
         uint32_t version = 1;
@@ -264,7 +281,8 @@ static bool test_d3d12_root_binding_cbv() {
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     cmdList->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(rs));
@@ -280,7 +298,8 @@ static bool test_d3d12_root_binding_cbv() {
 static bool test_d3d12_root_binding_descriptor_table() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     struct {
         uint32_t version = 1;
@@ -302,7 +321,8 @@ static bool test_d3d12_root_binding_descriptor_table() {
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     cmdList->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(rs));
@@ -318,7 +338,8 @@ static bool test_d3d12_root_binding_descriptor_table() {
 static bool test_d3d12_committed_resource_buffer() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     D3D12_HEAP_PROPERTIES heapProps = {D3D12_HEAP_TYPE_UPLOAD, 0, 0, 0, 0};
     D3D12_RESOURCE_DESC desc = {};
@@ -333,7 +354,8 @@ static bool test_d3d12_committed_resource_buffer() {
     desc.Flags = 0;
 
     void* resPtr = nullptr;
-    HRESULT hr = device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_ID3D12Resource, &resPtr);
+    HRESULT hr = device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                                                 nullptr, IID_ID3D12Resource, &resPtr);
     device->Release();
     return SUCCEEDED(hr) && resPtr != nullptr;
 }
@@ -341,7 +363,8 @@ static bool test_d3d12_committed_resource_buffer() {
 static bool test_d3d12_buffer_map_unmap() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     D3D12_HEAP_PROPERTIES heapProps = {D3D12_HEAP_TYPE_UPLOAD, 0, 0, 0, 0};
     D3D12_RESOURCE_DESC desc = {};
@@ -353,7 +376,8 @@ static bool test_d3d12_buffer_map_unmap() {
     desc.SampleDesc = {1, 0};
 
     void* resPtr = nullptr;
-    device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_ID3D12Resource, &resPtr);
+    device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr,
+                                    IID_ID3D12Resource, &resPtr);
     auto* res = static_cast<ID3D12Resource*>(resPtr);
 
     void* data = nullptr;
@@ -371,7 +395,8 @@ static bool test_d3d12_buffer_map_unmap() {
 static bool test_d3d12_fence_signal() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* fencePtr = nullptr;
     device->CreateFence(0, 0, IID_ID3D12Fence, &fencePtr);
@@ -406,7 +431,8 @@ int main() {
     TEST(d3d12_fence_signal);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

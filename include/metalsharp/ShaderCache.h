@@ -9,12 +9,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <metalsharp/Platform.h>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <cstdint>
-#include <mutex>
 
 namespace metalsharp {
 
@@ -30,7 +30,7 @@ struct CachedShader {
 };
 
 class ShaderCache {
-public:
+  public:
     static ShaderCache& instance();
 
     bool init(const std::string& cacheDir);
@@ -53,7 +53,7 @@ public:
     void setMaxCacheSize(uint64_t bytes) { m_maxCacheSize = bytes; }
     uint64_t maxCacheSize() const { return m_maxCacheSize; }
 
-private:
+  private:
     ShaderCache() = default;
     ~ShaderCache() = default;
 
@@ -74,4 +74,4 @@ private:
     std::mutex m_mutex;
 };
 
-}
+} // namespace metalsharp

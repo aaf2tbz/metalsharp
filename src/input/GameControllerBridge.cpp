@@ -1,9 +1,10 @@
 /// @file GameControllerBridge.cpp
 /// @brief GameController bridge platform-agnostic interface.
 ///
-/// Defines the GameControllerBridge API surface (polling, state conversion, rumble). Platform-specific GameController framework integration is in the .mm counterpart.
-#include <metalsharp/GameControllerBridge.h>
+/// Defines the GameControllerBridge API surface (polling, state conversion, rumble). Platform-specific GameController
+/// framework integration is in the .mm counterpart.
 #include <cstring>
+#include <metalsharp/GameControllerBridge.h>
 
 namespace metalsharp {
 
@@ -15,16 +16,23 @@ GameControllerBridge::GameControllerBridge() {
 
 GameControllerBridge::~GameControllerBridge() = default;
 
-bool GameControllerBridge::init() { return false; }
+bool GameControllerBridge::init() {
+    return false;
+}
 void GameControllerBridge::poll() {}
 
 bool GameControllerBridge::getState(uint32_t index, XInputState* pState) {
-    if (!pState || index >= MAX_CONTROLLERS) return false;
+    if (!pState || index >= MAX_CONTROLLERS)
+        return false;
     memset(pState, 0, sizeof(XInputState));
     return false;
 }
 
-bool GameControllerBridge::setState(uint32_t, uint16_t, uint16_t) { return false; }
-bool GameControllerBridge::getCapabilities(uint32_t, XInputCapabilities*) { return false; }
-
+bool GameControllerBridge::setState(uint32_t, uint16_t, uint16_t) {
+    return false;
 }
+bool GameControllerBridge::getCapabilities(uint32_t, XInputCapabilities*) {
+    return false;
+}
+
+} // namespace metalsharp

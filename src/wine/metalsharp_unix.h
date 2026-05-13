@@ -1,12 +1,14 @@
 /// @file metalsharp_unix.h
 /// @brief Shared header for MetalSharp Wine PE/Unix D3D11 interface.
 ///
-/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D11 shim to communicate with the Unix-side Metal backend. Bridges Wine's PE/Unix split architecture for D3D11 device and context calls.
+/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D11 shim to
+/// communicate with the Unix-side Metal backend. Bridges Wine's PE/Unix split architecture for D3D11 device and context
+/// calls.
 #ifndef METALSHARP_UNIX_H
 #define METALSHARP_UNIX_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,10 +1,10 @@
-#include <metalsharp/CoreAudioBackend.h>
-#include <metalsharp/XAudio2Engine.h>
-#include <metalsharp/X3DAudioEngine.h>
-#include <metalsharp/DirectSoundBackend.h>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <cmath>
+#include <metalsharp/CoreAudioBackend.h>
+#include <metalsharp/DirectSoundBackend.h>
+#include <metalsharp/X3DAudioEngine.h>
+#include <metalsharp/XAudio2Engine.h>
 
 using namespace metalsharp;
 
@@ -13,19 +13,27 @@ extern "C" HRESULT XAudio2Create(void** ppXAudio2, UINT Flags, UINT XAudio2Proce
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-55s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-55s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 // 22.1 CoreAudio / XAudio2
 static bool test_coreaudio_lifecycle() {
     CoreAudioBackend backend;
-    if (backend.isActive()) return false;
+    if (backend.isActive())
+        return false;
 
     bool initOk = backend.init();
-    if (!initOk) return false;
-    if (!backend.isActive()) return false;
+    if (!initOk)
+        return false;
+    if (!backend.isActive())
+        return false;
 
     backend.play();
     backend.pause();
@@ -57,16 +65,20 @@ static bool test_coreaudio_volume() {
     backend.init();
 
     backend.setVolume(0.0f);
-    if (backend.volume() != 0.0f) return false;
+    if (backend.volume() != 0.0f)
+        return false;
 
     backend.setVolume(1.0f);
-    if (backend.volume() != 1.0f) return false;
+    if (backend.volume() != 1.0f)
+        return false;
 
     backend.setVolume(1.5f);
-    if (backend.volume() != 1.0f) return false;
+    if (backend.volume() != 1.0f)
+        return false;
 
     backend.setVolume(-0.5f);
-    if (backend.volume() != 0.0f) return false;
+    if (backend.volume() != 0.0f)
+        return false;
 
     backend.shutdown();
     return true;
@@ -89,10 +101,12 @@ static bool test_coreaudio_queued_buffers() {
     XAudio2WaveFormat fmt = {1, 2, 44100, 176400, 4, 16};
     uint32_t samples[64] = {};
 
-    if (backend.queuedBufferCount() != 0) return false;
+    if (backend.queuedBufferCount() != 0)
+        return false;
     backend.submitBuffer(samples, sizeof(samples), fmt);
     backend.submitBuffer(samples, sizeof(samples), fmt);
-    if (backend.queuedBufferCount() != 2) return false;
+    if (backend.queuedBufferCount() != 2)
+        return false;
 
     backend.flushBuffers();
     bool empty = backend.queuedBufferCount() == 0;
@@ -104,7 +118,8 @@ static bool test_xaudio2_create() {
     void* engine = nullptr;
     HRESULT hr = XAudio2Create(&engine, 0, 0);
     bool ok = hr == S_OK && engine != nullptr;
-    if (engine) delete static_cast<XAudio2Engine*>(engine);
+    if (engine)
+        delete static_cast<XAudio2Engine*>(engine);
     return ok;
 }
 
@@ -131,8 +146,13 @@ static bool test_xaudio2_submit_start_stop() {
     XAudio2WaveFormat fmt = {1, 2, 44100, 176400, 4, 16};
     engine.createSourceVoice(&voice, &fmt);
 
-    struct { uint32_t flags; uint32_t audioBytes; const void* pAudioData;
-            uint32_t pb, pl, lb, ll, lc; void* ctx; } buf = {};
+    struct {
+        uint32_t flags;
+        uint32_t audioBytes;
+        const void* pAudioData;
+        uint32_t pb, pl, lb, ll, lc;
+        void* ctx;
+    } buf = {};
     uint32_t samples[64] = {};
     buf.audioBytes = sizeof(samples);
     buf.pAudioData = samples;
@@ -168,9 +188,9 @@ static bool test_x3daudio_pan() {
     auto& engine = X3DAudioEngine::instance();
     engine.init(0x3);
 
-    Audio3DListener listener = {{0,0,0}, {0,0,-1}, {0,1,0}, {0,0,0}, 1, 1, 0};
-    Audio3DEmitter left = {{-5,0,-5}, {0,0,-1}, {0,1,0}, {0,0,0}, 0, 0, 1, 1, 1, 1};
-    Audio3DEmitter right = {{5,0,-5}, {0,0,-1}, {0,1,0}, {0,0,0}, 0, 0, 1, 1, 1, 1};
+    Audio3DListener listener = {{0, 0, 0}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 1, 1, 0};
+    Audio3DEmitter left = {{-5, 0, -5}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 0, 0, 1, 1, 1, 1};
+    Audio3DEmitter right = {{5, 0, -5}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 0, 0, 1, 1, 1, 1};
 
     float panL = engine.computePan(listener, left);
     float panR = engine.computePan(listener, right);
@@ -184,8 +204,8 @@ static bool test_x3daudio_doppler() {
     engine.init(0x3);
     engine.setDopplerFactor(1.0f);
 
-    Audio3DListener listener = {{0,0,0}, {0,0,-1}, {0,1,0}, {0,0,0}, 1, 1, 0};
-    Audio3DEmitter approaching = {{0,0,-10}, {0,0,-1}, {0,1,0}, {0,0,50}, 0, 0, 1, 1, 1, 1};
+    Audio3DListener listener = {{0, 0, 0}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 1, 1, 0};
+    Audio3DEmitter approaching = {{0, 0, -10}, {0, 0, -1}, {0, 1, 0}, {0, 0, 50}, 0, 0, 1, 1, 1, 1};
 
     float doppler = engine.computeDoppler(listener, approaching);
     engine.shutdown();
@@ -196,8 +216,8 @@ static bool test_x3daudio_calculate() {
     auto& engine = X3DAudioEngine::instance();
     engine.init(0x3);
 
-    Audio3DListener listener = {{0,0,0}, {0,0,-1}, {0,1,0}, {0,0,0}, 1, 1, 0};
-    Audio3DEmitter emitter = {{0,0,-10}, {0,0,-1}, {0,1,0}, {0,0,0}, 0, 0, 1, 1, 1, 1};
+    Audio3DListener listener = {{0, 0, 0}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 1, 1, 0};
+    Audio3DEmitter emitter = {{0, 0, -10}, {0, 0, -1}, {0, 1, 0}, {0, 0, 0}, 0, 0, 1, 1, 1, 1};
 
     Audio3DOutput output = {};
     engine.calculate(listener, emitter, 0, 2, output);
@@ -287,7 +307,8 @@ int main() {
     TEST(directsound_volume);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

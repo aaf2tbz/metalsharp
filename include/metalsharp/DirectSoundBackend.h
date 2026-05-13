@@ -8,8 +8,8 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
 #include <cstdint>
+#include <metalsharp/Platform.h>
 #include <vector>
 
 namespace metalsharp {
@@ -42,7 +42,7 @@ static constexpr UINT WHDR_ENDLOOP = 0x00000008;
 static constexpr UINT WHDR_INQUEUE = 0x00000010;
 
 class DirectSoundBackend {
-public:
+  public:
     static DirectSoundBackend& instance();
 
     bool init();
@@ -56,7 +56,7 @@ public:
     bool setVolume(void* buffer, float volume);
     float getVolume(void* buffer) const;
 
-private:
+  private:
     DirectSoundBackend() = default;
 
     struct DSBuffer {
@@ -71,4 +71,4 @@ private:
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

@@ -1,15 +1,16 @@
 /// @file CoreAudioBackend.mm
 /// @brief CoreAudio AudioUnit rendering backend for XAudio2.
 ///
-/// Creates and manages an AUAudioUnit (or AudioUnit) render pipeline that accepts PCM float/int16 buffers from XAudio2 voices. Handles sample rate conversion, channel mapping, and ring buffer management for real-time audio output.
-#include <metalsharp/CoreAudioBackend.h>
-#include <metalsharp/Logger.h>
-#include <deque>
-#include <mutex>
-#include <vector>
-#include <cstring>
+/// Creates and manages an AUAudioUnit (or AudioUnit) render pipeline that accepts PCM float/int16 buffers from XAudio2
+/// voices. Handles sample rate conversion, channel mapping, and ring buffer management for real-time audio output.
 #import <AudioUnit/AudioUnit.h>
 #import <AVFoundation/AVFoundation.h>
+#include <cstring>
+#include <deque>
+#include <metalsharp/CoreAudioBackend.h>
+#include <metalsharp/Logger.h>
+#include <mutex>
+#include <vector>
 
 namespace metalsharp {
 
@@ -31,12 +32,9 @@ struct CoreAudioBackend::Impl {
     mutable std::mutex bufferMutex;
 };
 
-static OSStatus audioRenderCallback(void* inRefCon,
-                                      AudioUnitRenderActionFlags* ioActionFlags,
-                                      const AudioTimeStamp* inTimeStamp,
-                                      UInt32 inBusNumber,
-                                      UInt32 inNumberFrames,
-                                      AudioBufferList* ioData) {
+static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags* ioActionFlags,
+                                    const AudioTimeStamp* inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames,
+                                    AudioBufferList* ioData) {
     auto* impl = static_cast<CoreAudioBackend::Impl*>(inRefCon);
 
     if (!impl->playing || !ioData) {
@@ -90,7 +88,10 @@ static OSStatus audioRenderCallback(void* inRefCon,
 }
 
 CoreAudioBackend::CoreAudioBackend() : m_impl(new Impl()) {}
-CoreAudioBackend::~CoreAudioBackend() { shutdown(); delete m_impl; }
+CoreAudioBackend::~CoreAudioBackend() {
+    shutdown();
+    delete m_impl;
+}
 
 bool CoreAudioBackend::init() {
     m_impl->active = true;
@@ -138,12 +139,8 @@ bool CoreAudioBackend::init() {
     asbd.mChannelsPerFrame = 2;
     asbd.mBitsPerChannel = 16;
 
-    status = AudioUnitSetProperty(audioUnit,
-                                   kAudioUnitProperty_StreamFormat,
-                                   kAudioUnitScope_Input,
-                                   0,
-                                   &asbd,
-                                   sizeof(asbd));
+    status =
+        AudioUnitSetProperty(audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd, sizeof(asbd));
     if (status != noErr) {
         MS_WARN("CoreAudioBackend: failed to set stream format (%d)", (int)status);
     }
@@ -152,12 +149,8 @@ bool CoreAudioBackend::init() {
     callback.inputProc = audioRenderCallback;
     callback.inputProcRefCon = m_impl;
 
-    status = AudioUnitSetProperty(audioUnit,
-                                   kAudioUnitProperty_SetRenderCallback,
-                                   kAudioUnitScope_Input,
-                                   0,
-                                   &callback,
-                                   sizeof(callback));
+    status = AudioUnitSetProperty(audioUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback,
+                                  sizeof(callback));
     if (status != noErr) {
         MS_WARN("CoreAudioBackend: failed to set render callback (%d)", (int)status);
     }
@@ -172,7 +165,8 @@ bool CoreAudioBackend::init() {
 }
 
 void CoreAudioBackend::shutdown() {
-    if (m_impl->playing) stop();
+    if (m_impl->playing)
+        stop();
 
     if (m_impl->audioUnit) {
         AudioOutputUnitStop(m_impl->audioUnit);
@@ -185,22 +179,25 @@ void CoreAudioBackend::shutdown() {
     m_impl->bufferQueue.clear();
 }
 
-bool CoreAudioBackend::isActive() const { return m_impl->active; }
+bool CoreAudioBackend::isActive() const {
+    return m_impl->active;
+}
 
 bool CoreAudioBackend::submitBuffer(const void* data, uint32_t size, const XAudio2WaveFormat& format) {
-    if (!data || size == 0) return false;
+    if (!data || size == 0)
+        return false;
 
     std::lock_guard<std::mutex> lock(m_impl->bufferMutex);
     m_impl->format = format;
 
-    m_impl->bytesPerSample = format.bitsPerSample == 8 ? 1 :
-                              format.bitsPerSample == 16 ? 2 :
-                              format.bitsPerSample == 24 ? 3 :
-                              format.bitsPerSample == 32 ? 4 : 2;
+    m_impl->bytesPerSample = format.bitsPerSample == 8    ? 1
+                             : format.bitsPerSample == 16 ? 2
+                             : format.bitsPerSample == 24 ? 3
+                             : format.bitsPerSample == 32 ? 4
+                                                          : 2;
 
     AudioBufferEntry buf;
-    buf.data.assign(static_cast<const uint8_t*>(data),
-                    static_cast<const uint8_t*>(data) + size);
+    buf.data.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + size);
     buf.readPos = 0;
     buf.loopCount = 0;
     m_impl->bufferQueue.push_back(std::move(buf));
@@ -210,16 +207,13 @@ bool CoreAudioBackend::submitBuffer(const void* data, uint32_t size, const XAudi
 void CoreAudioBackend::setVolume(float v) {
     m_impl->volume = v < 0 ? 0 : (v > 1 ? 1 : v);
     if (m_impl->audioUnit) {
-        AudioUnitSetParameter(m_impl->audioUnit,
-                              kHALOutputParam_Volume,
-                              kAudioUnitScope_Output,
-                              0,
-                              m_impl->volume,
-                              0);
+        AudioUnitSetParameter(m_impl->audioUnit, kHALOutputParam_Volume, kAudioUnitScope_Output, 0, m_impl->volume, 0);
     }
 }
 
-float CoreAudioBackend::volume() const { return m_impl->volume; }
+float CoreAudioBackend::volume() const {
+    return m_impl->volume;
+}
 
 void CoreAudioBackend::play() {
     m_impl->playing = true;
@@ -246,7 +240,9 @@ void CoreAudioBackend::setFrequencyRatio(float ratio) {
     m_impl->frequencyRatio = ratio < 0.0f ? 0.0f : ratio;
 }
 
-float CoreAudioBackend::frequencyRatio() const { return m_impl->frequencyRatio; }
+float CoreAudioBackend::frequencyRatio() const {
+    return m_impl->frequencyRatio;
+}
 
 uint32_t CoreAudioBackend::queuedBufferCount() const {
     std::lock_guard<std::mutex> lock(m_impl->bufferMutex);
@@ -258,4 +254,4 @@ void CoreAudioBackend::flushBuffers() {
     m_impl->bufferQueue.clear();
 }
 
-}
+} // namespace metalsharp

@@ -36,19 +36,19 @@
 ///
 /// This shim is registered first and handles ~40 of the most critical kernel32 exports.
 /// Additional kernel32 functions are in Kernel32Extra.cpp.
-#include <metalsharp/Kernel32Shim.h>
-#include <metalsharp/Win32Types.h>
-#include <metalsharp/PELoader.h>
-#include <metalsharp/Logger.h>
-#include <metalsharp/VirtualFileSystem.h>
-#include <metalsharp/SyncContext.h>
-#include <cstring>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <errno.h>
+#include <metalsharp/Kernel32Shim.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PELoader.h>
+#include <metalsharp/SyncContext.h>
+#include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/Win32Types.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <errno.h>
 
 namespace metalsharp {
 namespace win32 {
@@ -90,7 +90,8 @@ static void* MSABI shim_VirtualAlloc(void* lpAddress, SIZE_T dwSize, DWORD flAll
 
 static BOOL MSABI shim_VirtualFree(void* lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
     auto it = Kernel32Shim::s_allocations.find(reinterpret_cast<uintptr_t>(lpAddress));
-    if (it == Kernel32Shim::s_allocations.end()) return 0;
+    if (it == Kernel32Shim::s_allocations.end())
+        return 0;
 
     size_t size = it->second;
     Kernel32Shim::s_allocations.erase(it);
@@ -106,7 +107,9 @@ static void* MSABI shim_GetProcessHeap() {
 }
 
 static void* MSABI shim_HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize) {
-    (void)flOptions; (void)dwInitialSize; (void)dwMaximumSize;
+    (void)flOptions;
+    (void)dwInitialSize;
+    (void)dwMaximumSize;
     MS_INFO("TRACE: HeapCreate(0x%X, %zu, %zu) -> fake heap", flOptions, dwInitialSize, dwMaximumSize);
     return reinterpret_cast<void*>(0x1);
 }
@@ -125,7 +128,8 @@ static BOOL MSABI shim_HeapFree(void* hHeap, DWORD dwFlags, void* lpMem) {
 }
 
 static void* MSABI shim_LocalAlloc(UINT uFlags, SIZE_T uBytes) {
-    if (uFlags & 0x40) return calloc(1, uBytes);
+    if (uFlags & 0x40)
+        return calloc(1, uBytes);
     return malloc(uBytes);
 }
 
@@ -134,7 +138,8 @@ static void MSABI shim_LocalFree(void* hMem) {
 }
 
 static void* MSABI shim_GlobalAlloc(UINT uFlags, SIZE_T uBytes) {
-    if (uFlags & 0x40) return calloc(1, uBytes);
+    if (uFlags & 0x40)
+        return calloc(1, uBytes);
     return malloc(uBytes);
 }
 
@@ -143,25 +148,29 @@ static void MSABI shim_GlobalFree(void* hMem) {
 }
 
 static HANDLE MSABI shim_CreateFileA(const char* lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
-    void* lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile) {
-    (void)lpSecurityAttributes; (void)hTemplateFile;
-    return VirtualFileSystem::instance().createFile(lpFileName, dwDesiredAccess, dwShareMode, dwCreationDisposition, dwFlagsAndAttributes);
+                                     void* lpSecurityAttributes, DWORD dwCreationDisposition,
+                                     DWORD dwFlagsAndAttributes, HANDLE hTemplateFile) {
+    (void)lpSecurityAttributes;
+    (void)hTemplateFile;
+    return VirtualFileSystem::instance().createFile(lpFileName, dwDesiredAccess, dwShareMode, dwCreationDisposition,
+                                                    dwFlagsAndAttributes);
 }
 
-static BOOL MSABI shim_ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead,
-    DWORD* lpNumberOfBytesRead, void* lpOverlapped) {
+static BOOL MSABI shim_ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead, DWORD* lpNumberOfBytesRead,
+                                void* lpOverlapped) {
     (void)lpOverlapped;
     return VirtualFileSystem::instance().readFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead);
 }
 
 static BOOL MSABI shim_WriteFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite,
-    DWORD* lpNumberOfBytesWritten, void* lpOverlapped) {
+                                 DWORD* lpNumberOfBytesWritten, void* lpOverlapped) {
     (void)lpOverlapped;
     return VirtualFileSystem::instance().writeFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten);
 }
 
 static BOOL MSABI shim_CloseHandle(HANDLE hObject) {
-    if (!hObject || hObject == INVALID_HANDLE_VALUE) return 1;
+    if (!hObject || hObject == INVALID_HANDLE_VALUE)
+        return 1;
     return VirtualFileSystem::instance().closeHandle(hObject) ? 1 : 1;
 }
 
@@ -171,7 +180,8 @@ static DWORD MSABI shim_GetFileSize(HANDLE hFile, DWORD* lpFileSizeHigh) {
 
 static DWORD MSABI shim_GetCurrentDirectoryA(DWORD nBufferLength, char* lpBuffer) {
     MS_INFO("TRACE: GetCurrentDirectoryA(%u, %p)", nBufferLength, lpBuffer);
-    if (nBufferLength == 0) return 0;
+    if (nBufferLength == 0)
+        return 0;
     if (getcwd(lpBuffer, nBufferLength)) {
         return static_cast<DWORD>(strlen(lpBuffer));
     }
@@ -195,7 +205,8 @@ static DWORD MSABI shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DW
     (void)hModule;
     if (nSize > 0) {
         size_t len = strlen(exe);
-        if (len >= nSize) len = nSize - 1;
+        if (len >= nSize)
+            len = nSize - 1;
         memcpy(lpFilename, exe, len);
         lpFilename[len] = 0;
         return static_cast<DWORD>(len);
@@ -205,17 +216,21 @@ static DWORD MSABI shim_GetModuleFileNameA(HMODULE hModule, char* lpFilename, DW
 
 static HMODULE MSABI shim_GetModuleHandleA(const char* lpModuleName) {
     MS_INFO("TRACE: GetModuleHandleA(\"%s\")", lpModuleName ? lpModuleName : "(null)");
-    if (!lpModuleName) return reinterpret_cast<HMODULE>(PELoader::instance()->getMainModule()->base);
+    if (!lpModuleName)
+        return reinterpret_cast<HMODULE>(PELoader::instance()->getMainModule()->base);
     auto* mod = PELoader::instance()->getModule(lpModuleName);
-    if (mod) return reinterpret_cast<HMODULE>(mod->base);
+    if (mod)
+        return reinterpret_cast<HMODULE>(mod->base);
     return PELoader::instance()->loadLibrary(lpModuleName);
 }
 
 static FARPROC MSABI shim_GetProcAddress(HMODULE hModule, const char* lpProcName) {
-    if (!hModule || !lpProcName) return nullptr;
+    if (!hModule || !lpProcName)
+        return nullptr;
     if (reinterpret_cast<uintptr_t>(lpProcName) > 0xFFFF) {
         void* addr = PELoader::instance()->getProcAddress(hModule, std::string(lpProcName));
-        if (addr) return reinterpret_cast<FARPROC>(addr);
+        if (addr)
+            return reinterpret_cast<FARPROC>(addr);
     }
     return nullptr;
 }
@@ -268,20 +283,23 @@ static void MSABI shim_DeleteCriticalSection(CRITICAL_SECTION* lpCriticalSection
     }
 }
 
-static HANDLE MSABI shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSize,
-    void* lpStartAddress, void* lpParameter, DWORD dwCreationFlags, DWORD* lpThreadId) {
-    MS_INFO("TRACE: CreateThread(%p, %zu, %p, %p, 0x%X, %p)", lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
-    (void)lpThreadAttributes; (void)dwStackSize; (void)dwCreationFlags;
+static HANDLE MSABI shim_CreateThread(void* lpThreadAttributes, SIZE_T dwStackSize, void* lpStartAddress,
+                                      void* lpParameter, DWORD dwCreationFlags, DWORD* lpThreadId) {
+    MS_INFO("TRACE: CreateThread(%p, %zu, %p, %p, 0x%X, %p)", lpThreadAttributes, dwStackSize, lpStartAddress,
+            lpParameter, dwCreationFlags, lpThreadId);
+    (void)lpThreadAttributes;
+    (void)dwStackSize;
+    (void)dwCreationFlags;
 
     pthread_t thread;
-    int result = pthread_create(&thread, nullptr,
-        reinterpret_cast<void*(*)(void*)>(lpStartAddress), lpParameter);
+    int result = pthread_create(&thread, nullptr, reinterpret_cast<void* (*)(void*)>(lpStartAddress), lpParameter);
     if (result != 0) {
         t_lastError = result;
         return nullptr;
     }
 
-    if (lpThreadId) *lpThreadId = static_cast<DWORD>(reinterpret_cast<uintptr_t>(thread));
+    if (lpThreadId)
+        *lpThreadId = static_cast<DWORD>(reinterpret_cast<uintptr_t>(thread));
 
     HANDLE h = SyncContext::instance().createThread(thread);
     MS_INFO("TRACE: CreateThread -> handle %p (pthread %p)", h, (void*)thread);
@@ -331,17 +349,21 @@ static void MSABI shim_OutputDebugStringA(const char* lpOutputString) {
 
 static BOOL MSABI shim_IsProcessorFeaturePresent(DWORD ProcessorFeature) {
     MS_INFO("TRACE: IsProcessorFeaturePresent(%u)", ProcessorFeature);
-    if (ProcessorFeature == 23) return 0;
+    if (ProcessorFeature == 23)
+        return 0;
     return 1;
 }
 
-static int MSABI shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
-    const char* lpMultiByteStr, int cbMultiByte, wchar_t* lpWideCharStr, int cchWideChar) {
-    (void)CodePage; (void)dwFlags;
-    if (!lpMultiByteStr) return 0;
+static int MSABI shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags, const char* lpMultiByteStr, int cbMultiByte,
+                                          wchar_t* lpWideCharStr, int cchWideChar) {
+    (void)CodePage;
+    (void)dwFlags;
+    if (!lpMultiByteStr)
+        return 0;
 
     int len = cbMultiByte > 0 ? cbMultiByte : static_cast<int>(strlen(lpMultiByteStr));
-    if (cchWideChar == 0) return len;
+    if (cchWideChar == 0)
+        return len;
 
     int copyLen = len < cchWideChar ? len : cchWideChar;
     for (int i = 0; i < copyLen; i++) {
@@ -350,14 +372,19 @@ static int MSABI shim_MultiByteToWideChar(UINT CodePage, DWORD dwFlags,
     return copyLen;
 }
 
-static int MSABI shim_WideCharToMultiByte(UINT CodePage, DWORD dwFlags,
-    const wchar_t* lpWideCharStr, int cchWideChar, char* lpMultiByteStr,
-    int cbMultiByte, const char* lpDefaultChar, BOOL* lpUsedDefaultChar) {
-    (void)CodePage; (void)dwFlags; (void)lpDefaultChar; (void)lpUsedDefaultChar;
-    if (!lpWideCharStr) return 0;
+static int MSABI shim_WideCharToMultiByte(UINT CodePage, DWORD dwFlags, const wchar_t* lpWideCharStr, int cchWideChar,
+                                          char* lpMultiByteStr, int cbMultiByte, const char* lpDefaultChar,
+                                          BOOL* lpUsedDefaultChar) {
+    (void)CodePage;
+    (void)dwFlags;
+    (void)lpDefaultChar;
+    (void)lpUsedDefaultChar;
+    if (!lpWideCharStr)
+        return 0;
 
     int len = cchWideChar > 0 ? cchWideChar : static_cast<int>(wcslen(lpWideCharStr));
-    if (cbMultiByte == 0) return len;
+    if (cbMultiByte == 0)
+        return len;
 
     int copyLen = len < cbMultiByte ? len : cbMultiByte;
     for (int i = 0; i < copyLen; i++) {
@@ -430,7 +457,8 @@ static DWORD MSABI stub_GetFileAttributesA(const char* p) {
 static DWORD MSABI stub_GetTempPathA(DWORD n, char* b) {
     const char* t = "/tmp/";
     size_t l = strlen(t);
-    if (n > l) memcpy(b, t, l + 1);
+    if (n > l)
+        memcpy(b, t, l + 1);
     return (DWORD)l;
 }
 
@@ -439,14 +467,13 @@ static BOOL MSABI stub_IsDebuggerPresent() {
 }
 
 ShimLibrary Kernel32Shim::create() {
-    if (!s_initialized) s_initialized = true;
+    if (!s_initialized)
+        s_initialized = true;
 
     ShimLibrary lib;
     lib.name = "kernel32.dll";
 
-    auto fn = [](void* ptr) -> ExportedFunction {
-        return [ptr]() -> void* { return ptr; };
-    };
+    auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
 
     lib.functions["GetLastError"] = fn((void*)shim_GetLastError);
     lib.functions["SetLastError"] = fn((void*)shim_SetLastError);
@@ -558,5 +585,5 @@ ShimLibrary Kernel32Shim::create() {
     return lib;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

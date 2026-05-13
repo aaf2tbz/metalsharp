@@ -1,12 +1,14 @@
 /// @file NtdllShim.cpp
 /// @brief NTDLL shims for system time, memory, and handle operations.
 ///
-/// Implements NtQuerySystemTime, Rtl* memory functions (RtlZeroMemory, RtlCopyMemory, etc.), and NtClose to cover the ntdll.dll imports that games commonly reference. These are low-level NT native API calls used internally by kernel32.
+/// Implements NtQuerySystemTime, Rtl* memory functions (RtlZeroMemory, RtlCopyMemory, etc.), and NtClose to cover the
+/// ntdll.dll imports that games commonly reference. These are low-level NT native API calls used internally by
+/// kernel32.
+#include <cstdlib>
+#include <cstring>
+#include <metalsharp/Logger.h>
 #include <metalsharp/NtdllShim.h>
 #include <metalsharp/Win32Types.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
 #include <sched.h>
 
 namespace metalsharp {
@@ -18,7 +20,8 @@ static int64_t MSABI shim_RtlGetVersion(void* lpVersionInformation) {
 }
 
 static void* MSABI shim_RtlAllocateHeap(void* HeapHandle, uint32_t Flags, size_t Size) {
-    if (Flags & 0x8) return calloc(1, Size);
+    if (Flags & 0x8)
+        return calloc(1, Size);
     return malloc(Size);
 }
 
@@ -28,7 +31,9 @@ static int MSABI shim_RtlFreeHeap(void* HeapHandle, uint32_t Flags, void* BaseAd
 }
 
 static size_t MSABI shim_RtlSizeHeap(void* HeapHandle, uint32_t Flags, void* BaseAddress) {
-    (void)HeapHandle; (void)Flags; (void)BaseAddress;
+    (void)HeapHandle;
+    (void)Flags;
+    (void)BaseAddress;
     return 0;
 }
 
@@ -52,27 +57,45 @@ static void MSABI shim_RtlInitializeCriticalSection(void* lpCriticalSection) {
 
 static void MSABI shim_RtlEnterCriticalSection(void* lpCriticalSection) {
     auto** mtx = reinterpret_cast<pthread_mutex_t**>(lpCriticalSection);
-    if (*mtx) pthread_mutex_lock(*mtx);
+    if (*mtx)
+        pthread_mutex_lock(*mtx);
 }
 
 static void MSABI shim_RtlLeaveCriticalSection(void* lpCriticalSection) {
     auto** mtx = reinterpret_cast<pthread_mutex_t**>(lpCriticalSection);
-    if (*mtx) pthread_mutex_unlock(*mtx);
+    if (*mtx)
+        pthread_mutex_unlock(*mtx);
 }
 
-static void MSABI wrap_memset(void* d, int c, size_t n) { memset(d, c, n); }
-static void MSABI wrap_memcpy(void* d, const void* s, size_t n) { memcpy(d, s, n); }
-static void MSABI wrap_memmove(void* d, const void* s, size_t n) { memmove(d, s, n); }
-static int MSABI wrap_memcmp(const void* a, const void* b, size_t n) { return memcmp(a, b, n); }
+static void MSABI wrap_memset(void* d, int c, size_t n) {
+    memset(d, c, n);
+}
+static void MSABI wrap_memcpy(void* d, const void* s, size_t n) {
+    memcpy(d, s, n);
+}
+static void MSABI wrap_memmove(void* d, const void* s, size_t n) {
+    memmove(d, s, n);
+}
+static int MSABI wrap_memcmp(const void* a, const void* b, size_t n) {
+    return memcmp(a, b, n);
+}
 
-static int MSABI stub_NtYieldExecution() { sched_yield(); return 0; }
+static int MSABI stub_NtYieldExecution() {
+    sched_yield();
+    return 0;
+}
 
-static void MSABI stub_NtTerminateProcess(void*, int code) { exit(code); }
+static void MSABI stub_NtTerminateProcess(void*, int code) {
+    exit(code);
+}
 
-static void MSABI wrap_RtlZeroMemory(void* d, size_t n) { memset(d, 0, n); }
+static void MSABI wrap_RtlZeroMemory(void* d, size_t n) {
+    memset(d, 0, n);
+}
 
 static void MSABI shim_RtlRaiseException(void* exceptionRecord) {
-    if (!exceptionRecord) return;
+    if (!exceptionRecord)
+        return;
     uint32_t code = *reinterpret_cast<uint32_t*>(exceptionRecord);
 
     extern std::vector<std::pair<void*, bool>> s_vehHandlers;
@@ -83,19 +106,26 @@ static void MSABI shim_RtlRaiseException(void* exceptionRecord) {
         std::lock_guard<std::mutex> lock(s_vehMutex);
         for (auto& [handler, isFirst] : s_vehHandlers) {
             if (handler) {
-                struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
-                FakePointers pointers = { exceptionRecord, nullptr };
+                struct FakePointers {
+                    void* ExceptionRecord;
+                    void* ContextRecord;
+                };
+                FakePointers pointers = {exceptionRecord, nullptr};
                 typedef int32_t (*VEHHandler)(void*);
                 auto veh = reinterpret_cast<VEHHandler>(handler);
                 int32_t result = veh(&pointers);
-                if (result == -1) return;
+                if (result == -1)
+                    return;
             }
         }
     }
 
     if (s_unhandledExceptionFilter) {
-        struct FakePointers { void* ExceptionRecord; void* ContextRecord; };
-        FakePointers pointers = { exceptionRecord, nullptr };
+        struct FakePointers {
+            void* ExceptionRecord;
+            void* ContextRecord;
+        };
+        FakePointers pointers = {exceptionRecord, nullptr};
         typedef void* (*FilterFunc)(void*);
         auto filter = reinterpret_cast<FilterFunc>(s_unhandledExceptionFilter);
         filter(&pointers);
@@ -110,9 +140,7 @@ ShimLibrary createNtdllShim() {
     ShimLibrary lib;
     lib.name = "ntdll.dll";
 
-    auto fn = [](void* ptr) -> ExportedFunction {
-        return [ptr]() -> void* { return ptr; };
-    };
+    auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
 
     lib.functions["RtlGetVersion"] = fn((void*)shim_RtlGetVersion);
     lib.functions["RtlAllocateHeap"] = fn((void*)shim_RtlAllocateHeap);
@@ -173,5 +201,5 @@ ShimLibrary createNtdllShim() {
     return lib;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

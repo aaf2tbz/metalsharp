@@ -9,11 +9,11 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
+#include <cstdint>
 #include <metalsharp/CompatDatabase.h>
 #include <metalsharp/DRMDetector.h>
+#include <metalsharp/Platform.h>
 #include <string>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -27,7 +27,7 @@ struct ValidationResult {
 };
 
 class GameValidator {
-public:
+  public:
     static GameValidator& instance();
 
     void init(const std::string& dataDir);
@@ -41,7 +41,7 @@ public:
 
     std::string generateFullReport(const std::string& gameId) const;
 
-private:
+  private:
     GameValidator() = default;
 
     CompatStatus estimateStatus(const ValidationResult& result) const;
@@ -50,4 +50,4 @@ private:
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

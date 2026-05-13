@@ -1,11 +1,12 @@
 /// @file X3DAudioEngine.cpp
 /// @brief X3DAudio spatial audio calculations.
 ///
-/// Implements X3DAudioCalculate for 3D positional audio: distance attenuation, Doppler pitch shift, panning, and LF/RF matrix calculations. Used by games to place sound sources in 3D space relative to the listener.
-#include <metalsharp/X3DAudioEngine.h>
-#include <metalsharp/Logger.h>
+/// Implements X3DAudioCalculate for 3D positional audio: distance attenuation, Doppler pitch shift, panning, and LF/RF
+/// matrix calculations. Used by games to place sound sources in 3D space relative to the listener.
 #include <cmath>
 #include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/X3DAudioEngine.h>
 
 namespace metalsharp {
 
@@ -34,7 +35,8 @@ static float length(const Audio3DVector& v) {
 
 static Audio3DVector normalize(const Audio3DVector& v) {
     float len = length(v);
-    if (len < 1e-6f) return {0, 0, 0};
+    if (len < 1e-6f)
+        return {0, 0, 0};
     return {v.x / len, v.y / len, v.z / len};
 }
 
@@ -44,17 +46,17 @@ static Audio3DVector sub(const Audio3DVector& a, const Audio3DVector& b) {
 
 float X3DAudioEngine::computePan(const Audio3DListener& listener, const Audio3DEmitter& emitter) {
     auto dir = normalize(sub(emitter.position, listener.position));
-    auto right = Audio3DVector{
-        listener.front.y * listener.top.z - listener.front.z * listener.top.y,
-        listener.front.z * listener.top.x - listener.front.x * listener.top.z,
-        listener.front.x * listener.top.y - listener.front.y * listener.top.x
-    };
+    auto right = Audio3DVector{listener.front.y * listener.top.z - listener.front.z * listener.top.y,
+                               listener.front.z * listener.top.x - listener.front.x * listener.top.z,
+                               listener.front.x * listener.top.y - listener.front.y * listener.top.x};
     return dot(dir, right);
 }
 
 float X3DAudioEngine::computeDistanceAttenuation(float distance) {
-    if (distance <= m_nearDistance) return 1.0f;
-    if (distance >= m_farDistance) return 0.0f;
+    if (distance <= m_nearDistance)
+        return 1.0f;
+    if (distance >= m_farDistance)
+        return 0.0f;
 
     float ratio = (m_farDistance - distance) / (m_farDistance - m_nearDistance);
     return std::pow(ratio, m_rolloffFactor);
@@ -63,7 +65,8 @@ float X3DAudioEngine::computeDistanceAttenuation(float distance) {
 float X3DAudioEngine::computeDoppler(const Audio3DListener& listener, const Audio3DEmitter& emitter) {
     auto toListener = sub(listener.position, emitter.position);
     float dist = length(toListener);
-    if (dist < 1e-6f) return 1.0f;
+    if (dist < 1e-6f)
+        return 1.0f;
 
     auto normDir = normalize(toListener);
     float emitterVel = dot(emitter.velocity, normDir);
@@ -72,16 +75,15 @@ float X3DAudioEngine::computeDoppler(const Audio3DListener& listener, const Audi
     float denom = m_speedOfSound - listenerVel * m_dopplerFactor;
     float numer = m_speedOfSound - emitterVel * m_dopplerFactor;
 
-    if (denom < 1e-6f) denom = 1e-6f;
+    if (denom < 1e-6f)
+        denom = 1e-6f;
     return numer / denom;
 }
 
-void X3DAudioEngine::calculate(const Audio3DListener& listener,
-                                const Audio3DEmitter& emitter,
-                                uint32_t flags,
-                                uint32_t dstChannelCount,
-                                Audio3DOutput& output) {
-    if (!m_initialized) return;
+void X3DAudioEngine::calculate(const Audio3DListener& listener, const Audio3DEmitter& emitter, uint32_t flags,
+                               uint32_t dstChannelCount, Audio3DOutput& output) {
+    if (!m_initialized)
+        return;
 
     memset(&output, 0, sizeof(Audio3DOutput));
 
@@ -121,4 +123,4 @@ void X3DAudioEngine::setDopplerFactor(float factor) {
     m_dopplerFactor = factor;
 }
 
-}
+} // namespace metalsharp

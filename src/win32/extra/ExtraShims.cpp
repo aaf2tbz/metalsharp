@@ -34,28 +34,28 @@
 ///   only implemented where games actually depend on it.
 ///
 ///   Priority: prevent crashes > correct behavior > full API coverage.
+#include <arpa/inet.h>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/NetworkContext.h>
 #include <metalsharp/PELoader.h>
 #include <metalsharp/Platform.h>
-#include <metalsharp/Win32Types.h>
-#include <metalsharp/Logger.h>
-#include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/Registry.h>
-#include <metalsharp/NetworkContext.h>
-#include <cstring>
-#include <cstdlib>
-#include <csignal>
-#include <unordered_map>
-#include <sys/socket.h>
-#include <sys/select.h>
+#include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/Win32Types.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <cerrno>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <unordered_map>
 
 #if __has_include(<openssl/rand.h>)
 #include <openssl/rand.h>
@@ -69,11 +69,13 @@ static void* MSABI gdi32_CreateCompatibleDC(void*) {
 }
 
 static void* MSABI gdi32_CreateDIBSection(void*, const void*, UINT, void** ppv, void*, DWORD) {
-    if (ppv) *ppv = calloc(1, 1920 * 1080 * 4);
+    if (ppv)
+        *ppv = calloc(1, 1920 * 1080 * 4);
     return reinterpret_cast<void*>(0x9001);
 }
 
-static void* MSABI gdi32_CreateFontW(int, int, int, int, int, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, const wchar_t*) {
+static void* MSABI gdi32_CreateFontW(int, int, int, int, int, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD,
+                                     const wchar_t*) {
     return reinterpret_cast<void*>(0x9002);
 }
 
@@ -81,74 +83,147 @@ static void* MSABI gdi32_CreateICW(const wchar_t*, const wchar_t*, const wchar_t
     return reinterpret_cast<void*>(0x9003);
 }
 
-static BOOL MSABI gdi32_DeleteDC(void*) { return 1; }
+static BOOL MSABI gdi32_DeleteDC(void*) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_DeleteObject(void*) { return 1; }
+static BOOL MSABI gdi32_DeleteObject(void*) {
+    return 1;
+}
 
-static void* MSABI gdi32_SelectObject(void*, void* old) { return old; }
+static void* MSABI gdi32_SelectObject(void*, void* old) {
+    return old;
+}
 
 static int MSABI gdi32_GetDeviceCaps(void*, int index) {
-    switch (index) { case 0: return 1920; case 1: return 1080; case 12: return 96; case 88: return 32; default: return 0; }
+    switch (index) {
+    case 0:
+        return 1920;
+    case 1:
+        return 1080;
+    case 12:
+        return 96;
+    case 88:
+        return 32;
+    default:
+        return 0;
+    }
 }
 
-static void* MSABI gdi32_GetStockObject(int) { return reinterpret_cast<void*>(0x9004); }
+static void* MSABI gdi32_GetStockObject(int) {
+    return reinterpret_cast<void*>(0x9004);
+}
 
 static BOOL MSABI gdi32_GetTextExtentPoint32W(void*, const wchar_t*, int, void* sz) {
-    auto* s = reinterpret_cast<DWORD*>(sz); s[0] = 8; s[1] = 16; return 1;
+    auto* s = reinterpret_cast<DWORD*>(sz);
+    s[0] = 8;
+    s[1] = 16;
+    return 1;
 }
 
-static DWORD MSABI gdi32_SetBkColor(void*, DWORD c) { return c; }
+static DWORD MSABI gdi32_SetBkColor(void*, DWORD c) {
+    return c;
+}
 
-static int MSABI gdi32_SetBkMode(void*, int m) { return m; }
+static int MSABI gdi32_SetBkMode(void*, int m) {
+    return m;
+}
 
-static DWORD MSABI gdi32_SetTextColor(void*, DWORD c) { return c; }
+static DWORD MSABI gdi32_SetTextColor(void*, DWORD c) {
+    return c;
+}
 
-static BOOL MSABI gdi32_TextOutW(void*, int, int, const wchar_t*, int) { return 1; }
+static BOOL MSABI gdi32_TextOutW(void*, int, int, const wchar_t*, int) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_SwapBuffers(void*) { return 1; }
+static BOOL MSABI gdi32_SwapBuffers(void*) {
+    return 1;
+}
 
-static int MSABI gdi32_ChoosePixelFormat(void*, const void*) { return 1; }
+static int MSABI gdi32_ChoosePixelFormat(void*, const void*) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_SetPixelFormat(void*, int, const void*) { return 1; }
+static BOOL MSABI gdi32_SetPixelFormat(void*, int, const void*) {
+    return 1;
+}
 
 static HANDLE MSABI gdi32_AddFontMemResourceEx(const void*, DWORD, void*, DWORD* cnt) {
-    if (cnt) *cnt = 1; return reinterpret_cast<void*>(0x9005);
+    if (cnt)
+        *cnt = 1;
+    return reinterpret_cast<void*>(0x9005);
 }
 
-static BOOL MSABI gdi32_RemoveFontMemResourceEx(void*) { return 1; }
+static BOOL MSABI gdi32_RemoveFontMemResourceEx(void*) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_BitBlt(void*, int, int, int, int, void*, int, int, DWORD) { return 1; }
+static BOOL MSABI gdi32_BitBlt(void*, int, int, int, int, void*, int, int, DWORD) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_StretchBlt(void*, int, int, int, int, void*, int, int, int, int, DWORD) { return 1; }
+static BOOL MSABI gdi32_StretchBlt(void*, int, int, int, int, void*, int, int, int, int, DWORD) {
+    return 1;
+}
 
 static int MSABI gdi32_DrawTextW(void*, const wchar_t* str, int len, void* rect, UINT) {
-    if (rect) { auto* r = reinterpret_cast<LONG*>(rect); r[0] = 0; r[1] = 0; r[2] = 200; r[3] = 100; }
-    if (!str) return 0;
+    if (rect) {
+        auto* r = reinterpret_cast<LONG*>(rect);
+        r[0] = 0;
+        r[1] = 0;
+        r[2] = 200;
+        r[3] = 100;
+    }
+    if (!str)
+        return 0;
     return len >= 0 ? len : (int)wcslen(str);
 }
 
-static void* MSABI gdi32_CreateFontIndirectW(const void*) { return reinterpret_cast<void*>(0x9006); }
+static void* MSABI gdi32_CreateFontIndirectW(const void*) {
+    return reinterpret_cast<void*>(0x9006);
+}
 
 static int MSABI gdi32_GetObjectW(void*, int sz, void* buf) {
-    if (buf && sz >= 4) { memset(buf, 0, sz); *reinterpret_cast<LONG*>(buf) = -13; }
+    if (buf && sz >= 4) {
+        memset(buf, 0, sz);
+        *reinterpret_cast<LONG*>(buf) = -13;
+    }
     return sz;
 }
 
-static void* MSABI gdi32_CreateCompatibleBitmap(void*, int, int) { return reinterpret_cast<void*>(0x9007); }
+static void* MSABI gdi32_CreateCompatibleBitmap(void*, int, int) {
+    return reinterpret_cast<void*>(0x9007);
+}
 
-static BOOL MSABI gdi32_PatBlt(void*, int, int, int, int, DWORD) { return 1; }
+static BOOL MSABI gdi32_PatBlt(void*, int, int, int, int, DWORD) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_Rectangle(void*, int, int, int, int) { return 1; }
+static BOOL MSABI gdi32_Rectangle(void*, int, int, int, int) {
+    return 1;
+}
 
-static int MSABI gdi32_FillRect(void*, const void*, void*) { return 1; }
+static int MSABI gdi32_FillRect(void*, const void*, void*) {
+    return 1;
+}
 
-static void* MSABI gdi32_CreateSolidBrush(DWORD) { return reinterpret_cast<void*>(0x9008); }
+static void* MSABI gdi32_CreateSolidBrush(DWORD) {
+    return reinterpret_cast<void*>(0x9008);
+}
 
-static void* MSABI gdi32_CreateBitmap(int, int, UINT, UINT, const void*) { return reinterpret_cast<void*>(0x9009); }
+static void* MSABI gdi32_CreateBitmap(int, int, UINT, UINT, const void*) {
+    return reinterpret_cast<void*>(0x9009);
+}
 
-static int MSABI gdi32_SetDIBitsToDevice(void*, int, int, DWORD, DWORD, int, int, UINT, UINT, const void*, const void*, UINT) { return 1; }
+static int MSABI gdi32_SetDIBitsToDevice(void*, int, int, DWORD, DWORD, int, int, UINT, UINT, const void*, const void*,
+                                         UINT) {
+    return 1;
+}
 
-static BOOL MSABI gdi32_GdiFlush() { return 1; }
+static BOOL MSABI gdi32_GdiFlush() {
+    return 1;
+}
 
 ShimLibrary createGdi32Shim() {
     ShimLibrary lib;
@@ -196,69 +271,91 @@ static LONG MSABI advapi32_RegOpenKeyA(void* hKey, const char* subKey, void** ke
     return Registry::instance().openKey(hKey, subKey ? subKey : "", key);
 }
 
-static LONG MSABI advapi32_RegOpenKeyExA(void* hKey, const char* subKey, DWORD ulOptions, DWORD samDesired, void** key) {
+static LONG MSABI advapi32_RegOpenKeyExA(void* hKey, const char* subKey, DWORD ulOptions, DWORD samDesired,
+                                         void** key) {
     return Registry::instance().openKeyEx(hKey, subKey ? subKey : "", ulOptions, samDesired, key);
 }
 
-static LONG MSABI advapi32_RegOpenKeyExW(void* hKey, const wchar_t* subKey, DWORD ulOptions, DWORD samDesired, void** key) {
+static LONG MSABI advapi32_RegOpenKeyExW(void* hKey, const wchar_t* subKey, DWORD ulOptions, DWORD samDesired,
+                                         void** key) {
     char narrow[1024];
     if (subKey) {
         int j = 0;
-        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        for (int i = 0; subKey[i] && j < 1023; i++)
+            narrow[j++] = (char)(subKey[i] & 0xFF);
         narrow[j] = 0;
-    } else { narrow[0] = 0; }
+    } else {
+        narrow[0] = 0;
+    }
     return Registry::instance().openKeyEx(hKey, narrow, ulOptions, samDesired, key);
 }
 
 static LONG MSABI advapi32_RegCreateKeyExA(void* hKey, const char* subKey, DWORD reserved, char* lpClass,
-    DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key, void* lpdwDisposition) {
-    return Registry::instance().createKeyEx(hKey, subKey ? subKey : "", reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, key, lpdwDisposition);
+                                           DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key,
+                                           void* lpdwDisposition) {
+    return Registry::instance().createKeyEx(hKey, subKey ? subKey : "", reserved, lpClass, dwOptions, samDesired,
+                                            lpSecurityAttributes, key, lpdwDisposition);
 }
 
 static LONG MSABI advapi32_RegCreateKeyExW(void* hKey, const wchar_t* subKey, DWORD reserved, wchar_t* lpClass,
-    DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key, void* lpdwDisposition) {
+                                           DWORD dwOptions, DWORD samDesired, void* lpSecurityAttributes, void** key,
+                                           void* lpdwDisposition) {
     char narrow[1024];
     if (subKey) {
         int j = 0;
-        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        for (int i = 0; subKey[i] && j < 1023; i++)
+            narrow[j++] = (char)(subKey[i] & 0xFF);
         narrow[j] = 0;
-    } else { narrow[0] = 0; }
-    return Registry::instance().createKeyEx(hKey, narrow, reserved, nullptr, dwOptions, samDesired, lpSecurityAttributes, key, lpdwDisposition);
+    } else {
+        narrow[0] = 0;
+    }
+    return Registry::instance().createKeyEx(hKey, narrow, reserved, nullptr, dwOptions, samDesired,
+                                            lpSecurityAttributes, key, lpdwDisposition);
 }
 
 static LONG MSABI advapi32_RegCloseKey(void* hKey) {
     return Registry::instance().closeKey(hKey);
 }
 
-static LONG MSABI advapi32_RegQueryValueExA(void* hKey, const char* valueName, DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+static LONG MSABI advapi32_RegQueryValueExA(void* hKey, const char* valueName, DWORD* lpReserved, DWORD* lpType,
+                                            BYTE* lpData, DWORD* lpcbData) {
     (void)lpReserved;
     return Registry::instance().queryValue(hKey, valueName ? valueName : "", lpType, lpData, lpcbData);
 }
 
-static LONG MSABI advapi32_RegQueryValueExW(void* hKey, const wchar_t* valueName, DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+static LONG MSABI advapi32_RegQueryValueExW(void* hKey, const wchar_t* valueName, DWORD* lpReserved, DWORD* lpType,
+                                            BYTE* lpData, DWORD* lpcbData) {
     (void)lpReserved;
     char narrow[256];
     if (valueName) {
         int j = 0;
-        for (int i = 0; valueName[i] && j < 255; i++) narrow[j++] = (char)(valueName[i] & 0xFF);
+        for (int i = 0; valueName[i] && j < 255; i++)
+            narrow[j++] = (char)(valueName[i] & 0xFF);
         narrow[j] = 0;
-    } else { narrow[0] = 0; }
+    } else {
+        narrow[0] = 0;
+    }
     return Registry::instance().queryValue(hKey, narrow, lpType, lpData, lpcbData);
 }
 
-static LONG MSABI advapi32_RegSetValueExA(void* hKey, const char* valueName, DWORD reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
+static LONG MSABI advapi32_RegSetValueExA(void* hKey, const char* valueName, DWORD reserved, DWORD dwType,
+                                          const BYTE* lpData, DWORD cbData) {
     (void)reserved;
     return Registry::instance().setValue(hKey, valueName ? valueName : "", dwType, lpData, cbData);
 }
 
-static LONG MSABI advapi32_RegSetValueExW(void* hKey, const wchar_t* valueName, DWORD reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
+static LONG MSABI advapi32_RegSetValueExW(void* hKey, const wchar_t* valueName, DWORD reserved, DWORD dwType,
+                                          const BYTE* lpData, DWORD cbData) {
     (void)reserved;
     char narrow[256];
     if (valueName) {
         int j = 0;
-        for (int i = 0; valueName[i] && j < 255; i++) narrow[j++] = (char)(valueName[i] & 0xFF);
+        for (int i = 0; valueName[i] && j < 255; i++)
+            narrow[j++] = (char)(valueName[i] & 0xFF);
         narrow[j] = 0;
-    } else { narrow[0] = 0; }
+    } else {
+        narrow[0] = 0;
+    }
     return Registry::instance().setValue(hKey, narrow, dwType, lpData, cbData);
 }
 
@@ -274,35 +371,62 @@ static LONG MSABI advapi32_RegDeleteKeyW(void* hKey, const wchar_t* subKey) {
     char narrow[1024];
     if (subKey) {
         int j = 0;
-        for (int i = 0; subKey[i] && j < 1023; i++) narrow[j++] = (char)(subKey[i] & 0xFF);
+        for (int i = 0; subKey[i] && j < 1023; i++)
+            narrow[j++] = (char)(subKey[i] & 0xFF);
         narrow[j] = 0;
-    } else { narrow[0] = 0; }
+    } else {
+        narrow[0] = 0;
+    }
     return Registry::instance().deleteKey(hKey, narrow);
 }
 
-static LONG MSABI advapi32_RegEnumKeyExW(void* hKey, DWORD dwIndex, wchar_t* lpName, DWORD* lpcchName, DWORD* lpReserved,
-    wchar_t* lpClass, DWORD* lpcchClass, void* lpftLastWriteTime) {
-    (void)hKey; (void)dwIndex; (void)lpName; (void)lpcchName;
-    (void)lpReserved; (void)lpClass; (void)lpcchClass; (void)lpftLastWriteTime;
+static LONG MSABI advapi32_RegEnumKeyExW(void* hKey, DWORD dwIndex, wchar_t* lpName, DWORD* lpcchName,
+                                         DWORD* lpReserved, wchar_t* lpClass, DWORD* lpcchClass,
+                                         void* lpftLastWriteTime) {
+    (void)hKey;
+    (void)dwIndex;
+    (void)lpName;
+    (void)lpcchName;
+    (void)lpReserved;
+    (void)lpClass;
+    (void)lpcchClass;
+    (void)lpftLastWriteTime;
     return 2;
 }
 
 static LONG MSABI advapi32_RegEnumValueW(void* hKey, DWORD dwIndex, wchar_t* lpValueName, DWORD* lpcchValueName,
-    DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
-    (void)hKey; (void)dwIndex; (void)lpValueName; (void)lpcchValueName;
-    (void)lpReserved; (void)lpType; (void)lpData; (void)lpcbData;
+                                         DWORD* lpReserved, DWORD* lpType, BYTE* lpData, DWORD* lpcbData) {
+    (void)hKey;
+    (void)dwIndex;
+    (void)lpValueName;
+    (void)lpcchValueName;
+    (void)lpReserved;
+    (void)lpType;
+    (void)lpData;
+    (void)lpcbData;
     return 2;
 }
 
-static BOOL MSABI advapi32_InitializeSecurityDescriptor(void* sd, DWORD) { memset(sd, 0, 32); return 1; }
+static BOOL MSABI advapi32_InitializeSecurityDescriptor(void* sd, DWORD) {
+    memset(sd, 0, 32);
+    return 1;
+}
 
-static BOOL MSABI advapi32_SetSecurityDescriptorDacl(void*, BOOL, void*, BOOL) { return 1; }
+static BOOL MSABI advapi32_SetSecurityDescriptorDacl(void*, BOOL, void*, BOOL) {
+    return 1;
+}
 
-static void* MSABI advapi32_RegisterEventSourceW(const wchar_t*, const wchar_t*) { return reinterpret_cast<void*>(0xA100); }
+static void* MSABI advapi32_RegisterEventSourceW(const wchar_t*, const wchar_t*) {
+    return reinterpret_cast<void*>(0xA100);
+}
 
-static BOOL MSABI advapi32_DeregisterEventSource(void*) { return 1; }
+static BOOL MSABI advapi32_DeregisterEventSource(void*) {
+    return 1;
+}
 
-static BOOL MSABI advapi32_ReportEventW(void*, WORD, WORD, DWORD, void*, WORD, DWORD, const wchar_t**, void*) { return 1; }
+static BOOL MSABI advapi32_ReportEventW(void*, WORD, WORD, DWORD, void*, WORD, DWORD, const wchar_t**, void*) {
+    return 1;
+}
 
 ShimLibrary createAdvapi32Shim() {
     ShimLibrary lib;
@@ -334,11 +458,16 @@ ShimLibrary createAdvapi32Shim() {
 }
 
 static int MSABI ws2_32_WSAStartup(WORD, void* data) {
-    if (data) { memset(data, 0, 400); reinterpret_cast<WORD*>(data)[0] = 0x0202; }
+    if (data) {
+        memset(data, 0, 400);
+        reinterpret_cast<WORD*>(data)[0] = 0x0202;
+    }
     return 0;
 }
 
-static int MSABI ws2_32_WSACleanup() { return 0; }
+static int MSABI ws2_32_WSACleanup() {
+    return 0;
+}
 
 static int MSABI ws2_32_WSAGetLastError() {
     return (int)NetworkContext::instance().getWsaError();
@@ -356,14 +485,20 @@ static void* MSABI ws2_32_WSASocketA(int af, int type, int proto, void*, DWORD, 
 
 static int MSABI ws2_32_closesocket(void* s) {
     int fd = NetworkContext::instance().releaseSocket((int)(intptr_t)s);
-    if (fd >= 0) { close(fd); return 0; }
+    if (fd >= 0) {
+        close(fd);
+        return 0;
+    }
     NetworkContext::instance().setWsaError(WSAENOTSOCK);
     return -1;
 }
 
 static int MSABI ws2_32_connect(void* s, const void* addr, int len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = ::connect(fd, (const sockaddr*)addr, (socklen_t)len);
     if (ret < 0) {
         if (errno == EINPROGRESS) {
@@ -377,39 +512,58 @@ static int MSABI ws2_32_connect(void* s, const void* addr, int len) {
 
 static int MSABI ws2_32_send(void* s, const char* buf, int len, int flags) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = (int)::send(fd, buf, (size_t)len, flags);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static int MSABI ws2_32_recv(void* s, char* buf, int len, int flags) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = (int)::recv(fd, buf, (size_t)len, flags);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static int MSABI ws2_32_bind(void* s, const void* addr, int len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = ::bind(fd, (const sockaddr*)addr, (socklen_t)len);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static int MSABI ws2_32_listen(void* s, int backlog) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = ::listen(fd, backlog);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static void* MSABI ws2_32_accept(void* s, void* addr, int* len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return reinterpret_cast<void*>(static_cast<intptr_t>(-1));
+    }
     int nfd = ::accept(fd, (sockaddr*)addr, (socklen_t*)len);
     if (nfd < 0) {
         NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
@@ -421,44 +575,57 @@ static void* MSABI ws2_32_accept(void* s, void* addr, int* len) {
 
 static int MSABI ws2_32_shutdown(void* s, int how) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = ::shutdown(fd, how);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static int MSABI ws2_32_ioctlsocket(void* s, long cmd, void* argp) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     if (cmd == 0x8004667E) {
         int flags = fcntl(fd, F_GETFL, 0);
-        if (*(reinterpret_cast<uint32_t*>(argp))) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        else fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        if (*(reinterpret_cast<uint32_t*>(argp)))
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        else
+            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     }
     return 0;
 }
 
 static int MSABI ws2_32_getsockname(void* s, void* addr, int* len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     return ::getsockname(fd, (sockaddr*)addr, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_getpeername(void* s, void* addr, int* len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     return ::getpeername(fd, (sockaddr*)addr, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_getsockopt(void* s, int level, int opt, char* val, int* len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     return ::getsockopt(fd, level, opt, val, (socklen_t*)len);
 }
 
 static int MSABI ws2_32_setsockopt(void* s, int level, int opt, const char* val, int len) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     return ::setsockopt(fd, level, opt, val, (socklen_t)len);
 }
 
@@ -478,13 +645,15 @@ static int MSABI ws2_32_select(int nfds, void* readfds, void* writefds, void* ex
     int maxfd = 0;
 
     auto translateSet = [&](void* winSet, fd_set& posixSet) {
-        if (!winSet) return;
+        if (!winSet)
+            return;
         auto* wfd = reinterpret_cast<WinFDSet*>(winSet);
         for (uint32_t i = 0; i < wfd->fd_count; i++) {
             int fd = ctx.getFd((int)(intptr_t)wfd->fd_array[i]);
             if (fd >= 0) {
                 FD_SET(fd, &posixSet);
-                if (fd > maxfd) maxfd = fd;
+                if (fd > maxfd)
+                    maxfd = fd;
             }
         }
     };
@@ -509,7 +678,8 @@ static int MSABI ws2_32_select(int nfds, void* readfds, void* writefds, void* ex
     }
 
     auto translateBack = [&](void* winSet, fd_set& posixSet) {
-        if (!winSet) return;
+        if (!winSet)
+            return;
         auto* wfd = reinterpret_cast<WinFDSet*>(winSet);
         uint32_t outCount = 0;
         for (uint32_t i = 0; i < wfd->fd_count; i++) {
@@ -536,14 +706,28 @@ static int MSABI ws2_32_getaddrinfo(const char* node, const char* service, const
     return ret;
 }
 
-static void MSABI ws2_32_freeaddrinfo(void* p) { freeaddrinfo((addrinfo*)p); }
+static void MSABI ws2_32_freeaddrinfo(void* p) {
+    freeaddrinfo((addrinfo*)p);
+}
 
-static uint16_t MSABI ws2_32_htons(uint16_t v) { return __builtin_bswap16(v); }
-static uint16_t MSABI ws2_32_ntohs(uint16_t v) { return __builtin_bswap16(v); }
-static uint32_t MSABI ws2_32_htonl(uint32_t v) { return __builtin_bswap32(v); }
-static uint32_t MSABI ws2_32_ntohl(uint32_t v) { return __builtin_bswap32(v); }
-static uint32_t MSABI ws2_32_inet_addr(const char* cp) { return inet_addr(cp); }
-static char* MSABI ws2_32_inet_ntoa(struct in_addr in) { return inet_ntoa(in); }
+static uint16_t MSABI ws2_32_htons(uint16_t v) {
+    return __builtin_bswap16(v);
+}
+static uint16_t MSABI ws2_32_ntohs(uint16_t v) {
+    return __builtin_bswap16(v);
+}
+static uint32_t MSABI ws2_32_htonl(uint32_t v) {
+    return __builtin_bswap32(v);
+}
+static uint32_t MSABI ws2_32_ntohl(uint32_t v) {
+    return __builtin_bswap32(v);
+}
+static uint32_t MSABI ws2_32_inet_addr(const char* cp) {
+    return inet_addr(cp);
+}
+static char* MSABI ws2_32_inet_ntoa(struct in_addr in) {
+    return inet_ntoa(in);
+}
 
 static struct hostent g_hostent;
 static char* g_hostentAliases[2] = {nullptr, nullptr};
@@ -552,7 +736,8 @@ static uint32_t g_hostentAddr;
 static pthread_mutex_t g_hostentMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void* MSABI ws2_32_gethostbyname(const char* name) {
-    if (!name) return nullptr;
+    if (!name)
+        return nullptr;
     pthread_mutex_lock(&g_hostentMutex);
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
@@ -578,38 +763,47 @@ static void* MSABI ws2_32_gethostbyname(const char* name) {
 }
 
 static int MSABI ws2_32_WSAIoctl(void* s, DWORD dwIoControlCode, void* lpvInBuffer, DWORD cbInBuffer,
-    void* lpvOutBuffer, DWORD cbOutBuffer, DWORD* lpcbBytesReturned, void*, void*) {
+                                 void* lpvOutBuffer, DWORD cbOutBuffer, DWORD* lpcbBytesReturned, void*, void*) {
     auto& ctx = NetworkContext::instance();
     if (dwIoControlCode == SIO_GET_EXTENSION_FUNCTION_POINTER) {
         if (lpvInBuffer && cbInBuffer >= sizeof(uint32_t)) {
             uint32_t guid0 = *reinterpret_cast<uint32_t*>(lpvInBuffer);
             if (lpvOutBuffer && cbOutBuffer >= sizeof(void*)) {
                 *reinterpret_cast<void**>(lpvOutBuffer) = reinterpret_cast<void*>(static_cast<intptr_t>(guid0));
-                if (lpcbBytesReturned) *lpcbBytesReturned = sizeof(void*);
+                if (lpcbBytesReturned)
+                    *lpcbBytesReturned = sizeof(void*);
                 return 0;
             }
         }
     }
 
     int fd = ctx.getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
 
     if (dwIoControlCode == 0x4004667F || dwIoControlCode == 0x8004667D) {
         int arg = 0;
-        if (dwIoControlCode == 0x8004667D) arg = 1;
+        if (dwIoControlCode == 0x8004667D)
+            arg = 1;
         int ret = ::ioctl(fd, FIONBIO, &arg);
-        if (ret < 0) { ctx.setWsaError(ctx.mapErrnoToWsa(errno)); return -1; }
+        if (ret < 0) {
+            ctx.setWsaError(ctx.mapErrnoToWsa(errno));
+            return -1;
+        }
         return 0;
     }
 
     return 0;
 }
 
-static int MSABI ws2_32_WSARecv(void* s, void* lpBuffers, DWORD dwBufferCount,
-    DWORD* lpNumberOfBytesRecvd, DWORD* lpFlags, void* lpOverlapped, void* lpCompletionRoutine) {
+static int MSABI ws2_32_WSARecv(void* s, void* lpBuffers, DWORD dwBufferCount, DWORD* lpNumberOfBytesRecvd,
+                                DWORD* lpFlags, void* lpOverlapped, void* lpCompletionRoutine) {
     auto& ctx = NetworkContext::instance();
     int fd = ctx.getFd((int)(intptr_t)s);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
     if (lpOverlapped) {
@@ -622,22 +816,28 @@ static int MSABI ws2_32_WSARecv(void* s, void* lpBuffers, DWORD dwBufferCount,
         ssize_t n = ::recv(fd, bufs[i].buf, bufs[i].len, 0);
         if (n < 0) {
             ctx.setWsaError(ctx.mapErrnoToWsa(errno));
-            if (totalRead > 0) break;
+            if (totalRead > 0)
+                break;
             return -1;
         }
         totalRead += (DWORD)n;
-        if ((DWORD)n < bufs[i].len) break;
+        if ((DWORD)n < bufs[i].len)
+            break;
     }
-    if (lpNumberOfBytesRecvd) *lpNumberOfBytesRecvd = totalRead;
+    if (lpNumberOfBytesRecvd)
+        *lpNumberOfBytesRecvd = totalRead;
     return 0;
 }
 
-static int MSABI ws2_32_WSARecvFrom(void* s, void* lpBuffers, DWORD dwBufferCount,
-    DWORD* lpNumberOfBytesRecvd, DWORD* lpFlags, void* lpFrom, int* lpFromlen,
-    void* lpOverlapped, void* lpCompletionRoutine) {
+static int MSABI ws2_32_WSARecvFrom(void* s, void* lpBuffers, DWORD dwBufferCount, DWORD* lpNumberOfBytesRecvd,
+                                    DWORD* lpFlags, void* lpFrom, int* lpFromlen, void* lpOverlapped,
+                                    void* lpCompletionRoutine) {
     auto& ctx = NetworkContext::instance();
     int fd = ctx.getFd((int)(intptr_t)s);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
     if (lpOverlapped) {
@@ -647,25 +847,30 @@ static int MSABI ws2_32_WSARecvFrom(void* s, void* lpBuffers, DWORD dwBufferCoun
 
     DWORD totalRead = 0;
     for (DWORD i = 0; i < dwBufferCount; i++) {
-        ssize_t n = ::recvfrom(fd, bufs[i].buf, bufs[i].len, 0,
-            (sockaddr*)lpFrom, (socklen_t*)(lpFromlen));
+        ssize_t n = ::recvfrom(fd, bufs[i].buf, bufs[i].len, 0, (sockaddr*)lpFrom, (socklen_t*)(lpFromlen));
         if (n < 0) {
             ctx.setWsaError(ctx.mapErrnoToWsa(errno));
-            if (totalRead > 0) break;
+            if (totalRead > 0)
+                break;
             return -1;
         }
         totalRead += (DWORD)n;
-        if ((DWORD)n < bufs[i].len) break;
+        if ((DWORD)n < bufs[i].len)
+            break;
     }
-    if (lpNumberOfBytesRecvd) *lpNumberOfBytesRecvd = totalRead;
+    if (lpNumberOfBytesRecvd)
+        *lpNumberOfBytesRecvd = totalRead;
     return 0;
 }
 
-static int MSABI ws2_32_WSASend(void* s, void* lpBuffers, DWORD dwBufferCount,
-    DWORD* lpNumberOfBytesSent, DWORD dwFlags, void* lpOverlapped, void* lpCompletionRoutine) {
+static int MSABI ws2_32_WSASend(void* s, void* lpBuffers, DWORD dwBufferCount, DWORD* lpNumberOfBytesSent,
+                                DWORD dwFlags, void* lpOverlapped, void* lpCompletionRoutine) {
     auto& ctx = NetworkContext::instance();
     int fd = ctx.getFd((int)(intptr_t)s);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
     if (lpOverlapped) {
@@ -678,21 +883,26 @@ static int MSABI ws2_32_WSASend(void* s, void* lpBuffers, DWORD dwBufferCount,
         ssize_t n = ::send(fd, bufs[i].buf, bufs[i].len, dwFlags);
         if (n < 0) {
             ctx.setWsaError(ctx.mapErrnoToWsa(errno));
-            if (totalSent > 0) break;
+            if (totalSent > 0)
+                break;
             return -1;
         }
         totalSent += (DWORD)n;
     }
-    if (lpNumberOfBytesSent) *lpNumberOfBytesSent = totalSent;
+    if (lpNumberOfBytesSent)
+        *lpNumberOfBytesSent = totalSent;
     return 0;
 }
 
-static int MSABI ws2_32_WSASendTo(void* s, void* lpBuffers, DWORD dwBufferCount,
-    DWORD* lpNumberOfBytesSent, DWORD dwFlags, const void* lpTo, int iTolen,
-    void* lpOverlapped, void* lpCompletionRoutine) {
+static int MSABI ws2_32_WSASendTo(void* s, void* lpBuffers, DWORD dwBufferCount, DWORD* lpNumberOfBytesSent,
+                                  DWORD dwFlags, const void* lpTo, int iTolen, void* lpOverlapped,
+                                  void* lpCompletionRoutine) {
     auto& ctx = NetworkContext::instance();
     int fd = ctx.getFd((int)(intptr_t)s);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     auto* bufs = reinterpret_cast<WSABUF*>(lpBuffers);
     if (lpOverlapped) {
@@ -702,16 +912,17 @@ static int MSABI ws2_32_WSASendTo(void* s, void* lpBuffers, DWORD dwBufferCount,
 
     DWORD totalSent = 0;
     for (DWORD i = 0; i < dwBufferCount; i++) {
-        ssize_t n = ::sendto(fd, bufs[i].buf, bufs[i].len, dwFlags,
-            (const sockaddr*)lpTo, (socklen_t)iTolen);
+        ssize_t n = ::sendto(fd, bufs[i].buf, bufs[i].len, dwFlags, (const sockaddr*)lpTo, (socklen_t)iTolen);
         if (n < 0) {
             ctx.setWsaError(ctx.mapErrnoToWsa(errno));
-            if (totalSent > 0) break;
+            if (totalSent > 0)
+                break;
             return -1;
         }
         totalSent += (DWORD)n;
     }
-    if (lpNumberOfBytesSent) *lpNumberOfBytesSent = totalSent;
+    if (lpNumberOfBytesSent)
+        *lpNumberOfBytesSent = totalSent;
     return 0;
 }
 
@@ -719,7 +930,10 @@ static int MSABI ws2_32_WSAEventSelect(void* s, void* hEventObject, uint32_t lNe
     auto& ctx = NetworkContext::instance();
     int handle = (int)(intptr_t)s;
     int fd = ctx.getFd(handle);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     ctx.setSocketEventMask(handle, lNetworkEvents, hEventObject);
 
@@ -734,7 +948,10 @@ static int MSABI ws2_32_WSAAsyncSelect(void* s, void* hWnd, uint32_t wMsg, uint3
     auto& ctx = NetworkContext::instance();
     int handle = (int)(intptr_t)s;
     int fd = ctx.getFd(handle);
-    if (fd < 0) { ctx.setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        ctx.setWsaError(WSAENOTSOCK);
+        return -1;
+    }
 
     ctx.setSocketEventMask(handle, lEvent, hWnd);
 
@@ -745,16 +962,21 @@ static int MSABI ws2_32_WSAAsyncSelect(void* s, void* hWnd, uint32_t wMsg, uint3
     return 0;
 }
 
-static int MSABI ws2_32_WSAGetOverlappedResult(void* s, void* lpOverlapped,
-    DWORD* lpcbTransfer, BOOL fWait, DWORD* lpdwFlags) {
-    (void)s; (void)lpOverlapped; (void)fWait;
-    if (lpcbTransfer) *lpcbTransfer = 0;
-    if (lpdwFlags) *lpdwFlags = 0;
+static int MSABI ws2_32_WSAGetOverlappedResult(void* s, void* lpOverlapped, DWORD* lpcbTransfer, BOOL fWait,
+                                               DWORD* lpdwFlags) {
+    (void)s;
+    (void)lpOverlapped;
+    (void)fWait;
+    if (lpcbTransfer)
+        *lpcbTransfer = 0;
+    if (lpdwFlags)
+        *lpdwFlags = 0;
     return 1;
 }
 
 static int MSABI ws2_32_WSACreateEvent(void** lpEvent) {
-    if (lpEvent) *lpEvent = reinterpret_cast<void*>(0xEE00);
+    if (lpEvent)
+        *lpEvent = reinterpret_cast<void*>(0xEE00);
     return 0;
 }
 
@@ -763,10 +985,12 @@ static int MSABI ws2_32_WSACloseEvent(void* hEvent) {
     return 1;
 }
 
-static int MSABI ws2_32_WSAWaitForMultipleEvents(DWORD cEvents, void** lphEvents,
-    BOOL fWaitAll, DWORD dwTimeout, BOOL fAlertable) {
-    (void)fWaitAll; (void)fAlertable;
-    if (cEvents == 0) return -1;
+static int MSABI ws2_32_WSAWaitForMultipleEvents(DWORD cEvents, void** lphEvents, BOOL fWaitAll, DWORD dwTimeout,
+                                                 BOOL fAlertable) {
+    (void)fWaitAll;
+    (void)fAlertable;
+    if (cEvents == 0)
+        return -1;
     if (dwTimeout == 0xFFFFFFFF) {
         pollfd pfd;
         pfd.fd = 0;
@@ -782,7 +1006,8 @@ static int MSABI ws2_32_WSAWaitForMultipleEvents(DWORD cEvents, void** lphEvents
 }
 
 static int MSABI ws2_32_WSAEnumNetworkEvents(void* s, void* hEvent, void* lpNetworkEvents) {
-    (void)s; (void)hEvent;
+    (void)s;
+    (void)hEvent;
     if (lpNetworkEvents) {
         auto* ne = reinterpret_cast<uint32_t*>(lpNetworkEvents);
         ne[0] = FD_READ | FD_WRITE | FD_ACCEPT | FD_CONNECT;
@@ -797,7 +1022,8 @@ static int MSABI ws2_32_ord3(void* s) {
 
 static int MSABI ws2_32_ord4(void* s, int level, int opt) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     int val = 0;
     return ::getsockopt(fd, level, opt, reinterpret_cast<char*>(&val), nullptr) == 0 ? val : 0;
 }
@@ -863,17 +1089,25 @@ static int MSABI ws2_32_ord151(void* s, const char* host, const char* service, c
 
 static int MSABI ws2_32_recvfrom(void* s, char* buf, int len, int flags, void* from, int* fromlen) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = (int)::recvfrom(fd, buf, (size_t)len, flags, (sockaddr*)from, (socklen_t*)fromlen);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
 static int MSABI ws2_32_sendto(void* s, const char* buf, int len, int flags, const void* to, int tolen) {
     int fd = NetworkContext::instance().getFd((int)(intptr_t)s);
-    if (fd < 0) { NetworkContext::instance().setWsaError(WSAENOTSOCK); return -1; }
+    if (fd < 0) {
+        NetworkContext::instance().setWsaError(WSAENOTSOCK);
+        return -1;
+    }
     int ret = (int)::sendto(fd, buf, (size_t)len, flags, (const sockaddr*)to, (socklen_t)tolen);
-    if (ret < 0) NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
+    if (ret < 0)
+        NetworkContext::instance().setWsaError(NetworkContext::instance().mapErrnoToWsa(errno));
     return ret;
 }
 
@@ -949,22 +1183,29 @@ ShimLibrary createWs2_32Shim() {
 }
 
 static wchar_t** MSABI shell32_CommandLineToArgvW(const wchar_t*, int* argc) {
-    if (argc) *argc = 1;
+    if (argc)
+        *argc = 1;
     auto** argv = (wchar_t**)malloc(sizeof(wchar_t*) * 2);
     argv[0] = (wchar_t*)L"steam.exe";
     argv[1] = nullptr;
     return argv;
 }
 
-static DWORD MSABI shell32_SHGetFileInfoW(const wchar_t*, DWORD, void*, UINT, UINT) { return 0; }
+static DWORD MSABI shell32_SHGetFileInfoW(const wchar_t*, DWORD, void*, UINT, UINT) {
+    return 0;
+}
 
 static LONG MSABI shell32_SHGetKnownFolderPath(const void*, DWORD, void*, wchar_t** ppszPath) {
-    if (ppszPath) { *ppszPath = (wchar_t*)malloc(64); wcscpy(*ppszPath, L"C:\\Users\\user"); }
+    if (ppszPath) {
+        *ppszPath = (wchar_t*)malloc(64);
+        wcscpy(*ppszPath, L"C:\\Users\\user");
+    }
     return 0;
 }
 
 static LONG MSABI shell32_SHGetFolderPathW(void*, int, void*, DWORD, wchar_t* path) {
-    if (path) wcscpy(path, L"C:\\Users\\user");
+    if (path)
+        wcscpy(path, L"C:\\Users\\user");
     return 0;
 }
 
@@ -983,31 +1224,48 @@ ShimLibrary createShell32Shim() {
     return lib;
 }
 
-static void MSABI ole32_CoTaskMemFree(void* p) { free(p); }
+static void MSABI ole32_CoTaskMemFree(void* p) {
+    free(p);
+}
 
-static HRESULT MSABI ole32_CoInitialize(void*) { return 0; }
-static HRESULT MSABI ole32_CoInitializeEx(void*, DWORD) { return 0; }
+static HRESULT MSABI ole32_CoInitialize(void*) {
+    return 0;
+}
+static HRESULT MSABI ole32_CoInitializeEx(void*, DWORD) {
+    return 0;
+}
 static void MSABI ole32_CoUninitialize() {}
-static HRESULT MSABI ole32_CoCreateInstance(const GUID* rclsid, void* punkOuter, DWORD dwClsCtx, const GUID* riid, void** ppv) {
-    if (ppv) *ppv = nullptr;
+static HRESULT MSABI ole32_CoCreateInstance(const GUID* rclsid, void* punkOuter, DWORD dwClsCtx, const GUID* riid,
+                                            void** ppv) {
+    if (ppv)
+        *ppv = nullptr;
     return (HRESULT)0x80040154L;
 }
-static void* MSABI ole32_CoTaskMemAlloc(SIZE_T cb) { return malloc(cb); }
-static void* MSABI ole32_CoTaskMemRealloc(void* pv, SIZE_T cb) { return realloc(pv, cb); }
+static void* MSABI ole32_CoTaskMemAlloc(SIZE_T cb) {
+    return malloc(cb);
+}
+static void* MSABI ole32_CoTaskMemRealloc(void* pv, SIZE_T cb) {
+    return realloc(pv, cb);
+}
 static int MSABI ole32_StringFromGUID2(const GUID* guid, wchar_t* lpsz, int cchMax) {
-    if (!guid || !lpsz || cchMax < 39) return 0;
-    swprintf(lpsz, cchMax, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-        guid->Data1, guid->Data2, guid->Data3,
-        guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-        guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
+    if (!guid || !lpsz || cchMax < 39)
+        return 0;
+    swprintf(lpsz, cchMax, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", guid->Data1, guid->Data2, guid->Data3,
+             guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3], guid->Data4[4], guid->Data4[5],
+             guid->Data4[6], guid->Data4[7]);
     return 39;
 }
 static HRESULT MSABI ole32_IIDFromString(const wchar_t*, GUID* guid) {
-    if (guid) memset(guid, 0, sizeof(GUID));
+    if (guid)
+        memset(guid, 0, sizeof(GUID));
     return 0;
 }
-static HRESULT MSABI ole32_CoGetClassObject(const GUID*, DWORD, void*, const GUID*, void**) { return (HRESULT)0x80040154L; }
-static HRESULT MSABI ole32_OleInitialize(void*) { return 0; }
+static HRESULT MSABI ole32_CoGetClassObject(const GUID*, DWORD, void*, const GUID*, void**) {
+    return (HRESULT)0x80040154L;
+}
+static HRESULT MSABI ole32_OleInitialize(void*) {
+    return 0;
+}
 static void MSABI ole32_OleUninitialize() {}
 
 ShimLibrary createOle32Shim() {
@@ -1030,31 +1288,60 @@ ShimLibrary createOle32Shim() {
 }
 
 static void* MSABI oleaut32_SysAllocString(const wchar_t* str) {
-    if (!str) return nullptr;
+    if (!str)
+        return nullptr;
     size_t len = wcslen(str);
     wchar_t* buf = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
     wcscpy(buf, str);
     return buf;
 }
 
-static void MSABI oleaut32_SysFreeString(void* bstr) { free(bstr); }
+static void MSABI oleaut32_SysFreeString(void* bstr) {
+    free(bstr);
+}
 static void* MSABI oleaut32_SysAllocStringLen(const wchar_t*, UINT len) {
     return malloc((len + 1) * sizeof(wchar_t));
 }
 static UINT MSABI oleaut32_SysStringLen(void* bstr) {
-    if (!bstr) return 0;
+    if (!bstr)
+        return 0;
     return (UINT)wcslen((const wchar_t*)bstr);
 }
-static void MSABI oleaut32_VariantInit(void* pv) { if (pv) memset(pv, 0, 16); }
-static HRESULT MSABI oleaut32_VariantClear(void* pv) { if (pv) memset(pv, 0, 16); return 0; }
-static HRESULT MSABI oleaut32_VariantChangeType(void*, void*, UINT, UINT) { return 0; }
-static HRESULT MSABI oleaut32_VariantChangeTypeEx(void*, void*, DWORD, UINT, UINT) { return 0; }
-static void* MSABI oleaut32_SafeArrayCreate(UINT, UINT, void*) { return calloc(1, 32); }
-static HRESULT MSABI oleaut32_SafeArrayDestroy(void*) { return 0; }
-static HRESULT MSABI oleaut32_SafeArrayAccessData(void*, void** ppv) { if (ppv) *ppv = nullptr; return 0; }
-static HRESULT MSABI oleaut32_SafeArrayUnaccessData(void*) { return 0; }
-static HRESULT MSABI oleaut32_SafeArrayGetLBound(void*, UINT, LONG*) { return 0; }
-static HRESULT MSABI oleaut32_SafeArrayGetUBound(void*, UINT, LONG*) { return 0; }
+static void MSABI oleaut32_VariantInit(void* pv) {
+    if (pv)
+        memset(pv, 0, 16);
+}
+static HRESULT MSABI oleaut32_VariantClear(void* pv) {
+    if (pv)
+        memset(pv, 0, 16);
+    return 0;
+}
+static HRESULT MSABI oleaut32_VariantChangeType(void*, void*, UINT, UINT) {
+    return 0;
+}
+static HRESULT MSABI oleaut32_VariantChangeTypeEx(void*, void*, DWORD, UINT, UINT) {
+    return 0;
+}
+static void* MSABI oleaut32_SafeArrayCreate(UINT, UINT, void*) {
+    return calloc(1, 32);
+}
+static HRESULT MSABI oleaut32_SafeArrayDestroy(void*) {
+    return 0;
+}
+static HRESULT MSABI oleaut32_SafeArrayAccessData(void*, void** ppv) {
+    if (ppv)
+        *ppv = nullptr;
+    return 0;
+}
+static HRESULT MSABI oleaut32_SafeArrayUnaccessData(void*) {
+    return 0;
+}
+static HRESULT MSABI oleaut32_SafeArrayGetLBound(void*, UINT, LONG*) {
+    return 0;
+}
+static HRESULT MSABI oleaut32_SafeArrayGetUBound(void*, UINT, LONG*) {
+    return 0;
+}
 
 ShimLibrary createOleAut32Shim() {
     ShimLibrary lib;
@@ -1078,22 +1365,33 @@ ShimLibrary createOleAut32Shim() {
     return lib;
 }
 
-static void* MSABI crypt32_CertOpenStore(const char*, DWORD, void*, DWORD, const void*) { return reinterpret_cast<void*>(0xC000); }
+static void* MSABI crypt32_CertOpenStore(const char*, DWORD, void*, DWORD, const void*) {
+    return reinterpret_cast<void*>(0xC000);
+}
 
-static BOOL MSABI crypt32_CertCloseStore(void*, DWORD) { return 1; }
+static BOOL MSABI crypt32_CertCloseStore(void*, DWORD) {
+    return 1;
+}
 
-static void* MSABI crypt32_CertCreateCertificateContext(DWORD, const BYTE*, DWORD) { return reinterpret_cast<void*>(0xC001); }
+static void* MSABI crypt32_CertCreateCertificateContext(DWORD, const BYTE*, DWORD) {
+    return reinterpret_cast<void*>(0xC001);
+}
 
-static BOOL MSABI crypt32_CertFreeCertificateContext(void*) { return 1; }
+static BOOL MSABI crypt32_CertFreeCertificateContext(void*) {
+    return 1;
+}
 
 static BOOL MSABI crypt32_CertGetCertificateChain(void*, void*, void*, void*, const void*, DWORD, void*, void** chain) {
-    if (chain) *chain = reinterpret_cast<void*>(0xC002);
+    if (chain)
+        *chain = reinterpret_cast<void*>(0xC002);
     return 1;
 }
 
 static void MSABI crypt32_CertFreeCertificateChain(void*) {}
 
-static BOOL MSABI crypt32_CertAddCertificateContextToStore(void*, void*, DWORD, void**) { return 1; }
+static BOOL MSABI crypt32_CertAddCertificateContextToStore(void*, void*, DWORD, void**) {
+    return 1;
+}
 
 ShimLibrary createCrypt32Shim() {
     ShimLibrary lib;
@@ -1112,13 +1410,19 @@ ShimLibrary createCrypt32Shim() {
 }
 
 static DWORD MSABI psapi_GetModuleFileNameExW(void*, void*, wchar_t* buf, DWORD sz) {
-    if (buf && sz > 0) { buf[0] = 0; } return 0;
+    if (buf && sz > 0) {
+        buf[0] = 0;
+    }
+    return 0;
 }
 
-static BOOL MSABI psapi_GetModuleInformation(void*, void*, void*, DWORD) { return 1; }
+static BOOL MSABI psapi_GetModuleInformation(void*, void*, void*, DWORD) {
+    return 1;
+}
 
 static BOOL MSABI psapi_GetProcessMemoryInfo(void*, void* pmc, DWORD sz) {
-    memset(pmc, 0, sz); return 1;
+    memset(pmc, 0, sz);
+    return 1;
 }
 
 ShimLibrary createPsapiShim() {
@@ -1150,12 +1454,15 @@ struct FakeVersionResource {
 };
 
 static DWORD MSABI version_GetFileVersionInfoSizeW(const wchar_t* lptstrFilename, DWORD* lpdwHandle) {
-    if (lpdwHandle) *lpdwHandle = 0;
+    if (lpdwHandle)
+        *lpdwHandle = 0;
     return sizeof(FakeVersionResource) + 512;
 }
 
-static BOOL MSABI version_GetFileVersionInfoW(const wchar_t* lptstrFilename, DWORD dwHandle, DWORD dwLen, void* lpData) {
-    if (!lpData || dwLen < sizeof(FakeVersionResource)) return 0;
+static BOOL MSABI version_GetFileVersionInfoW(const wchar_t* lptstrFilename, DWORD dwHandle, DWORD dwLen,
+                                              void* lpData) {
+    if (!lpData || dwLen < sizeof(FakeVersionResource))
+        return 0;
     auto* info = reinterpret_cast<FakeVersionResource*>(lpData);
     memset(info, 0, sizeof(FakeVersionResource));
     info->dwSignature = 0xFEEF04BD;
@@ -1172,20 +1479,25 @@ static BOOL MSABI version_GetFileVersionInfoW(const wchar_t* lptstrFilename, DWO
     return 1;
 }
 
-static BOOL MSABI version_VerQueryValueW(const void* pBlock, const wchar_t* lpSubBlock, void** lplpBuffer, UINT* puLen) {
-    if (!pBlock || !lplpBuffer) return 0;
+static BOOL MSABI version_VerQueryValueW(const void* pBlock, const wchar_t* lpSubBlock, void** lplpBuffer,
+                                         UINT* puLen) {
+    if (!pBlock || !lplpBuffer)
+        return 0;
     if (wcsncmp(lpSubBlock, L"\\", 2) == 0) {
         *lplpBuffer = const_cast<void*>(pBlock);
-        if (puLen) *puLen = sizeof(FakeVersionResource);
+        if (puLen)
+            *puLen = sizeof(FakeVersionResource);
         return 1;
     }
     if (wcsncmp(lpSubBlock, L"\\VarFileInfo\\Translation", 24) == 0) {
         static DWORD translation = 0x040904B0;
         *lplpBuffer = &translation;
-        if (puLen) *puLen = 4;
+        if (puLen)
+            *puLen = 4;
         return 1;
     }
-    if (puLen) *puLen = 0;
+    if (puLen)
+        *puLen = 0;
     *lplpBuffer = nullptr;
     return 0;
 }
@@ -1203,7 +1515,8 @@ ShimLibrary createVersionShim() {
 }
 
 static LONG MSABI bcrypt_BCryptGenRandom(void*, BYTE* buf, ULONG len, ULONG) {
-    for (ULONG i = 0; i < len; i++) buf[i] = (BYTE)(rand() & 0xFF);
+    for (ULONG i = 0; i < len; i++)
+        buf[i] = (BYTE)(rand() & 0xFF);
     return 0;
 }
 
@@ -1215,7 +1528,9 @@ ShimLibrary createBcryptShim() {
     return lib;
 }
 
-static BOOL MSABI comctl32_InitCommonControlsEx(const void*) { return 1; }
+static BOOL MSABI comctl32_InitCommonControlsEx(const void*) {
+    return 1;
+}
 
 ShimLibrary createComCtl32Shim() {
     ShimLibrary lib;
@@ -1226,7 +1541,10 @@ ShimLibrary createComCtl32Shim() {
 }
 
 static int MSABI wsock32_ord1142(WORD, void* data) {
-    if (data) { memset(data, 0, 400); reinterpret_cast<WORD*>(data)[0] = 0x0202; }
+    if (data) {
+        memset(data, 0, 400);
+        reinterpret_cast<WORD*>(data)[0] = 0x0202;
+    }
     return 0;
 }
 
@@ -1238,5 +1556,5 @@ ShimLibrary createWsock32Shim() {
     return lib;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

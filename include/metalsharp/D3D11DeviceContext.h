@@ -12,18 +12,18 @@
 
 #pragma once
 
+#include <array>
 #include <d3d/D3D11.h>
+#include <memory>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/PipelineState.h>
-#include <array>
-#include <memory>
 
 namespace metalsharp {
 
 class D3D11Device;
 
 class D3D11DeviceContext : public ID3D11DeviceContext {
-public:
+  public:
     explicit D3D11DeviceContext(D3D11Device& device);
     virtual ~D3D11DeviceContext() = default;
 
@@ -36,18 +36,21 @@ public:
     STDMETHOD(SetPrivateDataInterface)(const GUID& guid, const IUnknown* pData) override;
 
     STDMETHOD(IASetInputLayout)(ID3D11InputLayout* pInputLayout) override;
-    STDMETHOD(IASetVertexBuffers)(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers, const UINT* pStrides, const UINT* pOffsets) override;
+    STDMETHOD(IASetVertexBuffers)(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers,
+                                  const UINT* pStrides, const UINT* pOffsets) override;
     STDMETHOD(IASetIndexBuffer)(ID3D11Buffer* pIndexBuffer, DXGI_FORMAT Format, UINT Offset) override;
     STDMETHOD(IASetPrimitiveTopology)(UINT Topology) override;
 
     STDMETHOD(VSSetShader)(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const*, UINT) override;
     STDMETHOD(VSSetConstantBuffers)(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override;
-    STDMETHOD(VSSetShaderResources)(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override;
+    STDMETHOD(VSSetShaderResources)(UINT StartSlot, UINT NumViews,
+                                    ID3D11ShaderResourceView* const* ppShaderResourceViews) override;
     STDMETHOD(VSSetSamplers)(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override;
 
     STDMETHOD(PSSetShader)(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const*, UINT) override;
     STDMETHOD(PSSetConstantBuffers)(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override;
-    STDMETHOD(PSSetShaderResources)(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override;
+    STDMETHOD(PSSetShaderResources)(UINT StartSlot, UINT NumViews,
+                                    ID3D11ShaderResourceView* const* ppShaderResourceViews) override;
     STDMETHOD(PSSetSamplers)(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override;
 
     STDMETHOD(GSSetShader)(ID3D11GeometryShader* pShader, ID3D11ClassInstance* const*, UINT) override;
@@ -59,8 +62,11 @@ public:
     STDMETHOD(CSSetSamplers)(UINT, UINT, ID3D11SamplerState* const*) override;
     STDMETHOD(Dispatch)(UINT, UINT, UINT) override;
 
-    STDMETHOD(OMSetRenderTargets)(UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews, ID3D11DepthStencilView* pDepthStencilView) override;
-    STDMETHOD(OMSetRenderTargetsAndUnorderedAccessViews)(UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*, UINT, UINT, ID3D11UnorderedAccessView* const*, const UINT*) override;
+    STDMETHOD(OMSetRenderTargets)(UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews,
+                                  ID3D11DepthStencilView* pDepthStencilView) override;
+    STDMETHOD(OMSetRenderTargetsAndUnorderedAccessViews)(UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*,
+                                                         UINT, UINT, ID3D11UnorderedAccessView* const*,
+                                                         const UINT*) override;
     STDMETHOD(OMSetBlendState)(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) override;
     STDMETHOD(OMSetDepthStencilState)(ID3D11DepthStencilState* pDepthStencilState, UINT StencilRef) override;
 
@@ -69,21 +75,26 @@ public:
     STDMETHOD(RSSetScissorRects)(UINT NumRects, const RECT* pRects) override;
 
     STDMETHOD(ClearRenderTargetView)(ID3D11RenderTargetView* pRenderTargetView, const FLOAT ColorRGBA[4]) override;
-    STDMETHOD(ClearDepthStencilView)(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) override;
+    STDMETHOD(ClearDepthStencilView)(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth,
+                                     UINT8 Stencil) override;
 
     STDMETHOD(DrawIndexed)(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override;
     STDMETHOD(Draw)(UINT VertexCount, UINT StartVertexLocation) override;
     STDMETHOD(DrawIndexedInstanced)(UINT, UINT, UINT, INT, UINT) override;
     STDMETHOD(DrawInstanced)(UINT, UINT, UINT, UINT) override;
 
-    STDMETHOD(Map)(ID3D11Resource* pResource, UINT Subresource, UINT MapType, UINT MapFlags, void* pMappedResource) override;
+    STDMETHOD(Map)(ID3D11Resource* pResource, UINT Subresource, UINT MapType, UINT MapFlags,
+                   void* pMappedResource) override;
     STDMETHOD(Unmap)(ID3D11Resource* pResource, UINT Subresource) override;
 
     STDMETHOD(GenerateMips)(ID3D11ShaderResourceView* pShaderResourceView) override;
     STDMETHOD(CopyResource)(ID3D11Resource* pDstResource, ID3D11Resource* pSrcResource) override;
-    STDMETHOD(UpdateSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, const void* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) override;
-    STDMETHOD(CopySubresourceRegion)(ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const void* pSrcBox) override;
-    STDMETHOD(ResolveSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, ID3D11Resource* pSrcResource, UINT SrcSubresource, DXGI_FORMAT Format) override;
+    STDMETHOD(UpdateSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, const void* pDstBox,
+                                 const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) override;
+    STDMETHOD(CopySubresourceRegion)(ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ,
+                                     ID3D11Resource* pSrcResource, UINT SrcSubresource, const void* pSrcBox) override;
+    STDMETHOD(ResolveSubresource)(ID3D11Resource* pDstResource, UINT DstSubresource, ID3D11Resource* pSrcResource,
+                                  UINT SrcSubresource, DXGI_FORMAT Format) override;
     STDMETHOD(Begin)(ID3D11Query* pQuery) override;
     STDMETHOD(End)(ID3D11Query* pQuery) override;
     STDMETHOD(GetData)(ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) override;
@@ -92,9 +103,10 @@ public:
     STDMETHOD(FinishCommandList)(INT RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override;
     STDMETHOD(ExecuteCommandList)(ID3D11CommandList* pCommandList, INT RestoreContextState) override;
 
-private:
+  private:
     void ensurePipeline();
-    void commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation, INT baseVertexLocation, bool indexed);
+    void commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation, INT baseVertexLocation,
+                    bool indexed);
 
     ULONG m_refCount = 1;
     D3D11Device& m_device;
@@ -136,8 +148,8 @@ private:
 
     std::unique_ptr<PipelineState> m_cachedPipeline;
     D3D11_VIEWPORT m_viewport = {};
-    FLOAT m_blendFactor[4] = {1,1,1,1};
+    FLOAT m_blendFactor[4] = {1, 1, 1, 1};
     UINT m_sampleMask = 0xFFFFFFFF;
 };
 
-}
+} // namespace metalsharp

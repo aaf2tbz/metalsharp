@@ -6,14 +6,16 @@
 /// names and download URLs without depending on an HTTP or JSON library.
 
 #include "metalsharp/UpdateChecker.h"
-#include <sstream>
 #include <algorithm>
+#include <sstream>
 
 namespace metalsharp {
 
 bool Version::operator>(const Version& o) const {
-    if (major != o.major) return major > o.major;
-    if (minor != o.minor) return minor > o.minor;
+    if (major != o.major)
+        return major > o.major;
+    if (minor != o.minor)
+        return minor > o.minor;
     return patch > o.patch;
 }
 
@@ -27,18 +29,21 @@ bool Version::operator>=(const Version& o) const {
 
 std::string Version::toString() const {
     std::string s = std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
-    if (!prerelease.empty()) s += "-" + prerelease;
+    if (!prerelease.empty())
+        s += "-" + prerelease;
     return s;
 }
 
 Version Version::parse(const std::string& s) {
     Version v;
     std::string input = s;
-    if (input.size() > 0 && input[0] == 'v') input = input.substr(1);
+    if (input.size() > 0 && input[0] == 'v')
+        input = input.substr(1);
 
     size_t dashPos = input.find('-');
     std::string versionPart = (dashPos != std::string::npos) ? input.substr(0, dashPos) : input;
-    if (dashPos != std::string::npos) v.prerelease = input.substr(dashPos + 1);
+    if (dashPos != std::string::npos)
+        v.prerelease = input.substr(dashPos + 1);
 
     std::istringstream ss(versionPart);
     std::string token;
@@ -46,10 +51,14 @@ Version Version::parse(const std::string& s) {
     while (std::getline(ss, token, '.')) {
         try {
             uint32_t val = static_cast<uint32_t>(std::stoul(token));
-            if (idx == 0) v.major = val;
-            else if (idx == 1) v.minor = val;
-            else if (idx == 2) v.patch = val;
-        } catch (...) {}
+            if (idx == 0)
+                v.major = val;
+            else if (idx == 1)
+                v.minor = val;
+            else if (idx == 2)
+                v.patch = val;
+        } catch (...) {
+        }
         idx++;
     }
 
@@ -75,13 +84,17 @@ UpdateInfo UpdateChecker::parseGitHubRelease(const std::string& json, const Vers
     auto extractJsonString = [](const std::string& j, const std::string& key) -> std::string {
         std::string search = "\"" + key + "\"";
         auto pos = j.find(search);
-        if (pos == std::string::npos) return "";
+        if (pos == std::string::npos)
+            return "";
         auto colon = j.find(':', pos + search.length());
-        if (colon == std::string::npos) return "";
+        if (colon == std::string::npos)
+            return "";
         auto openQuote = j.find('"', colon + 1);
-        if (openQuote == std::string::npos) return "";
+        if (openQuote == std::string::npos)
+            return "";
         auto closeQuote = j.find('"', openQuote + 1);
-        if (closeQuote == std::string::npos) return "";
+        if (closeQuote == std::string::npos)
+            return "";
         return j.substr(openQuote + 1, closeQuote - openQuote - 1);
     };
 
@@ -110,4 +123,4 @@ UpdateInfo UpdateChecker::checkForUpdates(const std::string& repo) {
     return parseGitHubRelease(json, current);
 }
 
-}
+} // namespace metalsharp

@@ -9,9 +9,9 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
-#include <mutex>
 
 namespace metalsharp {
 namespace win32 {
@@ -23,7 +23,7 @@ struct SSLSession {
 };
 
 class SecureTransport {
-public:
+  public:
     static SecureTransport& instance();
 
     void* createSSLSession(int socketFd);
@@ -34,7 +34,7 @@ public:
 
     void initialize();
 
-private:
+  private:
     SecureTransport() = default;
 
     mutable std::mutex m_mutex;
@@ -42,5 +42,5 @@ private:
     int m_nextHandle = 10000;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

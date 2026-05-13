@@ -69,18 +69,20 @@
 ///   All PE images are mmap'd with MAP_PRIVATE|MAP_ANONYMOUS|MAP_JIT.
 ///   Destruction unmap()s all loaded modules. The singleton (s_instance) pointer
 ///   is set in the constructor and cleared in the destructor.
-#include <metalsharp/PELoader.h>
-#include <metalsharp/PEHeader.h>
-#include <metalsharp/Logger.h>
 #include <cstring>
 #include <fstream>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PEHeader.h>
+#include <metalsharp/PELoader.h>
 #include <sys/mman.h>
 
 namespace metalsharp {
 
 PELoader* PELoader::s_instance = nullptr;
 
-PELoader::PELoader() { s_instance = this; }
+PELoader::PELoader() {
+    s_instance = this;
+}
 PELoader::~PELoader() {
     if (m_mainModule.base) {
         munmap(m_mainModule.base, m_mainModule.size);
@@ -95,7 +97,8 @@ PELoader::~PELoader() {
 
 void PELoader::registerShim(const std::string& dllName, ShimLibrary&& shim) {
     std::string lower = dllName;
-    for (auto& c : lower) c = tolower(c);
+    for (auto& c : lower)
+        c = tolower(c);
     m_shims[lower] = std::move(shim);
 }
 
@@ -103,12 +106,12 @@ void* PELoader::resolveFunction(const std::string& dllName, const std::string& f
     return resolveImport(dllName, funcName, 0xFFFF);
 }
 
- bool PELoader::load(const std::string& path) {
-     MS_INFO("PELoader: loading %s", path.c_str());
- 
-     m_mainModule.name = path;
+bool PELoader::load(const std::string& path) {
+    MS_INFO("PELoader: loading %s", path.c_str());
 
-     std::ifstream file(path, std::ios::binary | std::ios::ate);
+    m_mainModule.name = path;
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         MS_INFO("PELoader: failed to open %s", path.c_str());
         return false;
@@ -123,24 +126,32 @@ void* PELoader::resolveFunction(const std::string& dllName, const std::string& f
         return false;
     }
 
-    if (!parsePE(m_mainModule, data.data(), fileSize)) return false;
-    if (!mapSections(m_mainModule, data.data(), fileSize)) return false;
-    if (!processRelocations(m_mainModule)) return false;
-    if (!resolveImports(m_mainModule)) return false;
+    if (!parsePE(m_mainModule, data.data(), fileSize))
+        return false;
+    if (!mapSections(m_mainModule, data.data(), fileSize))
+        return false;
+    if (!processRelocations(m_mainModule))
+        return false;
+    if (!resolveImports(m_mainModule))
+        return false;
     resolveDelayImports(m_mainModule);
     applySectionProtections(m_mainModule);
     processTLS(m_mainModule, DLL_PROCESS_ATTACH);
 
-    MS_INFO("PELoader: loaded %s at %p, entry %p, size %u",
-            path.c_str(), m_mainModule.base, m_mainModule.entryPoint, m_mainModule.size);
+    MS_INFO("PELoader: loaded %s at %p, entry %p, size %u", path.c_str(), m_mainModule.base, m_mainModule.entryPoint,
+            m_mainModule.size);
     return true;
 }
 
 bool PELoader::loadFromMemory(const uint8_t* data, size_t size) {
-    if (!parsePE(m_mainModule, data, size)) return false;
-    if (!mapSections(m_mainModule, data, size)) return false;
-    if (!processRelocations(m_mainModule)) return false;
-    if (!resolveImports(m_mainModule)) return false;
+    if (!parsePE(m_mainModule, data, size))
+        return false;
+    if (!mapSections(m_mainModule, data, size))
+        return false;
+    if (!processRelocations(m_mainModule))
+        return false;
+    if (!resolveImports(m_mainModule))
+        return false;
     resolveDelayImports(m_mainModule);
     applySectionProtections(m_mainModule);
     processTLS(m_mainModule, DLL_PROCESS_ATTACH);
@@ -170,8 +181,7 @@ bool PELoader::parsePE(LoadedModule& module, const uint8_t* rawData, size_t rawS
         return false;
     }
 
-    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(
-        rawData + dos->e_lfanew + 4);
+    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(rawData + dos->e_lfanew + 4);
 
     if (fileHeader->Machine != IMAGE_FILE_MACHINE_AMD64) {
         MS_INFO("PELoader: unsupported machine type: 0x%04X (only AMD64 supported)", fileHeader->Machine);
@@ -183,8 +193,8 @@ bool PELoader::parsePE(LoadedModule& module, const uint8_t* rawData, size_t rawS
         return false;
     }
 
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        rawData + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(rawData + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
     if (optHeader->Magic != IMAGE_OPTIONAL_MAGIC_PE32PLUS) {
         MS_INFO("PELoader: not PE32+ (magic: 0x%04X)", optHeader->Magic);
@@ -198,20 +208,17 @@ bool PELoader::parsePE(LoadedModule& module, const uint8_t* rawData, size_t rawS
     module.size = optHeader->SizeOfImage;
     module.isPE = true;
 
-    MS_INFO("PELoader: PE32+ image, %u sections, image base 0x%llX, size %u",
-            fileHeader->NumberOfSections,
-            (unsigned long long)optHeader->ImageBase,
-            optHeader->SizeOfImage);
+    MS_INFO("PELoader: PE32+ image, %u sections, image base 0x%llX, size %u", fileHeader->NumberOfSections,
+            (unsigned long long)optHeader->ImageBase, optHeader->SizeOfImage);
 
     return true;
 }
 
 bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t rawSize) {
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(rawData);
-    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(
-        rawData + dos->e_lfanew + 4);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        rawData + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(rawData + dos->e_lfanew + 4);
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(rawData + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
     auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
         rawData + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER) + fileHeader->SizeOfOptionalHeader);
 
@@ -223,11 +230,8 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
     int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
 #endif
 
-    uint8_t* mem = reinterpret_cast<uint8_t*>(mmap(
-        nullptr, imageSize,
-        PROT_READ | PROT_WRITE | PROT_EXEC,
-        mmapFlags,
-        -1, 0));
+    uint8_t* mem =
+        reinterpret_cast<uint8_t*>(mmap(nullptr, imageSize, PROT_READ | PROT_WRITE | PROT_EXEC, mmapFlags, -1, 0));
 
     if (mem == MAP_FAILED) {
         MS_INFO("PELoader: mmap failed for image (%u bytes), errno=%d", imageSize, errno);
@@ -237,12 +241,14 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
     memset(mem, 0, imageSize);
 
     uint32_t headerSize = alignUp(optHeader->SizeOfHeaders, m_fileAlignment);
-    if (headerSize > rawSize) headerSize = rawSize;
+    if (headerSize > rawSize)
+        headerSize = rawSize;
     memcpy(mem, rawData, headerSize);
 
     for (uint16_t i = 0; i < fileHeader->NumberOfSections; i++) {
         const auto& sec = sections[i];
-        if (sec.SizeOfRawData == 0) continue;
+        if (sec.SizeOfRawData == 0)
+            continue;
 
         uint32_t dstOffset = sec.VirtualAddress;
         uint32_t srcOffset = sec.PointerToRawData;
@@ -260,8 +266,8 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
         }
 
         const char* name = reinterpret_cast<const char*>(sec.Name);
-        MS_INFO("PELoader: mapped section %.8s at RVA 0x%X (0x%X bytes, raw 0x%X)",
-                name, sec.VirtualAddress, sec.VirtualSize, sec.SizeOfRawData);
+        MS_INFO("PELoader: mapped section %.8s at RVA 0x%X (0x%X bytes, raw 0x%X)", name, sec.VirtualAddress,
+                sec.VirtualSize, sec.SizeOfRawData);
     }
 
     module.base = mem;
@@ -275,13 +281,13 @@ bool PELoader::mapSections(LoadedModule& module, const uint8_t* rawData, size_t 
 }
 
 bool PELoader::processRelocations(LoadedModule& module) {
-    if (!module.base) return false;
+    if (!module.base)
+        return false;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(
-        module.base + dos->e_lfanew + 4);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(module.base + dos->e_lfanew + 4);
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
     if (optHeader->DataDirectory[DIRECTORY_BASERELOC].Size == 0) {
         MS_INFO("PELoader: no relocations needed");
@@ -317,26 +323,27 @@ bool PELoader::processRelocations(LoadedModule& module) {
             }
         }
 
-        reloc = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
-            reinterpret_cast<uint8_t*>(reloc) + reloc->SizeOfBlock);
+        reloc = reinterpret_cast<IMAGE_BASE_RELOCATION*>(reinterpret_cast<uint8_t*>(reloc) + reloc->SizeOfBlock);
     }
 
     MS_INFO("PELoader: processed %d relocations (delta 0x%llX)", relocCount, (unsigned long long)m_delta);
 
-    if (!initCFG(module)) return false;
+    if (!initCFG(module))
+        return false;
 
     return true;
 }
 
 bool PELoader::initCFG(LoadedModule& module) {
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
     uint32_t lcRVA = optHeader->DataDirectory[DIRECTORY_LOAD_CONFIG].VirtualAddress;
     uint32_t lcSize = optHeader->DataDirectory[DIRECTORY_LOAD_CONFIG].Size;
 
-    if (!lcRVA || lcSize < 128) return true;
+    if (!lcRVA || lcSize < 128)
+        return true;
 
     auto* lc = reinterpret_cast<uint8_t*>(module.base + lcRVA);
 
@@ -345,29 +352,31 @@ bool PELoader::initCFG(LoadedModule& module) {
 
     if (!s_cfgAllowFn) {
 #ifdef __APPLE__
-        s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
+        s_cfgAllowFn =
+            mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
 #else
-        s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        s_cfgAllowFn = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
         if (s_cfgAllowFn == MAP_FAILED) {
             s_cfgAllowFn = nullptr;
             return true;
         }
-        uint8_t code[] = { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 };
+        uint8_t code[] = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3};
         memcpy(s_cfgAllowFn, code, sizeof(code));
     }
 
     auto writeCFPtr = [&](uint64_t fieldRVA, const char* name) {
-        if (!fieldRVA || fieldRVA >= module.size) return;
+        if (!fieldRVA || fieldRVA >= module.size)
+            return;
         uint64_t* ptr = reinterpret_cast<uint64_t*>(module.base + fieldRVA);
         MS_INFO("PELoader: CFG %s at RVA 0x%llX set to allow-all stub", name, (unsigned long long)fieldRVA);
         *ptr = reinterpret_cast<uint64_t>(s_cfgAllowFn);
     };
 
-    if (guardCFCheckFPRVA) writeCFPtr(guardCFCheckFPRVA, "GuardCFCheckFP");
-    if (guardCFDispatchFPRVA) writeCFPtr(guardCFDispatchFPRVA, "GuardCFDispatchFP");
+    if (guardCFCheckFPRVA)
+        writeCFPtr(guardCFCheckFPRVA, "GuardCFCheckFP");
+    if (guardCFDispatchFPRVA)
+        writeCFPtr(guardCFDispatchFPRVA, "GuardCFDispatchFP");
 
     return true;
 }
@@ -375,11 +384,12 @@ bool PELoader::initCFG(LoadedModule& module) {
 void* PELoader::s_cfgAllowFn = nullptr;
 
 bool PELoader::resolveImports(LoadedModule& module) {
-    if (!module.base) return false;
+    if (!module.base)
+        return false;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
     if (optHeader->DataDirectory[DIRECTORY_IMPORT].Size == 0) {
         MS_INFO("PELoader: no imports");
@@ -396,9 +406,7 @@ bool PELoader::resolveImports(LoadedModule& module) {
 
         auto* iat = reinterpret_cast<uint64_t*>(module.base + importDesc->FirstThunk);
 
-        uint32_t thunkRVA = importDesc->OriginalFirstThunk
-            ? importDesc->OriginalFirstThunk
-            : importDesc->FirstThunk;
+        uint32_t thunkRVA = importDesc->OriginalFirstThunk ? importDesc->OriginalFirstThunk : importDesc->FirstThunk;
 
         auto* thunk = reinterpret_cast<uint64_t*>(module.base + thunkRVA);
 
@@ -418,8 +426,7 @@ bool PELoader::resolveImports(LoadedModule& module) {
                 isOrdinal = true;
                 funcPtr = resolveImport(dllName, "", ordinal);
             } else {
-                auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(
-                    module.base + (entry & 0x7FFFFFFF));
+                auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(module.base + (entry & 0x7FFFFFFF));
                 missingName = reinterpret_cast<const char*>(ibn->Name);
                 funcPtr = resolveImport(dllName, missingName, 0xFFFF);
             }
@@ -450,7 +457,8 @@ bool PELoader::resolveImports(LoadedModule& module) {
 
 void* PELoader::resolveImport(const std::string& dllName, const std::string& funcName, uint16_t ordinal) {
     std::string lower = dllName;
-    for (auto& c : lower) c = tolower(c);
+    for (auto& c : lower)
+        c = tolower(c);
 
     auto shimIt = m_shims.find(lower);
     if (shimIt != m_shims.end()) {
@@ -484,13 +492,15 @@ void* PELoader::resolveImport(const std::string& dllName, const std::string& fun
 }
 
 void* PELoader::getExportAddress(LoadedModule& module, const std::string& funcName, uint16_t ordinal) {
-    if (!module.base) return nullptr;
+    if (!module.base)
+        return nullptr;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
-    if (optHeader->DataDirectory[DIRECTORY_EXPORT].Size == 0) return nullptr;
+    if (optHeader->DataDirectory[DIRECTORY_EXPORT].Size == 0)
+        return nullptr;
 
     uint32_t exportRVA = optHeader->DataDirectory[DIRECTORY_EXPORT].VirtualAddress;
     uint32_t exportSize = optHeader->DataDirectory[DIRECTORY_EXPORT].Size;
@@ -520,7 +530,8 @@ void* PELoader::getExportAddress(LoadedModule& module, const std::string& funcNa
         }
     }
 
-    if (funcRVA == 0) return nullptr;
+    if (funcRVA == 0)
+        return nullptr;
 
     if (funcRVA >= exportRVA && funcRVA < exportRVA + exportSize) {
         const char* fwdStr = reinterpret_cast<const char*>(module.base + funcRVA);
@@ -531,16 +542,19 @@ void* PELoader::getExportAddress(LoadedModule& module, const std::string& funcNa
 }
 
 void* PELoader::resolveForwardedExport(const char* forwardString) {
-    if (!forwardString) return nullptr;
+    if (!forwardString)
+        return nullptr;
 
     std::string fwd(forwardString);
     auto dot = fwd.find('.');
-    if (dot == std::string::npos) return nullptr;
+    if (dot == std::string::npos)
+        return nullptr;
 
     std::string dllName = fwd.substr(0, dot) + ".dll";
     std::string funcName = fwd.substr(dot + 1);
 
-    for (auto& c : dllName) c = tolower(c);
+    for (auto& c : dllName)
+        c = tolower(c);
 
     auto it = m_loadedDLLs.find(dllName);
     if (it != m_loadedDLLs.end()) {
@@ -557,26 +571,30 @@ void* PELoader::resolveForwardedExport(const char* forwardString) {
 }
 
 void PELoader::processTLS(LoadedModule& module, uint32_t reason) {
-    if (!module.base) return;
+    if (!module.base)
+        return;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
-    if (optHeader->DataDirectory[DIRECTORY_TLS].Size == 0) return;
+    if (optHeader->DataDirectory[DIRECTORY_TLS].Size == 0)
+        return;
 
     uint32_t tlsRVA = optHeader->DataDirectory[DIRECTORY_TLS].VirtualAddress;
     auto* tlsDir = reinterpret_cast<IMAGE_TLS_DIRECTORY64*>(module.base + tlsRVA);
 
     uint64_t callbacksVA = tlsDir->AddressOfCallBacks;
-    if (callbacksVA == 0) return;
+    if (callbacksVA == 0)
+        return;
 
     uint64_t callbacksRVA;
     if (callbacksVA >= m_imageBase && callbacksVA < m_imageBase + module.size) {
         callbacksRVA = callbacksVA - m_imageBase;
     } else {
         callbacksRVA = callbacksVA - reinterpret_cast<uint64_t>(module.base);
-        if (callbacksRVA >= module.size) return;
+        if (callbacksRVA >= module.size)
+            return;
     }
 
     auto** callbacks = reinterpret_cast<void**>(module.base + callbacksRVA);
@@ -592,14 +610,17 @@ void PELoader::processTLS(LoadedModule& module, uint32_t reason) {
 }
 
 bool PELoader::resolveDelayImports(LoadedModule& module) {
-    if (!module.base) return true;
+    if (!module.base)
+        return true;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* optHeader = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-        module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+    auto* optHeader =
+        reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
 
-    if (optHeader->NumberOfRvaAndSizes <= 13) return true;
-    if (optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].Size == 0) return true;
+    if (optHeader->NumberOfRvaAndSizes <= 13)
+        return true;
+    if (optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].Size == 0)
+        return true;
 
     uint32_t delayRVA = optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].VirtualAddress;
     uint32_t delaySize = optHeader->DataDirectory[DIRECTORY_DELAY_IMPORT].Size;
@@ -607,10 +628,12 @@ bool PELoader::resolveDelayImports(LoadedModule& module) {
 
     size_t count = delaySize / sizeof(IMAGE_DELAY_IMPORT_DESCRIPTOR);
     for (size_t i = 0; i < count; i++) {
-        if (desc[i].rvaDLLName == 0) break;
+        if (desc[i].rvaDLLName == 0)
+            break;
 
         const char* dllNameStr = reinterpret_cast<const char*>(module.base + desc[i].rvaDLLName);
-        if (!dllNameStr || !dllNameStr[0]) break;
+        if (!dllNameStr || !dllNameStr[0])
+            break;
 
         MS_INFO("PELoader: resolving delay-load import: %s", dllNameStr);
 
@@ -642,25 +665,28 @@ bool PELoader::resolveDelayImports(LoadedModule& module) {
 }
 
 void PELoader::applySectionProtections(LoadedModule& module) {
-    if (!module.base) return;
+    if (!module.base)
+        return;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module.base);
-    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(
-        module.base + dos->e_lfanew + 4);
+    auto* fileHeader = reinterpret_cast<const IMAGE_FILE_HEADER*>(module.base + dos->e_lfanew + 4);
     auto* sections = reinterpret_cast<const IMAGE_SECTION_HEADER*>(
         module.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER) + fileHeader->SizeOfOptionalHeader);
 
     for (uint16_t i = 0; i < fileHeader->NumberOfSections; i++) {
         auto& sec = sections[i];
-        if (sec.VirtualSize == 0 || sec.VirtualAddress == 0) continue;
+        if (sec.VirtualSize == 0 || sec.VirtualAddress == 0)
+            continue;
 
         uint32_t pageRVA = sec.VirtualAddress;
         uint32_t pageSize = alignUp(sec.VirtualSize, 4096);
         uint32_t chars = sec.Characteristics;
 
         int prot = PROT_READ;
-        if (chars & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
-        if (chars & IMAGE_SCN_MEM_WRITE) prot |= PROT_WRITE;
+        if (chars & IMAGE_SCN_MEM_EXECUTE)
+            prot |= PROT_EXEC;
+        if (chars & IMAGE_SCN_MEM_WRITE)
+            prot |= PROT_WRITE;
 
         if ((chars & IMAGE_SCN_CNT_CODE) && !(chars & IMAGE_SCN_MEM_WRITE)) {
             prot |= PROT_EXEC;
@@ -683,15 +709,18 @@ void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) 
     };
 
     for (auto& [name, mod] : m_loadedDLLs) {
-        if (!mod.base || !mod.isPE) continue;
+        if (!mod.base || !mod.isPE)
+            continue;
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(mod.base);
-        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-            mod.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
-        if (opt->DataDirectory[DIRECTORY_EXCEPTION].Size == 0) continue;
+        auto* opt =
+            reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(mod.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+        if (opt->DataDirectory[DIRECTORY_EXCEPTION].Size == 0)
+            continue;
 
         uint64_t modBase = reinterpret_cast<uint64_t>(mod.base);
         uint64_t modEnd = modBase + mod.size;
-        if (controlPc < modBase || controlPc >= modEnd) continue;
+        if (controlPc < modBase || controlPc >= modEnd)
+            continue;
 
         uint32_t exceptRva = opt->DataDirectory[DIRECTORY_EXCEPTION].VirtualAddress;
         uint32_t exceptSize = opt->DataDirectory[DIRECTORY_EXCEPTION].Size;
@@ -701,9 +730,10 @@ void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) 
         uint32_t rva = static_cast<uint32_t>(controlPc - modBase);
         for (size_t i = 0; i < count; i++) {
             if (rva >= funcs[i].BeginAddress && rva < funcs[i].EndAddress) {
-                if (outImageBase) *outImageBase = modBase;
-                MS_INFO("PELoader: lookupFunctionEntry(0x%llX) found in %s at RVA 0x%X",
-                    (unsigned long long)controlPc, name.c_str(), rva);
+                if (outImageBase)
+                    *outImageBase = modBase;
+                MS_INFO("PELoader: lookupFunctionEntry(0x%llX) found in %s at RVA 0x%X", (unsigned long long)controlPc,
+                        name.c_str(), rva);
                 return const_cast<RuntimeFunction*>(&funcs[i]);
             }
         }
@@ -711,8 +741,8 @@ void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) 
 
     if (m_mainModule.base && m_mainModule.isPE) {
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(m_mainModule.base);
-        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-            m_mainModule.base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(m_mainModule.base + dos->e_lfanew + 4 +
+                                                                     sizeof(IMAGE_FILE_HEADER));
         if (opt->DataDirectory[DIRECTORY_EXCEPTION].Size > 0) {
             uint64_t modBase = reinterpret_cast<uint64_t>(m_mainModule.base);
             uint32_t exceptRva = opt->DataDirectory[DIRECTORY_EXCEPTION].VirtualAddress;
@@ -723,16 +753,18 @@ void* PELoader::lookupFunctionEntry(uint64_t controlPc, uint64_t* outImageBase) 
             uint32_t rva = static_cast<uint32_t>(controlPc - modBase);
             for (size_t i = 0; i < count; i++) {
                 if (rva >= funcs[i].BeginAddress && rva < funcs[i].EndAddress) {
-                    if (outImageBase) *outImageBase = modBase;
+                    if (outImageBase)
+                        *outImageBase = modBase;
                     MS_INFO("PELoader: lookupFunctionEntry(0x%llX) found in main module at RVA 0x%X",
-                        (unsigned long long)controlPc, rva);
+                            (unsigned long long)controlPc, rva);
                     return const_cast<RuntimeFunction*>(&funcs[i]);
                 }
             }
         }
     }
 
-    if (outImageBase) *outImageBase = 0;
+    if (outImageBase)
+        *outImageBase = 0;
     return nullptr;
 }
 
@@ -759,13 +791,17 @@ bool PELoader::loadDependency(const std::string& dllName, LoadedModule& outModul
 
 LoadedModule* PELoader::getModule(const std::string& name) {
     std::string lower = name;
-    for (auto& c : lower) c = tolower(c);
+    for (auto& c : lower)
+        c = tolower(c);
 
-    if (m_loadedDLLs.count(lower)) return &m_loadedDLLs[lower];
+    if (m_loadedDLLs.count(lower))
+        return &m_loadedDLLs[lower];
     return nullptr;
 }
 
-PELoader* PELoader::instance() { return s_instance; }
+PELoader* PELoader::instance() {
+    return s_instance;
+}
 
 void PELoader::addSearchPath(const std::string& path) {
     m_searchPaths.push_back(path);
@@ -773,7 +809,8 @@ void PELoader::addSearchPath(const std::string& path) {
 
 HMODULE PELoader::loadLibrary(const std::string& dllName) {
     std::string lower = dllName;
-    for (auto& c : lower) c = tolower(c);
+    for (auto& c : lower)
+        c = tolower(c);
 
     auto existing = m_loadedDLLs.find(lower);
     if (existing != m_loadedDLLs.end()) {
@@ -781,7 +818,7 @@ HMODULE PELoader::loadLibrary(const std::string& dllName) {
     }
 
     std::string lowerWithDll = lower;
-    if (lower.size() < 4 || lower.substr(lower.size()-4) != ".dll") {
+    if (lower.size() < 4 || lower.substr(lower.size() - 4) != ".dll") {
         lowerWithDll = lower + ".dll";
     }
 
@@ -844,19 +881,25 @@ bool PELoader::loadDLL(const std::string& path, const std::string& dllName) {
     MS_INFO("PELoader: loading DLL %s from %s", dllName.c_str(), path.c_str());
 
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
     size_t fileSize = file.tellg();
     file.seekg(0);
     std::vector<uint8_t> data(fileSize);
-    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize)) return false;
+    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize))
+        return false;
 
     LoadedModule mod;
     mod.name = dllName;
-    if (!parsePE(mod, data.data(), fileSize)) return false;
-    if (!mapSections(mod, data.data(), fileSize)) return false;
-    if (!processRelocations(mod)) return false;
-    if (!resolveImports(mod)) return false;
+    if (!parsePE(mod, data.data(), fileSize))
+        return false;
+    if (!mapSections(mod, data.data(), fileSize))
+        return false;
+    if (!processRelocations(mod))
+        return false;
+    if (!resolveImports(mod))
+        return false;
     resolveDelayImports(mod);
 
     m_loadedDLLs[dllName] = std::move(mod);
@@ -879,4 +922,4 @@ bool PELoader::loadDLL(const std::string& path, const std::string& dllName) {
     return true;
 }
 
-}
+} // namespace metalsharp

@@ -42,7 +42,7 @@ struct MTLCommandQueue;
 namespace metalsharp {
 
 class MetalDevice {
-public:
+  public:
     static MetalDevice* create();
 
     void* nativeDevice() const;
@@ -52,7 +52,7 @@ public:
     MetalDevice(const MetalDevice&) = delete;
     MetalDevice& operator=(const MetalDevice&) = delete;
 
-private:
+  private:
     MetalDevice();
     bool init();
 
@@ -61,7 +61,7 @@ private:
 };
 
 class MetalCommandBuffer {
-public:
+  public:
     explicit MetalCommandBuffer(MetalDevice& device);
     ~MetalCommandBuffer();
 
@@ -76,13 +76,13 @@ public:
     MetalCommandBuffer(const MetalCommandBuffer&) = delete;
     MetalCommandBuffer& operator=(const MetalCommandBuffer&) = delete;
 
-private:
+  private:
     struct Impl;
     Impl* m_impl;
 };
 
 class MetalBuffer {
-public:
+  public:
     static MetalBuffer* create(MetalDevice& device, size_t size, const void* data);
     ~MetalBuffer();
 
@@ -90,7 +90,7 @@ public:
     void* contents();
     size_t size() const;
 
-private:
+  private:
     MetalBuffer();
     bool init(MetalDevice& device, size_t size, const void* data);
 
@@ -99,10 +99,13 @@ private:
 };
 
 class MetalTexture {
-public:
-    static MetalTexture* create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage, uint32_t mipLevels = 1);
-    static MetalTexture* create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels = 1, uint32_t sampleCount = 1);
-    static MetalTexture* create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels = 1);
+  public:
+    static MetalTexture* create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage,
+                                  uint32_t mipLevels = 1);
+    static MetalTexture* create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage,
+                                  uint32_t mipLevels = 1, uint32_t sampleCount = 1);
+    static MetalTexture* create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format,
+                                  uint32_t usage, uint32_t mipLevels = 1);
     ~MetalTexture();
 
     void* nativeTexture() const;
@@ -112,39 +115,40 @@ public:
     uint32_t mipLevels() const;
     uint32_t sampleCount() const;
 
-    void uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t width, uint32_t height, uint32_t depth = 1);
+    void uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t width,
+                    uint32_t height, uint32_t depth = 1);
 
-private:
+  private:
     MetalTexture();
     bool init1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage, uint32_t mipLevels);
-    bool init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels, uint32_t sampleCount);
-    bool init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels);
+    bool init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage,
+                uint32_t mipLevels, uint32_t sampleCount);
+    bool init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage,
+                uint32_t mipLevels);
 
     struct Impl;
     Impl* m_impl;
 };
 
 class MetalSampler {
-public:
-    static MetalSampler* create(MetalDevice& device,
-        uint32_t filter, uint32_t addressU, uint32_t addressV, uint32_t addressW,
-        float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc);
+  public:
+    static MetalSampler* create(MetalDevice& device, uint32_t filter, uint32_t addressU, uint32_t addressV,
+                                uint32_t addressW, float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc);
     ~MetalSampler();
 
     void* nativeSamplerState() const;
 
-private:
+  private:
     MetalSampler();
-    bool init(MetalDevice& device,
-        uint32_t filter, uint32_t addressU, uint32_t addressV, uint32_t addressW,
-        float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc);
+    bool init(MetalDevice& device, uint32_t filter, uint32_t addressU, uint32_t addressV, uint32_t addressW,
+              float mipLodBias, uint32_t maxAnisotropy, uint32_t comparisonFunc);
 
     struct Impl;
     Impl* m_impl;
 };
 
 class MetalFramebuffer {
-public:
+  public:
     MetalFramebuffer();
     ~MetalFramebuffer();
 
@@ -154,9 +158,9 @@ public:
 
     void* nativeRenderPassDescriptor() const;
 
-private:
+  private:
     struct Impl;
     Impl* m_impl;
 };
 
-}
+} // namespace metalsharp

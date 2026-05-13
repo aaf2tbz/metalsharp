@@ -9,10 +9,10 @@
 
 #pragma once
 
-#include <stdint.h>
 #include <stddef.h>
-#include <vector>
+#include <stdint.h>
 #include <string>
+#include <vector>
 
 namespace metalsharp {
 
@@ -61,14 +61,15 @@ struct ParsedDXBC {
 };
 
 class DXBCParser {
-public:
+  public:
     static bool parse(const uint8_t* data, size_t size, ParsedDXBC& out);
 
-private:
+  private:
     static bool parseContainer(const uint8_t* data, size_t size, ParsedDXBC& out);
     static bool parseBytecode(const uint32_t* tokens, size_t tokenCount, ParsedDXBC& out);
-    static bool parseSignature(const uint8_t* chunkData, size_t chunkSize, std::vector<DXBCSignatureElement>& out, const uint8_t* containerBase);
+    static bool parseSignature(const uint8_t* chunkData, size_t chunkSize, std::vector<DXBCSignatureElement>& out,
+                               const uint8_t* containerBase);
     static bool parseOperand(const uint32_t* tokens, size_t maxTokens, DXBCOperand& operand, size_t& tokensConsumed);
 };
 
-}
+} // namespace metalsharp

@@ -1,18 +1,20 @@
 /// @file metalsharp_unix.mm
 /// @brief Unix-side MetalSharp D3D11 backend (Objective-C++ Metal implementation).
 ///
-/// Implements the Metal backend that receives D3D11 calls from the PE side via unixlib thunks. Creates MTLDevice, MTLCommandQueue, MTLRenderPipelineState, and MTLTexture objects to fulfill D3D11 device, context, and resource requests.
+/// Implements the Metal backend that receives D3D11 calls from the PE side via unixlib thunks. Creates MTLDevice,
+/// MTLCommandQueue, MTLRenderPipelineState, and MTLTexture objects to fulfill D3D11 device, context, and resource
+/// requests.
+#import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
-#import <AppKit/AppKit.h>
 
+#include <mutex>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <unordered_map>
 #include <vector>
-#include <mutex>
 
 typedef long NTSTATUS;
 
@@ -21,7 +23,9 @@ typedef long NTSTATUS;
 static std::mutex g_mutex;
 static uint64_t g_next_handle = 0x1000;
 
-static uint64_t new_handle() { return ++g_next_handle; }
+static uint64_t new_handle() {
+    return ++g_next_handle;
+}
 
 struct MetalBuffer {
     id<MTLBuffer> buffer;
@@ -66,31 +70,31 @@ struct SwapChain {
 struct FrameState {
     id<MTLRenderPipelineState> pipeline;
     id<MTLDepthStencilState> depth_state;
-    
+
     id<MTLBuffer> vertex_buffers[16];
     uint32_t vertex_strides[16];
     uint32_t vertex_offsets[16];
     id<MTLBuffer> index_buffer;
     uint32_t index_format;
     uint32_t index_offset;
-    
+
     id<MTLBuffer> vs_constants[14];
     id<MTLBuffer> ps_constants[14];
     id<MTLTexture> vs_resources[128];
     id<MTLTexture> ps_resources[128];
     id<MTLSamplerState> vs_samplers[16];
     id<MTLSamplerState> ps_samplers[16];
-    
+
     id<MTLTexture> render_targets[8];
     id<MTLTexture> depth_target;
-    
+
     id<MTLFunction> vs_function;
     id<MTLFunction> ps_function;
     bool needs_pipeline_update;
-    
+
     float viewport_x, viewport_y, viewport_w, viewport_h, viewport_min, viewport_max;
     bool has_viewport;
-    
+
     uint32_t primitive_topology;
     bool in_render_pass;
     id<MTLCommandBuffer> command_buffer;
@@ -110,43 +114,70 @@ static std::unordered_map<uint64_t, MetalPipeline> g_pipelines;
 
 static MTLPrimitiveType to_mtl_primitive(uint32_t topo) {
     switch (topo) {
-        case 1: return MTLPrimitiveTypePoint;
-        case 2: return MTLPrimitiveTypeLine;
-        case 3: return MTLPrimitiveTypeLineStrip;
-        case 4: return MTLPrimitiveTypeTriangle;
-        case 5: return MTLPrimitiveTypeTriangleStrip;
-        default: return MTLPrimitiveTypeTriangle;
+    case 1:
+        return MTLPrimitiveTypePoint;
+    case 2:
+        return MTLPrimitiveTypeLine;
+    case 3:
+        return MTLPrimitiveTypeLineStrip;
+    case 4:
+        return MTLPrimitiveTypeTriangle;
+    case 5:
+        return MTLPrimitiveTypeTriangleStrip;
+    default:
+        return MTLPrimitiveTypeTriangle;
     }
 }
 
 static MTLPixelFormat dxgi_to_mtl(uint32_t format) {
     switch (format) {
-        case 28: return MTLPixelFormatBGRA8Unorm;
-        case 87: return MTLPixelFormatRGBA8Unorm;
-        case 2:  return MTLPixelFormatR32Float;
-        case 6:  return MTLPixelFormatR16Float;
-        case 11: return MTLPixelFormatRG16Float;
-        case 16: return MTLPixelFormatRG32Float;
-        case 24: return MTLPixelFormatR8Unorm;
-        case 49: return MTLPixelFormatBC1_RGBA;
-        case 50: return MTLPixelFormatBC2_RGBA;
-        case 51: return MTLPixelFormatBC3_RGBA;
-        case 70: return MTLPixelFormatBC7_RGBAUnorm;
-        case 71: return MTLPixelFormatBC7_RGBAUnorm_sRGB;
-        case 44: return MTLPixelFormatBC1_RGBA_sRGB;
-        case 55: return MTLPixelFormatDepth32Float;
-        case 40: return MTLPixelFormatDepth16Unorm;
-        case 45: return MTLPixelFormatDepth24Unorm_Stencil8;
-        case 62: return MTLPixelFormatRGB10A2Unorm;
-        case 12: return MTLPixelFormatRG11B10Float;
-        default: return MTLPixelFormatBGRA8Unorm;
+    case 28:
+        return MTLPixelFormatBGRA8Unorm;
+    case 87:
+        return MTLPixelFormatRGBA8Unorm;
+    case 2:
+        return MTLPixelFormatR32Float;
+    case 6:
+        return MTLPixelFormatR16Float;
+    case 11:
+        return MTLPixelFormatRG16Float;
+    case 16:
+        return MTLPixelFormatRG32Float;
+    case 24:
+        return MTLPixelFormatR8Unorm;
+    case 49:
+        return MTLPixelFormatBC1_RGBA;
+    case 50:
+        return MTLPixelFormatBC2_RGBA;
+    case 51:
+        return MTLPixelFormatBC3_RGBA;
+    case 70:
+        return MTLPixelFormatBC7_RGBAUnorm;
+    case 71:
+        return MTLPixelFormatBC7_RGBAUnorm_sRGB;
+    case 44:
+        return MTLPixelFormatBC1_RGBA_sRGB;
+    case 55:
+        return MTLPixelFormatDepth32Float;
+    case 40:
+        return MTLPixelFormatDepth16Unorm;
+    case 45:
+        return MTLPixelFormatDepth24Unorm_Stencil8;
+    case 62:
+        return MTLPixelFormatRGB10A2Unorm;
+    case 12:
+        return MTLPixelFormatRG11B10Float;
+    default:
+        return MTLPixelFormatBGRA8Unorm;
     }
 }
 
 static NTSTATUS ms_init(void*) {
-    if (g_device) return 0;
+    if (g_device)
+        return 0;
     g_device = MTLCreateSystemDefaultDevice();
-    if (!g_device) return -1;
+    if (!g_device)
+        return -1;
     g_queue = [g_device newCommandQueue];
     memset((void*)&g_frame, 0, sizeof(g_frame));
     fprintf(stderr, "[metalsharp] Metal device: %s\n", [[g_device name] UTF8String]);
@@ -159,45 +190,48 @@ static NTSTATUS ms_create_device(void*) {
 
 static NTSTATUS ms_create_swap_chain(void* p) {
     auto* params = (struct ms_create_swap_chain_params*)p;
-    if (!g_device) ms_init(nullptr);
-    
+    if (!g_device)
+        ms_init(nullptr);
+
     if (g_swapchain) {
-        if (g_swapchain->window) [g_swapchain->window close];
+        if (g_swapchain->window)
+            [g_swapchain->window close];
         delete g_swapchain;
     }
     g_swapchain = new SwapChain();
     g_swapchain->width = params->width > 0 ? params->width : 1280;
     g_swapchain->height = params->height > 0 ? params->height : 720;
-    
+
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSRect frame = NSMakeRect(0, 0, g_swapchain->width, g_swapchain->height);
-        NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-        g_swapchain->window = [[NSWindow alloc] initWithContentRect:frame
-                                                          styleMask:style
-                                                            backing:NSBackingStoreBuffered
-                                                              defer:NO];
-        [g_swapchain->window setTitle:@"MetalSharp"];
-        [g_swapchain->window makeKeyAndOrderFront:nil];
-        
-        g_swapchain->layer = [CAMetalLayer layer];
-        g_swapchain->layer.device = g_device;
-        g_swapchain->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        g_swapchain->layer.framebufferOnly = NO;
-        g_swapchain->layer.drawableSize = CGSizeMake(g_swapchain->width, g_swapchain->height);
-        
-        NSView* cv = [g_swapchain->window contentView];
-        cv.wantsLayer = YES;
-        cv.layer = g_swapchain->layer;
+      NSRect frame = NSMakeRect(0, 0, g_swapchain->width, g_swapchain->height);
+      NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
+                         NSWindowStyleMaskResizable;
+      g_swapchain->window = [[NSWindow alloc] initWithContentRect:frame
+                                                        styleMask:style
+                                                          backing:NSBackingStoreBuffered
+                                                            defer:NO];
+      [g_swapchain->window setTitle:@"MetalSharp"];
+      [g_swapchain->window makeKeyAndOrderFront:nil];
+
+      g_swapchain->layer = [CAMetalLayer layer];
+      g_swapchain->layer.device = g_device;
+      g_swapchain->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+      g_swapchain->layer.framebufferOnly = NO;
+      g_swapchain->layer.drawableSize = CGSizeMake(g_swapchain->width, g_swapchain->height);
+
+      NSView* cv = [g_swapchain->window contentView];
+      cv.wantsLayer = YES;
+      cv.layer = g_swapchain->layer;
     });
-    
+
     fprintf(stderr, "[metalsharp] Swap chain %ux%u\n", g_swapchain->width, g_swapchain->height);
     return 0;
 }
 
 static NTSTATUS ms_present(void*) {
-    if (!g_swapchain || !g_swapchain->layer) return -1;
-    
+    if (!g_swapchain || !g_swapchain->layer)
+        return -1;
+
     @autoreleasepool {
         if (g_frame.in_render_pass && g_frame.encoder) {
             [g_frame.encoder endEncoding];
@@ -208,18 +242,23 @@ static NTSTATUS ms_present(void*) {
             [g_frame.command_buffer commit];
             g_frame.command_buffer = nil;
         }
-        
+
         id<CAMetalDrawable> drawable = [g_swapchain->layer nextDrawable];
-        if (!drawable) return 0;
-        
+        if (!drawable)
+            return 0;
+
         if (g_swapchain->back_buffer) {
             id<MTLCommandBuffer> blit = [g_queue commandBuffer];
             id<MTLBlitCommandEncoder> blitEnc = [blit blitCommandEncoder];
             [blitEnc copyFromTexture:g_swapchain->back_buffer
-                         sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
-                           sourceSize:MTLSizeMake(g_swapchain->width, g_swapchain->height, 1)
-                            toTexture:drawable.texture
-                     destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
+                         sourceSlice:0
+                         sourceLevel:0
+                        sourceOrigin:MTLOriginMake(0, 0, 0)
+                          sourceSize:MTLSizeMake(g_swapchain->width, g_swapchain->height, 1)
+                           toTexture:drawable.texture
+                    destinationSlice:0
+                    destinationLevel:0
+                   destinationOrigin:MTLOriginMake(0, 0, 0)];
             [blitEnc endEncoding];
             [blit presentDrawable:drawable];
             [blit commit];
@@ -229,60 +268,61 @@ static NTSTATUS ms_present(void*) {
             [cmd commit];
         }
     }
-    
+
     @autoreleasepool {
         id<MTLRenderPipelineState> saved_pipeline = g_frame.pipeline;
         id<MTLFunction> saved_vs = g_frame.vs_function;
         id<MTLFunction> saved_ps = g_frame.ps_function;
-        
+
         memset((void*)&g_frame, 0, sizeof(g_frame));
-        
+
         g_frame.pipeline = saved_pipeline;
         g_frame.vs_function = saved_vs;
         g_frame.ps_function = saved_ps;
     }
-    
+
     return 0;
 }
 
 static NTSTATUS ms_create_buffer(void* p) {
     auto* params = (struct ms_create_buffer_params*)p;
-    if (!g_device) ms_init(nullptr);
-    
+    if (!g_device)
+        ms_init(nullptr);
+
     uint64_t handle = new_handle();
     auto& buf = g_buffers[handle];
     buf.size = params->byte_width;
     buf.mapped = nullptr;
-    
+
     if (params->initial_data && params->initial_data_size > 0) {
         buf.buffer = [g_device newBufferWithBytes:params->initial_data
                                            length:params->byte_width
                                           options:MTLResourceStorageModeShared];
     } else {
-        buf.buffer = [g_device newBufferWithLength:params->byte_width
-                                           options:MTLResourceStorageModeShared];
+        buf.buffer = [g_device newBufferWithLength:params->byte_width options:MTLResourceStorageModeShared];
     }
-    
+
     if (!buf.buffer) {
         g_buffers.erase(handle);
         return -1;
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_texture_2d(void* p) {
     auto* params = (struct ms_create_texture_2d_params*)p;
-    if (!g_device) ms_init(nullptr);
-    
+    if (!g_device)
+        ms_init(nullptr);
+
     uint64_t handle = new_handle();
     auto& tex = g_textures[handle];
     tex.width = params->width;
     tex.height = params->height;
     tex.format = params->format;
     tex.mip_levels = params->mip_levels > 0 ? params->mip_levels : 1;
-    
+
     MTLTextureDescriptor* desc = [[MTLTextureDescriptor alloc] init];
     desc.textureType = MTLTextureType2D;
     desc.pixelFormat = dxgi_to_mtl(params->format);
@@ -290,33 +330,39 @@ static NTSTATUS ms_create_texture_2d(void* p) {
     desc.height = params->height;
     desc.mipmapLevelCount = tex.mip_levels;
     desc.sampleCount = params->sample_count > 0 ? params->sample_count : 1;
-    
+
     MTLTextureUsage usage = 0;
-    if (params->bind_flags & 0x1) usage |= MTLTextureUsageShaderRead;
-    if (params->bind_flags & 0x2) usage |= MTLTextureUsageRenderTarget;
-    if (params->bind_flags & 0x40) usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-    if (params->bind_flags & 0x20) usage |= MTLTextureUsagePixelFormatView;
-    if (usage == 0) usage = MTLTextureUsageShaderRead;
+    if (params->bind_flags & 0x1)
+        usage |= MTLTextureUsageShaderRead;
+    if (params->bind_flags & 0x2)
+        usage |= MTLTextureUsageRenderTarget;
+    if (params->bind_flags & 0x40)
+        usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+    if (params->bind_flags & 0x20)
+        usage |= MTLTextureUsagePixelFormatView;
+    if (usage == 0)
+        usage = MTLTextureUsageShaderRead;
     desc.usage = usage;
     desc.storageMode = (params->cpu_access_flags & 0x10000) ? MTLStorageModeShared : MTLStorageModePrivate;
-    
+
     tex.texture = [g_device newTextureWithDescriptor:desc];
     if (!tex.texture) {
         g_textures.erase(handle);
         return -1;
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_render_target_view(void* p) {
     auto* params = (struct ms_create_rt_view_params*)p;
-    if (!g_device) ms_init(nullptr);
-    
+    if (!g_device)
+        ms_init(nullptr);
+
     uint64_t handle = new_handle();
     auto& rtv = g_rtvs[handle];
-    
+
     if (params->texture_handle) {
         auto it = g_textures.find(params->texture_handle);
         if (it != g_textures.end()) {
@@ -342,36 +388,38 @@ static NTSTATUS ms_create_render_target_view(void* p) {
             rtv.height = g_swapchain->height;
         }
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_depth_stencil_view(void* p) {
     auto* params = (struct ms_create_rt_view_params*)p;
-    if (!g_device) ms_init(nullptr);
-    
+    if (!g_device)
+        ms_init(nullptr);
+
     uint64_t handle = new_handle();
     auto& dsv = g_rtvs[handle];
-    
+
     auto it = g_textures.find(params->texture_handle);
     if (it != g_textures.end()) {
         dsv.texture = it->second.texture;
         dsv.width = it->second.width;
         dsv.height = it->second.height;
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_vertex_shader(void* p) {
     auto* params = (struct ms_create_shader_params*)p;
-    if (!g_device || !params->bytecode || params->bytecode_size == 0) return -1;
-    
+    if (!g_device || !params->bytecode || params->bytecode_size == 0)
+        return -1;
+
     uint64_t handle = new_handle();
     auto& shader = g_shaders[handle];
-    
+
     const uint8_t* ptr = (const uint8_t*)params->bytecode;
     if (params->bytecode_size > 5 && ptr[0] == 'M' && ptr[1] == 'S' && ptr[2] == 'L' && ptr[3] == '\0') {
         const char* func_name = (const char*)(ptr + 4);
@@ -383,14 +431,16 @@ static NTSTATUS ms_create_vertex_shader(void* p) {
         }
         const char* source = func_name + name_len + 1;
         size_t source_len = remaining - name_len - 1;
-        
+
         @autoreleasepool {
-            NSString* nsSource = [[NSString alloc] initWithBytes:source length:source_len encoding:NSUTF8StringEncoding];
+            NSString* nsSource = [[NSString alloc] initWithBytes:source
+                                                          length:source_len
+                                                        encoding:NSUTF8StringEncoding];
             NSError* error = nil;
             id<MTLLibrary> library = [g_device newLibraryWithSource:nsSource options:nil error:&error];
             if (error || !library) {
                 fprintf(stderr, "[metalsharp] VS compile error: %s\n",
-                    error ? [[error localizedDescription] UTF8String] : "unknown");
+                        error ? [[error localizedDescription] UTF8String] : "unknown");
                 g_shaders.erase(handle);
                 return -1;
             }
@@ -408,18 +458,19 @@ static NTSTATUS ms_create_vertex_shader(void* p) {
         auto* bc = (const uint8_t*)params->bytecode;
         shader.bytecode.assign(bc, bc + params->bytecode_size);
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
 static NTSTATUS ms_create_pixel_shader(void* p) {
     auto* params = (struct ms_create_shader_params*)p;
-    if (!g_device || !params->bytecode || params->bytecode_size == 0) return -1;
-    
+    if (!g_device || !params->bytecode || params->bytecode_size == 0)
+        return -1;
+
     uint64_t handle = new_handle();
     auto& shader = g_shaders[handle];
-    
+
     const uint8_t* ptr = (const uint8_t*)params->bytecode;
     if (params->bytecode_size > 5 && ptr[0] == 'M' && ptr[1] == 'S' && ptr[2] == 'L' && ptr[3] == '\0') {
         const char* func_name = (const char*)(ptr + 4);
@@ -431,14 +482,16 @@ static NTSTATUS ms_create_pixel_shader(void* p) {
         }
         const char* source = func_name + name_len + 1;
         size_t source_len = remaining - name_len - 1;
-        
+
         @autoreleasepool {
-            NSString* nsSource = [[NSString alloc] initWithBytes:source length:source_len encoding:NSUTF8StringEncoding];
+            NSString* nsSource = [[NSString alloc] initWithBytes:source
+                                                          length:source_len
+                                                        encoding:NSUTF8StringEncoding];
             NSError* error = nil;
             id<MTLLibrary> library = [g_device newLibraryWithSource:nsSource options:nil error:&error];
             if (error || !library) {
                 fprintf(stderr, "[metalsharp] PS compile error: %s\n",
-                    error ? [[error localizedDescription] UTF8String] : "unknown");
+                        error ? [[error localizedDescription] UTF8String] : "unknown");
                 g_shaders.erase(handle);
                 return -1;
             }
@@ -456,26 +509,39 @@ static NTSTATUS ms_create_pixel_shader(void* p) {
         auto* bc = (const uint8_t*)params->bytecode;
         shader.bytecode.assign(bc, bc + params->bytecode_size);
     }
-    
+
     params->out_handle = handle;
     return 0;
 }
 
-static NTSTATUS ms_create_input_layout(void*) { return 0; }
-static NTSTATUS ms_create_blend_state(void*) { return 0; }
-static NTSTATUS ms_create_rasterizer_state(void*) { return 0; }
-static NTSTATUS ms_create_depth_stencil_state(void*) { return 0; }
-static NTSTATUS ms_create_sampler_state(void*) { return 0; }
-static NTSTATUS ms_create_shader_resource_view(void*) { return 0; }
+static NTSTATUS ms_create_input_layout(void*) {
+    return 0;
+}
+static NTSTATUS ms_create_blend_state(void*) {
+    return 0;
+}
+static NTSTATUS ms_create_rasterizer_state(void*) {
+    return 0;
+}
+static NTSTATUS ms_create_depth_stencil_state(void*) {
+    return 0;
+}
+static NTSTATUS ms_create_sampler_state(void*) {
+    return 0;
+}
+static NTSTATUS ms_create_shader_resource_view(void*) {
+    return 0;
+}
 
 static void ensure_render_pass() {
-    if (g_frame.in_render_pass) return;
+    if (g_frame.in_render_pass)
+        return;
     if (!g_frame.command_buffer) {
         g_frame.command_buffer = [g_queue commandBuffer];
     }
-    
+
     MTLRenderPassDescriptor* desc = [[MTLRenderPassDescriptor alloc] init];
-    
+
     bool has_target = false;
     for (int i = 0; i < 8; i++) {
         if (g_frame.render_targets[i]) {
@@ -486,7 +552,7 @@ static void ensure_render_pass() {
             has_target = true;
         }
     }
-    
+
     if (!has_target && g_swapchain && g_swapchain->back_buffer) {
         auto* attachment = desc.colorAttachments[0];
         attachment.texture = g_swapchain->back_buffer;
@@ -494,23 +560,23 @@ static void ensure_render_pass() {
         attachment.clearColor = MTLClearColorMake(0, 0, 0, 1);
         attachment.storeAction = MTLStoreActionStore;
     }
-    
+
     if (g_frame.depth_target) {
         desc.depthAttachment.texture = g_frame.depth_target;
         desc.depthAttachment.loadAction = MTLLoadActionClear;
         desc.depthAttachment.clearDepth = 1.0;
         desc.depthAttachment.storeAction = MTLStoreActionStore;
     }
-    
+
     g_frame.encoder = [g_frame.command_buffer renderCommandEncoderWithDescriptor:desc];
     g_frame.in_render_pass = true;
-    
+
     if (g_frame.needs_pipeline_update && g_frame.vs_function && g_frame.ps_function) {
         @autoreleasepool {
             MTLRenderPipelineDescriptor* pdesc = [[MTLRenderPipelineDescriptor alloc] init];
             pdesc.vertexFunction = g_frame.vs_function;
             pdesc.fragmentFunction = g_frame.ps_function;
-            
+
             MTLPixelFormat rt_format = MTLPixelFormatBGRA8Unorm;
             for (int i = 0; i < 8; i++) {
                 if (g_frame.render_targets[i]) {
@@ -519,26 +585,25 @@ static void ensure_render_pass() {
                 }
             }
             pdesc.colorAttachments[0].pixelFormat = rt_format;
-            
+
             NSError* error = nil;
             g_frame.pipeline = [g_device newRenderPipelineStateWithDescriptor:pdesc error:&error];
             if (error || !g_frame.pipeline) {
                 fprintf(stderr, "[metalsharp] Pipeline error: %s\n",
-                    error ? [[error localizedDescription] UTF8String] : "unknown");
+                        error ? [[error localizedDescription] UTF8String] : "unknown");
             } else {
                 fprintf(stderr, "[metalsharp] Pipeline created\n");
             }
             g_frame.needs_pipeline_update = false;
         }
     }
-    
+
     if (g_frame.pipeline) {
         [g_frame.encoder setRenderPipelineState:g_frame.pipeline];
     }
     if (g_frame.has_viewport) {
-        MTLViewport vp = { g_frame.viewport_x, g_frame.viewport_y,
-                           g_frame.viewport_w, g_frame.viewport_h,
-                           g_frame.viewport_min, g_frame.viewport_max };
+        MTLViewport vp = {g_frame.viewport_x, g_frame.viewport_y,   g_frame.viewport_w,
+                          g_frame.viewport_h, g_frame.viewport_min, g_frame.viewport_max};
         [g_frame.encoder setViewport:vp];
     }
 }
@@ -550,7 +615,7 @@ static NTSTATUS ms_om_set_render_targets(void* p) {
         g_frame.in_render_pass = false;
         g_frame.encoder = nil;
     }
-    
+
     memset(g_frame.render_targets, 0, sizeof(g_frame.render_targets));
     for (uint32_t i = 0; i < params->num_views && i < 8; i++) {
         if (params->rtv_handles[i]) {
@@ -573,8 +638,9 @@ static NTSTATUS ms_om_set_render_targets(void* p) {
 static NTSTATUS ms_clear_render_target_view(void* p) {
     auto* params = (struct ms_clear_params*)p;
     auto it = g_rtvs.find(params->view_handle);
-    if (it == g_rtvs.end()) return -1;
-    
+    if (it == g_rtvs.end())
+        return -1;
+
     if (g_frame.in_render_pass) {
         [g_frame.encoder endEncoding];
         g_frame.in_render_pass = false;
@@ -582,14 +648,14 @@ static NTSTATUS ms_clear_render_target_view(void* p) {
     if (!g_frame.command_buffer) {
         g_frame.command_buffer = [g_queue commandBuffer];
     }
-    
+
     MTLRenderPassDescriptor* desc = [[MTLRenderPassDescriptor alloc] init];
     auto* attachment = desc.colorAttachments[0];
     attachment.texture = it->second.texture;
     attachment.loadAction = MTLLoadActionClear;
     attachment.clearColor = MTLClearColorMake(params->r, params->g, params->b, params->a);
     attachment.storeAction = MTLStoreActionStore;
-    
+
     id<MTLRenderCommandEncoder> enc = [g_frame.command_buffer renderCommandEncoderWithDescriptor:desc];
     [enc endEncoding];
     return 0;
@@ -604,9 +670,9 @@ static NTSTATUS ms_set_viewports(void* p) {
     g_frame.viewport_min = vp->min_depth;
     g_frame.viewport_max = vp->max_depth;
     g_frame.has_viewport = true;
-    
+
     if (g_frame.encoder) {
-        MTLViewport mtlvp = { vp->top_left_x, vp->top_left_y, vp->width, vp->height, vp->min_depth, vp->max_depth };
+        MTLViewport mtlvp = {vp->top_left_x, vp->top_left_y, vp->width, vp->height, vp->min_depth, vp->max_depth};
         [g_frame.encoder setViewport:mtlvp];
     }
     return 0;
@@ -622,11 +688,9 @@ static NTSTATUS ms_ia_set_vertex_buffers(void* p) {
                 g_frame.vertex_buffers[slot] = it->second.buffer;
                 g_frame.vertex_strides[slot] = params->strides[i];
                 g_frame.vertex_offsets[slot] = params->offsets[i];
-                
+
                 if (g_frame.encoder) {
-                    [g_frame.encoder setVertexBuffer:it->second.buffer
-                                             offset:params->offsets[i]
-                                            atIndex:slot];
+                    [g_frame.encoder setVertexBuffer:it->second.buffer offset:params->offsets[i] atIndex:slot];
                 }
             }
         }
@@ -721,15 +785,17 @@ static NTSTATUS ms_ps_set_constant_buffers(void* p) {
 static NTSTATUS ms_draw_indexed(void* p) {
     auto* params = (struct ms_draw_indexed_params*)p;
     ensure_render_pass();
-    if (!g_frame.encoder) return -1;
-    
+    if (!g_frame.encoder)
+        return -1;
+
     if (g_frame.index_buffer) {
         MTLIndexType indexType = (g_frame.index_format == 1) ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
-        [g_frame.encoder drawIndexedPrimitives:to_mtl_primitive(g_frame.primitive_topology)
-                                    indexCount:params->index_count
-                                     indexType:indexType
-                                   indexBuffer:g_frame.index_buffer
-                             indexBufferOffset:g_frame.index_offset + params->start_index * (g_frame.index_format == 1 ? 2 : 4)];
+        [g_frame.encoder
+            drawIndexedPrimitives:to_mtl_primitive(g_frame.primitive_topology)
+                       indexCount:params->index_count
+                        indexType:indexType
+                      indexBuffer:g_frame.index_buffer
+                indexBufferOffset:g_frame.index_offset + params->start_index * (g_frame.index_format == 1 ? 2 : 4)];
     }
     return 0;
 }
@@ -737,8 +803,9 @@ static NTSTATUS ms_draw_indexed(void* p) {
 static NTSTATUS ms_draw(void* p) {
     auto* params = (struct ms_draw_params*)p;
     ensure_render_pass();
-    if (!g_frame.encoder) return -1;
-    
+    if (!g_frame.encoder)
+        return -1;
+
     [g_frame.encoder drawPrimitives:to_mtl_primitive(g_frame.primitive_topology)
                         vertexStart:params->start_vertex
                         vertexCount:params->vertex_count];
@@ -823,7 +890,7 @@ static NTSTATUS ms_get_buffer(void* p) {
             g_swapchain->back_buffer = [g_device newTextureWithDescriptor:desc];
         }
     }
-    
+
     uint64_t handle = new_handle();
     auto& tex = g_textures[handle];
     if (g_swapchain && g_swapchain->back_buffer) {
@@ -848,7 +915,8 @@ static NTSTATUS ms_shutdown(void*) {
     g_rtvs.clear();
     g_pipelines.clear();
     if (g_swapchain) {
-        if (g_swapchain->window) [g_swapchain->window close];
+        if (g_swapchain->window)
+            [g_swapchain->window close];
         delete g_swapchain;
         g_swapchain = nullptr;
     }
@@ -857,14 +925,15 @@ static NTSTATUS ms_shutdown(void*) {
     return 0;
 }
 
-static NTSTATUS ms_stub(void*) { return 0; }
+static NTSTATUS ms_stub(void*) {
+    return 0;
+}
 
 extern "C" {
 
 typedef NTSTATUS (*unixlib_entry_t)(void*);
 
-__attribute__((used, visibility("default")))
-unixlib_entry_t __wine_unix_call_funcs[] = {
+__attribute__((used, visibility("default"))) unixlib_entry_t __wine_unix_call_funcs[] = {
     ms_init,
     ms_create_device,
     ms_create_swap_chain,
@@ -929,8 +998,7 @@ unixlib_entry_t __wine_unix_call_funcs[] = {
     ms_stub,
 };
 
-__attribute__((used, visibility("default")))
-unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
+__attribute__((used, visibility("default"))) unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
     ms_init,
     ms_create_device,
     ms_create_swap_chain,
@@ -996,6 +1064,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
     ms_stub,
 };
 
-NTSTATUS __attribute__((visibility("default"))) __wine_unix_lib_init(void) { return 0; }
-
+NTSTATUS __attribute__((visibility("default"))) __wine_unix_lib_init(void) {
+    return 0;
+}
 }

@@ -5,13 +5,13 @@
 /// DXIL bytecode via the IR converter bridge or DXBC-to-MSL fallback, and produces
 /// Metal shader functions ready for pipeline state creation.
 
-#include <metalsharp/ShaderTranslator.h>
-#include <metalsharp/MetalBackend.h>
+#include <Foundation/Foundation.h>
+#include <Metal/Metal.h>
 #include <metalsharp/DXBCParser.h>
 #include <metalsharp/DXBCtoMSL.h>
 #include <metalsharp/Logger.h>
-#include <Foundation/Foundation.h>
-#include <Metal/Metal.h>
+#include <metalsharp/MetalBackend.h>
+#include <metalsharp/ShaderTranslator.h>
 
 namespace metalsharp {
 
@@ -27,10 +27,14 @@ ShaderTranslator::ShaderTranslator() : m_impl(new Impl()) {
     m_impl->device = MTLCreateSystemDefaultDevice();
 }
 
-ShaderTranslator::~ShaderTranslator() { delete m_impl; }
+ShaderTranslator::~ShaderTranslator() {
+    delete m_impl;
+}
 
-bool ShaderTranslator::compileMSL(const char* source, const char* vertexEntry, const char* fragmentEntry, CompiledShader& out) {
-    if (!m_impl->device || !source) return false;
+bool ShaderTranslator::compileMSL(const char* source, const char* vertexEntry, const char* fragmentEntry,
+                                  CompiledShader& out) {
+    if (!m_impl->device || !source)
+        return false;
 
     NSString* sourceNS = [NSString stringWithUTF8String:source];
     NSError* error = nil;
@@ -56,33 +60,26 @@ bool ShaderTranslator::compileMSL(const char* source, const char* vertexEntry, c
     return true;
 }
 
-bool ShaderTranslator::translateViaIRConverter(
-    const uint8_t* dxilData, size_t dxilSize,
-    ShaderStage stage, const char* entryPoint,
-    const void* rootSigData, size_t rootSigSize,
-    CompiledShader& out
-) {
+bool ShaderTranslator::translateViaIRConverter(const uint8_t* dxilData, size_t dxilSize, ShaderStage stage,
+                                               const char* entryPoint, const void* rootSigData, size_t rootSigSize,
+                                               CompiledShader& out) {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return false;
+    if (!bridge.isAvailable())
+        return false;
 
     std::vector<uint8_t> metallib;
     IRConverterReflection reflection;
 
     bool ok;
     if (rootSigData && rootSigSize > 0) {
-        ok = bridge.compileDXILToMetallibWithRootSignature(
-            dxilData, dxilSize, stage, entryPoint,
-            rootSigData, rootSigSize,
-            metallib, reflection
-        );
+        ok = bridge.compileDXILToMetallibWithRootSignature(dxilData, dxilSize, stage, entryPoint, rootSigData,
+                                                           rootSigSize, metallib, reflection);
     } else {
-        ok = bridge.compileDXILToMetallib(
-            dxilData, dxilSize, stage, entryPoint,
-            metallib, reflection
-        );
+        ok = bridge.compileDXILToMetallib(dxilData, dxilSize, stage, entryPoint, metallib, reflection);
     }
 
-    if (!ok || metallib.empty()) return false;
+    if (!ok || metallib.empty())
+        return false;
 
     void* lib = createMTLLibraryFromMetallib(metallib.data(), metallib.size());
     if (!lib) {
@@ -91,7 +88,8 @@ bool ShaderTranslator::translateViaIRConverter(
     }
 
     const char* funcName = reflection.entryPointName.empty() ? entryPoint : reflection.entryPointName.c_str();
-    if (!funcName) funcName = "main0";
+    if (!funcName)
+        funcName = "main0";
 
     void* func = getFunctionFromLibrary(lib, funcName);
 
@@ -103,32 +101,50 @@ bool ShaderTranslator::translateViaIRConverter(
     out.entryPointName = funcName;
 
     switch (stage) {
-        case ShaderStage::Vertex: out.vertexFunction = func; break;
-        case ShaderStage::Pixel: out.fragmentFunction = func; break;
-        case ShaderStage::Compute: out.computeFunction = func; break;
-        default: break;
+    case ShaderStage::Vertex:
+        out.vertexFunction = func;
+        break;
+    case ShaderStage::Pixel:
+        out.fragmentFunction = func;
+        break;
+    case ShaderStage::Compute:
+        out.computeFunction = func;
+        break;
+    default:
+        break;
     }
 
     MS_INFO("ShaderTranslator: compiled via IRConverter (stage=%d, entry=%s)", (int)stage, funcName);
     return true;
 }
 
-bool ShaderTranslator::translateViaFallbackDXBC(const uint8_t* data, size_t size, ShaderStage stage, CompiledShader& out) {
+bool ShaderTranslator::translateViaFallbackDXBC(const uint8_t* data, size_t size, ShaderStage stage,
+                                                CompiledShader& out) {
     ParsedDXBC parsed;
-    if (!DXBCParser::parse(data, size, parsed)) return false;
+    if (!DXBCParser::parse(data, size, parsed))
+        return false;
 
     std::string mslSource = DXBCtoMSL::translate(parsed);
-    if (mslSource.empty()) return false;
+    if (mslSource.empty())
+        return false;
 
     const char* entryName = "main0";
     switch (stage) {
-        case ShaderStage::Vertex: entryName = "vertexShader"; break;
-        case ShaderStage::Pixel: entryName = "fragmentShader"; break;
-        case ShaderStage::Compute: entryName = "computeShader"; break;
-        default: break;
+    case ShaderStage::Vertex:
+        entryName = "vertexShader";
+        break;
+    case ShaderStage::Pixel:
+        entryName = "fragmentShader";
+        break;
+    case ShaderStage::Compute:
+        entryName = "computeShader";
+        break;
+    default:
+        break;
     }
 
-    if (!m_impl->device) return false;
+    if (!m_impl->device)
+        return false;
 
     NSString* sourceNS = [NSString stringWithUTF8String:mslSource.c_str()];
     NSError* error = nil;
@@ -150,16 +166,17 @@ bool ShaderTranslator::translateViaFallbackDXBC(const uint8_t* data, size_t size
     out.computeFunction = nullptr;
 
     switch (stage) {
-        case ShaderStage::Vertex:
-            out.vertexFunction = func ? (__bridge_retained void*)func : nullptr;
-            break;
-        case ShaderStage::Pixel:
-            out.fragmentFunction = func ? (__bridge_retained void*)func : nullptr;
-            break;
-        case ShaderStage::Compute:
-            out.computeFunction = func ? (__bridge_retained void*)func : nullptr;
-            break;
-        default: break;
+    case ShaderStage::Vertex:
+        out.vertexFunction = func ? (__bridge_retained void*)func : nullptr;
+        break;
+    case ShaderStage::Pixel:
+        out.fragmentFunction = func ? (__bridge_retained void*)func : nullptr;
+        break;
+    case ShaderStage::Compute:
+        out.computeFunction = func ? (__bridge_retained void*)func : nullptr;
+        break;
+    default:
+        break;
     }
 
     MS_INFO("ShaderTranslator: compiled via DXBC->MSL fallback (stage=%d)", (int)stage);
@@ -167,7 +184,8 @@ bool ShaderTranslator::translateViaFallbackDXBC(const uint8_t* data, size_t size
 }
 
 bool ShaderTranslator::translateDXIL(const uint8_t* data, size_t size, ShaderStage stage, CompiledShader& out) {
-    if (!data || size == 0) return false;
+    if (!data || size == 0)
+        return false;
     return translateViaIRConverter(data, size, stage, nullptr, nullptr, 0, out);
 }
 
@@ -175,13 +193,11 @@ bool ShaderTranslator::translateDXBC(const uint8_t* data, size_t size, ShaderSta
     return translateDXBCWithRootSignature(data, size, stage, nullptr, 0, out);
 }
 
-bool ShaderTranslator::translateDXBCWithRootSignature(
-    const uint8_t* data, size_t size,
-    ShaderStage stage,
-    const void* rootSigData, size_t rootSigSize,
-    CompiledShader& out
-) {
-    if (!data || size == 0) return false;
+bool ShaderTranslator::translateDXBCWithRootSignature(const uint8_t* data, size_t size, ShaderStage stage,
+                                                      const void* rootSigData, size_t rootSigSize,
+                                                      CompiledShader& out) {
+    if (!data || size == 0)
+        return false;
 
     auto& bridge = IRConverterBridge::instance();
 
@@ -194,17 +210,14 @@ bool ShaderTranslator::translateDXBCWithRootSignature(
             bool extracted = bridge.extractDXILFromDXBC(data, size, dxil);
             if (!extracted) {
                 uint32_t sm = bridge.detectShaderModel(data, size);
-                MS_INFO("ShaderTranslator: DXBC SM %u.%u — no DXIL chunk, using MSL fallback",
-                         sm / 10, sm % 10);
+                MS_INFO("ShaderTranslator: DXBC SM %u.%u — no DXIL chunk, using MSL fallback", sm / 10, sm % 10);
                 return translateViaFallbackDXBC(data, size, stage, out);
             }
         }
 
-        bool ok = translateViaIRConverter(
-            dxil.data(), dxil.size(), stage, nullptr,
-            rootSigData, rootSigSize, out
-        );
-        if (ok) return true;
+        bool ok = translateViaIRConverter(dxil.data(), dxil.size(), stage, nullptr, rootSigData, rootSigSize, out);
+        if (ok)
+            return true;
 
         MS_WARN("ShaderTranslator: IRConverter failed, falling back to DXBC->MSL");
     }
@@ -212,4 +225,4 @@ bool ShaderTranslator::translateDXBCWithRootSignature(
     return translateViaFallbackDXBC(data, size, stage, out);
 }
 
-}
+} // namespace metalsharp

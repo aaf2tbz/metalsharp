@@ -1,17 +1,23 @@
-#include <metalsharp/Logger.h>
-#include <metalsharp/PEHook.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PEHook.h>
 
 static int passed = 0;
 static int failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); passed++; } \
-    else { printf("  [FAIL] %s\n", msg); failed++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            passed++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            failed++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== Runtime Tests ===\n\n");
@@ -30,8 +36,7 @@ int main() {
         metalsharp::Logger::shutdown();
 
         std::ifstream f(tmpPath);
-        std::string contents((std::istreambuf_iterator<char>(f)),
-                              std::istreambuf_iterator<char>());
+        std::string contents((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         CHECK(contents.find("trace msg") != std::string::npos, "Trace message logged");
         CHECK(contents.find("info msg") != std::string::npos, "Info message logged");
         CHECK(contents.find("warn msg") != std::string::npos, "Warn message logged");
@@ -61,11 +66,16 @@ int main() {
         bool hasD3D11 = false, hasD3D12 = false, hasDXGI = false;
         bool hasXAudio = false, hasXInput = false;
         for (const auto& m : mappings) {
-            if (strcmp(m.windowsDll, "d3d11.dll") == 0) hasD3D11 = true;
-            if (strcmp(m.windowsDll, "d3d12.dll") == 0) hasD3D12 = true;
-            if (strcmp(m.windowsDll, "dxgi.dll") == 0) hasDXGI = true;
-            if (strcmp(m.windowsDll, "xaudio2_9.dll") == 0) hasXAudio = true;
-            if (strcmp(m.windowsDll, "xinput1_4.dll") == 0) hasXInput = true;
+            if (strcmp(m.windowsDll, "d3d11.dll") == 0)
+                hasD3D11 = true;
+            if (strcmp(m.windowsDll, "d3d12.dll") == 0)
+                hasD3D12 = true;
+            if (strcmp(m.windowsDll, "dxgi.dll") == 0)
+                hasDXGI = true;
+            if (strcmp(m.windowsDll, "xaudio2_9.dll") == 0)
+                hasXAudio = true;
+            if (strcmp(m.windowsDll, "xinput1_4.dll") == 0)
+                hasXInput = true;
         }
         CHECK(hasD3D11, "d3d11.dll mapped");
         CHECK(hasD3D12, "d3d12.dll mapped");

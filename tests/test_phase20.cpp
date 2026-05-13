@@ -1,17 +1,22 @@
-#include <metalsharp/AntiCheatDB.h>
-#include <cstring>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <metalsharp/AntiCheatDB.h>
 
 using namespace metalsharp::win32;
 
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-55s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-55s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 static bool test_anticheat_db_has_entries() {
     return kAntiCheatEntryCount > 0;
@@ -52,9 +57,8 @@ static bool test_anticheat_kernel_impossible() {
     auto* eac = findAntiCheat("Easy Anti-Cheat");
     auto* be = findAntiCheat("BattlEye");
     auto* ricochet = findAntiCheat("Ricochet");
-    return eac && be && ricochet &&
-           !eac->compatible && !be->compatible && !ricochet->compatible &&
-           eac->kernelLevel && be->kernelLevel && ricochet->kernelLevel;
+    return eac && be && ricochet && !eac->compatible && !be->compatible && !ricochet->compatible && eac->kernelLevel &&
+           be->kernelLevel && ricochet->kernelLevel;
 }
 
 static bool test_anticheat_find_nonexistent() {
@@ -133,7 +137,8 @@ int main() {
     TEST(qpc_frequency_realistic);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

@@ -5,9 +5,9 @@
 /// are timestamped and written to a configurable output sink. Thread-safety is
 /// handled internally so callers can log from any context without synchronization.
 
-#include <metalsharp/Logger.h>
 #include <cstring>
 #include <ctime>
+#include <metalsharp/Logger.h>
 
 namespace metalsharp {
 
@@ -18,7 +18,8 @@ void Logger::init(const std::string& logPath) {
     if (!logPath.empty()) {
         s_file = fopen(logPath.c_str(), "a");
     }
-    if (!s_file) s_file = stderr;
+    if (!s_file)
+        s_file = stderr;
 }
 
 void Logger::shutdown() {
@@ -28,17 +29,28 @@ void Logger::shutdown() {
     }
 }
 
-void Logger::setLevel(LogLevel level) { s_level = level; }
+void Logger::setLevel(LogLevel level) {
+    s_level = level;
+}
 
 void Logger::log(LogLevel level, const char* fmt, ...) {
-    if (level < s_level) return;
+    if (level < s_level)
+        return;
 
     const char* prefix = "INFO";
     switch (level) {
-        case LogLevel::Trace: prefix = "TRACE"; break;
-        case LogLevel::Info:  prefix = "INFO "; break;
-        case LogLevel::Warn:  prefix = "WARN "; break;
-        case LogLevel::Error: prefix = "ERROR"; break;
+    case LogLevel::Trace:
+        prefix = "TRACE";
+        break;
+    case LogLevel::Info:
+        prefix = "INFO ";
+        break;
+    case LogLevel::Warn:
+        prefix = "WARN ";
+        break;
+    case LogLevel::Error:
+        prefix = "ERROR";
+        break;
     }
 
     time_t now = time(nullptr);
@@ -59,4 +71,4 @@ void Logger::log(LogLevel level, const char* fmt, ...) {
     va_end(args);
 }
 
-}
+} // namespace metalsharp

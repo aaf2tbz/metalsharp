@@ -1,19 +1,15 @@
-#include <d3d/D3D11.h>
 #include <cstdio>
 #include <cstring>
+#include <d3d/D3D11.h>
 
-extern "C" HRESULT D3D11CreateDevice(
-    void*, UINT, HMODULE, UINT, const void*, UINT, UINT,
-    ID3D11Device**, void*, ID3D11DeviceContext**);
+extern "C" HRESULT D3D11CreateDevice(void*, UINT, HMODULE, UINT, const void*, UINT, UINT, ID3D11Device**, void*,
+                                     ID3D11DeviceContext**);
 
 int main() {
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
 
-    HRESULT hr = D3D11CreateDevice(
-        nullptr, 0, nullptr, 0,
-        nullptr, 0, 7,
-        &device, nullptr, &context);
+    HRESULT hr = D3D11CreateDevice(nullptr, 0, nullptr, 0, nullptr, 0, 7, &device, nullptr, &context);
 
     if (FAILED(hr)) {
         fprintf(stderr, "FAIL: D3D11CreateDevice returned 0x%08x\n", hr);

@@ -40,4 +40,4 @@ bool dxgiFormatIsDepth(DXGITranslation format);
 bool dxgiFormatIsStencil(DXGITranslation format);
 bool dxgiFormatIsCompressed(DXGITranslation format);
 
-}
+} // namespace metalsharp
