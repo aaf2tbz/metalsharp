@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -122,6 +122,14 @@
       {
         "from": "bundles/SteamSetup.exe",
         "to": "bundles/SteamSetup.exe"
+      },
+      {
+        "from": "bundles/steamwebhelper.exe",
+        "to": "bundles/steamwebhelper.exe"
+      },
+      {
+        "from": "bundles/steamwebhelper-wrapper.c",
+        "to": "bundles/steamwebhelper-wrapper.c"
       }
     ],
     "directories": {
