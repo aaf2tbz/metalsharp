@@ -30,7 +30,7 @@ pub fn status() -> Value {
 
     let login_state = detect_login_state();
 
-    let mac_paths = vec![
+    let mac_paths = [
         home.join(".steam/steam/steamapps"),
         home.join(".local/share/Steam/steamapps"),
         home.join("Library/Application Support/Steam/steamapps"),
@@ -351,7 +351,7 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         if manifest_path.exists() {
             let contents = std::fs::read_to_string(&manifest_path).unwrap_or_default();
             let install_dir = contents.lines().find(|l| l.contains("\"installdir\"")).and_then(|l| {
-                let parts: Vec<&str> = l.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                let parts: Vec<&str> = l.splitn(2, ['\t', ' ']).collect();
                 parts.last().map(|s| s.trim().trim_matches('"').to_string())
             });
 

@@ -52,7 +52,7 @@ pub fn start_install_all() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({"ok": false, "error": "installation already in progress"}));
     }
 
-    if !INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+    if INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return Ok(json!({"ok": false, "error": "installation already in progress"}));
     }
 
@@ -76,8 +76,8 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("Xcode CLI Tools", Box::new(|_| install_xcode_cli())),
-        ("MetalSharp Bundle", Box::new(|home| install_metalsharp_bundle(home))),
-        ("Game Porting Toolkit", Box::new(|home| install_gptk(home))),
+        ("MetalSharp Bundle", Box::new(install_metalsharp_bundle)),
+        ("Game Porting Toolkit", Box::new(install_gptk)),
         ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -489,7 +489,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         if steam_exe.exists() {
             let steam_dir =
                 home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
-            let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+            crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
             return Ok(true);
         }
     }
@@ -497,7 +497,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     if steam_exe.exists() {
         let steam_dir =
             home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
-        let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+        crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
         Ok(true)
     } else {
         Err("Steam.exe not found after installation — may need manual install".into())

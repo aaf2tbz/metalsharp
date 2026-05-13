@@ -123,8 +123,7 @@ fn parse_vdf_path(line: &str, key: &str) -> Option<String> {
 pub fn resolve_wine_path(path: &str) -> String {
     let p = path.replace('\\', "/");
     for drive in &["C:", "c:", "D:", "d:", "E:", "e:", "F:", "f:", "G:", "g:", "H:", "h:"] {
-        if p.starts_with(drive) {
-            let rest = &p[drive.len()..];
+        if let Some(rest) = p.strip_prefix(drive) {
             if rest.starts_with('/') || rest.is_empty() {
                 return format!("/{}", rest);
             }
