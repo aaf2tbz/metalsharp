@@ -8,13 +8,13 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
 #include <metalsharp/CoreAudioBackend.h>
+#include <metalsharp/Platform.h>
 
 namespace metalsharp {
 
 class XAudio2Engine {
-public:
+  public:
     XAudio2Engine();
     ~XAudio2Engine();
 
@@ -25,9 +25,9 @@ public:
     HRESULT stop(void* pVoice);
     HRESULT setVolume(void* pVoice, float volume);
 
-private:
+  private:
     CoreAudioBackend m_backend;
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

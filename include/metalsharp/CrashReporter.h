@@ -8,9 +8,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 namespace metalsharp {
 
@@ -29,7 +29,7 @@ struct CrashReport {
 };
 
 class CrashReporter {
-public:
+  public:
     static CrashReporter& instance();
 
     void beginSession(const std::string& gameName, const std::string& exePath);
@@ -46,7 +46,7 @@ public:
     static std::string generateId();
     static std::string formatTimestamp(int64_t epoch);
 
-private:
+  private:
     CrashReporter() = default;
     std::string m_currentGame;
     std::string m_currentExe;
@@ -54,4 +54,4 @@ private:
     bool m_inSession = false;
 };
 
-}
+} // namespace metalsharp

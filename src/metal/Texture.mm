@@ -5,10 +5,10 @@
 /// Translates D3D format enums to Metal pixel formats and configures texture descriptors
 /// for render target, depth stencil, and shader resource usage.
 
-#include <metalsharp/MetalBackend.h>
-#include <metalsharp/FormatTranslation.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
+#include <metalsharp/FormatTranslation.h>
+#include <metalsharp/MetalBackend.h>
 
 namespace metalsharp {
 
@@ -22,14 +22,20 @@ struct MetalTexture::Impl {
 };
 
 MetalTexture::MetalTexture() : m_impl(new Impl()) {}
-MetalTexture::~MetalTexture() { delete m_impl; }
+MetalTexture::~MetalTexture() {
+    delete m_impl;
+}
 
 static MTLTextureUsage translateUsage(uint32_t usage) {
     MTLTextureUsage mtlUsage = 0;
-    if (usage & 0x1) mtlUsage |= MTLTextureUsageRenderTarget;
-    if (usage & 0x2) mtlUsage |= MTLTextureUsageShaderRead;
-    if (usage & 0x4) mtlUsage |= MTLTextureUsageShaderWrite;
-    if (usage & 0x8) mtlUsage |= MTLTextureUsagePixelFormatView;
+    if (usage & 0x1)
+        mtlUsage |= MTLTextureUsageRenderTarget;
+    if (usage & 0x2)
+        mtlUsage |= MTLTextureUsageShaderRead;
+    if (usage & 0x4)
+        mtlUsage |= MTLTextureUsageShaderWrite;
+    if (usage & 0x8)
+        mtlUsage |= MTLTextureUsagePixelFormatView;
     return mtlUsage;
 }
 
@@ -55,7 +61,8 @@ bool MetalTexture::init1D(MetalDevice& device, uint32_t width, uint32_t format, 
     return m_impl->texture != nil;
 }
 
-bool MetalTexture::init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels, uint32_t sampleCount) {
+bool MetalTexture::init2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage,
+                          uint32_t mipLevels, uint32_t sampleCount) {
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
 
     MTLTextureDescriptor* desc = [[MTLTextureDescriptor alloc] init];
@@ -77,7 +84,8 @@ bool MetalTexture::init2D(MetalDevice& device, uint32_t width, uint32_t height, 
     return m_impl->texture != nil;
 }
 
-bool MetalTexture::init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels) {
+bool MetalTexture::init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format,
+                          uint32_t usage, uint32_t mipLevels) {
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
 
     MTLTextureDescriptor* desc = [[MTLTextureDescriptor alloc] init];
@@ -100,7 +108,8 @@ bool MetalTexture::init3D(MetalDevice& device, uint32_t width, uint32_t height, 
     return m_impl->texture != nil;
 }
 
-MetalTexture* MetalTexture::create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage, uint32_t mipLevels) {
+MetalTexture* MetalTexture::create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage,
+                                     uint32_t mipLevels) {
     MetalTexture* tex = new MetalTexture();
     if (!tex->init1D(device, width, format, usage, mipLevels)) {
         delete tex;
@@ -109,7 +118,8 @@ MetalTexture* MetalTexture::create1D(MetalDevice& device, uint32_t width, uint32
     return tex;
 }
 
-MetalTexture* MetalTexture::create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format, uint32_t usage, uint32_t mipLevels, uint32_t sampleCount) {
+MetalTexture* MetalTexture::create2D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t format,
+                                     uint32_t usage, uint32_t mipLevels, uint32_t sampleCount) {
     MetalTexture* tex = new MetalTexture();
     if (!tex->init2D(device, width, height, format, usage, mipLevels, sampleCount)) {
         delete tex;
@@ -118,7 +128,8 @@ MetalTexture* MetalTexture::create2D(MetalDevice& device, uint32_t width, uint32
     return tex;
 }
 
-MetalTexture* MetalTexture::create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage, uint32_t mipLevels) {
+MetalTexture* MetalTexture::create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth,
+                                     uint32_t format, uint32_t usage, uint32_t mipLevels) {
     MetalTexture* tex = new MetalTexture();
     if (!tex->init3D(device, width, height, depth, format, usage, mipLevels)) {
         delete tex;
@@ -127,25 +138,37 @@ MetalTexture* MetalTexture::create3D(MetalDevice& device, uint32_t width, uint32
     return tex;
 }
 
-void MetalTexture::uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t w, uint32_t h, uint32_t depth) {
-    if (!m_impl->texture || !data) return;
+void MetalTexture::uploadData(uint32_t mipLevel, uint32_t slice, const void* data, uint32_t rowPitch, uint32_t w,
+                              uint32_t h, uint32_t depth) {
+    if (!m_impl->texture || !data)
+        return;
     MTLRegion region = MTLRegionMake3D(0, 0, 0, w, h, depth > 0 ? depth : 1);
     [m_impl->texture replaceRegion:region
-                        mipmapLevel:mipLevel
-                              slice:slice
-                          withBytes:data
-                        bytesPerRow:rowPitch
-                      bytesPerImage:rowPitch * h];
+                       mipmapLevel:mipLevel
+                             slice:slice
+                         withBytes:data
+                       bytesPerRow:rowPitch
+                     bytesPerImage:rowPitch * h];
 }
 
 void* MetalTexture::nativeTexture() const {
     return (__bridge void*)m_impl->texture;
 }
 
-uint32_t MetalTexture::width() const { return m_impl->w; }
-uint32_t MetalTexture::height() const { return m_impl->h; }
-uint32_t MetalTexture::depth() const { return m_impl->d; }
-uint32_t MetalTexture::mipLevels() const { return m_impl->mips; }
-uint32_t MetalTexture::sampleCount() const { return m_impl->samples; }
-
+uint32_t MetalTexture::width() const {
+    return m_impl->w;
 }
+uint32_t MetalTexture::height() const {
+    return m_impl->h;
+}
+uint32_t MetalTexture::depth() const {
+    return m_impl->d;
+}
+uint32_t MetalTexture::mipLevels() const {
+    return m_impl->mips;
+}
+uint32_t MetalTexture::sampleCount() const {
+    return m_impl->samples;
+}
+
+} // namespace metalsharp

@@ -1,17 +1,23 @@
+#include <cstdio>
+#include <cstring>
+#include <d3d/D3D11.h>
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/D3D11DeviceContext.h>
 #include <metalsharp/DeferredContext.h>
-#include <d3d/D3D11.h>
-#include <cstdio>
-#include <cstring>
 
 static int g_pass = 0;
 static int g_fail = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); g_pass++; } \
-    else { printf("  [FAIL] %s\n", msg); g_fail++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            g_pass++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            g_fail++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 static const char* kMSL = R"msl(
 #include <metal_stdlib>
@@ -154,12 +160,18 @@ int main() {
         }
     }
 
-    if (cmdList) cmdList->Release();
-    if (cmdList2) cmdList2->Release();
-    if (rtv) rtv->Release();
-    if (rtTexture) rtTexture->Release();
-    if (deferred) deferred->Release();
-    if (immediate) immediate->Release();
+    if (cmdList)
+        cmdList->Release();
+    if (cmdList2)
+        cmdList2->Release();
+    if (rtv)
+        rtv->Release();
+    if (rtTexture)
+        rtTexture->Release();
+    if (deferred)
+        deferred->Release();
+    if (immediate)
+        immediate->Release();
     device->Release();
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);

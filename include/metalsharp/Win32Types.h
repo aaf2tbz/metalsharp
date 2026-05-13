@@ -10,8 +10,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 #define MSABI __attribute__((ms_abi))
 
@@ -98,39 +98,39 @@ struct SYSTEM_INFO {
     WORD wProcessorRevision;
 };
 
-constexpr uint32_t MEM_COMMIT   = 0x1000;
-constexpr uint32_t MEM_RESERVE  = 0x2000;
-constexpr uint32_t MEM_RELEASE  = 0x8000;
+constexpr uint32_t MEM_COMMIT = 0x1000;
+constexpr uint32_t MEM_RESERVE = 0x2000;
+constexpr uint32_t MEM_RELEASE = 0x8000;
 constexpr uint32_t MEM_DECOMMIT = 0x4000;
 
-constexpr uint32_t PAGE_NOACCESS    = 0x01;
-constexpr uint32_t PAGE_READONLY    = 0x02;
-constexpr uint32_t PAGE_READWRITE   = 0x04;
-constexpr uint32_t PAGE_EXECUTE     = 0x10;
+constexpr uint32_t PAGE_NOACCESS = 0x01;
+constexpr uint32_t PAGE_READONLY = 0x02;
+constexpr uint32_t PAGE_READWRITE = 0x04;
+constexpr uint32_t PAGE_EXECUTE = 0x10;
 constexpr uint32_t PAGE_EXECUTE_READ = 0x20;
 constexpr uint32_t PAGE_EXECUTE_READWRITE = 0x40;
 
-constexpr uint32_t GENERIC_READ    = 0x80000000;
-constexpr uint32_t GENERIC_WRITE   = 0x40000000;
+constexpr uint32_t GENERIC_READ = 0x80000000;
+constexpr uint32_t GENERIC_WRITE = 0x40000000;
 constexpr uint32_t FILE_SHARE_READ = 0x00000001;
 
-constexpr uint32_t CREATE_NEW        = 1;
-constexpr uint32_t CREATE_ALWAYS     = 2;
-constexpr uint32_t OPEN_EXISTING     = 3;
-constexpr uint32_t OPEN_ALWAYS       = 4;
+constexpr uint32_t CREATE_NEW = 1;
+constexpr uint32_t CREATE_ALWAYS = 2;
+constexpr uint32_t OPEN_EXISTING = 3;
+constexpr uint32_t OPEN_ALWAYS = 4;
 constexpr uint32_t TRUNCATE_EXISTING = 5;
 
 constexpr uint32_t FILE_ATTRIBUTE_NORMAL = 0x80;
 
-constexpr uint32_t STD_INPUT_HANDLE  = 0xFFFFFFF6;
+constexpr uint32_t STD_INPUT_HANDLE = 0xFFFFFFF6;
 constexpr uint32_t STD_OUTPUT_HANDLE = 0xFFFFFFF5;
-constexpr uint32_t STD_ERROR_HANDLE  = 0xFFFFFFF4;
+constexpr uint32_t STD_ERROR_HANDLE = 0xFFFFFFF4;
 
 constexpr uint32_t INFINITE = 0xFFFFFFFF;
 
 constexpr uint32_t WAIT_OBJECT_0 = 0;
-constexpr uint32_t WAIT_TIMEOUT  = 258;
-constexpr uint32_t WAIT_FAILED   = 0xFFFFFFFF;
+constexpr uint32_t WAIT_TIMEOUT = 258;
+constexpr uint32_t WAIT_FAILED = 0xFFFFFFFF;
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

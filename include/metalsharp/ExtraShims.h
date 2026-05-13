@@ -31,5 +31,5 @@ ShimLibrary createWsock32Shim();
 void addMissingKernel32(ShimLibrary& lib);
 void addDRMShims(ShimLibrary& kernel32, ShimLibrary& winmm);
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

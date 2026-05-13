@@ -1,5 +1,5 @@
-#include <metalsharp/MetalBackend.h>
 #include <cstdio>
+#include <metalsharp/MetalBackend.h>
 
 int main() {
     auto* device = metalsharp::MetalDevice::create();

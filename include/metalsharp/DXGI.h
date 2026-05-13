@@ -10,14 +10,15 @@
 #pragma once
 
 #include <dxgi/DXGI.h>
-#include <metalsharp/MetalBackend.h>
 #include <memory>
+#include <metalsharp/MetalBackend.h>
 
 namespace metalsharp {
 
 class MetalSwapChain {
-public:
-    static MetalSwapChain* create(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount);
+  public:
+    static MetalSwapChain* create(MetalDevice& device, void* window, uint32_t width, uint32_t height,
+                                  uint32_t bufferCount);
     ~MetalSwapChain();
 
     void present(uint32_t syncInterval);
@@ -26,7 +27,7 @@ public:
     void resize(uint32_t width, uint32_t height);
     void* metalLayer() const;
 
-private:
+  private:
     MetalSwapChain();
     bool init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount);
 
@@ -37,8 +38,9 @@ private:
 class D3D11Device;
 
 class DXGISwapChainImpl : public IDXGISwapChain1 {
-public:
-    static HRESULT create(MetalDevice* metalDevice, HWND window, uint32_t width, uint32_t height, uint32_t bufferCount, DXGI_FORMAT format, IDXGISwapChain** ppSwapChain);
+  public:
+    static HRESULT create(MetalDevice* metalDevice, HWND window, uint32_t width, uint32_t height, uint32_t bufferCount,
+                          DXGI_FORMAT format, IDXGISwapChain** ppSwapChain);
 
     STDMETHOD(QueryInterface)(REFIID riid, void** ppvObject) override;
     STDMETHOD_(ULONG, AddRef)() override;
@@ -53,14 +55,15 @@ public:
     STDMETHOD(SetFullscreenState)(INT Fullscreen, IDXGIOutput* pTarget) override;
     STDMETHOD(GetFullscreenState)(INT* pFullscreen, IDXGIOutput** ppTarget) override;
     STDMETHOD(GetDesc)(void* pDesc) override;
-    STDMETHOD(ResizeBuffers)(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) override;
+    STDMETHOD(ResizeBuffers)(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
+                             UINT SwapChainFlags) override;
     STDMETHOD(ResizeTarget)(const DXGI_MODE_DESC* pNewTargetParameters) override;
     STDMETHOD(GetContainingOutput)(IDXGIOutput** ppOutput) override;
     STDMETHOD(GetFrameStatistics)(void* pStats) override;
     STDMETHOD(GetLastPresentCount)(UINT* pLastPresentCount) override;
     STDMETHOD(Present1)(UINT SyncInterval, UINT PresentFlags, const void* pPresentParameters) override;
 
-private:
+  private:
     DXGISwapChainImpl() = default;
     ~DXGISwapChainImpl();
 
@@ -76,7 +79,7 @@ private:
 };
 
 class DXGIFactory : public IDXGIFactory4 {
-public:
+  public:
     static HRESULT create(const GUID& riid, void** ppFactory);
 
     STDMETHOD(QueryInterface)(REFIID riid, void** ppvObject) override;
@@ -90,10 +93,10 @@ public:
     STDMETHOD(EnumAdapters1)(UINT, IDXGIAdapter**) override { return DXGI_ERROR_NOT_FOUND; }
     STDMETHOD_(INT, IsCurrent)() override { return TRUE; }
 
-private:
+  private:
     DXGIFactory() = default;
     ~DXGIFactory() = default;
     ULONG m_refCount = 1;
 };
 
-}
+} // namespace metalsharp

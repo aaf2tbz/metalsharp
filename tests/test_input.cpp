@@ -1,14 +1,20 @@
-#include <metalsharp/GameControllerBridge.h>
 #include <cstdio>
 #include <cstring>
+#include <metalsharp/GameControllerBridge.h>
 
 static int passed = 0;
 static int failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); passed++; } \
-    else { printf("  [FAIL] %s\n", msg); failed++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            passed++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            failed++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== Input Tests ===\n\n");

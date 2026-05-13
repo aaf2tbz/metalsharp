@@ -1,10 +1,11 @@
 /// @file RenderThreadPool.cpp
 /// @brief Thread pool for parallel command buffer encoding.
 ///
-/// Manages a pool of worker threads that encode Metal command buffers in parallel, splitting draw call batches across threads. Uses work-stealing queues and fence-based synchronization to preserve D3D11 submission order.
-#include <metalsharp/RenderThreadPool.h>
-#include <metalsharp/Logger.h>
+/// Manages a pool of worker threads that encode Metal command buffers in parallel, splitting draw call batches across
+/// threads. Uses work-stealing queues and fence-based synchronization to preserve D3D11 submission order.
 #include <algorithm>
+#include <metalsharp/Logger.h>
+#include <metalsharp/RenderThreadPool.h>
 
 namespace metalsharp {
 
@@ -14,7 +15,8 @@ RenderThreadPool& RenderThreadPool::instance() {
 }
 
 void RenderThreadPool::init(uint32_t threadCount) {
-    if (m_initialized) return;
+    if (m_initialized)
+        return;
 
     if (threadCount == 0) {
         threadCount = std::max(1u, std::thread::hardware_concurrency() / 2);
@@ -34,7 +36,8 @@ void RenderThreadPool::init(uint32_t threadCount) {
 }
 
 void RenderThreadPool::shutdown() {
-    if (!m_initialized) return;
+    if (!m_initialized)
+        return;
 
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
@@ -43,7 +46,8 @@ void RenderThreadPool::shutdown() {
     m_queueCV.notify_all();
 
     for (auto& t : m_threads) {
-        if (t.joinable()) t.join();
+        if (t.joinable())
+            t.join();
     }
     m_threads.clear();
     m_queue.clear();
@@ -51,7 +55,8 @@ void RenderThreadPool::shutdown() {
 }
 
 uint64_t RenderThreadPool::submit(std::function<void()> task) {
-    if (!m_initialized || !m_running) return 0;
+    if (!m_initialized || !m_running)
+        return 0;
 
     RenderTask rt;
     rt.work = std::move(task);
@@ -68,7 +73,8 @@ uint64_t RenderThreadPool::submit(std::function<void()> task) {
 }
 
 void RenderThreadPool::submitBarrier() {
-    if (!m_initialized || !m_running) return;
+    if (!m_initialized || !m_running)
+        return;
 
     RenderTask barrier;
     barrier.isBarrier = true;
@@ -83,9 +89,7 @@ void RenderThreadPool::submitBarrier() {
 
 void RenderThreadPool::waitIdle() {
     std::unique_lock<std::mutex> lock(m_queueMutex);
-    m_completionCV.wait(lock, [this] {
-        return m_queue.empty() && m_tasksCompleted >= m_tasksSubmitted;
-    });
+    m_completionCV.wait(lock, [this] { return m_queue.empty() && m_tasksCompleted >= m_tasksSubmitted; });
 }
 
 void RenderThreadPool::workerLoop() {
@@ -93,11 +97,10 @@ void RenderThreadPool::workerLoop() {
         RenderTask task;
         {
             std::unique_lock<std::mutex> lock(m_queueMutex);
-            m_queueCV.wait(lock, [this] {
-                return !m_queue.empty() || !m_running;
-            });
+            m_queueCV.wait(lock, [this] { return !m_queue.empty() || !m_running; });
 
-            if (!m_running && m_queue.empty()) return;
+            if (!m_running && m_queue.empty())
+                return;
 
             task = std::move(m_queue.front());
             m_queue.pop_front();
@@ -140,7 +143,8 @@ void CommandBufferPool::shutdown() {
 
 void* CommandBufferPool::acquire() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized || !m_commandQueue) return nullptr;
+    if (!m_initialized || !m_commandQueue)
+        return nullptr;
 
     for (auto& entry : m_pool) {
         if (!entry.inUse) {
@@ -154,7 +158,8 @@ void* CommandBufferPool::acquire() {
 
 void CommandBufferPool::release(void* buffer) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!buffer) return;
+    if (!buffer)
+        return;
 
     for (auto& entry : m_pool) {
         if (entry.buffer == buffer) {
@@ -172,7 +177,8 @@ void CommandBufferPool::release(void* buffer) {
 uint64_t CommandBufferPool::activeCount() const {
     uint64_t count = 0;
     for (const auto& entry : m_pool) {
-        if (entry.inUse) count++;
+        if (entry.inUse)
+            count++;
     }
     return count;
 }
@@ -180,9 +186,10 @@ uint64_t CommandBufferPool::activeCount() const {
 uint64_t CommandBufferPool::pooledCount() const {
     uint64_t count = 0;
     for (const auto& entry : m_pool) {
-        if (!entry.inUse) count++;
+        if (!entry.inUse)
+            count++;
     }
     return count;
 }
 
-}
+} // namespace metalsharp

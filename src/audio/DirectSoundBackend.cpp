@@ -1,11 +1,12 @@
 /// @file DirectSoundBackend.cpp
 /// @brief DirectSound buffer emulation via CoreAudio ring buffer.
 ///
-/// Implements IDirectSound and IDirectSoundBuffer COM interfaces by writing captured audio into the same CoreAudio ring buffer used by XAudio2. Supports primary/secondary buffer semantics and write cursor tracking.
+/// Implements IDirectSound and IDirectSoundBuffer COM interfaces by writing captured audio into the same CoreAudio ring
+/// buffer used by XAudio2. Supports primary/secondary buffer semantics and write cursor tracking.
+#include <algorithm>
+#include <cstring>
 #include <metalsharp/DirectSoundBackend.h>
 #include <metalsharp/Logger.h>
-#include <cstring>
-#include <algorithm>
 
 namespace metalsharp {
 
@@ -36,13 +37,14 @@ void* DirectSoundBackend::createBuffer(uint32_t size, const WAVEFORMAT& format) 
     buf->playing = false;
     buf->writeCursor = 0;
     m_buffers.push_back(buf);
-    MS_TRACE("DirectSoundBackend: buffer created (%u bytes, %u Hz, %u-bit, %u ch)",
-             size, format.nSamplesPerSec, format.wBitsPerSample, format.nChannels);
+    MS_TRACE("DirectSoundBackend: buffer created (%u bytes, %u Hz, %u-bit, %u ch)", size, format.nSamplesPerSec,
+             format.wBitsPerSample, format.nChannels);
     return buf;
 }
 
 void DirectSoundBackend::destroyBuffer(void* buffer) {
-    if (!buffer) return;
+    if (!buffer)
+        return;
     auto* buf = static_cast<DSBuffer*>(buffer);
     auto it = std::find(m_buffers.begin(), m_buffers.end(), buf);
     if (it != m_buffers.end()) {
@@ -52,36 +54,42 @@ void DirectSoundBackend::destroyBuffer(void* buffer) {
 }
 
 bool DirectSoundBackend::writeBuffer(void* buffer, const void* data, uint32_t offset, uint32_t size) {
-    if (!buffer || !data) return false;
+    if (!buffer || !data)
+        return false;
     auto* buf = static_cast<DSBuffer*>(buffer);
-    if (offset + size > buf->data.size()) return false;
+    if (offset + size > buf->data.size())
+        return false;
     memcpy(buf->data.data() + offset, data, size);
     return true;
 }
 
 bool DirectSoundBackend::playBuffer(void* buffer, uint32_t flags) {
-    if (!buffer) return false;
+    if (!buffer)
+        return false;
     auto* buf = static_cast<DSBuffer*>(buffer);
     buf->playing = true;
     return true;
 }
 
 bool DirectSoundBackend::stopBuffer(void* buffer) {
-    if (!buffer) return false;
+    if (!buffer)
+        return false;
     auto* buf = static_cast<DSBuffer*>(buffer);
     buf->playing = false;
     return true;
 }
 
 bool DirectSoundBackend::setVolume(void* buffer, float volume) {
-    if (!buffer) return false;
+    if (!buffer)
+        return false;
     static_cast<DSBuffer*>(buffer)->volume = volume;
     return true;
 }
 
 float DirectSoundBackend::getVolume(void* buffer) const {
-    if (!buffer) return 0;
+    if (!buffer)
+        return 0;
     return static_cast<DSBuffer*>(buffer)->volume;
 }
 
-}
+} // namespace metalsharp

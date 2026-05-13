@@ -8,10 +8,7 @@ use std::time::Duration;
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 fn progress_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".metalsharp")
-        .join("install_progress.json")
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("install_progress.json")
 }
 
 fn write_progress(step: usize, total: usize, name: &str, status: &str, log_line: &str, error: Option<&str>) {
@@ -73,7 +70,7 @@ fn run_install_all() {
         None => {
             write_progress(0, 0, "", "error", "no home directory", Some("no home directory"));
             return;
-        }
+        },
     };
 
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
@@ -95,10 +92,10 @@ fn run_install_all() {
         match installer(&home) {
             Ok(false) => {
                 write_progress(step_num, total, name, "done", &format!("{} already installed — skipping", name), None);
-            }
+            },
             Ok(true) => {
                 write_progress(step_num, total, name, "done", &format!("{} installed!", name), None);
-            }
+            },
             Err(e) => {
                 let is_required = i < 7;
                 if is_required {
@@ -107,7 +104,7 @@ fn run_install_all() {
                 } else {
                     write_progress(step_num, total, name, "skipped", &format!("{} skipped: {}", name, e), None);
                 }
-            }
+            },
         }
 
         std::thread::sleep(Duration::from_millis(200));
@@ -121,11 +118,7 @@ fn install_rosetta() -> Result<bool, String> {
     if plist.exists() {
         return Ok(false);
     }
-    let running = Command::new("pgrep")
-        .args(["-q", "oahd"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let running = Command::new("pgrep").args(["-q", "oahd"]).status().map(|s| s.success()).unwrap_or(false);
     if running {
         return Ok(false);
     }
@@ -191,11 +184,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         let _ = fs::create_dir_all(&wine_dir);
 
         let extracted_wine115 = tmp_extract.join("wine-11.5");
-        let source = if extracted_wine115.exists() {
-            extracted_wine115
-        } else {
-            tmp_extract.join("wine")
-        };
+        let source = if extracted_wine115.exists() { extracted_wine115 } else { tmp_extract.join("wine") };
 
         if source.exists() {
             if let Ok(entries) = fs::read_dir(&source) {
@@ -308,9 +297,7 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_gptk(_home: &PathBuf) -> Result<bool, String> {
-    let gptk_wine = PathBuf::from(
-        "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
-    );
+    let gptk_wine = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64");
     if gptk_wine.exists() {
         return Ok(false);
     }
@@ -430,7 +417,8 @@ fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
-    let steam_exe = home.join(".metalsharp")
+    let steam_exe = home
+        .join(".metalsharp")
         .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
@@ -499,22 +487,16 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     for _ in 0..90 {
         std::thread::sleep(Duration::from_secs(2));
         if steam_exe.exists() {
-            let steam_dir = home.join(".metalsharp")
-                .join("prefix-steam")
-                .join("drive_c")
-                .join("Program Files (x86)")
-                .join("Steam");
+            let steam_dir =
+                home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
             let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
             return Ok(true);
         }
     }
 
     if steam_exe.exists() {
-        let steam_dir = home.join(".metalsharp")
-            .join("prefix-steam")
-            .join("drive_c")
-            .join("Program Files (x86)")
-            .join("Steam");
+        let steam_dir =
+            home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
         let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
         Ok(true)
     } else {
@@ -533,11 +515,7 @@ fn check_command(cmd: &str) -> bool {
             return true;
         }
     }
-    Command::new("/usr/bin/which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    Command::new("/usr/bin/which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn install_mono_arm64() -> Result<bool, String> {
@@ -602,19 +580,13 @@ fn install_moltenvk() -> Result<bool, String> {
 }
 
 fn find_brew() -> Result<PathBuf, String> {
-    let candidates = [
-        PathBuf::from("/opt/homebrew/bin/brew"),
-        PathBuf::from("/usr/local/bin/brew"),
-    ];
+    let candidates = [PathBuf::from("/opt/homebrew/bin/brew"), PathBuf::from("/usr/local/bin/brew")];
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
         }
     }
-    let output = Command::new("which")
-        .arg("brew")
-        .output()
-        .ok();
+    let output = Command::new("which").arg("brew").output().ok();
     if let Some(o) = output {
         if o.status.success() {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -628,16 +600,9 @@ fn find_brew() -> Result<PathBuf, String> {
 
 fn brew_install(package: &str) -> Result<bool, String> {
     let brew = find_brew()?;
-    let output = Command::new(&brew)
-        .args(["install", package])
-        .output()
-        .map_err(|e| format!("brew failed: {}", e))?;
+    let output = Command::new(&brew).args(["install", package]).output().map_err(|e| format!("brew failed: {}", e))?;
 
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let combined = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
 
     if output.status.success() || combined.contains("already installed") {
         Ok(true)
@@ -675,7 +640,10 @@ fn brew_cask_install(package: &str) -> Result<bool, String> {
         String::from_utf8_lossy(&reinstall_output.stderr)
     );
 
-    if reinstall_output.status.success() || reinstall_combined.contains("already installed") || reinstall_combined.contains("It seems there is already an app") {
+    if reinstall_output.status.success()
+        || reinstall_combined.contains("already installed")
+        || reinstall_combined.contains("It seems there is already an app")
+    {
         Ok(true)
     } else {
         let combined = format!("{}\n{}", install_combined, reinstall_combined);
@@ -684,10 +652,7 @@ fn brew_cask_install(package: &str) -> Result<bool, String> {
 }
 
 fn find_bundled_archive(name: &str) -> Option<PathBuf> {
-    let candidates = [
-        find_in_resources(name),
-        find_in_dev_path(name),
-    ];
+    let candidates = [find_in_resources(name), find_in_dev_path(name)];
 
     if let Some(found) = candidates.into_iter().find(|c| c.is_some()).flatten() {
         return Some(found);
@@ -725,17 +690,9 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
         }
     }
 
-    let url = format!(
-        "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}",
-        filename
-    );
+    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
 
-    let output = Command::new("curl")
-        .args(["-sL", "--progress-bar", "-o"])
-        .arg(&cached)
-        .arg(&url)
-        .output()
-        .ok()?;
+    let output = Command::new("curl").args(["-sL", "--progress-bar", "-o"]).arg(&cached).arg(&url).output().ok()?;
 
     if output.status.success() && cached.exists() {
         let size = fs::metadata(&cached).ok().map(|m| m.len()).unwrap_or(0);
@@ -839,11 +796,9 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
 fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), String> {
     let _ = fs::create_dir_all(dest);
 
-    let file = fs::File::open(archive)
-        .map_err(|e| format!("cannot open archive: {}", e))?;
+    let file = fs::File::open(archive).map_err(|e| format!("cannot open archive: {}", e))?;
 
-    let mut decoder = zstd::Decoder::new(file)
-        .map_err(|e| format!("zstd decode error: {}", e))?;
+    let mut decoder = zstd::Decoder::new(file).map_err(|e| format!("zstd decode error: {}", e))?;
 
     let mut tar_cmd = Command::new("tar")
         .args(["-xf", "-"])
@@ -856,13 +811,11 @@ fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), Stri
         .map_err(|e| format!("tar spawn failed: {}", e))?;
 
     if let Some(mut stdin) = tar_cmd.stdin.take() {
-        std::io::copy(&mut decoder, &mut stdin)
-            .map_err(|e| format!("zstd decompression failed: {}", e))?;
+        std::io::copy(&mut decoder, &mut stdin).map_err(|e| format!("zstd decompression failed: {}", e))?;
         drop(stdin);
     }
 
-    let status = tar_cmd.wait()
-        .map_err(|e| format!("tar wait failed: {}", e))?;
+    let status = tar_cmd.wait().map_err(|e| format!("tar wait failed: {}", e))?;
 
     if !status.success() {
         return Err(format!("tar extraction failed for {}", name));

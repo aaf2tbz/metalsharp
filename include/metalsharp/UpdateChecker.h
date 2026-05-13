@@ -8,8 +8,8 @@
 
 #pragma once
 
-#include <string>
 #include <cstdint>
+#include <string>
 
 namespace metalsharp {
 
@@ -36,14 +36,14 @@ struct UpdateInfo {
 };
 
 class UpdateChecker {
-public:
+  public:
     static UpdateInfo checkForUpdates(const std::string& repo = "aaf2tbz/metalsharp");
     static Version getCurrentVersion();
     static std::string getUserAgent();
     static UpdateInfo parseGitHubRelease(const std::string& json, const Version& current);
 
-private:
+  private:
     static std::string fetchLatestRelease(const std::string& repo);
 };
 
-}
+} // namespace metalsharp

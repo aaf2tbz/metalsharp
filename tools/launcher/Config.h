@@ -1,9 +1,9 @@
 #pragma once
 
-#include <string>
-#include <vector>
-#include <unordered_map>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace metalsharp {
 
@@ -19,7 +19,7 @@ struct GameProfile {
 };
 
 class Config {
-public:
+  public:
     Config();
 
     bool load(const std::string& path);
@@ -43,8 +43,8 @@ public:
     static std::string defaultConfigPath();
     static std::string findSteamInstallDir();
 
-private:
+  private:
     std::unordered_map<std::string, GameProfile> m_profiles;
 };
 
-}
+} // namespace metalsharp

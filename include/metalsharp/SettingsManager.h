@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include <string>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace metalsharp {
@@ -53,7 +53,7 @@ struct SettingsState {
 };
 
 class SettingsManager {
-public:
+  public:
     static SettingsManager& instance();
 
     bool load(const std::string& path = "");
@@ -72,10 +72,10 @@ public:
     void clearPipelineCache();
     uint64_t shaderCacheSize();
 
-private:
+  private:
     SettingsManager() = default;
     SettingsState m_state;
     std::string m_path;
 };
 
-}
+} // namespace metalsharp

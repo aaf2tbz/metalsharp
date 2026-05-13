@@ -9,11 +9,11 @@
 
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <metalsharp/Platform.h>
 #include <string>
 #include <unordered_map>
-#include <cstdint>
-#include <functional>
 
 namespace metalsharp {
 
@@ -24,7 +24,7 @@ struct GPUCounter {
 };
 
 class GPUProfiler {
-public:
+  public:
     static GPUProfiler& instance();
 
     void init();
@@ -37,7 +37,8 @@ public:
     void endPass(const std::string& name);
 
     void recordDraw(const std::string& passName, uint32_t vertexCount, uint32_t instanceCount);
-    void recordCompute(const std::string& passName, uint32_t threadgroupsX, uint32_t threadgroupsY, uint32_t threadgroupsZ);
+    void recordCompute(const std::string& passName, uint32_t threadgroupsX, uint32_t threadgroupsY,
+                       uint32_t threadgroupsZ);
     void recordGPUTiming(void* commandBuffer);
 
     struct FrameStats {
@@ -60,7 +61,7 @@ public:
     using StatsCallback = std::function<void(const FrameStats&)>;
     void setStatsCallback(StatsCallback callback);
 
-private:
+  private:
     GPUProfiler() = default;
 
     struct PassTimer {
@@ -93,4 +94,4 @@ private:
     StatsCallback m_callback;
 };
 
-}
+} // namespace metalsharp

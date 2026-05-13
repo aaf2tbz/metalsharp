@@ -99,16 +99,25 @@ class App {
 
   private switchView(view: string) {
     this.currentView = view;
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".nav-item").forEach((b) => {
+      b.classList.remove("active");
+    });
     document.querySelector(`[data-view="${view}"]`)?.classList.add("active");
-    document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+    document.querySelectorAll(".view").forEach((v) => {
+      v.classList.add("hidden");
+    });
     document.getElementById(`view-${view}`)?.classList.remove("hidden");
 
     if (view === "settings") this.renderSettings();
     if (view === "logs") this.renderLogs();
   }
 
-  private async api<T = unknown>(method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number): Promise<T | null> {
+  private async api<T = unknown>(
+    method: string,
+    url: string,
+    body?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<T | null> {
     try {
       const res = await getAPI().request(method, url, body, timeoutMs);
       if (!res.ok && res.error) this.toast(res.error, "error");
@@ -151,7 +160,11 @@ class App {
     const scan = await this.api<{ steam: SteamStatus }>("GET", "/scan");
     if (scan) this.steam = scan.steam ?? { installed: false, running: false };
 
-    const steamStatus = await this.api<{ installed: boolean; running: boolean; metalsharp_wine_available: boolean }>("GET", "/steam/status");
+    const steamStatus = await this.api<{
+      installed: boolean;
+      running: boolean;
+      metalsharp_wine_available: boolean;
+    }>("GET", "/steam/status");
     this.wineSteamInstalled = steamStatus?.installed ?? false;
     this.wineSteamRunning = steamStatus?.running ?? false;
     this.metalsharpWineAvailable = steamStatus?.metalsharp_wine_available ?? false;
@@ -190,10 +203,18 @@ class App {
     overlay.appendChild(wizard);
 
     switch (step) {
-      case 0: this.renderSetupWelcome(wizard); break;
-      case 1: this.renderSetupInstall(wizard); break;
-      case 2: this.renderSetupSteam(wizard); break;
-      case 3: this.renderSetupComplete(wizard); break;
+      case 0:
+        this.renderSetupWelcome(wizard);
+        break;
+      case 1:
+        this.renderSetupInstall(wizard);
+        break;
+      case 2:
+        this.renderSetupSteam(wizard);
+        break;
+      case 3:
+        this.renderSetupComplete(wizard);
+        break;
     }
   }
 
@@ -333,7 +354,8 @@ class App {
         (brewBtn as HTMLButtonElement).disabled = true;
         const result = await getAPI().installHomebrew();
         if (result.ok) {
-          brewBtn.innerHTML = '<span class="setup-install-btn-label">Homebrew — Terminal Opened</span><span class="setup-install-btn-desc">Complete the install in Terminal, then click below</span>';
+          brewBtn.innerHTML =
+            '<span class="setup-install-btn-label">Homebrew — Terminal Opened</span><span class="setup-install-btn-desc">Complete the install in Terminal, then click below</span>';
           brewBtn.classList.remove("btn-primary");
           brewBtn.classList.add("btn-secondary");
           depBtn.style.opacity = "1";
@@ -346,7 +368,9 @@ class App {
         }
       });
 
-      depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
+      depBtn.addEventListener("click", () =>
+        this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn),
+      );
     } else {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-primary btn-lg setup-install-btn";
@@ -354,19 +378,22 @@ class App {
       depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">MetalSharp Wine, GPTK, Mono, DXVK, Wine, and more</span>`;
       buttonsDiv.appendChild(depBtn);
 
-      depBtn.addEventListener("click", () => this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn));
+      depBtn.addEventListener("click", () =>
+        this.startDepInstall(logContainer, logDiv, progressBar, progressLabel, nextBtn),
+      );
     }
 
     body.querySelector("#setup-back")?.addEventListener("click", () => this.renderSetupStep(0));
 
-    nextBtn.addEventListener("click", () => this.renderSetupStep(2));  }
+    nextBtn.addEventListener("click", () => this.renderSetupStep(2));
+  }
 
   private async startDepInstall(
     logContainer: HTMLElement,
     logDiv: HTMLElement,
     progressBar: HTMLElement,
     progressLabel: HTMLElement,
-    nextBtn: HTMLElement
+    nextBtn: HTMLElement,
   ) {
     const depBtn = document.getElementById("btn-install-deps") as HTMLButtonElement;
     if (depBtn) {
@@ -380,7 +407,10 @@ class App {
     const started = await this.api<{ ok: boolean; error?: string }>("POST", "/setup/install-all");
     if (!started?.ok) {
       this.toast(started?.error ?? "Failed to start installation", "error");
-      if (depBtn) { depBtn.disabled = false; depBtn.style.opacity = "1"; }
+      if (depBtn) {
+        depBtn.disabled = false;
+        depBtn.style.opacity = "1";
+      }
       return;
     }
 
@@ -395,7 +425,14 @@ class App {
     addLog("Starting installation...", "info");
 
     const pollInterval = setInterval(async () => {
-      const progress = await this.api<{ step: number; total: number; current: string; status: string; log: string; error: string | null }>("GET", "/setup/install-progress");
+      const progress = await this.api<{
+        step: number;
+        total: number;
+        current: string;
+        status: string;
+        log: string;
+        error: string | null;
+      }>("GET", "/setup/install-progress");
       if (!progress) return;
 
       const pct = progress.total > 0 ? Math.round((progress.step / progress.total) * 100) : 0;
@@ -420,7 +457,11 @@ class App {
           logDiv.appendChild(marker);
         }
         clearInterval(pollInterval);
-        if (depBtn) { depBtn.disabled = false; depBtn.style.opacity = "1"; depBtn.textContent = "Retry"; }
+        if (depBtn) {
+          depBtn.disabled = false;
+          depBtn.style.opacity = "1";
+          depBtn.textContent = "Retry";
+        }
         return;
       } else if (progress.status === "installing") {
         const existing = logDiv.querySelector(`[data-step="${progress.step}"]`);
@@ -483,11 +524,13 @@ class App {
 
     const initialStatus = await checkSteamStatus();
     if (initialStatus?.running) {
-      statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+      statusDiv.innerHTML =
+        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
       installBtn.style.display = "none";
       nextBtn.style.display = "inline-flex";
     } else if (initialStatus?.installed) {
-      statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is installed</span>';
+      statusDiv.innerHTML =
+        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is installed</span>';
       installBtn.textContent = "Launch Steam";
     }
 
@@ -498,15 +541,22 @@ class App {
       const steamStatus = await checkSteamStatus();
 
       if (steamStatus?.running) {
-        statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+        statusDiv.innerHTML =
+          '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
         installBtn.style.display = "none";
         nextBtn.style.display = "inline-flex";
         return;
       }
 
       if (!steamStatus?.installed) {
-        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
-        const installResult = await this.api<{ ok: boolean; path?: string; error?: string; message?: string }>("POST", "/steam/install");
+        statusDiv.innerHTML =
+          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
+        const installResult = await this.api<{
+          ok: boolean;
+          path?: string;
+          error?: string;
+          message?: string;
+        }>("POST", "/steam/install");
         if (!installResult?.ok) {
           statusDiv.innerHTML = `<span style="color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</span>`;
           installBtn.textContent = "Retry Install";
@@ -514,31 +564,41 @@ class App {
           return;
         }
 
-        statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window...</span>';
+        statusDiv.innerHTML =
+          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window...</span>';
 
         const pollInstall = setInterval(async () => {
           const s = await checkSteamStatus();
           if (s?.installed || s?.running) {
             clearInterval(pollInstall);
             this.wineSteamInstalled = true;
-            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
+            statusDiv.innerHTML =
+              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
             installBtn.textContent = "Launch Steam";
             (installBtn as HTMLButtonElement).disabled = false;
           }
         }, 3000);
-        setTimeout(() => { clearInterval(pollInstall); }, 300000);
+        setTimeout(() => {
+          clearInterval(pollInstall);
+        }, 300000);
         return;
       }
 
-      statusDiv.innerHTML = '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';
-      const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/steam/launch");
+      statusDiv.innerHTML =
+        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';
+      const launchResult = await this.api<{
+        ok: boolean;
+        pid?: number;
+        error?: string;
+      }>("POST", "/steam/launch");
       if (launchResult?.ok) {
         this.wineSteamRunning = true;
         const pollSteam = setInterval(async () => {
           const s = await checkSteamStatus();
           if (s?.running) {
             clearInterval(pollSteam);
-            statusDiv.innerHTML = '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+            statusDiv.innerHTML =
+              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
             installBtn.style.display = "none";
             nextBtn.style.display = "inline-flex";
           }
@@ -612,7 +672,11 @@ class App {
       const key = keyInput?.value?.trim();
 
       this.setupDeviceName = name;
-      await this.api("POST", "/setup/save", { step: 3, deviceName: name, completed: true });
+      await this.api("POST", "/setup/save", {
+        step: 3,
+        deviceName: name,
+        completed: true,
+      });
 
       if (key) {
         await this.api("POST", "/steam/save-api-key", { key });
@@ -636,8 +700,8 @@ class App {
       const steamStatusBadge = this.wineSteamRunning
         ? '<span class="badge badge-ok" style="margin-left:8px">Steam Running</span>'
         : this.wineSteamInstalled
-        ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
-        : '';
+          ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
+          : "";
 
       el.innerHTML = `
         <div class="library-header">
@@ -646,7 +710,7 @@ class App {
             <p class="subtitle">No games yet ${steamStatusBadge}</p>
           </div>
           <div class="header-actions">
-            <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
+            <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
             <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
             <button class="btn btn-secondary" id="btn-scan">Refresh</button>
           </div>
@@ -662,14 +726,14 @@ class App {
       return;
     }
 
-    const installedGames = lib.games.filter(g => g.installed);
-    const notInstalled = lib.games.filter(g => !g.installed);
+    const installedGames = lib.games.filter((g) => g.installed);
+    const notInstalled = lib.games.filter((g) => !g.installed);
 
     const steamStatusBadge = this.wineSteamRunning
       ? '<span class="badge badge-ok" style="margin-left:8px">Steam Running</span>'
       : this.wineSteamInstalled
-      ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
-      : '';
+        ? '<span class="badge badge-warn" style="margin-left:8px">Steam Offline</span>'
+        : "";
 
     el.innerHTML = `
       <div class="library-header">
@@ -678,7 +742,7 @@ class App {
           <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge}</p>
         </div>
         <div class="header-actions">
-          <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? 'Stop Wine Steam' : 'Start Wine Steam'}">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>
+          <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
           <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
           <select class="control-input control-select" id="library-filter">
             <option value="all">All Games</option>
@@ -712,9 +776,9 @@ class App {
     this.libraryFilter = filter;
 
     let games = this.library.games;
-    if (filter === "installed") games = games.filter(g => g.installed);
-    if (filter === "not_installed") games = games.filter(g => !g.installed);
-    if (search) games = games.filter(g => g.name.toLowerCase().includes(search));
+    if (filter === "installed") games = games.filter((g) => g.installed);
+    if (filter === "not_installed") games = games.filter((g) => !g.installed);
+    if (search) games = games.filter((g) => g.name.toLowerCase().includes(search));
 
     this.renderGameGrid(games);
   }
@@ -746,7 +810,8 @@ class App {
 
     let actionHtml: string;
     if (isDownloading) {
-      const statusText = this.downloadProgress >= 95 ? "Installing..." : `Downloading ${Math.round(this.downloadProgress)}%`;
+      const statusText =
+        this.downloadProgress >= 95 ? "Installing..." : `Downloading ${Math.round(this.downloadProgress)}%`;
       actionHtml = `
         <div class="download-bar">
           <div class="download-progress" style="width:${this.downloadProgress}%"></div>
@@ -866,7 +931,7 @@ class App {
     if (!this.wineSteamRunning) {
       this.toast("Starting Steam...", "success");
       await this.api("POST", "/steam/launch");
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, 10000));
       this.wineSteamRunning = true;
     }
 
@@ -879,7 +944,10 @@ class App {
       if (lib?.games) {
         const installed = lib.games.find((g: SteamGame) => g.appid === game.appid && g.installed);
         if (installed) {
-          if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
+          if (this.progressInterval) {
+            clearInterval(this.progressInterval);
+            this.progressInterval = null;
+          }
           this.pollingForInstall = null;
           this.toast(`${game.name} installed!`, "success");
           await this.loadLibrary();
@@ -898,7 +966,7 @@ class App {
     if (!isFna && this.wineSteamInstalled && !this.wineSteamRunning) {
       this.toast("Starting Steam...", "success");
       await this.api("POST", "/steam/launch");
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, 10000));
       this.wineSteamRunning = true;
     }
 
@@ -906,8 +974,15 @@ class App {
     await this.api("POST", "/game/prepare", { appid: game.appid });
 
     this.toast(`Launching ${game.name}...`, "success");
-    const selectedMethod = (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ?? "native";
-    const launchResult = await this.api<{ ok: boolean; pid?: number; error?: string; gameType?: string }>("POST", "/game/launch-auto", {
+    const selectedMethod =
+      (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ??
+      "native";
+    const launchResult = await this.api<{
+      ok: boolean;
+      pid?: number;
+      error?: string;
+      gameType?: string;
+    }>("POST", "/game/launch-auto", {
       appid: game.appid,
       launchMethod: selectedMethod,
     });
@@ -935,7 +1010,10 @@ class App {
   }
 
   private async stopGame(game: SteamGame) {
-    await this.api("POST", "/kill", { pid: this.runningPid, appid: game.appid });
+    await this.api("POST", "/kill", {
+      pid: this.runningPid,
+      appid: game.appid,
+    });
     this.runningPid = null;
     this.runningAppId = null;
     this.toast(`Stopped ${game.name}`);
@@ -1004,12 +1082,14 @@ class App {
           </div>
           <div class="settings-value">
             <div style="display:flex;gap:8px;align-items:center;">
-              ${this.wineSteamInstalled
-                ? `<span class="badge badge-ok">Installed</span>`
-                : this.metalsharpWineAvailable
+              ${
+                this.wineSteamInstalled
+                  ? `<span class="badge badge-ok">Installed</span>`
+                  : this.metalsharpWineAvailable
                     ? `<button class="btn btn-primary btn-sm" id="btn-install-steam">Install Steam</button>`
-                    : `<span class="badge badge-warn">MetalSharp Wine Required</span>`}
-              ${this.wineSteamInstalled ? `<button class="btn btn-secondary btn-sm" id="btn-steam-launch">${this.wineSteamRunning ? 'Stop Steam' : 'Start Steam'}</button>` : ''}
+                    : `<span class="badge badge-warn">MetalSharp Wine Required</span>`
+              }
+              ${this.wineSteamInstalled ? `<button class="btn btn-secondary btn-sm" id="btn-steam-launch">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>` : ""}
             </div>
           </div>
         </div>
@@ -1121,7 +1201,9 @@ class App {
           </div>
           <div class="settings-value">Enabled</div>
         </div>
-        ${this.updateStatus?.available ? `
+        ${
+          this.updateStatus?.available
+            ? `
         <div class="settings-row">
           <div>
             <div class="settings-label">Update Available</div>
@@ -1131,7 +1213,8 @@ class App {
             <a href="${this.updateStatus.download_url}" target="_blank" class="btn btn-primary btn-sm">Download</a>
           </div>
         </div>
-        ` : `
+        `
+            : `
         <div class="settings-row">
           <div>
             <div class="settings-label">Version</div>
@@ -1141,7 +1224,8 @@ class App {
             <span class="badge badge-ok">v${this.updateStatus?.current_version ?? "0.1.0"}</span>
           </div>
         </div>
-        `}
+        `
+        }
       </div>
 
       <div class="settings-section">
@@ -1216,7 +1300,9 @@ class App {
     el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {
       const reports = await this.api<CrashReportSummary[]>("GET", "/crash-reports");
       if (reports && Array.isArray(reports) && reports.length > 0) {
-        const lines = reports.map((r: CrashReportSummary) => `[${r.timestamp}] ${r.game} (exit ${r.exit_code})`).join("\n");
+        const lines = reports
+          .map((r: CrashReportSummary) => `[${r.timestamp}] ${r.game} (exit ${r.exit_code})`)
+          .join("\n");
         this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
       } else {
         this.toast("No crash reports found.");
@@ -1241,7 +1327,9 @@ class App {
 
     el.querySelector("#btn-refresh-logs")?.addEventListener("click", () => this.renderLogs());
 
-    const result = await this.api<{ logs: { name: string; lines: string[] }[] }>("GET", "/logs");
+    const result = await this.api<{
+      logs: { name: string; lines: string[] }[];
+    }>("GET", "/logs");
     const content = el.querySelector("#log-content")!;
     if (result && result.logs && result.logs.length > 0) {
       const latest = result.logs[result.logs.length - 1];
@@ -1290,15 +1378,18 @@ class App {
 
   private platformIcon(platform: string): string {
     switch (platform) {
-      case "steam": return "\u2699";
-      case "local": return "\uD83D\uDD33";
-      default: return "\uD83C\uDFAE";
+      case "steam":
+        return "\u2699";
+      case "local":
+        return "\uD83D\uDD33";
+      default:
+        return "\uD83C\uDFAE";
     }
   }
 
   private isGameInLocalDir(appid: number): boolean {
     if (!this.library) return false;
-    return this.library.games.some(g => g.appid === appid && g.installed);
+    return this.library.games.some((g) => g.appid === appid && g.installed);
   }
 
   private async toggleWineSteam() {
@@ -1320,7 +1411,7 @@ class App {
   private pollWineSteamInstall(game: SteamGame) {
     const interval = setInterval(async () => {
       await this.loadLibrary();
-      const installed = this.library?.games.find(g => g.appid === game.appid)?.installed;
+      const installed = this.library?.games.find((g) => g.appid === game.appid)?.installed;
       if (installed) {
         clearInterval(interval);
         this.toast(`${game.name} installed!`, "success");

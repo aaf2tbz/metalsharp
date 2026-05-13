@@ -36,10 +36,7 @@ pub fn save_step(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error:
     let config_path = config_dir.join("setup.json");
 
     let mut cfg: Map<String, Value> = if config_path.exists() {
-        std::fs::read_to_string(&config_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        std::fs::read_to_string(&config_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
     } else {
         Map::new()
     };
@@ -63,16 +60,12 @@ pub fn save_step(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error:
 
 pub fn generate_device_name() -> String {
     let adjectives = [
-        "Swift", "Crimson", "Silent", "Bright", "Shadow",
-        "Frost", "Ember", "Storm", "Lunar", "Solar",
-        "Nova", "Pixel", "Cyber", "Iron", "Neon",
-        "Blaze", "Drift", "Pulse", "Glitch", "Volt",
+        "Swift", "Crimson", "Silent", "Bright", "Shadow", "Frost", "Ember", "Storm", "Lunar", "Solar", "Nova", "Pixel",
+        "Cyber", "Iron", "Neon", "Blaze", "Drift", "Pulse", "Glitch", "Volt",
     ];
     let nouns = [
-        "Wolf", "Falcon", "Tiger", "Raven", "Phoenix",
-        "Cobra", "Panther", "Hawk", "Lynx", "Viper",
-        "Fox", "Bear", "Eagle", "Shark", "Dragon",
-        "Knight", "Blade", "Spark", "Forge", "Core",
+        "Wolf", "Falcon", "Tiger", "Raven", "Phoenix", "Cobra", "Panther", "Hawk", "Lynx", "Viper", "Fox", "Bear",
+        "Eagle", "Shark", "Dragon", "Knight", "Blade", "Spark", "Forge", "Core",
     ];
 
     let mut buf: [u8; 4] = [0; 4];
@@ -80,11 +73,7 @@ pub fn generate_device_name() -> String {
         use std::io::Read;
         let _ = f.read_exact(&mut buf);
     } else {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-            .to_ne_bytes();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().to_ne_bytes();
         for (i, b) in nanos.iter().take(4).enumerate() {
             buf[i] = *b;
         }
@@ -101,9 +90,7 @@ pub fn dependencies() -> Value {
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
     let mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
     let rosetta = check_rosetta();
-    let gptk = check_path(&PathBuf::from(
-        "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
-    ));
+    let gptk = check_path(&PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"));
     let xcode_cli = check_command("clang") || check_command("xcodebuild");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
@@ -210,7 +197,7 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
             "sdl3" => run_brew_install("sdl3"),
             _ => {
                 json!({"id": id, "ok": false, "error": "unknown dependency"})
-            }
+            },
         };
         results.push(result);
     }
@@ -242,7 +229,7 @@ fn run_brew_install(package: &str) -> Value {
             } else {
                 json!({"id": package, "ok": false, "error": combined.lines().last().unwrap_or("unknown error")})
             }
-        }
+        },
         Err(e) => json!({"id": package, "ok": false, "error": e.to_string()}),
     }
 }
@@ -293,8 +280,7 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
 
 pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let game_dir = resolve_game_dir(appid)
-        .ok_or_else(|| format!("game directory not found for appid {}", appid))?;
+    let game_dir = resolve_game_dir(appid).ok_or_else(|| format!("game directory not found for appid {}", appid))?;
 
     let marker = game_dir.join(".metalsharp_prepared");
 
@@ -307,7 +293,13 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         535520 => "wined3d_32",
         945360 | 1139900 => "metalsharp_wine",
         620 => "wine_devel",
-        _ => if is_dotnet { "xna_fna" } else { "steam_d3dmetal_perf" },
+        _ => {
+            if is_dotnet {
+                "xna_fna"
+            } else {
+                "steam_d3dmetal_perf"
+            }
+        },
     };
 
     if !marker.exists() {
@@ -326,7 +318,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
             }
-        }
+        },
     }
 
     std::fs::write(&marker, format!("prepared: game_type={}", game_type))?;
@@ -340,7 +332,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mac_libs = home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx");
+    let mac_libs =
+        home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx");
 
     if mac_libs.exists() {
         for lib in &["libsteam_api.dylib", "libSDL3.0.dylib", "libFAudio.0.dylib", "libFNA3D.0.dylib", "libnfd.dylib"] {
@@ -436,9 +429,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
         let alias_file = repo.join("src/fna/shims/csteamworks_aliases.txt");
         if shim_src.exists() {
             let mut cmd = std::process::Command::new("clang");
-            cmd.args(["-shared", "-arch", "x86_64"])
-                .arg("-o").arg(&csteamworks)
-                .arg(&shim_src);
+            cmd.args(["-shared", "-arch", "x86_64"]).arg("-o").arg(&csteamworks).arg(&shim_src);
 
             if alias_file.exists() {
                 if let Ok(aliases) = std::fs::read_to_string(&alias_file) {
@@ -459,7 +450,8 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
             if result.is_err() || !result.unwrap().success() {
                 let _ = std::process::Command::new("clang")
                     .args(["-shared", "-arch", "x86_64"])
-                    .arg("-o").arg(&csteamworks)
+                    .arg("-o")
+                    .arg(&csteamworks)
                     .arg(&shim_src)
                     .args(["-undefined", "dynamic_lookup", "-install_name", "@loader_path/libCSteamworks.dylib"])
                     .stdout(std::process::Stdio::null())
@@ -480,7 +472,8 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
             if stub_src.exists() {
                 let _ = std::process::Command::new("clang")
                     .args(["-shared", "-arch", "x86_64"])
-                    .arg("-o").arg(&dst)
+                    .arg("-o")
+                    .arg(&dst)
                     .arg(&stub_src)
                     .args(["-undefined", "dynamic_lookup", "-install_name", &format!("@loader_path/{}", fmod)])
                     .stdout(std::process::Stdio::null())
@@ -530,7 +523,10 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
         if wine.exists() {
             let _ = std::process::Command::new(&wine)
                 .env("WINEPREFIX", &prefix_str)
-                .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+                .env(
+                    "DYLD_FALLBACK_LIBRARY_PATH",
+                    ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+                )
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
@@ -638,9 +634,7 @@ fn has_native_windows_dlls(game_dir: &PathBuf) -> bool {
                         || name_lower.contains("fmod")
                         || managed_extensions.iter().any(|e| name_lower.ends_with(e));
                     if !is_managed_wrapper {
-                        let output = std::process::Command::new("file")
-                            .arg(&path)
-                            .output();
+                        let output = std::process::Command::new("file").arg(&path).output();
                         if let Ok(o) = output {
                             let desc = String::from_utf8_lossy(&o.stdout);
                             if desc.contains("PE32") && !desc.contains(".Net") && !desc.contains("Mono/.Net") {
@@ -710,10 +704,8 @@ fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         }
     }
 
-    let sdl3_candidates = [
-        PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"),
-        PathBuf::from("/usr/local/lib/libSDL3.0.dylib"),
-    ];
+    let sdl3_candidates =
+        [PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"), PathBuf::from("/usr/local/lib/libSDL3.0.dylib")];
     for sdl3 in &sdl3_candidates {
         if sdl3.exists() {
             let dst = game_dir.join("libSDL3.0.dylib");
@@ -774,27 +766,22 @@ fn build_shim(src: &PathBuf, game_dir: &PathBuf) {
     let output = game_dir.join(output_name);
     let result = std::process::Command::new("clang")
         .args(["-shared", "-arch", "arm64"])
-        .arg("-o").arg(&output)
+        .arg("-o")
+        .arg(&output)
         .arg(src)
-        .arg("-install_name").arg(install_name)
+        .arg("-install_name")
+        .arg(install_name)
         .output();
 
     if let Ok(o) = result {
         if o.status.success() {
-            let _ = std::process::Command::new("codesign")
-                .args(["--force", "-s", "-"])
-                .arg(&output)
-                .output();
+            let _ = std::process::Command::new("codesign").args(["--force", "-s", "-"]).arg(&output).output();
         }
     }
 }
 
 fn check_command(cmd: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    std::process::Command::new("which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn check_path(path: &PathBuf) -> bool {
@@ -826,10 +813,5 @@ fn check_brew(formula: &str) -> bool {
 
 fn check_rosetta() -> bool {
     PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
-        || std::process::Command::new("pgrep")
-            .arg("-q")
-            .arg("oahd")
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        || std::process::Command::new("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
 }

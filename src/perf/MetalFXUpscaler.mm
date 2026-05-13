@@ -1,10 +1,12 @@
 /// @file MetalFXUpscaler.mm
 /// @brief MetalFX spatial/temporal upscaling integration.
 ///
-/// Wraps Apple's MetalFX framework (MTLFXSpatialScaler / MTLFXTemporalScaler) to provide DLSS-style upscaling from lower-resolution render targets. Supports dynamic resolution scaling with configurable quality presets (quality, balanced, performance).
-#include <metalsharp/MetalFXUpscaler.h>
-#include <metalsharp/Logger.h>
+/// Wraps Apple's MetalFX framework (MTLFXSpatialScaler / MTLFXTemporalScaler) to provide DLSS-style upscaling from
+/// lower-resolution render targets. Supports dynamic resolution scaling with configurable quality presets (quality,
+/// balanced, performance).
 #include <dlfcn.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/MetalFXUpscaler.h>
 
 #import <Metal/Metal.h>
 
@@ -42,10 +44,10 @@ MetalFXUpscaler::~MetalFXUpscaler() {
     shutdown();
 }
 
-bool MetalFXUpscaler::init(uint32_t inputWidth, uint32_t inputHeight,
-                           uint32_t outputWidth, uint32_t outputHeight,
+bool MetalFXUpscaler::init(uint32_t inputWidth, uint32_t inputHeight, uint32_t outputWidth, uint32_t outputHeight,
                            uint32_t format) {
-    if (!m_available) return false;
+    if (!m_available)
+        return false;
 
     m_inputWidth = inputWidth;
     m_inputHeight = inputHeight;
@@ -53,8 +55,7 @@ bool MetalFXUpscaler::init(uint32_t inputWidth, uint32_t inputHeight,
     m_outputHeight = outputHeight;
     m_initialized = true;
 
-    MS_INFO("MetalFX spatial upscaler: %ux%u -> %ux%u",
-            inputWidth, inputHeight, outputWidth, outputHeight);
+    MS_INFO("MetalFX spatial upscaler: %ux%u -> %ux%u", inputWidth, inputHeight, outputWidth, outputHeight);
     return true;
 }
 
@@ -62,20 +63,19 @@ void MetalFXUpscaler::shutdown() {
     m_initialized = false;
 }
 
-bool MetalFXUpscaler::process(void* inputTexture, void* outputTexture,
-                               void* depthTexture, void* motionTexture,
-                               float jitterX, float jitterY,
-                               float motionScaleX, float motionScaleY) {
-    if (!m_available || !m_initialized) return false;
+bool MetalFXUpscaler::process(void* inputTexture, void* outputTexture, void* depthTexture, void* motionTexture,
+                              float jitterX, float jitterY, float motionScaleX, float motionScaleY) {
+    if (!m_available || !m_initialized)
+        return false;
 
-    if (!inputTexture || !outputTexture) return false;
+    if (!inputTexture || !outputTexture)
+        return false;
 
     id<MTLTexture> input = (__bridge id<MTLTexture>)inputTexture;
     id<MTLTexture> output = (__bridge id<MTLTexture>)outputTexture;
 
-    MS_TRACE("MetalFX spatial upscale: input %dx%d -> output %dx%d, sharpness=%.2f",
-             (int)input.width, (int)input.height,
-             (int)output.width, (int)output.height, m_sharpness);
+    MS_TRACE("MetalFX spatial upscale: input %dx%d -> output %dx%d, sharpness=%.2f", (int)input.width,
+             (int)input.height, (int)output.width, (int)output.height, m_sharpness);
 
     return true;
 }
@@ -101,7 +101,8 @@ MetalFXInterpolator::~MetalFXInterpolator() {
 }
 
 bool MetalFXInterpolator::init(uint32_t width, uint32_t height, uint32_t format) {
-    if (!m_available) return false;
+    if (!m_available)
+        return false;
     m_initialized = true;
     return true;
 }
@@ -110,11 +111,11 @@ void MetalFXInterpolator::shutdown() {
     m_initialized = false;
 }
 
-bool MetalFXInterpolator::process(void* outputTexture,
-                                   void* depthTexture, void* motionTexture,
-                                   float jitterX, float jitterY) {
-    if (!m_available || !m_initialized) return false;
+bool MetalFXInterpolator::process(void* outputTexture, void* depthTexture, void* motionTexture, float jitterX,
+                                  float jitterY) {
+    if (!m_available || !m_initialized)
+        return false;
     return true;
 }
 
-}
+} // namespace metalsharp

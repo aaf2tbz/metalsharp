@@ -1,13 +1,14 @@
 /// @file GPUProfiler.mm
 /// @brief Metal GPU timing profiler with frame-level metrics.
 ///
-/// Uses MTLCounterSampleBuffer and Metal timestamp queries to measure GPU execution time per frame and per render pass. Aggregates min/max/average frame times and reports bottlenecks for D3D11 draw call batches.
+/// Uses MTLCounterSampleBuffer and Metal timestamp queries to measure GPU execution time per frame and per render pass.
+/// Aggregates min/max/average frame times and reports bottlenecks for D3D11 draw call batches.
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#import <Metal/Metal.h>
 #include <metalsharp/GPUProfiler.h>
 #include <metalsharp/Logger.h>
-#import <Metal/Metal.h>
-#include <chrono>
-#include <algorithm>
-#include <cstring>
 
 namespace metalsharp {
 
@@ -30,7 +31,8 @@ void GPUProfiler::shutdown() {
 }
 
 void GPUProfiler::beginFrame() {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -42,7 +44,8 @@ void GPUProfiler::beginFrame() {
 }
 
 void GPUProfiler::endFrame() {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -65,7 +68,8 @@ void GPUProfiler::endFrame() {
 }
 
 void GPUProfiler::beginPass(const std::string& name) {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -79,7 +83,8 @@ void GPUProfiler::beginPass(const std::string& name) {
 }
 
 void GPUProfiler::endPass(const std::string& name) {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     auto now = std::chrono::high_resolution_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
@@ -94,10 +99,12 @@ void GPUProfiler::endPass(const std::string& name) {
 }
 
 void GPUProfiler::recordGPUTiming(void* commandBuffer) {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     id<MTLCommandBuffer> cmdBuf = (__bridge id<MTLCommandBuffer>)commandBuffer;
-    if (!cmdBuf) return;
+    if (!cmdBuf)
+        return;
 
     double gpuStart = [cmdBuf GPUStartTime];
     double gpuEnd = [cmdBuf GPUEndTime];
@@ -118,7 +125,8 @@ void GPUProfiler::recordGPUTiming(void* commandBuffer) {
 }
 
 void GPUProfiler::recordDraw(const std::string& passName, uint32_t vertexCount, uint32_t instanceCount) {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     for (auto* pass : m_activePasses) {
         if (pass->name == passName) {
@@ -130,7 +138,8 @@ void GPUProfiler::recordDraw(const std::string& passName, uint32_t vertexCount, 
 }
 
 void GPUProfiler::recordCompute(const std::string& passName, uint32_t tgX, uint32_t tgY, uint32_t tgZ) {
-    if (!m_initialized || !m_enabled) return;
+    if (!m_initialized || !m_enabled)
+        return;
 
     for (auto* pass : m_activePasses) {
         if (pass->name == passName) {
@@ -149,7 +158,8 @@ GPUProfiler::FrameStats GPUProfiler::getLastFrameStats() const {
     stats.triangles = 0;
     stats.frameIndex = 0;
 
-    if (m_history.empty()) return stats;
+    if (m_history.empty())
+        return stats;
 
     const auto& frame = m_history.back();
     stats.frameTime = frame.endTime - frame.startTime;
@@ -176,7 +186,8 @@ GPUProfiler::FrameStats GPUProfiler::getAverageStats(uint32_t numFrames) const {
     avg.frameIndex = 0;
 
     uint32_t count = std::min(numFrames, static_cast<uint32_t>(m_history.size()));
-    if (count == 0) return avg;
+    if (count == 0)
+        return avg;
 
     auto start = m_history.end() - count;
     for (auto it = start; it != m_history.end(); ++it) {
@@ -202,4 +213,4 @@ void GPUProfiler::setStatsCallback(StatsCallback callback) {
     m_callback = callback;
 }
 
-}
+} // namespace metalsharp

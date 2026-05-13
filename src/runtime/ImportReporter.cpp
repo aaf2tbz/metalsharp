@@ -5,10 +5,10 @@
 /// resolve versus which are missing, and generates a compatibility summary. Used by
 /// the validation pipeline to produce per-game import coverage reports.
 
+#include <algorithm>
 #include <metalsharp/ImportReporter.h>
 #include <metalsharp/Logger.h>
 #include <sstream>
-#include <algorithm>
 
 namespace metalsharp {
 
@@ -46,7 +46,8 @@ void ImportReporter::endModule() {
 std::vector<ImportReport> ImportReporter::missingImports() const {
     std::vector<ImportReport> result;
     for (const auto& r : m_reports) {
-        if (!r.resolved) result.push_back(r);
+        if (!r.resolved)
+            result.push_back(r);
     }
     return result;
 }
@@ -54,7 +55,8 @@ std::vector<ImportReport> ImportReporter::missingImports() const {
 std::vector<ImportReport> ImportReporter::resolvedImports() const {
     std::vector<ImportReport> result;
     for (const auto& r : m_reports) {
-        if (r.resolved) result.push_back(r);
+        if (r.resolved)
+            result.push_back(r);
     }
     return result;
 }
@@ -74,7 +76,8 @@ std::vector<std::string> ImportReporter::missingDlls() const {
 size_t ImportReporter::resolvedCount() const {
     size_t c = 0;
     for (const auto& r : m_reports) {
-        if (r.resolved) c++;
+        if (r.resolved)
+            c++;
     }
     return c;
 }
@@ -82,7 +85,8 @@ size_t ImportReporter::resolvedCount() const {
 size_t ImportReporter::missingCount() const {
     size_t c = 0;
     for (const auto& r : m_reports) {
-        if (!r.resolved) c++;
+        if (!r.resolved)
+            c++;
     }
     return c;
 }
@@ -112,7 +116,8 @@ std::string ImportReporter::generateSummary() const {
         for (const auto& dll : dlls) {
             size_t count = 0;
             for (const auto& r : missing) {
-                if (r.dllName == dll) count++;
+                if (r.dllName == dll)
+                    count++;
             }
             ss << "  " << dll << " (" << count << " missing)\n";
         }
@@ -126,4 +131,4 @@ void ImportReporter::clear() {
     m_currentModule.clear();
 }
 
-}
+} // namespace metalsharp

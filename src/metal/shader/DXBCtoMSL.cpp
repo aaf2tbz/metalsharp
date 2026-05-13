@@ -5,17 +5,20 @@
 /// fallback path when the IR converter dylib is unavailable. Handles instruction decoding,
 /// register allocation, and MSL function emission for vertex and pixel shaders.
 
-#include <metalsharp/DXBCtoMSL.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <algorithm>
+#include <metalsharp/DXBCtoMSL.h>
 
 namespace metalsharp {
 
 const char* DXBCtoMSL::semanticToMSL(const std::string& semantic, uint32_t index, uint32_t componentType) {
-    if (semantic == "POSITION") return "position";
-    if (semantic == "SV_POSITION") return "position";
-    if (semantic == "NORMAL") return "normal";
+    if (semantic == "POSITION")
+        return "position";
+    if (semantic == "SV_POSITION")
+        return "position";
+    if (semantic == "NORMAL")
+        return "normal";
     if (semantic == "TEXCOORD") {
         static char buf[32];
         snprintf(buf, sizeof(buf), "texcoord%u", index);
@@ -26,61 +29,101 @@ const char* DXBCtoMSL::semanticToMSL(const std::string& semantic, uint32_t index
         snprintf(buf, sizeof(buf), "color%u", index);
         return buf;
     }
-    if (semantic == "TANGENT") return "tangent";
-    if (semantic == "BINORMAL") return "binormal";
-    if (semantic == "BLENDWEIGHT") return "blendweight";
-    if (semantic == "BLENDINDICES") return "blendindices";
+    if (semantic == "TANGENT")
+        return "tangent";
+    if (semantic == "BINORMAL")
+        return "binormal";
+    if (semantic == "BLENDWEIGHT")
+        return "blendweight";
+    if (semantic == "BLENDINDICES")
+        return "blendindices";
     if (semantic == "SV_TARGET") {
         static char buf[32];
         snprintf(buf, sizeof(buf), "target%u", index);
         return buf;
     }
-    if (semantic == "SV_Depth") return "depth_out";
+    if (semantic == "SV_Depth")
+        return "depth_out";
     return "user";
 }
 
 static const char* componentTypeName(uint32_t type) {
     switch (type) {
-        case 1: return "int";
-        case 2: return "uint";
-        case 3: return "float";
-        default: return "float";
+    case 1:
+        return "int";
+    case 2:
+        return "uint";
+    case 3:
+        return "float";
+    default:
+        return "float";
     }
 }
 
 std::string DXBCtoMSL::opcodeToMSL(uint32_t opcode) {
     switch (opcode) {
-        case 0: return "+";
-        case 1: return "-";
-        case 2: return "*";
-        case 4: return "mad";
-        case 6: return "dot";
-        case 7: return "dot4";
-        case 8: return "min";
-        case 9: return "max";
-        case 10: return "lessThan";
-        case 11: return "greaterThanEqual";
-        case 12: return "equal";
-        case 13: return "notEqual";
-        case 15: return "mix";
-        case 17: return "rsqrt";
-        case 21: return "sqrt";
-        case 26: return "exp2";
-        case 27: return "log2";
-        case 64: return "sample";
-        case 65: return "sample_l";
-        case 66: return "sample_b";
-        case 67: return "sample_c";
-        case 81: return "gather4";
-        case 90: return "mov";
-        case 100: return "+";
-        case 104: return "*";
-        case 22: return "int";
-        case 24: return "float";
-        case 82: return "dfdx";
-        case 83: return "dfdy";
-        case 84: return "discard";
-        default: return "unknown";
+    case 0:
+        return "+";
+    case 1:
+        return "-";
+    case 2:
+        return "*";
+    case 4:
+        return "mad";
+    case 6:
+        return "dot";
+    case 7:
+        return "dot4";
+    case 8:
+        return "min";
+    case 9:
+        return "max";
+    case 10:
+        return "lessThan";
+    case 11:
+        return "greaterThanEqual";
+    case 12:
+        return "equal";
+    case 13:
+        return "notEqual";
+    case 15:
+        return "mix";
+    case 17:
+        return "rsqrt";
+    case 21:
+        return "sqrt";
+    case 26:
+        return "exp2";
+    case 27:
+        return "log2";
+    case 64:
+        return "sample";
+    case 65:
+        return "sample_l";
+    case 66:
+        return "sample_b";
+    case 67:
+        return "sample_c";
+    case 81:
+        return "gather4";
+    case 90:
+        return "mov";
+    case 100:
+        return "+";
+    case 104:
+        return "*";
+    case 22:
+        return "int";
+    case 24:
+        return "float";
+    case 82:
+        return "dfdx";
+    case 83:
+        return "dfdy";
+    case 84:
+        return "discard";
+    default:
+        return "unknown";
     }
 }
 
@@ -88,54 +131,66 @@ static std::string swizzleStr(uint32_t mask) {
     std::string s = ".";
     const char* comps = "xyzw";
     for (int i = 0; i < 4; ++i) {
-        if (mask & (1 << i)) s += comps[i];
+        if (mask & (1 << i))
+            s += comps[i];
     }
-    if (s.size() == 1) return "";
-    if (s == ".xyzw") return "";
+    if (s.size() == 1)
+        return "";
+    if (s == ".xyzw")
+        return "";
     return s;
 }
 
 std::string DXBCtoMSL::operandToString(const DXBCOperand& operand, uint32_t componentType) {
     char buf[128];
     switch (operand.type) {
-        case 0: // temp
-            if (operand.mask) snprintf(buf, sizeof(buf), "r%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
-            else snprintf(buf, sizeof(buf), "r%u", operand.indices[0]);
-            break;
-        case 1: // input
-            if (operand.mask) snprintf(buf, sizeof(buf), "input%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
-            else snprintf(buf, sizeof(buf), "input%u", operand.indices[0]);
-            break;
-        case 2: // output
-            if (operand.mask) snprintf(buf, sizeof(buf), "output%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
-            else snprintf(buf, sizeof(buf), "output%u", operand.indices[0]);
-            break;
-        case 3: // indexable temp
-            if (operand.mask) snprintf(buf, sizeof(buf), "x%u[%u]%s", operand.indices[0], operand.indices[1], swizzleStr(operand.mask).c_str());
-            else snprintf(buf, sizeof(buf), "x%u[%u]", operand.indices[0], operand.indices[1]);
-            break;
-        case 4: // immediate32
-            return std::to_string(operand.indices[0]);
-        case 5: // immediate64
-            return std::to_string(operand.indices[0]);
-        case 6: // sampler
-            snprintf(buf, sizeof(buf), "sampler%u", operand.indices[0]);
-            break;
-        case 7: // resource
-            snprintf(buf, sizeof(buf), "texture%u", operand.indices[0]);
-            break;
-        case 8: // constant buffer
-            if (operand.indexDimension >= 1)
-                snprintf(buf, sizeof(buf), "cb%u[%u]", operand.indices[0], operand.indices[1]);
-            else
-                snprintf(buf, sizeof(buf), "cb%u", operand.indices[0]);
-            break;
-        case 9: // immediate constant buffer
-            snprintf(buf, sizeof(buf), "icb[%u]", operand.indices[0]);
-            break;
-        default:
-            snprintf(buf, sizeof(buf), "unk%u", operand.type);
-            break;
+    case 0: // temp
+        if (operand.mask)
+            snprintf(buf, sizeof(buf), "r%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
+        else
+            snprintf(buf, sizeof(buf), "r%u", operand.indices[0]);
+        break;
+    case 1: // input
+        if (operand.mask)
+            snprintf(buf, sizeof(buf), "input%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
+        else
+            snprintf(buf, sizeof(buf), "input%u", operand.indices[0]);
+        break;
+    case 2: // output
+        if (operand.mask)
+            snprintf(buf, sizeof(buf), "output%u%s", operand.indices[0], swizzleStr(operand.mask).c_str());
+        else
+            snprintf(buf, sizeof(buf), "output%u", operand.indices[0]);
+        break;
+    case 3: // indexable temp
+        if (operand.mask)
+            snprintf(buf, sizeof(buf), "x%u[%u]%s", operand.indices[0], operand.indices[1],
+                     swizzleStr(operand.mask).c_str());
+        else
+            snprintf(buf, sizeof(buf), "x%u[%u]", operand.indices[0], operand.indices[1]);
+        break;
+    case 4: // immediate32
+        return std::to_string(operand.indices[0]);
+    case 5: // immediate64
+        return std::to_string(operand.indices[0]);
+    case 6: // sampler
+        snprintf(buf, sizeof(buf), "sampler%u", operand.indices[0]);
+        break;
+    case 7: // resource
+        snprintf(buf, sizeof(buf), "texture%u", operand.indices[0]);
+        break;
+    case 8: // constant buffer
+        if (operand.indexDimension >= 1)
+            snprintf(buf, sizeof(buf), "cb%u[%u]", operand.indices[0], operand.indices[1]);
+        else
+            snprintf(buf, sizeof(buf), "cb%u", operand.indices[0]);
+        break;
+    case 9: // immediate constant buffer
+        snprintf(buf, sizeof(buf), "icb[%u]", operand.indices[0]);
+        break;
+    default:
+        snprintf(buf, sizeof(buf), "unk%u", operand.type);
+        break;
     }
     return buf;
 }
@@ -149,25 +204,25 @@ std::string DXBCtoMSL::translate(const ParsedDXBC& dxbc) {
     bool isCompute = false;
 
     switch (dxbc.shaderType) {
-        case DXBCShaderType::Vertex:
-            stageFn = "vertexShader";
-            stageAttr = "vertex ";
-            returnPrefix = "float4";
-            break;
-        case DXBCShaderType::Pixel:
-            stageFn = "fragmentShader";
-            stageAttr = "fragment ";
-            returnPrefix = "float4";
-            break;
-        case DXBCShaderType::Compute:
-            stageFn = "computeShader";
-            stageAttr = "kernel ";
-            returnPrefix = "void";
-            isCompute = true;
-            break;
-        default:
-            stageFn = "main0";
-            break;
+    case DXBCShaderType::Vertex:
+        stageFn = "vertexShader";
+        stageAttr = "vertex ";
+        returnPrefix = "float4";
+        break;
+    case DXBCShaderType::Pixel:
+        stageFn = "fragmentShader";
+        stageAttr = "fragment ";
+        returnPrefix = "float4";
+        break;
+    case DXBCShaderType::Compute:
+        stageFn = "computeShader";
+        stageAttr = "kernel ";
+        returnPrefix = "void";
+        isCompute = true;
+        break;
+    default:
+        stageFn = "main0";
+        break;
     }
 
     src += "#include <metal_stdlib>\nusing namespace metal;\n\n";
@@ -186,12 +241,22 @@ std::string DXBCtoMSL::translate(const ParsedDXBC& dxbc) {
         d.regIndex = elem.registerIndex;
         d.name = semanticToMSL(elem.semanticName, elem.semanticIndex, elem.componentType);
         uint32_t componentCount = 0;
-        for (int i = 0; i < 4; ++i) if (elem.mask & (1 << i)) componentCount++;
+        for (int i = 0; i < 4; ++i)
+            if (elem.mask & (1 << i))
+                componentCount++;
         switch (componentCount) {
-            case 1: d.type = "float"; break;
-            case 2: d.type = "float2"; break;
-            case 3: d.type = "float3"; break;
-            default: d.type = "float4"; break;
+        case 1:
+            d.type = "float";
+            break;
+        case 2:
+            d.type = "float2";
+            break;
+        case 3:
+            d.type = "float3";
+            break;
+        default:
+            d.type = "float4";
+            break;
         }
         if (dxbc.shaderType == DXBCShaderType::Vertex)
             d.attribute = " [[attribute(" + std::to_string(elem.registerIndex) + ")]]";
@@ -275,38 +340,39 @@ std::string DXBCtoMSL::translate(const ParsedDXBC& dxbc) {
 
     for (auto& inp : inputs) {
         src += "    float4 input" + std::to_string(inp.regIndex) + " = float4(input_in." + inp.name;
-        if (inp.type == "float") src += ", 0, 0, 0";
-        else if (inp.type == "float2") src += ", 0, 0";
-        else if (inp.type == "float3") src += ", 0";
+        if (inp.type == "float")
+            src += ", 0, 0, 0";
+        else if (inp.type == "float2")
+            src += ", 0, 0";
+        else if (inp.type == "float3")
+            src += ", 0";
         src += ");\n";
     }
 
     for (auto& inst : dxbc.instructions) {
         if (inst.opcode == 90) { // MOV
             if (inst.operandCount >= 2) {
-                src += "    " + operandToString(inst.operands[0], 3) + " = " + operandToString(inst.operands[1], 3) + ";\n";
+                src += "    " + operandToString(inst.operands[0], 3) + " = " + operandToString(inst.operands[1], 3) +
+                       ";\n";
             }
         } else if (inst.opcode == 0 || inst.opcode == 1 || inst.opcode == 2) { // ADD, SUB, MUL
             if (inst.operandCount >= 3) {
                 const char* op = inst.opcode == 0 ? "+" : inst.opcode == 1 ? "-" : "*";
-                src += "    " + operandToString(inst.operands[0], 3) + " = " +
-                       operandToString(inst.operands[1], 3) + " " + op + " " +
-                       operandToString(inst.operands[2], 3) + ";\n";
+                src += "    " + operandToString(inst.operands[0], 3) + " = " + operandToString(inst.operands[1], 3) +
+                       " " + op + " " + operandToString(inst.operands[2], 3) + ";\n";
             }
         } else if (inst.opcode == 4) { // MAD
             if (inst.operandCount >= 4) {
-                src += "    " + operandToString(inst.operands[0], 3) + " = " +
-                       operandToString(inst.operands[1], 3) + " * " +
-                       operandToString(inst.operands[2], 3) + " + " +
-                       operandToString(inst.operands[3], 3) + ";\n";
+                src += "    " + operandToString(inst.operands[0], 3) + " = " + operandToString(inst.operands[1], 3) +
+                       " * " + operandToString(inst.operands[2], 3) + " + " + operandToString(inst.operands[3], 3) +
+                       ";\n";
             }
         } else if (inst.opcode == 6 || inst.opcode == 7) { // DP3, DP4
             if (inst.operandCount >= 3) {
                 src += "    " + operandToString(inst.operands[0], 3) + " = float4(dot(" +
-                       operandToString(inst.operands[1], 3) + ", " +
-                       operandToString(inst.operands[2], 3) + "));\n";
+                       operandToString(inst.operands[1], 3) + ", " + operandToString(inst.operands[2], 3) + "));\n";
             }
-        } else if (inst.opcode == 7) { // DP4 (already handled above with DP3)
+        } else if (inst.opcode == 7) {  // DP4 (already handled above with DP3)
         } else if (inst.opcode == 17) { // RSQ
             if (inst.operandCount >= 2) {
                 src += "    " + operandToString(inst.operands[0], 3) + " = float4(rsqrt(" +
@@ -314,10 +380,9 @@ std::string DXBCtoMSL::translate(const ParsedDXBC& dxbc) {
             }
         } else if (inst.opcode == 64) { // SAMPLE
             if (inst.operandCount >= 4) {
-                src += "    " + operandToString(inst.operands[0], 3) + " = " +
-                       operandToString(inst.operands[3], 3) + ".sample(" +
-                       operandToString(inst.operands[2], 3) + ", " +
-                       operandToString(inst.operands[1], 3) + ");\n";
+                src += "    " + operandToString(inst.operands[0], 3) + " = " + operandToString(inst.operands[3], 3) +
+                       ".sample(" + operandToString(inst.operands[2], 3) + ", " + operandToString(inst.operands[1], 3) +
+                       ");\n";
             }
         } else if (inst.opcode == 82) { // DERIV_RTX
             if (inst.operandCount >= 2) {
@@ -359,4 +424,4 @@ std::string DXBCtoMSL::translate(const ParsedDXBC& dxbc) {
     return src;
 }
 
-}
+} // namespace metalsharp

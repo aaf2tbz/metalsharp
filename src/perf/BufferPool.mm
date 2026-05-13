@@ -1,11 +1,13 @@
 /// @file BufferPool.mm
 /// @brief MTLBuffer allocation pool with size-class recycling.
 ///
-/// Recycles MTLBuffer allocations by size class to avoid repeated GPU heap allocation. Tracks buffer lifetimes via Metal shareable event fences and returns completed buffers to the free list for reuse. Reduces allocation latency for dynamic vertex/index buffers.
+/// Recycles MTLBuffer allocations by size class to avoid repeated GPU heap allocation. Tracks buffer lifetimes via
+/// Metal shareable event fences and returns completed buffers to the free list for reuse. Reduces allocation latency
+/// for dynamic vertex/index buffers.
+#include <algorithm>
+#include <cstring>
 #include <metalsharp/BufferPool.h>
 #include <metalsharp/Logger.h>
-#include <cstring>
-#include <algorithm>
 
 #import <Metal/Metal.h>
 
@@ -36,10 +38,12 @@ void BufferPool::shutdown() {
 
 void* BufferPool::allocate(size_t size) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized || !m_device) return nullptr;
+    if (!m_initialized || !m_device)
+        return nullptr;
 
     size_t searchMax = size * 2;
-    if (searchMax < size) searchMax = size;
+    if (searchMax < size)
+        searchMax = size;
 
     void* reused = findFree(size, searchMax);
     if (reused) {
@@ -56,7 +60,8 @@ void* BufferPool::allocate(size_t size) {
 
 void BufferPool::release(void* buffer) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!buffer) return;
+    if (!buffer)
+        return;
 
     for (auto& entry : m_entries) {
         if (entry.buffer == buffer) {
@@ -69,7 +74,8 @@ void BufferPool::release(void* buffer) {
 void* BufferPool::createBuffer(size_t size) {
     id<MTLDevice> device = (__bridge id<MTLDevice>)m_device;
     id<MTLBuffer> buffer = [device newBufferWithLength:size options:MTLResourceStorageModeShared];
-    if (!buffer) return nullptr;
+    if (!buffer)
+        return nullptr;
 
     BufferPoolEntry entry;
     entry.buffer = (__bridge_retained void*)buffer;
@@ -92,7 +98,8 @@ void* BufferPool::findFree(size_t minSize, size_t maxSize) {
 uint64_t BufferPool::activeBuffers() const {
     uint64_t count = 0;
     for (auto& entry : m_entries) {
-        if (entry.inUse) count++;
+        if (entry.inUse)
+            count++;
     }
     return count;
 }
@@ -100,9 +107,10 @@ uint64_t BufferPool::activeBuffers() const {
 uint64_t BufferPool::pooledBuffers() const {
     uint64_t count = 0;
     for (auto& entry : m_entries) {
-        if (!entry.inUse) count++;
+        if (!entry.inUse)
+            count++;
     }
     return count;
 }
 
-}
+} // namespace metalsharp

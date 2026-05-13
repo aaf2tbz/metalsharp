@@ -9,15 +9,15 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
-#include <vector>
-#include <deque>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <functional>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <functional>
+#include <metalsharp/Platform.h>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace metalsharp {
 
@@ -28,7 +28,7 @@ struct RenderTask {
 };
 
 class RenderThreadPool {
-public:
+  public:
     static RenderThreadPool& instance();
 
     void init(uint32_t threadCount = 0);
@@ -43,7 +43,7 @@ public:
     uint64_t tasksCompleted() const { return m_tasksCompleted; }
     bool isInitialized() const { return m_initialized; }
 
-private:
+  private:
     RenderThreadPool() = default;
     void workerLoop();
 
@@ -61,7 +61,7 @@ private:
 };
 
 class CommandBufferPool {
-public:
+  public:
     static CommandBufferPool& instance();
 
     void init(void* commandQueue);
@@ -73,7 +73,7 @@ public:
     uint64_t activeCount() const;
     uint64_t pooledCount() const;
 
-private:
+  private:
     CommandBufferPool() = default;
 
     struct PooledBuffer {
@@ -87,4 +87,4 @@ private:
     bool m_initialized = false;
 };
 
-}
+} // namespace metalsharp

@@ -1,7 +1,8 @@
 /// @file CommandBatcher.cpp
 /// @brief Metal command buffer batching for reduced submit overhead.
 ///
-/// Groups multiple D3D11 draw calls into fewer Metal command buffers to reduce commit overhead. Tracks render pass boundaries and automatically flushes when the batch size limit or resource hazard is detected.
+/// Groups multiple D3D11 draw calls into fewer Metal command buffers to reduce commit overhead. Tracks render pass
+/// boundaries and automatically flushes when the batch size limit or resource hazard is detected.
 #include <metalsharp/CommandBatcher.h>
 #include <metalsharp/Logger.h>
 
@@ -32,7 +33,8 @@ void CommandBatcher::endFrame() {
 }
 
 void CommandBatcher::enqueue(const BatchedCommand& cmd) {
-    if (!m_initialized) return;
+    if (!m_initialized)
+        return;
 
     m_batch.push_back(cmd);
     m_totalBatches++;
@@ -43,7 +45,8 @@ void CommandBatcher::enqueue(const BatchedCommand& cmd) {
 }
 
 void CommandBatcher::flush() {
-    if (m_batch.empty()) return;
+    if (m_batch.empty())
+        return;
     if (!m_execute) {
         m_batch.clear();
         return;
@@ -61,4 +64,4 @@ void CommandBatcher::setExecuteFunction(ExecuteFn fn) {
     m_execute = fn;
 }
 
-}
+} // namespace metalsharp

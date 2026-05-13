@@ -5,13 +5,13 @@
 /// file using a manual parser instead of a JSON library. Provides add/update/remove
 /// operations, lookup by game ID, and generates summary reports for the launcher UI.
 
-#include <metalsharp/CompatDatabase.h>
-#include <metalsharp/Logger.h>
-#include <fstream>
-#include <sstream>
+#include <algorithm>
 #include <cstring>
 #include <ctime>
-#include <algorithm>
+#include <fstream>
+#include <metalsharp/CompatDatabase.h>
+#include <metalsharp/Logger.h>
+#include <sstream>
 
 namespace metalsharp {
 
@@ -23,11 +23,16 @@ CompatDatabase& CompatDatabase::instance() {
 }
 
 CompatStatus CompatDatabase::statusFromString(const std::string& s) {
-    if (s == "Platinum") return CompatStatus::Platinum;
-    if (s == "Gold") return CompatStatus::Gold;
-    if (s == "Silver") return CompatStatus::Silver;
-    if (s == "Bronze") return CompatStatus::Bronze;
-    if (s == "Broken") return CompatStatus::Broken;
+    if (s == "Platinum")
+        return CompatStatus::Platinum;
+    if (s == "Gold")
+        return CompatStatus::Gold;
+    if (s == "Silver")
+        return CompatStatus::Silver;
+    if (s == "Bronze")
+        return CompatStatus::Bronze;
+    if (s == "Broken")
+        return CompatStatus::Broken;
     return CompatStatus::Untested;
 }
 
@@ -77,7 +82,8 @@ const GameEntry* CompatDatabase::find(const std::string& gameId) const {
 std::vector<GameEntry> CompatDatabase::queryByStatus(CompatStatus status) const {
     std::vector<GameEntry> result;
     for (const auto& [id, entry] : m_entries) {
-        if (entry.status == status) result.push_back(entry);
+        if (entry.status == status)
+            result.push_back(entry);
     }
     return result;
 }
@@ -97,7 +103,8 @@ size_t CompatDatabase::count() const {
 size_t CompatDatabase::countByStatus(CompatStatus status) const {
     size_t c = 0;
     for (const auto& [id, entry] : m_entries) {
-        if (entry.status == status) c++;
+        if (entry.status == status)
+            c++;
     }
     return c;
 }
@@ -113,7 +120,8 @@ void CompatDatabase::addMissingImport(const std::string& gameId, const MissingIm
     }
 
     for (const auto& existing : entry->missingImports) {
-        if (existing.dll == imp.dll && existing.function == imp.function) return;
+        if (existing.dll == imp.dll && existing.function == imp.function)
+            return;
     }
     entry->missingImports.push_back(imp);
 }
@@ -135,7 +143,8 @@ void CompatDatabase::addCrashRecord(const std::string& gameId, const CrashRecord
 
 std::string CompatDatabase::generateReport(const std::string& gameId) const {
     const auto* entry = find(gameId);
-    if (!entry) return "Game not found: " + gameId + "\n";
+    if (!entry)
+        return "Game not found: " + gameId + "\n";
 
     std::ostringstream ss;
     ss << "=== Compatibility Report: " << entry->name << " ===\n";
@@ -166,7 +175,8 @@ std::string CompatDatabase::generateReport(const std::string& gameId) const {
         for (const auto& crash : entry->crashes) {
             ss << "  Signal " << crash.signal << " at 0x" << std::hex << crash.faultAddr << std::dec;
             ss << " (RIP 0x" << std::hex << crash.rip << std::dec << ")";
-            if (!crash.crashRVA.empty()) ss << " RVA " << crash.crashRVA;
+            if (!crash.crashRVA.empty())
+                ss << " RVA " << crash.crashRVA;
             ss << "\n";
         }
     }
@@ -185,29 +195,37 @@ std::string CompatDatabase::generateReport(const std::string& gameId) const {
 static std::string escapeJson(const std::string& s) {
     std::string out;
     for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else out += c;
+        if (c == '"')
+            out += "\\\"";
+        else if (c == '\\')
+            out += "\\\\";
+        else if (c == '\n')
+            out += "\\n";
+        else
+            out += c;
     }
     return out;
 }
 
 static std::string readQuotedString(const std::string& json, size_t& pos) {
     std::string result;
-    if (pos >= json.size() || json[pos] != '"') return result;
+    if (pos >= json.size() || json[pos] != '"')
+        return result;
     pos++;
     while (pos < json.size() && json[pos] != '"') {
         if (json[pos] == '\\' && pos + 1 < json.size()) {
             pos++;
-            if (json[pos] == 'n') result += '\n';
-            else result += json[pos];
+            if (json[pos] == 'n')
+                result += '\n';
+            else
+                result += json[pos];
         } else {
             result += json[pos];
         }
         pos++;
     }
-    if (pos < json.size()) pos++;
+    if (pos < json.size())
+        pos++;
     return result;
 }
 
@@ -218,8 +236,10 @@ static void skipWhitespace(const std::string& json, size_t& pos) {
 
 static std::string readValue(const std::string& json, size_t& pos) {
     skipWhitespace(json, pos);
-    if (pos >= json.size()) return "";
-    if (json[pos] == '"') return readQuotedString(json, pos);
+    if (pos >= json.size())
+        return "";
+    if (json[pos] == '"')
+        return readQuotedString(json, pos);
     size_t start = pos;
     while (pos < json.size() && json[pos] != ',' && json[pos] != '}' && json[pos] != ']')
         pos++;
@@ -228,26 +248,40 @@ static std::string readValue(const std::string& json, size_t& pos) {
 
 static uint64_t readUint(const std::string& json, size_t& pos) {
     std::string val = readValue(json, pos);
-    try { return std::stoull(val); } catch (...) { return 0; }
+    try {
+        return std::stoull(val);
+    } catch (...) {
+        return 0;
+    }
 }
 
 static uint32_t readUint32(const std::string& json, size_t& pos) {
     std::string val = readValue(json, pos);
-    try { return static_cast<uint32_t>(std::stoul(val)); } catch (...) { return 0; }
+    try {
+        return static_cast<uint32_t>(std::stoul(val));
+    } catch (...) {
+        return 0;
+    }
 }
 
 static int readInt(const std::string& json, size_t& pos) {
     std::string val = readValue(json, pos);
-    try { return std::stoi(val); } catch (...) { return 0; }
+    try {
+        return std::stoi(val);
+    } catch (...) {
+        return 0;
+    }
 }
 
 static std::string findField(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\"";
     size_t pos = json.find(search);
-    if (pos == std::string::npos) return "";
+    if (pos == std::string::npos)
+        return "";
     pos += search.size();
     skipWhitespace(json, pos);
-    if (pos < json.size() && json[pos] == ':') pos++;
+    if (pos < json.size() && json[pos] == ':')
+        pos++;
     skipWhitespace(json, pos);
     return readValue(json, pos);
 }
@@ -256,12 +290,15 @@ static std::vector<std::string> findArray(const std::string& json, const std::st
     std::vector<std::string> items;
     std::string search = "\"" + key + "\"";
     size_t pos = json.find(search);
-    if (pos == std::string::npos) return items;
+    if (pos == std::string::npos)
+        return items;
     pos += search.size();
     skipWhitespace(json, pos);
-    if (pos < json.size() && json[pos] == ':') pos++;
+    if (pos < json.size() && json[pos] == ':')
+        pos++;
     skipWhitespace(json, pos);
-    if (pos >= json.size() || json[pos] != '[') return items;
+    if (pos >= json.size() || json[pos] != '[')
+        return items;
     pos++;
     while (pos < json.size() && json[pos] != ']') {
         skipWhitespace(json, pos);
@@ -275,15 +312,18 @@ static std::vector<std::string> findArray(const std::string& json, const std::st
 }
 
 bool CompatDatabase::saveToDisk() {
-    if (m_dbPath.empty()) return false;
+    if (m_dbPath.empty())
+        return false;
 
     std::ofstream file(m_dbPath);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
     file << "{\n  \"version\": 1,\n  \"games\": [\n";
     bool first = true;
     for (const auto& [id, e] : m_entries) {
-        if (!first) file << ",\n";
+        if (!first)
+            file << ",\n";
         first = false;
 
         file << "    {\n";
@@ -304,24 +344,27 @@ bool CompatDatabase::saveToDisk() {
         file << "      \"missingImports\": [";
         for (size_t i = 0; i < e.missingImports.size(); i++) {
             const auto& imp = e.missingImports[i];
-            if (i > 0) file << ",";
+            if (i > 0)
+                file << ",";
             file << "\n        {\"dll\":\"" << escapeJson(imp.dll) << "\","
                  << "\"fn\":\"" << escapeJson(imp.function) << "\","
                  << "\"ord\":" << (imp.isOrdinal ? "true" : "false") << ","
                  << "\"n\":" << imp.ordinal << "}";
         }
-        if (!e.missingImports.empty()) file << "\n      ";
+        if (!e.missingImports.empty())
+            file << "\n      ";
         file << "],\n";
 
         file << "      \"crashes\": [";
         for (size_t i = 0; i < e.crashes.size(); i++) {
             const auto& c = e.crashes[i];
-            if (i > 0) file << ",";
-            file << "\n        {\"ts\":" << c.timestamp << ",\"sig\":" << c.signal
-                 << ",\"fa\":" << c.faultAddr << ",\"rip\":" << c.rip
-                 << ",\"rva\":\"" << escapeJson(c.crashRVA) << "\"}";
+            if (i > 0)
+                file << ",";
+            file << "\n        {\"ts\":" << c.timestamp << ",\"sig\":" << c.signal << ",\"fa\":" << c.faultAddr
+                 << ",\"rip\":" << c.rip << ",\"rva\":\"" << escapeJson(c.crashRVA) << "\"}";
         }
-        if (!e.crashes.empty()) file << "\n      ";
+        if (!e.crashes.empty())
+            file << "\n      ";
         file << "]\n";
 
         file << "    }";
@@ -333,28 +376,34 @@ bool CompatDatabase::saveToDisk() {
 }
 
 bool CompatDatabase::loadFromDisk() {
-    if (m_dbPath.empty()) return false;
+    if (m_dbPath.empty())
+        return false;
 
     std::ifstream file(m_dbPath);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
-    std::string json((std::istreambuf_iterator<char>(file)),
-                      std::istreambuf_iterator<char>());
-    if (json.empty()) return false;
+    std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (json.empty())
+        return false;
 
     size_t gamesPos = json.find("\"games\"");
-    if (gamesPos == std::string::npos) return true;
+    if (gamesPos == std::string::npos)
+        return true;
 
     size_t pos = json.find('[', gamesPos);
-    if (pos == std::string::npos) return true;
+    if (pos == std::string::npos)
+        return true;
     pos++;
 
     while (pos < json.size()) {
         size_t objStart = json.find('{', pos);
-        if (objStart == std::string::npos) break;
+        if (objStart == std::string::npos)
+            break;
 
         size_t objEnd = json.find('}', objStart);
-        if (objEnd == std::string::npos) break;
+        if (objEnd == std::string::npos)
+            break;
 
         std::string obj = json.substr(objStart, objEnd - objStart + 1);
 
@@ -371,7 +420,11 @@ bool CompatDatabase::loadFromDisk() {
         {
             size_t p = 0;
             std::string dv = findField(obj, "d3dVersion");
-            if (!dv.empty()) try { entry.d3dVersion = std::stoi(dv); } catch (...) {}
+            if (!dv.empty())
+                try {
+                    entry.d3dVersion = std::stoi(dv);
+                } catch (...) {
+                }
         }
 
         entry.antiCheat = findField(obj, "antiCheat");
@@ -382,11 +435,19 @@ bool CompatDatabase::loadFromDisk() {
 
         {
             std::string lt = findField(obj, "lastTested");
-            if (!lt.empty()) try { entry.lastTested = std::stoull(lt); } catch (...) {}
+            if (!lt.empty())
+                try {
+                    entry.lastTested = std::stoull(lt);
+                } catch (...) {
+                }
         }
         {
             std::string fps = findField(obj, "avgFPS");
-            if (!fps.empty()) try { entry.avgFPS = std::stoi(fps); } catch (...) {}
+            if (!fps.empty())
+                try {
+                    entry.avgFPS = std::stoi(fps);
+                } catch (...) {
+                }
         }
 
         size_t impPos = obj.find("\"missingImports\"");
@@ -398,9 +459,11 @@ bool CompatDatabase::loadFromDisk() {
                 size_t ip = 0;
                 while (ip < impArr.size()) {
                     size_t impObj = impArr.find('{', ip);
-                    if (impObj == std::string::npos) break;
+                    if (impObj == std::string::npos)
+                        break;
                     size_t impEnd = impArr.find('}', impObj);
-                    if (impEnd == std::string::npos) break;
+                    if (impEnd == std::string::npos)
+                        break;
 
                     std::string impData = impArr.substr(impObj, impEnd - impObj + 1);
                     MissingImport mi;
@@ -409,7 +472,11 @@ bool CompatDatabase::loadFromDisk() {
                     std::string ord = findField(impData, "ord");
                     mi.isOrdinal = (ord == "true");
                     std::string n = findField(impData, "n");
-                    if (!n.empty()) try { mi.ordinal = std::stoi(n); } catch (...) {}
+                    if (!n.empty())
+                        try {
+                            mi.ordinal = std::stoi(n);
+                        } catch (...) {
+                        }
                     entry.missingImports.push_back(mi);
 
                     ip = impEnd + 1;
@@ -428,4 +495,4 @@ bool CompatDatabase::loadFromDisk() {
     return true;
 }
 
-}
+} // namespace metalsharp

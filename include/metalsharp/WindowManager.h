@@ -10,12 +10,12 @@
 
 #pragma once
 
+#include <functional>
 #include <metalsharp/Win32Types.h>
+#include <mutex>
+#include <queue>
 #include <string>
 #include <unordered_map>
-#include <queue>
-#include <functional>
-#include <mutex>
 
 namespace metalsharp {
 namespace win32 {
@@ -55,7 +55,7 @@ struct MSG {
     POINT pt;
 };
 
-typedef intptr_t (MSABI *WNDPROC)(HANDLE, UINT, uintptr_t, intptr_t);
+typedef intptr_t(MSABI* WNDPROC)(HANDLE, UINT, uintptr_t, intptr_t);
 
 struct WNDCLASS_STORE {
     std::string className;
@@ -65,14 +65,14 @@ struct WNDCLASS_STORE {
 };
 
 class WindowManager {
-public:
+  public:
     static WindowManager& instance();
 
     void init();
 
-    HANDLE createWindow(DWORD dwExStyle, const wchar_t* lpClassName, const wchar_t* lpWindowName,
-        DWORD dwStyle, int x, int y, int nWidth, int nHeight,
-        HANDLE hWndParent, HANDLE hMenu, HANDLE hInstance, void* lpParam);
+    HANDLE createWindow(DWORD dwExStyle, const wchar_t* lpClassName, const wchar_t* lpWindowName, DWORD dwStyle, int x,
+                        int y, int nWidth, int nHeight, HANDLE hWndParent, HANDLE hMenu, HANDLE hInstance,
+                        void* lpParam);
 
     WORD registerClass(const void* lpwcx);
     BOOL destroyWindow(HANDLE hWnd);
@@ -97,7 +97,7 @@ public:
 
     void* getNSWindow(HANDLE hWnd);
 
-private:
+  private:
     WindowManager();
 
     std::unordered_map<std::string, WNDCLASS_STORE> m_classes;
@@ -114,5 +114,5 @@ private:
     std::mutex m_mutex;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

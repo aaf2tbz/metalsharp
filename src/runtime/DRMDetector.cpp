@@ -6,11 +6,11 @@
 /// Returns a bitmask of detected DRM systems so the validation pipeline can assess
 /// compatibility impact.
 
+#include <cstring>
+#include <fstream>
 #include <metalsharp/DRMDetector.h>
 #include <metalsharp/Logger.h>
-#include <fstream>
 #include <vector>
-#include <cstring>
 
 namespace metalsharp {
 
@@ -54,9 +54,9 @@ DRMDetector& DRMDetector::instance() {
     return inst;
 }
 
-bool DRMDetector::matchPattern(const uint8_t* data, size_t dataLen,
-                                 const char* pattern, size_t patternLen) const {
-    if (patternLen > dataLen) return false;
+bool DRMDetector::matchPattern(const uint8_t* data, size_t dataLen, const char* pattern, size_t patternLen) const {
+    if (patternLen > dataLen)
+        return false;
 
     for (size_t i = 0; i <= dataLen - patternLen; i++) {
         if (memcmp(data + i, pattern, patternLen) == 0) {
@@ -74,22 +74,24 @@ std::vector<DRMDetection> DRMDetector::scanFile(const std::string& exePath) {
     }
 
     auto fileSize = file.tellg();
-    if (fileSize <= 0 || fileSize > 500 * 1024 * 1024) return {};
+    if (fileSize <= 0 || fileSize > 500 * 1024 * 1024)
+        return {};
 
     file.seekg(0, std::ios::beg);
     std::vector<uint8_t> data(static_cast<size_t>(fileSize));
-    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize)) return {};
+    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize))
+        return {};
 
     auto results = scanMemory(data.data(), data.size());
 
-    MS_INFO("DRMDetector: scanned %s (%zu bytes), %zu detections",
-            exePath.c_str(), data.size(), results.size());
+    MS_INFO("DRMDetector: scanned %s (%zu bytes), %zu detections", exePath.c_str(), data.size(), results.size());
     return results;
 }
 
 std::vector<DRMDetection> DRMDetector::scanMemory(const uint8_t* data, size_t size) {
     std::vector<DRMDetection> results;
-    if (!data || size == 0) return results;
+    if (!data || size == 0)
+        return results;
 
     size_t sigCount = sizeof(kSignatures) / sizeof(kSignatures[0]);
 
@@ -105,7 +107,8 @@ std::vector<DRMDetection> DRMDetector::scanMemory(const uint8_t* data, size_t si
                 break;
             }
         }
-        if (alreadyDetected) continue;
+        if (alreadyDetected)
+            continue;
 
         DRMDetection det;
         det.name = sig.name;
@@ -121,8 +124,10 @@ std::vector<DRMDetection> DRMDetector::scanMemory(const uint8_t* data, size_t si
 
 bool DRMDetector::hasKernelAntiCheat(const std::vector<DRMDetection>& results) const {
     for (const auto& r : results) {
-        if (!r.detected) continue;
-        if (r.type != "Anti-cheat") continue;
+        if (!r.detected)
+            continue;
+        if (r.type != "Anti-cheat")
+            continue;
 
         size_t sigCount = sizeof(kSignatures) / sizeof(kSignatures[0]);
         for (size_t i = 0; i < sigCount; i++) {
@@ -141,11 +146,13 @@ bool DRMDetector::isCompatible(const std::vector<DRMDetection>& results) const {
 std::string DRMDetector::summary(const std::vector<DRMDetection>& results) const {
     std::string s;
     for (const auto& r : results) {
-        if (!r.detected) continue;
-        if (!s.empty()) s += ", ";
+        if (!r.detected)
+            continue;
+        if (!s.empty())
+            s += ", ";
         s += r.name + " [" + r.type + "]";
     }
     return s.empty() ? "No DRM/anti-cheat detected" : s;
 }
 
-}
+} // namespace metalsharp

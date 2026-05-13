@@ -10,9 +10,9 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
 #include <cstdint>
 #include <functional>
+#include <metalsharp/Platform.h>
 #include <vector>
 
 namespace metalsharp {
@@ -34,7 +34,7 @@ enum class PresentMode {
 };
 
 class FramePacer {
-public:
+  public:
     static FramePacer& instance();
 
     void init(double targetFPS = 60.0);
@@ -63,7 +63,7 @@ public:
     uint32_t tripleBufferCount() const { return m_tripleBufferCount; }
     void setTripleBufferCount(uint32_t count) { m_tripleBufferCount = count; }
 
-private:
+  private:
     FramePacer() = default;
 
     double m_targetFPS = 60.0;
@@ -83,4 +83,4 @@ private:
     std::function<void()> m_presentCallback;
 };
 
-}
+} // namespace metalsharp

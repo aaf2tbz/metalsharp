@@ -1,15 +1,16 @@
 /// @file ShaderCache.cpp
 /// @brief DXBC-to-MSL shader compilation cache (platform-agnostic logic).
 ///
-/// Manages the on-disk shader cache that maps DXBC bytecode hashes to compiled MSL source. Handles cache lookup, insertion, serialization, and stale entry cleanup. Metal-specific compilation lives in the .mm counterpart.
-#include <metalsharp/ShaderCache.h>
-#include <metalsharp/Logger.h>
-#include <fstream>
-#include <cstring>
-#include <cstdlib>
-#include <sys/stat.h>
-#include <dirent.h>
+/// Manages the on-disk shader cache that maps DXBC bytecode hashes to compiled MSL source. Handles cache lookup,
+/// insertion, serialization, and stale entry cleanup. Metal-specific compilation lives in the .mm counterpart.
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fstream>
+#include <metalsharp/Logger.h>
+#include <metalsharp/ShaderCache.h>
+#include <sys/stat.h>
 
 namespace metalsharp {
 
@@ -55,7 +56,8 @@ uint64_t ShaderCache::computeHash(const uint8_t* data, size_t size) {
 
 bool ShaderCache::lookup(uint64_t hash, CachedShader& out) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized) return false;
+    if (!m_initialized)
+        return false;
 
     auto it = m_cache.find(hash);
     if (it != m_cache.end()) {
@@ -70,7 +72,8 @@ bool ShaderCache::lookup(uint64_t hash, CachedShader& out) {
 
 void ShaderCache::store(uint64_t hash, const CachedShader& shader) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized) return;
+    if (!m_initialized)
+        return;
 
     m_cache[hash] = shader;
     m_cache[hash].hash = hash;
@@ -79,7 +82,8 @@ void ShaderCache::store(uint64_t hash, const CachedShader& shader) {
 
 bool ShaderCache::storeMetallib(uint64_t hash, const uint8_t* data, size_t size, const std::string& entryPoint) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized) return false;
+    if (!m_initialized)
+        return false;
 
     auto& entry = m_cache[hash];
     entry.hash = hash;
@@ -97,7 +101,8 @@ bool ShaderCache::storeMetallib(uint64_t hash, const uint8_t* data, size_t size,
 
 bool ShaderCache::lookupMetallib(uint64_t hash, std::vector<uint8_t>& outData, std::string& outEntryPoint) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized) return false;
+    if (!m_initialized)
+        return false;
 
     auto it = m_cache.find(hash);
     if (it != m_cache.end() && !it->second.metallib.empty()) {
@@ -125,7 +130,8 @@ uint64_t ShaderCache::totalCacheSize() const {
 }
 
 bool ShaderCache::saveToDisk() {
-    if (m_cacheDir.empty()) return false;
+    if (m_cacheDir.empty())
+        return false;
 
     for (auto& [hash, entry] : m_cache) {
         if (!entry.mslSource.empty()) {
@@ -139,19 +145,23 @@ bool ShaderCache::saveToDisk() {
 }
 
 bool ShaderCache::loadFromDisk() {
-    if (m_cacheDir.empty()) return false;
+    if (m_cacheDir.empty())
+        return false;
 
     DIR* dir = opendir(m_cacheDir.c_str());
-    if (!dir) return false;
+    if (!dir)
+        return false;
 
     struct dirent* ent;
     while ((ent = readdir(dir)) != nullptr) {
         std::string name = ent->d_name;
-        if (name.size() < 5) continue;
+        if (name.size() < 5)
+            continue;
 
         std::string ext = name.substr(name.size() - 4);
         auto dot = name.rfind('.');
-        if (dot == std::string::npos) continue;
+        if (dot == std::string::npos)
+            continue;
 
         std::string baseName = name.substr(0, dot);
         uint64_t hash = 0;
@@ -174,11 +184,12 @@ bool ShaderCache::loadFromDisk() {
 
 bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
     std::ifstream file(path);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
-    std::string source((std::istreambuf_iterator<char>(file)),
-                        std::istreambuf_iterator<char>());
-    if (source.empty()) return false;
+    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (source.empty())
+        return false;
 
     CachedShader entry;
     entry.hash = hash;
@@ -194,21 +205,25 @@ bool ShaderCache::loadEntry(const std::string& path, uint64_t hash) {
 
 bool ShaderCache::saveEntry(const std::string& path, uint64_t hash, const CachedShader& shader) {
     std::ofstream file(path);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
     file << shader.mslSource;
     return true;
 }
 
 bool ShaderCache::loadMetallibEntry(const std::string& path, uint64_t hash) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
+    if (!file.is_open())
+        return false;
 
     auto fileSize = file.tellg();
-    if (fileSize <= 0) return false;
+    if (fileSize <= 0)
+        return false;
     file.seekg(0, std::ios::beg);
 
     std::vector<uint8_t> data(static_cast<size_t>(fileSize));
-    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize)) return false;
+    if (!file.read(reinterpret_cast<char*>(data.data()), fileSize))
+        return false;
 
     if (!verifyHash(hash, data)) {
         MS_WARN("ShaderCache: metallib hash verification failed for %s", path.c_str());
@@ -223,12 +238,13 @@ bool ShaderCache::loadMetallibEntry(const std::string& path, uint64_t hash) {
 
 bool ShaderCache::saveMetallibEntry(const std::string& path, uint64_t hash) {
     auto it = m_cache.find(hash);
-    if (it == m_cache.end() || it->second.metallib.empty()) return false;
+    if (it == m_cache.end() || it->second.metallib.empty())
+        return false;
 
     std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
-    file.write(reinterpret_cast<const char*>(it->second.metallib.data()),
-               it->second.metallib.size());
+    if (!file.is_open())
+        return false;
+    file.write(reinterpret_cast<const char*>(it->second.metallib.data()), it->second.metallib.size());
     return true;
 }
 
@@ -257,4 +273,4 @@ void ShaderCache::clear() {
     m_misses = 0;
 }
 
-}
+} // namespace metalsharp

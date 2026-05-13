@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include <metalsharp/Platform.h>
 #include <cstdint>
+#include <metalsharp/Platform.h>
 
 namespace metalsharp {
 
@@ -55,17 +55,14 @@ struct Audio3DOutput {
 };
 
 class X3DAudioEngine {
-public:
+  public:
     static X3DAudioEngine& instance();
 
     void init(uint32_t speakerChannelMask);
     void shutdown();
 
-    void calculate(const Audio3DListener& listener,
-                   const Audio3DEmitter& emitter,
-                   uint32_t flags,
-                   uint32_t dstChannelCount,
-                   Audio3DOutput& output);
+    void calculate(const Audio3DListener& listener, const Audio3DEmitter& emitter, uint32_t flags,
+                   uint32_t dstChannelCount, Audio3DOutput& output);
 
     void setDistanceCurve(float nearDist, float farDist, float rolloff);
     void setDopplerFactor(float factor);
@@ -74,7 +71,7 @@ public:
     float computeDistanceAttenuation(float distance);
     float computeDoppler(const Audio3DListener& listener, const Audio3DEmitter& emitter);
 
-private:
+  private:
     X3DAudioEngine() = default;
 
     bool m_initialized = false;
@@ -86,4 +83,4 @@ private:
     float m_speedOfSound = 343.0f;
 };
 
-}
+} // namespace metalsharp

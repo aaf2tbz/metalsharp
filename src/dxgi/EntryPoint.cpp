@@ -22,5 +22,4 @@ HRESULT CreateDXGIFactory1(const GUID& riid, void** ppFactory) {
 HRESULT CreateDXGIFactory2(UINT Flags, const GUID& riid, void** ppFactory) {
     return DXGIFactory::create(riid, ppFactory);
 }
-
 }

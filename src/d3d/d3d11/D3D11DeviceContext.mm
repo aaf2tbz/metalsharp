@@ -5,39 +5,56 @@
 /// render/compute command encoders, manages pipeline state binding, and submits work to
 /// the Metal command queue.
 
-#include <metalsharp/D3D11DeviceContext.h>
-#include <metalsharp/D3D11Device.h>
-#include <metalsharp/DeferredContext.h>
-#include <metalsharp/PipelineState.h>
+#include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
-#include <cstring>
+#include <metalsharp/D3D11Device.h>
+#include <metalsharp/D3D11DeviceContext.h>
+#include <metalsharp/DeferredContext.h>
+#include <metalsharp/PipelineState.h>
 
 namespace metalsharp {
 
 D3D11DeviceContext::D3D11DeviceContext(D3D11Device& device) : m_device(device) {}
 
 HRESULT D3D11DeviceContext::QueryInterface(REFIID riid, void** ppvObject) {
-    if (!ppvObject) return E_POINTER;
+    if (!ppvObject)
+        return E_POINTER;
     if (riid == __uuidof(IUnknown) || riid == __uuidof(ID3D11DeviceContext)) {
-        AddRef(); *ppvObject = this; return S_OK;
+        AddRef();
+        *ppvObject = this;
+        return S_OK;
     }
     return E_NOINTERFACE;
 }
 
-ULONG D3D11DeviceContext::AddRef() { return ++m_refCount; }
-ULONG D3D11DeviceContext::Release() { ULONG c = --m_refCount; if (c == 0) delete this; return c; }
+ULONG D3D11DeviceContext::AddRef() {
+    return ++m_refCount;
+}
+ULONG D3D11DeviceContext::Release() {
+    ULONG c = --m_refCount;
+    if (c == 0)
+        delete this;
+    return c;
+}
 
 HRESULT D3D11DeviceContext::GetDevice(ID3D11Device** ppDevice) {
-    if (!ppDevice) return E_POINTER;
+    if (!ppDevice)
+        return E_POINTER;
     m_device.AddRef();
     *ppDevice = &m_device;
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::GetPrivateData(const GUID&, UINT*, void*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::SetPrivateData(const GUID&, UINT, const void*) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::SetPrivateDataInterface(const GUID&, const IUnknown*) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::GetPrivateData(const GUID&, UINT*, void*) {
+    return E_NOTIMPL;
+}
+HRESULT D3D11DeviceContext::SetPrivateData(const GUID&, UINT, const void*) {
+    return E_NOTIMPL;
+}
+HRESULT D3D11DeviceContext::SetPrivateDataInterface(const GUID&, const IUnknown*) {
+    return E_NOTIMPL;
+}
 
 HRESULT D3D11DeviceContext::IASetInputLayout(ID3D11InputLayout* pInputLayout) {
     m_inputLayout = pInputLayout;
@@ -45,7 +62,8 @@ HRESULT D3D11DeviceContext::IASetInputLayout(ID3D11InputLayout* pInputLayout) {
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers, const UINT* pStrides, const UINT* pOffsets) {
+HRESULT D3D11DeviceContext::IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers,
+                                               const UINT* pStrides, const UINT* pOffsets) {
     for (UINT i = 0; i < NumBuffers && (StartSlot + i) < MAX_VERTEX_BUFFERS; ++i) {
         m_vertexBuffers[StartSlot + i].buffer = ppVertexBuffers ? ppVertexBuffers[i] : nullptr;
         m_vertexBuffers[StartSlot + i].stride = pStrides ? pStrides[i] : 0;
@@ -73,14 +91,16 @@ HRESULT D3D11DeviceContext::VSSetShader(ID3D11VertexShader* pVertexShader, ID3D1
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) {
+HRESULT D3D11DeviceContext::VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers,
+                                                 ID3D11Buffer* const* ppConstantBuffers) {
     for (UINT i = 0; i < NumBuffers && (StartSlot + i) < MAX_CONSTANT_BUFFERS; ++i) {
         m_vsConstantBuffers[StartSlot + i] = ppConstantBuffers ? ppConstantBuffers[i] : nullptr;
     }
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::VSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppSRVs) {
+HRESULT D3D11DeviceContext::VSSetShaderResources(UINT StartSlot, UINT NumViews,
+                                                 ID3D11ShaderResourceView* const* ppSRVs) {
     for (UINT i = 0; i < NumViews && (StartSlot + i) < 128; ++i) {
         m_vsShaderResources[StartSlot + i] = ppSRVs ? ppSRVs[i] : nullptr;
     }
@@ -100,14 +120,16 @@ HRESULT D3D11DeviceContext::PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11C
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) {
+HRESULT D3D11DeviceContext::PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers,
+                                                 ID3D11Buffer* const* ppConstantBuffers) {
     for (UINT i = 0; i < NumBuffers && (StartSlot + i) < MAX_CONSTANT_BUFFERS; ++i) {
         m_psConstantBuffers[StartSlot + i] = ppConstantBuffers ? ppConstantBuffers[i] : nullptr;
     }
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppSRVs) {
+HRESULT D3D11DeviceContext::PSSetShaderResources(UINT StartSlot, UINT NumViews,
+                                                 ID3D11ShaderResourceView* const* ppSRVs) {
     for (UINT i = 0; i < NumViews && (StartSlot + i) < 128; ++i) {
         m_psShaderResources[StartSlot + i] = ppSRVs ? ppSRVs[i] : nullptr;
     }
@@ -121,40 +143,54 @@ HRESULT D3D11DeviceContext::PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::GSSetShader(ID3D11GeometryShader*, ID3D11ClassInstance* const*, UINT) { return E_NOTIMPL; }
-HRESULT D3D11DeviceContext::CSSetShader(ID3D11ComputeShader* pComputeShader, ID3D11ClassInstance* const*, UINT) { m_computeShader = pComputeShader; return S_OK; }
+HRESULT D3D11DeviceContext::GSSetShader(ID3D11GeometryShader*, ID3D11ClassInstance* const*, UINT) {
+    return E_NOTIMPL;
+}
+HRESULT D3D11DeviceContext::CSSetShader(ID3D11ComputeShader* pComputeShader, ID3D11ClassInstance* const*, UINT) {
+    m_computeShader = pComputeShader;
+    return S_OK;
+}
 
 HRESULT D3D11DeviceContext::CSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppBuffers) {
-    if (!ppBuffers) return S_OK;
+    if (!ppBuffers)
+        return S_OK;
     for (UINT i = 0; i < NumBuffers && StartSlot + i < MAX_CONSTANT_BUFFERS; ++i)
         m_vsConstantBuffers[StartSlot + i] = ppBuffers[i];
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::CSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppViews) {
-    if (!ppViews) return S_OK;
+HRESULT D3D11DeviceContext::CSSetShaderResources(UINT StartSlot, UINT NumViews,
+                                                 ID3D11ShaderResourceView* const* ppViews) {
+    if (!ppViews)
+        return S_OK;
     for (UINT i = 0; i < NumViews && StartSlot + i < 128; ++i)
         m_psShaderResources[StartSlot + i] = ppViews[i];
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::CSSetUnorderedAccessViews(UINT StartSlot, UINT NumUAVs, ID3D11UnorderedAccessView* const* ppUAVs, const UINT*) {
-    if (!ppUAVs) return S_OK;
+HRESULT D3D11DeviceContext::CSSetUnorderedAccessViews(UINT StartSlot, UINT NumUAVs,
+                                                      ID3D11UnorderedAccessView* const* ppUAVs, const UINT*) {
+    if (!ppUAVs)
+        return S_OK;
     for (UINT i = 0; i < NumUAVs && StartSlot + i < 8; ++i)
         m_csUAVs[StartSlot + i] = ppUAVs[i];
     return S_OK;
 }
 
 HRESULT D3D11DeviceContext::CSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) {
-    if (!ppSamplers) return S_OK;
+    if (!ppSamplers)
+        return S_OK;
     for (UINT i = 0; i < NumSamplers && StartSlot + i < 16; ++i)
         m_psSamplers[StartSlot + i] = ppSamplers[i];
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::Dispatch(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) { return E_NOTIMPL; }
+HRESULT D3D11DeviceContext::Dispatch(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) {
+    return E_NOTIMPL;
+}
 
-HRESULT D3D11DeviceContext::OMSetRenderTargets(UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews, ID3D11DepthStencilView* pDepthStencilView) {
+HRESULT D3D11DeviceContext::OMSetRenderTargets(UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews,
+                                               ID3D11DepthStencilView* pDepthStencilView) {
     m_renderTargets.fill(nullptr);
     for (UINT i = 0; i < NumViews && i < MAX_RENDER_TARGETS; ++i) {
         m_renderTargets[i] = ppRenderTargetViews ? ppRenderTargetViews[i] : nullptr;
@@ -164,13 +200,18 @@ HRESULT D3D11DeviceContext::OMSetRenderTargets(UINT NumViews, ID3D11RenderTarget
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(UINT NumRTVs, ID3D11RenderTargetView* const* ppRTVs, ID3D11DepthStencilView* pDSV, UINT, UINT, ID3D11UnorderedAccessView* const*, const UINT*) {
+HRESULT D3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(UINT NumRTVs,
+                                                                      ID3D11RenderTargetView* const* ppRTVs,
+                                                                      ID3D11DepthStencilView* pDSV, UINT, UINT,
+                                                                      ID3D11UnorderedAccessView* const*, const UINT*) {
     return OMSetRenderTargets(NumRTVs, ppRTVs, pDSV);
 }
 
-HRESULT D3D11DeviceContext::OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) {
+HRESULT D3D11DeviceContext::OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4],
+                                            UINT SampleMask) {
     m_blendState = pBlendState;
-    if (BlendFactor) memcpy(m_blendFactor, BlendFactor, sizeof(m_blendFactor));
+    if (BlendFactor)
+        memcpy(m_blendFactor, BlendFactor, sizeof(m_blendFactor));
     m_sampleMask = SampleMask;
     m_cachedPipeline.reset();
     return S_OK;
@@ -188,27 +229,31 @@ HRESULT D3D11DeviceContext::RSSetState(ID3D11RasterizerState* pRasterizerState) 
 }
 
 HRESULT D3D11DeviceContext::RSSetViewports(UINT NumViewports, const D3D11_VIEWPORT* pViewports) {
-    if (NumViewports > 0 && pViewports) m_viewport = pViewports[0];
+    if (NumViewports > 0 && pViewports)
+        m_viewport = pViewports[0];
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::RSSetScissorRects(UINT, const RECT*) { return S_OK; }
+HRESULT D3D11DeviceContext::RSSetScissorRects(UINT, const RECT*) {
+    return S_OK;
+}
 
 HRESULT D3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView* pRTV, const FLOAT ColorRGBA[4]) {
-    if (!pRTV || !m_renderTargets[0]) return S_OK;
+    if (!pRTV || !m_renderTargets[0])
+        return S_OK;
     auto& metalDev = m_device.metalDevice();
     id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
     id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
 
     void* texPtr = pRTV->__metalTexturePtr();
-    if (!texPtr) return S_OK;
+    if (!texPtr)
+        return S_OK;
 
     MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
     passDesc.colorAttachments[0].texture = (__bridge id<MTLTexture>)texPtr;
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(
-        ColorRGBA[0], ColorRGBA[1], ColorRGBA[2], ColorRGBA[3]);
+    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(ColorRGBA[0], ColorRGBA[1], ColorRGBA[2], ColorRGBA[3]);
 
     id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
     [encoder endEncoding];
@@ -216,10 +261,13 @@ HRESULT D3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView* pRTV, 
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView* pDSV, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) {
-    if (!pDSV) return S_OK;
+HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView* pDSV, UINT ClearFlags, FLOAT Depth,
+                                                  UINT8 Stencil) {
+    if (!pDSV)
+        return S_OK;
     void* texPtr = pDSV->__metalTexturePtr();
-    if (!texPtr) return S_OK;
+    if (!texPtr)
+        return S_OK;
 
     auto& metalDev = m_device.metalDevice();
     id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
@@ -245,20 +293,26 @@ HRESULT D3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView* pDSV, 
 }
 
 void D3D11DeviceContext::ensurePipeline() {
-    if (m_cachedPipeline) return;
-    if (!m_vertexShader) return;
+    if (m_cachedPipeline)
+        return;
+    if (!m_vertexShader)
+        return;
 
     PipelineStateDesc desc;
     desc.vertexStride = m_vertexBuffers[0].stride;
 
-    if (m_vertexShader) desc.vertexFunction = m_vertexShader->__metalVertexFunction();
-    if (m_pixelShader) desc.fragmentFunction = m_pixelShader->__metalFragmentFunction();
+    if (m_vertexShader)
+        desc.vertexFunction = m_vertexShader->__metalVertexFunction();
+    if (m_pixelShader)
+        desc.fragmentFunction = m_pixelShader->__metalFragmentFunction();
 
     desc.numColorAttachments = 0;
     for (UINT i = 0; i < MAX_RENDER_TARGETS; ++i) {
-        if (!m_renderTargets[i]) continue;
+        if (!m_renderTargets[i])
+            continue;
         void* texPtr = m_renderTargets[i]->__metalTexturePtr();
-        if (!texPtr) continue;
+        if (!texPtr)
+            continue;
         id<MTLTexture> tex = (__bridge id<MTLTexture>)texPtr;
         desc.colorPixelFormats[i] = (uint32_t)tex.pixelFormat;
         desc.numColorAttachments = i + 1;
@@ -288,9 +342,12 @@ void D3D11DeviceContext::ensurePipeline() {
     m_cachedPipeline.reset(PipelineState::create(m_device.metalDevice(), desc));
 }
 
-void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation, INT baseVertexLocation, bool indexed) {
-    if (!m_cachedPipeline) return;
-    if (!m_vertexBuffers[0].buffer && !indexed) return;
+void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT startIndexLocation,
+                                    INT baseVertexLocation, bool indexed) {
+    if (!m_cachedPipeline)
+        return;
+    if (!m_vertexBuffers[0].buffer && !indexed)
+        return;
 
     auto& metalDev = m_device.metalDevice();
     id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
@@ -299,9 +356,11 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
     MTLRenderPassDescriptor* passDesc = [[MTLRenderPassDescriptor alloc] init];
 
     for (UINT i = 0; i < MAX_RENDER_TARGETS; ++i) {
-        if (!m_renderTargets[i]) continue;
+        if (!m_renderTargets[i])
+            continue;
         void* texPtr = m_renderTargets[i]->__metalTexturePtr();
-        if (!texPtr) continue;
+        if (!texPtr)
+            continue;
         passDesc.colorAttachments[i].texture = (__bridge id<MTLTexture>)texPtr;
         passDesc.colorAttachments[i].loadAction = MTLLoadActionLoad;
         passDesc.colorAttachments[i].storeAction = MTLStoreActionStore;
@@ -316,7 +375,8 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
         }
     }
 
-    id<MTLRenderPipelineState> pipeline = (__bridge id<MTLRenderPipelineState>)m_cachedPipeline->nativeRenderPipelineState();
+    id<MTLRenderPipelineState> pipeline =
+        (__bridge id<MTLRenderPipelineState>)m_cachedPipeline->nativeRenderPipelineState();
 
     id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
     [encoder setRenderPipelineState:pipeline];
@@ -378,9 +438,14 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
     if (m_rasterizerState) {
         MTLCullMode cullMode = MTLCullModeNone;
         switch (m_rasterizerState->__getCullMode()) {
-            case D3D11_CULL_FRONT: cullMode = MTLCullModeFront; break;
-            case D3D11_CULL_BACK: cullMode = MTLCullModeBack; break;
-            default: break;
+        case D3D11_CULL_FRONT:
+            cullMode = MTLCullModeFront;
+            break;
+        case D3D11_CULL_BACK:
+            cullMode = MTLCullModeBack;
+            break;
+        default:
+            break;
         }
         [encoder setCullMode:cullMode];
         if (m_rasterizerState->__getFrontCCW()) {
@@ -392,12 +457,23 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
 
     MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
     switch (m_primitiveTopology) {
-        case D3D11_PRIMITIVE_TOPOLOGY_POINTLIST:     primType = MTLPrimitiveTypePoint; break;
-        case D3D11_PRIMITIVE_TOPOLOGY_LINELIST:      primType = MTLPrimitiveTypeLine; break;
-        case D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP:     primType = MTLPrimitiveTypeLineStrip; break;
-        case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST:  primType = MTLPrimitiveTypeTriangle; break;
-        case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: primType = MTLPrimitiveTypeTriangleStrip; break;
-        default: break;
+    case D3D11_PRIMITIVE_TOPOLOGY_POINTLIST:
+        primType = MTLPrimitiveTypePoint;
+        break;
+    case D3D11_PRIMITIVE_TOPOLOGY_LINELIST:
+        primType = MTLPrimitiveTypeLine;
+        break;
+    case D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP:
+        primType = MTLPrimitiveTypeLineStrip;
+        break;
+    case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST:
+        primType = MTLPrimitiveTypeTriangle;
+        break;
+    case D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+        primType = MTLPrimitiveTypeTriangleStrip;
+        break;
+    default:
+        break;
     }
 
     if (indexed && m_indexBuffer) {
@@ -417,7 +493,11 @@ void D3D11DeviceContext::commitDraw(UINT vertexCount, UINT instanceCount, UINT s
                          indexBufferOffset:m_indexBufferOffset + startIndexLocation * indexSize];
         }
     } else {
-        [encoder drawPrimitives:primType vertexStart:startIndexLocation vertexCount:vertexCount instanceCount:instanceCount > 1 ? instanceCount : 1 baseInstance:0];
+        [encoder drawPrimitives:primType
+                    vertexStart:startIndexLocation
+                    vertexCount:vertexCount
+                  instanceCount:instanceCount > 1 ? instanceCount : 1
+                   baseInstance:0];
     }
 
     [encoder endEncoding];
@@ -436,20 +516,23 @@ HRESULT D3D11DeviceContext::Draw(UINT VertexCount, UINT StartVertexLocation) {
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::DrawIndexedInstanced(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation, INT BaseVertexLocation, UINT) {
+HRESULT D3D11DeviceContext::DrawIndexedInstanced(UINT IndexCountPerInstance, UINT InstanceCount,
+                                                 UINT StartIndexLocation, INT BaseVertexLocation, UINT) {
     ensurePipeline();
     commitDraw(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, true);
     return S_OK;
 }
 
-HRESULT D3D11DeviceContext::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT) {
+HRESULT D3D11DeviceContext::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation,
+                                          UINT) {
     ensurePipeline();
     commitDraw(VertexCountPerInstance, InstanceCount, StartVertexLocation, 0, false);
     return S_OK;
 }
 
 HRESULT D3D11DeviceContext::Map(ID3D11Resource* pResource, UINT, UINT MapType, UINT, void* pMappedResource) {
-    if (!pResource || !pMappedResource) return E_INVALIDARG;
+    if (!pResource || !pMappedResource)
+        return E_INVALIDARG;
 
     auto* mapped = static_cast<D3D11_MAPPED_SUBRESOURCE*>(pMappedResource);
     memset(mapped, 0, sizeof(D3D11_MAPPED_SUBRESOURCE));
@@ -471,12 +554,15 @@ HRESULT D3D11DeviceContext::Unmap(ID3D11Resource*, UINT) {
 }
 
 HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) {
-    if (!pShaderResourceView) return S_OK;
+    if (!pShaderResourceView)
+        return S_OK;
     void* texPtr = pShaderResourceView->__metalTexturePtr();
-    if (!texPtr) return S_OK;
+    if (!texPtr)
+        return S_OK;
 
     id<MTLTexture> tex = (__bridge id<MTLTexture>)texPtr;
-    if (tex.mipmapLevelCount <= 1) return S_OK;
+    if (tex.mipmapLevelCount <= 1)
+        return S_OK;
 
     auto& metalDev = m_device.metalDevice();
     id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)metalDev.nativeCommandQueue();
@@ -488,10 +574,14 @@ HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResour
         NSUInteger srcH = tex.height >> (level - 1);
         NSUInteger dstW = tex.width >> level;
         NSUInteger dstH = tex.height >> level;
-        if (srcW == 0) srcW = 1;
-        if (srcH == 0) srcH = 1;
-        if (dstW == 0) dstW = 1;
-        if (dstH == 0) dstH = 1;
+        if (srcW == 0)
+            srcW = 1;
+        if (srcH == 0)
+            srcH = 1;
+        if (dstW == 0)
+            dstW = 1;
+        if (dstH == 0)
+            dstH = 1;
 
         [blit generateMipmapsForTexture:tex];
         break;
@@ -503,7 +593,8 @@ HRESULT D3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView* pShaderResour
 }
 
 HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* pSrc) {
-    if (!pDst || !pSrc) return E_INVALIDARG;
+    if (!pDst || !pSrc)
+        return E_INVALIDARG;
 
     void* dstBuf = pDst->__metalBufferPtr();
     void* srcBuf = pSrc->__metalBufferPtr();
@@ -545,8 +636,10 @@ HRESULT D3D11DeviceContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* p
     return E_NOTIMPL;
 }
 
-HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubresource, const void* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) {
-    if (!pDst || !pSrcData) return E_INVALIDARG;
+HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubresource, const void* pDstBox,
+                                              const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) {
+    if (!pDst || !pSrcData)
+        return E_INVALIDARG;
 
     void* dstBuf = pDst->__metalBufferPtr();
     if (dstBuf) {
@@ -567,7 +660,7 @@ HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubr
         }
         NSUInteger bytesPerImage = SrcDepthPitch > 0 ? SrcDepthPitch : SrcRowPitch * tex.height;
         [tex replaceRegion:region
-                   mipmapLevel:DstSubresource
+               mipmapLevel:DstSubresource
                      slice:0
                  withBytes:pSrcData
                bytesPerRow:SrcRowPitch
@@ -578,8 +671,11 @@ HRESULT D3D11DeviceContext::UpdateSubresource(ID3D11Resource* pDst, UINT DstSubr
     return E_NOTIMPL;
 }
 
-HRESULT D3D11DeviceContext::CopySubresourceRegion(ID3D11Resource* pDst, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrc, UINT SrcSubresource, const void* pSrcBox) {
-    if (!pDst || !pSrc) return E_INVALIDARG;
+HRESULT D3D11DeviceContext::CopySubresourceRegion(ID3D11Resource* pDst, UINT DstSubresource, UINT DstX, UINT DstY,
+                                                  UINT DstZ, ID3D11Resource* pSrc, UINT SrcSubresource,
+                                                  const void* pSrcBox) {
+    if (!pDst || !pSrc)
+        return E_INVALIDARG;
 
     void* dstTex = pDst->__metalTexturePtr();
     void* srcTex = pSrc->__metalTexturePtr();
@@ -630,8 +726,10 @@ HRESULT D3D11DeviceContext::CopySubresourceRegion(ID3D11Resource* pDst, UINT Dst
     return E_NOTIMPL;
 }
 
-HRESULT D3D11DeviceContext::ResolveSubresource(ID3D11Resource* pDst, UINT DstSubresource, ID3D11Resource* pSrc, UINT SrcSubresource, DXGI_FORMAT Format) {
-    if (!pDst || !pSrc) return E_INVALIDARG;
+HRESULT D3D11DeviceContext::ResolveSubresource(ID3D11Resource* pDst, UINT DstSubresource, ID3D11Resource* pSrc,
+                                               UINT SrcSubresource, DXGI_FORMAT Format) {
+    if (!pDst || !pSrc)
+        return E_INVALIDARG;
 
     void* dstTex = pDst->__metalTexturePtr();
     void* srcTex = pSrc->__metalTexturePtr();
@@ -665,17 +763,20 @@ HRESULT D3D11DeviceContext::ResolveSubresource(ID3D11Resource* pDst, UINT DstSub
 }
 
 HRESULT D3D11DeviceContext::Begin(ID3D11Query* pQuery) {
-    if (!pQuery) return S_OK;
+    if (!pQuery)
+        return S_OK;
     return S_OK;
 }
 
 HRESULT D3D11DeviceContext::End(ID3D11Query* pQuery) {
-    if (!pQuery) return S_OK;
+    if (!pQuery)
+        return S_OK;
     return S_OK;
 }
 
 HRESULT D3D11DeviceContext::GetData(ID3D11Query* pQuery, void* pData, UINT DataSize, UINT GetDataFlags) {
-    if (!pQuery) return S_OK;
+    if (!pQuery)
+        return S_OK;
 
     UINT queryType = pQuery->__getQueryType();
     if (pData && DataSize >= sizeof(UINT64)) {
@@ -701,11 +802,12 @@ HRESULT D3D11DeviceContext::FinishCommandList(INT, ID3D11CommandList**) {
 }
 
 HRESULT D3D11DeviceContext::ExecuteCommandList(ID3D11CommandList* pCommandList, INT) {
-    if (!pCommandList) return E_INVALIDARG;
+    if (!pCommandList)
+        return E_INVALIDARG;
     auto* cmdList = static_cast<CommandList*>(pCommandList);
     m_cachedPipeline.reset();
     cmdList->replay(this);
     return S_OK;
 }
 
-}
+} // namespace metalsharp

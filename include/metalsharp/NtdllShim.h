@@ -16,4 +16,4 @@ namespace win32 {
 ShimLibrary createNtdllShim();
 
 }
-}
+} // namespace metalsharp

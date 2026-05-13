@@ -5,9 +5,9 @@
 /// resource bindings, input/output signatures, and other metadata needed for translation
 /// to Metal shading language.
 
-#include <metalsharp/DXBCParser.h>
-#include <cstring>
 #include <cstdio>
+#include <cstring>
+#include <metalsharp/DXBCParser.h>
 
 namespace metalsharp {
 
@@ -104,7 +104,8 @@ enum DXBCOpcode : uint32_t {
 };
 
 static bool readU32(const uint8_t* data, size_t size, size_t offset, uint32_t& out) {
-    if (offset + 4 > size) return false;
+    if (offset + 4 > size)
+        return false;
     memcpy(&out, data + offset, 4);
     return true;
 }
@@ -113,14 +114,16 @@ static std::string readString(const uint8_t* base, size_t totalSize, uint32_t of
     std::string result;
     while (offset < totalSize) {
         char c = static_cast<char>(base[offset]);
-        if (c == 0) break;
+        if (c == 0)
+            break;
         result += c;
         offset++;
     }
     return result;
 }
 
-bool DXBCParser::parseSignature(const uint8_t* chunkData, size_t chunkSize, std::vector<DXBCSignatureElement>& out, const uint8_t* containerBase) {
+bool DXBCParser::parseSignature(const uint8_t* chunkData, size_t chunkSize, std::vector<DXBCSignatureElement>& out,
+                                const uint8_t* containerBase) {
     uint32_t elementCount, key;
     memcpy(&elementCount, chunkData + 8, 4);
     memcpy(&key, chunkData + 12, 4);
@@ -130,7 +133,8 @@ bool DXBCParser::parseSignature(const uint8_t* chunkData, size_t chunkSize, std:
 
     for (uint32_t i = 0; i < elementCount; ++i) {
         size_t eoff = i * elementStride;
-        if (eoff + elementStride > chunkSize - 16) break;
+        if (eoff + elementStride > chunkSize - 16)
+            break;
 
         DXBCSignatureElement elem;
         memcpy(&elem.semanticNameOffset, elements + eoff, 4);
@@ -150,7 +154,8 @@ bool DXBCParser::parseSignature(const uint8_t* chunkData, size_t chunkSize, std:
 }
 
 bool DXBCParser::parseOperand(const uint32_t* tokens, size_t maxTokens, DXBCOperand& operand, size_t& tokensConsumed) {
-    if (maxTokens == 0) return false;
+    if (maxTokens == 0)
+        return false;
     tokensConsumed = 0;
 
     uint32_t token = tokens[0];
@@ -161,7 +166,8 @@ bool DXBCParser::parseOperand(const uint32_t* tokens, size_t maxTokens, DXBCOper
     operand.mask = (token >> 12) & 0xF;
 
     for (uint32_t i = 0; i <= operand.indexDimension && i < 3; ++i) {
-        if (tokensConsumed >= maxTokens) return false;
+        if (tokensConsumed >= maxTokens)
+            return false;
         uint32_t indexRep = (token >> (22 + i * 2)) & 0x3;
         if (indexRep == 0) {
             operand.indices[i] = tokens[tokensConsumed++];
@@ -176,24 +182,39 @@ bool DXBCParser::parseOperand(const uint32_t* tokens, size_t maxTokens, DXBCOper
 }
 
 bool DXBCParser::parseBytecode(const uint32_t* tokens, size_t tokenCount, ParsedDXBC& out) {
-    if (tokenCount < 2) return false;
+    if (tokenCount < 2)
+        return false;
 
     uint32_t versionToken = tokens[0];
     uint32_t shaderType = (versionToken >> 16) & 0xFFFF;
     switch (shaderType) {
-        case 0xFFFF: out.shaderType = DXBCShaderType::Pixel; break;
-        case 0xFFFE: out.shaderType = DXBCShaderType::Vertex; break;
-        case 0xFFF2: out.shaderType = DXBCShaderType::Geometry; break;
-        case 0xFFF1: out.shaderType = DXBCShaderType::Hull; break;
-        case 0xFFF0: out.shaderType = DXBCShaderType::Domain; break;
-        case 0xFFF3: out.shaderType = DXBCShaderType::Compute; break;
-        default: return false;
+    case 0xFFFF:
+        out.shaderType = DXBCShaderType::Pixel;
+        break;
+    case 0xFFFE:
+        out.shaderType = DXBCShaderType::Vertex;
+        break;
+    case 0xFFF2:
+        out.shaderType = DXBCShaderType::Geometry;
+        break;
+    case 0xFFF1:
+        out.shaderType = DXBCShaderType::Hull;
+        break;
+    case 0xFFF0:
+        out.shaderType = DXBCShaderType::Domain;
+        break;
+    case 0xFFF3:
+        out.shaderType = DXBCShaderType::Compute;
+        break;
+    default:
+        return false;
     }
     out.majorVersion = (versionToken >> 4) & 0xF;
     out.minorVersion = versionToken & 0xF;
 
     uint32_t lengthInTokens = tokens[1];
-    if (lengthInTokens > tokenCount) return false;
+    if (lengthInTokens > tokenCount)
+        return false;
 
     size_t pos = 2;
     while (pos < lengthInTokens) {
@@ -201,7 +222,8 @@ bool DXBCParser::parseBytecode(const uint32_t* tokens, size_t tokenCount, Parsed
         uint32_t opcode = instToken & 0x7FF;
         uint32_t instLength = (instToken >> 24) & 0x7F;
 
-        if (instLength == 0) break;
+        if (instLength == 0)
+            break;
 
         DXBCInstruction inst = {};
         inst.opcode = opcode;
@@ -237,8 +259,10 @@ bool DXBCParser::parseBytecode(const uint32_t* tokens, size_t tokenCount, Parsed
 
 bool DXBCParser::parseContainer(const uint8_t* data, size_t size, ParsedDXBC& out) {
     uint32_t magic;
-    if (!readU32(data, size, 0, magic) || magic != DXBC_MAGIC) return false;
-    if (size < 32) return false;
+    if (!readU32(data, size, 0, magic) || magic != DXBC_MAGIC)
+        return false;
+    if (size < 32)
+        return false;
 
     uint32_t totalFileSize;
     memcpy(&totalFileSize, data + 24, 4);
@@ -248,20 +272,24 @@ bool DXBCParser::parseContainer(const uint8_t* data, size_t size, ParsedDXBC& ou
 
     for (uint32_t i = 0; i < chunkCount; ++i) {
         uint32_t chunkOffset;
-        if (!readU32(data, size, 32 + i * 4, chunkOffset)) continue;
-        if (chunkOffset + 8 > size) continue;
+        if (!readU32(data, size, 32 + i * 4, chunkOffset))
+            continue;
+        if (chunkOffset + 8 > size)
+            continue;
 
         uint32_t chunkMagic;
         uint32_t chunkSize;
         memcpy(&chunkMagic, data + chunkOffset, 4);
         memcpy(&chunkSize, data + chunkOffset + 4, 4);
 
-        if (chunkOffset + 8 + chunkSize > size) continue;
+        if (chunkOffset + 8 + chunkSize > size)
+            continue;
 
         if (chunkMagic == SHDR_MAGIC || chunkMagic == SHEX_MAGIC) {
             const uint32_t* tokens = reinterpret_cast<const uint32_t*>(data + chunkOffset + 8);
             size_t tokenCount = chunkSize / 4;
-            if (!parseBytecode(tokens, tokenCount, out)) return false;
+            if (!parseBytecode(tokens, tokenCount, out))
+                return false;
         } else if (chunkMagic == ISGN_MAGIC) {
             parseSignature(data + chunkOffset, chunkSize + 8, out.inputSignature, data);
         } else if (chunkMagic == OSGN_MAGIC) {
@@ -273,8 +301,9 @@ bool DXBCParser::parseContainer(const uint8_t* data, size_t size, ParsedDXBC& ou
 }
 
 bool DXBCParser::parse(const uint8_t* data, size_t size, ParsedDXBC& out) {
-    if (!data || size < 24) return false;
+    if (!data || size < 24)
+        return false;
     return parseContainer(data, size, out);
 }
 
-}
+} // namespace metalsharp

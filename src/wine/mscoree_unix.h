@@ -1,12 +1,13 @@
 /// @file mscoree_unix.h
 /// @brief Shared header for Wine mscoree PE/Unix interface.
 ///
-/// Defines the unixlib dispatch table and shared structures for .NET CLR hosting calls that cross the PE/Unix boundary. Covers runtime loading, assembly execution, and AppDomain management.
+/// Defines the unixlib dispatch table and shared structures for .NET CLR hosting calls that cross the PE/Unix boundary.
+/// Covers runtime loading, assembly execution, and AppDomain management.
 #ifndef MSCOREE_UNIX_H
 #define MSCOREE_UNIX_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,7 +23,7 @@ struct mscoree_cor_exe_main_params {
     char exe_path[1024];
     char exe_dir[1024];
     int argc;
-    char *argv[64];
+    char* argv[64];
     int exit_code;
 };
 

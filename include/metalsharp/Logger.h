@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include <cstdio>
 #include <cstdarg>
+#include <cstdio>
 #include <string>
 
 namespace metalsharp {
@@ -18,19 +18,19 @@ namespace metalsharp {
 enum class LogLevel { Trace, Info, Warn, Error };
 
 class Logger {
-public:
+  public:
     static void init(const std::string& logPath);
     static void shutdown();
 
     static void log(LogLevel level, const char* fmt, ...);
     static void setLevel(LogLevel level);
 
-private:
+  private:
     static LogLevel s_level;
     static FILE* s_file;
 };
 
-}
+} // namespace metalsharp
 
 #define MS_TRACE(fmt, ...) metalsharp::Logger::log(metalsharp::LogLevel::Trace, fmt, ##__VA_ARGS__)
 #define MS_INFO(fmt, ...)  metalsharp::Logger::log(metalsharp::LogLevel::Info, fmt, ##__VA_ARGS__)

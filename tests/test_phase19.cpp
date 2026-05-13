@@ -1,65 +1,71 @@
-#include <metalsharp/D3D12Device.h>
-#include <metalsharp/IRConverterBridge.h>
-#include <metalsharp/ShaderStage.h>
-#include <metalsharp/ShaderModelValidator.h>
-#include <d3d/D3D12.h>
+#include <cassert>
 #include <cstdio>
 #include <cstring>
-#include <cassert>
+#include <d3d/D3D12.h>
+#include <metalsharp/D3D12Device.h>
+#include <metalsharp/IRConverterBridge.h>
+#include <metalsharp/ShaderModelValidator.h>
+#include <metalsharp/ShaderStage.h>
 
 using namespace metalsharp;
 
 static int testsPassed = 0;
 static int testsFailed = 0;
 
-#define TEST(name) \
-    printf("  TEST: %-55s", #name); \
-    if (test_##name()) { printf("PASS\n"); testsPassed++; } \
-    else { printf("FAIL\n"); testsFailed++; }
+#define TEST(name)                                                                                                     \
+    printf("  TEST: %-55s", #name);                                                                                    \
+    if (test_##name()) {                                                                                               \
+        printf("PASS\n");                                                                                              \
+        testsPassed++;                                                                                                 \
+    } else {                                                                                                           \
+        printf("FAIL\n");                                                                                              \
+        testsFailed++;                                                                                                 \
+    }
 
 static bool test_shader_stage_new_values() {
-    return ShaderStage::Mesh != ShaderStage::Vertex &&
-           ShaderStage::Amplification != ShaderStage::Compute &&
-           ShaderStage::RayGeneration != ShaderStage::ClosestHit &&
-           ShaderStage::Miss != ShaderStage::Intersection &&
+    return ShaderStage::Mesh != ShaderStage::Vertex && ShaderStage::Amplification != ShaderStage::Compute &&
+           ShaderStage::RayGeneration != ShaderStage::ClosestHit && ShaderStage::Miss != ShaderStage::Intersection &&
            ShaderStage::AnyHit != ShaderStage::Callable;
 }
 
 static bool test_shader_model_60_capabilities() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
     auto caps = bridge.getShaderModelCapabilities(60);
-    return caps.waveOps && caps.int64 &&
-           !caps.halfPrecision && !caps.barycentrics &&
-           !caps.rayTracing && !caps.meshShaders;
+    return caps.waveOps && caps.int64 && !caps.halfPrecision && !caps.barycentrics && !caps.rayTracing &&
+           !caps.meshShaders;
 }
 
 static bool test_shader_model_61_capabilities() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
     auto caps = bridge.getShaderModelCapabilities(61);
-    return caps.waveOps && caps.int64 &&
-           caps.halfPrecision && caps.barycentrics &&
-           !caps.rayTracing && !caps.meshShaders;
+    return caps.waveOps && caps.int64 && caps.halfPrecision && caps.barycentrics && !caps.rayTracing &&
+           !caps.meshShaders;
 }
 
 static bool test_shader_model_63_raytracing() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
     auto caps = bridge.getShaderModelCapabilities(63);
     return caps.rayTracing && caps.waveOps && caps.halfPrecision;
 }
 
 static bool test_shader_model_65_mesh() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
     auto caps = bridge.getShaderModelCapabilities(65);
     return caps.meshShaders && caps.samplerFeedback && caps.rayTracing;
 }
 
 static bool test_shader_model_66_derivatives() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
     auto caps = bridge.getShaderModelCapabilities(66);
     return caps.computeDerivatives && caps.meshShaders && caps.rayTracing;
 }
@@ -73,7 +79,8 @@ static bool test_shader_model_50_no_capabilities() {
 static bool test_create_state_object() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     D3D12_RAYTRACING_PIPELINE_CONFIG pipelineConfig = {2};
     D3D12_RAYTRACING_SHADER_CONFIG shaderConfig = {64, 32};
@@ -98,7 +105,8 @@ static bool test_create_state_object() {
 static bool test_state_object_with_library() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     uint8_t fakeDXIL[64] = {};
     memcpy(fakeDXIL, "DXIL", 4);
@@ -133,7 +141,8 @@ static bool test_state_object_with_library() {
 static bool test_rt_prebuild_info() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
     inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
@@ -150,12 +159,14 @@ static bool test_rt_prebuild_info() {
 static bool test_dispatch_rays_command() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     D3D12_DISPATCH_RAYS_DESC desc = {};
@@ -175,12 +186,14 @@ static bool test_dispatch_rays_command() {
 static bool test_build_acceleration_structure() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC desc = {};
@@ -200,12 +213,14 @@ static bool test_build_acceleration_structure() {
 static bool test_dispatch_mesh_command() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     HRESULT hr = cmdList->DispatchMesh(4, 1, 1);
@@ -218,7 +233,8 @@ static bool test_dispatch_mesh_command() {
 static bool test_compute_root_signature() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
@@ -240,7 +256,8 @@ static bool test_compute_root_signature() {
     device->CreateRootSignature(0, &blob, sizeof(blob), IID_ID3D12RootSignature, &rsPtr);
 
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     HRESULT hr = cmdList->SetComputeRootSignature(static_cast<ID3D12RootSignature*>(rsPtr));
@@ -263,12 +280,14 @@ static bool test_compute_root_signature() {
 static bool test_compute_dispatch_records() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
-    if (!device) return false;
+    if (!device)
+        return false;
 
     void* alloc = nullptr;
     device->CreateCommandAllocator(0, IID_ID3D12CommandAllocator, &alloc);
     void* cmdListPtr = nullptr;
-    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList, &cmdListPtr);
+    device->CreateCommandList(0, 0, static_cast<ID3D12CommandAllocator*>(alloc), nullptr, IID_ID3D12GraphicsCommandList,
+                              &cmdListPtr);
     auto* cmdList = static_cast<ID3D12GraphicsCommandList*>(cmdListPtr);
 
     HRESULT hr1 = cmdList->Dispatch(8, 8, 1);
@@ -286,25 +305,13 @@ static bool test_sm66_wave_size_validation() {
 }
 
 static bool test_sm66_compute_validation() {
-    ShaderModelValidator::validateComputeShader(
-        66,
-        256, 1, 1,
-        true, true, true
-    );
-    ShaderModelValidator::validateComputeShader(
-        66,
-        8, 8, 1,
-        true, false, false
-    );
+    ShaderModelValidator::validateComputeShader(66, 256, 1, 1, true, true, true);
+    ShaderModelValidator::validateComputeShader(66, 8, 8, 1, true, false, false);
     return true;
 }
 
 static bool test_sm_pre60_no_validation() {
-    ShaderModelValidator::validateComputeShader(
-        50,
-        8, 8, 8,
-        true, true, true
-    );
+    ShaderModelValidator::validateComputeShader(50, 8, 8, 8, true, true, true);
     ShaderModelValidator::validateWaveSize(60, 64);
     return true;
 }
@@ -317,7 +324,8 @@ static bool test_irconverter_availability() {
 
 static bool test_detect_shader_model_dxil() {
     auto& bridge = IRConverterBridge::instance();
-    if (!bridge.isAvailable()) return true;
+    if (!bridge.isAvailable())
+        return true;
 
     uint8_t fakeDXBC[64] = {};
     memcpy(fakeDXBC, "DXBC", 4);
@@ -374,7 +382,8 @@ int main() {
     TEST(shader_model_50_no_capabilities);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);
-    if (testsFailed > 0) printf(" (%d FAILED)", testsFailed);
+    if (testsFailed > 0)
+        printf(" (%d FAILED)", testsFailed);
     printf("\n");
 
     return testsFailed > 0 ? 1 : 0;

@@ -9,14 +9,14 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstdint>
+#include <deque>
 #include <metalsharp/Platform.h>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <deque>
-#include <cstdint>
-#include <mutex>
-#include <chrono>
 
 namespace metalsharp {
 
@@ -29,7 +29,7 @@ struct PipelineCacheEntry {
 };
 
 class PipelineCache {
-public:
+  public:
     static PipelineCache& instance();
 
     bool init(const std::string& cacheDir);
@@ -49,7 +49,7 @@ public:
 
     void setMaxEntries(uint64_t max) { m_maxEntries = max; }
 
-private:
+  private:
     PipelineCache() = default;
 
     bool loadFromDisk();
@@ -67,4 +67,4 @@ private:
     std::mutex m_mutex;
 };
 
-}
+} // namespace metalsharp

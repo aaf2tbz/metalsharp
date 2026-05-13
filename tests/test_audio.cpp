@@ -1,18 +1,24 @@
-#include <metalsharp/CoreAudioBackend.h>
-#include <metalsharp/XAudio2Engine.h>
-#include <metalsharp/Platform.h>
 #include <cstdio>
 #include <cstring>
+#include <metalsharp/CoreAudioBackend.h>
+#include <metalsharp/Platform.h>
+#include <metalsharp/XAudio2Engine.h>
 
 extern "C" HRESULT XAudio2Create(void** ppXAudio2, UINT Flags, UINT XAudio2Processor);
 
 static int passed = 0;
 static int failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { printf("  [OK] %s\n", msg); passed++; } \
-    else { printf("  [FAIL] %s\n", msg); failed++; } \
-} while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (cond) {                                                                                                    \
+            printf("  [OK] %s\n", msg);                                                                                \
+            passed++;                                                                                                  \
+        } else {                                                                                                       \
+            printf("  [FAIL] %s\n", msg);                                                                              \
+            failed++;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 int main() {
     printf("=== Audio Tests ===\n\n");

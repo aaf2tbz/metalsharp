@@ -9,10 +9,10 @@
 
 #pragma once
 
-#include <unordered_map>
-#include <string>
-#include <functional>
 #include "PELoader.h"
+#include <functional>
+#include <string>
+#include <unordered_map>
 
 namespace metalsharp {
 namespace win32 {
@@ -20,7 +20,7 @@ namespace win32 {
 void setExePath(const char* path);
 
 class Kernel32Shim {
-public:
+  public:
     static ShimLibrary create();
 
     static bool s_initialized;
@@ -29,5 +29,5 @@ public:
     static uintptr_t s_nextHandle;
 };
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

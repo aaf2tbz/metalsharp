@@ -1,11 +1,12 @@
 /// @file XAudio2Engine.cpp
 /// @brief XAudio2 engine implementation delegating to CoreAudio backend.
 ///
-/// Implements IXAudio2 engine initialization, voice creation, and mastering voice setup. Translates XAudio2 API calls to the CoreAudio backend's AudioUnit pipeline. Manages the XAudio2 processing graph lifecycle.
-#include <metalsharp/XAudio2Engine.h>
+/// Implements IXAudio2 engine initialization, voice creation, and mastering voice setup. Translates XAudio2 API calls
+/// to the CoreAudio backend's AudioUnit pipeline. Manages the XAudio2 processing graph lifecycle.
+#include <cstring>
 #include <metalsharp/CoreAudioBackend.h>
 #include <metalsharp/Logger.h>
-#include <cstring>
+#include <metalsharp/XAudio2Engine.h>
 
 namespace metalsharp {
 
@@ -31,28 +32,34 @@ struct MasteringVoice {
 };
 
 XAudio2Engine::XAudio2Engine() {}
-XAudio2Engine::~XAudio2Engine() { m_backend.shutdown(); }
+XAudio2Engine::~XAudio2Engine() {
+    m_backend.shutdown();
+}
 
 HRESULT XAudio2Engine::init() {
-    if (m_initialized) return S_OK;
-    if (!m_backend.init()) return E_FAIL;
+    if (m_initialized)
+        return S_OK;
+    if (!m_backend.init())
+        return E_FAIL;
     m_initialized = true;
     MS_INFO("XAudio2Engine initialized");
     return S_OK;
 }
 
 HRESULT XAudio2Engine::createSourceVoice(void** ppVoice, const XAudio2WaveFormat* pFormat) {
-    if (!ppVoice || !pFormat) return E_POINTER;
+    if (!ppVoice || !pFormat)
+        return E_POINTER;
     auto* voice = new SourceVoice();
     voice->format = *pFormat;
     *ppVoice = voice;
-    MS_TRACE("XAudio2Engine: source voice created (%u Hz, %u-bit, %u ch)",
-             pFormat->samplesPerSec, pFormat->bitsPerSample, pFormat->channels);
+    MS_TRACE("XAudio2Engine: source voice created (%u Hz, %u-bit, %u ch)", pFormat->samplesPerSec,
+             pFormat->bitsPerSample, pFormat->channels);
     return S_OK;
 }
 
 HRESULT XAudio2Engine::submitSourceBuffer(void* pVoice, const void* pBufferDesc) {
-    if (!pVoice) return E_POINTER;
+    if (!pVoice)
+        return E_POINTER;
     auto* voice = static_cast<SourceVoice*>(pVoice);
 
     struct XAudio2Buffer {
@@ -80,24 +87,27 @@ HRESULT XAudio2Engine::submitSourceBuffer(void* pVoice, const void* pBufferDesc)
 }
 
 HRESULT XAudio2Engine::start(void* pVoice) {
-    if (!pVoice) return E_POINTER;
+    if (!pVoice)
+        return E_POINTER;
     static_cast<SourceVoice*>(pVoice)->playing = true;
     m_backend.play();
     return S_OK;
 }
 
 HRESULT XAudio2Engine::stop(void* pVoice) {
-    if (!pVoice) return E_POINTER;
+    if (!pVoice)
+        return E_POINTER;
     static_cast<SourceVoice*>(pVoice)->playing = false;
     m_backend.stop();
     return S_OK;
 }
 
 HRESULT XAudio2Engine::setVolume(void* pVoice, float volume) {
-    if (!pVoice) return E_POINTER;
+    if (!pVoice)
+        return E_POINTER;
     static_cast<SourceVoice*>(pVoice)->volume = volume;
     m_backend.setVolume(volume);
     return S_OK;
 }
 
-}
+} // namespace metalsharp

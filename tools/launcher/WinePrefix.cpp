@@ -1,10 +1,10 @@
 #include "WinePrefix.h"
-#include <sys/stat.h>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace metalsharp {
 
@@ -13,14 +13,16 @@ WinePrefix::~WinePrefix() = default;
 
 std::string WinePrefix::defaultPrefixPath() {
     const char* home = getenv("HOME");
-    if (home) return std::string(home) + "/.metalsharp/prefix";
+    if (home)
+        return std::string(home) + "/.metalsharp/prefix";
     return "/tmp/metalsharp/prefix";
 }
 
 bool WinePrefix::init() {
     struct stat st{};
     if (stat(m_path.c_str(), &st) != 0) {
-        if (!createWinePrefix()) return false;
+        if (!createWinePrefix())
+            return false;
     }
 
     std::string dllDir = dllPath();
@@ -56,11 +58,21 @@ bool WinePrefix::createWinePrefix() {
     return true;
 }
 
-bool WinePrefix::isValid() const { return m_initialized; }
-std::string WinePrefix::dllPath() const { return m_path + "/dlls"; }
-std::string WinePrefix::winePrefixPath() const { return m_path; }
-std::string WinePrefix::userRegPath() const { return m_path + "/user.reg"; }
-std::string WinePrefix::systemRegPath() const { return m_path + "/system.reg"; }
+bool WinePrefix::isValid() const {
+    return m_initialized;
+}
+std::string WinePrefix::dllPath() const {
+    return m_path + "/dlls";
+}
+std::string WinePrefix::winePrefixPath() const {
+    return m_path;
+}
+std::string WinePrefix::userRegPath() const {
+    return m_path + "/user.reg";
+}
+std::string WinePrefix::systemRegPath() const {
+    return m_path + "/system.reg";
+}
 
 bool WinePrefix::setDllOverride(const std::string& dllName) {
     m_dllOverrides.push_back(dllName);
@@ -68,10 +80,12 @@ bool WinePrefix::setDllOverride(const std::string& dllName) {
 }
 
 bool WinePrefix::writeRegistryDllOverrides() {
-    if (m_dllOverrides.empty()) return true;
+    if (m_dllOverrides.empty())
+        return true;
 
     std::ofstream reg(userRegPath(), std::ios::app);
-    if (!reg.is_open()) return false;
+    if (!reg.is_open())
+        return false;
 
     reg << "\n[Software\\\\Wine\\\\DllOverrides]\n";
     for (const auto& dll : m_dllOverrides) {
@@ -85,8 +99,7 @@ bool WinePrefix::copyMetalSharpDlls() {
     const char* buildDir = getenv("METALSHARP_BUILD_DIR");
     std::string sourceDir = buildDir ? buildDir : "";
 
-    const char* dllNames[] = {"d3d11.dylib", "d3d12.dylib", "dxgi.dylib",
-                              "xaudio2_9.dylib", "xinput1_4.dylib"};
+    const char* dllNames[] = {"d3d11.dylib", "d3d12.dylib", "dxgi.dylib", "xaudio2_9.dylib", "xinput1_4.dylib"};
 
     std::string dest = dllPath();
     printf("  Installing MetalSharp DLLs to %s\n", dest.c_str());
@@ -108,4 +121,4 @@ bool WinePrefix::copyMetalSharpDlls() {
     return true;
 }
 
-}
+} // namespace metalsharp

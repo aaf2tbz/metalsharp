@@ -1,28 +1,28 @@
 #define _XOPEN_SOURCE
-#include <metalsharp/PELoader.h>
-#include <metalsharp/PEHeader.h>
-#include <metalsharp/Kernel32Shim.h>
-#include <metalsharp/NtdllShim.h>
-#include <metalsharp/ExtraShims.h>
-#include <metalsharp/D3DShims.h>
-#include <metalsharp/MSABITrampolines.h>
-#include <metalsharp/Logger.h>
-#include <metalsharp/VirtualFileSystem.h>
-#include <metalsharp/Registry.h>
-#include <metalsharp/WindowManager.h>
-#include <metalsharp/NetworkContext.h>
-#include <metalsharp/SecureTransport.h>
-#include <metalsharp/SyncContext.h>
-#include <metalsharp/ShaderCache.h>
-#include <metalsharp/PipelineCache.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <unistd.h>
-#include <signal.h>
-#include <ucontext.h>
-#include <sys/mman.h>
+#include <metalsharp/D3DShims.h>
+#include <metalsharp/ExtraShims.h>
+#include <metalsharp/Kernel32Shim.h>
+#include <metalsharp/Logger.h>
+#include <metalsharp/MSABITrampolines.h>
+#include <metalsharp/NetworkContext.h>
+#include <metalsharp/NtdllShim.h>
+#include <metalsharp/PEHeader.h>
+#include <metalsharp/PELoader.h>
+#include <metalsharp/PipelineCache.h>
+#include <metalsharp/Registry.h>
+#include <metalsharp/SecureTransport.h>
+#include <metalsharp/ShaderCache.h>
+#include <metalsharp/SyncContext.h>
+#include <metalsharp/VirtualFileSystem.h>
+#include <metalsharp/WindowManager.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <ucontext.h>
+#include <unistd.h>
 
 static metalsharp::LoadedModule* g_mainModule = nullptr;
 
@@ -35,12 +35,16 @@ static int g_fmode = 0;
 static char** g_environ_data = nullptr;
 
 static void MSABI stub_noop_void() {}
-static int MSABI stub_noop_int() { return 0; }
-static void* MSABI stub_noop_ptr() { return nullptr; }
+static int MSABI stub_noop_int() {
+    return 0;
+}
+static void* MSABI stub_noop_ptr() {
+    return nullptr;
+}
 
-#define STUB_V ((void*)(void(*)())stub_noop_void)
-#define STUB_I ((void*)(int(*)())stub_noop_int)
-#define STUB_P ((void*)(void*(*)())stub_noop_ptr)
+#define STUB_V ((void*)(void (*)())stub_noop_void)
+#define STUB_I ((void*)(int (*)())stub_noop_int)
+#define STUB_P ((void*)(void* (*)())stub_noop_ptr)
 
 static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
 #if defined(__x86_64__)
@@ -55,9 +59,8 @@ static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
     fprintf(stderr, "\n=== CRASH (signal %d) ===\n", sig);
     fprintf(stderr, "Faulting address: 0x%llX\n", (unsigned long long)(uintptr_t)info->si_addr);
     fprintf(stderr, "RIP: 0x%llX  RSP: 0x%llX\n", (unsigned long long)rip, (unsigned long long)rsp);
-    fprintf(stderr, "RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX  RDX: 0x%llX\n",
-            (unsigned long long)rax, (unsigned long long)rbx,
-            (unsigned long long)rcx, (unsigned long long)rdx);
+    fprintf(stderr, "RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX  RDX: 0x%llX\n", (unsigned long long)rax,
+            (unsigned long long)rbx, (unsigned long long)rcx, (unsigned long long)rdx);
 
     if (g_mainModule) {
         uint64_t base = (uint64_t)g_mainModule->base;
@@ -72,15 +75,14 @@ static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
         for (int i = 0; i < 16; i++) {
             uint64_t val = stack[i];
             if (val >= base && val < end)
-                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX  (PE RVA 0x%llX)\n",
-                        i*8, (unsigned long long)val, (unsigned long long)(val - base));
+                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX  (PE RVA 0x%llX)\n", i * 8, (unsigned long long)val,
+                        (unsigned long long)(val - base));
             else
-                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX\n", i*8, (unsigned long long)val);
+                fprintf(stderr, "  [RSP+0x%02X] = 0x%llX\n", i * 8, (unsigned long long)val);
         }
     }
 #else
-    fprintf(stderr, "\n=== CRASH (signal %d) at 0x%llX ===\n",
-            sig, (unsigned long long)(uintptr_t)info->si_addr);
+    fprintf(stderr, "\n=== CRASH (signal %d) at 0x%llX ===\n", sig, (unsigned long long)(uintptr_t)info->si_addr);
 #endif
     _exit(139);
 }
@@ -94,12 +96,12 @@ using namespace metalsharp::win32;
 
 static void printUsage(const char* prog) {
     fprintf(stderr,
-        "Usage: %s <game.exe> [args...]\n"
-        "\n"
-        "MetalSharp %s — Native D3D→Metal translation layer\n"
-        "Loads Windows x86_64 executables and translates D3D11/D3D12 calls to Metal.\n"
-        "No Wine dependency.\n",
-        prog, METALSHARP_VERSION);
+            "Usage: %s <game.exe> [args...]\n"
+            "\n"
+            "MetalSharp %s — Native D3D→Metal translation layer\n"
+            "Loads Windows x86_64 executables and translates D3D11/D3D12 calls to Metal.\n"
+            "No Wine dependency.\n",
+            prog, METALSHARP_VERSION);
 }
 
 int main(int argc, char* argv[]) {
@@ -247,9 +249,7 @@ int main(int argc, char* argv[]) {
 
     ShimLibrary msvcrt;
     msvcrt.name = "msvcrt.dll";
-    auto fn = [](void* ptr) -> ExportedFunction {
-        return [ptr]() -> void* { return ptr; };
-    };
+    auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
     msvcrt.functions["malloc"] = fn((void*)msabi_malloc);
     msvcrt.functions["free"] = fn((void*)msabi_free);
     msvcrt.functions["realloc"] = fn((void*)msabi_realloc);
@@ -495,7 +495,8 @@ int main(int argc, char* argv[]) {
 
     const char* envCmdline = getenv("METALSHARP_CMDLINE");
     const char* envCwd = getenv("METALSHARP_CWD");
-    if (envCwd) chdir(envCwd);
+    if (envCwd)
+        chdir(envCwd);
     if (envCmdline) {
         g_cmdline = const_cast<char*>(envCmdline);
     } else {
@@ -527,25 +528,23 @@ int main(int argc, char* argv[]) {
     uint8_t* fakeTeb = nullptr;
     if (main->isPE) {
         auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(main->base);
-        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(
-            main->base + dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER));
+        auto* opt = reinterpret_cast<const IMAGE_OPTIONAL_HEADER64*>(main->base + dos->e_lfanew + 4 +
+                                                                     sizeof(IMAGE_FILE_HEADER));
 
         bool isDll = false;
-        auto* fileHdr = reinterpret_cast<const IMAGE_FILE_HEADER*>(
-            main->base + dos->e_lfanew + 4);
+        auto* fileHdr = reinterpret_cast<const IMAGE_FILE_HEADER*>(main->base + dos->e_lfanew + 4);
         if (fileHdr->Characteristics & IMAGE_FILE_DLL) {
             isDll = true;
         }
 
-        fakeTeb = (uint8_t*)mmap(nullptr, 0x10000, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        fakeTeb = (uint8_t*)mmap(nullptr, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         memset(fakeTeb, 0, 0x10000);
 
         fakeTeb[0x30] = 0;
         uint64_t tebAddr = (uint64_t)fakeTeb;
         memcpy(&fakeTeb[0x30], &tebAddr, 8);
-        uint64_t stackTop = (uint64_t)mmap(nullptr, 0x100000, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        uint64_t stackTop =
+            (uint64_t)mmap(nullptr, 0x100000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         uint64_t stackBase = stackTop + 0x100000;
         memcpy(&fakeTeb[0x08], &stackTop, 8);
         memcpy(&fakeTeb[0x10], &stackBase, 8);
@@ -561,11 +560,11 @@ int main(int argc, char* argv[]) {
         memcpy(&fakeTeb[0x1488], &tlsValueAddr, 8);
 
 #if defined(__x86_64__)
-        __asm__ volatile (
-            "mov %0, %%rax\n"
-            "mov %%rax, %%gs:0x30\n"
-            : : "r"(tebAddr) : "rax", "memory"
-        );
+        __asm__ volatile("mov %0, %%rax\n"
+                         "mov %%rax, %%gs:0x30\n"
+                         :
+                         : "r"(tebAddr)
+                         : "rax", "memory");
 #else
         fprintf(stderr, "PE execution requires x86_64 (Rosetta 2)\n");
         return 1;

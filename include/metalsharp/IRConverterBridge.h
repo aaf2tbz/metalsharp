@@ -10,18 +10,18 @@
 
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <functional>
+#include <future>
 #include <metalsharp/Platform.h>
 #include <metalsharp/ShaderStage.h>
-#include <cstdint>
-#include <string>
-#include <vector>
-#include <functional>
 #include <mutex>
-#include <thread>
-#include <condition_variable>
 #include <queue>
-#include <future>
-#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
 
 namespace metalsharp {
 
@@ -47,41 +47,22 @@ struct IRConverterReflection {
 };
 
 class IRConverterBridge {
-public:
+  public:
     static IRConverterBridge& instance();
 
     bool isAvailable() const;
 
-    bool compileDXILToMetallib(
-        const uint8_t* dxilData,
-        size_t dxilSize,
-        ShaderStage stage,
-        const char* entryPoint,
-        std::vector<uint8_t>& outMetallib,
-        IRConverterReflection& outReflection
-    );
+    bool compileDXILToMetallib(const uint8_t* dxilData, size_t dxilSize, ShaderStage stage, const char* entryPoint,
+                               std::vector<uint8_t>& outMetallib, IRConverterReflection& outReflection);
 
-    bool compileDXILToMetallibWithRootSignature(
-        const uint8_t* dxilData,
-        size_t dxilSize,
-        ShaderStage stage,
-        const char* entryPoint,
-        const void* rootSignatureData,
-        size_t rootSignatureSize,
-        std::vector<uint8_t>& outMetallib,
-        IRConverterReflection& outReflection
-    );
+    bool compileDXILToMetallibWithRootSignature(const uint8_t* dxilData, size_t dxilSize, ShaderStage stage,
+                                                const char* entryPoint, const void* rootSignatureData,
+                                                size_t rootSignatureSize, std::vector<uint8_t>& outMetallib,
+                                                IRConverterReflection& outReflection);
 
-    bool compileRayTracingShader(
-        const uint8_t* dxilData,
-        size_t dxilSize,
-        ShaderStage stage,
-        const char* entryPoint,
-        uint32_t maxRecursionDepth,
-        uint32_t maxAttributeSize,
-        std::vector<uint8_t>& outMetallib,
-        IRConverterReflection& outReflection
-    );
+    bool compileRayTracingShader(const uint8_t* dxilData, size_t dxilSize, ShaderStage stage, const char* entryPoint,
+                                 uint32_t maxRecursionDepth, uint32_t maxAttributeSize,
+                                 std::vector<uint8_t>& outMetallib, IRConverterReflection& outReflection);
 
     struct ShaderModelCapabilities {
         bool waveOps = false;
@@ -96,11 +77,7 @@ public:
 
     ShaderModelCapabilities getShaderModelCapabilities(uint32_t smVersion) const;
 
-    bool extractDXILFromDXBC(
-        const uint8_t* dxbcData,
-        size_t dxbcSize,
-        std::vector<uint8_t>& outDXIL
-    );
+    bool extractDXILFromDXBC(const uint8_t* dxbcData, size_t dxbcSize, std::vector<uint8_t>& outDXIL);
 
     bool isDXIL(const uint8_t* data, size_t size) const;
     uint32_t detectShaderModel(const uint8_t* data, size_t size) const;
@@ -108,7 +85,7 @@ public:
     IRConverterBridge(const IRConverterBridge&) = delete;
     IRConverterBridge& operator=(const IRConverterBridge&) = delete;
 
-private:
+  private:
     IRConverterBridge();
     ~IRConverterBridge();
 
@@ -140,7 +117,7 @@ struct ShaderCompileResult {
 };
 
 class ShaderCompileService {
-public:
+  public:
     static ShaderCompileService& instance();
 
     bool init(uint32_t numThreads = 0);
@@ -156,7 +133,7 @@ public:
     ShaderCompileService(const ShaderCompileService&) = delete;
     ShaderCompileService& operator=(const ShaderCompileService&) = delete;
 
-private:
+  private:
     ShaderCompileService() = default;
     ~ShaderCompileService();
 
@@ -174,4 +151,4 @@ private:
     std::string m_cacheDir;
 };
 
-}
+} // namespace metalsharp

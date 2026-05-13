@@ -1,10 +1,16 @@
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <metalsharp/DXBCParser.h>
 #include <metalsharp/DXBCtoMSL.h>
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
 
-#define CHECK(cond, msg) do { if (!(cond)) { printf("FAIL: %s\n", msg); return 1; } } while(0)
+#define CHECK(cond, msg)                                                                                               \
+    do {                                                                                                               \
+        if (!(cond)) {                                                                                                 \
+            printf("FAIL: %s\n", msg);                                                                                 \
+            return 1;                                                                                                  \
+        }                                                                                                              \
+    } while (0)
 
 static void writeU32(std::vector<uint8_t>& out, uint32_t val) {
     out.push_back(val & 0xFF);
@@ -17,7 +23,7 @@ static std::vector<uint8_t> buildMinimalDXBC() {
     std::vector<uint8_t> shaderChunk;
 
     uint32_t versionToken = 0xFFFF0050; // ps_5_0 (major=5, minor=0)
-    uint32_t lengthToken = 3; // total tokens including version + length + ret
+    uint32_t lengthToken = 3;           // total tokens including version + length + ret
     uint32_t retToken = (22) | (1 << 24);
 
     writeU32(shaderChunk, versionToken);
@@ -34,14 +40,14 @@ static std::vector<uint8_t> buildMinimalDXBC() {
     const char* magic = "DXBC";
     dxbc.insert(dxbc.end(), magic, magic + 4);
     dxbc.insert(dxbc.end(), 16, 0); // checksum
-    writeU32(dxbc, 1); // version
+    writeU32(dxbc, 1);              // version
 
     uint32_t chunkCount = 1;
     uint32_t chunkDataOffset = 32 + chunkCount * 4; // 36
     uint32_t totalSize = chunkDataOffset + (uint32_t)chunk.size();
 
-    writeU32(dxbc, totalSize); // total file size
-    writeU32(dxbc, chunkCount); // chunk count
+    writeU32(dxbc, totalSize);       // total file size
+    writeU32(dxbc, chunkCount);      // chunk count
     writeU32(dxbc, chunkDataOffset); // offset to first chunk
 
     dxbc.insert(dxbc.end(), chunk.begin(), chunk.end());
@@ -80,7 +86,7 @@ static std::vector<uint8_t> buildShaderWithMov() {
     const char* magic = "DXBC";
     dxbc.insert(dxbc.end(), magic, magic + 4);
     dxbc.insert(dxbc.end(), 16, 0); // checksum
-    writeU32(dxbc, 1); // version
+    writeU32(dxbc, 1);              // version
 
     uint32_t chunkCount = 1;
     uint32_t chunkDataOffset = 32 + chunkCount * 4;

@@ -1,16 +1,18 @@
 /// @file SecureTransport.mm
 /// @brief SSL/TLS via Apple Security framework.
 ///
-/// Implements Win32 SecureChannel/Schannel TLS operations using Apple's Security framework. Handles certificate validation, SSL context creation, and encrypted read/write. Required by games that use HTTPS for multiplayer, telemetry, or DRM.
-#include <metalsharp/SecureTransport.h>
-#include <metalsharp/Logger.h>
+/// Implements Win32 SecureChannel/Schannel TLS operations using Apple's Security framework. Handles certificate
+/// validation, SSL context creation, and encrypted read/write. Required by games that use HTTPS for multiplayer,
+/// telemetry, or DRM.
 #include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/SecureTransport.h>
 #include <unistd.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#include <Security/Security.h>
 #include <Security/SecureTransport.h>
+#include <Security/Security.h>
 #pragma clang diagnostic pop
 
 namespace metalsharp {
@@ -28,7 +30,10 @@ void SecureTransport::initialize() {
 static OSStatus sslReadCallback(SSLConnectionRef conn, void* data, size_t* len) {
     int fd = (int)(intptr_t)conn;
     ssize_t n = read(fd, data, *len);
-    if (n < 0) { *len = 0; return errSSLClosedAbort; }
+    if (n < 0) {
+        *len = 0;
+        return errSSLClosedAbort;
+    }
     *len = (size_t)n;
     return noErr;
 }
@@ -36,7 +41,10 @@ static OSStatus sslReadCallback(SSLConnectionRef conn, void* data, size_t* len) 
 static OSStatus sslWriteCallback(SSLConnectionRef conn, const void* data, size_t* len) {
     int fd = (int)(intptr_t)conn;
     ssize_t n = write(fd, data, *len);
-    if (n < 0) { *len = 0; return errSSLClosedAbort; }
+    if (n < 0) {
+        *len = 0;
+        return errSSLClosedAbort;
+    }
     *len = (size_t)n;
     return noErr;
 }
@@ -69,7 +77,8 @@ void* SecureTransport::createSSLSession(int socketFd) {
 void SecureTransport::destroySSLSession(void* handle) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_sessions.find((intptr_t)handle);
-    if (it == m_sessions.end()) return;
+    if (it == m_sessions.end())
+        return;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -86,7 +95,8 @@ void SecureTransport::destroySSLSession(void* handle) {
 int SecureTransport::sslConnect(void* handle, const char* hostname) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_sessions.find((intptr_t)handle);
-    if (it == m_sessions.end() || !it->second.sslContext) return -1;
+    if (it == m_sessions.end() || !it->second.sslContext)
+        return -1;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -103,7 +113,8 @@ int SecureTransport::sslConnect(void* handle, const char* hostname) {
     }
 #pragma clang diagnostic pop
 
-    if (status == errSSLWouldBlock) return -1;
+    if (status == errSSLWouldBlock)
+        return -1;
 
     MS_INFO("SecureTransport: SSLHandshake failed with %ld", (long)status);
     return -1;
@@ -112,7 +123,8 @@ int SecureTransport::sslConnect(void* handle, const char* hostname) {
 int SecureTransport::sslRead(void* handle, char* buf, int len) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_sessions.find((intptr_t)handle);
-    if (it == m_sessions.end() || !it->second.sslContext) return -1;
+    if (it == m_sessions.end() || !it->second.sslContext)
+        return -1;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -125,14 +137,16 @@ int SecureTransport::sslRead(void* handle, char* buf, int len) {
         return (int)processed;
     }
 
-    if (status == errSSLClosedGraceful) return 0;
+    if (status == errSSLClosedGraceful)
+        return 0;
     return -1;
 }
 
 int SecureTransport::sslWrite(void* handle, const char* buf, int len) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_sessions.find((intptr_t)handle);
-    if (it == m_sessions.end() || !it->second.sslContext) return -1;
+    if (it == m_sessions.end() || !it->second.sslContext)
+        return -1;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -147,5 +161,5 @@ int SecureTransport::sslWrite(void* handle, const char* buf, int len) {
     return -1;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

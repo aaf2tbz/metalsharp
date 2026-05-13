@@ -1,13 +1,14 @@
 /// @file WindowManager.mm
 /// @brief HWND-to-NSWindow bridge with Win32 message pump dispatch.
 ///
-/// Maps Win32 HWND handles to NSWindow/CAMetalLayer objects for Metal rendering. Implements the Win32 message pump (GetMessage, DispatchMessage, WNDPROC callbacks) and handles window creation, sizing, and input event routing.
+/// Maps Win32 HWND handles to NSWindow/CAMetalLayer objects for Metal rendering. Implements the Win32 message pump
+/// (GetMessage, DispatchMessage, WNDPROC callbacks) and handles window creation, sizing, and input event routing.
 #import <AppKit/AppKit.h>
-#include <metalsharp/WindowManager.h>
-#include <metalsharp/Logger.h>
-#include <cstring>
-#include <cstdlib>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/WindowManager.h>
 
 @class MetalSharpWindowDelegate;
 
@@ -20,8 +21,7 @@
 
 - (void)windowWillClose:(NSNotification*)notification {
     (void)notification;
-    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd),
-        metalsharp::win32::WM_CLOSE, 0, 0);
+    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd), metalsharp::win32::WM_CLOSE, 0, 0);
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
@@ -30,20 +30,18 @@
     NSRect content = [window contentRectForFrameRect:[window frame]];
     uintptr_t w = static_cast<uintptr_t>(content.size.width);
     uintptr_t h = static_cast<uintptr_t>(content.size.height);
-    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd),
-        metalsharp::win32::WM_SIZE, 0, (intptr_t)((h << 16) | (w & 0xFFFF)));
+    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd), metalsharp::win32::WM_SIZE, 0,
+                          (intptr_t)((h << 16) | (w & 0xFFFF)));
 }
 
 - (void)windowDidBecomeKey:(NSNotification*)notification {
     (void)notification;
-    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd),
-        metalsharp::win32::WM_ACTIVATE, 1, 0);
+    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd), metalsharp::win32::WM_ACTIVATE, 1, 0);
 }
 
 - (void)windowDidResignKey:(NSNotification*)notification {
     (void)notification;
-    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd),
-        metalsharp::win32::WM_ACTIVATE, 0, 0);
+    _manager->postMessage(reinterpret_cast<metalsharp::win32::HANDLE>(_hwnd), metalsharp::win32::WM_ACTIVATE, 0, 0);
 }
 
 @end
@@ -51,37 +49,66 @@
 static uint16_t macKeyToVK(NSString* chars, unichar keyCode) {
     if ([chars length] > 0) {
         unichar ch = [chars characterAtIndex:0];
-        if (ch >= 'A' && ch <= 'Z') return ch;
-        if (ch >= 'a' && ch <= 'z') return toupper(ch);
-        if (ch >= '0' && ch <= '9') return ch;
+        if (ch >= 'A' && ch <= 'Z')
+            return ch;
+        if (ch >= 'a' && ch <= 'z')
+            return toupper(ch);
+        if (ch >= '0' && ch <= '9')
+            return ch;
     }
     switch (keyCode) {
-        case 0x7B: return 0x25;
-        case 0x7C: return 0x27;
-        case 0x7E: return 0x26;
-        case 0x7D: return 0x28;
-        case 0x24: return 0x0D;
-        case 0x35: return 0x08;
-        case 0x31: return 0x20;
-        case 0x30: return 0x09;
-        case 0x7A: return 0x70;
-        case 0x78: return 0x71;
-        case 0x63: return 0x72;
-        case 0x76: return 0x73;
-        case 0x60: return 0x74;
-        case 0x61: return 0x75;
-        case 0x62: return 0x76;
-        case 0x64: return 0x77;
-        case 0x65: return 0x78;
-        case 0x6D: return 0x79;
-        case 0x67: return 0x7A;
-        case 0x6F: return 0x7B;
-        case 0x69: return 0x7C;
-        case 0x6B: return 0x7D;
-        case 0x73: return 0x24;
-        case 0x74: return 0x23;
-        case 0x79: return 0x2D;
-        default: return 0;
+    case 0x7B:
+        return 0x25;
+    case 0x7C:
+        return 0x27;
+    case 0x7E:
+        return 0x26;
+    case 0x7D:
+        return 0x28;
+    case 0x24:
+        return 0x0D;
+    case 0x35:
+        return 0x08;
+    case 0x31:
+        return 0x20;
+    case 0x30:
+        return 0x09;
+    case 0x7A:
+        return 0x70;
+    case 0x78:
+        return 0x71;
+    case 0x63:
+        return 0x72;
+    case 0x76:
+        return 0x73;
+    case 0x60:
+        return 0x74;
+    case 0x61:
+        return 0x75;
+    case 0x62:
+        return 0x76;
+    case 0x64:
+        return 0x77;
+    case 0x65:
+        return 0x78;
+    case 0x6D:
+        return 0x79;
+    case 0x67:
+        return 0x7A;
+    case 0x6F:
+        return 0x7B;
+    case 0x69:
+        return 0x7C;
+    case 0x6B:
+        return 0x7D;
+    case 0x73:
+        return 0x24;
+    case 0x74:
+        return 0x23;
+    case 0x79:
+        return 0x2D;
+    default:
+        return 0;
     }
 }
 
@@ -102,13 +129,18 @@ void WindowManager::init() {
 }
 
 HANDLE WindowManager::createWindow(DWORD dwExStyle, const wchar_t* lpClassName, const wchar_t* lpWindowName,
-    DWORD dwStyle, int x, int y, int nWidth, int nHeight,
-    HANDLE hWndParent, HANDLE hMenu, HANDLE hInstance, void* lpParam) {
-    (void)dwExStyle; (void)hWndParent; (void)hMenu; (void)hInstance; (void)lpParam;
+                                   DWORD dwStyle, int x, int y, int nWidth, int nHeight, HANDLE hWndParent,
+                                   HANDLE hMenu, HANDLE hInstance, void* lpParam) {
+    (void)dwExStyle;
+    (void)hWndParent;
+    (void)hMenu;
+    (void)hInstance;
+    (void)lpParam;
 
     std::string className;
     if (lpClassName) {
-        for (int i = 0; lpClassName[i]; i++) className += (char)(lpClassName[i] & 0xFF);
+        for (int i = 0; lpClassName[i]; i++)
+            className += (char)(lpClassName[i] & 0xFF);
     }
 
     WNDPROC wndProc = nullptr;
@@ -117,10 +149,14 @@ HANDLE WindowManager::createWindow(DWORD dwExStyle, const wchar_t* lpClassName, 
         wndProc = it->second.lpfnWndProc;
     }
 
-    if (nWidth <= 0 || nWidth > 4096) nWidth = 800;
-    if (nHeight <= 0 || nHeight > 4096) nHeight = 600;
-    if (x < 0) x = 100;
-    if (y < 0) y = 100;
+    if (nWidth <= 0 || nWidth > 4096)
+        nWidth = 800;
+    if (nHeight <= 0 || nHeight > 4096)
+        nHeight = 600;
+    if (x < 0)
+        x = 100;
+    if (y < 0)
+        y = 100;
 
     NSRect frame = NSMakeRect(x, 0, nWidth, nHeight);
     NSScreen* screen = [NSScreen mainScreen];
@@ -129,21 +165,22 @@ HANDLE WindowManager::createWindow(DWORD dwExStyle, const wchar_t* lpClassName, 
         frame.origin.y = screenFrame.size.height - y - nHeight;
     }
 
-    NSUInteger styleMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+    NSUInteger styleMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
+                           NSWindowStyleMaskResizable;
     if (!(dwStyle & 0x00C00000)) {
         styleMask &= ~NSWindowStyleMaskTitled;
     }
 
     NSWindow* window = [[NSWindow alloc] initWithContentRect:frame
-        styleMask:styleMask
-        backing:NSBackingStoreBuffered
-        defer:NO];
+                                                   styleMask:styleMask
+                                                     backing:NSBackingStoreBuffered
+                                                       defer:NO];
 
     if (lpWindowName) {
         std::vector<unichar> uchars;
-        for (int i = 0; lpWindowName[i]; i++) uchars.push_back(lpWindowName[i]);
-        NSString* title = uchars.empty() ? @"" :
-            [NSString stringWithCharacters:uchars.data() length:uchars.size()];
+        for (int i = 0; lpWindowName[i]; i++)
+            uchars.push_back(lpWindowName[i]);
+        NSString* title = uchars.empty() ? @"" : [NSString stringWithCharacters:uchars.data() length:uchars.size()];
         [window setTitle:title];
     }
 
@@ -161,12 +198,13 @@ HANDLE WindowManager::createWindow(DWORD dwExStyle, const wchar_t* lpClassName, 
         std::lock_guard<std::mutex> lock(m_mutex);
         m_hwndToNSWindow[h] = (__bridge_retained void*)window;
         m_nsWindowToHwnd[(__bridge void*)window] = h;
-        if (wndProc) m_wndProcs[h] = wndProc;
+        if (wndProc)
+            m_wndProcs[h] = wndProc;
         m_messageQueues[h] = std::queue<MSG>();
     }
 
-    MS_INFO("WindowManager: CreateWindow(\"%s\") -> HWND=0x%llX, NSWindow=%p, WNDPROC=%p",
-        className.c_str(), (unsigned long long)h, window, wndProc);
+    MS_INFO("WindowManager: CreateWindow(\"%s\") -> HWND=0x%llX, NSWindow=%p, WNDPROC=%p", className.c_str(),
+            (unsigned long long)h, window, wndProc);
 
     if (wndProc) {
         wndProc(reinterpret_cast<HANDLE>(h), 0x0001, 0, 0);
@@ -184,7 +222,8 @@ WORD WindowManager::registerClass(const void* lpwcx) {
     const wchar_t* className = *reinterpret_cast<const wchar_t* const*>(data + 40);
     std::string name;
     if (className) {
-        for (int i = 0; className[i]; i++) name += (char)(className[i] & 0xFF);
+        for (int i = 0; className[i]; i++)
+            name += (char)(className[i] & 0xFF);
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -201,7 +240,8 @@ BOOL WindowManager::destroyWindow(HANDLE hWnd) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(h);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
 
@@ -225,7 +265,8 @@ BOOL WindowManager::showWindow(HANDLE hWnd, int nCmdShow) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(h);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
     if (nCmdShow == 5 || nCmdShow == 1 || nCmdShow == 3) {
@@ -250,7 +291,8 @@ BOOL WindowManager::getWindowRect(HANDLE hWnd, void* lpRect) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(h);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
     NSRect frame = [window frame];
@@ -270,7 +312,8 @@ BOOL WindowManager::getClientRect(HANDLE hWnd, void* lpRect) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(h);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
     NSRect content = [window contentRectForFrameRect:[window frame]];
@@ -289,7 +332,8 @@ BOOL WindowManager::moveWindow(HANDLE hWnd, int x, int y, int w, int h, BOOL rep
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(hwnd);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
     NSScreen* screen = [NSScreen mainScreen];
@@ -300,7 +344,8 @@ BOOL WindowManager::moveWindow(HANDLE hWnd, int x, int y, int w, int h, BOOL rep
 }
 
 BOOL WindowManager::setWindowPos(HANDLE hWnd, HANDLE hWndAfter, int x, int y, int w, int h, UINT flags) {
-    (void)hWndAfter; (void)flags;
+    (void)hWndAfter;
+    (void)flags;
     return moveWindow(hWnd, x, y, w, h, 1);
 }
 
@@ -309,14 +354,15 @@ BOOL WindowManager::setWindowTextW(HANDLE hWnd, const wchar_t* lpString) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_hwndToNSWindow.find(h);
-    if (it == m_hwndToNSWindow.end()) return 0;
+    if (it == m_hwndToNSWindow.end())
+        return 0;
 
     NSWindow* window = (__bridge NSWindow*)it->second;
     if (lpString) {
         std::vector<unichar> uchars;
-        for (int i = 0; lpString[i]; i++) uchars.push_back(lpString[i]);
-        NSString* title = uchars.empty() ? @"" :
-            [NSString stringWithCharacters:uchars.data() length:uchars.size()];
+        for (int i = 0; lpString[i]; i++)
+            uchars.push_back(lpString[i]);
+        NSString* title = uchars.empty() ? @"" : [NSString stringWithCharacters:uchars.data() length:uchars.size()];
         [window setTitle:title];
     }
     return 1;
@@ -326,97 +372,99 @@ void WindowManager::pumpEvents() {
     @autoreleasepool {
         for (;;) {
             NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                untilDate:[NSDate distantPast]
-                inMode:NSDefaultRunLoopMode
-                dequeue:YES];
+                                                untilDate:[NSDate distantPast]
+                                                   inMode:NSDefaultRunLoopMode
+                                                  dequeue:YES];
 
-            if (!event) break;
+            if (!event)
+                break;
 
             NSWindow* eventWindow = [event window];
             uintptr_t targetHwnd = 0;
 
             if (eventWindow) {
                 auto hit = m_nsWindowToHwnd.find((__bridge void*)eventWindow);
-                if (hit != m_nsWindowToHwnd.end()) targetHwnd = hit->second;
+                if (hit != m_nsWindowToHwnd.end())
+                    targetHwnd = hit->second;
             }
 
             switch ([event type]) {
-                case NSEventTypeLeftMouseDown: {
-                    if (targetHwnd) {
-                        NSPoint loc = [event locationInWindow];
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_LBUTTONDOWN, 0,
-                            (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
-                    }
-                    break;
-                }
-                case NSEventTypeLeftMouseUp: {
-                    if (targetHwnd) {
-                        NSPoint loc = [event locationInWindow];
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_LBUTTONUP, 0,
-                            (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
-                    }
-                    break;
-                }
-                case NSEventTypeMouseMoved:
-                case NSEventTypeLeftMouseDragged: {
-                    if (targetHwnd) {
-                        NSPoint loc = [event locationInWindow];
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_MOUSEMOVE, 0,
-                            (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
-                    }
-                    break;
-                }
-                case NSEventTypeRightMouseDown: {
-                    if (targetHwnd) {
-                        NSPoint loc = [event locationInWindow];
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_RBUTTONDOWN, 0,
-                            (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
-                    }
-                    break;
-                }
-                case NSEventTypeRightMouseUp: {
-                    if (targetHwnd) {
-                        NSPoint loc = [event locationInWindow];
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_RBUTTONUP, 0,
-                            (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
-                    }
-                    break;
-                }
-                case NSEventTypeKeyDown: {
-                    if (targetHwnd) {
-                        uint16_t vk = macKeyToVK([event characters], [event keyCode]);
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_KEYDOWN, vk, 1);
-                        NSString* chars = [event characters];
-                        if ([chars length] > 0) {
-                            unichar ch = [chars characterAtIndex:0];
-                            if (ch >= 32 && ch < 127) {
-                                postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_CHAR, ch, 1);
-                            }
-                        }
-                    }
-                    break;
-                }
-                case NSEventTypeKeyUp: {
-                    if (targetHwnd) {
-                        uint16_t vk = macKeyToVK([event characters], [event keyCode]);
-                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_KEYUP, vk, 1);
-                    }
-                    break;
-                }
-                case NSEventTypeScrollWheel: {
-                    if (targetHwnd) {
-                        CGFloat delta = [event deltaY];
-                        if (delta != 0) {
-                            uintptr_t wParam = (static_cast<uintptr_t>(static_cast<int>(delta * 120)) << 16);
-                            NSPoint loc = [event locationInWindow];
-                            postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_MOUSEWHEEL, wParam,
+            case NSEventTypeLeftMouseDown: {
+                if (targetHwnd) {
+                    NSPoint loc = [event locationInWindow];
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_LBUTTONDOWN, 0,
                                 (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                }
+                break;
+            }
+            case NSEventTypeLeftMouseUp: {
+                if (targetHwnd) {
+                    NSPoint loc = [event locationInWindow];
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_LBUTTONUP, 0,
+                                (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                }
+                break;
+            }
+            case NSEventTypeMouseMoved:
+            case NSEventTypeLeftMouseDragged: {
+                if (targetHwnd) {
+                    NSPoint loc = [event locationInWindow];
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_MOUSEMOVE, 0,
+                                (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                }
+                break;
+            }
+            case NSEventTypeRightMouseDown: {
+                if (targetHwnd) {
+                    NSPoint loc = [event locationInWindow];
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_RBUTTONDOWN, 0,
+                                (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                }
+                break;
+            }
+            case NSEventTypeRightMouseUp: {
+                if (targetHwnd) {
+                    NSPoint loc = [event locationInWindow];
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_RBUTTONUP, 0,
+                                (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                }
+                break;
+            }
+            case NSEventTypeKeyDown: {
+                if (targetHwnd) {
+                    uint16_t vk = macKeyToVK([event characters], [event keyCode]);
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_KEYDOWN, vk, 1);
+                    NSString* chars = [event characters];
+                    if ([chars length] > 0) {
+                        unichar ch = [chars characterAtIndex:0];
+                        if (ch >= 32 && ch < 127) {
+                            postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_CHAR, ch, 1);
                         }
                     }
-                    break;
                 }
-                default:
-                    break;
+                break;
+            }
+            case NSEventTypeKeyUp: {
+                if (targetHwnd) {
+                    uint16_t vk = macKeyToVK([event characters], [event keyCode]);
+                    postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_KEYUP, vk, 1);
+                }
+                break;
+            }
+            case NSEventTypeScrollWheel: {
+                if (targetHwnd) {
+                    CGFloat delta = [event deltaY];
+                    if (delta != 0) {
+                        uintptr_t wParam = (static_cast<uintptr_t>(static_cast<int>(delta * 120)) << 16);
+                        NSPoint loc = [event locationInWindow];
+                        postMessage(reinterpret_cast<HANDLE>(targetHwnd), WM_MOUSEWHEEL, wParam,
+                                    (intptr_t)((static_cast<int>(loc.y) << 16) | (static_cast<int>(loc.x) & 0xFFFF)));
+                    }
+                }
+                break;
+            }
+            default:
+                break;
             }
 
             [NSApp sendEvent:event];
@@ -425,7 +473,9 @@ void WindowManager::pumpEvents() {
 }
 
 BOOL WindowManager::getMessage(MSG* lpMsg, HANDLE hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax) {
-    (void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax;
+    (void)hWnd;
+    (void)wMsgFilterMin;
+    (void)wMsgFilterMax;
 
     while (!m_quitReceived) {
         pumpEvents();
@@ -462,7 +512,9 @@ BOOL WindowManager::getMessage(MSG* lpMsg, HANDLE hWnd, UINT wMsgFilterMin, UINT
 }
 
 BOOL WindowManager::peekMessage(MSG* lpMsg, HANDLE hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax, UINT wRemoveMsg) {
-    (void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax;
+    (void)hWnd;
+    (void)wMsgFilterMin;
+    (void)wMsgFilterMax;
 
     pumpEvents();
 
@@ -470,14 +522,16 @@ BOOL WindowManager::peekMessage(MSG* lpMsg, HANDLE hWnd, UINT wMsgFilterMin, UIN
 
     if (!m_globalQueue.empty()) {
         *lpMsg = m_globalQueue.front();
-        if (wRemoveMsg & 0x0001) m_globalQueue.pop();
+        if (wRemoveMsg & 0x0001)
+            m_globalQueue.pop();
         return lpMsg->message != WM_QUIT ? 1 : 0;
     }
 
     for (auto& [hwnd, queue] : m_messageQueues) {
         if (!queue.empty()) {
             *lpMsg = queue.front();
-            if (wRemoveMsg & 0x0001) queue.pop();
+            if (wRemoveMsg & 0x0001)
+                queue.pop();
             return 1;
         }
     }
@@ -491,7 +545,8 @@ BOOL WindowManager::translateMessage(const MSG* lpMsg) {
 }
 
 intptr_t WindowManager::dispatchMessage(const MSG* lpMsg) {
-    if (!lpMsg) return 0;
+    if (!lpMsg)
+        return 0;
 
     uintptr_t h = reinterpret_cast<uintptr_t>(lpMsg->hwnd);
     auto it = m_wndProcs.find(h);
@@ -549,25 +604,26 @@ void WindowManager::postQuitMessage(int nExitCode) {
 
 intptr_t WindowManager::defWindowProc(HANDLE hWnd, UINT Msg, uintptr_t wParam, intptr_t lParam) {
     switch (Msg) {
-        case WM_DESTROY:
-            postQuitMessage(0);
-            return 0;
-        case WM_CLOSE:
-            destroyWindow(hWnd);
-            return 0;
-        case WM_ERASEBKGND:
-            return 1;
-        default:
-            return 0;
+    case WM_DESTROY:
+        postQuitMessage(0);
+        return 0;
+    case WM_CLOSE:
+        destroyWindow(hWnd);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    default:
+        return 0;
     }
 }
 
 void* WindowManager::getNSWindow(HANDLE hWnd) {
     uintptr_t h = reinterpret_cast<uintptr_t>(hWnd);
     auto it = m_hwndToNSWindow.find(h);
-    if (it != m_hwndToNSWindow.end()) return it->second;
+    if (it != m_hwndToNSWindow.end())
+        return it->second;
     return nullptr;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp

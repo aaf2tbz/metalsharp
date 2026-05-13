@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import * as path from "path";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
+import * as path from "path";
 import { RustBridge } from "./rust-bridge";
 
 let shellPath: string | undefined;
@@ -78,7 +78,7 @@ function startSteamappsWatcher() {
     "drive_c",
     "Program Files (x86)",
     "Steam",
-    "steamapps"
+    "steamapps",
   );
 
   if (!fs.existsSync(steamappsDir)) return;
@@ -135,9 +135,12 @@ app.on("before-quit", () => {
 });
 
 function registerIpc() {
-  ipcMain.handle("backend:request", async (_e, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
-    return bridge.request(method, url, body, timeoutMs);
-  });
+  ipcMain.handle(
+    "backend:request",
+    async (_e, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
+      return bridge.request(method, url, body, timeoutMs);
+    },
+  );
 
   ipcMain.handle("app:is-first-launch", () => {
     return isFirstLaunch();
@@ -181,13 +184,21 @@ function registerIpc() {
       const { spawn } = require("child_process");
       const env = { ...process.env, PATH: ensureShellPath() };
       const brewPath = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].find((p) => {
-        try { fs.accessSync(p); return true; } catch { return false; }
+        try {
+          fs.accessSync(p);
+          return true;
+        } catch {
+          return false;
+        }
       });
 
       let proc;
       if (command.startsWith("brew ")) {
         if (!brewPath) {
-          resolve({ ok: false, error: "Homebrew is not installed. Install it from https://brew.sh first." });
+          resolve({
+            ok: false,
+            error: "Homebrew is not installed. Install it from https://brew.sh first.",
+          });
           return;
         }
         const args = command.split(/\s+/).slice(1);
@@ -214,19 +225,31 @@ function registerIpc() {
       let stderr = "";
       let settled = false;
 
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          proc.kill();
-          resolve({ ok: false, error: "Installation timed out after 10 minutes." });
-        }
-      }, 10 * 60 * 1000);
+      const timer = setTimeout(
+        () => {
+          if (!settled) {
+            settled = true;
+            proc.kill();
+            resolve({
+              ok: false,
+              error: "Installation timed out after 10 minutes.",
+            });
+          }
+        },
+        10 * 60 * 1000,
+      );
 
       proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
       proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
       proc.on("error", (err: Error) => {
-        if (!settled) { settled = true; clearTimeout(timer); }
-        resolve({ ok: false, error: `Failed to run "${command}": ${err.message}` });
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+        }
+        resolve({
+          ok: false,
+          error: `Failed to run "${command}": ${err.message}`,
+        });
       });
       proc.on("close", (code: number) => {
         if (settled) return;
@@ -234,7 +257,10 @@ function registerIpc() {
         clearTimeout(timer);
         const combined = `${stdout}${stderr}`;
         const ok = code === 0 || combined.includes("already installed");
-        resolve({ ok, error: ok ? null : combined.split("\n").filter(Boolean).pop() ?? `exit code ${code}` });
+        resolve({
+          ok,
+          error: ok ? null : (combined.split("\n").filter(Boolean).pop() ?? `exit code ${code}`),
+        });
       });
     });
   });
@@ -243,13 +269,22 @@ function registerIpc() {
     const { exec } = require("child_process");
     return new Promise((resolve) => {
       const script = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
-      exec(`osascript -e 'tell application "Terminal" to do script "${script.replace(/"/g, '\\\\"')}"'`, (err: Error | null) => {
-        if (err) {
-          resolve({ ok: false, error: "Failed to open Terminal for Homebrew install" });
-        } else {
-          resolve({ ok: true, message: "Terminal opened — complete the Homebrew install there" });
-        }
-      });
+      exec(
+        `osascript -e 'tell application "Terminal" to do script "${script.replace(/"/g, '\\\\"')}"'`,
+        (err: Error | null) => {
+          if (err) {
+            resolve({
+              ok: false,
+              error: "Failed to open Terminal for Homebrew install",
+            });
+          } else {
+            resolve({
+              ok: true,
+              message: "Terminal opened — complete the Homebrew install there",
+            });
+          }
+        },
+      );
     });
   });
 }

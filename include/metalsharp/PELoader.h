@@ -22,11 +22,10 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <functional>
 #include <cstdint>
+#include <functional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace metalsharp {
@@ -41,7 +40,8 @@ struct LoadedModule {
     bool isPE = false;
 
     uint8_t* rvaToPtr(uint32_t rva) const {
-        if (!base || rva >= size) return nullptr;
+        if (!base || rva >= size)
+            return nullptr;
         return base + rva;
     }
 };
@@ -55,7 +55,7 @@ struct ShimLibrary {
 };
 
 class PELoader {
-public:
+  public:
     PELoader();
     ~PELoader();
 
@@ -79,7 +79,7 @@ public:
 
     static PELoader* instance();
 
-private:
+  private:
     bool parsePE(LoadedModule& module, const uint8_t* rawData, size_t rawSize);
     bool mapSections(LoadedModule& module, const uint8_t* rawData, size_t rawSize);
     bool processRelocations(LoadedModule& module);
@@ -94,9 +94,7 @@ private:
     void* getExportAddress(LoadedModule& module, const std::string& funcName, uint16_t ordinal = 0xFFFF);
     void* resolveForwardedExport(const char* forwardString);
 
-    uint64_t alignUp(uint64_t value, uint64_t alignment) {
-        return (value + alignment - 1) & ~(alignment - 1);
-    }
+    uint64_t alignUp(uint64_t value, uint64_t alignment) { return (value + alignment - 1) & ~(alignment - 1); }
 
     LoadedModule m_mainModule;
     std::unordered_map<std::string, LoadedModule> m_loadedDLLs;
@@ -113,4 +111,4 @@ private:
     static void* s_cfgAllowFn;
 };
 
-}
+} // namespace metalsharp

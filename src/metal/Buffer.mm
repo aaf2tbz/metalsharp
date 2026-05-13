@@ -5,9 +5,9 @@
 /// constant, and staging buffers. Handles shared/private/managed memory modes
 /// and CPU-GPU data transfer.
 
-#include <metalsharp/MetalBackend.h>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
+#include <metalsharp/MetalBackend.h>
 
 namespace metalsharp {
 
@@ -17,7 +17,9 @@ struct MetalBuffer::Impl {
 };
 
 MetalBuffer::MetalBuffer() : m_impl(new Impl()) {}
-MetalBuffer::~MetalBuffer() { delete m_impl; }
+MetalBuffer::~MetalBuffer() {
+    delete m_impl;
+}
 
 bool MetalBuffer::init(MetalDevice& device, size_t size, const void* data) {
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
@@ -51,4 +53,4 @@ size_t MetalBuffer::size() const {
     return m_impl->bufferSize;
 }
 
-}
+} // namespace metalsharp

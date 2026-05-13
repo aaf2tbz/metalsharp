@@ -1,23 +1,28 @@
 /// @file User32Shim.cpp
 /// @brief user32.dll shim factory for window and message API exports.
 ///
-/// Registers user32.dll exports (CreateWindowEx, DefWindowProc, etc.) with the PE loader. Routes window management calls to the WindowManager and provides stubs for dialog, menu, and clipboard functions that games rarely use.
-#include <metalsharp/PELoader.h>
-#include <metalsharp/Win32Types.h>
-#include <metalsharp/Logger.h>
-#include <metalsharp/WindowManager.h>
-#include <cstring>
-#include <cstdlib>
+/// Registers user32.dll exports (CreateWindowEx, DefWindowProc, etc.) with the PE loader. Routes window management
+/// calls to the WindowManager and provides stubs for dialog, menu, and clipboard functions that games rarely use.
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <metalsharp/Logger.h>
+#include <metalsharp/PELoader.h>
+#include <metalsharp/Win32Types.h>
+#include <metalsharp/WindowManager.h>
 #include <unistd.h>
 
 namespace metalsharp {
 namespace win32 {
 
 static int MSABI shim_wsprintfA(char* buf, const char* fmt, ...) {
-    if (!buf) return 0;
-    if (!fmt) { buf[0] = 0; return 0; }
+    if (!buf)
+        return 0;
+    if (!fmt) {
+        buf[0] = 0;
+        return 0;
+    }
     buf[0] = 0;
 
     uintptr_t* stack = (uintptr_t*)&fmt + 1;
@@ -28,51 +33,66 @@ static int MSABI shim_wsprintfA(char* buf, const char* fmt, ...) {
     while (*p && (out - buf) < 2047) {
         if (*p == '%') {
             p++;
-            while (*p == '0' || *p == '-' || *p == '+' || *p == ' ' || *p == '#' || (*p >= '1' && *p <= '9') || *p == '.' || *p == 'l' || *p == 'I') p++;
+            while (*p == '0' || *p == '-' || *p == '+' || *p == ' ' || *p == '#' || (*p >= '1' && *p <= '9') ||
+                   *p == '.' || *p == 'l' || *p == 'I')
+                p++;
             char spec = *p++;
             switch (spec) {
-                case 's': {
-                    const char* s = (argIdx < 4) ? (const char*)stack[argIdx++] : "";
-                    if (s) { while (*s && (out - buf) < 2047) *out++ = *s++; }
-                    break;
+            case 's': {
+                const char* s = (argIdx < 4) ? (const char*)stack[argIdx++] : "";
+                if (s) {
+                    while (*s && (out - buf) < 2047)
+                        *out++ = *s++;
                 }
-                case 'S': {
-                    const wchar_t* ws = (argIdx < 4) ? (const wchar_t*)stack[argIdx++] : L"";
-                    if (ws) { while (*ws && (out - buf) < 2046) { *out++ = (char)*ws++; } }
-                    break;
+                break;
+            }
+            case 'S': {
+                const wchar_t* ws = (argIdx < 4) ? (const wchar_t*)stack[argIdx++] : L"";
+                if (ws) {
+                    while (*ws && (out - buf) < 2046) {
+                        *out++ = (char)*ws++;
+                    }
                 }
-                case 'd': case 'i': {
-                    int val = (argIdx < 4) ? (int)stack[argIdx++] : 0;
-                    out += snprintf(out, 2047 - (out - buf), "%d", val);
-                    break;
-                }
-                case 'u': {
-                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                    out += snprintf(out, 2047 - (out - buf), "%u", val);
-                    break;
-                }
-                case 'x': {
-                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                    out += snprintf(out, 2047 - (out - buf), "%x", val);
-                    break;
-                }
-                case 'X': {
-                    unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                    out += snprintf(out, 2047 - (out - buf), "%X", val);
-                    break;
-                }
-                case 'p': {
-                    void* val = (argIdx < 4) ? (void*)stack[argIdx++] : nullptr;
-                    out += snprintf(out, 2047 - (out - buf), "%p", val);
-                    break;
-                }
-                case 'c': {
-                    char c = (argIdx < 4) ? (char)stack[argIdx++] : ' ';
-                    *out++ = c;
-                    break;
-                }
-                case '%': *out++ = '%'; break;
-                default: *out++ = '%'; *out++ = spec; break;
+                break;
+            }
+            case 'd':
+            case 'i': {
+                int val = (argIdx < 4) ? (int)stack[argIdx++] : 0;
+                out += snprintf(out, 2047 - (out - buf), "%d", val);
+                break;
+            }
+            case 'u': {
+                unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                out += snprintf(out, 2047 - (out - buf), "%u", val);
+                break;
+            }
+            case 'x': {
+                unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                out += snprintf(out, 2047 - (out - buf), "%x", val);
+                break;
+            }
+            case 'X': {
+                unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
+                out += snprintf(out, 2047 - (out - buf), "%X", val);
+                break;
+            }
+            case 'p': {
+                void* val = (argIdx < 4) ? (void*)stack[argIdx++] : nullptr;
+                out += snprintf(out, 2047 - (out - buf), "%p", val);
+                break;
+            }
+            case 'c': {
+                char c = (argIdx < 4) ? (char)stack[argIdx++] : ' ';
+                *out++ = c;
+                break;
+            }
+            case '%':
+                *out++ = '%';
+                break;
+            default:
+                *out++ = '%';
+                *out++ = spec;
+                break;
             }
         } else {
             *out++ = *p++;
@@ -83,10 +103,10 @@ static int MSABI shim_wsprintfA(char* buf, const char* fmt, ...) {
 }
 
 static void* MSABI shim_CreateWindowExW(DWORD dwExStyle, const wchar_t* lpClassName, const wchar_t* lpWindowName,
-    DWORD dwStyle, int x, int y, int nWidth, int nHeight,
-    void* hWndParent, void* hMenu, void* hInstance, void* lpParam) {
-    return WindowManager::instance().createWindow(dwExStyle, lpClassName, lpWindowName, dwStyle,
-        x, y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam);
+                                        DWORD dwStyle, int x, int y, int nWidth, int nHeight, void* hWndParent,
+                                        void* hMenu, void* hInstance, void* lpParam) {
+    return WindowManager::instance().createWindow(dwExStyle, lpClassName, lpWindowName, dwStyle, x, y, nWidth, nHeight,
+                                                  hWndParent, hMenu, hInstance, lpParam);
 }
 
 static WORD MSABI shim_RegisterClassExW(void* lpwcx) {
@@ -147,13 +167,21 @@ static void* MSABI stub_BeginPaint(void* hWnd, void* ps) {
     return reinterpret_cast<void*>(0x6000);
 }
 
-static BOOL MSABI stub_EndPaint(void*, void*) { return 1; }
+static BOOL MSABI stub_EndPaint(void*, void*) {
+    return 1;
+}
 
-static void* MSABI stub_GetDC(void*) { return reinterpret_cast<void*>(0x6000); }
+static void* MSABI stub_GetDC(void*) {
+    return reinterpret_cast<void*>(0x6000);
+}
 
-static int MSABI stub_ReleaseDC(void*, void*) { return 1; }
+static int MSABI stub_ReleaseDC(void*, void*) {
+    return 1;
+}
 
-static BOOL MSABI stub_RedrawWindow(void*, const void*, void*, UINT) { return 1; }
+static BOOL MSABI stub_RedrawWindow(void*, const void*, void*, UINT) {
+    return 1;
+}
 
 static BOOL MSABI shim_GetWindowRect(void* hWnd, void* rect) {
     return WindowManager::instance().getWindowRect(hWnd, rect);
@@ -175,23 +203,36 @@ static BOOL MSABI shim_GetClientRect(void* hWnd, void* rect) {
     return WindowManager::instance().getClientRect(hWnd, rect);
 }
 
-static intptr_t MSABI stub_SetWindowLongPtrW(void*, int, intptr_t) { return 0; }
-static intptr_t MSABI stub_GetWindowLongPtrW(void*, int) { return 0; }
-static ULONG MSABI stub_SetClassLongPtrW(void*, int, LONG) { return 0; }
+static intptr_t MSABI stub_SetWindowLongPtrW(void*, int, intptr_t) {
+    return 0;
+}
+static intptr_t MSABI stub_GetWindowLongPtrW(void*, int) {
+    return 0;
+}
+static ULONG MSABI stub_SetClassLongPtrW(void*, int, LONG) {
+    return 0;
+}
 
 static void* MSABI stub_GetDesktopWindow() {
     return reinterpret_cast<void*>(0x5000);
 }
 
-static BOOL MSABI stub_IsWindowVisible(void*) { return 1; }
-
-static DWORD MSABI stub_GetWindowThreadProcessId(void*, DWORD* pid) {
-    if (pid) *pid = (DWORD)getpid();
+static BOOL MSABI stub_IsWindowVisible(void*) {
     return 1;
 }
 
-static BOOL MSABI stub_EnumWindows(void*, intptr_t) { return 1; }
-static BOOL MSABI stub_EnumChildWindows(void*, void*, intptr_t) { return 1; }
+static DWORD MSABI stub_GetWindowThreadProcessId(void*, DWORD* pid) {
+    if (pid)
+        *pid = (DWORD)getpid();
+    return 1;
+}
+
+static BOOL MSABI stub_EnumWindows(void*, intptr_t) {
+    return 1;
+}
+static BOOL MSABI stub_EnumChildWindows(void*, void*, intptr_t) {
+    return 1;
+}
 
 static void* MSABI stub_LoadCursorW(void*, const wchar_t*) {
     return reinterpret_cast<void*>(0x7000);
@@ -201,14 +242,21 @@ static void* MSABI stub_LoadIconW(void*, const wchar_t*) {
     return reinterpret_cast<void*>(0x7001);
 }
 
-static int MSABI stub_MessageBoxA(void*, const char*, const char*, UINT) { return 1; }
-static int MSABI stub_MessageBoxW(void*, const wchar_t*, const wchar_t*, UINT) { return 1; }
+static int MSABI stub_MessageBoxA(void*, const char*, const char*, UINT) {
+    return 1;
+}
+static int MSABI stub_MessageBoxW(void*, const wchar_t*, const wchar_t*, UINT) {
+    return 1;
+}
 
 static BOOL MSABI stub_GetMonitorInfoW(void*, void* mi) {
     memset(mi, 0, 72);
     reinterpret_cast<DWORD*>(mi)[0] = 72;
     auto* r = reinterpret_cast<LONG*>((uint8_t*)mi + 4);
-    r[0] = 0; r[1] = 0; r[2] = 1920; r[3] = 1080;
+    r[0] = 0;
+    r[1] = 0;
+    r[2] = 1920;
+    r[3] = 1080;
     return 1;
 }
 
@@ -224,25 +272,63 @@ static DWORD MSABI stub_MsgWaitForMultipleObjects(DWORD, void*, BOOL, DWORD, DWO
     return WAIT_OBJECT_0;
 }
 
-static BOOL MSABI stub_OpenClipboard(void*) { return 1; }
-static BOOL MSABI stub_CloseClipboard() { return 1; }
-static BOOL MSABI stub_EmptyClipboard() { return 1; }
-static void* MSABI stub_SetClipboardData(UINT, void*) { return nullptr; }
-static BOOL MSABI stub_GetClassInfoExW(void*, const wchar_t*, void*) { return 0; }
-static intptr_t MSABI stub_DialogBoxParamA(void*, const char*, void*, void*, intptr_t) { return 0; }
-static BOOL MSABI stub_EndDialog(void*, intptr_t) { return 1; }
-static void* MSABI stub_GetDlgItem(void*, int) { return reinterpret_cast<void*>(0x5000); }
-static UINT MSABI stub_GetDlgItemInt(void*, int, BOOL*, BOOL) { return 0; }
-static BOOL MSABI stub_SetDlgItemInt(void*, int, UINT, BOOL) { return 1; }
-static BOOL MSABI stub_SetDlgItemTextA(void*, int, const char*) { return 1; }
-static int MSABI stub_GetWindowTextLengthA(void*) { return 0; }
-static int MSABI stub_MapWindowPoints(void*, void*, void*, UINT) { return 0; }
-static BOOL MSABI stub_AllowSetForegroundWindow(DWORD) { return 1; }
-static BOOL MSABI stub_KillTimer(void*, intptr_t) { return 1; }
-static intptr_t MSABI stub_SetTimer(void*, intptr_t, UINT, void*) { return 1; }
-static BOOL MSABI stub_UnregisterClassW(const wchar_t*, void*) { return 1; }
-static void* MSABI stub_GetProcessWindowStation() { return reinterpret_cast<void*>(0x8000); }
-static BOOL MSABI stub_GetUserObjectInformationW(void*, int, void*, DWORD, DWORD*) { return 0; }
+static BOOL MSABI stub_OpenClipboard(void*) {
+    return 1;
+}
+static BOOL MSABI stub_CloseClipboard() {
+    return 1;
+}
+static BOOL MSABI stub_EmptyClipboard() {
+    return 1;
+}
+static void* MSABI stub_SetClipboardData(UINT, void*) {
+    return nullptr;
+}
+static BOOL MSABI stub_GetClassInfoExW(void*, const wchar_t*, void*) {
+    return 0;
+}
+static intptr_t MSABI stub_DialogBoxParamA(void*, const char*, void*, void*, intptr_t) {
+    return 0;
+}
+static BOOL MSABI stub_EndDialog(void*, intptr_t) {
+    return 1;
+}
+static void* MSABI stub_GetDlgItem(void*, int) {
+    return reinterpret_cast<void*>(0x5000);
+}
+static UINT MSABI stub_GetDlgItemInt(void*, int, BOOL*, BOOL) {
+    return 0;
+}
+static BOOL MSABI stub_SetDlgItemInt(void*, int, UINT, BOOL) {
+    return 1;
+}
+static BOOL MSABI stub_SetDlgItemTextA(void*, int, const char*) {
+    return 1;
+}
+static int MSABI stub_GetWindowTextLengthA(void*) {
+    return 0;
+}
+static int MSABI stub_MapWindowPoints(void*, void*, void*, UINT) {
+    return 0;
+}
+static BOOL MSABI stub_AllowSetForegroundWindow(DWORD) {
+    return 1;
+}
+static BOOL MSABI stub_KillTimer(void*, intptr_t) {
+    return 1;
+}
+static intptr_t MSABI stub_SetTimer(void*, intptr_t, UINT, void*) {
+    return 1;
+}
+static BOOL MSABI stub_UnregisterClassW(const wchar_t*, void*) {
+    return 1;
+}
+static void* MSABI stub_GetProcessWindowStation() {
+    return reinterpret_cast<void*>(0x8000);
+}
+static BOOL MSABI stub_GetUserObjectInformationW(void*, int, void*, DWORD, DWORD*) {
+    return 0;
+}
 
 static BOOL MSABI shim_PostMessageW(void* hWnd, UINT msg, uintptr_t wParam, intptr_t lParam) {
     return WindowManager::instance().postMessage(hWnd, msg, wParam, lParam);
@@ -252,9 +338,7 @@ ShimLibrary createUser32Shim() {
     ShimLibrary lib;
     lib.name = "USER32.dll";
 
-    auto fn = [](void* ptr) -> ExportedFunction {
-        return [ptr]() -> void* { return ptr; };
-    };
+    auto fn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
 
     lib.functions["CreateWindowExW"] = fn((void*)shim_CreateWindowExW);
     lib.functions["RegisterClassExW"] = fn((void*)shim_RegisterClassExW);
@@ -325,5 +409,5 @@ ShimLibrary createUser32Shim() {
     return lib;
 }
 
-}
-}
+} // namespace win32
+} // namespace metalsharp
