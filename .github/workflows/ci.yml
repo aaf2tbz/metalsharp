@@ -23,6 +23,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Verify Rust toolchain
+        run: rustup show && cargo --version
+
       - name: Install Rust cache
         uses: Swatinem/rust-cache@v2
         with:
