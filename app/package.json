@@ -27,7 +27,7 @@
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^25.7.0"
   },
   "build": {
     "appId": "com.metalsharp.app",
