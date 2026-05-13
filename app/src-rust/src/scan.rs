@@ -93,6 +93,28 @@ fn steam_library_paths() -> Vec<PathBuf> {
         paths.extend(parse_library_folders(&wine_steamapps));
     }
 
+    let home = dirs::home_dir().unwrap_or_default();
+    let wine_prefix = home.join(".metalsharp").join("prefix-steam");
+    let wine_drive_z = wine_prefix.join("drive_z");
+    if wine_drive_z.exists() {
+        for entry in std::fs::read_dir(&wine_drive_z).unwrap_or_else(|_| std::fs::read_dir("/").unwrap()) {
+            if let Ok(e) = entry {
+                let zpath = e.path();
+                if zpath.is_dir() {
+                    let sa = zpath.join("Volumes").join("AverySSD").join("SteamLibrary").join("steamapps");
+                    if sa.exists() && !paths.contains(&sa) {
+                        paths.push(sa);
+                    }
+                }
+            }
+        }
+    }
+
+    let ssd_path = PathBuf::from("/Volumes/AverySSD/SteamLibrary/steamapps");
+    if ssd_path.exists() && !paths.contains(&ssd_path) {
+        paths.push(ssd_path);
+    }
+
     paths
 }
 
@@ -127,7 +149,13 @@ fn parse_vdf_path(line: &str, key: &str) -> Option<String> {
     if val.is_empty() {
         return None;
     }
-    Some(val.replace("\\\\", "/"))
+    let mut path = val.replace("\\\\", "/").replace("\\", "/");
+    if let Some(stripped) = path.strip_prefix("Z:/") {
+        path = format!("/{}", stripped);
+    } else if let Some(stripped) = path.strip_prefix("Z:\\") {
+        path = format!("/{}", stripped.replace("\\", "/"));
+    }
+    Some(path)
 }
 
 fn parse_acf(contents: &str) -> Option<(u32, String, String)> {

@@ -1,0 +1,72 @@
+name: Game Compatibility Report
+description: Report whether a game works or doesn't work with MetalSharp
+labels: [compatibility]
+body:
+  - type: input
+    id: game-name
+    attributes:
+      label: Game Name
+    validations:
+      required: true
+
+  - type: input
+    id: steam-appid
+    attributes:
+      label: Steam App ID
+      description: Found in the Steam store URL, e.g. store.steampowered.com/app/312520
+      placeholder: e.g. 312520
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Works perfectly
+        - Works with minor issues
+        - Partially works (describe issues)
+        - Does not launch
+        - Crashes during gameplay
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launch-method
+    attributes:
+      label: Launch method used
+      options:
+        - Native (DXMT Metal)
+        - Native (D3DMetal/GPTK)
+        - Native (MetalFX)
+        - FNA (ARM64)
+        - FNA (x86)
+        - WineD3D (32-bit)
+        - MetalSharp Wine
+        - Steam bare
+        - Auto-detected
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What works, what doesn't, any workarounds, visual glitches, performance notes.
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Mac model / chip
+    validations:
+      required: false
+
+  - type: input
+    id: fps
+    attributes:
+      label: Approximate FPS
+      placeholder: e.g. 60fps at 1080p, 30fps at 4K
+    validations:
+      required: false

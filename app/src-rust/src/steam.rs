@@ -264,23 +264,24 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
 }
 
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
-    let steamapps = steam_prefix()
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
-
     let mut appids = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&steamapps) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("appmanifest_") && name.ends_with(".acf") {
-                if let Some(id_str) = name
-                    .strip_prefix("appmanifest_")
-                    .and_then(|s| s.strip_suffix(".acf"))
-                {
-                    if let Ok(id) = id_str.parse::<u32>() {
-                        appids.push(id);
+
+    let search_dirs = crate::setup::resolve_all_steamapps_dirs();
+
+    for steamapps in &search_dirs {
+        if let Ok(entries) = std::fs::read_dir(steamapps) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("appmanifest_") && name.ends_with(".acf") {
+                    if let Some(id_str) = name
+                        .strip_prefix("appmanifest_")
+                        .and_then(|s| s.strip_suffix(".acf"))
+                    {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            if !appids.contains(&id) {
+                                appids.push(id);
+                            }
+                        }
                     }
                 }
             }

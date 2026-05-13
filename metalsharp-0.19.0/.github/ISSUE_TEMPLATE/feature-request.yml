@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest a feature or game compatibility improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the feature or improvement you'd like to see.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Game Compatibility
+        - Graphics / Rendering
+        - Steam Integration
+        - Electron App / UI
+        - Rust Backend
+        - Wine / DXMT
+        - FNA / XNA
+        - Build / CI
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like to see?
+      description: Describe the feature, improvement, or game support request.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, references, screenshots, or related issues.
+    validations:
+      required: false
