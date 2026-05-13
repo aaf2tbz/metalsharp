@@ -80,40 +80,7 @@ fn steam_library_paths() -> Vec<PathBuf> {
         }
     }
 
-    let wine_steam_dir = home
-        .join(".metalsharp")
-        .join("prefix-steam")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam");
-
-    let wine_steamapps = wine_steam_dir.join("steamapps");
-    if wine_steamapps.exists() {
-        paths.push(wine_steamapps.clone());
-        paths.extend(parse_library_folders(&wine_steamapps));
-    }
-
-    let home = dirs::home_dir().unwrap_or_default();
-    let wine_prefix = home.join(".metalsharp").join("prefix-steam");
-    let wine_drive_z = wine_prefix.join("drive_z");
-    if wine_drive_z.exists() {
-        for entry in std::fs::read_dir(&wine_drive_z).unwrap_or_else(|_| std::fs::read_dir("/").unwrap()) {
-            if let Ok(e) = entry {
-                let zpath = e.path();
-                if zpath.is_dir() {
-                    let sa = zpath.join("Volumes").join("AverySSD").join("SteamLibrary").join("steamapps");
-                    if sa.exists() && !paths.contains(&sa) {
-                        paths.push(sa);
-                    }
-                }
-            }
-        }
-    }
-
-    let ssd_path = PathBuf::from("/Volumes/AverySSD/SteamLibrary/steamapps");
-    if ssd_path.exists() && !paths.contains(&ssd_path) {
-        paths.push(ssd_path);
-    }
+    paths.extend(wine_steam_library_paths());
 
     paths
 }
@@ -149,13 +116,48 @@ fn parse_vdf_path(line: &str, key: &str) -> Option<String> {
     if val.is_empty() {
         return None;
     }
-    let mut path = val.replace("\\\\", "/").replace("\\", "/");
-    if let Some(stripped) = path.strip_prefix("Z:/") {
-        path = format!("/{}", stripped);
-    } else if let Some(stripped) = path.strip_prefix("Z:\\") {
-        path = format!("/{}", stripped.replace("\\", "/"));
+    let unix_path = val.replace('\\', "/");
+    Some(resolve_wine_path(&unix_path))
+}
+
+pub fn resolve_wine_path(path: &str) -> String {
+    let p = path.replace('\\', "/");
+    for drive in &["C:", "c:", "D:", "d:", "E:", "e:", "F:", "f:", "G:", "g:", "H:", "h:"] {
+        if p.starts_with(drive) {
+            let rest = &p[drive.len()..];
+            if rest.starts_with('/') || rest.is_empty() {
+                return format!("/{}", rest);
+            }
+            return rest.to_string();
+        }
     }
-    Some(path)
+    if p.starts_with("Z:/") || p.starts_with("z:/") || p.starts_with("Z:") || p.starts_with("z:") {
+        return p[2..].to_string();
+    }
+    p
+}
+
+pub fn wine_steam_library_paths() -> Vec<PathBuf> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+
+    let wine_steamapps = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    if !wine_steamapps.exists() {
+        return Vec::new();
+    }
+
+    let mut paths = vec![wine_steamapps.clone()];
+    paths.extend(parse_library_folders(&wine_steamapps));
+    paths
 }
 
 fn parse_acf(contents: &str) -> Option<(u32, String, String)> {
