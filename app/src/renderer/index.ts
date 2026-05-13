@@ -242,7 +242,11 @@ class App {
   }
 
   private async loadCacheSizes() {
-    const result = await this.api<{ ok: boolean; shader_cache: { bytes: number; files: number }; pipeline_cache: { bytes: number; files: number } }>("GET", "/cache/size");
+    const result = await this.api<{
+      ok: boolean;
+      shader_cache: { bytes: number; files: number };
+      pipeline_cache: { bytes: number; files: number };
+    }>("GET", "/cache/size");
     if (result?.ok) {
       this.shaderCacheBytes = result.shader_cache.bytes;
       this.pipelineCacheBytes = result.pipeline_cache.bytes;
@@ -1413,9 +1417,15 @@ class App {
     });
 
     el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {
-      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "shader" });
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>(
+        "POST",
+        "/cache/clear",
+        { type: "shader" },
+      );
       if (result?.ok) {
-        this.toast(`Shader cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`);
+        this.toast(
+          `Shader cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`,
+        );
       } else {
         this.toast("Shader cache cleared");
       }
@@ -1425,9 +1435,15 @@ class App {
     });
 
     el.querySelector("#btn-clear-pipeline-cache")?.addEventListener("click", async () => {
-      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "pipeline" });
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>(
+        "POST",
+        "/cache/clear",
+        { type: "pipeline" },
+      );
       if (result?.ok) {
-        this.toast(`Pipeline cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`);
+        this.toast(
+          `Pipeline cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`,
+        );
       } else {
         this.toast("Pipeline cache cleared");
       }
