@@ -54,6 +54,7 @@ jobs:
             --repo ${{ github.repository }} \
             --pattern "*.tar.zst" \
             --pattern "*.exe" \
+            --pattern "*.c" \
             --dir app/bundles \
             --clobber || echo "No bundles found — building without"
           ls -lh app/bundles/

@@ -97,6 +97,17 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({"ok": true, "message": "Steam already running"}));
     }
 
+    let ms_root = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".metalsharp")
+        .join("runtime")
+        .join("wine");
+    let dyld = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
+
     let prefix_str = steam_prefix().to_string_lossy().to_string();
 
     let child = Command::new(&wine)
@@ -105,6 +116,7 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .arg(&exe)
         .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
@@ -198,11 +210,16 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
         .join(".metalsharp")
         .join("runtime")
         .join("wine");
+    let dyld = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
 
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -228,11 +245,16 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
         .join(".metalsharp")
         .join("runtime")
         .join("wine");
+    let dyld = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
 
     Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").to_string_lossy().to_string())
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -267,12 +289,25 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
     appids
 }
 
-fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
+pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
     let original = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
+    let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
+
+    if wrapper_marker.exists() && real.exists() {
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+        if real_size > 100_000 {
+            return;
+        }
+    }
 
     if !original.exists() {
+        return;
+    }
+
+    let real_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
+    if real_size < 100_000 {
         return;
     }
 
@@ -280,6 +315,57 @@ fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
         let _ = std::fs::remove_file(&real);
     }
     let _ = std::fs::rename(&original, &real);
+
+    let wrapper = find_bundled_steamwebhelper_wrapper();
+    if let Some(wrapper_src) = wrapper {
+        let _ = std::fs::copy(&wrapper_src, &original);
+        let _ = std::fs::write(&wrapper_marker, "deployed");
+    }
+}
+
+fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let resources = exe.parent()?.parent()?.join("Resources");
+        let wrapper = resources.join("bundles").join("steamwebhelper.exe");
+        if wrapper.exists() {
+            return Some(wrapper);
+        }
+    }
+
+    let dev = PathBuf::from("app/bundles/steamwebhelper.exe");
+    if dev.exists() {
+        return Some(dev);
+    }
+
+    let home = dirs::home_dir()?;
+    let cache_dir = home.join(".metalsharp").join("cache").join("bundles");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join("steamwebhelper.exe");
+
+    if cached.exists() {
+        let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
+        if size > 100_000 {
+            return Some(cached);
+        }
+    }
+
+    let url = "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/steamwebhelper.exe";
+    let output = Command::new("curl")
+        .args(["-sL", "-o"])
+        .arg(&cached)
+        .arg(url)
+        .output()
+        .ok()?;
+
+    if output.status.success() && cached.exists() {
+        let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
+        if size > 100_000 {
+            return Some(cached);
+        }
+    }
+
+    let _ = std::fs::remove_file(&cached);
+    None
 }
 
 fn get_game_name_from_manifest(appid: u32) -> Option<String> {
@@ -710,9 +796,21 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .args(["-sL", "-o", &installer.to_string_lossy(), url])
         .status()?;
     if !output.success() {
-        let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
-        if bundled.exists() {
-            let _ = std::fs::copy(&bundled, &installer);
+        let mut found = false;
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
+                let bundled = resources.join("bundles").join("SteamSetup.exe");
+                if bundled.exists() {
+                    let _ = std::fs::copy(&bundled, &installer);
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
+            if bundled.exists() {
+                let _ = std::fs::copy(&bundled, &installer);
+            }
         }
     }
     if !installer.exists() {
@@ -734,7 +832,11 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .join(".metalsharp")
         .join("runtime")
         .join("wine");
-    let dyld = ms_root.join("lib").to_string_lossy().to_string();
+    let dyld = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
 
     let _ = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
@@ -746,8 +848,6 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stderr(std::process::Stdio::null())
         .status();
 
-    deploy_steamwebhelper_wrapper(&steam_dir);
-
     let child = Command::new(&wine)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
@@ -757,7 +857,10 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    Ok(format!("Launched Steam installer via MetalSharp Wine (pid {}) — complete the setup wizard, then launch Steam again", child.id()))
+    std::thread::sleep(std::time::Duration::from_secs(30));
+    deploy_steamwebhelper_wrapper(&steam_dir);
+
+    Ok(format!("Launched Steam installer via MetalSharp Wine (pid {}) — complete the setup wizard, then launch Steam again. CEF wrapper will be deployed on first Steam launch.", child.id()))
 }
 
 pub fn watch_steamapps() -> Option<String> {

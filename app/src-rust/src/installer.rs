@@ -182,7 +182,38 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 
     let bundle = find_bundled_file("metalsharp_bundle.tar.zst");
     if let Some(archive) = bundle {
-        extract_zst(&archive, &runtime_dir, "bundle")?;
+        let tmp_extract = std::env::temp_dir().join("metalsharp-bundle-extract");
+        let _ = fs::remove_dir_all(&tmp_extract);
+        let _ = fs::create_dir_all(&tmp_extract);
+        extract_zst(&archive, &tmp_extract, "bundle")?;
+
+        let wine_dir = runtime_dir.join("wine");
+        let _ = fs::create_dir_all(&wine_dir);
+
+        let extracted_wine115 = tmp_extract.join("wine-11.5");
+        let source = if extracted_wine115.exists() {
+            extracted_wine115
+        } else {
+            tmp_extract.join("wine")
+        };
+
+        if source.exists() {
+            if let Ok(entries) = fs::read_dir(&source) {
+                for entry in entries.flatten() {
+                    let src_path = entry.path();
+                    let file_name = entry.file_name();
+                    let dst = wine_dir.join(&file_name);
+                    if src_path.is_dir() {
+                        let _ = fs::create_dir_all(&dst);
+                        copy_dir_recursive(&src_path, &dst);
+                    } else {
+                        let _ = fs::copy(&src_path, &dst);
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&tmp_extract);
+
         let bundle2 = find_bundled_file("metalsharp_bundle2.tar.zst");
         if let Some(archive2) = bundle2 {
             let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
@@ -438,7 +469,11 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let _ = fs::create_dir_all(&prefix);
 
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let dyld = ms_root.join("lib").to_string_lossy().to_string();
+    let dyld = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
 
     let _ = Command::new(&ms_wine)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
@@ -464,11 +499,23 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     for _ in 0..90 {
         std::thread::sleep(Duration::from_secs(2));
         if steam_exe.exists() {
+            let steam_dir = home.join(".metalsharp")
+                .join("prefix-steam")
+                .join("drive_c")
+                .join("Program Files (x86)")
+                .join("Steam");
+            let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
             return Ok(true);
         }
     }
 
     if steam_exe.exists() {
+        let steam_dir = home.join(".metalsharp")
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let _ = crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
         Ok(true)
     } else {
         Err("Steam.exe not found after installation — may need manual install".into())
@@ -642,7 +689,11 @@ fn find_bundled_archive(name: &str) -> Option<PathBuf> {
         find_in_dev_path(name),
     ];
 
-    candidates.into_iter().find(|c| c.is_some()).flatten()
+    if let Some(found) = candidates.into_iter().find(|c| c.is_some()).flatten() {
+        return Some(found);
+    }
+
+    download_from_github_release(&format!("{}.tar.zst", name))
 }
 
 fn find_bundled_file(name: &str) -> Option<PathBuf> {
@@ -659,6 +710,41 @@ fn find_bundled_file(name: &str) -> Option<PathBuf> {
         return Some(dev);
     }
 
+    download_from_github_release(name)
+}
+
+fn download_from_github_release(filename: &str) -> Option<PathBuf> {
+    let cache_dir = dirs::home_dir()?.join(".metalsharp").join("cache").join("bundles");
+    let _ = fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join(filename);
+
+    if cached.exists() {
+        let size = fs::metadata(&cached).ok().map(|m| m.len()).unwrap_or(0);
+        if size > 0 {
+            return Some(cached);
+        }
+    }
+
+    let url = format!(
+        "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}",
+        filename
+    );
+
+    let output = Command::new("curl")
+        .args(["-sL", "--progress-bar", "-o"])
+        .arg(&cached)
+        .arg(&url)
+        .output()
+        .ok()?;
+
+    if output.status.success() && cached.exists() {
+        let size = fs::metadata(&cached).ok().map(|m| m.len()).unwrap_or(0);
+        if size > 0 {
+            return Some(cached);
+        }
+    }
+
+    let _ = fs::remove_file(&cached);
     None
 }
 
@@ -733,6 +819,21 @@ fn extract_to_applications(archive: &PathBuf, app_name: &str) -> Result<(), Stri
 
     let _ = fs::remove_dir_all(&tmp_dir);
     Ok(())
+}
+
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
+    if let Ok(entries) = fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            if src_path.is_dir() {
+                let _ = fs::create_dir_all(&dst_path);
+                copy_dir_recursive(&src_path, &dst_path);
+            } else {
+                let _ = fs::copy(&src_path, &dst_path);
+            }
+        }
+    }
 }
 
 fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), String> {
