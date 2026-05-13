@@ -22,7 +22,7 @@ jobs:
   check:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check C++ formatting
         run: |
@@ -44,7 +44,7 @@ jobs:
   tidy:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install clang-tidy
         run: brew install llvm
