@@ -21,7 +21,7 @@
     "dmg": "npm run dist -- --mac dmg"
   },
   "dependencies": {
-    "electron-store": "^10.0.0"
+    "electron-store": "^11.0.2"
   },
   "devDependencies": {
     "electron": "^35.0.0",
