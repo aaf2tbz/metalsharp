@@ -75,16 +75,15 @@ fn run_install_all() {
 
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
-        ("Xcode CLI Tools", Box::new(|_| install_xcode_cli())),
-        ("MetalSharp Bundle", Box::new(install_metalsharp_bundle)),
-        ("Game Porting Toolkit", Box::new(install_gptk)),
-        ("Mono (arm64)", Box::new(|_| install_mono_arm64())),
+        ("System Tools", Box::new(|_| install_xcode_cli())),
+        ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+        ("Compatibility Layer", Box::new(install_gptk)),
+        ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
 
     let total = steps.len();
 
     write_progress(0, total, "Starting...", "starting", "Verifying prerequisites...", None);
-
     if !check_command("tar") {
         write_progress(
             0,
@@ -115,10 +114,10 @@ fn run_install_all() {
 
         match installer(&home) {
             Ok(false) => {
-                write_progress(step_num, total, name, "done", &format!("{} already installed — skipping", name), None);
+                write_progress(step_num, total, name, "done", &format!("{} ready", name), None);
             },
             Ok(true) => {
-                write_progress(step_num, total, name, "done", &format!("{} installed!", name), None);
+                write_progress(step_num, total, name, "done", &format!("{} installed", name), None);
             },
             Err(e) => {
                 let is_required = i < 7;
@@ -134,7 +133,7 @@ fn run_install_all() {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    write_progress(total, total, "Complete", "complete", "All dependencies installed!", None);
+    write_progress(total, total, "Complete", "complete", "All assets installed!", None);
 }
 
 fn install_rosetta() -> Result<bool, String> {

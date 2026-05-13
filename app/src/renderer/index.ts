@@ -303,7 +303,7 @@ class App {
   }
 
   private renderSetupStepIndicator(container: HTMLElement, current: number) {
-    const steps = ["Welcome", "Install", "Steam", "Done"];
+    const steps = ["Welcome", "Install Assets", "Steam", "Done"];
     const indicator = document.createElement("div");
     indicator.className = "setup-steps";
 
@@ -387,8 +387,8 @@ class App {
 
     body.innerHTML = `
       <div class="setup-section-header">
-        <h1>Install Dependencies</h1>
-        <p>MetalSharp needs a few system tools and runtimes. Install Homebrew first, then hit the button below.</p>
+        <h1>Install Assets</h1>
+        <p>MetalSharp needs game runtimes and translation layers. Install Homebrew first, then hit the button below.</p>
       </div>
       <div id="install-buttons" class="setup-install-buttons"></div>
       <div id="install-log-container" class="setup-install-log-container" style="display:none;">
@@ -428,7 +428,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-secondary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">MetalSharp Wine, GPTK, Mono, DXVK, Wine, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Assets</span><span class="setup-install-btn-desc">Game runtimes and translation layers</span>`;
       depBtn.style.opacity = "0.5";
       depBtn.style.pointerEvents = "none";
       buttonsDiv.appendChild(depBtn);
@@ -459,7 +459,7 @@ class App {
       const depBtn = document.createElement("button");
       depBtn.className = "btn btn-primary btn-lg setup-install-btn";
       depBtn.id = "btn-install-deps";
-      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Dependencies</span><span class="setup-install-btn-desc">MetalSharp Wine, GPTK, Mono, DXVK, Wine, and more</span>`;
+      depBtn.innerHTML = `<span class="setup-install-btn-label">Install Assets</span><span class="setup-install-btn-desc">Game runtimes and translation layers</span>`;
       buttonsDiv.appendChild(depBtn);
 
       depBtn.addEventListener("click", () =>
@@ -508,6 +508,9 @@ class App {
 
     addLog("Starting installation...", "info");
 
+    let lastStep = -1;
+    let lastStatus = "";
+
     const pollInterval = setInterval(async () => {
       const progress = await this.api<{
         step: number;
@@ -523,11 +526,16 @@ class App {
       progressBar.style.width = `${pct}%`;
       progressLabel.textContent = `${pct}%`;
 
+      const stepChanged = progress.step !== lastStep;
+      const statusChanged = progress.status !== lastStatus;
+
       if (progress.status === "done" || progress.status === "skipped") {
-        if (progress.status === "done") {
-          addLog(`${progress.log}`, "success");
-        } else {
-          addLog(`${progress.log}`, "warn");
+        if (stepChanged || statusChanged) {
+          if (progress.status === "done") {
+            addLog(`${progress.log}`, "success");
+          } else {
+            addLog(`${progress.log}`, "warn");
+          }
         }
       } else if (progress.status === "error") {
         if (!logDiv.querySelector(`[data-error-step="${progress.step}"]`)) {
@@ -548,8 +556,7 @@ class App {
         }
         return;
       } else if (progress.status === "installing") {
-        const existing = logDiv.querySelector(`[data-step="${progress.step}"]`);
-        if (!existing) {
+        if (stepChanged) {
           const line = document.createElement("div");
           line.className = "setup-log-line active";
           line.dataset.step = String(progress.step);
@@ -558,16 +565,23 @@ class App {
           logDiv.scrollTop = logDiv.scrollHeight;
         }
       } else if (progress.status === "complete") {
-        addLog("All dependencies installed!", "success");
-        clearInterval(pollInterval);
-        progressBar.style.width = "100%";
-        progressLabel.textContent = "100%";
-        nextBtn.style.display = "inline-flex";
-        this.toast("All dependencies installed!", "success");
-        return;
+        if (statusChanged) {
+          addLog("All assets installed!", "success");
+          clearInterval(pollInterval);
+          progressBar.style.width = "100%";
+          progressLabel.textContent = "100%";
+          nextBtn.style.display = "inline-flex";
+          this.toast("All assets installed!", "success");
+          return;
+        }
       } else if (progress.status === "starting") {
-        addLog(progress.log, "info");
+        if (statusChanged) {
+          addLog(progress.log, "info");
+        }
       }
+
+      lastStep = progress.step;
+      lastStatus = progress.status;
     }, 500);
 
     setTimeout(() => clearInterval(pollInterval), 30 * 60 * 1000);
