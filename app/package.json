@@ -24,7 +24,7 @@
     "electron-store": "^10.0.0"
   },
   "devDependencies": {
-    "electron": "^35.0.0",
+    "electron": "^42.0.1",
     "electron-builder": "^26.0.0",
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
