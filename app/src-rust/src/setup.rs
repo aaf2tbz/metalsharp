@@ -255,24 +255,20 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
         return Some(local_dir);
     }
 
-    let wine_steamapps = home
-        .join(".metalsharp")
-        .join("prefix-steam")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+    let search_dirs = resolve_all_steamapps_dirs();
 
-    let manifest_path = wine_steamapps.join(format!("appmanifest_{}.acf", appid));
-    if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("\"installdir\"") {
-                let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
-                if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
-                    let game_dir = wine_steamapps.join("common").join(dir_name);
-                    if game_dir.exists() {
-                        return Some(game_dir);
+    for steamapps in &search_dirs {
+        let manifest_path = steamapps.join(format!("appmanifest_{}.acf", appid));
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("\"installdir\"") {
+                    let parts: Vec<&str> = trimmed.splitn(2, |c: char| c == '\t' || c == ' ').collect();
+                    if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
+                        let game_dir = steamapps.join("common").join(dir_name);
+                        if game_dir.exists() {
+                            return Some(game_dir);
+                        }
                     }
                 }
             }
@@ -284,6 +280,78 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
     }
 
     None
+}
+
+pub fn resolve_all_steamapps_dirs() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut dirs = Vec::new();
+
+    let wine_steamapps = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+    if wine_steamapps.exists() {
+        dirs.push(wine_steamapps.clone());
+        dirs.extend(parse_libraryfolders_vdf(&wine_steamapps));
+    }
+
+    let mac_candidates = vec![
+        home.join("Library/Application Support/Steam/steamapps"),
+        home.join(".steam/steam/steamapps"),
+    ];
+    for c in &mac_candidates {
+        if c.exists() && !dirs.contains(c) {
+            dirs.push(c.clone());
+        }
+    }
+
+    let ssd = PathBuf::from("/Volumes/AverySSD/SteamLibrary/steamapps");
+    if ssd.exists() && !dirs.contains(&ssd) {
+        dirs.push(ssd);
+    }
+
+    dirs
+}
+
+fn parse_libraryfolders_vdf(steamapps: &PathBuf) -> Vec<PathBuf> {
+    let lf_path = steamapps.join("libraryfolders.vdf");
+    let contents = match std::fs::read_to_string(&lf_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut extra = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = parse_vdf_path_value(trimmed, "path") {
+            let sa = PathBuf::from(&val).join("steamapps");
+            if sa.exists() {
+                extra.push(sa);
+            }
+        }
+    }
+    extra
+}
+
+fn parse_vdf_path_value(line: &str, key: &str) -> Option<String> {
+    let prefix = format!("\"{}\"", key);
+    if !line.starts_with(&prefix) {
+        return None;
+    }
+    let rest = line.trim_start_matches(&prefix).trim();
+    let rest = rest.trim_start_matches('\t').trim_start_matches(' ');
+    let val = rest.trim_matches('"');
+    if val.is_empty() {
+        return None;
+    }
+    let mut path = val.replace("\\\\", "/").replace("\\", "/");
+    if let Some(stripped) = path.strip_prefix("Z:/") {
+        path = format!("/{}", stripped);
+    }
+    Some(path)
 }
 
 pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {

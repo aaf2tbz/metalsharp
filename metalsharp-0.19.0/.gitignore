@@ -1,0 +1,35 @@
+build/
+.cache/
+out/
+*.o
+*.d
+*.dylib
+*.dll
+*.so
+*.a
+*.lib
+*.exe
+*.obj
+*.pdb
+*.ilk
+.DS_Store
+compile_commands.json
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+dist/
+node_modules/
+
+# Rust build artifacts
+app/src-rust/target/
+src/fna/FNA/
+src/fna/FNA3D/
+build-x86/
+app/bundles/*.tar.zst
+app/bundles/*.exe
+
+# Code intelligence
+.graphiq/

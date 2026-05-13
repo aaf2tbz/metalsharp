@@ -1,0 +1,14 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+ColumnLimit: 120
+PointerAlignment: Left
+SortIncludes: CaseInsensitive
+AlignConsecutiveMacros: true
+ObjCSpaceAfterProperty: true
+ObjCSpaceBeforeProtocolList: true
