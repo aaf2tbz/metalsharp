@@ -249,7 +249,7 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     let game_dir = crate::setup::resolve_game_dir(appid);
-    let dir = game_dir.as_ref().unwrap_or(&local_dir);
+    let _dir = game_dir.as_ref().unwrap_or(&local_dir);
 
     match method {
         "native_metalfx_low" => {

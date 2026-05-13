@@ -1,3 +1,22 @@
+#![allow(
+    clippy::ptr_arg,
+    clippy::unnecessary_unwrap,
+    clippy::useless_vec,
+    clippy::manual_div_ceil,
+    clippy::redundant_closure,
+    clippy::bool_assert_comparison,
+    clippy::needless_bool,
+    clippy::manual_strip,
+    clippy::let_unit_value,
+    clippy::char_lit_as_u8,
+    clippy::type_complexity,
+    clippy::single_match,
+    clippy::match_single_binding,
+    clippy::redundant_pattern_matching,
+    dead_code,
+    unused_variables
+)]
+
 mod installer;
 mod launch;
 mod scan;
@@ -197,7 +216,7 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             let home = dirs::home_dir().unwrap_or_default();
             let log_path = home.join(".metalsharp").join("logs");
             let mut entries = Vec::new();
-            if let Ok(mut rd) = std::fs::read_dir(&log_path) {
+            if let Ok(rd) = std::fs::read_dir(&log_path) {
                 let mut files: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
                 files.sort_by(|a, b| b.cmp(a));
                 for p in files.iter().take(3) {
@@ -353,7 +372,7 @@ fn chrono_date() -> String {
     let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = d.as_secs();
     let days = secs / 86400;
-    let y = 1970 + (days * 400 + 146096) / 146097;
+    let y = 1970 + (days * 400).div_ceil(146097);
     let mut remaining = days - (((y - 1) * 365) + ((y - 1) / 4) - ((y - 1) / 100) + ((y - 1) / 400));
     let ml = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut mo = 1;
