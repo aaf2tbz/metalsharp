@@ -99,6 +99,10 @@ class App {
 
   private switchView(view: string) {
     this.currentView = view;
+    if (view !== "logs" && this.logPollInterval) {
+      clearInterval(this.logPollInterval);
+      this.logPollInterval = null;
+    }
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.classList.remove("active");
     });
@@ -235,6 +239,18 @@ class App {
     }, 500);
 
     setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
+  }
+
+  private async loadCacheSizes() {
+    const result = await this.api<{
+      ok: boolean;
+      shader_cache: { bytes: number; files: number };
+      pipeline_cache: { bytes: number; files: number };
+    }>("GET", "/cache/size");
+    if (result?.ok) {
+      this.shaderCacheBytes = result.shader_cache.bytes;
+      this.pipelineCacheBytes = result.pipeline_cache.bytes;
+    }
   }
 
   private async loadLibrary() {
@@ -1130,12 +1146,16 @@ class App {
     }
   }
 
+  private shaderCacheBytes: number = -1;
+  private pipelineCacheBytes: number = -1;
+
   private renderSettings() {
     const el = document.getElementById("view-settings")!;
     const steam = this.steam;
     const cfg = this.config;
 
     const savedKey = this.steamApiKey;
+    this.loadCacheSizes();
 
     el.innerHTML = `
       <div class="library-header">
@@ -1263,6 +1283,7 @@ class App {
             <div class="settings-desc">Persist compiled shaders to disk for faster loading</div>
           </div>
           <div class="settings-value">
+            <span id="shader-cache-size" class="badge badge-ok" style="margin-right:8px;">${this.shaderCacheBytes >= 0 ? this.formatBytes(this.shaderCacheBytes) : "..."}</span>
             <button class="btn btn-secondary btn-sm" id="btn-clear-shader-cache">Clear Cache</button>
           </div>
         </div>
@@ -1272,6 +1293,7 @@ class App {
             <div class="settings-desc">Persist compiled pipeline state objects</div>
           </div>
           <div class="settings-value">
+            <span id="pipeline-cache-size" class="badge badge-ok" style="margin-right:8px;">${this.pipelineCacheBytes >= 0 ? this.formatBytes(this.pipelineCacheBytes) : "..."}</span>
             <button class="btn btn-secondary btn-sm" id="btn-clear-pipeline-cache">Clear Cache</button>
           </div>
         </div>
@@ -1395,13 +1417,39 @@ class App {
     });
 
     el.querySelector("#btn-clear-shader-cache")?.addEventListener("click", async () => {
-      await this.api("POST", "/cache/clear", { type: "shader" });
-      this.toast("Shader cache cleared");
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>(
+        "POST",
+        "/cache/clear",
+        { type: "shader" },
+      );
+      if (result?.ok) {
+        this.toast(
+          `Shader cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`,
+        );
+      } else {
+        this.toast("Shader cache cleared");
+      }
+      this.shaderCacheBytes = 0;
+      const badge = document.getElementById("shader-cache-size");
+      if (badge) badge.textContent = "0 B";
     });
 
     el.querySelector("#btn-clear-pipeline-cache")?.addEventListener("click", async () => {
-      await this.api("POST", "/cache/clear", { type: "pipeline" });
-      this.toast("Pipeline cache cleared");
+      const result = await this.api<{ ok: boolean; bytes_freed: number; files_removed: number }>(
+        "POST",
+        "/cache/clear",
+        { type: "pipeline" },
+      );
+      if (result?.ok) {
+        this.toast(
+          `Pipeline cache cleared — ${this.formatBytes(result.bytes_freed)} freed (${result.files_removed} files)`,
+        );
+      } else {
+        this.toast("Pipeline cache cleared");
+      }
+      this.pipelineCacheBytes = 0;
+      const badge = document.getElementById("pipeline-cache-size");
+      if (badge) badge.textContent = "0 B";
     });
 
     el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {
@@ -1434,33 +1482,146 @@ class App {
     });
   }
 
+  private logPollInterval: ReturnType<typeof setInterval> | null = null;
+  private logLineCount = 0;
+
   private async renderLogs() {
     const el = document.getElementById("view-logs")!;
+    this.logLineCount = 0;
+    if (this.logPollInterval) {
+      clearInterval(this.logPollInterval);
+      this.logPollInterval = null;
+    }
+
     el.innerHTML = `
       <div class="library-header">
         <div>
           <h1>Logs</h1>
-          <p class="subtitle">MetalSharp runtime logs</p>
+          <p class="subtitle">Live MetalSharp runtime logs</p>
         </div>
         <div class="header-actions">
-          <button class="btn btn-secondary" id="btn-refresh-logs">Refresh</button>
+          <button class="btn btn-secondary" id="btn-open-log-folder" title="Open log folder in Finder">&#128193; Open Logs</button>
+          <button class="btn btn-secondary" id="btn-clear-logs-view">Clear View</button>
         </div>
       </div>
-      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.6;max-height:calc(100vh - 200px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
+      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;max-height:calc(100vh - 280px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
+      <div style="margin-top:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="color:var(--text-dim);font-size:11px;font-weight:600;">Crash Dumps</span>
+          <button class="btn btn-secondary" id="btn-open-crash-folder" style="font-size:10px;padding:3px 10px;" title="Open crash dump folder in Finder">&#128193; Open Folder</button>
+        </div>
+        <div id="crash-reports-summary"></div>
+      </div>
     `;
 
-    el.querySelector("#btn-refresh-logs")?.addEventListener("click", () => this.renderLogs());
+    el.querySelector("#btn-clear-logs-view")?.addEventListener("click", () => {
+      const content = document.getElementById("log-content");
+      if (content) content.innerHTML = "";
+      this.logLineCount = 0;
+    });
+
+    el.querySelector("#btn-open-log-folder")?.addEventListener("click", async () => {
+      await getAPI().openInFinder("~/.metalsharp/logs");
+    });
+
+    el.querySelector("#btn-open-crash-folder")?.addEventListener("click", async () => {
+      await getAPI().openInFinder("~/.metalsharp/games");
+    });
+
+    this.pollLogs();
+    this.loadCrashReports();
+  }
+
+  private async pollLogs() {
+    const result = await this.api<{ ok: boolean; total: number; lines: string[] }>(
+      "GET",
+      `/logs/stream?after=${this.logLineCount}`,
+    );
+    if (result?.ok && result.lines && result.lines.length > 0) {
+      this.appendLogLines(result.lines);
+    }
+    if (result?.ok) {
+      this.logLineCount = result.total;
+    }
+
+    this.logPollInterval = setInterval(async () => {
+      const r = await this.api<{ ok: boolean; total: number; lines: string[] }>(
+        "GET",
+        `/logs/stream?after=${this.logLineCount}`,
+      );
+      if (r?.ok && r.lines && r.lines.length > 0) {
+        this.appendLogLines(r.lines);
+      }
+      if (r?.ok) {
+        this.logLineCount = r.total;
+      }
+    }, 2000);
+  }
+
+  private appendLogLines(lines: string[]) {
+    const content = document.getElementById("log-content");
+    if (!content) return;
+    for (const raw of lines) {
+      const line = document.createElement("div");
+      line.className = "log-line";
+
+      const tsMatch = raw.match(/^(\[[0-9]{2}:[0-9]{2}:[0-9]{2}\])\s?(.*)/);
+      if (tsMatch) {
+        const ts = document.createElement("span");
+        ts.style.color = "var(--text-dim)";
+        ts.style.marginRight = "8px";
+        ts.textContent = tsMatch[1];
+        const msg = document.createElement("span");
+        msg.textContent = tsMatch[2];
+        line.appendChild(ts);
+        line.appendChild(msg);
+      } else {
+        line.textContent = raw;
+      }
+
+      if (raw.includes("[LAUNCH]") || raw.includes("[LAUNCHED]")) {
+        line.classList.add("log-event-launch");
+      } else if (raw.includes("[STOP]") || raw.includes("[STOPPED]")) {
+        line.classList.add("log-event-stop");
+      } else if (raw.includes("[STOP FAILED]") || raw.includes("[LAUNCH FAILED]")) {
+        line.classList.add("log-event-error");
+      } else if (raw.includes("engine:")) {
+        line.classList.add("log-event-engine");
+      } else if (
+        raw.toLowerCase().includes("crash") ||
+        raw.toLowerCase().includes("error") ||
+        raw.toLowerCase().includes("failed")
+      ) {
+        line.classList.add("log-event-warn");
+      }
+
+      content.appendChild(line);
+    }
+    content.scrollTop = content.scrollHeight;
+  }
+
+  private async loadCrashReports() {
+    const summary = document.getElementById("crash-reports-summary");
+    if (!summary) return;
 
     const result = await this.api<{
-      logs: { name: string; lines: string[] }[];
-    }>("GET", "/logs");
-    const content = el.querySelector("#log-content")!;
-    if (result && result.logs && result.logs.length > 0) {
-      const latest = result.logs[result.logs.length - 1];
-      content.textContent = latest.lines.join("\n");
-    } else {
-      content.textContent = "No logs found. Logs are written to ~/.metalsharp/logs/ during game execution.";
+      ok: boolean;
+      reports: { file: string; name: string; source: string; timestamp: string; size_bytes: number }[];
+    }>("GET", "/logs/crash-reports");
+
+    if (!result?.ok || !result.reports || result.reports.length === 0) {
+      summary.innerHTML = '<span style="color:var(--text-dim);font-size:11px;">No crash dumps found</span>';
+      return;
     }
+
+    const reportLines = result.reports
+      .slice(0, 10)
+      .map(
+        (r) =>
+          `<div style="font-size:11px;color:var(--error);margin-top:2px;">${this.esc(r.name)} (${this.esc(r.source)}) — ${this.esc(r.timestamp)} <span style="color:var(--text-dim)">${this.formatBytes(r.size_bytes)}</span></div>`,
+      )
+      .join("");
+    summary.innerHTML = `<span class="badge badge-warn" style="font-size:10px;margin-bottom:4px;">${result.reports.length} crash dump(s)</span>${reportLines}`;
   }
 
   private showError(title: string, message: string) {
