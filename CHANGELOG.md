@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.23.0 — 2026-05-14
+
+Goldberg Steam emulator integration for DxvkMetal32 games.
+
+### Added
+
+- **Goldberg Steam emulator** — automatic download and deployment for Portal 2 (appid 620) and Goat Simulator (appid 265930). Caches DLLs at `~/.metalsharp/runtime/goldberg/{x86,x64}/`, deploys per-game with `steam_settings/force_steam_appid.txt`
+- **`scripts/setup-goldberg-deps.sh`** — generalized setup script replacing `setup-portal2-deps.sh`. Downloads from Detanup01/gbe_fork (fallback to official GitLab build), auto-resolves game dir from Steam appmanifests
+- **Rust-native Goldberg download** — `ensure_goldberg_downloaded()` in setup.rs handles download + extraction without requiring the bash script
+- **Launch-time Goldberg deploy** — `deploy_goldberg_for_launch()` called in `launch_dxvk_metal32()` as safety net, auto-deploys if DLLs missing
+
+### Changed
+
+- **Portal 2 game_type** — fixed from `"wine_devel"` to `"dxvk_metal32"` to match actual engine routing
+- **WINEDLLOVERRIDES for DxvkMetal32** — added `steamclient,steamclient64=d` to prevent Wine's Steam client DLLs from interfering with Goldberg
+- **`prepare_portal_2()`** — generalized to `prepare_goldberg_game(game_dir, home, appid)` supporting both Portal 2 and Goat Simulator
+- **`run_game_setup_script()`** — appids 620 and 265930 now route to `setup-goldberg-deps.sh`
+
 ## v0.22.0 — 2026-05-14
 
 Native engine build, DXVK MoltenVK for 32-bit D3D9, engine routing overhaul.
