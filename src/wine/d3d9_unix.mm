@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <dlfcn.h>
 #include <unordered_map>
 #include <vector>
 #include <mutex>
@@ -892,47 +893,108 @@ static NTSTATUS d3d9_init(void*) {
      fprintf(stderr, "[d3d9] create_device: device=%p\n", (void*)(__bridge void*)g_device);
  
      if (g_swapchain) {
-         if (g_swapchain->window) {
-             dispatch_async(dispatch_get_main_queue(), ^{
-                 [g_swapchain->window close];
-             });
-         }
          delete g_swapchain;
      }
      g_swapchain = new D3D9SwapChain();
      g_swapchain->width = params->width > 0 ? params->width : 1280;
      g_swapchain->height = params->height > 0 ? params->height : 720;
-     fprintf(stderr, "[d3d9] create_device: swapchain %ux%u, dispatching window\n", g_swapchain->width, g_swapchain->height);
- 
-     dispatch_sync(dispatch_get_main_queue(), ^{
-        @autoreleasepool {
-            NSRect frame = NSMakeRect(0, 0, g_swapchain->width, g_swapchain->height);
-            NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-            g_swapchain->window = [[NSWindow alloc] initWithContentRect:frame
-                                                              styleMask:style
-                                                                backing:NSBackingStoreBuffered
-                                                                  defer:NO];
-            [g_swapchain->window setTitle:@"MetalSharp D3D9"];
-            [g_swapchain->window makeKeyAndOrderFront:nil];
+     g_swapchain->window = nil;
 
-            g_swapchain->layer = [CAMetalLayer layer];
-            g_swapchain->layer.device = g_device;
-            g_swapchain->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-            g_swapchain->layer.framebufferOnly = NO;
-            g_swapchain->layer.drawableSize = CGSizeMake(g_swapchain->width, g_swapchain->height);
+     typedef struct macdrv_opaque_metal_device *macdrv_metal_device;
+     typedef struct macdrv_opaque_metal_view *macdrv_metal_view;
+     typedef struct macdrv_opaque_metal_layer *macdrv_metal_layer;
+     typedef struct macdrv_opaque_view *macdrv_view;
+     typedef struct macdrv_opaque_window *macdrv_window;
+     typedef struct macdrv_opaque_window_data *macdrv_window_data;
+     typedef struct opaque_HWND *HWND_t;
 
-            NSView* cv = [g_swapchain->window contentView];
-            cv.wantsLayer = YES;
-            cv.layer = g_swapchain->layer;
-        }
-    });
+     struct macdrv_win_data {
+         HWND_t hwnd;
+         macdrv_window cocoa_window;
+         macdrv_view cocoa_view;
+         macdrv_view client_cocoa_view;
+     };
 
-     fprintf(stderr, "[d3d9] create_device: window created, making back_buffer\n");
+     struct macdrv_functions_t {
+         void (*macdrv_init_display_devices)(int);
+         struct macdrv_win_data *(*get_win_data)(HWND_t hwnd);
+         void (*release_win_data)(struct macdrv_win_data *data);
+         macdrv_window (*macdrv_get_cocoa_window)(HWND_t hwnd, int require_on_screen);
+         macdrv_metal_device (*macdrv_create_metal_device)(void);
+         void (*macdrv_release_metal_device)(macdrv_metal_device d);
+         macdrv_metal_view (*macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d);
+         macdrv_metal_layer (*macdrv_view_get_metal_layer)(macdrv_metal_view v);
+         void (*macdrv_view_release_metal_view)(macdrv_metal_view v);
+         void (*on_main_thread)(dispatch_block_t b);
+     };
+
+     macdrv_metal_view metal_view = nullptr;
+     macdrv_metal_layer metal_layer = nullptr;
+
+     struct macdrv_functions_t *macdrv_functions = (struct macdrv_functions_t *)dlsym(RTLD_DEFAULT, "macdrv_functions");
+     if (macdrv_functions && params->hwnd) {
+         fprintf(stderr, "[d3d9] create_device: using macdrv for hwnd=%llu\n", (unsigned long long)params->hwnd);
+         struct macdrv_win_data *(*pfn_get_win_data)(HWND_t) = macdrv_functions->get_win_data;
+         void (*pfn_release_win_data)(struct macdrv_win_data*) = macdrv_functions->release_win_data;
+         macdrv_metal_view (*pfn_create_metal_view)(macdrv_view, macdrv_metal_device) = macdrv_functions->macdrv_view_create_metal_view;
+         macdrv_metal_layer (*pfn_get_metal_layer)(macdrv_metal_view) = macdrv_functions->macdrv_view_get_metal_layer;
+
+         if (pfn_get_win_data && pfn_release_win_data && pfn_create_metal_view && pfn_get_metal_layer) {
+             struct macdrv_win_data *win_data = pfn_get_win_data((HWND_t)params->hwnd);
+             if (win_data && win_data->client_cocoa_view) {
+                 macdrv_metal_device mtl_dev = macdrv_functions->macdrv_create_metal_device ? macdrv_functions->macdrv_create_metal_device() : nullptr;
+                 metal_view = pfn_create_metal_view(win_data->client_cocoa_view, mtl_dev);
+                 if (metal_view) {
+                     metal_layer = pfn_get_metal_layer(metal_view);
+                 }
+                 pfn_release_win_data(win_data);
+             } else {
+                 if (win_data) pfn_release_win_data(win_data);
+                 fprintf(stderr, "[d3d9] create_device: no win_data or client_cocoa_view for hwnd\n");
+             }
+         }
+     }
+
+     @autoreleasepool {
+         if (metal_layer) {
+             g_swapchain->layer = (__bridge CAMetalLayer *)metal_layer;
+             g_swapchain->layer.device = g_device;
+             g_swapchain->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+             g_swapchain->layer.framebufferOnly = NO;
+             g_swapchain->layer.drawableSize = CGSizeMake(g_swapchain->width, g_swapchain->height);
+             fprintf(stderr, "[d3d9] create_device: using macdrv CAMetalLayer %p\n", metal_layer);
+         } else {
+             fprintf(stderr, "[d3d9] create_device: macdrv failed, creating standalone window\n");
+             dispatch_sync(dispatch_get_main_queue(), ^{
+                 @autoreleasepool {
+                     NSRect frame = NSMakeRect(0, 0, g_swapchain->width, g_swapchain->height);
+                     NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                        NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+                     g_swapchain->window = [[NSWindow alloc] initWithContentRect:frame
+                                                                       styleMask:style
+                                                                         backing:NSBackingStoreBuffered
+                                                                           defer:NO];
+                     [g_swapchain->window setTitle:@"MetalSharp D3D9"];
+                     [g_swapchain->window makeKeyAndOrderFront:nil];
+
+                     g_swapchain->layer = [CAMetalLayer layer];
+                     g_swapchain->layer.device = g_device;
+                     g_swapchain->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+                     g_swapchain->layer.framebufferOnly = NO;
+                     g_swapchain->layer.drawableSize = CGSizeMake(g_swapchain->width, g_swapchain->height);
+
+                     NSView* cv = [g_swapchain->window contentView];
+                     cv.wantsLayer = YES;
+                     cv.layer = g_swapchain->layer;
+                 }
+             });
+         }
+     }
+
+     fprintf(stderr, "[d3d9] create_device: surface ready, making back_buffer\n");
  
      @autoreleasepool {
          MTLTextureDescriptor* td = [[MTLTextureDescriptor alloc] init];
-         fprintf(stderr, "[d3d9] create_device: td=%p\n", (void*)(__bridge void*)td);
          td.textureType = MTLTextureType2D;
          td.pixelFormat = MTLPixelFormatBGRA8Unorm;
          td.width = g_swapchain->width;
@@ -940,7 +1002,6 @@ static NTSTATUS d3d9_init(void*) {
          td.mipmapLevelCount = 1;
          td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
          td.storageMode = MTLStorageModePrivate;
-         fprintf(stderr, "[d3d9] create_device: creating texture from device=%p\n", (void*)(__bridge void*)g_device);
          g_swapchain->back_buffer = [g_device newTextureWithDescriptor:td];
          fprintf(stderr, "[d3d9] create_device: back_buffer=%p\n", (void*)(__bridge void*)g_swapchain->back_buffer);
      }
