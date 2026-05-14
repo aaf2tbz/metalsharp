@@ -64,6 +64,28 @@ pub fn is_installing_steam() -> bool {
     STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
+fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
+    let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
+    let wrapper = cef_dir.join("steamwebhelper.exe");
+    let real = cef_dir.join("steamwebhelper_real.exe");
+
+    if !wrapper.exists() {
+        return;
+    }
+
+    let needs_redeploy = if real.exists() {
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+        real_size < 100_000
+    } else {
+        let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+        wrapper_size > 100_000
+    };
+
+    if needs_redeploy {
+        deploy_steamwebhelper_wrapper(steam_dir);
+    }
+}
+
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
@@ -80,6 +102,8 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if is_wine_steam_running() {
         return Ok(json!({"ok": true, "message": "Steam already running"}));
     }
+
+    ensure_steam_launch_ready(&steam_dir);
 
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
     let dyld = format!(
