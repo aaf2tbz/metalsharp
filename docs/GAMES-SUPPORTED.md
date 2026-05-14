@@ -1,4 +1,4 @@
-# Games Supported — MetalSharp v0.22.0
+# Games Supported — MetalSharp v0.23.0
 
 ## Rendering Engines
 
