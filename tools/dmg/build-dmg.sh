@@ -7,6 +7,7 @@ APP_DIR="$PROJECT_DIR/app"
 BUILD_DIR="$PROJECT_DIR/dist/electron"
 DMG_OUTPUT="$PROJECT_DIR/dist/MetalSharp.dmg"
 RUNTIME_DIR="$PROJECT_DIR/src/fna"
+VER=$(grep '"version"' "$APP_DIR/package.json" | head -1 | sed 's/.*: *"//;s/".*//')
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,12 +73,12 @@ npm run build 2>&1 | tail -5
 info "Packaging with electron-builder..."
 npx electron-builder --mac dmg --arm64 2>&1 | tail -10
 
-if [[ -f "$BUILD_DIR/MetalSharp-0.17.0-arm64.dmg" ]]; then
-    cp "$BUILD_DIR/MetalSharp-0.17.0-arm64.dmg" "$DMG_OUTPUT"
+if [[ -f "$BUILD_DIR/MetalSharp-${VER}-arm64.dmg" ]]; then
+    cp "$BUILD_DIR/MetalSharp-${VER}-arm64.dmg" "$DMG_OUTPUT"
     ok "DMG created: $DMG_OUTPUT"
     info "Size: $(du -sh "$DMG_OUTPUT" | cut -f1)"
-elif [[ -f "$BUILD_DIR/MetalSharp-0.17.0.dmg" ]]; then
-    cp "$BUILD_DIR/MetalSharp-0.17.0.dmg" "$DMG_OUTPUT"
+elif [[ -f "$BUILD_DIR/MetalSharp-${VER}.dmg" ]]; then
+    cp "$BUILD_DIR/MetalSharp-${VER}.dmg" "$DMG_OUTPUT"
     ok "DMG created: $DMG_OUTPUT"
     info "Size: $(du -sh "$DMG_OUTPUT" | cut -f1)"
 else
