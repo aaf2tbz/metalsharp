@@ -109,7 +109,11 @@ type MetalsharpAPI = {
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;
   updaterEnsureReady: () => Promise<boolean>;
-  updaterSpawnInstall: (dmgPath: string, backendPid: number, targetVersion: string) => Promise<{ ok: boolean; error?: string }>;
+  updaterSpawnInstall: (
+    dmgPath: string,
+    backendPid: number,
+    targetVersion: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   updaterInstallStatus: () => Promise<InstallStatus | null>;
   updaterClearStatus: () => Promise<void>;
   backendGetPid: () => Promise<number | null>;
