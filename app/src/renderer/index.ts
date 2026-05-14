@@ -45,6 +45,9 @@ class App {
   private setupState: SetupState | null = null;
   private setupStep = 0;
   private setupDeviceName = "";
+  private backendConnected: boolean = false;
+  private backendVersion: string | null = null;
+  private healthPollInterval: ReturnType<typeof setInterval> | null = null;
 
   async init() {
     this.initTheme();
@@ -63,6 +66,7 @@ class App {
     const setupState = await this.api<{ deviceName?: string }>("GET", "/setup/state");
     if (setupState?.deviceName) this.setupDeviceName = setupState.deviceName;
     await this.loadLibrary();
+    this.startHealthPolling();
   }
 
   private bindNav() {
@@ -89,12 +93,62 @@ class App {
     this.updateThemeToggle();
   }
 
-  private updateThemeToggle() {
+  private async updateThemeToggle() {
     const btn = document.getElementById("btn-theme");
     if (!btn) return;
     const next = this.theme === "dark" ? "light" : "dark";
     btn.textContent = this.theme === "dark" ? "Light Mode" : "Dark Mode";
     btn.setAttribute("title", `Toggle ${next} mode`);
+  }
+
+  private startHealthPolling() {
+    if (this.healthPollInterval) clearInterval(this.healthPollInterval);
+    this.pollBackendHealth();
+    this.healthPollInterval = setInterval(() => this.pollBackendHealth(), 120000);
+  }
+
+  private async pollBackendHealth() {
+    const prev = this.backendConnected;
+    const alive = await getAPI().isBackendAlive();
+    this.backendConnected = alive;
+
+    if (alive) {
+      try {
+        const status = await this.api<{ ok?: boolean; version?: string }>("GET", "/status");
+        if (status?.version) this.backendVersion = status.version;
+      } catch {}
+    } else {
+      this.backendVersion = null;
+    }
+
+    this.renderBackendStatusDot();
+
+    if (prev && !alive) {
+      this.toast("Backend connection lost", "error");
+    } else if (!prev && alive) {
+      this.toast("Backend connected", "success");
+    }
+  }
+
+  private renderBackendStatusDot() {
+    const dot = document.getElementById("backend-status");
+    const text = document.getElementById("backend-status-text");
+    if (dot) {
+      dot.classList.remove("connected", "error");
+      dot.classList.add(this.backendConnected ? "connected" : "error");
+    }
+    if (text) {
+      text.textContent = this.backendConnected
+        ? `Connected${this.backendVersion ? ` — v${this.backendVersion}` : ""}`
+        : "Offline";
+    }
+
+    const headerDot = document.getElementById("backend-status-header");
+    if (headerDot) {
+      headerDot.classList.remove("connected", "error");
+      headerDot.classList.add(this.backendConnected ? "connected" : "error");
+      headerDot.textContent = this.backendConnected ? "Backend" : "Backend Offline";
+    }
   }
 
   private switchView(view: string) {
@@ -853,7 +907,7 @@ class App {
       <div class="library-header">
         <div>
           <h1>Library</h1>
-          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge}</p>
+          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge} <span class="backend-status-badge ${this.backendConnected ? "connected" : "error"}" id="backend-status-header">${this.backendConnected ? "Backend" : "Backend Offline"}</span></p>
         </div>
         <div class="header-actions">
           <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
@@ -1006,8 +1060,7 @@ class App {
     if (appid === 105600) return "xna_fna_arm64";
     if (appid === 504230) return "xna_fna_x86";
     if (appid === 375520) return "gptk_wine";
-    if (appid === 535520) return "metalsharp_wine";
-    if (appid === 391540) return "metalsharp_wine";
+    if (appid === 535520 || appid === 391540) return "auto";
     if ([945360, 1139900, 2050650].includes(appid)) return "steam";
     if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
     return "steam_d3dmetal_perf";
@@ -1218,6 +1271,31 @@ class App {
           </div>
           <div class="settings-value">
             ${steam?.mac_installed ? `<span class="badge badge-ok">Detected</span>` : `<span class="badge badge-warn">Not Found</span>`}
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Backend</h2>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Game Runtime Backend</div>
+            <div class="settings-desc">The Rust backend handles game launches, Steam integration, and shader management</div>
+          </div>
+          <div class="settings-value">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="badge ${this.backendConnected ? "badge-ok" : "badge-warn"}">${this.backendConnected ? "Connected" : "Offline"}</span>
+              ${this.backendVersion ? `<span style="color:var(--text-dim);font-size:12px;">v${this.esc(this.backendVersion)}</span>` : ""}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Restart Backend</div>
+            <div class="settings-desc">Kill and restart the backend process. Use this if games fail to launch or the status shows Offline.</div>
+          </div>
+          <div class="settings-value">
+            <button class="btn btn-secondary btn-sm" id="btn-restart-backend">Restart Backend</button>
           </div>
         </div>
       </div>
@@ -1479,6 +1557,23 @@ class App {
       } else {
         this.toast(this.updateStatus?.error ?? "Could not check for updates", "error");
       }
+    });
+
+    el.querySelector("#btn-restart-backend")?.addEventListener("click", async () => {
+      const btn = el.querySelector("#btn-restart-backend") as HTMLButtonElement;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Restarting...";
+      }
+      this.toast("Restarting backend...", "success");
+      const result = await getAPI().restartBackend();
+      if (result.ok) {
+        await this.pollBackendHealth();
+        this.toast("Backend restarted", "success");
+      } else {
+        this.toast(result.error ?? "Failed to restart backend", "error");
+      }
+      this.renderSettings();
     });
   }
 

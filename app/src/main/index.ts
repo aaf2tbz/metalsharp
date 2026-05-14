@@ -297,4 +297,12 @@ function registerIpc() {
     }
     shell.openPath(fullPath);
   });
+
+  ipcMain.handle("backend:restart", async () => {
+    return bridge.restart();
+  });
+
+  ipcMain.handle("backend:is-alive", async () => {
+    return bridge.isAlive();
+  });
 }
