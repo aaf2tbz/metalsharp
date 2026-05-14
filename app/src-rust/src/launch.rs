@@ -211,18 +211,8 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         Engine::DxvkMetal32 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let _ = deploy_dxvk_metal32_dlls(appid, dir);
-            let moltenvk_icd = find_moltenvk_icd();
-            let shader_cache =
-                home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
-            let _ = std::fs::create_dir_all(&shader_cache);
-            let shader_cache_path = format!("{}/", shader_cache.to_string_lossy());
-            let env: Vec<(&str, &str)> = vec![
-                ("WINEDLLOVERRIDES", "d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                ("VK_ICD_FILENAMES", &moltenvk_icd),
-                ("DXVK_STATE_CACHE_PATH", &shader_cache_path),
-            ];
-            let pid = launch_via_steam_with_env(appid, &env)?;
-            Ok((pid, "dxvk_metal32_steam"))
+            let pid = launch_via_steam(appid)?;
+            Ok((pid, "dxvk_metal32"))
         },
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
