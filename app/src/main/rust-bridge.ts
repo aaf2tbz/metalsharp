@@ -192,9 +192,10 @@ export class RustBridge {
   }
 
   private async getProcessPath(pid: number): Promise<string | null> {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
     return new Promise((resolve) => {
       const { exec } = require("child_process");
-      exec(`ps -o comm= -p ${pid} 2>/dev/null`, (err: Error | null, stdout: string) => {
+      exec(`ps -o comm= -p ${Math.floor(pid)} 2>/dev/null`, (err: Error | null, stdout: string) => {
         if (err || !stdout.trim()) {
           resolve(null);
         } else {
