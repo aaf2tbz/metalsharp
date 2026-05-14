@@ -113,4 +113,5 @@ type MetalsharpAPI = {
   updaterInstallStatus: () => Promise<InstallStatus | null>;
   updaterClearStatus: () => Promise<void>;
   backendGetPid: () => Promise<number | null>;
+  quitApp: () => void;
 };
