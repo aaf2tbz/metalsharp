@@ -3,11 +3,7 @@ import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
 
-const STATUS_FILE = path.join(
-  process.env.HOME || "/tmp",
-  ".metalsharp",
-  "update_install_status.json",
-);
+const STATUS_FILE = path.join(process.env.HOME || "/tmp", ".metalsharp", "update_install_status.json");
 
 export interface InstallStatus {
   phase: string;
@@ -78,21 +74,18 @@ export class UpdaterBridge {
 
   async getBackendPid(): Promise<number | null> {
     return new Promise((resolve) => {
-      const req = http.get(
-        `http://127.0.0.1:${this.backendPort}/status`,
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (c) => chunks.push(c));
-          res.on("end", () => {
-            try {
-              const data = JSON.parse(Buffer.concat(chunks).toString());
-              resolve(data.pid ?? null);
-            } catch {
-              resolve(null);
-            }
-          });
-        },
-      );
+      const req = http.get(`http://127.0.0.1:${this.backendPort}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.pid ?? null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
       req.on("error", () => resolve(null));
       req.setTimeout(1500, () => {
         req.destroy();
@@ -101,26 +94,27 @@ export class UpdaterBridge {
     });
   }
 
-  spawnInstallUpdater(
-    dmgPath: string,
-    backendPid: number,
-    targetVersion: string,
-  ): { ok: boolean; error?: string } {
+  spawnInstallUpdater(dmgPath: string, backendPid: number, targetVersion: string): { ok: boolean; error?: string } {
     if (!this.pythonPath || !this.scriptPath) {
       return { ok: false, error: "Updater not ready — python3 or update.py missing" };
     }
 
     if (!fs.existsSync(dmgPath)) {
-      return { ok: false, error: "DMG file not found: " + dmgPath };
+      return { ok: false, error: `DMG file not found: ${dmgPath}` };
     }
 
     const args = [
       this.scriptPath,
-      "--dmg", dmgPath,
-      "--backend-pid", String(backendPid),
-      "--target-version", targetVersion,
-      "--status-file", STATUS_FILE,
-      "--python", this.pythonPath,
+      "--dmg",
+      dmgPath,
+      "--backend-pid",
+      String(backendPid),
+      "--target-version",
+      targetVersion,
+      "--status-file",
+      STATUS_FILE,
+      "--python",
+      this.pythonPath,
     ];
 
     const child = spawn(this.pythonPath, args, {
@@ -128,22 +122,13 @@ export class UpdaterBridge {
       stdio: "ignore",
       env: {
         ...process.env,
-        PATH: [
-          "/opt/homebrew/bin",
-          "/usr/local/bin",
-          "/usr/bin",
-          "/bin",
-          "/usr/sbin",
-          "/sbin",
-        ].join(":"),
+        PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
       },
     });
 
     child.unref();
 
-    console.log(
-      `Updater: spawned install updater (pid=${child.pid}) for v${targetVersion}`,
-    );
+    console.log(`Updater: spawned install updater (pid=${child.pid}) for v${targetVersion}`);
 
     return { ok: true };
   }
