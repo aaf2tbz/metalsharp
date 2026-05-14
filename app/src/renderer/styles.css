@@ -218,6 +218,30 @@ body {
   color: var(--text-dim);
 }
 
+.backend-status-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all var(--transition);
+}
+
+.backend-status-badge.connected {
+  background: rgba(52, 199, 89, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(52, 199, 89, 0.3);
+}
+
+.backend-status-badge.error {
+  background: rgba(255, 59, 48, 0.15);
+  color: var(--error);
+  border: 1px solid rgba(255, 59, 48, 0.3);
+}
+
 /* Main content */
 .content {
   flex: 1;

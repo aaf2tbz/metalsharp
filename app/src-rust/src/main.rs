@@ -69,7 +69,8 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 200,
                 json!({
                     "ok": true,
-                    "version": env!("CARGO_PKG_VERSION")
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "pid": std::process::id(),
                 }),
             )
         },
