@@ -1,12 +1,14 @@
 /// @file d3d9_unix.h
 /// @brief Shared header for Wine D3D9 PE/Unix interface.
 ///
-/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D9 shim to communicate with the Unix-side Metal backend. Covers D3D9 device creation, swap chain, and resource management calls.
+/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D9 shim to
+/// communicate with the Unix-side Metal backend. Covers D3D9 device creation, swap chain, and resource management
+/// calls.
 #ifndef METALSHARP_D3D9_UNIX_H
 #define METALSHARP_D3D9_UNIX_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
