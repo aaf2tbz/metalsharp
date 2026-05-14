@@ -95,6 +95,7 @@ struct D3D9State {
     float viewport_min_z, viewport_max_z;
     bool has_viewport;
     bool needs_pipeline_update;
+    bool has_cleared;
     id<MTLRenderPipelineState> current_pipeline;
     id<MTLCommandBuffer> command_buffer;
     id<MTLRenderCommandEncoder> encoder;
@@ -829,8 +830,18 @@ static uint32_t prim_vertex_count(uint32_t prim_type, uint32_t prim_count) {
     }
 }
 
+static id<MTLBuffer> g_zero_buffer = nil;
+
 static MTLVertexDescriptor* build_vertex_descriptor() {
     MTLVertexDescriptor* vd = [[MTLVertexDescriptor alloc] init];
+
+    if (!g_device) return vd;
+
+    if (!g_zero_buffer) {
+        uint8_t zeros[32] = {0};
+        g_zero_buffer = [g_device newBufferWithBytes:zeros length:sizeof(zeros)
+                                             options:MTLResourceStorageModeShared];
+    }
 
     if (!g_state.vertex_decl_handle) return vd;
     auto it = g_vertex_decls.find(g_state.vertex_decl_handle);
@@ -839,6 +850,7 @@ static MTLVertexDescriptor* build_vertex_descriptor() {
     const auto& decl = it->second;
     uint32_t stream_strides[16] = {};
     bool stream_used[16] = {};
+    bool has_texcoord0 = false;
 
     for (uint32_t i = 0; i < decl.num_elements; i++) {
         const auto& el = decl.elements[i];
@@ -858,6 +870,21 @@ static MTLVertexDescriptor* build_vertex_descriptor() {
         stream_used[el.stream] = true;
         if (stride + el.offset > stream_strides[el.stream])
             stream_strides[el.stream] = stride + el.offset;
+
+        if (el.usage == D3DDECLUSAGE_TEXCOORD && el.usage_index == 0)
+            has_texcoord0 = true;
+    }
+
+    if (!has_texcoord0) {
+        auto* tcAttr = vd.attributes[5];
+        tcAttr.format = MTLVertexFormatFloat2;
+        tcAttr.offset = 0;
+        tcAttr.bufferIndex = 15;
+
+        auto* tcLayout = vd.layouts[15];
+        tcLayout.stride = 8;
+        tcLayout.stepFunction = MTLVertexStepFunctionConstant;
+        tcLayout.stepRate = 0;
     }
 
     for (uint32_t s = 0; s < 16; s++) {
@@ -1250,8 +1277,11 @@ static NTSTATUS d3d9_create_vertex_declaration(void* p) {
 }
 
 static NTSTATUS d3d9_set_vertex_declaration(void* p) {
-    g_state.vertex_decl_handle = *(uint64_t*)p;
-    g_state.needs_pipeline_update = true;
+    uint64_t h = *(uint64_t*)p;
+    if (g_state.vertex_decl_handle != h) {
+        g_state.vertex_decl_handle = h;
+        g_state.needs_pipeline_update = true;
+    }
     return 0;
 }
 
@@ -1372,13 +1402,13 @@ static void ensure_render_pass() {
         }
     }
 
-    if (!has_target && g_swapchain && g_swapchain->back_buffer) {
-        auto* attachment = desc.colorAttachments[0];
-        attachment.texture = g_swapchain->back_buffer;
-        attachment.loadAction = MTLLoadActionClear;
-        attachment.clearColor = MTLClearColorMake(0, 0, 0, 1);
-        attachment.storeAction = MTLStoreActionStore;
-    }
+     if (!has_target && g_swapchain && g_swapchain->back_buffer) {
+         auto* attachment = desc.colorAttachments[0];
+         attachment.texture = g_swapchain->back_buffer;
+         attachment.loadAction = g_state.has_cleared ? MTLLoadActionLoad : MTLLoadActionClear;
+         attachment.clearColor = MTLClearColorMake(0, 0, 0, 1);
+         attachment.storeAction = MTLStoreActionStore;
+     }
 
     if (g_state.depth_stencil) {
         auto it = g_textures.find(g_state.depth_stencil);
@@ -1397,22 +1427,27 @@ static void ensure_render_pass() {
     static id<MTLLibrary> g_ff_ps_lib = nil;
     static id<MTLFunction> g_ff_vs_func = nil;
     static id<MTLFunction> g_ff_ps_func = nil;
+    static id<MTLTexture> g_default_white_tex = nil;
+    static id<MTLSamplerState> g_default_sampler = nil;
 
     if (!g_ff_vs_lib) {
         @autoreleasepool {
             NSString* ffVS = @""
                 "#include <metal_stdlib>\n"
                 "using namespace metal;\n"
-                "struct VIn { float3 position [[attribute(0)]]; float4 color [[attribute(15)]]; };\n"
-                "struct VOut { float4 pos [[position]]; float4 color; };\n"
+                "struct VIn { float3 position [[attribute(0)]]; float4 color [[attribute(15)]]; float2 texcoord [[attribute(5)]]; };\n"
+                "struct VOut { float4 pos [[position]]; float4 color; float2 texcoord; };\n"
                 "vertex VOut ff_vs(VIn in [[stage_in]]) {\n"
-                "  VOut o; o.pos = float4(in.position, 1.0); o.color = in.color; return o;\n"
+                "  VOut o; o.pos = float4(in.position, 1.0); o.color = in.color.bgra; o.texcoord = in.texcoord; return o;\n"
                 "}\n";
             NSString* ffPS = @""
                 "#include <metal_stdlib>\n"
                 "using namespace metal;\n"
-                "struct FIn { float4 pos [[position]]; float4 color; };\n"
-                "fragment float4 ff_ps(FIn in [[stage_in]]) { return in.color; }\n";
+                "struct FIn { float4 pos [[position]]; float4 color; float2 texcoord; };\n"
+                "fragment float4 ff_ps(FIn in [[stage_in]], texture2d<float> tex [[texture(0)]], sampler samp [[sampler(0)]]) {\n"
+                "  float4 texColor = tex.sample(samp, in.texcoord);\n"
+                "  return in.color * texColor;\n"
+                "}\n";
             NSError* err = nil;
             g_ff_vs_lib = [g_device newLibraryWithSource:ffVS options:nil error:&err];
             if (err) fprintf(stderr, "[d3d9] FF VS compile error: %s\n", [[err localizedDescription] UTF8String]);
@@ -1420,9 +1455,33 @@ static void ensure_render_pass() {
             g_ff_ps_lib = [g_device newLibraryWithSource:ffPS options:nil error:&err];
             if (err) fprintf(stderr, "[d3d9] FF PS compile error: %s\n", [[err localizedDescription] UTF8String]);
             if (!err) fprintf(stderr, "[d3d9] FF PS compiled OK\n");
-            if (err) fprintf(stderr, "[d3d9] FF PS compile error: %s\n", [[err localizedDescription] UTF8String]);
             if (g_ff_vs_lib) g_ff_vs_func = [g_ff_vs_lib newFunctionWithName:@"ff_vs"];
             if (g_ff_ps_lib) g_ff_ps_func = [g_ff_ps_lib newFunctionWithName:@"ff_ps"];
+
+            MTLTextureDescriptor* whiteDesc = [[MTLTextureDescriptor alloc] init];
+            whiteDesc.textureType = MTLTextureType2D;
+            whiteDesc.pixelFormat = MTLPixelFormatBGRA8Unorm;
+            whiteDesc.width = 1;
+            whiteDesc.height = 1;
+            whiteDesc.usage = MTLTextureUsageShaderRead;
+            whiteDesc.storageMode = MTLStorageModeShared;
+            g_default_white_tex = [g_device newTextureWithDescriptor:whiteDesc];
+            if (g_default_white_tex) {
+                uint32_t white = 0xFFFFFFFF;
+                [g_default_white_tex replaceRegion:MTLRegionMake2D(0, 0, 1, 1)
+                                       mipmapLevel:0
+                                         withBytes:&white
+                                       bytesPerRow:4];
+                fprintf(stderr, "[d3d9] Default white texture created\n");
+            }
+
+            MTLSamplerDescriptor* sampDesc = [[MTLSamplerDescriptor alloc] init];
+            sampDesc.minFilter = MTLSamplerMinMagFilterNearest;
+            sampDesc.magFilter = MTLSamplerMinMagFilterNearest;
+            sampDesc.mipFilter = MTLSamplerMipFilterNotMipmapped;
+            sampDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
+            sampDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
+            g_default_sampler = [g_device newSamplerStateWithDescriptor:sampDesc];
         }
     }
 
@@ -1502,6 +1561,19 @@ static void ensure_render_pass() {
     apply_render_state_to_encoder();
     apply_sampler_states_to_encoder();
 
+    if (g_default_white_tex && !g_state.texture_handles[0]) {
+        [g_state.encoder setFragmentTexture:g_default_white_tex atIndex:0];
+        [g_state.encoder setVertexTexture:g_default_white_tex atIndex:0];
+    }
+    if (g_default_sampler && !g_state.texture_handles[0]) {
+        [g_state.encoder setFragmentSamplerState:g_default_sampler atIndex:0];
+        [g_state.encoder setVertexSamplerState:g_default_sampler atIndex:0];
+    }
+
+    if (g_zero_buffer) {
+        [g_state.encoder setVertexBuffer:g_zero_buffer offset:0 atIndex:15];
+    }
+
     if (g_state.has_viewport) {
         MTLViewport vp = { (double)g_state.viewport_x, (double)g_state.viewport_y,
                            (double)g_state.viewport_w, (double)g_state.viewport_h,
@@ -1556,67 +1628,68 @@ static NTSTATUS d3d9_draw_indexed_primitive(void* p) {
     return 0;
 }
 
-static NTSTATUS d3d9_clear(void* p) {
-    auto* params = (struct d3d9_clear_params*)p;
+ static NTSTATUS d3d9_clear(void* p) {
+     auto* params = (struct d3d9_clear_params*)p;
 
-    if (g_state.in_render_pass) {
-        [g_state.encoder endEncoding];
-        g_state.in_render_pass = false;
-        g_state.encoder = nil;
-    }
-    if (!g_state.command_buffer) {
-        g_state.command_buffer = [g_queue commandBuffer];
-    }
+     if (g_state.in_render_pass && g_state.encoder) {
+         [g_state.encoder endEncoding];
+         g_state.in_render_pass = false;
+         g_state.encoder = nil;
+     }
+     if (!g_state.command_buffer) {
+         g_state.command_buffer = [g_queue commandBuffer];
+     }
 
-    MTLRenderPassDescriptor* desc = [[MTLRenderPassDescriptor alloc] init];
+     MTLRenderPassDescriptor* desc = [[MTLRenderPassDescriptor alloc] init];
 
-    if (params->flags & 0x1) {
-        id<MTLTexture> target = nil;
-        for (int i = 0; i < 4; i++) {
-            if (g_state.render_targets[i]) {
-                auto it = g_textures.find(g_state.render_targets[i]);
-                if (it != g_textures.end()) { target = it->second.texture; break; }
-            }
-        }
-        if (!target && g_swapchain && g_swapchain->back_buffer) target = g_swapchain->back_buffer;
+     if (params->flags & 0x1) {
+         id<MTLTexture> target = nil;
+         for (int i = 0; i < 4; i++) {
+             if (g_state.render_targets[i]) {
+                 auto it = g_textures.find(g_state.render_targets[i]);
+                 if (it != g_textures.end()) { target = it->second.texture; break; }
+             }
+         }
+         if (!target && g_swapchain && g_swapchain->back_buffer) target = g_swapchain->back_buffer;
 
-        if (target) {
-            auto* attachment = desc.colorAttachments[0];
-            attachment.texture = target;
-            attachment.loadAction = MTLLoadActionClear;
-            float r = ((params->color >> 16) & 0xFF) / 255.0f;
-            float g = ((params->color >> 8) & 0xFF) / 255.0f;
-            float b = (params->color & 0xFF) / 255.0f;
-            float a = ((params->color >> 24) & 0xFF) / 255.0f;
-            attachment.clearColor = MTLClearColorMake(r, g, b, a);
-            attachment.storeAction = MTLStoreActionStore;
-        }
-    }
+         if (target) {
+             auto* attachment = desc.colorAttachments[0];
+             attachment.texture = target;
+             attachment.loadAction = MTLLoadActionClear;
+             float r = ((params->color >> 16) & 0xFF) / 255.0f;
+             float g = ((params->color >> 8) & 0xFF) / 255.0f;
+             float b = (params->color & 0xFF) / 255.0f;
+             float a = ((params->color >> 24) & 0xFF) / 255.0f;
+             attachment.clearColor = MTLClearColorMake(r, g, b, a);
+             attachment.storeAction = MTLStoreActionStore;
+         }
+     }
 
-    if ((params->flags & 0x2) && g_state.depth_stencil) {
-        auto it = g_textures.find(g_state.depth_stencil);
-        if (it != g_textures.end() && it->second.texture) {
-            desc.depthAttachment.texture = it->second.texture;
-            desc.depthAttachment.loadAction = MTLLoadActionClear;
-            desc.depthAttachment.clearDepth = params->z;
-            desc.depthAttachment.storeAction = MTLStoreActionStore;
-        }
-    }
+     if ((params->flags & 0x2) && g_state.depth_stencil) {
+         auto it = g_textures.find(g_state.depth_stencil);
+         if (it != g_textures.end() && it->second.texture) {
+             desc.depthAttachment.texture = it->second.texture;
+             desc.depthAttachment.loadAction = MTLLoadActionClear;
+             desc.depthAttachment.clearDepth = params->z;
+             desc.depthAttachment.storeAction = MTLStoreActionStore;
+         }
+     }
 
-    if ((params->flags & 0x4) && g_state.depth_stencil) {
-        auto it = g_textures.find(g_state.depth_stencil);
-        if (it != g_textures.end() && it->second.texture) {
-            desc.stencilAttachment.texture = it->second.texture;
-            desc.stencilAttachment.loadAction = MTLLoadActionClear;
-            desc.stencilAttachment.clearStencil = params->stencil;
-            desc.stencilAttachment.storeAction = MTLStoreActionStore;
-        }
-    }
+     if ((params->flags & 0x4) && g_state.depth_stencil) {
+         auto it = g_textures.find(g_state.depth_stencil);
+         if (it != g_textures.end() && it->second.texture) {
+             desc.stencilAttachment.texture = it->second.texture;
+             desc.stencilAttachment.loadAction = MTLLoadActionClear;
+             desc.stencilAttachment.clearStencil = params->stencil;
+             desc.stencilAttachment.storeAction = MTLStoreActionStore;
+         }
+     }
 
-    id<MTLRenderCommandEncoder> enc = [g_state.command_buffer renderCommandEncoderWithDescriptor:desc];
-    [enc endEncoding];
-    return 0;
-}
+     id<MTLRenderCommandEncoder> enc = [g_state.command_buffer renderCommandEncoderWithDescriptor:desc];
+     [enc endEncoding];
+     g_state.has_cleared = true;
+     return 0;
+ }
 
 static NTSTATUS d3d9_present(void*) {
     if (!g_swapchain || !g_swapchain->layer) return -1;
@@ -1653,9 +1726,15 @@ static NTSTATUS d3d9_present(void*) {
         }
     }
 
-    memset((void*)&g_state, 0, sizeof(g_state));
-    return 0;
-}
+       id<MTLRenderPipelineState> saved_pipeline = g_state.current_pipeline;
+       uint64_t saved_vdecl = g_state.vertex_decl_handle;
+       memset((void*)&g_state, 0, sizeof(g_state));
+       g_state.current_pipeline = saved_pipeline;
+       g_state.vertex_decl_handle = saved_vdecl;
+       g_state.has_cleared = false;
+       g_state.needs_pipeline_update = false;
+      return 0;
+ }
 
 static NTSTATUS d3d9_set_render_target(void* p) {
     uint64_t* handles = (uint64_t*)p;
@@ -1759,6 +1838,59 @@ static NTSTATUS d3d9_upload_buffer(void* p) {
     return 0;
 }
 
+static NTSTATUS d3d9_upload_texture(void* p) {
+    auto* params = (struct d3d9_upload_texture_params*)p;
+    const void* src = (const void*)(uintptr_t)params->data;
+    fprintf(stderr, "[d3d9] upload_texture: handle=%llu %ux%u pitch=%u fmt=%u\n",
+            (unsigned long long)params->texture_handle, params->width, params->height,
+            params->row_pitch, params->format);
+
+    auto it = g_textures.find(params->texture_handle);
+    if (it == g_textures.end() || !it->second.texture) {
+        fprintf(stderr, "[d3d9] upload_texture: handle not found\n");
+        return -1;
+    }
+
+    id<MTLTexture> texture = it->second.texture;
+
+    @autoreleasepool {
+        NSUInteger bpp = 4;
+        NSUInteger srcRowPitch = params->row_pitch ? params->row_pitch : params->width * bpp;
+        NSUInteger imageBytes = srcRowPitch * params->height;
+
+        id<MTLBuffer> stagingBuf = [g_device newBufferWithLength:imageBytes
+                                                        options:MTLResourceStorageModeShared];
+        if (!stagingBuf) {
+            fprintf(stderr, "[d3d9] upload_texture: failed to alloc staging buffer (%lu bytes)\n", imageBytes);
+            return -1;
+        }
+
+        void* dst = [stagingBuf contents];
+        if (dst && src) {
+            memcpy(dst, src, imageBytes);
+        }
+
+        id<MTLCommandBuffer> cmdBuf = [g_queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+        [blit copyFromBuffer:stagingBuf
+               sourceOffset:0
+          sourceBytesPerRow:srcRowPitch
+        sourceBytesPerImage:imageBytes
+                 sourceSize:MTLSizeMake(params->width, params->height, 1)
+                  toTexture:texture
+           destinationSlice:0
+           destinationLevel:0
+          destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [blit endEncoding];
+        [cmdBuf commit];
+        [cmdBuf waitUntilCompleted];
+
+        fprintf(stderr, "[d3d9] upload_texture: uploaded %ux%u to Metal texture OK\n", params->width, params->height);
+    }
+
+    return 0;
+}
+
 static NTSTATUS d3d9_stub(void*) { return 0; }
 
 extern "C" {
@@ -1802,6 +1934,7 @@ unixlib_entry_t __wine_unix_call_funcs[] = {
     d3d9_map,
     d3d9_stub,
     d3d9_upload_buffer,
+    d3d9_upload_texture,
 };
 
 __attribute__((used, visibility("default")))
@@ -1841,6 +1974,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
     d3d9_map,
     d3d9_stub,
     d3d9_upload_buffer,
+    d3d9_upload_texture,
 };
 
 NTSTATUS __attribute__((visibility("default"))) __wine_unix_lib_init(void) { return 0; }

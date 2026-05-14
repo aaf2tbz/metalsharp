@@ -146,7 +146,17 @@ public:
 
 class MSD3DTexture : public IDirect3DTexture9 {
     LONG m_ref = 1;
+    uint64_t m_handle = 0;
+    uint32_t m_width = 0;
+    uint32_t m_height = 0;
+    uint32_t m_format = 0;
+    void* m_lock_ptr = nullptr;
+    uint32_t m_lock_row_pitch = 0;
+    uint32_t m_lock_level = 0;
 public:
+    void init(uint64_t h, uint32_t w, uint32_t ht, uint32_t fmt) {
+        m_handle = h; m_width = w; m_height = ht; m_format = fmt;
+    }
     HRESULT WINAPI QueryInterface(REFIID, void** ppv) override { if(ppv)*ppv=nullptr; return E_NOINTERFACE; }
     ULONG WINAPI AddRef() override { return ref_add(&m_ref); }
     ULONG WINAPI Release() override { ULONG r = ref_sub(&m_ref); return r ? r : 0; }
@@ -166,8 +176,32 @@ public:
     void WINAPI GenerateMipSubLevels() override {}
     HRESULT WINAPI GetLevelDesc(UINT, D3DSURFACE_DESC* pDesc) override { if(pDesc) memset(pDesc,0,sizeof(*pDesc)); return S_OK; }
     HRESULT WINAPI GetSurfaceLevel(UINT, IDirect3DSurface9** pp) override { if(pp) *pp = new MSD3DSurface(); return S_OK; }
-    HRESULT WINAPI LockRect(UINT, D3DLOCKED_RECT*, const RECT*, DWORD) override { return E_NOTIMPL; }
-    HRESULT WINAPI UnlockRect(UINT) override { return S_OK; }
+    HRESULT WINAPI LockRect(UINT level, D3DLOCKED_RECT* pLockedRect, const RECT* pRect, DWORD flags) override {
+        if (!pLockedRect) return E_POINTER;
+        if (!m_handle) return E_FAIL;
+        uint32_t bpp = 4;
+        if (m_format == 21 || m_format == 22) bpp = 4;
+        m_lock_row_pitch = m_width * bpp;
+        if (!m_lock_ptr) m_lock_ptr = new char[m_lock_row_pitch * m_height];
+        pLockedRect->pBits = m_lock_ptr;
+        pLockedRect->Pitch = m_lock_row_pitch;
+        m_lock_level = level;
+        fprintf(stderr, "[d3d9] Texture LockRect: level=%u ptr=%p pitch=%u\n", level, m_lock_ptr, m_lock_row_pitch);
+        return S_OK;
+    }
+    HRESULT WINAPI UnlockRect(UINT level) override {
+        if (!m_lock_ptr || !m_handle) return S_OK;
+        struct d3d9_upload_texture_params p = {};
+        p.texture_handle = m_handle;
+        p.data = (uint64_t)(uintptr_t)m_lock_ptr;
+        p.width = m_width;
+        p.height = m_height;
+        p.row_pitch = m_lock_row_pitch;
+        p.format = m_format;
+        fprintf(stderr, "[d3d9] Texture UnlockRect: uploading %ux%u handle=%llu\n", m_width, m_height, (unsigned long long)m_handle);
+        unix_call(D3D9_FUNC_UPLOAD_TEXTURE, &p);
+        return S_OK;
+    }
     HRESULT WINAPI AddDirtyRect(const RECT*) override { return S_OK; }
 };
 
@@ -273,6 +307,8 @@ static void fill_caps(D3DCAPS9* pCaps) {
 class MSD3DDevice9 : public IDirect3DDevice9 {
     LONG m_ref = 1;
     IDirect3D9* m_parent;
+    DWORD m_last_fvf = 0;
+    uint64_t m_last_fvf_decl_handle = 0;
 public:
     MSD3DDevice9(IDirect3D9* parent) : m_parent(parent) {}
     HRESULT WINAPI QueryInterface(REFIID, void** ppv) override { if(ppv)*ppv=nullptr; return E_NOINTERFACE; }
@@ -313,7 +349,10 @@ public:
         auto* t = new MSD3DTexture();
         struct d3d9_create_texture_params p = {W,H,L,(uint32_t)U,(uint32_t)F,(int)P,0};
         NTSTATUS r = unix_call(D3D9_FUNC_CREATE_TEXTURE, &p);
-        if(r>=0) set_handle(t, p.out_handle);
+        if(r>=0) {
+            set_handle(t, p.out_handle);
+            t->init(p.out_handle, W, H, (uint32_t)F);
+        }
         *pp = t; return S_OK;
     }
     HRESULT WINAPI CreateVolumeTexture(UINT,UINT,UINT,UINT,DWORD,D3DFORMAT,D3DPOOL,IDirect3DVolumeTexture9**,HANDLE*) override { return E_NOTIMPL; }
@@ -457,6 +496,11 @@ public:
     HRESULT WINAPI SetVertexDeclaration(IDirect3DVertexDeclaration9* d) override { uint64_t h=obj_handle(d); unix_call(D3D9_FUNC_SET_VERTEX_DECLARATION,&h); return S_OK; }
     HRESULT WINAPI GetVertexDeclaration(IDirect3DVertexDeclaration9** pp) override { if(pp)*pp=nullptr; return D3DERR_NOTFOUND; }
     HRESULT WINAPI SetFVF(DWORD fvf) override {
+        if (fvf == m_last_fvf && m_last_fvf_decl_handle) {
+            uint64_t h = m_last_fvf_decl_handle;
+            unix_call(D3D9_FUNC_SET_VERTEX_DECLARATION, &h);
+            return S_OK;
+        }
         D3DVERTEXELEMENT9 elems[16] = {};
         UINT n = 0;
         WORD offset = 0;
@@ -498,6 +542,8 @@ public:
         IDirect3DVertexDeclaration9* decl = nullptr;
         HRESULT hr = CreateVertexDeclaration(elems, &decl);
         if (FAILED(hr)) return hr;
+        m_last_fvf = fvf;
+        m_last_fvf_decl_handle = obj_handle(decl);
         hr = SetVertexDeclaration(decl);
         if (decl) decl->Release();
         return hr;

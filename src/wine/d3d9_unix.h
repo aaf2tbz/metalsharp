@@ -48,6 +48,7 @@ enum d3d9_func_id {
     D3D9_FUNC_MAP,
     D3D9_FUNC_UNMAP,
     D3D9_FUNC_UPLOAD_BUFFER,
+    D3D9_FUNC_UPLOAD_TEXTURE,
     D3D9_FUNC_COUNT
 };
 
@@ -202,6 +203,15 @@ struct d3d9_upload_params {
     uint64_t resource_handle;
     uint64_t data;
     uint32_t size;
+};
+
+struct d3d9_upload_texture_params {
+    uint64_t texture_handle;
+    uint64_t data;
+    uint32_t width;
+    uint32_t height;
+    uint32_t row_pitch;
+    uint32_t format;
 };
 
 #ifdef __cplusplus
