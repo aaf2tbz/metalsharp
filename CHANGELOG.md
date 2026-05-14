@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.24.0 — 2026-05-14
+
+Updater fix and Metal CI.
+
+### Fixed
+
+- **Auto-updater never ran install script** — `require("electron").remote` is undefined without `@electron/remote`, so `remote?.app?.quit()` was a silent no-op. The app appeared to close but the Python install script was never spawned, leaving MetalSharp zombie in the background. Replaced with proper `app:quit` IPC channel through preload bridge.
+- **Python updater process group isolation** — added `os.setsid()` at script startup to fully detach from parent process group, ensuring the updater survives app termination.
+- **Pre-quit spawn delay** — increased from 2s to 3s for child process stability.
+
+### Added
+
+- **Metal CI workflow** (`ci-metal.yml`) — dedicated CI for Metal/D3D compilation and adapter validation on macos-14 (M1). Explicit grouped steps for Metal device, shader translation (DXBC, format, argument buffers), D3D11, D3D12, audio/input backends, and runtime tests. Triggers only on `src/metal/**`, `src/d3d/**`, `src/dxgi/**`, `include/**`, `tests/**`, `CMakeLists.txt` changes.
+
 ## v0.23.0 — 2026-05-14
 
 Goldberg Steam emulator integration for DxvkMetal32 games.
