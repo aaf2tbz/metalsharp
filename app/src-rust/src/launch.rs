@@ -212,7 +212,8 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
             let _ = deploy_dxvk_metal32_dlls(appid, dir);
             let moltenvk_icd = find_moltenvk_icd();
-            let shader_cache = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
+            let shader_cache =
+                home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
             let _ = std::fs::create_dir_all(&shader_cache);
             let shader_cache_path = format!("{}/", shader_cache.to_string_lossy());
             let env: Vec<(&str, &str)> = vec![
@@ -598,7 +599,8 @@ fn deploy_dxvk_metal32_dlls(appid: u32, game_dir: &PathBuf) -> Result<(), Box<dy
                 let _ = std::fs::copy(&path, bin.join("steam_api.dll"));
             }
 
-            let steam_dir = home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+            let steam_dir =
+                home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
             for dll in &["steamclient.dll", "steamclient64.dll"] {
                 let src = steam_dir.join(dll);
                 if src.exists() {
@@ -670,7 +672,11 @@ fn find_bundled_file(archive_name: &str, filename: &str) -> Option<PathBuf> {
 
     let archive_path = archive_path.or_else(|| {
         let dev = PathBuf::from(format!("app/bundles/{}", archive_name));
-        if dev.exists() { Some(dev) } else { None }
+        if dev.exists() {
+            Some(dev)
+        } else {
+            None
+        }
     });
 
     if let Some(archive) = archive_path {
