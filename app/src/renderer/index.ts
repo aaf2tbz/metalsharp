@@ -247,7 +247,10 @@ class App {
   private async startUpdateFlow() {
     const ready = await getAPI().updaterEnsureReady();
     if (!ready) {
-      this.toast("Updater not available — python3 not found. Install Xcode CLI tools or check your installation.", "error");
+      this.toast(
+        "Updater not available — python3 not found. Install Xcode CLI tools or check your installation.",
+        "error",
+      );
       return;
     }
 
