@@ -543,11 +543,7 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
     Ok(())
 }
 
-fn prepare_goldberg_game(
-    game_dir: &PathBuf,
-    home: &PathBuf,
-    appid: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
     let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
     let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
     let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
@@ -559,11 +555,19 @@ fn prepare_goldberg_game(
     let deploy_dir = match appid {
         620 => {
             let bin = game_dir.join("bin");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         265930 => {
             let bin = game_dir.join("Binaries").join("Win32");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         _ => game_dir.clone(),
     };
@@ -615,10 +619,8 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     let _ = std::fs::create_dir_all(&tmpdir);
 
     let gbe_fork_url = "https://api.github.com/repos/Detanup01/gbe_fork/releases/latest";
-    let output = std::process::Command::new("curl")
-        .args(["-sL", gbe_fork_url])
-        .stdout(std::process::Stdio::piped())
-        .output()?;
+    let output =
+        std::process::Command::new("curl").args(["-sL", gbe_fork_url]).stdout(std::process::Stdio::piped()).output()?;
 
     let json_str = String::from_utf8_lossy(&output.stdout);
     let mut download_url: Option<String> = None;
@@ -660,16 +662,9 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     let extract_dir = tmpdir.join("extracted");
     let _ = std::fs::create_dir_all(&extract_dir);
 
-    let has_7z = std::process::Command::new("which")
-        .arg("7z")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let has_bsdtar = std::process::Command::new("which")
-        .arg("bsdtar")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let has_7z = std::process::Command::new("which").arg("7z").output().map(|o| o.status.success()).unwrap_or(false);
+    let has_bsdtar =
+        std::process::Command::new("which").arg("bsdtar").output().map(|o| o.status.success()).unwrap_or(false);
 
     if has_7z {
         let _ = std::process::Command::new("7z")
@@ -780,11 +775,19 @@ pub fn deploy_goldberg_for_launch(
     let deploy_dir = match appid {
         620 => {
             let bin = game_dir.join("bin");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         265930 => {
             let bin = game_dir.join("Binaries").join("Win32");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         _ => game_dir.clone(),
     };
