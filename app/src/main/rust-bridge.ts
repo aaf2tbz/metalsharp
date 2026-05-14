@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "child_process";
+import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
-import * as fs from "fs";
 
 function getShellPath(): string {
   const home = process.env.HOME || "";
