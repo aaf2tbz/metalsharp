@@ -587,6 +587,8 @@ fn launch_dxvk_metal32(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
+    let _ = crate::setup::deploy_goldberg_for_launch(&home, game_dir, appid);
+
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
 
@@ -632,7 +634,7 @@ fn launch_dxvk_metal32(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result
         .current_dir(&work_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINEDLLOVERRIDES", "d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("WINEDLLOVERRIDES", "d3d9=n,b;steamclient,steamclient64=d;gameoverlayrenderer,gameoverlayrenderer64=d")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_wine)
         .env("VK_ICD_FILENAMES", &moltenvk_icd_str)
         .env("DXVK_STATE_CACHE_PATH", format!("{}/", shader_cache_base.to_string_lossy()))
@@ -784,6 +786,7 @@ pub fn run_game_setup_script(appid: u32) -> Result<(), Box<dyn std::error::Error
         312520 => "setup-rainworld-deps.sh",
         535520 => "setup-nidhogg2-deps.sh",
         945360 => "setup-amongus-deps.sh",
+        620 | 265930 => "setup-goldberg-deps.sh",
         _ => return Ok(()),
     };
 

@@ -47,13 +47,13 @@ These games have been tested and confirmed running on MetalSharp.
 ### Portal 2
 - **AppID:** 620
 - **Engine:** DxvkMetal32 (D3D9 → Vulkan → Metal via DXVK + MoltenVK)
-- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `bin/` dir. MoltenVK bundled in wine runtime. VK_ICD_FILENAMES set to bundled ICD. Per-appid state cache at `~/.metalsharp/shader-cache/dxvk-metal32/620/`.
+- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `bin/` dir. Goldberg Steam emulator deployed to `bin/` — replaces `steam_api.dll` (x86) and `bin/win64/steam_api64.dll` (x64) for offline/LAN play without Steam DRM. MoltenVK bundled in wine runtime. VK_ICD_FILENAMES set to bundled ICD. Per-appid state cache at `~/.metalsharp/shader-cache/dxvk-metal32/620/`. Steam client/overlay disabled via WINEDLLOVERRIDES.
 - **Recommended Settings:** Low/Medium settings, V-Sync ON
 
 ### Goat Simulator
 - **AppID:** 265930
 - **Engine:** DxvkMetal32 (D3D9 → Vulkan → Metal via DXVK + MoltenVK)
-- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `Binaries/Win32/`. Working dir set to `Binaries/Win32/`. Same MoltenVK setup as Portal 2.
+- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `Binaries/Win32/`. Goldberg Steam emulator deployed to `Binaries/Win32/` — replaces `steam_api.dll` for offline/LAN play. Working dir set to `Binaries/Win32/`. Same MoltenVK setup as Portal 2. Steam client/overlay disabled via WINEDLLOVERRIDES.
 - **Recommended Settings:** Low settings, V-Sync ON
 
 ### Nidhogg 2
@@ -123,6 +123,16 @@ Environment variables set for DxmtMetal games:
 - `DXMT_SHADER_CACHE_PATH` — per-appid cache dir under `~/.metalsharp/shader-cache/dxmt-metal/<appid>/`
 - `DXMT_CONFIG_FILE` — points to `dxmt.conf`
 - `DXMT_METALFX_SPATIAL_SWAPCHAIN=1` — enables MetalFX spatial upscaling
+
+## Goldberg Steam Emulator
+
+Used by DxvkMetal32 games (Portal 2, Goat Simulator) to bypass Steam DRM for offline/LAN play.
+
+- **Source:** `Detanup01/gbe_fork` (GitHub releases), fallback to official `Mr_Goldberg/goldberg_emulator` (GitLab CI)
+- **Cache:** `~/.metalsharp/runtime/goldberg/{x86,x64}/` — downloaded once, reused for all games
+- **Deployment per game:** `steam_api.dll` (x86) and `steam_api64.dll` (x64) placed in the game's binary directory, originals backed up as `.orig`
+- **Settings:** `steam_settings/force_steam_appid.txt` written with the game's appid
+- **Triggered by:** `prepare_game()` during first-time setup, and `launch_dxvk_metal32()` on every launch (auto-deploys if missing)
 
 ## DXVK Configuration
 
