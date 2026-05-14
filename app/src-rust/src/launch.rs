@@ -210,9 +210,19 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
         },
         Engine::DxvkMetal32 => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
-            let exe = resolve_game_exe_fallback(dir);
-            let pid = launch_dxvk_metal32(appid, &exe, dir)?;
-            Ok((pid, "dxvk_metal32"))
+            let _ = deploy_dxvk_metal32_dlls(appid, dir);
+            let moltenvk_icd = find_moltenvk_icd();
+            let shader_cache =
+                home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
+            let _ = std::fs::create_dir_all(&shader_cache);
+            let shader_cache_path = format!("{}/", shader_cache.to_string_lossy());
+            let env: Vec<(&str, &str)> = vec![
+                ("WINEDLLOVERRIDES", "d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                ("VK_ICD_FILENAMES", &moltenvk_icd),
+                ("DXVK_STATE_CACHE_PATH", &shader_cache_path),
+            ];
+            let pid = launch_via_steam_with_env(appid, &env)?;
+            Ok((pid, "dxvk_metal32_steam"))
         },
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -559,68 +569,56 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
     Ok(child.id())
 }
 
-fn launch_dxvk_metal32(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+fn find_moltenvk_icd() -> String {
+    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    let primary = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+    if primary.exists() {
+        return primary.to_string_lossy().to_string();
+    }
+    ms_root.join("etc").join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json").to_string_lossy().to_string()
+}
+
+fn deploy_dxvk_metal32_dlls(appid: u32, game_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
-
-    if !wine.exists() {
-        return Err("MetalSharp Wine not found — run setup first".into());
-    }
-
-    let prefix = home.join(".metalsharp").join("prefix-steam");
-    let prefix_str = prefix.to_string_lossy().to_string();
-
     let dxvk_i386 = ms_root.join("lib").join("dxvk").join("i386-windows");
     let game = game_dir.as_path();
 
-    let (exe_name, work_dir, d3d9_target) = match appid {
+    if !dxvk_i386.join("d3d9.dll").exists() {
+        return Err("DXVK i386 not found — run setup first".into());
+    }
+
+    match appid {
         620 => {
-            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("bin").join("d3d9.dll"));
-            (String::from("portal2.exe"), game_dir.clone(), game.join("bin"))
+            let bin = game.join("bin");
+            let _ = std::fs::create_dir_all(&bin);
+            std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"))
+                .map_err(|e| format!("failed to copy d3d9.dll to Portal 2 bin/: {}", e))?;
+
+            if let Some(path) = find_bundled_file("portal2-deps.tar.zst", "portal2_steam_api.dll") {
+                let _ = std::fs::copy(&path, bin.join("steam_api.dll"));
+            }
+
+            let steam_dir =
+                home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+            for dll in &["steamclient.dll", "steamclient64.dll"] {
+                let src = steam_dir.join(dll);
+                if src.exists() {
+                    let _ = std::fs::copy(&src, bin.join(dll));
+                }
+            }
         },
         265930 => {
             let bin = game.join("Binaries").join("Win32");
+            let _ = std::fs::create_dir_all(&bin);
             let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"));
-            (String::from("GoatGame-Win32-Shipping.exe"), bin.clone(), bin)
         },
         _ => {
             let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("d3d9.dll"));
-            let exe = std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string();
-            (exe, game_dir.clone(), game.join("."))
         },
-    };
+    }
 
-    let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
-    let _ = std::fs::create_dir_all(&shader_cache_base);
-
-    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
-    let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
-    let moltenvk_icd_str = if moltenvk_icd.exists() {
-        moltenvk_icd.to_string_lossy().to_string()
-    } else {
-        ms_root
-            .join("etc")
-            .join("etc")
-            .join("vulkan")
-            .join("icd.d")
-            .join("MoltenVK_icd.json")
-            .to_string_lossy()
-            .to_string()
-    };
-
-    let child = Command::new(&wine)
-        .current_dir(&work_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("WINEDLLOVERRIDES", "d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_wine)
-        .env("VK_ICD_FILENAMES", &moltenvk_icd_str)
-        .env("DXVK_STATE_CACHE_PATH", format!("{}/", shader_cache_base.to_string_lossy()))
-        .arg(&exe_name)
-        .spawn()?;
-
-    Ok(child.id())
+    Ok(())
 }
 
 fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
@@ -648,6 +646,67 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
         .spawn()?;
 
     Ok(child.id())
+}
+
+fn find_bundled_file(archive_name: &str, filename: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let cache_dir = home.join(".metalsharp").join("cache").join("bundles");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join(filename);
+
+    if cached.exists() {
+        return Some(cached);
+    }
+
+    let archive_path = if let Ok(exe) = std::env::current_exe() {
+        let resources = exe.parent()?.parent()?.join("Resources");
+        let bundled = resources.join("bundles").join(archive_name);
+        if bundled.exists() {
+            Some(bundled)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let archive_path = archive_path.or_else(|| {
+        let dev = PathBuf::from(format!("app/bundles/{}", archive_name));
+        if dev.exists() {
+            Some(dev)
+        } else {
+            None
+        }
+    });
+
+    if let Some(archive) = archive_path {
+        let output = Command::new("tar")
+            .args(["--zstd", "-xf", &archive.to_string_lossy(), "-C", &cache_dir.to_string_lossy(), filename])
+            .output()
+            .ok()?;
+        if output.status.success() && cached.exists() {
+            return Some(cached);
+        }
+    }
+
+    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", archive_name);
+    let download = Command::new("curl")
+        .args(["-sL", "-o", &cache_dir.join(archive_name).to_string_lossy(), &url])
+        .output()
+        .ok()?;
+
+    if download.status.success() {
+        let local_archive = cache_dir.join(archive_name);
+        let extract = Command::new("tar")
+            .args(["--zstd", "-xf", &local_archive.to_string_lossy(), "-C", &cache_dir.to_string_lossy(), filename])
+            .output()
+            .ok()?;
+        if extract.status.success() && cached.exists() {
+            return Some(cached);
+        }
+    }
+
+    None
 }
 
 fn resolve_game_exe_fallback(game_dir: &PathBuf) -> String {

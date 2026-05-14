@@ -130,6 +130,10 @@
       {
         "from": "bundles/steamwebhelper-wrapper.c",
         "to": "bundles/steamwebhelper-wrapper.c"
+      },
+      {
+        "from": "bundles/portal2-deps.tar.zst",
+        "to": "bundles/portal2-deps.tar.zst"
       }
     ],
     "directories": {
