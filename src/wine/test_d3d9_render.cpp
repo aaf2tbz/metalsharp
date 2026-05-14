@@ -10,11 +10,17 @@ static const int W = 800, H = 600;
 
 static int init_d3d() {
     g_d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!g_d3d) { fprintf(stderr, "  FAIL: Direct3DCreate9\n"); return 0; }
+    if (!g_d3d) {
+        fprintf(stderr, "  FAIL: Direct3DCreate9\n");
+        return 0;
+    }
     fprintf(stderr, "  PASS: Direct3DCreate9\n");
 
     g_wnd = CreateWindowExA(0, "STATIC", "d3d9_render_test", 0, 0, 0, W, H, NULL, NULL, GetModuleHandle(NULL), NULL);
-    if (!g_wnd) { fprintf(stderr, "  FAIL: CreateWindow\n"); return 0; }
+    if (!g_wnd) {
+        fprintf(stderr, "  FAIL: CreateWindow\n");
+        return 0;
+    }
 
     D3DPRESENT_PARAMETERS pp = {};
     pp.Windowed = TRUE;
@@ -26,20 +32,29 @@ static int init_d3d() {
     pp.AutoDepthStencilFormat = D3DFMT_D24X8;
 
     HRESULT hr = g_d3d->CreateDevice(0, D3DDEVTYPE_HAL, g_wnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &g_dev);
-    if (FAILED(hr)) { fprintf(stderr, "  FAIL: CreateDevice (0x%08x)\n", hr); return 0; }
+    if (FAILED(hr)) {
+        fprintf(stderr, "  FAIL: CreateDevice (0x%08x)\n", hr);
+        return 0;
+    }
     fprintf(stderr, "  PASS: CreateDevice\n");
     return 1;
 }
 
 static void shutdown_d3d() {
-    if (g_dev) g_dev->Release();
-    if (g_d3d) g_d3d->Release();
-    if (g_wnd) DestroyWindow(g_wnd);
+    if (g_dev)
+        g_dev->Release();
+    if (g_d3d)
+        g_d3d->Release();
+    if (g_wnd)
+        DestroyWindow(g_wnd);
 }
 
 static int present_and_wait(const char* name) {
     HRESULT hr = g_dev->Present(NULL, NULL, NULL, NULL);
-    if (FAILED(hr)) { fprintf(stderr, "  FAIL: %s Present (0x%08x)\n", name, hr); return 0; }
+    if (FAILED(hr)) {
+        fprintf(stderr, "  FAIL: %s Present (0x%08x)\n", name, hr);
+        return 0;
+    }
     Sleep(2000);
     fprintf(stderr, "  PASS: %s\n", name);
     return 1;
@@ -59,7 +74,10 @@ struct VertexPCT {
 static IDirect3DVertexBuffer9* make_vb(const void* data, UINT size) {
     IDirect3DVertexBuffer9* vb = NULL;
     HRESULT hr = g_dev->CreateVertexBuffer(size, 0, 0, D3DPOOL_DEFAULT, &vb, NULL);
-    if (FAILED(hr)) { fprintf(stderr, "    FAIL: CreateVertexBuffer (0x%08x)\n", hr); return NULL; }
+    if (FAILED(hr)) {
+        fprintf(stderr, "    FAIL: CreateVertexBuffer (0x%08x)\n", hr);
+        return NULL;
+    }
     void* ptr = NULL;
     vb->Lock(0, 0, &ptr, 0);
     memcpy(ptr, data, size);
@@ -71,16 +89,17 @@ static int probe1_triangle_no_bg() {
     fprintf(stderr, "\n--- Probe 1: Colored triangle, no background ---\n");
 
     VertexPC tri[] = {
-        { 0.0f,  0.5f, 0.5f, 0x00ff0000 },
-        { 0.5f, -0.5f, 0.5f, 0x0000ff00 },
-        {-0.5f, -0.5f, 0.5f, 0x000000ff },
+        {0.0f, 0.5f, 0.5f, 0x00ff0000},
+        {0.5f, -0.5f, 0.5f, 0x0000ff00},
+        {-0.5f, -0.5f, 0.5f, 0x000000ff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0);
     g_dev->BeginScene();
 
     IDirect3DVertexBuffer9* vb = make_vb(tri, sizeof(tri));
-    if (!vb) return 0;
+    if (!vb)
+        return 0;
 
     g_dev->SetStreamSource(0, vb, 0, sizeof(VertexPC));
     g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
@@ -95,16 +114,17 @@ static int probe2_triangle_with_bg() {
     fprintf(stderr, "\n--- Probe 2: Colored triangle, blue background ---\n");
 
     VertexPC tri[] = {
-        { 0.0f,  0.5f, 0.5f, 0x00ffff00 },
-        { 0.5f, -0.5f, 0.5f, 0x00ff00ff },
-        {-0.5f, -0.5f, 0.5f, 0x0000ffff },
+        {0.0f, 0.5f, 0.5f, 0x00ffff00},
+        {0.5f, -0.5f, 0.5f, 0x00ff00ff},
+        {-0.5f, -0.5f, 0.5f, 0x0000ffff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0xff404080, 1.0f, 0);
     g_dev->BeginScene();
 
     IDirect3DVertexBuffer9* vb = make_vb(tri, sizeof(tri));
-    if (!vb) return 0;
+    if (!vb)
+        return 0;
 
     g_dev->SetStreamSource(0, vb, 0, sizeof(VertexPC));
     g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
@@ -119,13 +139,9 @@ static int probe3_depth_test() {
     fprintf(stderr, "\n--- Probe 3: Two triangles at different depths ---\n");
 
     VertexPC tris[] = {
-        { -0.8f,  0.8f, 0.2f, 0x00ff0000 },
-        {  0.0f, -0.8f, 0.2f, 0x00ff0000 },
-        { -0.8f, -0.8f, 0.2f, 0x00ff0000 },
+        {-0.8f, 0.8f, 0.2f, 0x00ff0000}, {0.0f, -0.8f, 0.2f, 0x00ff0000}, {-0.8f, -0.8f, 0.2f, 0x00ff0000},
 
-        { -0.2f,  0.8f, 0.8f, 0x0000ff00 },
-        {  0.8f, -0.8f, 0.8f, 0x0000ff00 },
-        {  0.8f,  0.8f, 0.8f, 0x0000ff00 },
+        {-0.2f, 0.8f, 0.8f, 0x0000ff00}, {0.8f, -0.8f, 0.8f, 0x0000ff00}, {0.8f, 0.8f, 0.8f, 0x0000ff00},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff1a1a2e, 1.0f, 0);
@@ -135,7 +151,8 @@ static int probe3_depth_test() {
     g_dev->BeginScene();
 
     IDirect3DVertexBuffer9* vb = make_vb(tris, sizeof(tris));
-    if (!vb) return 0;
+    if (!vb)
+        return 0;
 
     g_dev->SetStreamSource(0, vb, 0, sizeof(VertexPC));
     g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
@@ -151,20 +168,17 @@ static int probe4_rgb_square() {
     fprintf(stderr, "\n--- Probe 4: Two RGB triangles forming a square ---\n");
 
     VertexPC sq[] = {
-        { -0.5f,  0.5f, 0.5f, 0x00ff0000 },
-        {  0.5f,  0.5f, 0.5f, 0x0000ff00 },
-        { -0.5f, -0.5f, 0.5f, 0x000000ff },
+        {-0.5f, 0.5f, 0.5f, 0x00ff0000},  {0.5f, 0.5f, 0.5f, 0x0000ff00}, {-0.5f, -0.5f, 0.5f, 0x000000ff},
 
-        { -0.5f, -0.5f, 0.5f, 0x000000ff },
-        {  0.5f,  0.5f, 0.5f, 0x0000ff00 },
-        {  0.5f, -0.5f, 0.5f, 0x00ffffff },
+        {-0.5f, -0.5f, 0.5f, 0x000000ff}, {0.5f, 0.5f, 0.5f, 0x0000ff00}, {0.5f, -0.5f, 0.5f, 0x00ffffff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0xff2d2d2d, 1.0f, 0);
     g_dev->BeginScene();
 
     IDirect3DVertexBuffer9* vb = make_vb(sq, sizeof(sq));
-    if (!vb) return 0;
+    if (!vb)
+        return 0;
 
     g_dev->SetStreamSource(0, vb, 0, sizeof(VertexPC));
     g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
@@ -180,29 +194,32 @@ static int probe5_textured_bg() {
 
     IDirect3DTexture9* tex = NULL;
     HRESULT hr = g_dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &tex, NULL);
-    if (FAILED(hr)) { fprintf(stderr, "    FAIL: CreateTexture (0x%08x)\n", hr); return 0; }
+    if (FAILED(hr)) {
+        fprintf(stderr, "    FAIL: CreateTexture (0x%08x)\n", hr);
+        return 0;
+    }
 
     D3DLOCKED_RECT lr;
     tex->LockRect(0, &lr, NULL, 0);
     DWORD* px = (DWORD*)lr.pBits;
-    px[0] = 0xff808080; px[1] = 0xff606060;
-    px[2] = 0xff606060; px[3] = 0xff808080;
+    px[0] = 0xff808080;
+    px[1] = 0xff606060;
+    px[2] = 0xff606060;
+    px[3] = 0xff808080;
     tex->UnlockRect(0);
 
     VertexPCT bg[] = {
-        { -1.0f,  1.0f, 0.9f, 0xffffffff, 0.0f, 0.0f },
-        {  1.0f,  1.0f, 0.9f, 0xffffffff, 1.0f, 0.0f },
-        { -1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 1.0f },
+        {-1.0f, 1.0f, 0.9f, 0xffffffff, 0.0f, 0.0f},  {1.0f, 1.0f, 0.9f, 0xffffffff, 1.0f, 0.0f},
+        {-1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 1.0f},
 
-        { -1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 1.0f },
-        {  1.0f,  1.0f, 0.9f, 0xffffffff, 1.0f, 0.0f },
-        {  1.0f, -1.0f, 0.9f, 0xffffffff, 1.0f, 1.0f },
+        {-1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 1.0f}, {1.0f, 1.0f, 0.9f, 0xffffffff, 1.0f, 0.0f},
+        {1.0f, -1.0f, 0.9f, 0xffffffff, 1.0f, 1.0f},
     };
 
     VertexPC tri[] = {
-        { 0.0f,  0.5f, 0.5f, 0x00ff4444 },
-        { 0.5f, -0.5f, 0.5f, 0x0044ff44 },
-        {-0.5f, -0.5f, 0.5f, 0x004444ff },
+        {0.0f, 0.5f, 0.5f, 0x00ff4444},
+        {0.5f, -0.5f, 0.5f, 0x0044ff44},
+        {-0.5f, -0.5f, 0.5f, 0x004444ff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000, 1.0f, 0);
@@ -233,19 +250,15 @@ static int probe6_alpha_blend() {
     fprintf(stderr, "\n--- Probe 6: Alpha-blended triangle over background ---\n");
 
     VertexPC bg[] = {
-        { -0.8f,  0.8f, 0.5f, 0x00ffffff },
-        {  0.8f,  0.8f, 0.5f, 0x00ffffff },
-        { -0.8f, -0.8f, 0.5f, 0x00333333 },
+        {-0.8f, 0.8f, 0.5f, 0x00ffffff},  {0.8f, 0.8f, 0.5f, 0x00ffffff}, {-0.8f, -0.8f, 0.5f, 0x00333333},
 
-        { -0.8f, -0.8f, 0.5f, 0x00333333 },
-        {  0.8f,  0.8f, 0.5f, 0x00ffffff },
-        {  0.8f, -0.8f, 0.5f, 0x00333333 },
+        {-0.8f, -0.8f, 0.5f, 0x00333333}, {0.8f, 0.8f, 0.5f, 0x00ffffff}, {0.8f, -0.8f, 0.5f, 0x00333333},
     };
 
     VertexPC tri[] = {
-        { 0.0f,  0.5f, 0.2f, 0x80ff0000 },
-        { 0.5f, -0.5f, 0.2f, 0x8000ff00 },
-        {-0.5f, -0.5f, 0.2f, 0x800000ff },
+        {0.0f, 0.5f, 0.2f, 0x80ff0000},
+        {0.5f, -0.5f, 0.2f, 0x8000ff00},
+        {-0.5f, -0.5f, 0.2f, 0x800000ff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000, 1.0f, 0);
@@ -282,33 +295,28 @@ static int probe7_full_scene() {
     D3DLOCKED_RECT lr;
     tex->LockRect(0, &lr, NULL, 0);
     DWORD* px = (DWORD*)lr.pBits;
-    for (int i = 0; i < 16; i++) px[i] = (i % 2 == i / 4 % 2) ? 0xff446688 : 0xff223344;
+    for (int i = 0; i < 16; i++)
+        px[i] = (i % 2 == i / 4 % 2) ? 0xff446688 : 0xff223344;
     tex->UnlockRect(0);
 
     VertexPCT bg[] = {
-        { -1.0f,  1.0f, 0.9f, 0xffffffff, 0.0f, 0.0f },
-        {  1.0f,  1.0f, 0.9f, 0xffffffff, 4.0f, 0.0f },
-        { -1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 4.0f },
+        {-1.0f, 1.0f, 0.9f, 0xffffffff, 0.0f, 0.0f},  {1.0f, 1.0f, 0.9f, 0xffffffff, 4.0f, 0.0f},
+        {-1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 4.0f},
 
-        { -1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 4.0f },
-        {  1.0f,  1.0f, 0.9f, 0xffffffff, 4.0f, 0.0f },
-        {  1.0f, -1.0f, 0.9f, 0xffffffff, 4.0f, 4.0f },
+        {-1.0f, -1.0f, 0.9f, 0xffffffff, 0.0f, 4.0f}, {1.0f, 1.0f, 0.9f, 0xffffffff, 4.0f, 0.0f},
+        {1.0f, -1.0f, 0.9f, 0xffffffff, 4.0f, 4.0f},
     };
 
     VertexPC depth_tris[] = {
-        { -0.7f,  0.7f, 0.3f, 0x00ff4444 },
-        {  0.0f, -0.7f, 0.3f, 0x00ff4444 },
-        { -0.7f, -0.7f, 0.3f, 0x00ff4444 },
+        {-0.7f, 0.7f, 0.3f, 0x00ff4444}, {0.0f, -0.7f, 0.3f, 0x00ff4444}, {-0.7f, -0.7f, 0.3f, 0x00ff4444},
 
-        { -0.1f,  0.7f, 0.6f, 0x0044ff44 },
-        {  0.6f, -0.7f, 0.6f, 0x0044ff44 },
-        {  0.6f,  0.7f, 0.6f, 0x0044ff44 },
+        {-0.1f, 0.7f, 0.6f, 0x0044ff44}, {0.6f, -0.7f, 0.6f, 0x0044ff44}, {0.6f, 0.7f, 0.6f, 0x0044ff44},
     };
 
     VertexPC alpha_tri[] = {
-        { 0.0f,  0.6f, 0.1f, 0xa0ffffff },
-        { 0.6f, -0.4f, 0.1f, 0xa0ff8800 },
-        {-0.6f, -0.4f, 0.1f, 0xa08800ff },
+        {0.0f, 0.6f, 0.1f, 0xa0ffffff},
+        {0.6f, -0.4f, 0.1f, 0xa0ff8800},
+        {-0.6f, -0.4f, 0.1f, 0xa08800ff},
     };
 
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff0a0a0a, 1.0f, 0);
@@ -360,13 +368,20 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR cmd, int show) {
 
     int passed = 0, total = 7;
 
-    if (probe1_triangle_no_bg()) passed++;
-    if (probe2_triangle_with_bg()) passed++;
-    if (probe3_depth_test()) passed++;
-    if (probe4_rgb_square()) passed++;
-    if (probe5_textured_bg()) passed++;
-    if (probe6_alpha_blend()) passed++;
-    if (probe7_full_scene()) passed++;
+    if (probe1_triangle_no_bg())
+        passed++;
+    if (probe2_triangle_with_bg())
+        passed++;
+    if (probe3_depth_test())
+        passed++;
+    if (probe4_rgb_square())
+        passed++;
+    if (probe5_textured_bg())
+        passed++;
+    if (probe6_alpha_blend())
+        passed++;
+    if (probe7_full_scene())
+        passed++;
 
     fprintf(stderr, "\n========================================\n");
     fprintf(stderr, "  Results: %d / %d probes passed\n", passed, total);
