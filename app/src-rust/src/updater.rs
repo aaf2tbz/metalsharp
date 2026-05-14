@@ -121,11 +121,7 @@ fn clean_version(tag: &str) -> String {
     let parts: Vec<&str> = v.split('.').collect();
     parts
         .iter()
-        .map(|p| {
-            p.chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-        })
+        .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
         .join(".")
@@ -212,12 +208,7 @@ fn run_download() {
         app_log(&format!("Using cached DMG: {}", dmg_path.display()));
     }
 
-    write_update_progress(
-        "downloaded",
-        80,
-        &format!("Download complete — ready to install v{}", latest_version),
-        None,
-    );
+    write_update_progress("downloaded", 80, &format!("Download complete — ready to install v{}", latest_version), None);
 }
 
 fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
@@ -270,11 +261,8 @@ pub fn get_downloaded_dmg_path() -> Option<String> {
     let update_info = check_for_update();
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str())?;
     let home = dirs::home_dir()?;
-    let dmg_path = home
-        .join(".metalsharp")
-        .join("cache")
-        .join("updates")
-        .join(format!("MetalSharp-{}.dmg", latest_version));
+    let dmg_path =
+        home.join(".metalsharp").join("cache").join("updates").join(format!("MetalSharp-{}.dmg", latest_version));
 
     if dmg_path.exists() {
         Some(dmg_path.to_string_lossy().to_string())
@@ -287,9 +275,7 @@ fn app_log(msg: &str) {
     let home = dirs::home_dir().unwrap_or_default();
     let log_dir = home.join(".metalsharp").join("logs");
     let _ = fs::create_dir_all(&log_dir);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
     let h = (secs / 3600) % 24;
     let m = (secs / 60) % 60;
