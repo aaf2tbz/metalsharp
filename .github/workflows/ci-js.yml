@@ -6,14 +6,18 @@ on:
     paths:
       - 'app/src/**'
       - 'app/package.json'
+      - 'app/package-lock.json'
       - 'app/tsconfig.json'
+      - 'app/biome.json'
       - '.github/workflows/ci-js.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/src/**'
       - 'app/package.json'
+      - 'app/package-lock.json'
       - 'app/tsconfig.json'
+      - 'app/biome.json'
       - '.github/workflows/ci-js.yml'
 
 jobs:
