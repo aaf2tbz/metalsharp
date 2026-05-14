@@ -338,9 +338,8 @@ class App {
       return;
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
-    const { remote } = require("electron");
-    remote?.app?.quit();
+    await new Promise((r) => setTimeout(r, 3000));
+    getAPI().quitApp();
   }
 
   private async checkForInstallResult() {
