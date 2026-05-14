@@ -1,0 +1,119 @@
+name: Metal CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/metal/**'
+      - 'src/d3d/**'
+      - 'src/dxgi/**'
+      - 'src/audio/**'
+      - 'src/input/**'
+      - 'src/loader/**'
+      - 'src/runtime/**'
+      - 'src/perf/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ci-metal.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/metal/**'
+      - 'src/d3d/**'
+      - 'src/dxgi/**'
+      - 'src/audio/**'
+      - 'src/input/**'
+      - 'src/loader/**'
+      - 'src/runtime/**'
+      - 'src/perf/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ci-metal.yml'
+
+jobs:
+  metal:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel $(sysctl -n hw.ncpu)
+
+      - name: Metal adapter check
+        run: |
+          echo "::group::Metal Device Validation"
+          ./build/test_metal_device
+          echo "::endgroup::"
+
+      - name: Shader translation tests
+        run: |
+          echo "::group::DXBC Parser"
+          ./build/test_dxbc
+          echo "::endgroup::"
+          echo "::group::Format Translation"
+          ./build/test_format_translation
+          echo "::endgroup::"
+          echo "::group::Argument Buffers"
+          ./build/test_phase17
+          echo "::endgroup::"
+
+      - name: D3D11 Metal tests
+        run: |
+          echo "::group::D3D11 Device"
+          ./build/test_d3d11_device
+          echo "::endgroup::"
+          echo "::group::Deferred Context"
+          ./build/test_deferred_context
+          echo "::endgroup::"
+
+      - name: D3D12 Metal tests
+        run: |
+          echo "::group::D3D12 Device"
+          ./build/test_d3d12
+          echo "::endgroup::"
+          echo "::group::Phase 18"
+          ./build/test_phase18
+          echo "::endgroup::"
+          echo "::group::Phase 19"
+          ./build/test_phase19
+          echo "::endgroup::"
+
+      - name: Audio & Input backend tests
+        run: |
+          echo "::group::XAudio2"
+          ./build/test_audio
+          echo "::endgroup::"
+          echo "::group::XInput"
+          ./build/test_input
+          echo "::endgroup::"
+
+      - name: Runtime tests
+        run: |
+          echo "::group::Runtime"
+          ./build/test_runtime
+          echo "::endgroup::"
+          echo "::group::Phase 20"
+          ./build/test_phase20
+          echo "::endgroup::"
+          echo "::group::Phase 21"
+          ./build/test_phase21
+          echo "::endgroup::"
+          echo "::group::Phase 22"
+          ./build/test_phase22
+          echo "::endgroup::"
+          echo "::group::Phase 23"
+          ./build/test_phase23
+          echo "::endgroup::"
+          echo "::group::Phase 24"
+          ./build/test_phase24
+          echo "::endgroup::"
+
+      - name: Full ctest suite
+        run: cd build && ctest --output-on-failure
