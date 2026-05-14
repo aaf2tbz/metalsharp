@@ -18,6 +18,7 @@ enum Engine {
     DxmtMetal12,
     Wined3d32,
     DxvkMetal32,
+    D3d9Metal,
     MetalsharpWine,
     SteamBare,
     SteamMetalfx,
@@ -37,6 +38,7 @@ pub fn engine_description_for_appid(appid: u32) -> &'static str {
         Engine::DxmtMetal12 => "DXMT D3D12 → Metal — native Metal translation",
         Engine::Wined3d32 => "WineD3D (32-bit) — CPU fallback renderer",
         Engine::DxvkMetal32 => "DXVK D3D9 → MoltenVK → Metal — 32-bit Vulkan translation",
+        Engine::D3d9Metal => "D3D9 → Metal — native Metal translation (32-bit)",
         Engine::MetalsharpWine => "MetalSharp Wine — bare Wine",
         Engine::SteamBare => "Steam Native — macOS native launch",
         Engine::SteamMetalfx => "D3DMetal + MetalFX — spatial upscaling",
@@ -52,6 +54,7 @@ fn engine_method(engine: Engine) -> &'static str {
         Engine::DxmtMetal12 => "dxmt_metal12",
         Engine::Wined3d32 => "wined3d_32",
         Engine::DxvkMetal32 => "dxvk_metal32",
+        Engine::D3d9Metal => "d3d9_metal",
         Engine::MetalsharpWine => "metalsharp_wine",
         Engine::SteamBare => "steam",
         Engine::SteamMetalfx => "steam_metalfx",
@@ -63,7 +66,8 @@ fn get_engine_for_appid(appid: u32) -> Engine {
     match appid {
         105600 => Engine::FnaArm64,
         504230 => Engine::SteamD3DMetalPerf,
-        265930 | 620 => Engine::DxvkMetal32,
+        265930 => Engine::D3d9Metal,
+        620 => Engine::D3d9Metal,
         312520 | 375520 | 848450 => Engine::DxmtMetal,
         535520 | 391540 => Engine::Wined3d32,
 
@@ -213,6 +217,12 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
             let _ = deploy_dxvk_metal32_dlls(appid, dir);
             let pid = launch_via_steam(appid)?;
             Ok((pid, "dxvk_metal32"))
+        },
+        Engine::D3d9Metal => {
+            let dir = game_dir.as_ref().unwrap_or(&local_dir);
+            let exe = resolve_game_exe_fallback(dir);
+            let pid = launch_d3d9_metal(appid, &exe, dir)?;
+            Ok((pid, "d3d9_metal"))
         },
         Engine::MetalsharpWine => {
             let dir = game_dir.as_ref().unwrap_or(&local_dir);
@@ -553,6 +563,60 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
             "DYLD_FALLBACK_LIBRARY_PATH",
             ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
         )
+        .arg(&exe_name)
+        .spawn()?;
+
+    Ok(child.id())
+}
+
+fn launch_d3d9_metal(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = ms_root.join("bin").join("metalsharp-wine");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    let exe_name = match appid {
+        620 => String::from("portal2.exe"),
+        265930 => String::from("GoatGame-Win32-Shipping.exe"),
+        _ => std::path::Path::new(exe_path).file_name().unwrap_or_default().to_string_lossy().to_string(),
+    };
+
+    let d3d9_dll_src = ms_root.join("lib").join("d3d9-metal").join("i386-windows").join("d3d9.dll");
+    if d3d9_dll_src.exists() {
+        match appid {
+            265930 => {
+                let bin = game_dir.join("Binaries").join("Win32");
+                let _ = std::fs::create_dir_all(&bin);
+                let _ = std::fs::copy(&d3d9_dll_src, bin.join("d3d9.dll"));
+            },
+            620 => {
+                let bin = game_dir.join("bin");
+                let _ = std::fs::create_dir_all(&bin);
+                let _ = std::fs::copy(&d3d9_dll_src, bin.join("d3d9.dll"));
+                let _ = std::fs::copy(&d3d9_dll_src, game_dir.join("d3d9.dll"));
+            },
+            _ => {
+                let _ = std::fs::copy(&d3d9_dll_src, game_dir.join("d3d9.dll"));
+            },
+        }
+    }
+
+    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_d3d9 = ms_root.join("lib").join("d3d9-metal").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_path = format!("{}:{}", dyld_wine, dyld_d3d9);
+
+    let child = Command::new(&wine)
+        .current_dir(game_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "d3d9=b,n;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
         .arg(&exe_name)
         .spawn()?;
 

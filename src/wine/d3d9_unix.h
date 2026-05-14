@@ -1,14 +1,12 @@
 /// @file d3d9_unix.h
 /// @brief Shared header for Wine D3D9 PE/Unix interface.
 ///
-/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D9 shim to
-/// communicate with the Unix-side Metal backend. Covers D3D9 device creation, swap chain, and resource management
-/// calls.
+/// Defines the unixlib dispatch table, shared structures, and callback types used by the PE-side D3D9 shim to communicate with the Unix-side Metal backend. Covers D3D9 device creation, swap chain, and resource management calls.
 #ifndef METALSHARP_D3D9_UNIX_H
 #define METALSHARP_D3D9_UNIX_H
 
-#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +47,7 @@ enum d3d9_func_id {
     D3D9_FUNC_CREATE_SURFACE,
     D3D9_FUNC_MAP,
     D3D9_FUNC_UNMAP,
+    D3D9_FUNC_UPLOAD_BUFFER,
     D3D9_FUNC_COUNT
 };
 
@@ -95,7 +94,7 @@ struct d3d9_create_surface_params {
 };
 
 struct d3d9_create_shader_params {
-    const void* bytecode;
+    uint64_t bytecode;
     uint32_t bytecode_size;
     uint64_t out_handle;
 };
@@ -110,7 +109,7 @@ struct d3d9_vertex_element {
 };
 
 struct d3d9_create_vertex_decl_params {
-    const struct d3d9_vertex_element* elements;
+    uint64_t elements;
     uint32_t num_elements;
     uint64_t out_handle;
 };
@@ -194,9 +193,15 @@ struct d3d9_reset_params {
 
 struct d3d9_map_params {
     uint64_t resource_handle;
-    void* out_data;
+    uint64_t out_data;
     uint32_t out_row_pitch;
     uint32_t out_depth_pitch;
+};
+
+struct d3d9_upload_params {
+    uint64_t resource_handle;
+    uint64_t data;
+    uint32_t size;
 };
 
 #ifdef __cplusplus
