@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.22.0 — 2026-05-14
+
+Native engine build, DXVK MoltenVK for 32-bit D3D9, engine routing overhaul.
+
+### Added
+
+- **Native C++ engine** — full D3D11, D3D12, DXGI, XAudio2, and XInput implementations built via CMake (`metalsharp_core`, `metalsharp_d3d11`, `metalsharp_d3d12`, `metalsharp_dxgi`, `metalsharp_audio`, `metalsharp_input` libraries). Loads PE binaries directly via native loader without Wine
+- **`DxvkMetal32` engine** — DXVK d3d9.dll injected into game directory, routed through MoltenVK Vulkan→Metal. Per-game binary path handling (Portal 2: `bin/portal2.exe`, Goat Simulator: `Binaries/Win32/GoatGame-Win32-Shipping.exe`)
+- **`MetalsharpWine` engine** — bare Wine launch with no DLL overrides. Used for legacy D3D9 games detected by `d3dx9_43.dll` marker
+- **Native launcher** — `metalsharp_launcher` and `metalsharp_native` executables in `tools/launcher/` for running games without the Electron app
+- **Bundled MoltenVK ICD** — Vulkan ICD manifest at `etc/vulkan/icd.d/MoltenVK_icd.json` in wine runtime, DxvkMetal32 uses this instead of Homebrew path
+- **DXVK state cache** — `DXVK_STATE_CACHE_PATH` set per-appid under `~/.metalsharp/shader-cache/dxvk-metal32/<appid>/`
+- **Shader cache per-appid** — DXMT shader cache path changed from `~/.metalsharp/shader-cache/<exename>/` to `~/.metalsharp/shader-cache/dxmt-metal/<appid>/`
+- **HTTP backend uses tiny_http** — replaced Actix with tiny_http for lighter dependency footprint
+- **Updater module** — `updater.rs` for self-update DMG download and install
+- **Test suite expanded** — 20+ test files covering D3D11, D3D12, DXBC parsing, Metal device, audio, input, tiled resources, and phases 2–24
+
+### Changed
+
+- **Celeste (appid 504230) → SteamD3DMetalPerf** — was FnaX86. Steam Celeste uses Steam DRM, launches via GPTK D3DMetal
+- **Portal 2 (appid 620) → DxvkMetal32** — was SteamD3DMetalPerf. Now uses DXVK d3d9→MoltenVK→Metal, no GPTK needed
+- **Goat Simulator (appid 265930) → DxvkMetal32** — was SteamD3DMetalPerf. 32-bit UE3 D3D9 via DXVK
+- **Undertale (appid 375520) → DxmtMetal** — mapped alongside Rain World and Subnautica BZ
+- **Among Us (appid 945360), Valheim (appid 892970) → SteamBare** — Steam DRM, no extra env vars
+- **Wined3d32** now sets `steamclient64,steamclient=d` in WINEDLLOVERRIDES and `SteamOverlayDisabled=1`
+- **DxmtMetal WINEDLLOVERRIDES** includes `gameoverlayrenderer,gameoverlayrenderer64=d`
+- **Steam launch wait** — increased to 60s with 2s polling interval for `launch_via_steam_with_env()`
+- **DXVK i386-windows path** — DXVK 32-bit DLLs located at `lib/dxvk/i386-windows/` in wine runtime (not `lib/wine/i386-windows/`)
+
+### Removed
+
+- **`Engine::FnaX86` active routing** — Celeste no longer uses FnaX86 path (FnaX86 enum variant still exists but no game maps to it)
+- **Actix dependency** — replaced by tiny_http
+
 ## v0.18.0 — 2026-05-12
 
 Performance optimizations, GPTK D3DMetal integration for Steam DRM games, 7 games confirmed working.
