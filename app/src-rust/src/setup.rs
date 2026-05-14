@@ -292,7 +292,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         2050650 | 3164500 => "dxmt_metal12",
         535520 => "wined3d_32",
         945360 | 1139900 => "metalsharp_wine",
-        620 => "wine_devel",
+        620 | 265930 => "dxvk_metal32",
         _ => {
             if is_dotnet {
                 "xna_fna"
@@ -313,7 +313,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         2050650 | 3164500 => prepare_dxmt_metal12(&game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
-        620 => prepare_portal_2(&game_dir, &home)?,
+        620 | 265930 => prepare_goldberg_game(&game_dir, &home, appid)?,
         _ => {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
@@ -543,16 +543,55 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
     Ok(())
 }
 
-fn prepare_portal_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-    let prefix = home.join(".metalsharp").join("prefix-620");
-    let prefix_str = prefix.to_string_lossy().to_string();
+fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
+    let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
 
-    if !prefix.exists() {
-        std::fs::create_dir_all(&prefix)?;
-        if wine.exists() {
-            let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", &prefix_str)
+    if !goldberg_x86.exists() || !goldberg_x64.exists() {
+        ensure_goldberg_downloaded(home)?;
+    }
+
+    let deploy_dir = match appid {
+        620 => {
+            let bin = game_dir.join("bin");
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
+        },
+        265930 => {
+            let bin = game_dir.join("Binaries").join("Win32");
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
+        },
+        _ => game_dir.clone(),
+    };
+
+    deploy_goldberg_to_dir(&deploy_dir, &goldberg_dir, appid)?;
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    if !prefix.join("drive_c/windows/system32").exists() {
+        let _ = std::fs::create_dir_all(&prefix);
+        if ms_wine.exists() {
+            let _ = std::process::Command::new(&ms_wine)
+                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .env(
+                    "DYLD_FALLBACK_LIBRARY_PATH",
+                    home.join(".metalsharp")
+                        .join("runtime")
+                        .join("wine")
+                        .join("lib")
+                        .join("wine")
+                        .join("x86_64-unix")
+                        .to_string_lossy()
+                        .to_string(),
+                )
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
@@ -561,37 +600,213 @@ fn prepare_portal_2(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn st
         }
     }
 
+    Ok(())
+}
+
+fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
+    let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
 
-    let bin_dir = game_dir.join("bin");
-    if bin_dir.exists() {
-        let x86_src = goldberg_dir.join("x86").join("steam_api.dll");
-        let x86_dst = bin_dir.join("steam_api.dll");
-        if x86_src.exists() && !x86_dst.with_extension("orig").exists() {
-            if x86_dst.exists() {
-                let _ = std::fs::rename(&x86_dst, bin_dir.join("steam_api.dll.orig"));
-            }
-            let _ = std::fs::copy(&x86_src, &x86_dst);
-        }
+    if goldberg_x86.exists() && goldberg_x64.exists() {
+        return Ok(());
+    }
 
-        let win64_dir = bin_dir.join("win64");
-        if win64_dir.exists() {
-            let x64_src = goldberg_dir.join("x64").join("steam_api64.dll");
-            let x64_dst = win64_dir.join("steam_api64.dll");
-            if x64_src.exists() && !x64_dst.with_extension("orig").exists() {
-                if x64_dst.exists() {
-                    let _ = std::fs::rename(&x64_dst, win64_dir.join("steam_api64.dll.orig"));
+    std::fs::create_dir_all(goldberg_dir.join("x86"))?;
+    std::fs::create_dir_all(goldberg_dir.join("x64"))?;
+
+    let tmpdir = home.join(".metalsharp").join("tmp").join("goldberg-download");
+    let _ = std::fs::create_dir_all(&tmpdir);
+
+    let gbe_fork_url = "https://api.github.com/repos/Detanup01/gbe_fork/releases/latest";
+    let output =
+        std::process::Command::new("curl").args(["-sL", gbe_fork_url]).stdout(std::process::Stdio::piped()).output()?;
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let mut download_url: Option<String> = None;
+
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Some(assets) = parsed.get("assets").and_then(|a| a.as_array()) {
+            for asset in assets {
+                if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
+                    if name.contains("win-release") && name.ends_with(".7z") {
+                        if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
+                            download_url = Some(url.to_string());
+                            break;
+                        }
+                    }
                 }
-                let _ = std::fs::copy(&x64_src, &x64_dst);
             }
         }
     }
 
-    let steam_settings = game_dir.join("bin").join("steam_settings");
-    if !steam_settings.exists() {
-        let _ = std::fs::create_dir_all(&steam_settings);
+    let url = match download_url {
+        Some(u) => u,
+        None => "https://gitlab.com/Mr_Goldberg/goldberg_emulator/-/jobs/artifacts/master/download?job=win_release"
+            .to_string(),
+    };
+
+    let archive_path = tmpdir.join("goldberg.7z");
+    let dl_status = std::process::Command::new("curl")
+        .args(["-sL", "-o"])
+        .arg(&archive_path)
+        .arg(&url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+
+    if !dl_status.success() {
+        return Err("failed to download Goldberg emulator".into());
     }
-    let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), "620");
+
+    let extract_dir = tmpdir.join("extracted");
+    let _ = std::fs::create_dir_all(&extract_dir);
+
+    let has_7z = std::process::Command::new("which").arg("7z").output().map(|o| o.status.success()).unwrap_or(false);
+    let has_bsdtar =
+        std::process::Command::new("which").arg("bsdtar").output().map(|o| o.status.success()).unwrap_or(false);
+
+    if has_7z {
+        let _ = std::process::Command::new("7z")
+            .args(["x", "-y"])
+            .arg(format!("-o{}", extract_dir.to_string_lossy()))
+            .arg(&archive_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    } else if has_bsdtar {
+        let _ = std::process::Command::new("bsdtar")
+            .arg("-xf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&extract_dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    } else {
+        return Err("need 7z or bsdtar to extract Goldberg archive".into());
+    }
+
+    let x86_dll = find_file_recursive(&extract_dir, "steam_api.dll");
+    let x64_dll = find_file_recursive(&extract_dir, "steam_api64.dll");
+
+    match (x86_dll, x64_dll) {
+        (Some(x86), Some(x64)) => {
+            std::fs::copy(&x86, &goldberg_x86)?;
+            std::fs::copy(&x64, &goldberg_x64)?;
+        },
+        _ => return Err("Goldberg DLLs not found in downloaded archive".into()),
+    }
+
+    let _ = std::fs::remove_dir_all(&tmpdir);
+
+    Ok(())
+}
+
+fn deploy_goldberg_to_dir(
+    target_dir: &PathBuf,
+    goldberg_dir: &PathBuf,
+    appid: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
+    let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
+
+    if !goldberg_x86.exists() || !goldberg_x64.exists() {
+        return Err("Goldberg DLLs not found — download failed or was skipped".into());
+    }
+
+    std::fs::create_dir_all(target_dir)?;
+
+    let x86_dst = target_dir.join("steam_api.dll");
+    let (x64_dst, settings_dir) = {
+        let win64 = target_dir.join("win64");
+        if win64.exists() {
+            (win64.join("steam_api64.dll"), target_dir.join("steam_settings"))
+        } else {
+            (target_dir.join("steam_api64.dll"), target_dir.join("steam_settings"))
+        }
+    };
+
+    if x86_dst.exists() && !target_dir.join("steam_api.dll.orig").exists() {
+        let _ = std::fs::rename(&x86_dst, target_dir.join("steam_api.dll.orig"));
+    }
+    if x64_dst.exists() && !x64_dst.with_extension("orig").exists() {
+        let _ = std::fs::rename(&x64_dst, x64_dst.with_extension("orig"));
+    }
+
+    std::fs::copy(&goldberg_x86, &x86_dst)?;
+    std::fs::copy(&goldberg_x64, &x64_dst)?;
+
+    std::fs::create_dir_all(&settings_dir)?;
+    std::fs::write(settings_dir.join("force_steam_appid.txt"), appid.to_string())?;
+
+    Ok(())
+}
+
+fn find_file_recursive(dir: &PathBuf, name: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = find_file_recursive(&path, name) {
+                    return Some(found);
+                }
+            } else if path.file_name().map(|n| n == name).unwrap_or(false) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+pub fn deploy_goldberg_for_launch(
+    home: &PathBuf,
+    game_dir: &PathBuf,
+    appid: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
+    let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
+
+    if !goldberg_x86.exists() || !goldberg_x64.exists() {
+        ensure_goldberg_downloaded(home)?;
+    }
+
+    let deploy_dir = match appid {
+        620 => {
+            let bin = game_dir.join("bin");
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
+        },
+        265930 => {
+            let bin = game_dir.join("Binaries").join("Win32");
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
+        },
+        _ => game_dir.clone(),
+    };
+
+    let settings_dir = deploy_dir.join("steam_settings");
+    let appid_ok = settings_dir.join("force_steam_appid.txt").exists();
+
+    let x86_dst = deploy_dir.join("steam_api.dll");
+    let x64_dst = if deploy_dir.join("win64").exists() {
+        deploy_dir.join("win64").join("steam_api64.dll")
+    } else {
+        deploy_dir.join("steam_api64.dll")
+    };
+
+    let dlls_ok = x86_dst.exists() && x64_dst.exists();
+
+    if !dlls_ok || !appid_ok {
+        deploy_goldberg_to_dir(&deploy_dir, &goldberg_dir, appid)?;
+    }
 
     Ok(())
 }
