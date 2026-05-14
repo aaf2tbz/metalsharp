@@ -49,70 +49,70 @@ jobs:
       - name: Metal adapter check
         run: |
           echo "::group::Metal Device Validation"
-          ./build/test_metal_device
+          ./build/tests/test_metal_device
           echo "::endgroup::"
 
       - name: Shader translation tests
         run: |
           echo "::group::DXBC Parser"
-          ./build/test_dxbc
+          ./build/tests/test_dxbc
           echo "::endgroup::"
           echo "::group::Format Translation"
-          ./build/test_format_translation
+          ./build/tests/test_format_translation
           echo "::endgroup::"
           echo "::group::Argument Buffers"
-          ./build/test_phase17
+          ./build/tests/test_phase17
           echo "::endgroup::"
 
       - name: D3D11 Metal tests
         run: |
           echo "::group::D3D11 Device"
-          ./build/test_d3d11_device
+          ./build/tests/test_d3d11_device
           echo "::endgroup::"
           echo "::group::Deferred Context"
-          ./build/test_deferred_context
+          ./build/tests/test_deferred_context
           echo "::endgroup::"
 
       - name: D3D12 Metal tests
         run: |
           echo "::group::D3D12 Device"
-          ./build/test_d3d12
+          ./build/tests/test_d3d12
           echo "::endgroup::"
           echo "::group::Phase 18"
-          ./build/test_phase18
+          ./build/tests/test_phase18
           echo "::endgroup::"
           echo "::group::Phase 19"
-          ./build/test_phase19
+          ./build/tests/test_phase19
           echo "::endgroup::"
 
       - name: Audio & Input backend tests
         run: |
           echo "::group::XAudio2"
-          ./build/test_audio
+          ./build/tests/test_audio
           echo "::endgroup::"
           echo "::group::XInput"
-          ./build/test_input
+          ./build/tests/test_input
           echo "::endgroup::"
 
       - name: Runtime tests
         run: |
           echo "::group::Runtime"
-          ./build/test_runtime
+          ./build/tests/test_runtime
           echo "::endgroup::"
           echo "::group::Phase 20"
-          ./build/test_phase20
+          ./build/tests/test_phase20
           echo "::endgroup::"
           echo "::group::Phase 21"
-          ./build/test_phase21
+          ./build/tests/test_phase21
           echo "::endgroup::"
           echo "::group::Phase 22"
-          ./build/test_phase22
+          ./build/tests/test_phase22
           echo "::endgroup::"
           echo "::group::Phase 23"
-          ./build/test_phase23
+          ./build/tests/test_phase23
           echo "::endgroup::"
           echo "::group::Phase 24"
-          ./build/test_phase24
+          ./build/tests/test_phase24
           echo "::endgroup::"
 
       - name: Full ctest suite
