@@ -1,10 +1,12 @@
 # MetalSharp
 
-Play Windows Steam games on macOS. One app, one click.
+**Play Windows Steam games on macOS. No GPTK, no CrossOver, no commercial Wine fork.**
 
-MetalSharp bundles a custom Wine 11.5 runtime with DXMT (D3D→Metal translation), DXVK + MoltenVK, and FNA into a single Electron app with a setup wizard and one-click launch. It picks the right backend for each game automatically.
+MetalSharp is a standalone D3D→Metal translation layer that runs Windows games natively through Apple's Metal API. It bundles a custom Wine 11.5 runtime with DXMT (D3D→Metal), DXVK + MoltenVK, Goldberg Steam emulator, and FNA into a single app — one-click install, one-click play.
 
-## How games run
+> **This is MetalSharp Beta 4.** The core 64-bit Metal-native path is stable. 32-bit Vulkan translation is still under development.
+
+## How it works
 
 | Backend | How it works | Used for |
 |---------|-------------|----------|
@@ -36,14 +38,12 @@ See [docs/GAMES-SUPPORTED.md](docs/GAMES-SUPPORTED.md) for full details includin
 
 Tested on Apple M4, macOS 26.
 
-## What's new in v0.22.0
+## What's new in Beta 4
 
-- **DXVK MoltenVK for 32-bit D3D9 games** — new `DxvkMetal32` engine: injects DXVK d3d9.dll into game dir, routes through MoltenVK Vulkan→Metal. Portal 2 and Goat Simulator now use this path instead of GPTK
-- **MetalsharpWine engine** — bare Wine launch for games that need minimal interference (D3D9 games with `d3dx9_43.dll` marker)
-- **Celeste moved to SteamD3DMetalPerf** — Steam DRM + GPTK D3DMetal, no longer FnaX86
-- **Native engine** — C++ D3D11/D3D12/DXGI/XAudio2/XInput implementations built via CMake, loads PE binaries directly without Wine (for native launcher)
-- **Shader cache per-appid** — DXMT and DXVK shader caches organized by appid under `~/.metalsharp/shader-cache/<engine>/<appid>/`
-- **MoltenVK ICD bundled** — Vulkan ICD manifest shipped in wine runtime at `etc/vulkan/icd.d/`
+- **Goldberg Steam emulator** — automatic download and deployment for supported DxvkMetal32 titles. No Steam login required for Portal 2, Goat Simulator, and future 32-bit games.
+- **Auto-updater fixed** — the in-app updater now correctly closes MetalSharp and runs the install script with an admin password prompt. Previously it silently failed.
+- **Metal CI** — every push to Metal/D3D/DXGI code now runs adapter validation, shader translation tests, and the full test suite on Apple Silicon runners.
+- **mscompatdb 591 rules** — auto-detects and routes games to the correct rendering engine.
 
 ## Install
 
@@ -63,6 +63,12 @@ First launch walks through a setup wizard:
 2. In the Steam window, find the game and click Install
 3. MetalSharp detects the new installation via filesystem watch
 4. Click **Play** — MetalSharp applies game-specific config and launches
+
+## What to expect
+
+The 64-bit Metal-native path (DXMT) is stable and tested across multiple titles. 32-bit Vulkan translation (DXVK + MoltenVK) is still under active development — some titles work, but compatibility is not yet at parity. MetalFX upscaling infrastructure is in place but not yet exposed in the UI.
+
+If you hit issues, open an issue on this repo with the game name, your Mac model, and the crash log from `~/.metalsharp/logs/`.
 
 ## Building from source
 
