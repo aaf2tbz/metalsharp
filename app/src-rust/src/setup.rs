@@ -669,7 +669,7 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     if has_7z {
         let _ = std::process::Command::new("7z")
             .args(["x", "-y"])
-            .arg(format!("-o{}", extract_dir.to_string_lossy().to_string()))
+            .arg(format!("-o{}", extract_dir.to_string_lossy()))
             .arg(&archive_path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
