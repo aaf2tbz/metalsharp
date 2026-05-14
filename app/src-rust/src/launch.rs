@@ -581,15 +581,25 @@ fn deploy_dxvk_metal32_dlls(appid: u32, game_dir: &PathBuf) -> Result<(), Box<dy
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let dxvk_i386 = ms_root.join("lib").join("dxvk").join("i386-windows");
-    let prefix = home.join(".metalsharp").join("prefix-steam");
     let game = game_dir.as_path();
+
+    if !dxvk_i386.join("d3d9.dll").exists() {
+        return Err("DXVK i386 not found — run setup first".into());
+    }
 
     match appid {
         620 => {
             let bin = game.join("bin");
-            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"));
-            let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
-            for dll in &["steam_api.dll", "steamclient.dll", "steamclient64.dll"] {
+            let _ = std::fs::create_dir_all(&bin);
+            std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"))
+                .map_err(|e| format!("failed to copy d3d9.dll to Portal 2 bin/: {}", e))?;
+
+            if let Some(path) = find_bundled_file("portal2-deps.tar.zst", "portal2_steam_api.dll") {
+                let _ = std::fs::copy(&path, bin.join("steam_api.dll"));
+            }
+
+            let steam_dir = home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+            for dll in &["steamclient.dll", "steamclient64.dll"] {
                 let src = steam_dir.join(dll);
                 if src.exists() {
                     let _ = std::fs::copy(&src, bin.join(dll));
@@ -634,6 +644,63 @@ fn launch_metalsharp_wine(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box
         .spawn()?;
 
     Ok(child.id())
+}
+
+fn find_bundled_file(archive_name: &str, filename: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let cache_dir = home.join(".metalsharp").join("cache").join("bundles");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join(filename);
+
+    if cached.exists() {
+        return Some(cached);
+    }
+
+    let archive_path = if let Ok(exe) = std::env::current_exe() {
+        let resources = exe.parent()?.parent()?.join("Resources");
+        let bundled = resources.join("bundles").join(archive_name);
+        if bundled.exists() {
+            Some(bundled)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let archive_path = archive_path.or_else(|| {
+        let dev = PathBuf::from(format!("app/bundles/{}", archive_name));
+        if dev.exists() { Some(dev) } else { None }
+    });
+
+    if let Some(archive) = archive_path {
+        let output = Command::new("tar")
+            .args(["--zstd", "-xf", &archive.to_string_lossy(), "-C", &cache_dir.to_string_lossy(), filename])
+            .output()
+            .ok()?;
+        if output.status.success() && cached.exists() {
+            return Some(cached);
+        }
+    }
+
+    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", archive_name);
+    let download = Command::new("curl")
+        .args(["-sL", "-o", &cache_dir.join(archive_name).to_string_lossy(), &url])
+        .output()
+        .ok()?;
+
+    if download.status.success() {
+        let local_archive = cache_dir.join(archive_name);
+        let extract = Command::new("tar")
+            .args(["--zstd", "-xf", &local_archive.to_string_lossy(), "-C", &cache_dir.to_string_lossy(), filename])
+            .output()
+            .ok()?;
+        if extract.status.success() && cached.exists() {
+            return Some(cached);
+        }
+    }
+
+    None
 }
 
 fn resolve_game_exe_fallback(game_dir: &PathBuf) -> String {

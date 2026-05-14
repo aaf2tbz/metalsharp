@@ -28,7 +28,9 @@ app/src-rust/target/
 src/fna/FNA/
 src/fna/FNA3D/
 build-x86/
-app/bundles/*.tar.zst
+app/bundles/metalsharp_bundle*.tar.zst
+app/bundles/dxvk*.tar.zst
+app/bundles/mono*.tar.zst
 app/bundles/SteamSetup.exe
 
 # Code intelligence
