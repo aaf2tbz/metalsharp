@@ -80,11 +80,9 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/update/progress") => resp(200, updater::read_update_progress()),
-        (Method::Get, "/update/dmg-path") => {
-            match updater::get_downloaded_dmg_path() {
-                Some(p) => resp(200, json!({"ok": true, "path": p})),
-                None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
-            }
+        (Method::Get, "/update/dmg-path") => match updater::get_downloaded_dmg_path() {
+            Some(p) => resp(200, json!({"ok": true, "path": p})),
+            None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
         },
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
