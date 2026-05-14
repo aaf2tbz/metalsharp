@@ -576,8 +576,24 @@ fn launch_dxvk_metal32(appid: u32, exe_path: &str, game_dir: &PathBuf) -> Result
 
     let (exe_name, work_dir, d3d9_target) = match appid {
         620 => {
-            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("bin").join("d3d9.dll"));
-            (String::from("portal2.exe"), game_dir.clone(), game.join("bin"))
+            let bin = game.join("bin");
+            let _ = std::fs::copy(dxvk_i386.join("d3d9.dll"), bin.join("d3d9.dll"));
+
+            let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+            let steam_api_src = steam_dir.join("steam_api.dll");
+            let steamclient_src = steam_dir.join("steamclient.dll");
+            let steamclient64_src = steam_dir.join("steamclient64.dll");
+            if steam_api_src.exists() {
+                let _ = std::fs::copy(&steam_api_src, bin.join("steam_api.dll"));
+            }
+            if steamclient_src.exists() {
+                let _ = std::fs::copy(&steamclient_src, bin.join("steamclient.dll"));
+            }
+            if steamclient64_src.exists() {
+                let _ = std::fs::copy(&steamclient64_src, bin.join("steamclient64.dll"));
+            }
+
+            (String::from("portal2.exe"), game_dir.clone(), bin)
         },
         265930 => {
             let bin = game.join("Binaries").join("Win32");
