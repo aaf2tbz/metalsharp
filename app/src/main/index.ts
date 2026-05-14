@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { RustBridge } from "./rust-bridge";
+import { UpdaterBridge } from "./updater-bridge";
 
 let shellPath: string | undefined;
 
@@ -25,6 +26,7 @@ function ensureShellPath() {
 
 let mainWindow: BrowserWindow | null = null;
 let bridge: RustBridge;
+let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
 
 function getMetalsharpDir(): string {
@@ -113,6 +115,7 @@ function cleanup() {
 app.whenReady().then(async () => {
   ensureMetalsharpDirs();
   bridge = new RustBridge();
+  updaterBridge = new UpdaterBridge(bridge.getPort());
   await bridge.start();
 
   registerIpc();
@@ -304,5 +307,25 @@ function registerIpc() {
 
   ipcMain.handle("backend:is-alive", async () => {
     return bridge.isAlive();
+  });
+
+  ipcMain.handle("updater:ensure-ready", async () => {
+    return updaterBridge.ensureReady();
+  });
+
+  ipcMain.handle("updater:spawn-install", async (_e, dmgPath: string, backendPid: number, targetVersion: string) => {
+    return updaterBridge.spawnInstallUpdater(dmgPath, backendPid, targetVersion);
+  });
+
+  ipcMain.handle("updater:install-status", async () => {
+    return updaterBridge.readInstallStatus();
+  });
+
+  ipcMain.handle("updater:clear-status", async () => {
+    updaterBridge.clearInstallStatus();
+  });
+
+  ipcMain.handle("backend:get-pid", async () => {
+    return bridge.getBackendPid();
   });
 }

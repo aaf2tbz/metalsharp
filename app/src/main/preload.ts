@@ -11,4 +11,10 @@ contextBridge.exposeInMainWorld("metalsharp", {
   openInFinder: (path: string) => ipcRenderer.invoke("app:open-in-finder", path),
   restartBackend: () => ipcRenderer.invoke("backend:restart"),
   isBackendAlive: () => ipcRenderer.invoke("backend:is-alive"),
+  updaterEnsureReady: () => ipcRenderer.invoke("updater:ensure-ready"),
+  updaterSpawnInstall: (dmgPath: string, backendPid: number, targetVersion: string) =>
+    ipcRenderer.invoke("updater:spawn-install", dmgPath, backendPid, targetVersion),
+  updaterInstallStatus: () => ipcRenderer.invoke("updater:install-status"),
+  updaterClearStatus: () => ipcRenderer.invoke("updater:clear-status"),
+  backendGetPid: () => ipcRenderer.invoke("backend:get-pid"),
 });
