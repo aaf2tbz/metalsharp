@@ -330,9 +330,16 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
         },
         _ => {
             let known = [
-                "dxmt_metal", "dxmt_metal12", "wined3d_32", "dxvk_metal32",
-                "metalsharp_wine", "steam", "steam_metalfx", "steam_d3dmetal_perf",
-                "xna_fna_arm64", "xna_fna_x86",
+                "dxmt_metal",
+                "dxmt_metal12",
+                "wined3d_32",
+                "dxvk_metal32",
+                "metalsharp_wine",
+                "steam",
+                "steam_metalfx",
+                "steam_d3dmetal_perf",
+                "xna_fna_arm64",
+                "xna_fna_x86",
             ];
             if known.contains(&method) {
                 return launch_auto(appid);
@@ -561,7 +568,10 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", "dxgi,d3d11=b;gameoverlayrenderer,gameoverlayrenderer64=d;steamclient64,steamclient=d")
         .env("SteamOverlayDisabled", "1")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string())
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+        )
         .arg(&exe_name)
         .spawn()?;
 
