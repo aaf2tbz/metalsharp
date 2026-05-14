@@ -120,7 +120,7 @@ def mount_dmg(dmg_path):
     apple = (
         'do shell script "hdiutil attach -nobrowse -quiet '
         '\\"' + dmg_path + '\\""'
-        ' with administrator privileges'
+        " with administrator privileges"
     )
     r = run(["osascript", "-e", apple])
     if r.returncode == 0:
@@ -175,7 +175,13 @@ def admin_cp_r(src, dst):
     r = run(["cp", "-R", src, dst])
     if r.returncode == 0:
         return True
-    apple = 'do shell script "cp -R \\"' + src + '\\" \\"' + dst + '\\"" with administrator privileges'
+    apple = (
+        'do shell script "cp -R \\"'
+        + src
+        + '\\" \\"'
+        + dst
+        + '\\"" with administrator privileges'
+    )
     r = run(["osascript", "-e", apple])
     return r.returncode == 0
 
@@ -184,7 +190,9 @@ def wait_for_backend(timeout=45):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            req = urllib.request.Request("http://127.0.0.1:" + str(BACKEND_PORT) + "/status")
+            req = urllib.request.Request(
+                "http://127.0.0.1:" + str(BACKEND_PORT) + "/status"
+            )
             with urllib.request.urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read())
                 return data.get("version"), data.get("pid")
@@ -214,32 +222,66 @@ def main():
     write_status(sf, "starting", 0, "Starting update...", new_version=tv)
 
     # ── 1. Kill backend ──────────────────────────────────────────────
-    write_status(sf, "killing_backend", 5, "Stopping backend (PID {})...".format(bpid), new_version=tv)
+    write_status(
+        sf,
+        "killing_backend",
+        5,
+        "Stopping backend (PID {})...".format(bpid),
+        new_version=tv,
+    )
     if not kill_pid(bpid, timeout=10):
-        write_status(sf, "error", 5, "Failed to stop backend", error="backend_kill_failed", new_version=tv)
+        write_status(
+            sf,
+            "error",
+            5,
+            "Failed to stop backend",
+            error="backend_kill_failed",
+            new_version=tv,
+        )
         sys.exit(1)
     run(["pkill", "-x", "metalsharp-backend"])
     time.sleep(0.5)
     write_status(sf, "killed_backend", 10, "Backend stopped.", new_version=tv)
 
     # ── 2. Kill steam/wine/webhelper ─────────────────────────────────
-    write_status(sf, "killing_steam", 15, "Stopping Steam and Wine processes...", new_version=tv)
+    write_status(
+        sf, "killing_steam", 15, "Stopping Steam and Wine processes...", new_version=tv
+    )
     wine_patterns = [
-        "steam", "steam.exe", "steamwebhelper", "steamwebhelper.exe",
-        "wine", "wine64", "wineserver",
+        "steam",
+        "steam.exe",
+        "steamwebhelper",
+        "steamwebhelper.exe",
+        "wine",
+        "wine64",
+        "wineserver",
     ]
     kill_by_patterns(wine_patterns)
     verify_all_dead(wine_patterns, timeout=15)
-    write_status(sf, "killed_steam", 20, "Steam/Wine processes stopped.", new_version=tv)
+    write_status(
+        sf, "killed_steam", 20, "Steam/Wine processes stopped.", new_version=tv
+    )
 
     # ── 3. Verify DMG exists ─────────────────────────────────────────
     if not os.path.exists(dmg):
-        write_status(sf, "error", 20, "DMG not found: {}".format(dmg), error="dmg_not_found", new_version=tv)
+        write_status(
+            sf,
+            "error",
+            20,
+            "DMG not found: {}".format(dmg),
+            error="dmg_not_found",
+            new_version=tv,
+        )
         sys.exit(1)
 
     # ── 4. Kill MetalSharp app ───────────────────────────────────────
     write_status(sf, "closing_app", 25, "Closing MetalSharp...", new_version=tv)
-    for pat in ["MetalSharp", "MetalSharp Helper", "MetalSharp Helper (GPU)", "MetalSharp Helper (Renderer)"]:
+    for pat in [
+        "MetalSharp",
+        "MetalSharp Helper",
+        "MetalSharp Helper (GPU)",
+        "MetalSharp Helper (Renderer)",
+    ]:
         try:
             subprocess.run(["pkill", "-x", pat], capture_output=True, timeout=5)
         except Exception:
@@ -247,7 +289,9 @@ def main():
 
     deadline = time.time() + 15
     while time.time() < deadline:
-        r = subprocess.run(["pgrep", "-x", "MetalSharp"], capture_output=True, text=True)
+        r = subprocess.run(
+            ["pgrep", "-x", "MetalSharp"], capture_output=True, text=True
+        )
         if r.returncode != 0:
             break
         time.sleep(0.5)
@@ -264,7 +308,14 @@ def main():
     write_status(sf, "mounting", 35, "Mounting update disk image...", new_version=tv)
     mount_point = mount_dmg(dmg)
     if not mount_point:
-        write_status(sf, "error", 35, "Failed to mount DMG.", error="mount_failed", new_version=tv)
+        write_status(
+            sf,
+            "error",
+            35,
+            "Failed to mount DMG.",
+            error="mount_failed",
+            new_version=tv,
+        )
         sys.exit(1)
     write_status(sf, "mounted", 45, "Mounted at {}".format(mount_point), new_version=tv)
 
@@ -274,19 +325,42 @@ def main():
     app_source = find_app_in_mount(mount_point)
     if not app_source:
         run(["hdiutil", "detach", mount_point, "-quiet"])
-        write_status(sf, "error", 50, "MetalSharp.app not found in update.", error="app_not_found", new_version=tv)
+        write_status(
+            sf,
+            "error",
+            50,
+            "MetalSharp.app not found in update.",
+            error="app_not_found",
+            new_version=tv,
+        )
         sys.exit(1)
 
     if os.path.exists(APP_PATH):
         if not admin_rm_rf(APP_PATH):
             run(["hdiutil", "detach", mount_point, "-quiet"])
-            write_status(sf, "error", 55, "Failed to remove old app.", error="remove_failed", new_version=tv)
+            write_status(
+                sf,
+                "error",
+                55,
+                "Failed to remove old app.",
+                error="remove_failed",
+                new_version=tv,
+            )
             sys.exit(1)
 
-    write_status(sf, "installing", 60, "Copying new version to Applications...", new_version=tv)
+    write_status(
+        sf, "installing", 60, "Copying new version to Applications...", new_version=tv
+    )
     if not admin_cp_r(app_source, APP_PATH):
         run(["hdiutil", "detach", mount_point, "-quiet"])
-        write_status(sf, "error", 65, "Failed to copy new version.", error="copy_failed", new_version=tv)
+        write_status(
+            sf,
+            "error",
+            65,
+            "Failed to copy new version.",
+            error="copy_failed",
+            new_version=tv,
+        )
         sys.exit(1)
 
     write_status(sf, "installed", 80, "New version installed.", new_version=tv)
@@ -305,7 +379,13 @@ def main():
     version, new_pid = wait_for_backend(timeout=45)
 
     if version and version != tv:
-        write_status(sf, "deploying_backend", 92, "Backend version mismatch, redeploying...", new_version=tv)
+        write_status(
+            sf,
+            "deploying_backend",
+            92,
+            "Backend version mismatch, redeploying...",
+            new_version=tv,
+        )
         if new_pid:
             kill_pid(new_pid, timeout=10)
         time.sleep(1)
@@ -318,13 +398,17 @@ def main():
     # ── 10. Report result ────────────────────────────────────────────
     if version == tv:
         write_status(
-            sf, "complete", 100,
+            sf,
+            "complete",
+            100,
             "Successfully updated to v{}!".format(tv),
             new_version=tv,
         )
     else:
         write_status(
-            sf, "complete", 100,
+            sf,
+            "complete",
+            100,
             "Update installed. Backend: v{} (expected v{})".format(version or "?", tv),
             new_version=tv,
         )
