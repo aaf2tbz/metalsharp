@@ -328,4 +328,8 @@ function registerIpc() {
   ipcMain.handle("backend:get-pid", async () => {
     return bridge.getBackendPid();
   });
+
+  ipcMain.on("app:quit", () => {
+    app.quit();
+  });
 }

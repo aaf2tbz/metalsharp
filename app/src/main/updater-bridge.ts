@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "child_process";
+import { spawn } from "child_process";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
@@ -22,7 +22,6 @@ export class UpdaterBridge {
   private pythonPath: string | null = null;
   private scriptPath: string | null = null;
   private backendPort: number;
-  private proc: ChildProcess | null = null;
 
   constructor(port: number = 9274) {
     this.backendPort = port;
@@ -124,7 +123,7 @@ export class UpdaterBridge {
       "--python", this.pythonPath,
     ];
 
-    this.proc = spawn(this.pythonPath, args, {
+    const child = spawn(this.pythonPath, args, {
       detached: true,
       stdio: "ignore",
       env: {
@@ -140,10 +139,10 @@ export class UpdaterBridge {
       },
     });
 
-    this.proc.unref();
+    child.unref();
 
     console.log(
-      `Updater: spawned install updater (pid=${this.proc.pid}) for v${targetVersion}`,
+      `Updater: spawned install updater (pid=${child.pid}) for v${targetVersion}`,
     );
 
     return { ok: true };

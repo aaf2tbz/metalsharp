@@ -21,6 +21,11 @@ import sys
 import time
 import urllib.request
 
+try:
+    os.setsid()
+except OSError:
+    pass
+
 APP_PATH = "/Applications/MetalSharp.app"
 BACKEND_PORT = 9274
 

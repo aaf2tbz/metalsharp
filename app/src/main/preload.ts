@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld("metalsharp", {
   updaterInstallStatus: () => ipcRenderer.invoke("updater:install-status"),
   updaterClearStatus: () => ipcRenderer.invoke("updater:clear-status"),
   backendGetPid: () => ipcRenderer.invoke("backend:get-pid"),
+  quitApp: () => ipcRenderer.send("app:quit"),
 });
