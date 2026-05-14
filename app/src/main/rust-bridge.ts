@@ -31,6 +31,10 @@ export class RustBridge {
     this.base = `http://127.0.0.1:${this.port}`;
   }
 
+  getPort(): number {
+    return this.port;
+  }
+
   async start(): Promise<void> {
     const binPath = this.findBinary();
     if (!binPath) {
@@ -86,6 +90,28 @@ export class RustBridge {
       req.setTimeout(1500, () => {
         req.destroy();
         resolve(false);
+      });
+    });
+  }
+
+  async getBackendPid(): Promise<number | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.pid ?? null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
       });
     });
   }
@@ -163,28 +189,6 @@ export class RustBridge {
     } catch {}
 
     return false;
-  }
-
-  private async getBackendPid(): Promise<number | null> {
-    return new Promise((resolve) => {
-      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          try {
-            const data = JSON.parse(Buffer.concat(chunks).toString());
-            resolve(data.pid ?? null);
-          } catch {
-            resolve(null);
-          }
-        });
-      });
-      req.on("error", () => resolve(null));
-      req.setTimeout(1500, () => {
-        req.destroy();
-        resolve(null);
-      });
-    });
   }
 
   private async getProcessPath(pid: number): Promise<string | null> {
