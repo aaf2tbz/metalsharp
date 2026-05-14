@@ -65,7 +65,8 @@ fn get_engine_for_appid(appid: u32) -> Engine {
         504230 => Engine::SteamD3DMetalPerf,
         265930 | 620 => Engine::DxvkMetal32,
         312520 | 375520 | 848450 => Engine::DxmtMetal,
-        535520 | 391540 => Engine::Wined3d32,
+        535520 => Engine::Wined3d32,
+        391540 => Engine::SteamBare,
 
         2050650 | 1583230 => Engine::SteamD3DMetalPerf,
         3164500 => Engine::DxmtMetal,
@@ -327,7 +328,24 @@ pub fn launch_with_method(appid: u32, method: &str) -> Result<(u32, &'static str
             )?;
             Ok((pid, "native_metalfx_high"))
         },
-        _ => Err(format!("Unknown launch method: {}", method).into()),
+        _ => {
+            let known = [
+                "dxmt_metal",
+                "dxmt_metal12",
+                "wined3d_32",
+                "dxvk_metal32",
+                "metalsharp_wine",
+                "steam",
+                "steam_metalfx",
+                "steam_d3dmetal_perf",
+                "xna_fna_arm64",
+                "xna_fna_x86",
+            ];
+            if known.contains(&method) {
+                return launch_auto(appid);
+            }
+            Err(format!("Unknown launch method: {}", method).into())
+        },
     }
 }
 
@@ -548,7 +566,8 @@ fn launch_wined3d_32(exe_path: &str, game_dir: &PathBuf) -> Result<u32, Box<dyn 
         .current_dir(game_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINEDLLOVERRIDES", "dxgi,d3d11=b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("WINEDLLOVERRIDES", "dxgi,d3d11=b;gameoverlayrenderer,gameoverlayrenderer64=d;steamclient64,steamclient=d")
+        .env("SteamOverlayDisabled", "1")
         .env(
             "DYLD_FALLBACK_LIBRARY_PATH",
             ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
