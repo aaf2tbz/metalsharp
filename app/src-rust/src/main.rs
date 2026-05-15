@@ -299,6 +299,51 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
+        (Method::Get, "/mtsp/pipelines") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let pipeline_id = mtsp::rules::resolve_pipeline(appid);
+            let node = mtsp::engine::get_pipeline(pipeline_id);
+            let all_pipelines: Vec<serde_json::Value> = mtsp::engine::pipelines()
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "id": p.id,
+                        "name": p.name,
+                        "description": p.description,
+                        "backend": p.backend,
+                        "experimental": p.experimental,
+                        "requires_wine": p.requires_wine,
+                    })
+                })
+                .collect();
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "appid": appid,
+                    "recommended": node.id,
+                    "recommended_name": node.name,
+                    "pipelines": all_pipelines,
+                }),
+            )
+        },
+        (Method::Post, "/mtsp/prepare") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => match mtsp::launcher::prepare_pipeline(id as u32) {
+                    Ok(v) => resp(200, v),
+                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Post, "/launch") => {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
@@ -345,7 +390,14 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
                     let engine_desc = launch::engine_description_for_appid(id as u32);
                     app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
-                    match launch::launch_with_method(id as u32, launch_method) {
+                    let result = if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_legacy_method(launch_method) {
+                        crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline_id)
+                    } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
+                        crate::mtsp::launcher::launch_auto(id as u32)
+                    } else {
+                        launch::launch_with_method(id as u32, launch_method)
+                    };
+                    match result {
                         Ok((pid, game_type)) => {
                             app_log(&format!("[LAUNCHED] appid {} | pid {} | engine: {}", id, pid, game_type));
                             resp(
