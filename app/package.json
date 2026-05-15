@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.27.0",
+  "version": "0.27.2",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -130,6 +130,10 @@
       {
         "from": "bundles/steamwebhelper-wrapper.c",
         "to": "steamwebhelper-wrapper.c"
+      },
+      {
+        "from": "updater/update.sh",
+        "to": "updater/update.sh"
       },
       {
         "from": "updater/update.py",
