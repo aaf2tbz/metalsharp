@@ -293,8 +293,12 @@ function registerIpc() {
 
   ipcMain.handle("app:open-in-finder", async (_e, inputPath: string) => {
     const home = require("os").homedir();
+    const metalsharpDir = path.join(home, ".metalsharp");
     const resolved = inputPath.replace(/^~/, home);
     const fullPath = path.resolve(resolved);
+    if (!fullPath.startsWith(metalsharpDir) && !fullPath.startsWith(home)) {
+      return;
+    }
     if (!fs.existsSync(fullPath)) {
       fs.mkdirSync(fullPath, { recursive: true });
     }
@@ -331,5 +335,27 @@ function registerIpc() {
 
   ipcMain.on("app:quit", () => {
     app.quit();
+  });
+
+  ipcMain.handle("app:pick-exe-file", async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Select an EXE file",
+      properties: ["openFile"],
+      filters: [{ name: "Windows Executable", extensions: ["exe"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("app:pick-image-file", async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Select a cover image",
+      properties: ["openFile"],
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; font-src 'self'; img-src 'self' https://steamcdn-a.akamaihd.net https://cdn.akamai.steamstatic.com https://store.steampowered.com; style-src 'self' 'unsafe-inline'; script-src 'self';"
+      content="default-src 'self'; font-src 'self'; img-src 'self' https://steamcdn-a.akamaihd.net https://cdn.akamai.steamstatic.com https://store.steampowered.com data:; style-src 'self' 'unsafe-inline'; script-src 'self';"
     />
     <title>MetalSharp</title>
     <link rel="stylesheet" href="styles.css" />
@@ -19,7 +19,8 @@
           <span class="logo-text">MetalSharp</span>
         </div>
         <div class="nav-items">
-          <button type="button" class="nav-item active" data-view="library">Library</button>
+          <button type="button" class="nav-item active" data-view="library">Steam Library</button>
+          <button type="button" class="nav-item" data-view="sharp-library">Sharp Library</button>
           <button type="button" class="nav-item" data-view="logs">Logs</button>
           <button type="button" class="theme-toggle-sidebar" id="btn-theme" title="Toggle light mode">
             Light Mode
@@ -33,6 +34,7 @@
       </nav>
       <main class="content" id="main-content">
         <div class="view" id="view-library"></div>
+        <div class="view hidden" id="view-sharp-library"></div>
         <div class="view hidden" id="view-logs"></div>
         <div class="view hidden" id="view-settings"></div>
       </main>

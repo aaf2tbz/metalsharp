@@ -22,12 +22,18 @@ mod launch;
 mod mtsp;
 mod scan;
 mod setup;
+mod sharp_library;
 mod steam;
 mod updater;
 
 use serde_json::json;
 use std::sync::Arc;
 use tiny_http::{Header, Method, Response, Server};
+
+enum RouteResponse {
+    Json(u16, Vec<u8>),
+    Raw(u16, Vec<u8>, String),
+}
 
 fn main() {
     let port = std::env::var("METALSHARP_PORT").unwrap_or_else(|_| "9274".into());
@@ -49,16 +55,29 @@ fn main() {
             Err(_) => break,
         };
 
-        let (code, body) = route(&mut request);
-        let resp = Response::from_data(body)
-            .with_header(cors_header.clone())
-            .with_header(json_header.clone())
-            .with_status_code(code);
-        let _ = request.respond(resp);
+        let route_resp = route(&mut request);
+        match route_resp {
+            RouteResponse::Json(code, body) => {
+                let resp = Response::from_data(body)
+                    .with_header(cors_header.clone())
+                    .with_header(json_header.clone())
+                    .with_status_code(code);
+                let _ = request.respond(resp);
+            },
+            RouteResponse::Raw(code, data, mime) => {
+                let content_header =
+                    Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap_or_else(|_| json_header.clone());
+                let resp = Response::from_data(data)
+                    .with_header(cors_header.clone())
+                    .with_header(content_header)
+                    .with_status_code(code);
+                let _ = request.respond(resp);
+            },
+        }
     }
 }
 
-fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
+fn route(req: &mut tiny_http::Request) -> RouteResponse {
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or(&url);
@@ -348,6 +367,91 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Get, "/goldberg/status") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = crate::setup::resolve_game_dir(appid);
+            let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(d)).unwrap_or(false);
+            resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active}))
+        },
+        (Method::Post, "/goldberg/toggle") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            let enable = body.get("enable").and_then(|v| v.as_bool()).unwrap_or(true);
+            match appid {
+                Some(id) => {
+                    let aid = id as u32;
+                    let game_dir = crate::setup::resolve_game_dir(aid);
+                    match game_dir {
+                        Some(dir) if dir.exists() => {
+                            if enable {
+                                let home = dirs::home_dir().unwrap_or_default();
+                                mtsp::launcher::deploy_goldberg_internal(&home, &dir, aid);
+                                app_log(&format!("[GOLDBERG] enabled for appid {}", aid));
+                                resp(200, json!({"ok": true, "goldberg_active": true}))
+                            } else {
+                                mtsp::launcher::cleanup_goldberg(&dir);
+                                app_log(&format!("[GOLDBERG] disabled for appid {}", aid));
+                                resp(200, json!({"ok": true, "goldberg_active": false}))
+                            }
+                        },
+                        _ => resp(404, json!({"ok": false, "error": "game directory not found"})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
+        (Method::Post, "/sharp-library/install") => {
+            let body = read_body(req);
+            app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
+            resp(200, sharp_library::handle_install(&body))
+        },
+        (Method::Post, "/sharp-library/uninstall") => {
+            let body = read_body(req);
+            let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            app_log(&format!("[SHARP-LIB] uninstall: {}", id));
+            resp(200, sharp_library::handle_uninstall(&body))
+        },
+        (Method::Post, "/sharp-library/launch") => {
+            let body = read_body(req);
+            let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("wine_bare");
+            app_log(&format!("[SHARP-LIB] launch: {} engine: {}", id, engine));
+            let result = sharp_library::handle_launch(&body);
+            if result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                app_log(&format!(
+                    "[SHARP-LIB] launched pid {}",
+                    result.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)
+                ));
+            }
+            resp(200, result)
+        },
+        (Method::Post, "/sharp-library/set-cover") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_set_cover(&body))
+        },
+        (Method::Post, "/sharp-library/set-engine") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_set_engine(&body))
+        },
+        (Method::Get, "/sharp-library/cover") => {
+            let url_str = req.url().to_string();
+            let id = url_str.split("id=").nth(1).and_then(|v| v.split('&').next()).unwrap_or("");
+            match sharp_library::get_cover_path(id) {
+                Some(path) => {
+                    let data = std::fs::read(&path).unwrap_or_default();
+                    let mime = if path.to_string_lossy().ends_with(".png") { "image/png" } else { "image/jpeg" };
+                    resp_raw(200, data, mime)
+                },
+                None => resp(404, json!({"ok": false, "error": "cover not found"})),
+            }
+        },
         (Method::Post, "/launch") => {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
@@ -553,8 +657,12 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
     }
 }
 
-fn resp(code: u16, body: serde_json::Value) -> (u16, Vec<u8>) {
-    (code, body.to_string().into_bytes())
+fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
+    RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+fn resp_raw(code: u16, data: Vec<u8>, mime: &str) -> RouteResponse {
+    RouteResponse::Raw(code, data, mime.to_string())
 }
 
 fn app_log(msg: &str) {
