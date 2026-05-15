@@ -45,6 +45,7 @@ class App {
     { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
   > = new Map();
   private lastLaunchMethod: Map<number, string> = new Map();
+  private goldbergCache: Map<number, boolean> = new Map();
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -1027,6 +1028,18 @@ class App {
     for (const game of games) {
       grid.appendChild(this.createGameCard(game));
     }
+
+    const installedGames = games.filter((g) => g.installed);
+    for (const game of installedGames) {
+      if (!this.goldbergCache.has(game.appid)) {
+        this.fetchGoldbergStatus(game.appid).then((active) => {
+          const toggle = grid.querySelector(`.goldberg-toggle[data-appid="${game.appid}"]`) as HTMLInputElement;
+          if (toggle && toggle.checked !== active) {
+            toggle.checked = active;
+          }
+        });
+      }
+    }
   }
 
   private createGameCard(game: SteamGame): HTMLElement {
@@ -1060,7 +1073,6 @@ class App {
         <div class="game-card-actions-stack">
           <div class="game-card-actions-row">
             <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
-            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
           </div>
           <div class="game-card-active-pipeline">
             <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">${this.esc(pipelineName)}</span>
@@ -1070,11 +1082,16 @@ class App {
     } else if (isLaunching) {
       actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Preparing runtime and launching...</span></div>`;
     } else if (game.installed) {
+      const goldbergActive = this.goldbergCache.get(game.appid) ?? false;
       actionHtml = `
         <div class="game-card-actions-stack">
           <div class="game-card-actions-row">
             <button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>
-            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+            <label class="toggle-label" title="Toggle Goldberg Steam emulator for this game">
+              <input type="checkbox" class="goldberg-toggle" data-appid="${game.appid}" ${goldbergActive ? "checked" : ""} />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Goldberg</span>
+            </label>
           </div>
           <div class="game-card-actions-row subtle">
             <select class="launch-method-select" data-appid="${game.appid}" title="${this.esc(this.launchMethodHelp(game))}">
@@ -1123,7 +1140,14 @@ class App {
         else if (action === "stop") this.stopGame(game);
         else if (action === "install") this.installGame(game);
         else if (action === "uninstall") this.uninstallGame(game);
-        else if (action === "view-steam") this.viewOnSteam(game);
+      });
+    });
+
+    card.querySelectorAll(".goldberg-toggle").forEach((el) => {
+      el.addEventListener("change", async (e) => {
+        const checkbox = e.currentTarget as HTMLInputElement;
+        const enable = checkbox.checked;
+        await this.toggleGoldberg(game.appid, enable);
       });
     });
 
@@ -1278,6 +1302,35 @@ class App {
     }
     const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/view-game", { appid: game.appid });
     if (result?.ok) this.toast(`Opened ${game.name} in Steam`, "success");
+  }
+
+  private async fetchGoldbergStatus(appid: number): Promise<boolean> {
+    if (this.goldbergCache.has(appid)) return this.goldbergCache.get(appid)!;
+    try {
+      const result = await this.api<{ ok: boolean; goldberg_active: boolean }>(
+        "GET",
+        `/goldberg/status?appid=${appid}`,
+      );
+      if (result?.ok) {
+        this.goldbergCache.set(appid, result.goldberg_active);
+        return result.goldberg_active;
+      }
+    } catch {}
+    return false;
+  }
+
+  private async toggleGoldberg(appid: number, enable: boolean) {
+    const result = await this.api<{ ok: boolean; goldberg_active: boolean }>("POST", "/goldberg/toggle", {
+      appid,
+      enable,
+    });
+    if (result?.ok) {
+      this.goldbergCache.set(appid, result.goldberg_active);
+      this.toast(enable ? "Goldberg enabled" : "Goldberg disabled", "success");
+    } else {
+      this.toast("Failed to toggle Goldberg", "error");
+      this.renderLibrary();
+    }
   }
 
   private async stopGame(game: SteamGame) {
@@ -1486,10 +1539,10 @@ class App {
         <div class="settings-row">
           <div>
             <div class="settings-label">Automatic Crash Reporting</div>
-            <div class="settings-desc">Collect logs and diagnostics when games crash</div>
+            <div class="settings-desc">Crash dumps appear in the Logs view</div>
           </div>
           <div class="settings-value">
-            <button class="btn btn-secondary btn-sm" id="btn-view-crashes">View Reports</button>
+            <button class="btn btn-secondary btn-sm" id="btn-view-crashes">Open Logs</button>
           </div>
         </div>
       </div>
@@ -1634,16 +1687,8 @@ class App {
       if (badge) badge.textContent = "0 B";
     });
 
-    el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {
-      const reports = await this.api<CrashReportSummary[]>("GET", "/crash-reports");
-      if (reports && Array.isArray(reports) && reports.length > 0) {
-        const lines = reports
-          .map((r: CrashReportSummary) => `[${r.timestamp}] ${r.game} (exit ${r.exit_code})`)
-          .join("\n");
-        this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
-      } else {
-        this.toast("No crash reports found.");
-      }
+    el.querySelector("#btn-view-crashes")?.addEventListener("click", () => {
+      this.switchView("logs");
     });
 
     el.querySelector("#btn-install-update")?.addEventListener("click", () => {
@@ -1703,14 +1748,7 @@ class App {
           <button class="btn btn-secondary" id="btn-clear-logs-view">Clear View</button>
         </div>
       </div>
-      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;max-height:calc(100vh - 280px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
-      <div style="margin-top:12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <span style="color:var(--text-dim);font-size:11px;font-weight:600;">Crash Dumps</span>
-          <button class="btn btn-secondary" id="btn-open-crash-folder" style="font-size:10px;padding:3px 10px;" title="Open crash dump folder in Finder">&#128193; Open Folder</button>
-        </div>
-        <div id="crash-reports-summary"></div>
-      </div>
+      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;max-height:calc(100vh - 220px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
     `;
 
     el.querySelector("#btn-clear-logs-view")?.addEventListener("click", () => {
@@ -1721,10 +1759,6 @@ class App {
 
     el.querySelector("#btn-open-log-folder")?.addEventListener("click", async () => {
       await getAPI().openInFinder("~/.metalsharp/logs");
-    });
-
-    el.querySelector("#btn-open-crash-folder")?.addEventListener("click", async () => {
-      await getAPI().openInFinder("~/.metalsharp/games");
     });
 
     this.pollLogs();
@@ -1800,8 +1834,8 @@ class App {
   }
 
   private async loadCrashReports() {
-    const summary = document.getElementById("crash-reports-summary");
-    if (!summary) return;
+    const content = document.getElementById("log-content");
+    if (!content) return;
 
     const result = await this.api<{
       ok: boolean;
@@ -1809,18 +1843,26 @@ class App {
     }>("GET", "/logs/crash-reports");
 
     if (!result?.ok || !result.reports || result.reports.length === 0) {
-      summary.innerHTML = '<span style="color:var(--text-dim);font-size:11px;">No crash dumps found</span>';
       return;
     }
 
-    const reportLines = result.reports
-      .slice(0, 10)
-      .map(
-        (r) =>
-          `<div style="font-size:11px;color:var(--error);margin-top:2px;">${this.esc(r.name)} (${this.esc(r.source)}) — ${this.esc(r.timestamp)} <span style="color:var(--text-dim)">${this.formatBytes(r.size_bytes)}</span></div>`,
-      )
-      .join("");
-    summary.innerHTML = `<span class="badge badge-warn" style="font-size:10px;margin-bottom:4px;">${result.reports.length} crash dump(s)</span>${reportLines}`;
+    const separator = document.createElement("div");
+    separator.style.cssText = "border-top:1px solid var(--border);margin:12px 0;";
+
+    const header = document.createElement("div");
+    header.style.cssText = "color:var(--error);font-weight:600;font-size:11px;margin-bottom:4px;";
+    header.textContent = `${result.reports.length} crash dump(s) detected`;
+
+    content.appendChild(separator);
+    content.appendChild(header);
+
+    for (const r of result.reports.slice(0, 10)) {
+      const line = document.createElement("div");
+      line.className = "log-line log-event-warn";
+      line.style.fontSize = "11px";
+      line.textContent = `${r.name} (${r.source}) — ${r.timestamp} ${this.formatBytes(r.size_bytes)}`;
+      content.appendChild(line);
+    }
   }
 
   private showError(title: string, message: string) {

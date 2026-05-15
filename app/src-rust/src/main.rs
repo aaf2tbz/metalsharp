@@ -348,6 +348,45 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Get, "/goldberg/status") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = crate::setup::resolve_game_dir(appid);
+            let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(d)).unwrap_or(false);
+            resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active}))
+        },
+        (Method::Post, "/goldberg/toggle") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            let enable = body.get("enable").and_then(|v| v.as_bool()).unwrap_or(true);
+            match appid {
+                Some(id) => {
+                    let aid = id as u32;
+                    let game_dir = crate::setup::resolve_game_dir(aid);
+                    match game_dir {
+                        Some(dir) if dir.exists() => {
+                            if enable {
+                                let home = dirs::home_dir().unwrap_or_default();
+                                mtsp::launcher::deploy_goldberg_internal(&home, &dir, aid);
+                                app_log(&format!("[GOLDBERG] enabled for appid {}", aid));
+                                resp(200, json!({"ok": true, "goldberg_active": true}))
+                            } else {
+                                mtsp::launcher::cleanup_goldberg(&dir);
+                                app_log(&format!("[GOLDBERG] disabled for appid {}", aid));
+                                resp(200, json!({"ok": true, "goldberg_active": false}))
+                            }
+                        },
+                        _ => resp(404, json!({"ok": false, "error": "game directory not found"})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Post, "/launch") => {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");

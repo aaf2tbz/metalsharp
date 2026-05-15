@@ -21,7 +21,7 @@ pub fn launch_with_pipeline(
         PipelineId::Steam => launch_steam(appid),
         PipelineId::SteamMetalfx => launch_steam_metalfx(appid),
         PipelineId::SteamD3DMetalPerf => launch_steam_d3dmetal_perf(appid),
-        PipelineId::MonoGeneric => launch_fna_arm64(appid),
+        PipelineId::MonoGeneric => launch_mono_generic(appid),
     }
 }
 
@@ -279,15 +279,49 @@ fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::E
 
 fn launch_steam_metalfx(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let node = get_pipeline(PipelineId::SteamMetalfx);
-    let env: Vec<(&str, &str)> = node.env_vars.iter().map(|e| (e.key, e.value)).collect();
-    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+
+    let gptk_dyld = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix";
+    let gptk_exists = std::path::Path::new(gptk_dyld).exists();
+
+    let mut env: Vec<(String, String)> =
+        node.env_vars.iter().map(|e| (e.key.to_string(), e.value.to_string())).collect();
+
+    if gptk_exists {
+        let ms_dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+        let dyld = format!("{}:{}", gptk_dyld, ms_dyld);
+        env.push(("DYLD_FALLBACK_LIBRARY_PATH".to_string(), dyld));
+    }
+
+    let env_refs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let pid = crate::launch::launch_via_steam_with_env(appid, &env_refs)?;
     Ok((pid, "steam_metalfx"))
 }
 
 fn launch_steam_d3dmetal_perf(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let node = get_pipeline(PipelineId::SteamD3DMetalPerf);
-    let env: Vec<(&str, &str)> = node.env_vars.iter().map(|e| (e.key, e.value)).collect();
-    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+
+    let gptk_dll = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-windows";
+    let gptk_dyld = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix";
+    let gptk_exists = std::path::Path::new(gptk_dll).exists();
+
+    let mut env: Vec<(String, String)> =
+        node.env_vars.iter().map(|e| (e.key.to_string(), e.value.to_string())).collect();
+
+    if gptk_exists {
+        let ms_dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+        let dyld = format!("{}:{}", gptk_dyld, ms_dyld);
+        let wine_dll_path =
+            format!("{}:{}", gptk_dll, ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy());
+        env.push(("WINEDLLPATH".to_string(), wine_dll_path));
+        env.push(("DYLD_FALLBACK_LIBRARY_PATH".to_string(), dyld));
+    }
+
+    let env_refs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let pid = crate::launch::launch_via_steam_with_env(appid, &env_refs)?;
     Ok((pid, "steam_d3dmetal_perf"))
 }
 
@@ -302,10 +336,15 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         _ => resolve_game_exe(dir).into(),
     };
 
+    if !exe.exists() {
+        return Err(format!("game exe not found: {}", exe.display()).into());
+    }
+
+    let mono_bin = find_mono_binary()?;
     let mono_config = find_config("terraria-mono.config");
     let dyld = format!("{}:/opt/homebrew/lib", dir.to_string_lossy());
 
-    let mut cmd = Command::new("mono");
+    let mut cmd = Command::new(&mono_bin);
     cmd.current_dir(dir)
         .env("DYLD_LIBRARY_PATH", &dyld)
         .env("MONO_CONFIG", mono_config)
@@ -324,7 +363,7 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
     let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
 
     if !mono_x86.exists() {
-        return Err("x86 mono not found — run setup first".into());
+        return Err("x86 mono not found — install via setup or run: metalsharp setup --mono-x86".into());
     }
 
     let mono_config = find_config("celeste-x86-mono.config");
@@ -342,6 +381,10 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
         _ => resolve_game_exe(dir).into(),
     };
 
+    if !exe.exists() {
+        return Err(format!("game exe not found: {}", exe.display()).into());
+    }
+
     let child = Command::new("arch")
         .args(["-x86_64", &mono_x86.to_string_lossy()])
         .current_dir(dir)
@@ -354,6 +397,48 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
         .spawn()?;
 
     Ok((child.id(), "xna_fna_x86"))
+}
+
+fn launch_mono_generic(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let dir = if game_dir.exists() { &game_dir } else { &local_dir };
+
+    let exe = resolve_game_exe(dir);
+    let exe_path = std::path::Path::new(&exe);
+    if !exe_path.exists() {
+        return Err(format!("game exe not found: {}", exe).into());
+    }
+
+    let mono_bin = find_mono_binary()?;
+    let mono_config = find_config("terraria-mono.config");
+    let dyld = format!("{}:/opt/homebrew/lib", dir.to_string_lossy());
+
+    let mut cmd = Command::new(&mono_bin);
+    cmd.current_dir(dir)
+        .env("DYLD_LIBRARY_PATH", &dyld)
+        .env("MONO_CONFIG", mono_config)
+        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
+        .arg(&exe);
+
+    let child = cmd.spawn()?;
+    Ok((child.id(), "mono_generic"))
+}
+
+fn find_mono_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/mono"),
+        PathBuf::from("/usr/local/bin/mono"),
+        home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono"),
+    ];
+    for c in candidates {
+        if c.exists() {
+            return Ok(c);
+        }
+    }
+    Err("Mono not found — install with: brew install mono".into())
 }
 
 fn resolve_d3d9_exe(appid: u32, game_dir: &PathBuf) -> (String, PathBuf) {
@@ -430,6 +515,10 @@ fn find_dll_deploy<'a>(deploys: &'a [DllDeploy], filename: &str) -> Option<&'a D
 }
 
 fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
+    deploy_goldberg_internal(home, game_dir, appid);
+}
+
+pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
     let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
     if !goldberg_dir.exists() {
         return;
@@ -472,4 +561,60 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
         let _ = std::fs::create_dir_all(&steam_settings);
     }
     let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), appid.to_string());
+}
+
+pub fn cleanup_goldberg(game_dir: &PathBuf) {
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win32"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+
+        let x86_orig = target.join("steam_api.dll.orig");
+        let x86_goldberg = target.join("steam_api.dll");
+        if x86_orig.exists() && x86_goldberg.exists() {
+            let _ = std::fs::rename(&x86_orig, &x86_goldberg);
+        }
+
+        let x64_orig = target.join("steam_api64.dll.orig");
+        let x64_goldberg = target.join("steam_api64.dll");
+        if x64_orig.exists() && x64_goldberg.exists() {
+            let _ = std::fs::rename(&x64_orig, &x64_goldberg);
+        }
+    }
+
+    let steam_settings = game_dir.join("steam_settings");
+    if steam_settings.exists() {
+        let _ = std::fs::remove_file(steam_settings.join("force_steam_appid.txt"));
+        if std::fs::read_dir(&steam_settings).map(|d| d.count()).unwrap_or(1) == 0 {
+            let _ = std::fs::remove_dir(&steam_settings);
+        }
+    }
+}
+
+pub fn goldberg_status(game_dir: &PathBuf) -> bool {
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win32"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+        if target.join("steam_api.dll.orig").exists() || target.join("steam_api64.dll.orig").exists() {
+            return true;
+        }
+    }
+    false
 }
