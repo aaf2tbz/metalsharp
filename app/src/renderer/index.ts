@@ -410,9 +410,8 @@ class App {
 
     this.pipelineCache.clear();
     if (lib?.games) {
-      for (const game of lib.games) {
-        if (game.installed) this.fetchPipelines(game.appid);
-      }
+      const installed = lib.games.filter((g) => g.installed);
+      await Promise.all(installed.map((g) => this.fetchPipelines(g.appid)));
     }
 
     this.renderLibrary();
