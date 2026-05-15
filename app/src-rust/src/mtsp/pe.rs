@@ -107,12 +107,7 @@ pub fn parse_pe_imports(data: &[u8]) -> Option<PeInfo> {
 
     let detected_api = detect_d3d_api(&imports);
 
-    Some(PeInfo {
-        machine_type: machine,
-        is_64_bit,
-        imports,
-        detected_api,
-    })
+    Some(PeInfo { machine_type: machine, is_64_bit, imports, detected_api })
 }
 
 fn read_null_terminated(data: &[u8], offset: usize) -> Option<String> {
@@ -145,8 +140,12 @@ pub fn analyze_game_exe(game_dir: &Path) -> Option<PeInfo> {
             let path = entry.path();
             if path.extension().map(|e| e == "exe").unwrap_or(false) {
                 let name = path.file_name()?.to_string_lossy().to_lowercase();
-                if name.contains("setup") || name.contains("redist") || name.contains("uninstall")
-                    || name.contains("vcredist") || name.contains("installer") || name.contains("crashhandler")
+                if name.contains("setup")
+                    || name.contains("redist")
+                    || name.contains("uninstall")
+                    || name.contains("vcredist")
+                    || name.contains("installer")
+                    || name.contains("crashhandler")
                 {
                     continue;
                 }
