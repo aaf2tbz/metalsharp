@@ -79,6 +79,7 @@ fn run_install_all() {
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+        ("EAC Bypass", Box::new(install_eac_toggle)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
@@ -437,6 +438,41 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err("Goldberg Steam emulator not found — goldberg.tar.zst missing from bundles".into())
+    }
+}
+
+fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
+    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle");
+    let dll = eac_dir.join("x86_64-windows").join("_winhttp.dll");
+
+    if dll.exists() {
+        return Ok(false);
+    }
+
+    let _ = fs::create_dir_all(eac_dir.join("x86_64-windows"));
+
+    let bundled = find_bundled_archive("eac-toggle");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-eac-toggle-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "eac-toggle")?;
+
+        let src_windows = tmp.join("x86_64-windows");
+        if src_windows.exists() {
+            for entry in fs::read_dir(&src_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), eac_dir.join("x86_64-windows").join(entry.file_name()));
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    if eac_dir.join("x86_64-windows").join("_winhttp.dll").exists() {
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 

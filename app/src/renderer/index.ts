@@ -46,6 +46,7 @@ class App {
   > = new Map();
   private lastLaunchMethod: Map<number, string> = new Map();
   private goldbergCache: Map<number, boolean> = new Map();
+  private eacToggleCache: Map<number, boolean> = new Map();
   private sharpApps: SharpApp[] = [];
 
   private steamApiKey: string | null = null;
@@ -1041,6 +1042,14 @@ class App {
           }
         });
       }
+      if (!this.eacToggleCache.has(game.appid)) {
+        this.fetchEacToggleStatus(game.appid).then((active) => {
+          const toggle = grid.querySelector(`.eac-toggle[data-appid="${game.appid}"]`) as HTMLInputElement;
+          if (toggle && toggle.checked !== active) {
+            toggle.checked = active;
+          }
+        });
+      }
     }
   }
 
@@ -1085,6 +1094,7 @@ class App {
       actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Preparing runtime and launching...</span></div>`;
     } else if (game.installed) {
       const goldbergActive = this.goldbergCache.get(game.appid) ?? false;
+      const eacToggleActive = this.eacToggleCache.get(game.appid) ?? false;
       actionHtml = `
         <div class="game-card-actions-stack">
           <div class="game-card-actions-row">
@@ -1093,6 +1103,11 @@ class App {
               <input type="checkbox" class="goldberg-toggle" data-appid="${game.appid}" ${goldbergActive ? "checked" : ""} />
               <span class="toggle-switch"></span>
               <span class="toggle-text">Goldberg</span>
+            </label>
+            <label class="toggle-label" title="Toggle EAC bypass (offline play only, disables anti-cheat)">
+              <input type="checkbox" class="eac-toggle" data-appid="${game.appid}" ${eacToggleActive ? "checked" : ""} />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">No EAC</span>
             </label>
           </div>
           <div class="game-card-actions-row subtle">
@@ -1150,6 +1165,14 @@ class App {
         const checkbox = e.currentTarget as HTMLInputElement;
         const enable = checkbox.checked;
         await this.toggleGoldberg(game.appid, enable);
+      });
+    });
+
+    card.querySelectorAll(".eac-toggle").forEach((el) => {
+      el.addEventListener("change", async (e) => {
+        const checkbox = e.currentTarget as HTMLInputElement;
+        const enable = checkbox.checked;
+        await this.toggleEacToggle(game.appid, enable);
       });
     });
 
@@ -1331,6 +1354,35 @@ class App {
       this.toast(enable ? "Goldberg enabled" : "Goldberg disabled", "success");
     } else {
       this.toast("Failed to toggle Goldberg", "error");
+      this.renderLibrary();
+    }
+  }
+
+  private async fetchEacToggleStatus(appid: number): Promise<boolean> {
+    if (this.eacToggleCache.has(appid)) return this.eacToggleCache.get(appid)!;
+    try {
+      const result = await this.api<{ ok: boolean; eac_toggle_active: boolean }>(
+        "GET",
+        `/eac-toggle/status?appid=${appid}`,
+      );
+      if (result?.ok) {
+        this.eacToggleCache.set(appid, result.eac_toggle_active);
+        return result.eac_toggle_active;
+      }
+    } catch {}
+    return false;
+  }
+
+  private async toggleEacToggle(appid: number, enable: boolean) {
+    const result = await this.api<{ ok: boolean; eac_toggle_active: boolean }>("POST", "/eac-toggle/toggle", {
+      appid,
+      enable,
+    });
+    if (result?.ok) {
+      this.eacToggleCache.set(appid, result.eac_toggle_active);
+      this.toast(enable ? "EAC bypass enabled (offline only)" : "EAC bypass disabled", "success");
+    } else {
+      this.toast("Failed to toggle EAC bypass", "error");
       this.renderLibrary();
     }
   }
