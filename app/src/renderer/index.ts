@@ -357,7 +357,10 @@ class App {
     if (!status || status.phase !== "complete") return;
 
     await getAPI().updaterClearStatus();
-    await this.api("POST", "/update/cleanup");
+
+    if (!status.error) {
+      await this.api("POST", "/update/cleanup");
+    }
 
     await new Promise((r) => setTimeout(r, 1500));
     await this.pollBackendHealth();
