@@ -388,12 +388,20 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
             match appid {
                 Some(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let engine_desc = launch::engine_description_for_appid(id as u32);
+                    let resolved_pipeline =
+                        if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_legacy_method(launch_method) {
+                            Some(pipeline_id)
+                        } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
+                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
+                        } else {
+                            None
+                        };
+                    let engine_desc = resolved_pipeline
+                        .map(|p| crate::mtsp::engine::get_pipeline(p).description)
+                        .unwrap_or_else(|| launch::engine_description_for_appid(id as u32));
                     app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
-                    let result = if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_legacy_method(launch_method) {
+                    let result = if let Some(pipeline_id) = resolved_pipeline {
                         crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline_id)
-                    } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
-                        crate::mtsp::launcher::launch_auto(id as u32)
                     } else {
                         launch::launch_with_method(id as u32, launch_method)
                     };
