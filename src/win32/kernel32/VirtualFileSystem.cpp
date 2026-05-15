@@ -18,6 +18,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstring>
+#include <sys/stat.h>
+#include <sys/types.h>
+
 namespace metalsharp {
 namespace win32 {
 
@@ -27,14 +32,26 @@ static std::string toLower(std::string s) {
     return s;
 }
 
+static bool mkdirRecursive(const std::string& path) {
+    size_t pos = path.rfind('/');
+    if (pos != std::string::npos && pos > 0) {
+        std::string parent = path.substr(0, pos);
+        struct stat st;
+        if (stat(parent.c_str(), &st) != 0) {
+            mkdirRecursive(parent);
+        }
+    }
+    mkdir(path.c_str(), 0755);
+    return true;
+}
+
 static std::string ensureDir(const std::string& path) {
     size_t pos = path.rfind('/');
     if (pos != std::string::npos) {
         std::string dir = path.substr(0, pos);
         struct stat st;
         if (stat(dir.c_str(), &st) != 0) {
-            std::string cmd = "mkdir -p \"" + dir + "\"";
-            system(cmd.c_str());
+            mkdirRecursive(dir);
         }
     }
     return path;

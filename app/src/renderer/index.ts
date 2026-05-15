@@ -61,6 +61,7 @@ class App {
     }
 
     await this.loadConfig();
+    this.checkForInstallResult();
     await this.checkForUpdates();
     this.steamApiKey = await this.getSteamApiKey();
     const setupState = await this.api<{ deviceName?: string }>("GET", "/setup/state");
@@ -244,6 +245,15 @@ class App {
   }
 
   private async startUpdateFlow() {
+    const ready = await getAPI().updaterEnsureReady();
+    if (!ready) {
+      this.toast(
+        "Updater not available — python3 not found. Install Xcode CLI tools or check your installation.",
+        "error",
+      );
+      return;
+    }
+
     const overlay = document.createElement("div");
     overlay.className = "update-overlay";
     overlay.id = "update-progress-overlay";
@@ -271,13 +281,13 @@ class App {
       return;
     }
 
+    const fill = document.getElementById("update-progress-fill") as HTMLElement;
+    const label = document.getElementById("update-progress-label") as HTMLElement;
+    const message = document.getElementById("update-progress-message") as HTMLElement;
+
     const pollInterval = setInterval(async () => {
       const progress = await this.api<UpdateProgress>("GET", "/update/progress");
       if (!progress) return;
-
-      const fill = document.getElementById("update-progress-fill") as HTMLElement;
-      const label = document.getElementById("update-progress-label") as HTMLElement;
-      const message = document.getElementById("update-progress-message") as HTMLElement;
 
       if (fill) fill.style.width = `${progress.percent}%`;
       if (label) label.textContent = `${progress.percent}%`;
@@ -287,12 +297,85 @@ class App {
         clearInterval(pollInterval);
         overlay.remove();
         this.toast(`Update failed: ${progress.error ?? "unknown error"}`, "error");
-      } else if (progress.status === "complete") {
+      } else if (progress.status === "downloaded") {
         clearInterval(pollInterval);
+        await this.triggerInstall(overlay);
       }
     }, 500);
 
     setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
+  }
+
+  private async triggerInstall(overlay: HTMLElement) {
+    const fill = document.getElementById("update-progress-fill") as HTMLElement;
+    const label = document.getElementById("update-progress-label") as HTMLElement;
+    const message = document.getElementById("update-progress-message") as HTMLElement;
+
+    if (fill) fill.style.width = "82%";
+    if (label) label.textContent = "82%";
+    if (message) message.textContent = "Preparing to install...";
+
+    const dmgResult = await this.api<{ ok: boolean; path?: string; error?: string }>("GET", "/update/dmg-path");
+    if (!dmgResult?.ok || !dmgResult?.path) {
+      overlay.remove();
+      this.toast("Downloaded DMG not found", "error");
+      return;
+    }
+
+    const backendPid = await getAPI().backendGetPid();
+    if (!backendPid) {
+      overlay.remove();
+      this.toast("Cannot determine backend PID", "error");
+      return;
+    }
+
+    const targetVersion = this.updateStatus?.latest_version ?? "unknown";
+
+    if (fill) fill.style.width = "85%";
+    if (message) message.textContent = "Launching installer... The app will close momentarily.";
+
+    const result = await getAPI().updaterSpawnInstall(dmgResult.path, backendPid, targetVersion);
+    if (!result.ok) {
+      overlay.remove();
+      this.toast(result.error ?? "Failed to launch installer", "error");
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, 3000));
+    getAPI().quitApp();
+  }
+
+  private async checkForInstallResult() {
+    const status = await getAPI().updaterInstallStatus();
+    if (!status || status.phase !== "complete") return;
+
+    await getAPI().updaterClearStatus();
+
+    await new Promise((r) => setTimeout(r, 1500));
+    await this.pollBackendHealth();
+
+    if (status.error) {
+      this.toast(`Update had issues: ${status.error}`, "error");
+    } else {
+      const overlay = document.createElement("div");
+      overlay.className = "update-overlay";
+      document.body.appendChild(overlay);
+
+      overlay.innerHTML = `
+        <div class="update-dialog-backdrop"></div>
+        <div class="update-dialog">
+          <div class="update-dialog-icon" style="background:rgba(92,184,112,0.15);color:var(--success);">&#10003;</div>
+          <h2 class="update-dialog-title">Update Complete!</h2>
+          <p class="update-dialog-desc" style="color:var(--text-secondary);">${this.esc(status.message)}</p>
+          <div class="update-dialog-actions">
+            <button class="btn btn-primary" id="update-done-dismiss">Continue</button>
+          </div>
+        </div>
+      `;
+
+      overlay.querySelector("#update-done-dismiss")?.addEventListener("click", () => overlay.remove());
+      overlay.querySelector(".update-dialog-backdrop")?.addEventListener("click", () => overlay.remove());
+    }
   }
 
   private async loadCacheSizes() {

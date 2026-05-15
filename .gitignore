@@ -33,3 +33,4 @@ app/bundles/SteamSetup.exe
 
 # Code intelligence
 .graphiq/
+metalsharp-*/

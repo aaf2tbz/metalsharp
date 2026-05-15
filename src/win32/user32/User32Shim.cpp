@@ -58,27 +58,47 @@ static int MSABI shim_wsprintfA(char* buf, const char* fmt, ...) {
             case 'd':
             case 'i': {
                 int val = (argIdx < 4) ? (int)stack[argIdx++] : 0;
-                out += snprintf(out, 2047 - (out - buf), "%d", val);
+                int remaining = 2047 - (int)(out - buf);
+                if (remaining > 0) {
+                    int n = snprintf(out, remaining, "%d", val);
+                    out += (n > 0 && n < remaining) ? n : remaining;
+                }
                 break;
             }
             case 'u': {
                 unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                out += snprintf(out, 2047 - (out - buf), "%u", val);
+                int remaining = 2047 - (int)(out - buf);
+                if (remaining > 0) {
+                    int n = snprintf(out, remaining, "%u", val);
+                    out += (n > 0 && n < remaining) ? n : remaining;
+                }
                 break;
             }
             case 'x': {
                 unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                out += snprintf(out, 2047 - (out - buf), "%x", val);
+                int remaining = 2047 - (int)(out - buf);
+                if (remaining > 0) {
+                    int n = snprintf(out, remaining, "%x", val);
+                    out += (n > 0 && n < remaining) ? n : remaining;
+                }
                 break;
             }
             case 'X': {
                 unsigned val = (argIdx < 4) ? (unsigned)stack[argIdx++] : 0;
-                out += snprintf(out, 2047 - (out - buf), "%X", val);
+                int remaining = 2047 - (int)(out - buf);
+                if (remaining > 0) {
+                    int n = snprintf(out, remaining, "%X", val);
+                    out += (n > 0 && n < remaining) ? n : remaining;
+                }
                 break;
             }
             case 'p': {
                 void* val = (argIdx < 4) ? (void*)stack[argIdx++] : nullptr;
-                out += snprintf(out, 2047 - (out - buf), "%p", val);
+                int remaining = 2047 - (int)(out - buf);
+                if (remaining > 0) {
+                    int n = snprintf(out, remaining, "%p", val);
+                    out += (n > 0 && n < remaining) ? n : remaining;
+                }
                 break;
             }
             case 'c': {

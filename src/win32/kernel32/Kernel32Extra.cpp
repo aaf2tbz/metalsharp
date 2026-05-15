@@ -1181,8 +1181,16 @@ static BOOL MSABI shim_CopyFileExW(const wchar_t* lpExistingFileName, const wcha
     {
         size_t pos = dst.rfind('/');
         if (pos != std::string::npos) {
-            std::string cmd = "mkdir -p \"" + dst.substr(0, pos) + "\"";
-            system(cmd.c_str());
+            std::string dir = dst.substr(0, pos);
+            struct stat st;
+            if (stat(dir.c_str(), &st) != 0) {
+                size_t start = 0;
+                while ((start = dir.find('/', start + 1)) != std::string::npos) {
+                    std::string part = dir.substr(0, start);
+                    mkdir(part.c_str(), 0755);
+                }
+                mkdir(dir.c_str(), 0755);
+            }
         }
     }
     FILE* fout = fopen(dst.c_str(), "wb");

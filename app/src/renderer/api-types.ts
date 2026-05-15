@@ -47,6 +47,15 @@ interface UpdateProgress {
   error: string | null;
 }
 
+interface InstallStatus {
+  phase: string;
+  percent: number;
+  message: string;
+  error: string | null;
+  new_version: string | null;
+  timestamp: number;
+}
+
 interface CrashReportSummary {
   id: string;
   timestamp: string;
@@ -99,4 +108,14 @@ type MetalsharpAPI = {
   openInFinder: (path: string) => Promise<void>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;
+  updaterEnsureReady: () => Promise<boolean>;
+  updaterSpawnInstall: (
+    dmgPath: string,
+    backendPid: number,
+    targetVersion: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  updaterInstallStatus: () => Promise<InstallStatus | null>;
+  updaterClearStatus: () => Promise<void>;
+  backendGetPid: () => Promise<number | null>;
+  quitApp: () => void;
 };
