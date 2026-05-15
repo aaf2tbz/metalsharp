@@ -44,6 +44,7 @@ class App {
     number,
     { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
   > = new Map();
+  private lastLaunchMethod: Map<number, string> = new Map();
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -409,9 +410,8 @@ class App {
 
     this.pipelineCache.clear();
     if (lib?.games) {
-      for (const game of lib.games) {
-        if (game.installed) this.fetchPipelines(game.appid);
-      }
+      const installed = lib.games.filter((g) => g.installed);
+      await Promise.all(installed.map((g) => this.fetchPipelines(g.appid)));
     }
 
     this.renderLibrary();
@@ -758,7 +758,7 @@ class App {
     body.innerHTML = `
       <div class="setup-section-header">
         <h1>Install Steam</h1>
-        <p>MetalSharp will download and install Windows Steam. Complete the setup in the Steam window, then click Continue.</p>
+        <p>MetalSharp will download and install Windows Steam. Complete the setup in the Steam window, then click Next.</p>
       </div>
       <div id="steam-install-status" style="text-align:center;margin:24px 0;">
         <span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Steam not installed</span>
@@ -766,7 +766,7 @@ class App {
       <div class="setup-actions">
         <button class="btn btn-secondary" id="setup-back">Back</button>
         <button class="btn btn-primary btn-lg" id="btn-install-steam">Install Steam</button>
-        <button class="btn btn-primary" id="setup-next" style="display:none;">Continue</button>
+        <button class="btn btn-primary" id="setup-next" style="display:none;">Next</button>
       </div>
     `;
 
@@ -781,16 +781,23 @@ class App {
       return s;
     };
 
-    const initialStatus = await checkSteamStatus();
-    if (initialStatus?.running) {
+    const showSteamReady = () => {
+      this.wineSteamInstalled = true;
       statusDiv.innerHTML =
-        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
       installBtn.style.display = "none";
       nextBtn.style.display = "inline-flex";
-    } else if (initialStatus?.installed) {
-      statusDiv.innerHTML =
-        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is installed</span>';
-      installBtn.textContent = "Launch Steam";
+    };
+
+    const showInstallFailed = (errorMsg: string) => {
+      statusDiv.innerHTML = `<span style="color:var(--error);font-size:14px;">${this.esc(errorMsg)}</span>`;
+      installBtn.textContent = "Retry Install";
+      (installBtn as HTMLButtonElement).disabled = false;
+    };
+
+    const initialStatus = await checkSteamStatus();
+    if (initialStatus?.installed || initialStatus?.running) {
+      showSteamReady();
     }
 
     installBtn.addEventListener("click", async () => {
@@ -799,75 +806,43 @@ class App {
 
       const steamStatus = await checkSteamStatus();
 
-      if (steamStatus?.running) {
-        statusDiv.innerHTML =
-          '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-        installBtn.style.display = "none";
-        nextBtn.style.display = "inline-flex";
-        return;
-      }
-
-      if (!steamStatus?.installed) {
-        statusDiv.innerHTML =
-          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
-        const installResult = await this.api<{
-          ok: boolean;
-          path?: string;
-          error?: string;
-          message?: string;
-        }>("POST", "/steam/install");
-        if (!installResult?.ok) {
-          statusDiv.innerHTML = `<span style="color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</span>`;
-          installBtn.textContent = "Retry Install";
-          (installBtn as HTMLButtonElement).disabled = false;
-          return;
-        }
-
-        statusDiv.innerHTML =
-          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window...</span>';
-
-        const pollInstall = setInterval(async () => {
-          const s = await checkSteamStatus();
-          if (s?.installed || s?.running) {
-            clearInterval(pollInstall);
-            this.wineSteamInstalled = true;
-            statusDiv.innerHTML =
-              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
-            installBtn.textContent = "Launch Steam";
-            (installBtn as HTMLButtonElement).disabled = false;
-          }
-        }, 3000);
-        setTimeout(() => {
-          clearInterval(pollInstall);
-        }, 300000);
+      if (steamStatus?.installed || steamStatus?.running) {
+        showSteamReady();
         return;
       }
 
       statusDiv.innerHTML =
-        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';
-      const launchResult = await this.api<{
+        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
+      const installResult = await this.api<{
         ok: boolean;
-        pid?: number;
+        path?: string;
         error?: string;
-      }>("POST", "/steam/launch");
-      if (launchResult?.ok) {
-        this.wineSteamRunning = true;
-        const pollSteam = setInterval(async () => {
-          const s = await checkSteamStatus();
-          if (s?.running) {
-            clearInterval(pollSteam);
-            statusDiv.innerHTML =
-              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-            installBtn.style.display = "none";
-            nextBtn.style.display = "inline-flex";
-          }
-        }, 3000);
-        setTimeout(() => clearInterval(pollSteam), 120000);
-      } else {
-        statusDiv.innerHTML = `<span style="color:var(--error)">${launchResult?.error ?? "Failed to launch Steam"}</span>`;
-        installBtn.textContent = "Launch Steam";
-        (installBtn as HTMLButtonElement).disabled = false;
+        message?: string;
+      }>("POST", "/steam/install");
+      if (!installResult?.ok) {
+        showInstallFailed(installResult?.error ?? "Failed to install Steam");
+        return;
       }
+
+      statusDiv.innerHTML =
+        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window, then wait for it to finish...</span>';
+
+      let installTimedOut = false;
+      const pollInstall = setInterval(async () => {
+        const s = await checkSteamStatus();
+        if (s?.installed || s?.running) {
+          clearInterval(pollInstall);
+          showSteamReady();
+        }
+      }, 3000);
+
+      setTimeout(() => {
+        if (!this.wineSteamInstalled) {
+          clearInterval(pollInstall);
+          installTimedOut = true;
+          showInstallFailed("Steam installation timed out — the installer may have crashed. Click Retry Install to try again.");
+        }
+      }, 300000);
     });
 
     nextBtn.addEventListener("click", async () => {
@@ -1078,10 +1053,16 @@ class App {
         <span class="download-pct">${statusText}</span>
       `;
     } else if (isRunning) {
+      const pipelineName = this.getPipelineDisplayName(game.appid);
       actionHtml = `
         <div class="game-card-actions-stack">
-          <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
-          <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+          <div class="game-card-actions-row">
+            <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
+            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+          </div>
+          <div class="game-card-active-pipeline">
+            <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">${this.esc(pipelineName)}</span>
+          </div>
         </div>
       `;
     } else if (isLaunching) {
@@ -1179,11 +1160,13 @@ class App {
       return `<option value="native">Auto (Recommended)</option>`;
     }
 
+    const savedMethod = this.lastLaunchMethod.get(game.appid);
     let options = "";
     for (const p of cached.pipelines) {
       const isRec = p.id === cached.recommended;
       const badge = p.experimental ? " [exp]" : "";
-      const selected = isRec ? " selected" : "";
+      const isSelected = savedMethod ? p.id === savedMethod : isRec;
+      const selected = isSelected ? " selected" : "";
       options += `<option value="${p.id}"${selected}>${p.name}${badge}${isRec ? " (Recommended)" : ""}</option>`;
     }
 
@@ -1197,6 +1180,20 @@ class App {
       return rec?.description ?? "Select a launch pipeline.";
     }
     return "Select a launch pipeline. MTSP engine will auto-resolve the best backend.";
+  }
+
+  private getPipelineDisplayName(appid: number): string {
+    const cached = this.pipelineCache.get(appid);
+    const savedMethod = this.lastLaunchMethod.get(appid);
+    if (cached) {
+      if (savedMethod) {
+        const match = cached.pipelines.find((p) => p.id === savedMethod);
+        if (match) return match.name;
+      }
+      const rec = cached.pipelines.find((p) => p.id === cached.recommended);
+      if (rec) return rec.name;
+    }
+    return "Auto";
   }
 
   private async installGame(game: SteamGame) {
@@ -1253,6 +1250,10 @@ class App {
     this.toast(`Launching ${game.name}...`, "success");
     const selectEl = document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement;
     const selectedMethod = selectEl?.value ?? "native";
+
+    if (selectedMethod && selectedMethod !== "native") {
+      this.lastLaunchMethod.set(game.appid, selectedMethod);
+    }
 
     const launchResult = await this.api<{
       ok: boolean;
