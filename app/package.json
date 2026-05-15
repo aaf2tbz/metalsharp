@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.21.0",
+  "version": "0.24.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -24,10 +24,10 @@
     "electron-store": "^10.0.0"
   },
   "devDependencies": {
-    "electron": "^35.0.0",
+    "@types/node": "^22.0.0",
+    "electron": "^39.8.10",
     "electron-builder": "^26.0.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   },
   "build": {
     "appId": "com.metalsharp.app",
@@ -129,7 +129,15 @@
       },
       {
         "from": "bundles/steamwebhelper-wrapper.c",
-        "to": "bundles/steamwebhelper-wrapper.c"
+        "to": "steamwebhelper-wrapper.c"
+      },
+      {
+        "from": "updater/update.py",
+        "to": "updater/update.py"
+      },
+      {
+        "from": "bundles/updater.tar.gz",
+        "to": "updater.tar.gz"
       }
     ],
     "directories": {

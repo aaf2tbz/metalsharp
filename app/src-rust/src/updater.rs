@@ -2,17 +2,13 @@ use serde_json::json;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO_API: &str = "https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest";
-const REPO_OWNER: &str = "aaf2tbz";
-const REPO_NAME: &str = "metalsharp";
 
 static UPDATING: AtomicBool = AtomicBool::new(false);
 static DOWNLOAD_PERCENT: AtomicU32 = AtomicU32::new(0);
-static UPDATE_STATUS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn progress_path() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("update_progress.json")
@@ -94,7 +90,8 @@ pub fn check_for_update() -> serde_json::Value {
         },
     };
 
-    let latest = release.tag_name.trim_start_matches('v').to_string();
+    let latest_raw = release.tag_name.trim();
+    let latest = clean_version(latest_raw);
     let current = CURRENT_VERSION.to_string();
     let available = semver_gt(&latest, &current);
 
@@ -102,6 +99,11 @@ pub fn check_for_update() -> serde_json::Value {
 
     let release_notes = release.body.unwrap_or_default();
     let release_name = release.name.unwrap_or_else(|| release.tag_name.clone());
+
+    app_log(&format!(
+        "Update check: current={} latest_raw='{}' latest_clean='{}' available={}",
+        current, latest_raw, latest, available
+    ));
 
     json!({
         "ok": true,
@@ -114,8 +116,26 @@ pub fn check_for_update() -> serde_json::Value {
     })
 }
 
+fn clean_version(tag: &str) -> String {
+    let v = tag.trim().trim_start_matches('v');
+    let parts: Vec<&str> = v.split('.').collect();
+    parts
+        .iter()
+        .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn semver_gt(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|p| p.parse::<u32>().ok()).collect() };
+    let parse = |v: &str| -> Vec<u32> {
+        v.split('.')
+            .filter_map(|p| {
+                let clean: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
+                clean.parse::<u32>().ok()
+            })
+            .collect()
+    };
     let av = parse(a);
     let bv = parse(b);
     for i in 0..std::cmp::max(av.len(), bv.len()) {
@@ -144,14 +164,14 @@ pub fn start_update() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     write_update_progress("starting", 0, "Checking for updates...", None);
 
     std::thread::spawn(|| {
-        run_update();
+        run_download();
         UPDATING.store(false, Ordering::SeqCst);
     });
 
     Ok(json!({"ok": true}))
 }
 
-fn run_update() {
+fn run_download() {
     write_update_progress("checking", 5, "Fetching latest release info...", None);
 
     let update_info = check_for_update();
@@ -177,57 +197,18 @@ fn run_update() {
     let _ = fs::create_dir_all(&cache_dir);
     let dmg_path = cache_dir.join(format!("MetalSharp-{}.dmg", latest_version));
 
-    write_update_progress("downloading", 10, &format!("Downloading v{}...", latest_version), None);
-
     if !dmg_path.exists() {
+        write_update_progress("downloading", 10, &format!("Downloading v{}...", latest_version), None);
         if let Err(e) = download_with_progress(&download_url, &dmg_path) {
             write_update_progress("error", 0, &format!("Download failed: {}", e), Some(&e.to_string()));
             let _ = fs::remove_file(&dmg_path);
             return;
         }
     } else {
-        write_update_progress("downloading", 80, "Using cached DMG...", None);
+        app_log(&format!("Using cached DMG: {}", dmg_path.display()));
     }
 
-    write_update_progress("stopping_backend", 85, "Stopping backend...", None);
-    stop_backend();
-
-    write_update_progress("mounting", 87, "Mounting DMG...", None);
-    let mount_point = match mount_dmg(&dmg_path) {
-        Some(m) => m,
-        None => {
-            write_update_progress("error", 0, "Failed to mount DMG", Some("mount_failed"));
-            return;
-        },
-    };
-
-    write_update_progress("installing", 90, "Installing new version...", None);
-
-    let app_source = find_app_in_mount(&mount_point);
-    match app_source {
-        Some(src) => {
-            if let Err(e) = install_app(&src) {
-                let _ = detach_dmg(&mount_point);
-                write_update_progress("error", 0, &format!("Install failed: {}", e), Some(&e.to_string()));
-                return;
-            }
-        },
-        None => {
-            let _ = detach_dmg(&mount_point);
-            write_update_progress("error", 0, "MetalSharp.app not found in DMG", Some("app_not_found"));
-            return;
-        },
-    }
-
-    write_update_progress("installing", 95, "Unmounting installer...", None);
-    let _ = detach_dmg(&mount_point);
-
-    write_update_progress("relaunching", 98, "Relaunching MetalSharp...", None);
-
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    relaunch_app();
-
-    write_update_progress("complete", 100, &format!("Updated to v{}!", latest_version), None);
+    write_update_progress("downloaded", 80, &format!("Download complete — ready to install v{}", latest_version), None);
 }
 
 fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
@@ -256,6 +237,7 @@ fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
         if n == 0 {
             break;
         }
+        use std::io::Write;
         file.write_all(&buf[..n]).map_err(|e| format!("write error: {}", e))?;
         downloaded += n as u64;
 
@@ -275,96 +257,46 @@ fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn stop_backend() {
-    let _ = Command::new("pkill")
-        .args(["-f", "metalsharp-backend"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+pub fn get_downloaded_dmg_path() -> Option<String> {
+    let update_info = check_for_update();
+    let latest_version = update_info.get("latest_version").and_then(|v| v.as_str())?;
+    let home = dirs::home_dir()?;
+    let dmg_path =
+        home.join(".metalsharp").join("cache").join("updates").join(format!("MetalSharp-{}.dmg", latest_version));
+
+    if dmg_path.exists() {
+        Some(dmg_path.to_string_lossy().to_string())
+    } else {
+        None
+    }
 }
 
-fn mount_dmg(dmg_path: &PathBuf) -> Option<String> {
-    let output = Command::new("hdiutil").args(["attach", "-nobrowse", "-quiet"]).arg(dmg_path).output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines().rev() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if let Some(mount) = parts.last() {
-            if mount.starts_with("/Volumes/") {
-                return Some(mount.to_string());
-            }
+fn app_log(msg: &str) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let log_dir = home.join(".metalsharp").join("logs");
+    let _ = fs::create_dir_all(&log_dir);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = now.as_secs();
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    let line = format!("[{:02}:{:02}:{:02}] {}\n", h, m, s, msg);
+    let days = secs / 86400;
+    let y = 1970 + (days * 400).div_ceil(146097);
+    let mut remaining = days - (((y - 1) * 365) + ((y - 1) / 4) - ((y - 1) / 100) + ((y - 1) / 400));
+    let ml = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 1;
+    for (i, &md) in ml.iter().enumerate() {
+        if remaining < md {
+            mo = i + 1;
+            break;
         }
+        remaining -= md;
     }
-    None
+    let log_path = log_dir.join(format!("{:04}-{:02}-{:02}.log", y, mo, remaining + 1));
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
 }
-
-fn detach_dmg(mount_point: &str) -> bool {
-    Command::new("hdiutil")
-        .args(["detach", mount_point, "-quiet"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn find_app_in_mount(mount_point: &str) -> Option<PathBuf> {
-    let mount = PathBuf::from(mount_point);
-    if let Ok(entries) = fs::read_dir(&mount) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".app") && name.to_lowercase().contains("metalsharp") {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
-}
-
-fn install_app(app_source: &PathBuf) -> Result<(), String> {
-    let target = PathBuf::from("/Applications/MetalSharp.app");
-
-    if target.exists() {
-        let _ = Command::new("rm")
-            .args(["-rf"])
-            .arg(&target)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-
-    let output = Command::new("cp")
-        .args(["-R"])
-        .arg(app_source)
-        .arg(&target)
-        .output()
-        .map_err(|e| format!("cp failed: {}", e))?;
-
-    if !output.status.success() {
-        return Err(format!("copy failed: {}", String::from_utf8_lossy(&output.stderr)));
-    }
-
-    Ok(())
-}
-
-fn relaunch_app() {
-    let app_path = "/Applications/MetalSharp.app";
-    let _ = Command::new("open")
-        .arg(app_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    let _ = Command::new("pkill")
-        .args(["-f", "MetalSharp"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-}
-
-use std::io::Write;

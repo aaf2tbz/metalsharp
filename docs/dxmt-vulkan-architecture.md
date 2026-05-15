@@ -1,6 +1,6 @@
 # DXMT & Vulkan Architecture
 
-MetalSharp uses two D3D translation pipelines: **DXMT** (D3D→Metal, direct) and **DXVK + MoltenVK** (D3D→Vulkan→Metal, indirect). DXMT is the primary path.
+MetalSharp uses two D3D translation pipelines: **DXMT** (D3D→Metal, direct) and **DXVK + MoltenVK** (D3D→Vulkan→Metal, indirect). DXMT is the primary path for 64-bit D3D11 games. DXVK is used for 32-bit D3D9 games.
 
 ## Pipeline Overview
 
@@ -78,10 +78,10 @@ DXMT has two cache systems:
 
 **Shader cache** (`DXMT_SHADER_CACHE_PATH`):
 - Stores compiled Metal shaders in `.db` files (SQLite-based via WMT::CacheWriter/CacheReader)
-- Per-game under `~/.metalsharp/shader-cache/<exename>/`
+- Per-appid under `~/.metalsharp/shader-cache/dxmt-metal/<appid>/`
 - File format: `shaders_<metal_version>.db` (e.g., `shaders_320.db`)
 - `DXMT_SHADER_CACHE=0` disables
-- Path must start with `/` — if set, DXMT uses it directly (no exe name subdirectory appended)
+- Path is set with trailing `/` by the Rust backend
 
 **Metal PSO cache** (automatic):
 - Set in `dxgi.cpp` `InitializeMetalCachePath()` → `dxmt/<exename>/com.apple.metal`
@@ -101,11 +101,11 @@ All config options documented in DXMT source: `dxmt-src/docs/CUSTOMIZATION.md`
 
 ## DXVK + MoltenVK — Vulkan Pipeline
 
-Fallback path. D3D → Vulkan → Metal. Extra translation hop but wider compatibility.
+Used for 32-bit D3D9 games (Portal 2, Goat Simulator). D3D9 → Vulkan → Metal. Two translation hops but enables D3D9 games that don't work through WineD3D OpenGL.
 
 ```
-Game D3D11 calls
-  → DXVK d3d11.dll (D3D → Vulkan)
+Game D3D9 calls
+  → DXVK d3d9.dll (D3D9 → Vulkan)
     → MoltenVK (Vulkan → Metal)
       → Metal framework
 ```
@@ -117,23 +117,25 @@ DXVK 2.x requires Vulkan 1.3. MoltenVK supports Vulkan 1.1 (some 1.2). DXVK 1.10
 ### DXVK Layout
 
 ```
+~/.metalsharp/runtime/wine/lib/dxvk/
+└── i386-windows/    32-bit DXVK DLLs (d3d9.dll, d3d11.dll, d3d10core.dll, dxgi.dll)
+
 ~/.metalsharp/runtime/dxvk-1.10.3/
 ├── x32/   (32-bit: d3d11, d3d10core, d3d9, dxgi)
 └── x64/   (64-bit: d3d11, d3d10core, d3d9, dxgi)
 ```
 
-Not placed in Wine's builtin dirs. Copied into game directories when needed.
+DXVK i386 DLLs live at `lib/dxvk/i386-windows/` inside the wine tree (not `lib/wine/i386-windows/`). The Rust backend copies `d3d9.dll` from here into the game's binary directory on every launch.
 
 ### MoltenVK
 
-Installed via Homebrew (`brew install moltenvk`). Not bundled.
+Bundled in the wine runtime. ICD manifest at `etc/vulkan/icd.d/MoltenVK_icd.json`.
 
 Env for DXVK pipeline:
 ```
-VK_ICD_FILENAMES=/opt/homebrew/share/vulkan/icd.d/MoltenVK_icd.json
-MVK_PRESENT_MODE=1
-DXVK_FRAME_RATE=60
-DXVK_ASYNC=1
+VK_ICD_FILENAMES=~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json
+DXVK_STATE_CACHE_PATH=~/.metalsharp/shader-cache/dxvk-metal32/<appid>/
+WINEDLLOVERRIDES=d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d
 ```
 
 ## Comparison
@@ -144,8 +146,9 @@ DXVK_ASYNC=1
 | Latency | Lower | Higher |
 | Shader path | DXBC/DXIL → MSL direct | DXBC → SPIR-V → MSL |
 | Metal features | Direct access (Metal 3+) | Limited to MoltenVK surface |
-| 32-bit support | Via WoW64 thunks | Via WINEDLLOVERRIDES |
+| 32-bit support | Via WoW64 thunks (D3D11) | Via DXVK d3d9.dll (D3D9) |
 | Vulkan needed | No | Yes |
+| Games using it | Rain World, Schedule I, Subnautica BZ, Undertale | Portal 2, Goat Simulator |
 
 ## Current Usage
 
@@ -154,6 +157,10 @@ DXVK_ASYNC=1
 | Rain World | DXMT Metal | 64-bit D3D11, primary path |
 | Schedule I | DXMT Metal | 64-bit D3D11, Unity |
 | Subnautica BZ | DXMT Metal | 64-bit D3D11 |
+| Undertale | DXMT Metal | 64-bit D3D11 |
+| Portal 2 | DXVK MoltenVK | 32-bit Source engine D3D9, DXVK handles it better than WineD3D |
+| Goat Simulator | DXVK MoltenVK | 32-bit UE3 D3D9 |
 | Nidhogg 2 | WineD3D OpenGL | 32-bit, no 32-bit Metal API |
-| Portal 2 | Wine D3DMetal | Steam DRM, Wine builtins |
-| RE4 | Wine D3DMetal | Steam DRM, blocked on DXMT injection |
+| Celeste | GPTK D3DMetal | Steam DRM, uses SteamD3DMetalPerf |
+| RE4 | GPTK D3DMetal | Steam DRM, SteamD3DMetalPerf (crashes) |
+| Elden Ring | GPTK D3DMetal + MetalFX | Steam DRM, SteamMetalfx |
