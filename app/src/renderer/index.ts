@@ -106,7 +106,8 @@ class App {
     const btn = document.getElementById("btn-theme");
     if (!btn) return;
     const next = this.theme === "dark" ? "light" : "dark";
-    btn.textContent = this.theme === "dark" ? "Light Mode" : "Dark Mode";
+    const icon = this.theme === "dark" ? "\u{1F319}" : "\u2600\uFE0F";
+    btn.innerHTML = `<i class="nav-icon">${icon}</i><span class="nav-label">${this.theme === "dark" ? "Light Mode" : "Dark Mode"}</span>`;
     btn.setAttribute("title", `Toggle ${next} mode`);
   }
 

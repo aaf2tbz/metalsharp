@@ -144,6 +144,14 @@ body {
   flex: 1;
 }
 
+.nav-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
 .nav-item {
   background: none;
   border: none;
@@ -153,9 +161,22 @@ body {
   padding: 10px 14px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
   transition: all var(--transition);
   -webkit-app-region: no-drag;
+}
+
+.nav-icon {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  vertical-align: middle;
+  font-style: normal;
+}
+
+.nav-label {
+  vertical-align: middle;
 }
 
 .theme-toggle-sidebar {
@@ -167,9 +188,10 @@ body {
   padding: 10px 14px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
   transition: all var(--transition);
   -webkit-app-region: no-drag;
+  font-family: var(--font-main);
 }
 
 .theme-toggle-sidebar:hover {
@@ -1602,4 +1624,48 @@ body {
 .toggle-text {
   font-size: 9px;
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .game-card-actions-row {
+    flex-wrap: wrap;
+  }
+
+  .game-card-actions-row .btn-play {
+    padding: 8px 14px;
+    font-size: 10px;
+  }
+
+  .toggle-label {
+    font-size: 8px;
+    gap: 4px;
+  }
+
+  .toggle-switch {
+    width: 26px;
+    height: 15px;
+  }
+
+  .toggle-switch::after {
+    width: 11px;
+    height: 11px;
+  }
+
+  .toggle-label input[type="checkbox"]:checked + .toggle-switch::after {
+    transform: translateX(11px);
+  }
+
+  .toggle-text {
+    font-size: 8px;
+  }
+
+  .launch-method-select {
+    font-size: 7px;
+    padding: 6px 8px;
+  }
+
+  .btn-card {
+    padding: 7px 8px;
+    font-size: 8px;
+  }
 }
