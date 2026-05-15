@@ -84,6 +84,10 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
 
+    if let Some(subdir) = node.shader_cache_subdir {
+        super::shader_cache::deploy_preset_cache(&home, subdir, appid);
+    }
+
     let shader_cache_path = build_shader_cache(&home, node, appid);
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 

@@ -12,3 +12,4 @@ walkdir = "2"
 zstd = "0.13"
 ureq = { version = "3", features = ["json"] }
 toml = "0.8"
+rusqlite = { version = "0.31", features = ["bundled"] }
