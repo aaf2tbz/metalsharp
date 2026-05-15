@@ -622,3 +622,75 @@ pub fn goldberg_status(game_dir: &PathBuf) -> bool {
     }
     false
 }
+
+pub fn deploy_eac_toggle(game_dir: &PathBuf) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle");
+    if !eac_dir.exists() {
+        return;
+    }
+
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    let dll = eac_dir.join("_winhttp.dll");
+    let config = eac_dir.join("anti_cheat_toggler_config.ini");
+    let mod_list = eac_dir.join("anti_cheat_toggler_mod_list.txt");
+    if !dll.exists() {
+        return;
+    }
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+        if !target.join("_winhttp.dll").exists() {
+            let _ = std::fs::copy(&dll, target.join("_winhttp.dll"));
+        }
+        if !target.join("anti_cheat_toggler_config.ini").exists() {
+            let _ = std::fs::copy(&config, target.join("anti_cheat_toggler_config.ini"));
+        }
+        if !target.join("anti_cheat_toggler_mod_list.txt").exists() {
+            let _ = std::fs::copy(&mod_list, target.join("anti_cheat_toggler_mod_list.txt"));
+        }
+        break;
+    }
+}
+
+pub fn cleanup_eac_toggle(game_dir: &PathBuf) {
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+        let _ = std::fs::remove_file(target.join("_winhttp.dll"));
+        let _ = std::fs::remove_file(target.join("anti_cheat_toggler_config.ini"));
+        let _ = std::fs::remove_file(target.join("anti_cheat_toggler_mod_list.txt"));
+    }
+}
+
+pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if target.exists() && target.join("_winhttp.dll").exists() {
+            return true;
+        }
+    }
+    false
+}
