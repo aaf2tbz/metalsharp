@@ -484,8 +484,5 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
     if !steam_settings.exists() {
         let _ = std::fs::create_dir_all(&steam_settings);
     }
-    let _ = std::fs::write(
-        steam_settings.join("force_steam_appid.txt"),
-        appid.to_string(),
-    );
+    let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), appid.to_string());
 }
