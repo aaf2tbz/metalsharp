@@ -40,6 +40,10 @@ class App {
   private metalsharpWineAvailable: boolean = false;
   private launchingAppId: number | null = null;
   private theme: "dark" | "light" = "dark";
+  private pipelineCache: Map<
+    number,
+    { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
+  > = new Map();
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -247,10 +251,7 @@ class App {
   private async startUpdateFlow() {
     const ready = await getAPI().updaterEnsureReady();
     if (!ready) {
-      this.toast(
-        "Updater not available — python3 not found. Install Xcode CLI tools or check your installation.",
-        "error",
-      );
+      this.toast("Updater not available — update.sh not found. Try reinstalling MetalSharp.", "error");
       return;
     }
 
@@ -405,6 +406,13 @@ class App {
     this.wineSteamInstalled = steamStatus?.installed ?? false;
     this.wineSteamRunning = steamStatus?.running ?? false;
     this.metalsharpWineAvailable = steamStatus?.metalsharp_wine_available ?? false;
+
+    this.pipelineCache.clear();
+    if (lib?.games) {
+      for (const game of lib.games) {
+        if (game.installed) this.fetchPipelines(game.appid);
+      }
+    }
 
     this.renderLibrary();
   }
@@ -1139,37 +1147,56 @@ class App {
     return card;
   }
 
-  private defaultLaunchMethod(appid: number): string {
-    if (appid === 105600) return "xna_fna_arm64";
-    if (appid === 504230) return "xna_fna_x86";
-    if (appid === 375520) return "gptk_wine";
-    if (appid === 535520 || appid === 391540) return "auto";
-    if ([945360, 1139900, 2050650].includes(appid)) return "steam";
-    if ([1245620, 814380, 1593500].includes(appid)) return "steam_metalfx";
-    return "steam_d3dmetal_perf";
+  private async fetchPipelines(appid: number): Promise<{
+    recommended: string;
+    pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }>;
+  } | null> {
+    if (this.pipelineCache.has(appid)) return this.pipelineCache.get(appid)!;
+    try {
+      const result = await this.api<{
+        ok: boolean;
+        recommended: string;
+        recommended_name: string;
+        pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }>;
+      }>("GET", `/mtsp/pipelines?appid=${appid}`);
+      if (result?.ok && result.pipelines) {
+        const entry = { recommended: result.recommended, pipelines: result.pipelines };
+        this.pipelineCache.set(appid, entry);
+        return entry;
+      }
+    } catch {}
+    return null;
   }
 
   private recommendedLaunchMethod(game: SteamGame): string {
-    return game.launch_method ?? this.defaultLaunchMethod(game.appid);
+    return game.launch_method ?? "native";
   }
 
   private launchMethodOptions(game: SteamGame): string {
-    const recommended = this.recommendedLaunchMethod(game);
-    const isMetalFx = ["steam_metalfx", "steam_d3dmetal_perf"].includes(recommended);
-
-    let options = `<option value="native">Native (Recommended)</option>`;
-
-    if (isMetalFx) {
-      options += `<option value="native_metalfx_low">Native + MetalFX (Low)</option>`;
-      options += `<option value="native_metalfx_medium">Native + MetalFX (Medium)</option>`;
-      options += `<option value="native_metalfx_high">Native + MetalFX (High)</option>`;
+    const cached = this.pipelineCache.get(game.appid);
+    if (!cached) {
+      this.fetchPipelines(game.appid);
+      return `<option value="native">Auto (Recommended)</option>`;
     }
 
-    return options;
+    let options = "";
+    for (const p of cached.pipelines) {
+      const isRec = p.id === cached.recommended;
+      const badge = p.experimental ? " [exp]" : "";
+      const selected = isRec ? " selected" : "";
+      options += `<option value="${p.id}"${selected}>${p.name}${badge}${isRec ? " (Recommended)" : ""}</option>`;
+    }
+
+    return options || `<option value="native">Auto (Recommended)</option>`;
   }
 
   private launchMethodHelp(game: SteamGame): string {
-    return `Select launch mode. Native uses our recommended pipeline. MetalFX adds spatial upscaling.`;
+    const cached = this.pipelineCache.get(game.appid);
+    if (cached) {
+      const rec = cached.pipelines.find((p) => p.id === cached.recommended);
+      return rec?.description ?? "Select a launch pipeline.";
+    }
+    return "Select a launch pipeline. MTSP engine will auto-resolve the best backend.";
   }
 
   private async installGame(game: SteamGame) {
@@ -1224,9 +1251,9 @@ class App {
     await this.api("POST", "/game/prepare", { appid: game.appid });
 
     this.toast(`Launching ${game.name}...`, "success");
-    const selectedMethod =
-      (document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement)?.value ??
-      "native";
+    const selectEl = document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement;
+    const selectedMethod = selectEl?.value ?? "native";
+
     const launchResult = await this.api<{
       ok: boolean;
       pid?: number;

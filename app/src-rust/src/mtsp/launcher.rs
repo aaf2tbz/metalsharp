@@ -127,8 +127,7 @@ fn launch_d3d9_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe = resolve_game_exe(&game_dir);
-    let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let (exe_name, work_dir) = resolve_d3d9_exe(appid, &game_dir);
 
     deploy_dlls_for_pipeline(&game_dir, node);
     deploy_goldberg(&home, &game_dir, appid);
@@ -136,7 +135,7 @@ fn launch_d3d9_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(&game_dir)
+    cmd.current_dir(&work_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path);
@@ -206,46 +205,19 @@ fn launch_dxvk_metal32(appid: u32, node: &PipelineNode) -> Result<(u32, &'static
     deploy_dlls_for_pipeline(&game_dir, node);
     deploy_goldberg(&home, &game_dir, appid);
 
-    let (exe_name, work_dir) = match appid {
-        620 => {
-            if let Some(d3d9) = find_dll_deploy(&node.deploy_dlls, "d3d9.dll") {
-                let home2 = dirs::home_dir().unwrap_or_default();
-                let ms_root2 = home2.join(".metalsharp").join("runtime").join("wine");
-                let src = ms_root2.join(d3d9.source_subpath).join(d3d9.filename);
-                let _ = std::fs::copy(&src, game_dir.join("bin").join("d3d9.dll"));
-            }
-            (String::from("portal2.exe"), game_dir.clone())
-        },
-        265930 => {
-            let bin = game_dir.join("Binaries").join("Win32");
-            if let Some(d3d9) = find_dll_deploy(&node.deploy_dlls, "d3d9.dll") {
-                let home2 = dirs::home_dir().unwrap_or_default();
-                let ms_root2 = home2.join(".metalsharp").join("runtime").join("wine");
-                let src = ms_root2.join(d3d9.source_subpath).join(d3d9.filename);
-                let _ = std::fs::copy(&src, bin.join("d3d9.dll"));
-            }
-            (String::from("GoatGame-Win32-Shipping.exe"), bin.clone())
-        },
-        _ => {
-            let exe = resolve_game_exe(&game_dir);
-            let name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
-            (name, game_dir.clone())
-        },
-    };
+    let (exe_name, work_dir) = resolve_d3d9_exe(appid, &game_dir);
 
-    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    if let Some(d3d9) = find_dll_deploy(&node.deploy_dlls, "d3d9.dll") {
+        let src = ms_root.join(d3d9.source_subpath).join(d3d9.filename);
+        let _ = std::fs::copy(&src, work_dir.join("d3d9.dll"));
+    }
+
+    let dyld_wine = build_dyld(&ms_root, &node.dyld_paths);
     let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
     let moltenvk_str = if moltenvk_icd.exists() {
         moltenvk_icd.to_string_lossy().to_string()
     } else {
-        ms_root
-            .join("etc")
-            .join("etc")
-            .join("vulkan")
-            .join("icd.d")
-            .join("MoltenVK_icd.json")
-            .to_string_lossy()
-            .to_string()
+        ms_root.join("vulkan").join("icd.d").join("MoltenVK_icd.json").to_string_lossy().to_string()
     };
 
     let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
@@ -382,6 +354,21 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
         .spawn()?;
 
     Ok((child.id(), "xna_fna_x86"))
+}
+
+fn resolve_d3d9_exe(appid: u32, game_dir: &PathBuf) -> (String, PathBuf) {
+    match appid {
+        620 => (String::from("portal2.exe"), game_dir.clone()),
+        265930 => {
+            let bin = game_dir.join("Binaries").join("Win32");
+            (String::from("GoatGame-Win32-Shipping.exe"), bin)
+        },
+        _ => {
+            let exe = resolve_game_exe(game_dir);
+            let name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+            (name, game_dir.clone())
+        },
+    }
 }
 
 fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
