@@ -275,10 +275,9 @@ pub fn cleanup_downloaded_dmgs() -> serde_json::Value {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().map(|e| e == "dmg").unwrap_or(false) {
-                if let Ok(meta) = fs::metadata(&path) {
-                    bytes_freed += meta.len();
-                }
+                let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 if fs::remove_file(&path).is_ok() {
+                    bytes_freed += size;
                     removed += 1;
                 }
             }
