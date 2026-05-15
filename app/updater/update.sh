@@ -8,9 +8,10 @@ STATUS_FILE=""
 
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
+    local ver="$TARGET_VERSION"
     printf '{"phase":"%s","percent":%d,"message":"%s","error":%s,"new_version":"%s","timestamp":%s}\n' \
         "$phase" "$percent" "$message" "$([ -n "$error" ] && echo "\"$error\"" || echo "null")" \
-        "$TARGET_VERSION" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
+        "$ver" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
 }
 
 kill_pid() {
@@ -50,7 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write_status "starting" 0 "Starting update..." "new_version=$TARGET_VERSION"
+write_status "starting" 0 "Starting update..."
 
 write_status "killing_backend" 5 "Stopping backend (PID $BACKEND_PID)..."
 kill_pid "$BACKEND_PID" 10
@@ -83,14 +84,15 @@ if [ ! -f "$DMG_PATH" ]; then
 fi
 
 write_status "mounting" 35 "Mounting update disk image..."
-MOUNT_OUTPUT=$(hdiutil attach -nobrowse -quiet "$DMG_PATH" 2>&1) || {
-    MOUNT_OUTPUT=$(osascript -e "do shell script \"hdiutil attach -nobrowse -quiet \\\"$DMG_PATH\\\"\" with administrator privileges" 2>&1) || true
+MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1) || true
+if [ -z "$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/')" ]; then
+    MOUNT_OUTPUT=$(osascript -e "do shell script \"hdiutil attach -nobrowse \\\"$DMG_PATH\\\"\" with administrator privileges" 2>&1) || true
     sleep 2
-}
+fi
 
-MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | awk '{print $NF}' | grep '/Volumes/')
+MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -1)
 if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
-    MOUNT_POINT=$(hdiutil info 2>/dev/null | grep -A1 "$(basename "$DMG_PATH")" | grep '/Volumes/' | awk '{print $NF}' | head -1)
+    MOUNT_POINT=$(hdiutil info 2>/dev/null | grep -o "/Volumes/MetalSharp[^/]*/" | head -1)
 fi
 
 if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
@@ -145,7 +147,8 @@ sleep 5
 BACKEND_VERSION=""
 deadline=$((SECONDS + 45))
 while [ $SECONDS -lt $deadline ]; do
-    BACKEND_VERSION=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)
+    RAW=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null) || true
+    BACKEND_VERSION=$(echo "$RAW" | sed -n 's/.*"version"[[:space:]]*:"\{[^"]*\}".*/\1/p' | tr -d '"' || true)
     [ -n "$BACKEND_VERSION" ] && break
     sleep 1
 done
@@ -156,7 +159,8 @@ if [ "$BACKEND_VERSION" != "$TARGET_VERSION" ] && [ -n "$BACKEND_VERSION" ]; the
     sleep 1
     open -a "MetalSharp"
     sleep 5
-    BACKEND_VERSION=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)
+    RAW=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null) || true
+    BACKEND_VERSION=$(echo "$RAW" | sed -n 's/.*"version"[[:space:]]*:"\{[^"]*\}".*/\1/p' | tr -d '"' || true)
 fi
 
 if [ "$BACKEND_VERSION" = "$TARGET_VERSION" ]; then
