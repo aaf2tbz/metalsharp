@@ -40,7 +40,10 @@ class App {
   private metalsharpWineAvailable: boolean = false;
   private launchingAppId: number | null = null;
   private theme: "dark" | "light" = "dark";
-  private pipelineCache: Map<number, { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }> = new Map();
+  private pipelineCache: Map<
+    number,
+    { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
+  > = new Map();
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -248,10 +251,7 @@ class App {
   private async startUpdateFlow() {
     const ready = await getAPI().updaterEnsureReady();
     if (!ready) {
-      this.toast(
-        "Updater not available — update.sh not found. Try reinstalling MetalSharp.",
-        "error",
-      );
+      this.toast("Updater not available — update.sh not found. Try reinstalling MetalSharp.", "error");
       return;
     }
 
@@ -1147,13 +1147,18 @@ class App {
     return card;
   }
 
-  private async fetchPipelines(appid: number): Promise<{ recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> } | null> {
+  private async fetchPipelines(appid: number): Promise<{
+    recommended: string;
+    pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }>;
+  } | null> {
     if (this.pipelineCache.has(appid)) return this.pipelineCache.get(appid)!;
     try {
-      const result = await this.api<{ ok: boolean; recommended: string; recommended_name: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }>(
-        "GET",
-        `/mtsp/pipelines?appid=${appid}`,
-      );
+      const result = await this.api<{
+        ok: boolean;
+        recommended: string;
+        recommended_name: string;
+        pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }>;
+      }>("GET", `/mtsp/pipelines?appid=${appid}`);
       if (result?.ok && result.pipelines) {
         const entry = { recommended: result.recommended, pipelines: result.pipelines };
         this.pipelineCache.set(appid, entry);

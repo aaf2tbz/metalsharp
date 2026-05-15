@@ -28,10 +28,7 @@ export class UpdaterBridge {
     const resourcesDir = process.resourcesPath || "";
     const devRoot = path.join(__dirname, "..", "..");
 
-    const candidates = [
-      path.join(resourcesDir, "updater", "update.sh"),
-      path.join(devRoot, "updater", "update.sh"),
-    ];
+    const candidates = [path.join(resourcesDir, "updater", "update.sh"), path.join(devRoot, "updater", "update.sh")];
 
     for (const c of candidates) {
       try {
@@ -80,14 +77,28 @@ export class UpdaterBridge {
       return { ok: false, error: `DMG file not found: ${dmgPath}` };
     }
 
-    const child = spawn("/bin/bash", [this.scriptPath, "--dmg", dmgPath, "--backend-pid", String(backendPid), "--target-version", targetVersion, "--status-file", STATUS_FILE], {
-      detached: true,
-      stdio: "ignore",
-      env: {
-        ...process.env,
-        PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+    const child = spawn(
+      "/bin/bash",
+      [
+        this.scriptPath,
+        "--dmg",
+        dmgPath,
+        "--backend-pid",
+        String(backendPid),
+        "--target-version",
+        targetVersion,
+        "--status-file",
+        STATUS_FILE,
+      ],
+      {
+        detached: true,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+        },
       },
-    });
+    );
 
     child.unref();
 
