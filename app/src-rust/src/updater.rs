@@ -257,6 +257,40 @@ fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+pub fn cleanup_downloaded_dmgs() -> serde_json::Value {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+
+    let cache_dir = home.join(".metalsharp").join("cache").join("updates");
+    if !cache_dir.exists() {
+        return json!({"ok": true, "removed": 0, "bytes_freed": 0});
+    }
+
+    let mut removed = 0u32;
+    let mut bytes_freed: u64 = 0;
+
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "dmg").unwrap_or(false) {
+                let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                if fs::remove_file(&path).is_ok() {
+                    bytes_freed += size;
+                    removed += 1;
+                }
+            }
+        }
+    }
+
+    if removed > 0 {
+        app_log(&format!("Cleaned up {} downloaded DMG(s), freed {} bytes", removed, bytes_freed));
+    }
+
+    json!({"ok": true, "removed": removed, "bytes_freed": bytes_freed})
+}
+
 pub fn get_downloaded_dmg_path() -> Option<String> {
     let update_info = check_for_update();
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str())?;
