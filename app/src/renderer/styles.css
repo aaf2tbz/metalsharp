@@ -310,6 +310,9 @@ body {
 }
 
 .library-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 28px;
 }
 
@@ -317,6 +320,24 @@ body {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.5px;
+}
+
+.library-header .subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.library-header-centered {
+  display: block;
+}
+
+.library-header-centered h1 {
   text-align: center;
   margin-bottom: 14px;
 }

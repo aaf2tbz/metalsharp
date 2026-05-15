@@ -949,7 +949,7 @@ class App {
           : "";
 
       el.innerHTML = `
-        <div class="library-header">
+        <div class="library-header library-header-centered">
           <h1>Library</h1>
           <div class="library-header-controls">
             <div class="library-controls-left">
@@ -985,7 +985,7 @@ class App {
         : "";
 
     el.innerHTML = `
-      <div class="library-header">
+      <div class="library-header library-header-centered">
         <h1>Library</h1>
         <div class="library-header-controls">
           <div class="library-controls-left">
