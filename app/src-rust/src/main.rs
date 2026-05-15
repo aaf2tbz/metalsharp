@@ -104,6 +104,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Some(p) => resp(200, json!({"ok": true, "path": p})),
             None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
         },
+        (Method::Post, "/update/cleanup") => resp(200, updater::cleanup_downloaded_dmgs()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);

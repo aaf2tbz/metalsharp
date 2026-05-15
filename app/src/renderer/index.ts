@@ -358,6 +358,10 @@ class App {
 
     await getAPI().updaterClearStatus();
 
+    if (!status.error) {
+      await this.api("POST", "/update/cleanup");
+    }
+
     await new Promise((r) => setTimeout(r, 1500));
     await this.pollBackendHealth();
 
@@ -945,16 +949,20 @@ class App {
           : "";
 
       el.innerHTML = `
-        <div class="library-header">
-          <div>
-            <h1>Library</h1>
-            <p class="subtitle">No games yet ${steamStatusBadge}</p>
+        <div class="library-header library-header-centered">
+          <h1>Library</h1>
+          <div class="library-header-controls">
+            <div class="library-controls-left">
+              <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
+            </div>
+            <div class="library-controls-center">
+              <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
+            </div>
+            <div class="library-controls-right">
+              <button class="btn btn-secondary" id="btn-scan">Refresh</button>
+            </div>
           </div>
-          <div class="header-actions">
-            <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
-            <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
-            <button class="btn btn-secondary" id="btn-scan">Refresh</button>
-          </div>
+          <p class="subtitle library-header-stats">No games yet ${steamStatusBadge}</p>
         </div>
         <div class="empty-state">
           <div class="empty-state-icon">&#x1F3AE;</div>
@@ -977,21 +985,25 @@ class App {
         : "";
 
     el.innerHTML = `
-      <div class="library-header">
-        <div>
-          <h1>Library</h1>
-          <p class="subtitle">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge} <span class="backend-status-badge ${this.backendConnected ? "connected" : "error"}" id="backend-status-header">${this.backendConnected ? "Backend" : "Backend Offline"}</span></p>
+      <div class="library-header library-header-centered">
+        <h1>Library</h1>
+        <div class="library-header-controls">
+          <div class="library-controls-left">
+            <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
+          </div>
+          <div class="library-controls-center">
+            <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
+            <select class="control-input control-select" id="library-filter">
+              <option value="all">All Games</option>
+              <option value="installed">Installed</option>
+              <option value="not_installed">Not Installed</option>
+            </select>
+          </div>
+          <div class="library-controls-right">
+            <button class="btn btn-secondary" id="btn-scan">Refresh</button>
+          </div>
         </div>
-        <div class="header-actions">
-          <button class="btn btn-secondary" id="btn-steam-launch" title="${this.wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam"}">${this.wineSteamRunning ? "Stop Steam" : "Start Steam"}</button>
-          <input class="control-input" type="text" id="library-search" placeholder="Search games..." />
-          <select class="control-input control-select" id="library-filter">
-            <option value="all">All Games</option>
-            <option value="installed">Installed</option>
-            <option value="not_installed">Not Installed</option>
-          </select>
-          <button class="btn btn-secondary" id="btn-scan">Refresh</button>
-        </div>
+        <p class="subtitle library-header-stats">${lib.total} games &middot; ${installedGames.length} installed ${steamStatusBadge} <span class="backend-status-badge ${this.backendConnected ? "connected" : "error"}" id="backend-status-header">${this.backendConnected ? "Backend" : "Backend Offline"}</span></p>
       </div>
       <div class="game-grid" id="game-grid"></div>
     `;
