@@ -18,10 +18,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <cerrno>
 #include <cstring>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 namespace metalsharp {
 namespace win32 {
