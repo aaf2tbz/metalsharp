@@ -79,6 +79,7 @@ fn run_install_all() {
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+        ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -121,13 +122,8 @@ fn run_install_all() {
                 write_progress(step_num, total, name, "done", &format!("{} installed", name), None);
             },
             Err(e) => {
-                let is_required = i < 7;
-                if is_required {
-                    write_progress(step_num, total, name, "error", &format!("{} failed: {}", name, e), Some(&e));
-                    return;
-                } else {
-                    write_progress(step_num, total, name, "skipped", &format!("{} skipped: {}", name, e), None);
-                }
+                write_progress(step_num, total, name, "error", &format!("{} failed: {}", name, e), Some(&e));
+                return;
             },
         }
 
@@ -234,7 +230,11 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         if ms_wine.exists() {
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
-                Ok(o) if o.status.success() => return Ok(true),
+                Ok(o) if o.status.success() => {
+                    let _ = install_mono_x86_fallback(home);
+                    let _ = install_dxvk_fallback(home);
+                    return Ok(true);
+                },
                 Ok(o) => {
                     return Err(format!(
                         "Wine binary exists but --version failed: {}",
@@ -438,6 +438,45 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
     } else {
         Err("Goldberg Steam emulator not found — goldberg.tar.zst missing from bundles".into())
     }
+}
+
+fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
+    let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
+    if dest.exists() {
+        return Ok(false);
+    }
+
+    let mut candidates = vec![
+        PathBuf::from("configs/mtsp-rules.toml"),
+        home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
+        home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
+    ];
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(mut dir) = exe.parent() {
+            for _ in 0..8 {
+                candidates.push(dir.join("configs").join("mtsp-rules.toml"));
+                match dir.parent() {
+                    Some(p) => dir = p,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    for src in &candidates {
+        if src.exists() {
+            if let Ok(contents) = fs::read_to_string(src) {
+                let _ = fs::create_dir_all(dest.parent().unwrap());
+                let _ = fs::write(&dest, &contents);
+                if dest.exists() {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Err("mtsp-rules.toml not found — pipeline auto-detection will use PE analysis fallback".into())
 }
 
 fn install_gptk(_home: &PathBuf) -> Result<bool, String> {

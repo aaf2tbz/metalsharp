@@ -556,11 +556,19 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
     let deploy_dir = match appid {
         620 => {
             let bin = game_dir.join("bin");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         265930 => {
             let bin = game_dir.join("Binaries").join("Win32");
-            if bin.exists() { bin } else { game_dir.clone() }
+            if bin.exists() {
+                bin
+            } else {
+                game_dir.clone()
+            }
         },
         _ => game_dir.clone(),
     };
