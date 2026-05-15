@@ -148,7 +148,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "gptk",
                 "name": "Game Porting Toolkit",
-                "desc": "No longer required — MTSP engine uses bundled DLLs directly. Apple's D3D→Metal translation.",
+                "desc": "Optional. MTSP engine uses bundled DXMT Metal translation. Only needed for SteamD3DMetalPerf pipeline.",
                 "installed": gptk,
                 "required": false,
                 "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
@@ -156,7 +156,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "wine_devel",
                 "name": "Wine (Devel)",
-                "desc": "Wine runtime for 32-bit PE support (Portal 2).",
+                "desc": "No longer required — MetalSharp Wine handles all pipelines including DXVK D3D9 (Portal 2).",
                 "installed": wine_devel,
                 "required": false,
                 "installCmd": "brew install --cask wine@devel",
@@ -288,16 +288,17 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let game_type = match appid {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
-        312520 => "dxmt_metal",
-        2050650 | 3164500 => "dxmt_metal12",
+        312520 | 375520 => "dxmt_metal",
+        2050650 | 3164500 | 848450 => "dxmt_metal12",
         535520 => "wined3d_32",
-        945360 | 1139900 => "metalsharp_wine",
+        945360 | 1139900 => "steam",
         620 | 265930 => "dxvk_metal32",
         _ => {
             if is_dotnet {
                 "xna_fna"
             } else {
-                "steam_d3dmetal_perf"
+                let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
+                pipeline.to_legacy_method()
             }
         },
     };
@@ -309,8 +310,8 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     match appid {
         105600 => prepare_terrarria(&game_dir, &home)?,
         504230 => prepare_celeste(&game_dir, &home)?,
-        312520 => prepare_rain_world(&game_dir, &home)?,
-        2050650 | 3164500 => prepare_dxmt_metal12(&game_dir, &home)?,
+        312520 | 375520 => prepare_rain_world(&game_dir, &home)?,
+        2050650 | 3164500 | 848450 => prepare_dxmt_metal12(&game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 | 265930 => prepare_goldberg_game(&game_dir, &home, appid)?,
@@ -555,19 +556,11 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
     let deploy_dir = match appid {
         620 => {
             let bin = game_dir.join("bin");
-            if bin.exists() {
-                bin
-            } else {
-                game_dir.clone()
-            }
+            if bin.exists() { bin } else { game_dir.clone() }
         },
         265930 => {
             let bin = game_dir.join("Binaries").join("Win32");
-            if bin.exists() {
-                bin
-            } else {
-                game_dir.clone()
-            }
+            if bin.exists() { bin } else { game_dir.clone() }
         },
         _ => game_dir.clone(),
     };

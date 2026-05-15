@@ -78,6 +78,7 @@ fn run_install_all() {
         ("System Tools", Box::new(|_| install_xcode_cli())),
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+        ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -389,6 +390,53 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
+    }
+}
+
+fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let x86_dll = goldberg_dir.join("x86").join("steam_api.dll");
+    let x64_dll = goldberg_dir.join("x64").join("steam_api64.dll");
+
+    if x86_dll.exists() && x64_dll.exists() {
+        return Ok(false);
+    }
+
+    let _ = fs::create_dir_all(goldberg_dir.join("x86"));
+    let _ = fs::create_dir_all(goldberg_dir.join("x64"));
+
+    let bundled = find_bundled_archive("goldberg");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-goldberg-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "goldberg")?;
+
+        let src_x86 = tmp.join("x86");
+        let src_x64 = tmp.join("x64");
+
+        if src_x86.exists() {
+            for entry in fs::read_dir(&src_x86).map_err(|e| format!("read x86: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), goldberg_dir.join("x86").join(entry.file_name()));
+            }
+        }
+        if src_x64.exists() {
+            for entry in fs::read_dir(&src_x64).map_err(|e| format!("read x64: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), goldberg_dir.join("x64").join(entry.file_name()));
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    if goldberg_dir.join("x86").join("steam_api.dll").exists()
+        && goldberg_dir.join("x64").join("steam_api64.dll").exists()
+    {
+        Ok(true)
+    } else {
+        Err("Goldberg Steam emulator not found — goldberg.tar.zst missing from bundles".into())
     }
 }
 
