@@ -45,6 +45,8 @@ class App {
     { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
   > = new Map();
   private lastLaunchMethod: Map<number, string> = new Map();
+  private goldbergCache: Map<number, boolean> = new Map();
+  private sharpApps: SharpApp[] = [];
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -174,6 +176,7 @@ class App {
 
     if (view === "settings") this.renderSettings();
     if (view === "logs") this.renderLogs();
+    if (view === "sharp-library") this.renderSharpLibrary();
   }
 
   private async api<T = unknown>(
@@ -1027,6 +1030,18 @@ class App {
     for (const game of games) {
       grid.appendChild(this.createGameCard(game));
     }
+
+    const installedGames = games.filter((g) => g.installed);
+    for (const game of installedGames) {
+      if (!this.goldbergCache.has(game.appid)) {
+        this.fetchGoldbergStatus(game.appid).then((active) => {
+          const toggle = grid.querySelector(`.goldberg-toggle[data-appid="${game.appid}"]`) as HTMLInputElement;
+          if (toggle && toggle.checked !== active) {
+            toggle.checked = active;
+          }
+        });
+      }
+    }
   }
 
   private createGameCard(game: SteamGame): HTMLElement {
@@ -1060,7 +1075,6 @@ class App {
         <div class="game-card-actions-stack">
           <div class="game-card-actions-row">
             <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
-            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
           </div>
           <div class="game-card-active-pipeline">
             <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">${this.esc(pipelineName)}</span>
@@ -1070,11 +1084,16 @@ class App {
     } else if (isLaunching) {
       actionHtml = `<div class="launching-indicator"><div class="spinner"></div><span class="launching-text">Preparing runtime and launching...</span></div>`;
     } else if (game.installed) {
+      const goldbergActive = this.goldbergCache.get(game.appid) ?? false;
       actionHtml = `
         <div class="game-card-actions-stack">
           <div class="game-card-actions-row">
             <button class="btn btn-play" data-action="play" data-appid="${game.appid}">Play</button>
-            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+            <label class="toggle-label" title="Toggle Goldberg Steam emulator for this game">
+              <input type="checkbox" class="goldberg-toggle" data-appid="${game.appid}" ${goldbergActive ? "checked" : ""} />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Goldberg</span>
+            </label>
           </div>
           <div class="game-card-actions-row subtle">
             <select class="launch-method-select" data-appid="${game.appid}" title="${this.esc(this.launchMethodHelp(game))}">
@@ -1123,7 +1142,14 @@ class App {
         else if (action === "stop") this.stopGame(game);
         else if (action === "install") this.installGame(game);
         else if (action === "uninstall") this.uninstallGame(game);
-        else if (action === "view-steam") this.viewOnSteam(game);
+      });
+    });
+
+    card.querySelectorAll(".goldberg-toggle").forEach((el) => {
+      el.addEventListener("change", async (e) => {
+        const checkbox = e.currentTarget as HTMLInputElement;
+        const enable = checkbox.checked;
+        await this.toggleGoldberg(game.appid, enable);
       });
     });
 
@@ -1278,6 +1304,35 @@ class App {
     }
     const result = await this.api<{ ok: boolean; error?: string }>("POST", "/steam/view-game", { appid: game.appid });
     if (result?.ok) this.toast(`Opened ${game.name} in Steam`, "success");
+  }
+
+  private async fetchGoldbergStatus(appid: number): Promise<boolean> {
+    if (this.goldbergCache.has(appid)) return this.goldbergCache.get(appid)!;
+    try {
+      const result = await this.api<{ ok: boolean; goldberg_active: boolean }>(
+        "GET",
+        `/goldberg/status?appid=${appid}`,
+      );
+      if (result?.ok) {
+        this.goldbergCache.set(appid, result.goldberg_active);
+        return result.goldberg_active;
+      }
+    } catch {}
+    return false;
+  }
+
+  private async toggleGoldberg(appid: number, enable: boolean) {
+    const result = await this.api<{ ok: boolean; goldberg_active: boolean }>("POST", "/goldberg/toggle", {
+      appid,
+      enable,
+    });
+    if (result?.ok) {
+      this.goldbergCache.set(appid, result.goldberg_active);
+      this.toast(enable ? "Goldberg enabled" : "Goldberg disabled", "success");
+    } else {
+      this.toast("Failed to toggle Goldberg", "error");
+      this.renderLibrary();
+    }
   }
 
   private async stopGame(game: SteamGame) {
@@ -1486,10 +1541,10 @@ class App {
         <div class="settings-row">
           <div>
             <div class="settings-label">Automatic Crash Reporting</div>
-            <div class="settings-desc">Collect logs and diagnostics when games crash</div>
+            <div class="settings-desc">Crash dumps appear in the Logs view</div>
           </div>
           <div class="settings-value">
-            <button class="btn btn-secondary btn-sm" id="btn-view-crashes">View Reports</button>
+            <button class="btn btn-secondary btn-sm" id="btn-view-crashes">Open Logs</button>
           </div>
         </div>
       </div>
@@ -1634,16 +1689,8 @@ class App {
       if (badge) badge.textContent = "0 B";
     });
 
-    el.querySelector("#btn-view-crashes")?.addEventListener("click", async () => {
-      const reports = await this.api<CrashReportSummary[]>("GET", "/crash-reports");
-      if (reports && Array.isArray(reports) && reports.length > 0) {
-        const lines = reports
-          .map((r: CrashReportSummary) => `[${r.timestamp}] ${r.game} (exit ${r.exit_code})`)
-          .join("\n");
-        this.toast(`${reports.length} crash report(s) found. See Logs.`, "success");
-      } else {
-        this.toast("No crash reports found.");
-      }
+    el.querySelector("#btn-view-crashes")?.addEventListener("click", () => {
+      this.switchView("logs");
     });
 
     el.querySelector("#btn-install-update")?.addEventListener("click", () => {
@@ -1681,6 +1728,187 @@ class App {
     });
   }
 
+  private async loadSharpLibrary() {
+    const result = await this.api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
+    if (result?.ok) {
+      this.sharpApps = result.apps;
+    }
+  }
+
+  private async renderSharpLibrary() {
+    const el = document.getElementById("view-sharp-library")!;
+    await this.loadSharpLibrary();
+
+    el.innerHTML = `
+      <div class="library-header">
+        <div>
+          <h1>Sharp Library</h1>
+          <p class="subtitle">Windows applications running via MetalSharp Wine</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="btn-install-exe">Install an EXE</button>
+        </div>
+      </div>
+      <div id="sharp-app-grid" class="game-grid"></div>
+    `;
+
+    el.querySelector("#btn-install-exe")?.addEventListener("click", () => this.installSharpExe());
+
+    this.renderSharpAppGrid();
+  }
+
+  private renderSharpAppGrid() {
+    const grid = document.getElementById("sharp-app-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    if (this.sharpApps.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-dim);">
+          <div style="font-size:48px;margin-bottom:16px;">&#128187;</div>
+          <div style="font-size:14px;margin-bottom:8px;">No applications installed</div>
+          <div style="font-size:12px;">Click "Install an EXE" to add a Windows application</div>
+        </div>
+      `;
+      return;
+    }
+
+    for (const app of this.sharpApps) {
+      grid.appendChild(this.createSharpAppCard(app));
+    }
+  }
+
+  private createSharpAppCard(app: SharpApp): HTMLElement {
+    const card = document.createElement("div");
+    card.className = "game-card";
+
+    const coverUrl = app.cover ? `http://127.0.0.1:9274/sharp-library/cover?id=${app.id}` : "icon.png";
+
+    card.innerHTML = `
+      <div class="game-card-banner">
+        <img src="${coverUrl}" alt="${this.esc(app.name)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='icon.png'" />
+      </div>
+      <div class="game-card-body">
+        <div class="game-card-title">${this.esc(app.name)}</div>
+        <div class="game-card-meta">
+          <span class="badge badge-ok">Sharp App</span>
+          <span class="game-card-size">${this.formatBytes(app.size_bytes)}</span>
+        </div>
+        <div class="game-card-actions">
+          <div class="game-card-actions-stack">
+            <div class="game-card-actions-row">
+              <button class="btn btn-play" data-action="play" data-id="${app.id}">Play</button>
+              <select class="launch-method-select sharp-engine-select" data-id="${app.id}">
+                <option value="wine_bare" ${app.engine === "wine_bare" ? "selected" : ""}>Wine (Default)</option>
+                <option value="m64" ${app.engine === "m64" ? "selected" : ""}>M64</option>
+              </select>
+            </div>
+            <div class="game-card-actions-row subtle">
+              <button class="btn btn-secondary btn-card" data-action="set-cover" data-id="${app.id}">Set Cover</button>
+              <button class="btn btn-danger btn-card" data-action="uninstall" data-id="${app.id}">Uninstall</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    card.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const el = e.currentTarget as HTMLElement;
+        const action = el.dataset.action;
+        const id = el.dataset.id!;
+        if (action === "play") this.launchSharpApp(id);
+        else if (action === "uninstall") this.uninstallSharpApp(id);
+        else if (action === "set-cover") this.setSharpCover(id);
+      });
+    });
+
+    card.querySelectorAll(".sharp-engine-select").forEach((sel) => {
+      sel.addEventListener("change", async (e) => {
+        const select = e.currentTarget as HTMLSelectElement;
+        const id = select.dataset.id!;
+        await this.api("POST", "/sharp-library/set-engine", { id, engine: select.value });
+      });
+    });
+
+    return card;
+  }
+
+  private async installSharpExe() {
+    const filePath = await getAPI().pickExeFile();
+    if (!filePath) return;
+
+    this.toast("Installing application...");
+    const result = await this.api<{ ok: boolean; app?: SharpApp; error?: string }>("POST", "/sharp-library/install", {
+      srcPath: filePath,
+    });
+
+    if (result?.ok && result.app) {
+      this.toast(`Installed ${result.app.name}`, "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to install application", "error");
+    }
+  }
+
+  private async launchSharpApp(id: string) {
+    const app = this.sharpApps.find((a) => a.id === id);
+    if (!app) return;
+
+    const selectEl = document.querySelector(`.sharp-engine-select[data-id="${id}"]`) as HTMLSelectElement;
+    const engine = selectEl?.value ?? "wine_bare";
+
+    this.toast(`Launching ${app.name}...`);
+    const result = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/sharp-library/launch", {
+      id,
+      engine,
+    });
+
+    if (result?.ok && result.pid) {
+      this.toast(`Launched ${app.name} via ${engine === "m64" ? "M64" : "Wine"}`, "success");
+    } else {
+      this.toast(result?.error ?? `Failed to launch ${app.name}`, "error");
+    }
+  }
+
+  private async uninstallSharpApp(id: string) {
+    const app = this.sharpApps.find((a) => a.id === id);
+    if (!app) return;
+
+    if (!confirm(`Uninstall ${app.name}? All files will be deleted.`)) return;
+
+    this.toast(`Uninstalling ${app.name}...`);
+    const result = await this.api<{ ok: boolean; error?: string }>("POST", "/sharp-library/uninstall", { id });
+
+    if (result?.ok) {
+      this.toast(`Uninstalled ${app.name}`, "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to uninstall", "error");
+    }
+  }
+
+  private async setSharpCover(id: string) {
+    const filePath = await getAPI().pickImageFile();
+    if (!filePath) return;
+
+    this.toast("Setting cover image...");
+    const result = await this.api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-cover", {
+      id,
+      coverPath: filePath,
+    });
+
+    if (result?.ok) {
+      this.toast("Cover image updated", "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to set cover", "error");
+    }
+  }
+
   private logPollInterval: ReturnType<typeof setInterval> | null = null;
   private logLineCount = 0;
 
@@ -1703,14 +1931,7 @@ class App {
           <button class="btn btn-secondary" id="btn-clear-logs-view">Clear View</button>
         </div>
       </div>
-      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;max-height:calc(100vh - 280px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
-      <div style="margin-top:12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <span style="color:var(--text-dim);font-size:11px;font-weight:600;">Crash Dumps</span>
-          <button class="btn btn-secondary" id="btn-open-crash-folder" style="font-size:10px;padding:3px 10px;" title="Open crash dump folder in Finder">&#128193; Open Folder</button>
-        </div>
-        <div id="crash-reports-summary"></div>
-      </div>
+      <div id="log-content" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;max-height:calc(100vh - 220px);overflow-y:auto;color:var(--text-secondary);white-space:pre-wrap;"></div>
     `;
 
     el.querySelector("#btn-clear-logs-view")?.addEventListener("click", () => {
@@ -1721,10 +1942,6 @@ class App {
 
     el.querySelector("#btn-open-log-folder")?.addEventListener("click", async () => {
       await getAPI().openInFinder("~/.metalsharp/logs");
-    });
-
-    el.querySelector("#btn-open-crash-folder")?.addEventListener("click", async () => {
-      await getAPI().openInFinder("~/.metalsharp/games");
     });
 
     this.pollLogs();
@@ -1800,8 +2017,8 @@ class App {
   }
 
   private async loadCrashReports() {
-    const summary = document.getElementById("crash-reports-summary");
-    if (!summary) return;
+    const content = document.getElementById("log-content");
+    if (!content) return;
 
     const result = await this.api<{
       ok: boolean;
@@ -1809,18 +2026,26 @@ class App {
     }>("GET", "/logs/crash-reports");
 
     if (!result?.ok || !result.reports || result.reports.length === 0) {
-      summary.innerHTML = '<span style="color:var(--text-dim);font-size:11px;">No crash dumps found</span>';
       return;
     }
 
-    const reportLines = result.reports
-      .slice(0, 10)
-      .map(
-        (r) =>
-          `<div style="font-size:11px;color:var(--error);margin-top:2px;">${this.esc(r.name)} (${this.esc(r.source)}) — ${this.esc(r.timestamp)} <span style="color:var(--text-dim)">${this.formatBytes(r.size_bytes)}</span></div>`,
-      )
-      .join("");
-    summary.innerHTML = `<span class="badge badge-warn" style="font-size:10px;margin-bottom:4px;">${result.reports.length} crash dump(s)</span>${reportLines}`;
+    const separator = document.createElement("div");
+    separator.style.cssText = "border-top:1px solid var(--border);margin:12px 0;";
+
+    const header = document.createElement("div");
+    header.style.cssText = "color:var(--error);font-weight:600;font-size:11px;margin-bottom:4px;";
+    header.textContent = `${result.reports.length} crash dump(s) detected`;
+
+    content.appendChild(separator);
+    content.appendChild(header);
+
+    for (const r of result.reports.slice(0, 10)) {
+      const line = document.createElement("div");
+      line.className = "log-line log-event-warn";
+      line.style.fontSize = "11px";
+      line.textContent = `${r.name} (${r.source}) — ${r.timestamp} ${this.formatBytes(r.size_bytes)}`;
+      content.appendChild(line);
+    }
   }
 
   private showError(title: string, message: string) {

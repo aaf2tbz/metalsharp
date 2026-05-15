@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld("metalsharp", {
   updaterClearStatus: () => ipcRenderer.invoke("updater:clear-status"),
   backendGetPid: () => ipcRenderer.invoke("backend:get-pid"),
   quitApp: () => ipcRenderer.send("app:quit"),
+  pickExeFile: () => ipcRenderer.invoke("app:pick-exe-file"),
+  pickImageFile: () => ipcRenderer.invoke("app:pick-image-file"),
 });

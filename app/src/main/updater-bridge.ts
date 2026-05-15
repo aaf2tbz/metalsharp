@@ -1,9 +1,14 @@
 import { spawn } from "child_process";
 import * as fs from "fs";
 import * as http from "http";
+import * as os from "os";
 import * as path from "path";
 
-const STATUS_FILE = path.join(process.env.HOME || "/tmp", ".metalsharp", "update_install_status.json");
+function getMetalsharpDir(): string {
+  return path.join(os.homedir(), ".metalsharp");
+}
+
+const STATUS_FILE = path.join(getMetalsharpDir(), "update_install_status.json");
 
 export interface InstallStatus {
   phase: string;
@@ -107,8 +112,14 @@ export class UpdaterBridge {
     return { ok: true };
   }
 
+  private static validateStatusPath(): boolean {
+    const resolved = path.resolve(STATUS_FILE);
+    return resolved.startsWith(path.resolve(getMetalsharpDir()));
+  }
+
   readInstallStatus(): InstallStatus | null {
     try {
+      if (!UpdaterBridge.validateStatusPath()) return null;
       const raw = fs.readFileSync(STATUS_FILE, "utf8");
       return JSON.parse(raw);
     } catch {
@@ -118,6 +129,7 @@ export class UpdaterBridge {
 
   clearInstallStatus(): void {
     try {
+      if (!UpdaterBridge.validateStatusPath()) return;
       fs.unlinkSync(STATUS_FILE);
     } catch {}
   }
