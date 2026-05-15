@@ -309,6 +309,29 @@ impl PipelineId {
         }
     }
 
+    pub fn from_str_flexible(s: &str) -> Option<PipelineId> {
+        if let Some(p) = Self::from_legacy_method(s) {
+            return Some(p);
+        }
+        match s {
+            "m11" => Some(PipelineId::M11),
+            "m12" => Some(PipelineId::M12),
+            "m9" => Some(PipelineId::M9),
+            "m9_gl" => Some(PipelineId::M9Gl),
+            "m32_vk" => Some(PipelineId::M32Vk),
+            "m32_w" => Some(PipelineId::M32W),
+            "m64" => Some(PipelineId::M64),
+            "steam" => Some(PipelineId::Steam),
+            "steam_metalfx" => Some(PipelineId::SteamMetalfx),
+            "steam_d3dmetal_perf" => Some(PipelineId::SteamD3DMetalPerf),
+            "fna_arm64" => Some(PipelineId::FnaArm64),
+            "fna_x86" => Some(PipelineId::FnaX86),
+            "mono_generic" => Some(PipelineId::MonoGeneric),
+            "wine_bare" => Some(PipelineId::WineBare),
+            _ => None,
+        }
+    }
+
     pub fn to_legacy_method(self) -> &'static str {
         match self {
             PipelineId::M11 => "dxmt_metal",

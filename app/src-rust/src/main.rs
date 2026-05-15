@@ -393,7 +393,7 @@ fn route(req: &mut tiny_http::Request) -> (u16, Vec<u8>) {
                 Some(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
                     let resolved_pipeline =
-                        if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_legacy_method(launch_method) {
+                        if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                             Some(pipeline_id)
                         } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
                             Some(crate::mtsp::rules::resolve_pipeline(id as u32))
