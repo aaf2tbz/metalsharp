@@ -1585,7 +1585,9 @@ body {
   background: var(--text-dim);
   top: 2px;
   left: 2px;
-  transition: transform 0.2s, background 0.2s;
+  transition:
+    transform 0.2s,
+    background 0.2s;
 }
 
 .toggle-label input[type="checkbox"]:checked + .toggle-switch {

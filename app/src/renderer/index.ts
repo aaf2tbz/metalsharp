@@ -1782,9 +1782,7 @@ class App {
     const card = document.createElement("div");
     card.className = "game-card";
 
-    const coverUrl = app.cover
-      ? `http://127.0.0.1:9274/sharp-library/cover?id=${app.id}`
-      : "icon.png";
+    const coverUrl = app.cover ? `http://127.0.0.1:9274/sharp-library/cover?id=${app.id}` : "icon.png";
 
     card.innerHTML = `
       <div class="game-card-banner">
@@ -1841,11 +1839,9 @@ class App {
     if (!filePath) return;
 
     this.toast("Installing application...");
-    const result = await this.api<{ ok: boolean; app?: SharpApp; error?: string }>(
-      "POST",
-      "/sharp-library/install",
-      { srcPath: filePath },
-    );
+    const result = await this.api<{ ok: boolean; app?: SharpApp; error?: string }>("POST", "/sharp-library/install", {
+      srcPath: filePath,
+    });
 
     if (result?.ok && result.app) {
       this.toast(`Installed ${result.app.name}`, "success");
@@ -1864,11 +1860,10 @@ class App {
     const engine = selectEl?.value ?? "wine_bare";
 
     this.toast(`Launching ${app.name}...`);
-    const result = await this.api<{ ok: boolean; pid?: number; error?: string }>(
-      "POST",
-      "/sharp-library/launch",
-      { id, engine },
-    );
+    const result = await this.api<{ ok: boolean; pid?: number; error?: string }>("POST", "/sharp-library/launch", {
+      id,
+      engine,
+    });
 
     if (result?.ok && result.pid) {
       this.toast(`Launched ${app.name} via ${engine === "m64" ? "M64" : "Wine"}`, "success");
