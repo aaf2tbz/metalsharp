@@ -44,6 +44,7 @@ class App {
     number,
     { recommended: string; pipelines: Array<{ id: string; name: string; description: string; experimental: boolean }> }
   > = new Map();
+  private lastLaunchMethod: Map<number, string> = new Map();
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -1053,10 +1054,16 @@ class App {
         <span class="download-pct">${statusText}</span>
       `;
     } else if (isRunning) {
+      const pipelineName = this.getPipelineDisplayName(game.appid);
       actionHtml = `
         <div class="game-card-actions-stack">
-          <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
-          <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+          <div class="game-card-actions-row">
+            <button class="btn btn-stop" data-action="stop" data-appid="${game.appid}">Stop</button>
+            <button class="btn btn-secondary btn-card" data-action="view-steam" data-appid="${game.appid}">View on Steam</button>
+          </div>
+          <div class="game-card-active-pipeline">
+            <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">${this.esc(pipelineName)}</span>
+          </div>
         </div>
       `;
     } else if (isLaunching) {
@@ -1154,11 +1161,13 @@ class App {
       return `<option value="native">Auto (Recommended)</option>`;
     }
 
+    const savedMethod = this.lastLaunchMethod.get(game.appid);
     let options = "";
     for (const p of cached.pipelines) {
       const isRec = p.id === cached.recommended;
       const badge = p.experimental ? " [exp]" : "";
-      const selected = isRec ? " selected" : "";
+      const isSelected = savedMethod ? p.id === savedMethod : isRec;
+      const selected = isSelected ? " selected" : "";
       options += `<option value="${p.id}"${selected}>${p.name}${badge}${isRec ? " (Recommended)" : ""}</option>`;
     }
 
@@ -1172,6 +1181,20 @@ class App {
       return rec?.description ?? "Select a launch pipeline.";
     }
     return "Select a launch pipeline. MTSP engine will auto-resolve the best backend.";
+  }
+
+  private getPipelineDisplayName(appid: number): string {
+    const cached = this.pipelineCache.get(appid);
+    const savedMethod = this.lastLaunchMethod.get(appid);
+    if (cached) {
+      if (savedMethod) {
+        const match = cached.pipelines.find((p) => p.id === savedMethod);
+        if (match) return match.name;
+      }
+      const rec = cached.pipelines.find((p) => p.id === cached.recommended);
+      if (rec) return rec.name;
+    }
+    return "Auto";
   }
 
   private async installGame(game: SteamGame) {
@@ -1228,6 +1251,10 @@ class App {
     this.toast(`Launching ${game.name}...`, "success");
     const selectEl = document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement;
     const selectedMethod = selectEl?.value ?? "native";
+
+    if (selectedMethod && selectedMethod !== "native") {
+      this.lastLaunchMethod.set(game.appid, selectedMethod);
+    }
 
     const launchResult = await this.api<{
       ok: boolean;

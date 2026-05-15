@@ -75,7 +75,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             PipelineNode {
                 id: PipelineId::M12,
                 name: "DXMT D3D12 → Metal",
-                description: "DXMT native Metal translation for D3D12 games (WIP)",
+                description: "DXMT native Metal translation for D3D12 games with MetalFX spatial upscaling",
                 backend: "dxmt",
                 experimental: true,
                 requires_wine: true,
@@ -88,7 +88,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                 ],
-                env_vars: vec![EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" }],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
+                    EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
+                ],
                 alternatives: vec![PipelineId::SteamD3DMetalPerf],
                 shader_cache_subdir: Some("dxmt-metal12"),
             },
@@ -120,7 +124,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![EnvVar { key: "SteamOverlayDisabled", value: "1" }],
                 alternatives: vec![PipelineId::M9, PipelineId::M32Vk],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("wined3d-gl"),
             },
             PipelineNode {
                 id: PipelineId::M32Vk,
@@ -148,7 +152,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 alternatives: vec![PipelineId::M32Vk, PipelineId::M9],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("wined3d-32"),
             },
             PipelineNode {
                 id: PipelineId::M64,
@@ -162,7 +166,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("wine-64"),
             },
             PipelineNode {
                 id: PipelineId::Steam,
@@ -176,7 +180,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("steam-native"),
             },
             PipelineNode {
                 id: PipelineId::SteamMetalfx,
@@ -199,7 +203,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "MVK_ALLOW_METAL_FENCES", value: "1" },
                 ],
                 alternatives: vec![PipelineId::SteamD3DMetalPerf],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("steam-metalfx"),
             },
             PipelineNode {
                 id: PipelineId::SteamD3DMetalPerf,
@@ -219,7 +223,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "D3DM_FLUSH_POS_INF_TO_NAN", value: "1" },
                 ],
                 alternatives: vec![PipelineId::SteamMetalfx, PipelineId::M11],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("steam-d3dmetal"),
             },
             PipelineNode {
                 id: PipelineId::FnaArm64,
@@ -236,7 +240,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" },
                 ],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("fna-arm64"),
             },
             PipelineNode {
                 id: PipelineId::FnaX86,
@@ -253,7 +257,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" },
                 ],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("fna-x86"),
             },
             PipelineNode {
                 id: PipelineId::MonoGeneric,
@@ -267,7 +271,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" }],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("mono-generic"),
             },
             PipelineNode {
                 id: PipelineId::WineBare,
@@ -281,7 +285,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 alternatives: vec![],
-                shader_cache_subdir: None,
+                shader_cache_subdir: Some("wine-bare"),
             },
         ]
     })
