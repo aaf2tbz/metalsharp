@@ -62,10 +62,6 @@ name = "Resident Evil 2"
 pipeline = "steam_metalfx"
 name = "Resident Evil 4"
 
-[overrides.504230]
-pipeline = "fna_x86"
-name = "Celeste"
-
 [overrides.2050650]
 pipeline = "steam_d3dmetal_perf"
 name = "Cyberpunk 2077"

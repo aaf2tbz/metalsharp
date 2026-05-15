@@ -9,11 +9,24 @@ fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
     RULES.get_or_init(|| {
         let home = dirs::home_dir().unwrap_or_default();
 
-        let candidates = vec![
+        let mut candidates = vec![
             home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
             home.join(".metalsharp").join("configs").join("mtsp-rules.toml"),
+            home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
             PathBuf::from("configs/mtsp-rules.toml"),
         ];
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(mut dir) = exe.parent() {
+                for _ in 0..8 {
+                    candidates.push(dir.join("configs").join("mtsp-rules.toml"));
+                    match dir.parent() {
+                        Some(p) => dir = p,
+                        None => break,
+                    }
+                }
+            }
+        }
 
         for path in &candidates {
             if path.exists() {
