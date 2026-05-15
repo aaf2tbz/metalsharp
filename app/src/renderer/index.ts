@@ -249,7 +249,7 @@ class App {
     const ready = await getAPI().updaterEnsureReady();
     if (!ready) {
       this.toast(
-        "Updater not available — python3 not found. Install Xcode CLI tools or check your installation.",
+        "Updater not available — update.sh not found. Try reinstalling MetalSharp.",
         "error",
       );
       return;
