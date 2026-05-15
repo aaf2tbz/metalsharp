@@ -630,8 +630,13 @@ pub fn deploy_eac_toggle(game_dir: &PathBuf) {
         return;
     }
 
-    let targets: Vec<PathBuf> =
-        vec![game_dir.clone(), game_dir.join("bin"), game_dir.join("Binaries").join("Win64"), game_dir.join("win64")];
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
 
     let dll = eac_dir.join("_winhttp.dll");
     let config = eac_dir.join("anti_cheat_toggler_config.ini");
@@ -658,8 +663,13 @@ pub fn deploy_eac_toggle(game_dir: &PathBuf) {
 }
 
 pub fn cleanup_eac_toggle(game_dir: &PathBuf) {
-    let targets: Vec<PathBuf> =
-        vec![game_dir.clone(), game_dir.join("bin"), game_dir.join("Binaries").join("Win64"), game_dir.join("win64")];
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
 
     for target in &targets {
         if !target.exists() {
@@ -672,8 +682,13 @@ pub fn cleanup_eac_toggle(game_dir: &PathBuf) {
 }
 
 pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
-    let targets: Vec<PathBuf> =
-        vec![game_dir.clone(), game_dir.join("bin"), game_dir.join("Binaries").join("Win64"), game_dir.join("win64")];
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
 
     for target in &targets {
         if target.exists() && target.join("_winhttp.dll").exists() {
