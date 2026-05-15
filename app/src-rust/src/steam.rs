@@ -503,12 +503,34 @@ pub fn library() -> Value {
             let is_installed = installed_appids.contains(appid)
                 || downloaded_appids.contains(appid)
                 || wine_steam_appids.contains(appid);
+            let recommended = crate::launch::recommended_method_for_appid(*appid);
+            let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
+            let node = crate::mtsp::engine::get_pipeline(pipeline_id);
+            let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
+                "id": node.id,
+                "name": node.name,
+                "recommended": true,
+            }))
+            .chain(
+                node.alternatives
+                    .iter()
+                    .map(|alt| {
+                        let alt_node = crate::mtsp::engine::get_pipeline(*alt);
+                        serde_json::json!({
+                            "id": alt_node.id,
+                            "name": alt_node.name,
+                            "recommended": false,
+                        })
+                    }),
+            )
+            .collect();
             json!({
                 "appid": appid,
                 "name": name,
                 "installed": is_installed,
                 "state": if is_installed { "installed" } else { "not_installed" },
-                "launch_method": crate::launch::recommended_method_for_appid(*appid),
+                "launch_method": recommended,
+                "available_pipelines": available_pipelines,
                 "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
                 "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
             })
