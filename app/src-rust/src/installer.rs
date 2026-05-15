@@ -77,7 +77,7 @@ fn run_install_all() {
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("System Tools", Box::new(|_| install_xcode_cli())),
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
-        ("Compatibility Layer", Box::new(install_gptk)),
+        ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -327,6 +327,69 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
     }
 
     Err("MetalSharp Wine not found — no bundled wine.tar.zst available".into())
+}
+
+fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
+    let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
+    let unix_so = dxmt_dir.join("x86_64-unix").join("winemetal.so");
+    let pe_dll = dxmt_dir.join("x86_64-windows").join("d3d11.dll");
+
+    if unix_so.exists() && pe_dll.exists() {
+        return Ok(false);
+    }
+
+    let _ = fs::create_dir_all(dxmt_dir.join("x86_64-unix"));
+    let _ = fs::create_dir_all(dxmt_dir.join("x86_64-windows"));
+
+    let bundled = find_bundled_archive("dxmt");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-dxmt-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "dxmt")?;
+
+        let src_x64_unix = tmp.join("x86_64-unix");
+        let src_x64_windows = tmp.join("x86_64-windows");
+
+        if src_x64_unix.exists() {
+            for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read x86_64-unix: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), dxmt_dir.join("x86_64-unix").join(entry.file_name()));
+            }
+        }
+        if src_x64_windows.exists() {
+            for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), dxmt_dir.join("x86_64-windows").join(entry.file_name()));
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    } else {
+        let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
+        if dxmt_src.join("x86_64-windows").join("d3d11.dll").exists() {
+            for subdir in &["x86_64-unix", "x86_64-windows"] {
+                let src = dxmt_src.join(subdir);
+                let dst = dxmt_dir.join(subdir);
+                if src.exists() {
+                    let _ = fs::create_dir_all(&dst);
+                    if let Ok(entries) = fs::read_dir(&src) {
+                        for entry in entries.flatten() {
+                            let _ = fs::copy(entry.path(), dst.join(entry.file_name()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if dxmt_dir.join("x86_64-unix").join("winemetal.so").exists()
+        && dxmt_dir.join("x86_64-windows").join("d3d11.dll").exists()
+    {
+        Ok(true)
+    } else {
+        Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
+    }
 }
 
 fn install_gptk(_home: &PathBuf) -> Result<bool, String> {
