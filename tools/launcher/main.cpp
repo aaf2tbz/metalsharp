@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
+#include <vector>
 
 #ifndef METALSHARP_VERSION
 #define METALSHARP_VERSION "0.1.1"
@@ -152,9 +154,18 @@ int main(int argc, char* argv[]) {
 
     printf("\nLaunching %s via MetalSharp...\n", config.executable.c_str());
 
-    std::string launchCmd = "wine \"" + config.executable + "\"";
     if (config.verbose)
-        printf("  Command: %s\n", launchCmd.c_str());
+        printf("  Command: wine %s\n", config.executable.c_str());
 
-    return system(launchCmd.c_str());
+    std::vector<std::string> args = {"wine", config.executable};
+    if (config.fullscreen)
+        args.push_back("--fullscreen");
+    std::vector<char*> argvp;
+    argvp.reserve(args.size() + 1);
+    for (auto& a : args)
+        argvp.push_back(const_cast<char*>(a.c_str()));
+    argvp.push_back(nullptr);
+    execvp("wine", argvp.data());
+    perror("execvp failed");
+    return 1;
 }
