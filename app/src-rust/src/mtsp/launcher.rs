@@ -330,6 +330,7 @@ fn launch_steam_d3dmetal_perf(appid: u32) -> Result<(u32, &'static str), Box<dyn
 }
 
 fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
@@ -346,20 +347,24 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
 
     let mono_bin = find_mono_binary()?;
     let mono_config = find_config("terraria-mono.config");
-    let dyld = format!("{}:/opt/homebrew/lib", dir.to_string_lossy());
+    let shims_dir = find_shims_dir();
+    let dyld = format!("{}:{}:/opt/homebrew/lib", dir.to_string_lossy(), shims_dir);
 
     let mut cmd = Command::new(&mono_bin);
-    cmd.current_dir(dir)
-        .env("DYLD_LIBRARY_PATH", &dyld)
-        .env("MONO_CONFIG", mono_config)
-        .env("FNA3D_DRIVER", "OpenGL")
-        .arg(&exe);
+    cmd.current_dir(dir).env("DYLD_LIBRARY_PATH", &dyld).env("MONO_CONFIG", mono_config);
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.arg(&exe);
 
     let child = cmd.spawn()?;
     Ok((child.id(), "xna_fna_arm64"))
 }
 
 fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let node = get_pipeline(PipelineId::FnaX86);
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
@@ -389,21 +394,25 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
         return Err(format!("game exe not found: {}", exe.display()).into());
     }
 
-    let child = Command::new("arch")
-        .args(["-x86_64", &mono_x86.to_string_lossy()])
+    let mut cmd = Command::new("arch");
+    cmd.args(["-x86_64", &mono_x86.to_string_lossy()])
         .current_dir(dir)
         .env("DYLD_LIBRARY_PATH", &dyld)
         .env("MONO_CONFIG", mono_config)
-        .env("MONO_PATH", mono_path.to_string_lossy().to_string())
-        .env("FNA3D_DRIVER", "OpenGL")
-        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
-        .arg(&exe)
-        .spawn()?;
+        .env("MONO_PATH", mono_path.to_string_lossy().to_string());
 
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.arg(&exe);
+
+    let child = cmd.spawn()?;
     Ok((child.id(), "xna_fna_x86"))
 }
 
 fn launch_mono_generic(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let node = get_pipeline(PipelineId::MonoGeneric);
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let home = dirs::home_dir().ok_or("no home dir")?;
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
@@ -417,14 +426,17 @@ fn launch_mono_generic(appid: u32) -> Result<(u32, &'static str), Box<dyn std::e
 
     let mono_bin = find_mono_binary()?;
     let mono_config = find_config("terraria-mono.config");
-    let dyld = format!("{}:/opt/homebrew/lib", dir.to_string_lossy());
+    let shims_dir = find_shims_dir();
+    let dyld = format!("{}:{}:/opt/homebrew/lib", dir.to_string_lossy(), shims_dir);
 
     let mut cmd = Command::new(&mono_bin);
-    cmd.current_dir(dir)
-        .env("DYLD_LIBRARY_PATH", &dyld)
-        .env("MONO_CONFIG", mono_config)
-        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
-        .arg(&exe);
+    cmd.current_dir(dir).env("DYLD_LIBRARY_PATH", &dyld).env("MONO_CONFIG", mono_config);
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.arg(&exe);
 
     let child = cmd.spawn()?;
     Ok((child.id(), "mono_generic"))
@@ -493,13 +505,13 @@ fn resolve_game_exe(game_dir: &PathBuf) -> String {
 fn find_config(name: &str) -> String {
     let home = dirs::home_dir().unwrap_or_default();
     let candidates =
-        vec![home.join("metalsharp").join("configs").join(name), home.join(".metalsharp").join("configs").join(name)];
+        vec![home.join(".metalsharp").join("configs").join(name), home.join("metalsharp").join("configs").join(name)];
     for c in candidates {
         if c.exists() {
             return c.to_string_lossy().to_string();
         }
     }
-    home.join("metalsharp").join("configs").join(name).to_string_lossy().to_string()
+    home.join(".metalsharp").join("configs").join(name).to_string_lossy().to_string()
 }
 
 fn find_shims_dir() -> String {
@@ -530,6 +542,7 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
 
     let targets: Vec<PathBuf> = vec![
         game_dir.clone(),
+        game_dir.join("Game"),
         game_dir.join("bin"),
         game_dir.join("Binaries").join("Win32"),
         game_dir.join("Binaries").join("Win64"),
@@ -570,6 +583,7 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
 pub fn cleanup_goldberg(game_dir: &PathBuf) {
     let targets: Vec<PathBuf> = vec![
         game_dir.clone(),
+        game_dir.join("Game"),
         game_dir.join("bin"),
         game_dir.join("Binaries").join("Win32"),
         game_dir.join("Binaries").join("Win64"),
@@ -606,6 +620,7 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
 pub fn goldberg_status(game_dir: &PathBuf) -> bool {
     let targets: Vec<PathBuf> = vec![
         game_dir.clone(),
+        game_dir.join("Game"),
         game_dir.join("bin"),
         game_dir.join("Binaries").join("Win32"),
         game_dir.join("Binaries").join("Win64"),
