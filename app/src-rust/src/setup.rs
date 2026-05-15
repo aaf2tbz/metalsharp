@@ -148,7 +148,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "gptk",
                 "name": "Game Porting Toolkit",
-                "desc": "Apple's D3D→Metal translation. Required for Rain World.",
+                "desc": "No longer required — MTSP engine uses bundled DLLs directly. Apple's D3D→Metal translation.",
                 "installed": gptk,
                 "required": false,
                 "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
