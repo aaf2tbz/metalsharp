@@ -212,19 +212,12 @@ fn launch_dxvk_metal32(appid: u32, node: &PipelineNode) -> Result<(u32, &'static
         let _ = std::fs::copy(&src, work_dir.join("d3d9.dll"));
     }
 
-    let dyld_wine = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let dyld_wine = build_dyld(&ms_root, &node.dyld_paths);
     let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
     let moltenvk_str = if moltenvk_icd.exists() {
         moltenvk_icd.to_string_lossy().to_string()
     } else {
-        ms_root
-            .join("etc")
-            .join("etc")
-            .join("vulkan")
-            .join("icd.d")
-            .join("MoltenVK_icd.json")
-            .to_string_lossy()
-            .to_string()
+        ms_root.join("vulkan").join("icd.d").join("MoltenVK_icd.json").to_string_lossy().to_string()
     };
 
     let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
@@ -372,11 +365,7 @@ fn resolve_d3d9_exe(appid: u32, game_dir: &PathBuf) -> (String, PathBuf) {
         },
         _ => {
             let exe = resolve_game_exe(game_dir);
-            let name = std::path::Path::new(&exe)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
             (name, game_dir.clone())
         },
     }
