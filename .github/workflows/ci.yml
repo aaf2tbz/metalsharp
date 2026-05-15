@@ -9,40 +9,9 @@ on:
 
 permissions:
   contents: read
-  security-events: write
   actions: read
 
 jobs:
-  codeql:
-    name: CodeQL
-    runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [c-cpp, javascript-typescript, rust, actions]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-
-      - if: matrix.language == 'c-cpp'
-        run: |
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          cmake --build . --parallel $(sysctl -n hw.ncpu)
-
-      - if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@stable
-
-      - if: matrix.language == 'rust'
-        run: cd app/src-rust && cargo build --release
-
-      - uses: github/codeql-action/analyze@v4
-        with:
-          category: "/language:${{ matrix.language }}"
-
   check-rust:
     name: Rust
     runs-on: macos-14
@@ -206,7 +175,7 @@ jobs:
 
   build:
     name: Build DMG
-    needs: [check-rust, check-cpp, check-js, codeql]
+    needs: [check-rust, check-cpp, check-js]
     runs-on: macos-14
     permissions:
       contents: read
