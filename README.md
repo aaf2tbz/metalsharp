@@ -2,7 +2,7 @@
 
 # M E T A L S H A R P
 
-**Run Windows Steam games on macOS. No VM, no external runtime, no commercial Wine fork.**
+**Run Windows Steam games on macOS. No VM, no external runtime or paid service. Just play.**
 
 <a href="https://github.com/aaf2tbz/metalsharp/actions"><img src="https://img.shields.io/github/actions/workflow/status/aaf2tbz/metalsharp/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
 <a href="https://github.com/aaf2tbz/metalsharp/releases"><img src="https://img.shields.io/github/v/release/aaf2tbz/metalsharp?include_prereleases&style=for-the-badge" alt="Release"></a>
