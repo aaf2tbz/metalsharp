@@ -1,8 +1,11 @@
-use super::engine::{DllDeploy, PipelineId, PipelineNode, get_pipeline};
+use super::engine::{get_pipeline, DllDeploy, PipelineId, PipelineNode};
 use std::path::PathBuf;
 use std::process::Command;
 
-pub fn launch_with_pipeline(appid: u32, pipeline_id: PipelineId) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+pub fn launch_with_pipeline(
+    appid: u32,
+    pipeline_id: PipelineId,
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
@@ -31,8 +34,8 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
 
-    let game_dir = crate::setup::resolve_game_dir(appid)
-        .ok_or_else(|| format!("game directory not found for appid {}", appid))?;
+    let game_dir =
+        crate::setup::resolve_game_dir(appid).ok_or_else(|| format!("game directory not found for appid {}", appid))?;
 
     deploy_dlls_for_pipeline(&game_dir, node);
 
@@ -128,6 +131,7 @@ fn launch_d3d9_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     deploy_dlls_for_pipeline(&game_dir, node);
+    deploy_goldberg(&home, &game_dir, appid);
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
 
@@ -200,6 +204,7 @@ fn launch_dxvk_metal32(appid: u32, node: &PipelineNode) -> Result<(u32, &'static
     let prefix_str = prefix.to_string_lossy().to_string();
 
     deploy_dlls_for_pipeline(&game_dir, node);
+    deploy_goldberg(&home, &game_dir, appid);
 
     let (exe_name, work_dir) = match appid {
         620 => {
@@ -233,7 +238,14 @@ fn launch_dxvk_metal32(appid: u32, node: &PipelineNode) -> Result<(u32, &'static
     let moltenvk_str = if moltenvk_icd.exists() {
         moltenvk_icd.to_string_lossy().to_string()
     } else {
-        ms_root.join("etc").join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json").to_string_lossy().to_string()
+        ms_root
+            .join("etc")
+            .join("etc")
+            .join("vulkan")
+            .join("icd.d")
+            .join("MoltenVK_icd.json")
+            .to_string_lossy()
+            .to_string()
     };
 
     let shader_cache_base = home.join(".metalsharp").join("shader-cache").join("dxvk-metal32").join(appid.to_string());
@@ -373,11 +385,7 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
 }
 
 fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
-    paths
-        .iter()
-        .map(|p| ms_root.join(p).to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join(":")
+    paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
 fn build_shader_cache(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<String> {
@@ -432,4 +440,52 @@ fn find_shims_dir() -> String {
 
 fn find_dll_deploy<'a>(deploys: &'a [DllDeploy], filename: &str) -> Option<&'a DllDeploy> {
     deploys.iter().find(|d| d.filename == filename)
+}
+
+fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    if !goldberg_dir.exists() {
+        return;
+    }
+
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win32"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+
+        let x86_src = goldberg_dir.join("x86").join("steam_api.dll");
+        let x86_dst = target.join("steam_api.dll");
+        if x86_src.exists() && !x86_dst.with_extension("orig").exists() {
+            if x86_dst.exists() {
+                let _ = std::fs::rename(&x86_dst, target.join("steam_api.dll.orig"));
+            }
+            let _ = std::fs::copy(&x86_src, &x86_dst);
+        }
+
+        let x64_src = goldberg_dir.join("x64").join("steam_api64.dll");
+        let x64_dst = target.join("steam_api64.dll");
+        if x64_src.exists() && !x64_dst.with_extension("orig").exists() {
+            if x64_dst.exists() {
+                let _ = std::fs::rename(&x64_dst, target.join("steam_api64.dll.orig"));
+            }
+            let _ = std::fs::copy(&x64_src, &x64_dst);
+        }
+    }
+
+    let steam_settings = game_dir.join("steam_settings");
+    if !steam_settings.exists() {
+        let _ = std::fs::create_dir_all(&steam_settings);
+    }
+    let _ = std::fs::write(
+        steam_settings.join("force_steam_appid.txt"),
+        appid.to_string(),
+    );
 }

@@ -511,18 +511,14 @@ pub fn library() -> Value {
                 "name": node.name,
                 "recommended": true,
             }))
-            .chain(
-                node.alternatives
-                    .iter()
-                    .map(|alt| {
-                        let alt_node = crate::mtsp::engine::get_pipeline(*alt);
-                        serde_json::json!({
-                            "id": alt_node.id,
-                            "name": alt_node.name,
-                            "recommended": false,
-                        })
-                    }),
-            )
+            .chain(node.alternatives.iter().map(|alt| {
+                let alt_node = crate::mtsp::engine::get_pipeline(*alt);
+                serde_json::json!({
+                    "id": alt_node.id,
+                    "name": alt_node.name,
+                    "recommended": false,
+                })
+            }))
             .collect();
             json!({
                 "appid": appid,

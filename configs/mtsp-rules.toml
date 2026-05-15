@@ -31,11 +31,11 @@ pipeline = "m9_gl"
 name = "Nidhogg 2"
 
 [overrides.620]
-pipeline = "m9"
+pipeline = "m32_vk"
 name = "Portal 2"
 
 [overrides.265930]
-pipeline = "m9"
+pipeline = "m32_vk"
 name = "Goat Simulator"
 
 [overrides.391540]
