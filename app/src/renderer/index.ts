@@ -46,6 +46,7 @@ class App {
   > = new Map();
   private lastLaunchMethod: Map<number, string> = new Map();
   private goldbergCache: Map<number, boolean> = new Map();
+  private sharpApps: SharpApp[] = [];
 
   private steamApiKey: string | null = null;
   private setupState: SetupState | null = null;
@@ -175,6 +176,7 @@ class App {
 
     if (view === "settings") this.renderSettings();
     if (view === "logs") this.renderLogs();
+    if (view === "sharp-library") this.renderSharpLibrary();
   }
 
   private async api<T = unknown>(
@@ -1724,6 +1726,192 @@ class App {
       }
       this.renderSettings();
     });
+  }
+
+  private async loadSharpLibrary() {
+    const result = await this.api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
+    if (result?.ok) {
+      this.sharpApps = result.apps;
+    }
+  }
+
+  private async renderSharpLibrary() {
+    const el = document.getElementById("view-sharp-library")!;
+    await this.loadSharpLibrary();
+
+    el.innerHTML = `
+      <div class="library-header">
+        <div>
+          <h1>Sharp Library</h1>
+          <p class="subtitle">Windows applications running via MetalSharp Wine</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="btn-install-exe">Install an EXE</button>
+        </div>
+      </div>
+      <div id="sharp-app-grid" class="game-grid"></div>
+    `;
+
+    el.querySelector("#btn-install-exe")?.addEventListener("click", () => this.installSharpExe());
+
+    this.renderSharpAppGrid();
+  }
+
+  private renderSharpAppGrid() {
+    const grid = document.getElementById("sharp-app-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    if (this.sharpApps.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-dim);">
+          <div style="font-size:48px;margin-bottom:16px;">&#128187;</div>
+          <div style="font-size:14px;margin-bottom:8px;">No applications installed</div>
+          <div style="font-size:12px;">Click "Install an EXE" to add a Windows application</div>
+        </div>
+      `;
+      return;
+    }
+
+    for (const app of this.sharpApps) {
+      grid.appendChild(this.createSharpAppCard(app));
+    }
+  }
+
+  private createSharpAppCard(app: SharpApp): HTMLElement {
+    const card = document.createElement("div");
+    card.className = "game-card";
+
+    const coverUrl = app.cover
+      ? `http://127.0.0.1:9274/sharp-library/cover?id=${app.id}`
+      : "icon.png";
+
+    card.innerHTML = `
+      <div class="game-card-banner">
+        <img src="${coverUrl}" alt="${this.esc(app.name)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='icon.png'" />
+      </div>
+      <div class="game-card-body">
+        <div class="game-card-title">${this.esc(app.name)}</div>
+        <div class="game-card-meta">
+          <span class="badge badge-ok">Sharp App</span>
+          <span class="game-card-size">${this.formatBytes(app.size_bytes)}</span>
+        </div>
+        <div class="game-card-actions">
+          <div class="game-card-actions-stack">
+            <div class="game-card-actions-row">
+              <button class="btn btn-play" data-action="play" data-id="${app.id}">Play</button>
+              <select class="launch-method-select sharp-engine-select" data-id="${app.id}">
+                <option value="wine_bare" ${app.engine === "wine_bare" ? "selected" : ""}>Wine (Default)</option>
+                <option value="m64" ${app.engine === "m64" ? "selected" : ""}>M64</option>
+              </select>
+            </div>
+            <div class="game-card-actions-row subtle">
+              <button class="btn btn-secondary btn-card" data-action="set-cover" data-id="${app.id}">Set Cover</button>
+              <button class="btn btn-danger btn-card" data-action="uninstall" data-id="${app.id}">Uninstall</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    card.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const el = e.currentTarget as HTMLElement;
+        const action = el.dataset.action;
+        const id = el.dataset.id!;
+        if (action === "play") this.launchSharpApp(id);
+        else if (action === "uninstall") this.uninstallSharpApp(id);
+        else if (action === "set-cover") this.setSharpCover(id);
+      });
+    });
+
+    card.querySelectorAll(".sharp-engine-select").forEach((sel) => {
+      sel.addEventListener("change", async (e) => {
+        const select = e.currentTarget as HTMLSelectElement;
+        const id = select.dataset.id!;
+        await this.api("POST", "/sharp-library/set-engine", { id, engine: select.value });
+      });
+    });
+
+    return card;
+  }
+
+  private async installSharpExe() {
+    const filePath = await getAPI().pickExeFile();
+    if (!filePath) return;
+
+    this.toast("Installing application...");
+    const result = await this.api<{ ok: boolean; app?: SharpApp; error?: string }>(
+      "POST",
+      "/sharp-library/install",
+      { srcPath: filePath },
+    );
+
+    if (result?.ok && result.app) {
+      this.toast(`Installed ${result.app.name}`, "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to install application", "error");
+    }
+  }
+
+  private async launchSharpApp(id: string) {
+    const app = this.sharpApps.find((a) => a.id === id);
+    if (!app) return;
+
+    const selectEl = document.querySelector(`.sharp-engine-select[data-id="${id}"]`) as HTMLSelectElement;
+    const engine = selectEl?.value ?? "wine_bare";
+
+    this.toast(`Launching ${app.name}...`);
+    const result = await this.api<{ ok: boolean; pid?: number; error?: string }>(
+      "POST",
+      "/sharp-library/launch",
+      { id, engine },
+    );
+
+    if (result?.ok && result.pid) {
+      this.toast(`Launched ${app.name} via ${engine === "m64" ? "M64" : "Wine"}`, "success");
+    } else {
+      this.toast(result?.error ?? `Failed to launch ${app.name}`, "error");
+    }
+  }
+
+  private async uninstallSharpApp(id: string) {
+    const app = this.sharpApps.find((a) => a.id === id);
+    if (!app) return;
+
+    if (!confirm(`Uninstall ${app.name}? All files will be deleted.`)) return;
+
+    this.toast(`Uninstalling ${app.name}...`);
+    const result = await this.api<{ ok: boolean; error?: string }>("POST", "/sharp-library/uninstall", { id });
+
+    if (result?.ok) {
+      this.toast(`Uninstalled ${app.name}`, "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to uninstall", "error");
+    }
+  }
+
+  private async setSharpCover(id: string) {
+    const filePath = await getAPI().pickImageFile();
+    if (!filePath) return;
+
+    this.toast("Setting cover image...");
+    const result = await this.api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-cover", {
+      id,
+      coverPath: filePath,
+    });
+
+    if (result?.ok) {
+      this.toast("Cover image updated", "success");
+      await this.loadSharpLibrary();
+      this.renderSharpAppGrid();
+    } else {
+      this.toast(result?.error ?? "Failed to set cover", "error");
+    }
   }
 
   private logPollInterval: ReturnType<typeof setInterval> | null = null;

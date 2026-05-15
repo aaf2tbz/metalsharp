@@ -63,6 +63,17 @@ interface CrashReportSummary {
   exit_code: number;
 }
 
+interface SharpApp {
+  id: string;
+  name: string;
+  exe_path: string;
+  install_dir: string;
+  cover: string | null;
+  engine: string;
+  installed_at: string;
+  size_bytes: number;
+}
+
 interface BackendResponse {
   ok: boolean;
   data?: unknown;
@@ -118,4 +129,6 @@ type MetalsharpAPI = {
   updaterClearStatus: () => Promise<void>;
   backendGetPid: () => Promise<number | null>;
   quitApp: () => void;
+  pickExeFile: () => Promise<string | null>;
+  pickImageFile: () => Promise<string | null>;
 };

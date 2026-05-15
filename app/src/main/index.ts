@@ -332,4 +332,26 @@ function registerIpc() {
   ipcMain.on("app:quit", () => {
     app.quit();
   });
+
+  ipcMain.handle("app:pick-exe-file", async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Select an EXE file",
+      properties: ["openFile"],
+      filters: [{ name: "Windows Executable", extensions: ["exe"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("app:pick-image-file", async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Select a cover image",
+      properties: ["openFile"],
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
 }
