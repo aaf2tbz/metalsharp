@@ -1,0 +1,46 @@
+name: CI Rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src-rust/**'
+      - 'Cargo.lock'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/src-rust/**'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  check-rust:
+    name: Rust
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app/src-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-rust
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
