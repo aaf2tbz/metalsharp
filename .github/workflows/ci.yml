@@ -137,7 +137,7 @@ jobs:
         run: cd build && ctest --output-on-failure
 
   check-js:
-    name: JS / Python
+    name: JS
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -145,10 +145,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - name: Install JS dependencies
         run: cd app && npm install
@@ -162,16 +158,8 @@ jobs:
       - name: Prettier
         run: cd app && npx prettier --check 'src/**/*.{ts,js,html,css,json}'
 
-      - name: Python syntax check
-        run: python3 -m py_compile app/updater/update.py
-
-      - name: Python lint
-        run: |
-          pip install ruff
-          ruff check app/updater/update.py
-
-      - name: Python format check
-        run: ruff format --check app/updater/update.py
+      - name: Shell check
+        run: bash -n app/updater/update.sh
 
   build:
     name: Build DMG

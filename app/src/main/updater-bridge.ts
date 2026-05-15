@@ -15,7 +15,6 @@ export interface InstallStatus {
 }
 
 export class UpdaterBridge {
-  private pythonPath: string | null = null;
   private scriptPath: string | null = null;
   private backendPort: number;
 
@@ -24,39 +23,14 @@ export class UpdaterBridge {
   }
 
   async ensureReady(): Promise<boolean> {
-    if (this.pythonPath && this.scriptPath) return true;
+    if (this.scriptPath) return true;
 
     const resourcesDir = process.resourcesPath || "";
     const devRoot = path.join(__dirname, "..", "..");
 
-    const pythonCandidates = [
-      path.join(resourcesDir, "updater", "bin", "python3"),
-      path.join(resourcesDir, "updater", "python3"),
-      path.join(devRoot, "updater", "bin", "python3"),
-      "/usr/bin/python3",
-      "/opt/homebrew/bin/python3",
-      "/usr/local/bin/python3",
-    ];
+    const candidates = [path.join(resourcesDir, "updater", "update.sh"), path.join(devRoot, "updater", "update.sh")];
 
-    for (const c of pythonCandidates) {
-      try {
-        fs.accessSync(c);
-        this.pythonPath = c;
-        break;
-      } catch {}
-    }
-
-    if (!this.pythonPath) {
-      console.error("Updater: no python3 found");
-      return false;
-    }
-
-    const scriptCandidates = [
-      path.join(resourcesDir, "updater", "update.py"),
-      path.join(devRoot, "updater", "update.py"),
-    ];
-
-    for (const c of scriptCandidates) {
+    for (const c of candidates) {
       try {
         fs.accessSync(c);
         this.scriptPath = c;
@@ -65,7 +39,7 @@ export class UpdaterBridge {
     }
 
     if (!this.scriptPath) {
-      console.error("Updater: update.py not found");
+      console.error("Updater: update.sh not found");
       return false;
     }
 
@@ -95,40 +69,40 @@ export class UpdaterBridge {
   }
 
   spawnInstallUpdater(dmgPath: string, backendPid: number, targetVersion: string): { ok: boolean; error?: string } {
-    if (!this.pythonPath || !this.scriptPath) {
-      return { ok: false, error: "Updater not ready — python3 or update.py missing" };
+    if (!this.scriptPath) {
+      return { ok: false, error: "Updater not ready — update.sh missing" };
     }
 
     if (!fs.existsSync(dmgPath)) {
       return { ok: false, error: `DMG file not found: ${dmgPath}` };
     }
 
-    const args = [
-      this.scriptPath,
-      "--dmg",
-      dmgPath,
-      "--backend-pid",
-      String(backendPid),
-      "--target-version",
-      targetVersion,
-      "--status-file",
-      STATUS_FILE,
-      "--python",
-      this.pythonPath,
-    ];
-
-    const child = spawn(this.pythonPath, args, {
-      detached: true,
-      stdio: "ignore",
-      env: {
-        ...process.env,
-        PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+    const child = spawn(
+      "/bin/bash",
+      [
+        this.scriptPath,
+        "--dmg",
+        dmgPath,
+        "--backend-pid",
+        String(backendPid),
+        "--target-version",
+        targetVersion,
+        "--status-file",
+        STATUS_FILE,
+      ],
+      {
+        detached: true,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+        },
       },
-    });
+    );
 
     child.unref();
 
-    console.log(`Updater: spawned install updater (pid=${child.pid}) for v${targetVersion}`);
+    console.log(`Updater: spawned install script (pid=${child.pid}) for v${targetVersion}`);
 
     return { ok: true };
   }
