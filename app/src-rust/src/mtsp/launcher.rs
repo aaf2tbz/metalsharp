@@ -646,11 +646,11 @@ pub fn deploy_eac_toggle(game_dir: &PathBuf) {
     }
 
     let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
         game_dir.join("Game"),
-        game_dir.join("bin"),
         game_dir.join("Binaries").join("Win64"),
+        game_dir.join("bin"),
         game_dir.join("win64"),
+        game_dir.clone(),
     ];
 
     let dll = eac_dir.join("_winhttp.dll");
