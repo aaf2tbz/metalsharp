@@ -1220,7 +1220,7 @@ body {
 }
 
 .setup-install-btn {
-  display: flex !important;
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
   padding: 20px 28px;
