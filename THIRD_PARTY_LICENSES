@@ -1,0 +1,19 @@
+MetalSharp bundles third-party software. The licenses for these components
+are provided in the LICENSES/ directory.
+
+## DXMT — Metal-based D3D11/D3D10 translation layer
+
+- Repository: https://github.com/3Shain/dxmt
+- Version: v0.80-44-g391c23b
+- License: GNU Lesser General Public License v2.1 (LGPL-2.1)
+- Files: LICENSES/DXMT-LICENSE, LICENSES/DXMT-LGPL-2.1
+- Used as: Pre-built PE DLLs (d3d11.dll, dxgi.dll, d3d10core.dll, d3d12.dll,
+  winemetal.dll) and Mach-O shared library (winemetal.so), bundled and
+  distributed with MetalSharp under LGPL-2.1 section 6.
+- Source code available at the repository URL above.
+
+## MojoShader — SDL shader bytecode parser
+
+- Repository: https://github.com/icculus/mojoshader
+- License: MIT (see src/wine/mojoshader/LICENSE)
+- Used as: Git submodule in src/wine/mojoshader/
