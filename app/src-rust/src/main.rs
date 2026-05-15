@@ -19,6 +19,7 @@
 
 mod installer;
 mod launch;
+mod mtsp;
 mod scan;
 mod setup;
 mod steam;
