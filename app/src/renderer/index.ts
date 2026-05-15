@@ -758,7 +758,7 @@ class App {
     body.innerHTML = `
       <div class="setup-section-header">
         <h1>Install Steam</h1>
-        <p>MetalSharp will download and install Windows Steam. Complete the setup in the Steam window, then click Continue.</p>
+        <p>MetalSharp will download and install Windows Steam. Complete the setup in the Steam window, then click Next.</p>
       </div>
       <div id="steam-install-status" style="text-align:center;margin:24px 0;">
         <span class="badge badge-warn" style="font-size:14px;padding:12px 24px;">Steam not installed</span>
@@ -766,7 +766,7 @@ class App {
       <div class="setup-actions">
         <button class="btn btn-secondary" id="setup-back">Back</button>
         <button class="btn btn-primary btn-lg" id="btn-install-steam">Install Steam</button>
-        <button class="btn btn-primary" id="setup-next" style="display:none;">Continue</button>
+        <button class="btn btn-primary" id="setup-next" style="display:none;">Next</button>
       </div>
     `;
 
@@ -781,16 +781,23 @@ class App {
       return s;
     };
 
-    const initialStatus = await checkSteamStatus();
-    if (initialStatus?.running) {
+    const showSteamReady = () => {
+      this.wineSteamInstalled = true;
       statusDiv.innerHTML =
-        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
+        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
       installBtn.style.display = "none";
       nextBtn.style.display = "inline-flex";
-    } else if (initialStatus?.installed) {
-      statusDiv.innerHTML =
-        '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is installed</span>';
-      installBtn.textContent = "Launch Steam";
+    };
+
+    const showInstallFailed = (errorMsg: string) => {
+      statusDiv.innerHTML = `<span style="color:var(--error);font-size:14px;">${this.esc(errorMsg)}</span>`;
+      installBtn.textContent = "Retry Install";
+      (installBtn as HTMLButtonElement).disabled = false;
+    };
+
+    const initialStatus = await checkSteamStatus();
+    if (initialStatus?.installed || initialStatus?.running) {
+      showSteamReady();
     }
 
     installBtn.addEventListener("click", async () => {
@@ -799,75 +806,43 @@ class App {
 
       const steamStatus = await checkSteamStatus();
 
-      if (steamStatus?.running) {
-        statusDiv.innerHTML =
-          '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-        installBtn.style.display = "none";
-        nextBtn.style.display = "inline-flex";
-        return;
-      }
-
-      if (!steamStatus?.installed) {
-        statusDiv.innerHTML =
-          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
-        const installResult = await this.api<{
-          ok: boolean;
-          path?: string;
-          error?: string;
-          message?: string;
-        }>("POST", "/steam/install");
-        if (!installResult?.ok) {
-          statusDiv.innerHTML = `<span style="color:var(--error)">${installResult?.error ?? "Failed to install Steam"}</span>`;
-          installBtn.textContent = "Retry Install";
-          (installBtn as HTMLButtonElement).disabled = false;
-          return;
-        }
-
-        statusDiv.innerHTML =
-          '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window...</span>';
-
-        const pollInstall = setInterval(async () => {
-          const s = await checkSteamStatus();
-          if (s?.installed || s?.running) {
-            clearInterval(pollInstall);
-            this.wineSteamInstalled = true;
-            statusDiv.innerHTML =
-              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam installed</span>';
-            installBtn.textContent = "Launch Steam";
-            (installBtn as HTMLButtonElement).disabled = false;
-          }
-        }, 3000);
-        setTimeout(() => {
-          clearInterval(pollInstall);
-        }, 300000);
+      if (steamStatus?.installed || steamStatus?.running) {
+        showSteamReady();
         return;
       }
 
       statusDiv.innerHTML =
-        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Launching Steam — log in through the Steam window...</span>';
-      const launchResult = await this.api<{
+        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Downloading Steam installer... Complete setup in the Steam window.</span>';
+      const installResult = await this.api<{
         ok: boolean;
-        pid?: number;
+        path?: string;
         error?: string;
-      }>("POST", "/steam/launch");
-      if (launchResult?.ok) {
-        this.wineSteamRunning = true;
-        const pollSteam = setInterval(async () => {
-          const s = await checkSteamStatus();
-          if (s?.running) {
-            clearInterval(pollSteam);
-            statusDiv.innerHTML =
-              '<span class="badge badge-ok" style="font-size:14px;padding:12px 24px;">Steam is running</span>';
-            installBtn.style.display = "none";
-            nextBtn.style.display = "inline-flex";
-          }
-        }, 3000);
-        setTimeout(() => clearInterval(pollSteam), 120000);
-      } else {
-        statusDiv.innerHTML = `<span style="color:var(--error)">${launchResult?.error ?? "Failed to launch Steam"}</span>`;
-        installBtn.textContent = "Launch Steam";
-        (installBtn as HTMLButtonElement).disabled = false;
+        message?: string;
+      }>("POST", "/steam/install");
+      if (!installResult?.ok) {
+        showInstallFailed(installResult?.error ?? "Failed to install Steam");
+        return;
       }
+
+      statusDiv.innerHTML =
+        '<div class="spinner"></div> <span style="color:var(--text-dim);font-size:13px;">Steam setup running — complete the installer in the Steam window, then wait for it to finish...</span>';
+
+      let installTimedOut = false;
+      const pollInstall = setInterval(async () => {
+        const s = await checkSteamStatus();
+        if (s?.installed || s?.running) {
+          clearInterval(pollInstall);
+          showSteamReady();
+        }
+      }, 3000);
+
+      setTimeout(() => {
+        if (!this.wineSteamInstalled) {
+          clearInterval(pollInstall);
+          installTimedOut = true;
+          showInstallFailed("Steam installation timed out — the installer may have crashed. Click Retry Install to try again.");
+        }
+      }, 300000);
     });
 
     nextBtn.addEventListener("click", async () => {
