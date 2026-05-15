@@ -625,7 +625,7 @@ pub fn goldberg_status(game_dir: &PathBuf) -> bool {
 
 pub fn deploy_eac_toggle(game_dir: &PathBuf) {
     let home = dirs::home_dir().unwrap_or_default();
-    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle");
+    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle").join("x86_64-windows");
     if !eac_dir.exists() {
         return;
     }
