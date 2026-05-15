@@ -1,0 +1,271 @@
+# MTSP Pipeline Override Rules
+# appid → pipeline_id mapping
+# These take highest priority in the 3-tier resolver.
+
+[overrides.105600]
+pipeline = "fna_arm64"
+name = "Terraria"
+
+[overrides.504230]
+pipeline = "fna_x86"
+name = "Celeste"
+
+[overrides.312520]
+pipeline = "m11"
+name = "Rain World"
+
+[overrides.375520]
+pipeline = "m11"
+name = "Rain World Downpour"
+
+[overrides.848450]
+pipeline = "m11"
+name = "Noita"
+
+[overrides.3164500]
+pipeline = "m11"
+name = "Persona 3 Reload"
+
+[overrides.535520]
+pipeline = "m9_gl"
+name = "Nidhogg 2"
+
+[overrides.620]
+pipeline = "m9"
+name = "Portal 2"
+
+[overrides.265930]
+pipeline = "m9"
+name = "Goat Simulator"
+
+[overrides.391540]
+pipeline = "steam"
+name = "Undertale"
+
+[overrides.945360]
+pipeline = "steam"
+name = "Among Us"
+
+[overrides.1139900]
+pipeline = "steam"
+name = "Stardew Valley"
+
+[overrides.1245620]
+pipeline = "steam_metalfx"
+name = "Elden Ring"
+
+[overrides.814380]
+pipeline = "steam_metalfx"
+name = "Resident Evil 2"
+
+[overrides.1593500]
+pipeline = "steam_metalfx"
+name = "Resident Evil 4"
+
+[overrides.504230]
+pipeline = "fna_x86"
+name = "Celeste"
+
+[overrides.2050650]
+pipeline = "steam_d3dmetal_perf"
+name = "Cyberpunk 2077"
+
+[overrides.1583230]
+pipeline = "steam_d3dmetal_perf"
+name = "The Witcher 3"
+
+[overrides.397540]
+pipeline = "steam_d3dmetal_perf"
+name = "Dark Souls III"
+
+[overrides.298110]
+pipeline = "steam_d3dmetal_perf"
+name = "Dark Souls Remastered"
+
+[overrides.552520]
+pipeline = "steam_d3dmetal_perf"
+name = "Control"
+
+[overrides.1091500]
+pipeline = "steam_d3dmetal_perf"
+name = "Sekiro"
+
+[overrides.1868140]
+pipeline = "steam_d3dmetal_perf"
+name = "Hogwarts Legacy"
+
+[overrides.1551360]
+pipeline = "steam_d3dmetal_perf"
+name = "A Plague Tale: Requiem"
+
+[overrides.1716740]
+pipeline = "steam_d3dmetal_perf"
+name = "Lies of P"
+
+[overrides.1203620]
+pipeline = "steam_d3dmetal_perf"
+name = "Baldur's Gate 3"
+
+[overrides.1282100]
+pipeline = "steam_d3dmetal_perf"
+name = "Death Stranding"
+
+[overrides.750920]
+pipeline = "steam_d3dmetal_perf"
+name = "Hellblade: Senua's Sacrifice"
+
+[overrides.1172380]
+pipeline = "steam_d3dmetal_perf"
+name = "Satisfactory"
+
+[overrides.870780]
+pipeline = "steam_d3dmetal_perf"
+name = "NieR: Automata"
+
+[overrides.1196590]
+pipeline = "steam_d3dmetal_perf"
+name = "Raft"
+
+[overrides.1236300]
+pipeline = "steam_d3dmetal_perf"
+name = "Scorn"
+
+[overrides.1888160]
+pipeline = "steam_d3dmetal_perf"
+name = "The Callisto Protocol"
+
+[overrides.976310]
+pipeline = "steam_d3dmetal_perf"
+name = "Icarus"
+
+[overrides.2767030]
+pipeline = "steam_d3dmetal_perf"
+name = "Pacific Drive"
+
+[overrides.292030]
+pipeline = "steam_d3dmetal_perf"
+name = "A Plague Tale: Innocence"
+
+[overrides.990080]
+pipeline = "steam_d3dmetal_perf"
+name = "MHRise"
+
+[overrides.1172470]
+pipeline = "steam_d3dmetal_perf"
+name = "Disco Elysium"
+
+[overrides.2290180]
+pipeline = "steam_d3dmetal_perf"
+name = "Helldivers 2"
+
+[overrides.548430]
+pipeline = "steam_d3dmetal_perf"
+name = "Deep Rock Galactic"
+
+[overrides.892970]
+pipeline = "steam_d3dmetal_perf"
+name = "Valheim"
+
+[overrides.1313140]
+pipeline = "steam_d3dmetal_perf"
+name = "Phasmophobia"
+
+[overrides.1623730]
+pipeline = "steam_d3dmetal_perf"
+name = "It Takes Two"
+
+[overrides.553850]
+pipeline = "steam_d3dmetal_perf"
+name = "Hades II"
+
+[overrides.367520]
+pipeline = "steam_d3dmetal_perf"
+name = "Hollow Knight"
+
+[overrides.413150]
+pipeline = "steam_d3dmetal_perf"
+name = "Stardew Valley (alt)"
+
+[overrides.1145360]
+pipeline = "steam_d3dmetal_perf"
+name = "Ghostrunner"
+
+[overrides.588650]
+pipeline = "steam_d3dmetal_perf"
+name = "Immortals Fenyx Rising"
+
+[overrides.1637320]
+pipeline = "steam_d3dmetal_perf"
+name = "Dying Light 2"
+
+[overrides.1562430]
+pipeline = "steam_d3dmetal_perf"
+name = "Stray"
+
+[overrides.1092790]
+pipeline = "steam_d3dmetal_perf"
+name = "A Short Hike"
+
+[overrides.1229490]
+pipeline = "steam_d3dmetal_perf"
+name = "Unpacking"
+
+[overrides.1971650]
+pipeline = "steam_d3dmetal_perf"
+name = "Cult of the Lamb"
+
+[overrides.1809540]
+pipeline = "steam_d3dmetal_perf"
+name = "Vampire Survivors"
+
+[overrides.1237320]
+pipeline = "steam_d3dmetal_perf"
+name = "The Forgotten City"
+
+[overrides.1326470]
+pipeline = "steam_d3dmetal_perf"
+name = "Solar Ash"
+
+[overrides.275850]
+pipeline = "steam_d3dmetal_perf"
+name = "Insurgency: Sandstorm"
+
+[overrides.1643320]
+pipeline = "steam_d3dmetal_perf"
+name = "LEGO Star Wars"
+
+[overrides.379720]
+pipeline = "steam_d3dmetal_perf"
+name = "Doom Eternal"
+
+[overrides.782330]
+pipeline = "steam_d3dmetal_perf"
+name = "A Way Out"
+
+[overrides.289070]
+pipeline = "steam_d3dmetal_perf"
+name = "Rise of the Tomb Raider"
+
+[overrides.1147560]
+pipeline = "steam_d3dmetal_perf"
+name = "GreedFall"
+
+[overrides.1222680]
+pipeline = "steam_d3dmetal_perf"
+name = "Haven"
+
+[overrides.252950]
+pipeline = "steam_d3dmetal_perf"
+name = "Borderlands 3"
+
+[overrides.230410]
+pipeline = "steam_d3dmetal_perf"
+name = "Shadow of the Tomb Raider"
+
+[overrides.252490]
+pipeline = "steam_d3dmetal_perf"
+name = "The Outer Worlds"
+
+[overrides.730]
+pipeline = "steam_d3dmetal_perf"
+name = "Tomb Raider (2013)"
