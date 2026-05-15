@@ -840,7 +840,9 @@ class App {
         if (!this.wineSteamInstalled) {
           clearInterval(pollInstall);
           installTimedOut = true;
-          showInstallFailed("Steam installation timed out — the installer may have crashed. Click Retry Install to try again.");
+          showInstallFailed(
+            "Steam installation timed out — the installer may have crashed. Click Retry Install to try again.",
+          );
         }
       }, 300000);
     });
