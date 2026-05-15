@@ -81,6 +81,7 @@ fn run_install_all() {
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("EAC Bypass", Box::new(install_eac_toggle)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
+        ("Mono Configs", Box::new(install_mono_configs)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
     ];
 
@@ -513,6 +514,53 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     }
 
     Err("mtsp-rules.toml not found — pipeline auto-detection will use PE analysis fallback".into())
+}
+
+fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
+    let configs_dir = home.join(".metalsharp").join("configs");
+    let _ = fs::create_dir_all(&configs_dir);
+
+    let config_files = ["terraria-mono.config", "celeste-x86-mono.config"];
+    let mut any_installed = false;
+
+    for name in &config_files {
+        let dest = configs_dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+
+        let mut candidates = vec![
+            PathBuf::from(format!("configs/{}", name)),
+            home.join(".metalsharp").join("configs").join(name),
+            home.join("repos").join("metalsharp").join("configs").join(name),
+        ];
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(mut dir) = exe.parent() {
+                for _ in 0..8 {
+                    candidates.push(dir.join("configs").join(name));
+                    match dir.parent() {
+                        Some(p) => dir = p,
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        for src in &candidates {
+            if src.exists() {
+                if let Ok(contents) = fs::read_to_string(src) {
+                    let _ = fs::write(&dest, &contents);
+                    if dest.exists() {
+                        any_installed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(any_installed)
 }
 
 fn install_gptk(_home: &PathBuf) -> Result<bool, String> {

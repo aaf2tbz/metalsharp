@@ -13,6 +13,7 @@ pub enum PipelineId {
     M64,
     Steam,
     SteamMetalfx,
+    #[serde(rename = "steam_d3dmetal_perf")]
     SteamD3DMetalPerf,
     FnaArm64,
     FnaX86,
@@ -327,7 +328,7 @@ impl PipelineId {
             "m64" => Some(PipelineId::M64),
             "steam" => Some(PipelineId::Steam),
             "steam_metalfx" => Some(PipelineId::SteamMetalfx),
-            "steam_d3dmetal_perf" => Some(PipelineId::SteamD3DMetalPerf),
+            "steam_d3dmetal_perf" | "steam_d3_d_metal_perf" => Some(PipelineId::SteamD3DMetalPerf),
             "fna_arm64" => Some(PipelineId::FnaArm64),
             "fna_x86" => Some(PipelineId::FnaX86),
             "mono_generic" => Some(PipelineId::MonoGeneric),
