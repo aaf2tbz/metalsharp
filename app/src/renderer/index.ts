@@ -1236,20 +1236,6 @@ class App {
     const fnaAppids = [105600, 504230];
     const isFna = fnaAppids.includes(game.appid);
 
-    this.launchingAppId = game.appid;
-    this.renderLibrary();
-
-    if (!isFna && this.wineSteamInstalled && !this.wineSteamRunning) {
-      this.toast("Starting Steam...", "success");
-      await this.api("POST", "/steam/launch");
-      await new Promise((r) => setTimeout(r, 10000));
-      this.wineSteamRunning = true;
-    }
-
-    this.toast(`Preparing ${game.name}...`, "success");
-    await this.api("POST", "/game/prepare", { appid: game.appid });
-
-    this.toast(`Launching ${game.name}...`, "success");
     const selectEl = document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement;
     const selectedMethod = selectEl?.value ?? "native";
 
@@ -1257,11 +1243,15 @@ class App {
       this.lastLaunchMethod.set(game.appid, selectedMethod);
     }
 
+    this.launchingAppId = game.appid;
+    this.renderLibrary();
+
     const launchResult = await this.api<{
       ok: boolean;
       pid?: number;
       error?: string;
       gameType?: string;
+      engine?: string;
     }>("POST", "/game/launch-auto", {
       appid: game.appid,
       launchMethod: selectedMethod,
@@ -1272,7 +1262,8 @@ class App {
     if (launchResult?.ok && launchResult.pid) {
       this.runningPid = launchResult.pid;
       this.runningAppId = game.appid;
-      this.toast(`Launched ${game.name}`, "success");
+      const pipelineName = this.getPipelineDisplayName(game.appid);
+      this.toast(`Launched ${game.name} via ${pipelineName}`, "success");
       this.renderLibrary();
     } else {
       this.toast(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
