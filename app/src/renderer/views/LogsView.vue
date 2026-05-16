@@ -95,7 +95,10 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 16px;
+  margin: -24px -28px 16px;
+  padding: 24px 28px 18px;
+  background: var(--page-header-bg);
+  border-bottom: 1px solid var(--border);
 }
 .logs-header h1 {
   font-size: 22px;
