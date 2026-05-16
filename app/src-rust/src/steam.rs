@@ -4,6 +4,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
+const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 
 fn ms_wine() -> PathBuf {
     dirs::home_dir()
@@ -130,19 +131,14 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     let wrapper = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
 
-    if !wrapper.exists() {
-        return;
-    }
+    let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
 
-    let needs_redeploy = if real.exists() {
-        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
-        real_size < 100_000
-    } else {
-        let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
-        wrapper_size > 100_000
-    };
+    let wrapper_missing = wrapper_size == 0;
+    let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+    let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
-    if needs_redeploy {
+    if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
         deploy_steamwebhelper_wrapper(steam_dir);
     }
 }
@@ -422,30 +418,38 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     let real = cef_dir.join("steamwebhelper_real.exe");
     let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
 
-    if wrapper_marker.exists() && real.exists() {
-        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
-        if real_size > 100_000 {
+    let wrapper = match find_bundled_steamwebhelper_wrapper() {
+        Some(wrapper) => wrapper,
+        None => return,
+    };
+
+    let original_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
+    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+    let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+
+    if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        return;
+    }
+
+    if original_size > 0 && original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        if !wrapper_marker.exists() {
+            let _ = std::fs::write(&wrapper_marker, "deployed");
+        }
+        return;
+    }
+
+    if real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        if original_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            let _ = std::fs::remove_file(&real);
+            let _ = std::fs::rename(&original, &real);
+        } else {
             return;
         }
+    } else if original.exists() {
+        let _ = std::fs::remove_file(&original);
     }
 
-    if !original.exists() {
-        return;
-    }
-
-    let real_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
-    if real_size < 100_000 {
-        return;
-    }
-
-    if real.exists() {
-        let _ = std::fs::remove_file(&real);
-    }
-    let _ = std::fs::rename(&original, &real);
-
-    let wrapper = find_bundled_steamwebhelper_wrapper();
-    if let Some(wrapper_src) = wrapper {
-        let _ = std::fs::copy(&wrapper_src, &original);
+    if std::fs::copy(&wrapper, &original).is_ok() {
         let _ = std::fs::write(&wrapper_marker, "deployed");
     }
 }
@@ -471,7 +475,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 
     if cached.exists() {
         let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 100_000 {
+        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
             return Some(cached);
         }
     }
@@ -481,7 +485,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 
     if output.status.success() && cached.exists() {
         let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 100_000 {
+        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
             return Some(cached);
         }
     }
