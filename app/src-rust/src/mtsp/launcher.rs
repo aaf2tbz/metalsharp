@@ -8,10 +8,9 @@ use std::time::Duration;
 static BRIDGE_PORT: u16 = 18733;
 
 pub fn bridge_is_running() -> bool {
-    if let Ok(mut stream) = TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", BRIDGE_PORT).parse().unwrap(),
-        Duration::from_millis(500),
-    ) {
+    if let Ok(mut stream) =
+        TcpStream::connect_timeout(&format!("127.0.0.1:{}", BRIDGE_PORT).parse().unwrap(), Duration::from_millis(500))
+    {
         let ping: [u8; 4] = 0xFFu32.to_ne_bytes();
         let _ = stream.write_all(&ping);
         let _ = stream.write_all(&0u32.to_ne_bytes());
@@ -43,11 +42,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
     let bridge_dir = bridge_exe.parent().unwrap_or(std::path::Path::new(""));
     let dll_dest = bridge_dir.join("steam_api64.dll");
     if !dll_dest.exists() {
-        let steam_dll = prefix
-            .join("drive_c")
-            .join("Program Files (x86)")
-            .join("Steam")
-            .join("steam_api64.dll");
+        let steam_dll = prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steam_api64.dll");
         if steam_dll.exists() {
             let _ = std::fs::copy(&steam_dll, &dll_dest);
         }

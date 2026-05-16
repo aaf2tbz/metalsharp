@@ -84,13 +84,7 @@ pub fn resolve_dual_game_dir(appid: u32) -> DualGameDir {
     let macos_app = macos_dir.as_ref().and_then(|d| find_macos_app(d));
     let has_native_build = macos_app.is_some();
 
-    DualGameDir {
-        appid,
-        macos_dir,
-        wine_dir,
-        macos_app,
-        has_native_build,
-    }
+    DualGameDir { appid, macos_dir, wine_dir, macos_app, has_native_build }
 }
 
 pub fn find_macos_app(dir: &Path) -> Option<PathBuf> {
