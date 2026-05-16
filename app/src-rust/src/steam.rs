@@ -377,7 +377,7 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let manifest_name = format!("appmanifest_{}.acf", appid);
 
-    let _ = crate::launch::kill_game(appid);
+    let _ = crate::launch::kill_game_with_pid(appid, 0);
 
     for steamapps in crate::scan::wine_steam_library_paths() {
         let manifest_path = steamapps.join(&manifest_name);
