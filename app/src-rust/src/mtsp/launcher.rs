@@ -532,57 +532,24 @@ fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error
         return Ok(local_dir);
     }
 
-    let wine_steamapps = home
-        .join(".metalsharp")
-        .join("prefix-steam")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+    let dual = crate::scan::resolve_dual_game_dir(appid);
 
-    let manifest_name = format!("appmanifest_{}.acf", appid);
-    let manifest_path = wine_steamapps.join(&manifest_name);
-    if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("\"installdir\"") {
-                let parts: Vec<&str> = trimmed.splitn(2, ['\t', ' ']).collect();
-                if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
-                    let game_dir = wine_steamapps.join("common").join(dir_name);
-                    if game_dir.exists() && has_exe_files(&game_dir) {
-                        return Ok(game_dir);
-                    }
-                }
-            }
+    if let Some(ref wine_dir) = dual.wine_dir {
+        if wine_dir.exists() && has_exe_files(wine_dir) {
+            return Ok(wine_dir.clone());
         }
     }
 
-    for wine_lib_path in crate::scan::wine_steam_library_paths() {
-        if wine_lib_path == wine_steamapps {
-            continue;
-        }
-        let manifest_path = wine_lib_path.join(&manifest_name);
-        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("\"installdir\"") {
-                    let parts: Vec<&str> = trimmed.splitn(2, ['\t', ' ']).collect();
-                    if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
-                        let game_dir = wine_lib_path.join("common").join(dir_name);
-                        if game_dir.exists() && has_exe_files(&game_dir) {
-                            return Ok(game_dir);
-                        }
-                    }
-                }
-            }
+    if let Some(ref macos_dir) = dual.macos_dir {
+        if macos_dir.exists() {
+            return Ok(macos_dir.clone());
         }
     }
 
-    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     if local_dir.exists() {
         return Ok(local_dir);
     }
-    Err(format!("no Windows game dir found for appid {}", appid).into())
+    Err(format!("no game dir found for appid {}", appid).into())
 }
 
 fn has_exe_files(dir: &PathBuf) -> bool {

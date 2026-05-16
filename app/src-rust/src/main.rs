@@ -601,6 +601,27 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .collect();
             resp(200, json!({"ok": true, "running": running}))
         },
+        (Method::Get, "/game/dual-info") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            if appid == 0 {
+                return resp(400, json!({"ok": false, "error": "appid required"}));
+            }
+            let dual = scan::resolve_dual_game_dir(appid);
+            resp(200, json!({
+                "ok": true,
+                "appid": appid,
+                "has_native_build": dual.has_native_build,
+                "macos_dir": dual.macos_dir.map(|p| p.to_string_lossy().to_string()),
+                "macos_app": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
+                "wine_dir": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
+            }))
+        },
         (Method::Post, "/kill") => {
             let body = read_body(req);
             let pid_param = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
