@@ -66,6 +66,18 @@ fn main() {
         std::process::exit(1);
     }));
 
+    ctrlc::set_handler(move || {
+        app_log("Shutting down — cleaning up running games");
+        if let Ok(map) = running_games().lock() {
+            for (&appid, &pid) in map.iter() {
+                app_log(&format!("Killing game appid={} pid={}", appid, pid));
+                let _ = launch::kill_process_tree(pid);
+            }
+        }
+        std::process::exit(0);
+    })
+    .unwrap_or_else(|e| eprintln!("ctrlc handler warning: {}", e));
+
     eprintln!("metalsharp-backend listening on {}", addr);
     app_log(&format!("MetalSharp v{} backend started on {}", env!("CARGO_PKG_VERSION"), addr));
 
@@ -528,20 +540,24 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
             let steam_app_id = body.get("steamAppId").and_then(|v| v.as_u64());
-            let resolved = if steam_app_id.is_some() && !exe.contains(".exe") {
-                resolve_game_exe(steam_app_id.unwrap() as u32)
+            let resolved = if let Some(sid) = steam_app_id {
+                if !exe.contains(".exe") {
+                    resolve_game_exe(sid as u32)
+                } else {
+                    exe.to_string()
+                }
             } else {
                 exe.to_string()
             };
             app_log(&format!("Launching: {}", resolved));
 
             let mut game_type = "native";
-            if steam_app_id.is_some() {
+            if let Some(sid) = steam_app_id {
                 let home = dirs::home_dir().unwrap_or_default();
                 let marker = home
                     .join(".metalsharp")
                     .join("games")
-                    .join(steam_app_id.unwrap().to_string())
+                    .join(sid.to_string())
                     .join(".metalsharp_prepared");
                 if let Ok(content) = std::fs::read_to_string(&marker) {
                     if content.contains("is_dotnet=true") {
@@ -578,7 +594,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         .map(|p| crate::mtsp::engine::get_pipeline(p).description)
                         .unwrap_or("Unknown");
                     app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
-                    let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, resolved_pipeline.unwrap());
+                    let pipeline = match resolved_pipeline {
+                        Some(p) => p,
+                        None => {
+                            app_log(&format!("[LAUNCH FAILED] appid {} | no pipeline resolved", id));
+                            return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
+                        },
+                    };
+                    let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline);
                     match result {
                         Ok((pid, game_type)) => {
                             register_game_pid(id as u32, pid);
