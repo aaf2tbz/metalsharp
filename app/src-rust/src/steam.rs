@@ -377,7 +377,7 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let manifest_name = format!("appmanifest_{}.acf", appid);
 
-    let _ = crate::launch::kill_game(appid);
+    let _ = crate::launch::kill_game_with_pid(appid, 0);
 
     for steamapps in crate::scan::wine_steam_library_paths() {
         let manifest_path = steamapps.join(&manifest_name);
@@ -503,8 +503,9 @@ pub fn library() -> Value {
             let is_installed = installed_appids.contains(appid)
                 || downloaded_appids.contains(appid)
                 || wine_steam_appids.contains(appid);
-            let recommended = crate::launch::recommended_method_for_appid(*appid);
+            let dual = crate::scan::resolve_dual_game_dir(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
+            let recommended = pipeline_id.to_legacy_method();
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
                 "id": node.id,
@@ -527,6 +528,9 @@ pub fn library() -> Value {
                 "state": if is_installed { "installed" } else { "not_installed" },
                 "launch_method": recommended,
                 "available_pipelines": available_pipelines,
+                "has_native_build": dual.has_native_build,
+                "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
+                "wine_game_path": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
                 "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
                 "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
             })

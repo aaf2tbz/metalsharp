@@ -11,9 +11,12 @@ class TerrariaLauncher {
         AppDomain.CurrentDomain.UnhandledException += (s, e) => {
             Console.Error.WriteLine("[SUPPRESSED] " + e.ExceptionObject);
         };
+        AppDomain.CurrentDomain.FirstChanceException += (s, e) => {
+            Console.Error.WriteLine("[FIRSTCHANCE] " + e.Exception.GetType().Name + ": " + e.Exception.Message + " in " + e.Exception.Source);
+        };
         
-        _ta = Assembly.LoadFrom("Terraria.exe");
         AppDomain.CurrentDomain.AssemblyResolve += OnResolve;
+        _ta = Assembly.LoadFrom("Terraria.exe");
         
         using (var stream = _ta.GetManifestResourceStream("Terraria.Libraries.ReLogic.ReLogic.dll")) {
             byte[] data = new byte[stream.Length];
@@ -26,6 +29,46 @@ class TerrariaLauncher {
         }
         
         _ta.GetType("Terraria.Program").GetField("LoadedEverything", BindingFlags.Static | BindingFlags.Public).SetValue(null, true);
+        
+        // Force SocialAPI to None mode so it skips Steam init (which crashes WinForms MessageBox on 64-bit Mono)
+        try {
+            Type socialAPI = _ta.GetType("Terraria.Social.SocialAPI");
+            Type socialMode = null;
+            foreach (var t in _ta.GetTypes()) {
+                if (t.Name == "SocialMode" && t.Namespace == "Terraria.Social") { socialMode = t; break; }
+            }
+            if (socialAPI != null && socialMode != null) {
+                object noneVal = Enum.Parse(socialMode, "None");
+                FieldInfo modeField = null;
+                foreach (var f in socialAPI.GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)) {
+                    if (f.FieldType == socialMode) { modeField = f; break; }
+                }
+                if (modeField != null) {
+                    modeField.SetValue(null, noneVal);
+                    Console.WriteLine("TerrariaLauncher: SocialMode forced to None");
+                }
+            }
+        } catch (Exception ex) {
+            Console.Error.WriteLine("TerrariaLauncher: SocialMode patch failed: " + ex.Message);
+        }
+        
+        // Patch Terraria.Utilities.MessageBox.Show to be a no-op (WinForms Carbon crashes on 64-bit)
+        try {
+            Type msgBoxType = _ta.GetType("Terraria.Utilities.MessageBox");
+            if (msgBoxType != null) {
+                foreach (var f in msgBoxType.GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)) {
+                    Console.Error.WriteLine("TerrariaLauncher: MessageBox field: " + f.Name + " " + f.FieldType.FullName);
+                }
+                // Find the internal handler field and replace it
+                foreach (var f in msgBoxType.GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)) {
+                    if (typeof(Delegate).IsAssignableFrom(f.FieldType)) {
+                        Console.Error.WriteLine("TerrariaLauncher: found MessageBox delegate: " + f.Name);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            Console.Error.WriteLine("TerrariaLauncher: MessageBox patch failed: " + ex.Message);
+        }
         
         ThreadPool.QueueUserWorkItem(_ => {
             Thread.Sleep(8000);
@@ -40,7 +83,17 @@ class TerrariaLauncher {
         }
         
         try { mm.Invoke(null, new object[] { args }); }
-        catch (TargetInvocationException tie) { Console.Error.WriteLine("Game: " + tie.InnerException?.Message); }
+        catch (TargetInvocationException tie) {
+            var inner = tie.InnerException;
+            if (inner is TypeInitializationException) {
+                Console.Error.WriteLine("Game: TypeInitialization suppressed: " + inner.InnerException?.Message);
+            } else {
+                Console.Error.WriteLine("Game: " + inner?.Message + "\n" + inner?.StackTrace);
+            }
+        }
+        catch (Exception ex) {
+            Console.Error.WriteLine("Game: " + ex.Message + "\n" + ex.StackTrace);
+        }
         return 0;
     }
     

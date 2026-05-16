@@ -1,5 +1,8 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "files": {
+    "includes": ["**", "!**/*.vue", "!**/*.d.ts"]
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -13,7 +16,8 @@
       "correctness": {
         "noUnusedVariables": "off",
         "noUnusedFunctionParameters": "off",
-        "noUnusedPrivateClassMembers": "off"
+        "noUnusedPrivateClassMembers": "off",
+        "noUnusedImports": "warn"
       },
       "suspicious": {
         "noImplicitAnyLet": "off"
@@ -21,6 +25,9 @@
       "style": {
         "useNodejsImportProtocol": "off",
         "noNonNullAssertion": "off"
+      },
+      "complexity": {
+        "noImportantStyles": "off"
       }
     }
   },

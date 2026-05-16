@@ -1,0 +1,235 @@
+<script setup lang="ts">
+import { ref, onMounted } from "vue";
+import { useToast } from "../composables/useToast";
+import { api } from "../composables/useApi";
+
+interface SteamGame {
+  appid: number;
+  name: string;
+  installed: boolean;
+  state: "installed" | "not_installed" | "downloading";
+  cover_url: string;
+  header_url: string;
+  size_bytes?: number | null;
+  launch_method?: string;
+}
+
+const props = defineProps<{
+  game: SteamGame;
+  running: boolean;
+  launching: boolean;
+  steamInstalled: boolean;
+}>();
+
+const emit = defineEmits<{
+  play: [];
+  stop: [];
+  install: [];
+  uninstall: [];
+}>();
+
+const toast = useToast();
+const goldbergActive = ref(false);
+const eacActive = ref(false);
+const pipelineName = ref("Auto");
+
+onMounted(async () => {
+  if (props.game.installed) {
+    const gp = await api<{ ok: boolean; recommended: string; recommended_name: string }>(
+      "GET",
+      `/mtsp/pipelines?appid=${props.game.appid}`,
+    );
+    if (gp?.ok && gp.recommended_name) pipelineName.value = gp.recommended_name;
+
+    const gs = await api<{ ok: boolean; goldberg_active: boolean }>(
+      "GET",
+      `/goldberg/status?appid=${props.game.appid}`,
+    );
+    if (gs?.ok) goldbergActive.value = gs.goldberg_active;
+
+    const es = await api<{ ok: boolean; eac_toggle_active: boolean }>(
+      "GET",
+      `/eac-toggle/status?appid=${props.game.appid}`,
+    );
+    if (es?.ok) eacActive.value = es.eac_toggle_active;
+  }
+});
+
+async function toggleGoldberg(enable: boolean) {
+  const result = await api<{ ok: boolean; goldberg_active: boolean }>("POST", "/goldberg/toggle", {
+    appid: props.game.appid,
+    enable,
+  });
+  if (result?.ok) {
+    goldbergActive.value = result.goldberg_active;
+    toast.show(enable ? "Goldberg enabled" : "Goldberg disabled", "success");
+  } else {
+    toast.show("Failed to toggle Goldberg", "error");
+  }
+}
+
+async function toggleEac(enable: boolean) {
+  const result = await api<{ ok: boolean; eac_toggle_active: boolean }>("POST", "/eac-toggle/toggle", {
+    appid: props.game.appid,
+    enable,
+  });
+  if (result?.ok) {
+    eacActive.value = result.eac_toggle_active;
+    toast.show(enable ? "EAC bypass enabled (offline only)" : "EAC bypass disabled", "success");
+  } else {
+    toast.show("Failed to toggle EAC bypass", "error");
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+</script>
+
+<template>
+  <div class="game-card" :class="{ running }">
+    <div class="game-card-banner">
+      <img
+        v-if="game.header_url || game.cover_url"
+        :src="game.header_url || game.cover_url"
+        :alt="game.name"
+        class="game-card-cover"
+        loading="lazy"
+        @error="($event.target as HTMLImageElement).style.display = 'none'"
+      />
+      <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
+    </div>
+    <div class="game-card-body">
+      <div class="game-card-title">{{ game.name }}</div>
+      <div class="game-card-meta">
+        <span class="badge" :class="game.installed ? 'badge-ok' : 'badge-warn'">
+          {{ game.installed ? "Installed" : "Not Installed" }}
+        </span>
+        <span v-if="game.size_bytes" class="game-card-size">{{ formatBytes(game.size_bytes) }}</span>
+      </div>
+      <div class="game-card-actions">
+        <div v-if="launching" class="launching-indicator">
+          <div class="spinner"></div>
+          <span>Preparing runtime and launching...</span>
+        </div>
+        <div v-else-if="running" class="game-card-actions-stack">
+          <button class="btn btn-stop" @click="emit('stop')">Stop</button>
+          <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">{{ pipelineName }}</span>
+        </div>
+        <div v-else-if="game.installed" class="game-card-actions-stack">
+          <div class="game-card-actions-row">
+            <button class="btn btn-play" @click="emit('play')">Play</button>
+            <label class="toggle-label" title="Goldberg Steam emulator">
+              <input type="checkbox" :checked="goldbergActive" @change="toggleGoldberg(($event.target as HTMLInputElement).checked)" />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Goldberg</span>
+            </label>
+            <label class="toggle-label" title="EAC bypass (offline only)">
+              <input type="checkbox" :checked="eacActive" @change="toggleEac(($event.target as HTMLInputElement).checked)" />
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">No EAC</span>
+            </label>
+          </div>
+          <div class="game-card-actions-row subtle">
+            <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">{{ pipelineName }}</span>
+            <button class="btn btn-danger btn-sm" @click="emit('uninstall')">Uninstall</button>
+          </div>
+        </div>
+        <div v-else-if="steamInstalled" class="game-card-actions-stack">
+          <button class="btn btn-install" @click="emit('install')">Install</button>
+        </div>
+        <span v-else class="badge badge-warn">Setup Steam</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.game-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.game-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+.game-card.running {
+  border-color: var(--success);
+}
+
+.game-card-banner {
+  width: 100%;
+  height: 140px;
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.game-card-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.game-icon-placeholder {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--text-dim);
+  opacity: 0.4;
+}
+
+.game-card-body {
+  padding: 12px 14px 14px;
+}
+.game-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.game-card-size {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.game-card-actions {
+  min-height: 40px;
+}
+.game-card-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.game-card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.game-card-actions-row.subtle {
+  opacity: 0.7;
+}
+
+.launching-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+</style>
