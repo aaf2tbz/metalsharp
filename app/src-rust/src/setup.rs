@@ -242,32 +242,17 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
         return Some(local_dir);
     }
 
-    let manifest_name = format!("appmanifest_{}.acf", appid);
-    let mut all_steamapps: Vec<PathBuf> = Vec::new();
+    let dual = crate::scan::resolve_dual_game_dir(appid);
 
-    let mac_dirs = vec![
-        home.join("Library/Application Support/Steam/steamapps"),
-        home.join(".steam/steam/steamapps"),
-        home.join(".local/share/Steam/steamapps"),
-    ];
-    all_steamapps.extend(mac_dirs.into_iter().filter(|d| d.exists()));
-    all_steamapps.extend(crate::scan::wine_steam_library_paths());
+    if let Some(ref wine_dir) = dual.wine_dir {
+        if wine_dir.exists() {
+            return Some(wine_dir.clone());
+        }
+    }
 
-    for steamapps in &all_steamapps {
-        let manifest_path = steamapps.join(&manifest_name);
-        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("\"installdir\"") {
-                    let parts: Vec<&str> = trimmed.splitn(2, ['\t', ' ']).collect();
-                    if let Some(dir_name) = parts.last().map(|s| s.trim().trim_matches('"')) {
-                        let game_dir = steamapps.join("common").join(dir_name);
-                        if game_dir.exists() {
-                            return Some(game_dir);
-                        }
-                    }
-                }
-            }
+    if let Some(ref macos_dir) = dual.macos_dir {
+        if macos_dir.exists() {
+            return Some(macos_dir.clone());
         }
     }
 
@@ -276,6 +261,10 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
     }
 
     None
+}
+
+pub fn resolve_native_game_dir(appid: u32) -> Option<PathBuf> {
+    crate::scan::resolve_dual_game_dir(appid).macos_dir
 }
 
 pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
