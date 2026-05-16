@@ -4,6 +4,16 @@ import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
 
+interface CacheSummary {
+  bytes: number;
+  files: number;
+  directories: number;
+  apps: number;
+  status: "missing" | "empty" | "active";
+  path: string;
+  last_modified: string | null;
+}
+
 const config = inject<Ref<AppConfig | null>>("config")!;
 const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
@@ -21,8 +31,8 @@ const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
 
 const toast = useToast();
-const shaderCacheSize = ref(-1);
-const pipelineCacheSize = ref(-1);
+const shaderCache = ref<CacheSummary | null>(null);
+const pipelineCache = ref<CacheSummary | null>(null);
 const apiKeyInput = ref("");
 
 onMounted(async () => {
@@ -33,12 +43,12 @@ onMounted(async () => {
 async function refreshCacheSizes() {
   const result = await api<{
     ok: boolean;
-    shader_cache: { bytes: number };
-    pipeline_cache: { bytes: number };
+    shader_cache: CacheSummary;
+    pipeline_cache: CacheSummary;
   }>("GET", "/cache/size");
   if (result?.ok) {
-    shaderCacheSize.value = result.shader_cache.bytes;
-    pipelineCacheSize.value = result.pipeline_cache.bytes;
+    shaderCache.value = result.shader_cache;
+    pipelineCache.value = result.pipeline_cache;
   }
 }
 
@@ -74,9 +84,27 @@ async function toggleSteam() {
     toast.show("Steam stopped");
   } else {
     toast.show("Starting Steam...", "success");
-    await api("POST", "/steam/launch");
-    wineSteamRunning.value = true;
-    toast.show("Steam started", "success");
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/launch");
+    if (result?.ok) {
+      wineSteamRunning.value = true;
+      toast.show("Steam started", "success");
+    } else {
+      toast.show(result?.error ?? "Failed to start Steam", "error");
+    }
+  }
+}
+
+async function installMacSteam() {
+  const result = await api<{ ok: boolean; installed?: boolean; error?: string }>("POST", "/steam/mac-install");
+  if (result?.ok) {
+    if (result.installed) {
+      macSteamInstalled.value = true;
+      toast.show("macOS Steam is already installed", "success");
+    } else {
+      toast.show("Steam download page opened", "success");
+    }
+  } else {
+    toast.show(result?.error ?? "Could not open macOS Steam installer", "error");
   }
 }
 
@@ -121,6 +149,18 @@ async function checkForUpdates() {
   if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
   else if (result?.ok) toast.show("You're up to date!", "success");
   else toast.show("Could not check for updates", "error");
+}
+
+function cacheBadgeClass(cache: CacheSummary | null): string {
+  if (!cache || cache.status === "missing" || cache.status === "empty") return "badge-warn";
+  return "badge-ok";
+}
+
+function cacheStatusText(cache: CacheSummary | null): string {
+  if (!cache) return "...";
+  if (cache.status === "missing") return "Missing";
+  if (cache.status === "empty") return "Empty";
+  return `${formatBytes(cache.bytes)} · ${cache.files} files`;
 }
 </script>
 
@@ -185,6 +225,7 @@ async function checkForUpdates() {
           <button v-if="macSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleMacSteam">
             {{ macSteamRunning ? "Stop Steam Mac" : "Start Steam Mac" }}
           </button>
+          <button v-else class="btn btn-primary btn-sm" @click="installMacSteam">Install macOS Steam</button>
         </div>
       </div>
     </div>
@@ -222,7 +263,9 @@ async function checkForUpdates() {
           <div class="settings-desc">Persist compiled shaders to disk for faster loading</div>
         </div>
         <div class="settings-value">
-          <span class="badge badge-ok">{{ shaderCacheSize >= 0 ? formatBytes(shaderCacheSize) : "..." }}</span>
+          <span class="badge" :class="cacheBadgeClass(shaderCache)">{{ cacheStatusText(shaderCache) }}</span>
+          <span v-if="shaderCache?.apps" class="settings-version">{{ shaderCache.apps }} apps</span>
+          <span v-if="shaderCache?.last_modified" class="settings-version">{{ shaderCache.last_modified }}</span>
           <button class="btn btn-secondary btn-sm" @click="clearShaderCache">Clear</button>
         </div>
       </div>
@@ -232,7 +275,8 @@ async function checkForUpdates() {
           <div class="settings-desc">Persist compiled pipeline state objects</div>
         </div>
         <div class="settings-value">
-          <span class="badge badge-ok">{{ pipelineCacheSize >= 0 ? formatBytes(pipelineCacheSize) : "..." }}</span>
+          <span class="badge" :class="cacheBadgeClass(pipelineCache)">{{ cacheStatusText(pipelineCache) }}</span>
+          <span v-if="pipelineCache?.last_modified" class="settings-version">{{ pipelineCache.last_modified }}</span>
           <button class="btn btn-secondary btn-sm" @click="clearPipelineCache">Clear</button>
         </div>
       </div>

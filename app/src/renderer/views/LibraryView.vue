@@ -75,6 +75,12 @@ async function toggleSteam() {
 }
 
 async function toggleMacSteam() {
+  if (!macSteamInstalled.value) {
+    const result = await api<{ ok: boolean; installed?: boolean; error?: string }>("POST", "/steam/mac-install");
+    if (result?.ok) toast.show(result.installed ? "macOS Steam is already installed" : "Steam download page opened", "success");
+    else toast.show(result?.error ?? "Could not open macOS Steam installer", "error");
+    return;
+  }
   if (macSteamRunning.value) {
     await api("POST", "/steam/mac-stop");
     macSteamRunning.value = false;
@@ -133,12 +139,12 @@ async function installGame(game: SteamGame) {
 async function uninstallGame(game: SteamGame) {
   if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;
   toast.show(`Uninstalling ${game.name}...`);
-  const result = await api<{ ok: boolean }>("POST", "/steam/uninstall-game", { appid: game.appid });
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/uninstall-game", { appid: game.appid });
   if (result?.ok) {
     toast.show(`Uninstalled ${game.name}`);
     reloadLibrary();
   } else {
-    toast.show(`Failed to uninstall ${game.name}`, "error");
+    toast.show(result?.error ?? `Failed to uninstall ${game.name}`, "error");
   }
 }
 
@@ -165,7 +171,9 @@ watch([library, search, filter], applyFilter);
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2" /><path d="M9 18h6" />
           </svg>
-          <span class="control-label">{{ macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}</span>
+          <span class="control-label">
+            {{ !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}
+          </span>
         </button>
         <div class="library-controls-center">
           <input
