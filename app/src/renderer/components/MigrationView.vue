@@ -23,9 +23,12 @@ const stages = [
   { name: "FNA", color: "#039be5" },
 ];
 
-async function startMigration() {
+const MAX_START_RETRIES = 20;
+const START_RETRY_DELAY_MS = 500;
+
+async function startMigration(retriesLeft = MAX_START_RETRIES) {
   try {
-    const res = await window.metalsharp.request("POST", "/update/migrate/start");
+    const res = await window.metalsharp.request("POST", "/update/migrate/start", undefined, 10000);
     if (res?.ok) {
       message.value = "Migration started...";
       startPolling();
@@ -34,8 +37,14 @@ async function startMigration() {
       message.value = `Error: ${error.value}`;
     }
   } catch (e: any) {
-    error.value = e.message ?? "Network error";
-    message.value = `Error: ${error.value}`;
+    if (retriesLeft > 0 && (e.message?.includes("ECONNREFUSED") || e.message?.includes("timeout"))) {
+      message.value = "Waiting for backend to start...";
+      await new Promise((r) => setTimeout(r, START_RETRY_DELAY_MS));
+      startMigration(retriesLeft - 1);
+    } else {
+      error.value = e.message ?? "Network error";
+      message.value = `Error: ${error.value}`;
+    }
   }
 }
 
