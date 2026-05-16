@@ -79,9 +79,14 @@ async function changeDeviceName() {
 
 async function toggleSteam() {
   if (wineSteamRunning.value) {
-    await api("POST", "/steam/stop");
-    wineSteamRunning.value = false;
-    toast.show("Steam stopped");
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+    if (result?.ok && result.running === false) {
+      wineSteamRunning.value = false;
+      toast.show("Wine Steam stopped");
+    } else {
+      wineSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "Wine Steam is still running", "error");
+    }
   } else {
     toast.show("Starting Steam...", "success");
     const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/launch");
@@ -119,6 +124,16 @@ async function toggleMacSteam() {
       toast.show(result?.error ?? "Mac Steam is still running", "error");
     }
   } else {
+    if (wineSteamRunning.value) {
+      if (!confirm("Stop Wine Steam and start Mac Steam?")) return;
+      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+      if (!stopResult?.ok || stopResult.running !== false) {
+        wineSteamRunning.value = stopResult?.running ?? true;
+        toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+        return;
+      }
+      wineSteamRunning.value = false;
+    }
     toast.show("Starting Mac Steam...", "success");
     const result = await api<{ ok: boolean }>("POST", "/steam/mac-launch");
     if (result?.ok) {
@@ -227,7 +242,11 @@ function cacheStatusText(cache: CacheSummary | null): string {
         <div class="settings-value">
           <span v-if="macSteamInstalled" class="badge badge-ok">Installed</span>
           <span v-else class="badge badge-warn">Not Installed</span>
-          <button v-if="macSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleMacSteam">
+          <button
+            v-if="macSteamInstalled"
+            class="btn btn-secondary btn-sm"
+            @click="toggleMacSteam"
+          >
             {{ macSteamRunning ? "Stop Steam Mac" : "Start Steam Mac" }}
           </button>
           <button v-else class="btn btn-primary btn-sm" @click="installMacSteam">Install macOS Steam</button>

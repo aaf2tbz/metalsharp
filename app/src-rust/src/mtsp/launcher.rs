@@ -236,12 +236,11 @@ fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::E
 }
 
 fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let node = get_pipeline(PipelineId::MacSteam);
-    let cache_paths = build_cache_paths(&home, node, appid);
-    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
-    let result = crate::steam::launch_macos_steam_game_with_env(appid, &env)?;
+    if crate::steam::is_wine_steam_running() {
+        return Err("Wine Steam is running. Stop Wine Steam before launching through MacOS Steam.".into());
+    }
+
+    let result = crate::steam::launch_macos_steam_game(appid)?;
     let pid = result.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     Ok((pid, "macos_steam"))
 }
