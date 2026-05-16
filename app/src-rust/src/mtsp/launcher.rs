@@ -1,6 +1,92 @@
 use super::engine::{get_pipeline, DllDeploy, PipelineId, PipelineNode};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
+
+static BRIDGE_PORT: u16 = 18733;
+
+pub fn bridge_is_running() -> bool {
+    if let Ok(mut stream) = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{}", BRIDGE_PORT).parse().unwrap(),
+        Duration::from_millis(500),
+    ) {
+        let ping: [u8; 4] = 0xFFu32.to_ne_bytes();
+        let _ = stream.write_all(&ping);
+        let _ = stream.write_all(&0u32.to_ne_bytes());
+        let mut buf = [0u8; 8];
+        if stream.read_exact(&mut buf).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
+    if bridge_is_running() {
+        return Ok(());
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let bridge_exe = home.join(".metalsharp").join("runtime").join("steam-bridge").join("steambridge.exe");
+    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+
+    if !bridge_exe.exists() {
+        return Err("steambridge.exe not found".into());
+    }
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let bridge_dir = bridge_exe.parent().unwrap_or(std::path::Path::new(""));
+    let dll_dest = bridge_dir.join("steam_api64.dll");
+    if !dll_dest.exists() {
+        let steam_dll = prefix
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steam_api64.dll");
+        if steam_dll.exists() {
+            let _ = std::fs::copy(&steam_dll, &dll_dest);
+        }
+    }
+
+    let mut cmd = Command::new(&wine);
+    cmd.arg(&bridge_exe)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let _child = cmd.spawn()?;
+
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(250));
+        if bridge_is_running() {
+            return Ok(());
+        }
+    }
+
+    Err("steam bridge failed to start within 5s".into())
+}
+
+fn deploy_steam_shim(game_dir: &PathBuf) {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let shim_src = home.join(".metalsharp").join("runtime").join("steam-bridge").join("libsteam_api.dylib");
+    if !shim_src.exists() {
+        return;
+    }
+    let dest = game_dir.join("libsteam_api.dylib");
+    if dest.exists() {
+        return;
+    }
+    let _ = std::fs::copy(&shim_src, &dest);
+}
 
 pub fn launch_with_pipeline(
     appid: u32,
@@ -338,6 +424,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
 
     ensure_launcher_exe(appid, dir);
     deploy_fna_assemblies(dir);
+    deploy_steam_shim(dir);
+
+    let _ = ensure_bridge_running();
 
     let exe = match appid {
         105600 => find_preferred_exe(dir, &["TerrariaLauncher.exe", "Terraria.exe"])?,
@@ -400,6 +489,8 @@ fn launch_fna_x86(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error:
 
     ensure_launcher_exe(appid, dir);
     deploy_fna_assemblies(dir);
+    deploy_steam_shim(dir);
+    let _ = ensure_bridge_running();
 
     let mut cmd = Command::new("arch");
     cmd.args(["-x86_64", &mono_x86.to_string_lossy()])
@@ -432,6 +523,8 @@ fn launch_mono_generic(appid: u32) -> Result<(u32, &'static str), Box<dyn std::e
     }
 
     deploy_fna_assemblies(dir);
+    deploy_steam_shim(dir);
+    let _ = ensure_bridge_running();
 
     let mono_bin = find_mono_binary()?;
     let mono_config = find_config("terraria-mono.config");
