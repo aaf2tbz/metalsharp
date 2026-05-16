@@ -23,12 +23,12 @@ BUNDLES=(
 
 for bundle in "${BUNDLES[@]}"; do
     dest="$BUNDLE_DIR/$bundle"
-    if [ -s "$dest" ]; then
+    if [ -f "$dest" ] && [ -s "$dest" ]; then
         echo "SKIP: $bundle — already exists"
         continue
     elif [ -e "$dest" ]; then
         echo "Invalid existing $bundle — removing and downloading fresh copy"
-        rm -f "$dest"
+        rm -rf "$dest"
     fi
     echo "Downloading $bundle..."
     curl -fL -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$bundle"
@@ -43,7 +43,7 @@ for bundle in "${BUNDLES[@]}"; do
 done
 
 for bundle in "${BUNDLES[@]}"; do
-    if [ ! -s "$BUNDLE_DIR/$bundle" ]; then
+    if [ ! -f "$BUNDLE_DIR/$bundle" ] || [ ! -s "$BUNDLE_DIR/$bundle" ]; then
         echo "Missing required bundle: $bundle"
         exit 1
     fi
