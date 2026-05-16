@@ -311,6 +311,12 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         },
     }
 
+    let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    if let Some(subdir) = node.shader_cache_subdir {
+        crate::mtsp::shader_cache::deploy_preset_cache(&home, subdir, appid);
+    }
+
     std::fs::write(&marker, format!("prepared: game_type={}", game_type))?;
 
     Ok(json!({
