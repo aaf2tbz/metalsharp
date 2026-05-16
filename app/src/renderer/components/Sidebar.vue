@@ -48,9 +48,11 @@ const navItems = [
         <svg class="sidebar-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="item.icon" />
         <span v-if="!collapsed" class="sidebar-nav-label">{{ item.label }}</span>
       </button>
+    </div>
 
+    <div class="sidebar-bottom">
       <button
-        class="sidebar-nav-item sidebar-theme-toggle"
+        class="sidebar-nav-item"
         @click="emit('toggleTheme')"
         :title="collapsed ? (theme === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
       >
@@ -62,9 +64,6 @@ const navItems = [
         </svg>
         <span v-if="!collapsed" class="sidebar-nav-label">{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
       </button>
-    </div>
-
-    <div class="sidebar-bottom">
       <button
         class="sidebar-nav-item"
         :class="{ active: currentView === 'settings' }"
@@ -100,7 +99,7 @@ const navItems = [
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 12px 10px;
+  padding: 38px 12px 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -192,5 +191,8 @@ const navItems = [
 .sidebar-bottom {
   padding: 6px;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 </style>

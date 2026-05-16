@@ -201,6 +201,7 @@ fn kill_steam_wine() {
 
 struct PreservedData {
     setup_json: Option<Vec<u8>>,
+    steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
@@ -212,6 +213,9 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     let _ = fs::create_dir_all(&tmp);
 
     let setup_json = ms_dir.join("setup.json").exists().then(|| fs::read(ms_dir.join("setup.json")).ok()).flatten();
+
+    let steam_config_path = ms_dir.join("cache").join("steam_config.json");
+    let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
 
     write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
@@ -238,7 +242,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         copy_dir_recursive(&sharp_library, &sharp_library_tmp);
     }
 
-    PreservedData { setup_json, prefix_steam_tmp, games_tmp, sharp_library_tmp }
+    PreservedData { setup_json, steam_config_json, prefix_steam_tmp, games_tmp, sharp_library_tmp }
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
@@ -344,6 +348,12 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
 
     if let Some(ref data) = preserved.setup_json {
         let _ = fs::write(ms_dir.join("setup.json"), data);
+    }
+
+    if let Some(ref data) = preserved.steam_config_json {
+        let cache_dir = ms_dir.join("cache");
+        let _ = fs::create_dir_all(&cache_dir);
+        let _ = fs::write(cache_dir.join("steam_config.json"), data);
     }
 }
 

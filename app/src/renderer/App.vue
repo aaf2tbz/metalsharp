@@ -167,6 +167,7 @@ onMounted(async () => {
       @toggle-theme="toggleTheme()"
     />
     <main class="content">
+      <div class="drag-strip"></div>
       <component :is="activeView" :key="currentView" />
     </main>
   </template>
@@ -174,10 +175,17 @@ onMounted(async () => {
 </template>
 
 <style>
+.drag-strip {
+  height: 38px;
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+}
 .content {
   flex: 1;
   overflow-y: auto;
   padding: 0;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 </style>
