@@ -90,9 +90,11 @@ pub fn launch_with_pipeline(
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
-        PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
+        PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam => launch_steam(appid),
+        PipelineId::MacSteam => launch_macos_steam(appid),
         PipelineId::WineBare => launch_wine_bare(appid, node),
     }
 }
@@ -183,6 +185,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     }
 
     cmd.arg(&exe_name);
+    cmd.args(&node.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
@@ -215,6 +218,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     }
 
     cmd.arg(&exe_name);
+    cmd.args(&node.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
@@ -222,6 +226,12 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let pid = crate::launch::launch_via_steam(appid)?;
     Ok((pid, "steam"))
+}
+
+fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let result = crate::steam::launch_macos_steam_game(appid)?;
+    let pid = result.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    Ok((pid, "macos_steam"))
 }
 
 fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {

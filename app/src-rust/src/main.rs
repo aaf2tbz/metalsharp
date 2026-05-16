@@ -232,6 +232,34 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
+        (Method::Post, "/steam/mac-launch") => {
+            app_log("Launching macOS Steam...");
+            match steam::launch_macos_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        },
+        (Method::Post, "/steam/mac-stop") => {
+            app_log("Stopping macOS Steam...");
+            match steam::stop_macos_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        },
+        (Method::Post, "/steam/mac-launch-game") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    app_log(&format!("Launching game via macOS Steam: appid {}", id));
+                    match steam::launch_macos_steam_game(id as u32) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Get, "/steam/is-running") => resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()})),
         (Method::Get, "/steam/bridge-status") => {
             let running = mtsp::launcher::bridge_is_running();
@@ -701,35 +729,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let cache_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("shader");
             let home = dirs::home_dir().unwrap_or_default();
-            let base = home.join(".metalsharp").join("shader-cache");
-            let target = match cache_type {
-                "pipeline" => base.clone(),
-                _ => base.clone(),
-            };
-            let mut total_bytes: u64 = 0;
-            let mut file_count: u32 = 0;
+            let target = cache_dir_for_type(&home, cache_type);
+            let (total_bytes, file_count) = dir_stats(&target);
             if target.exists() {
-                if let Ok(entries) = std::fs::read_dir(&target) {
-                    for entry in entries.flatten() {
-                        if let Ok(meta) = entry.metadata() {
-                            if meta.is_dir() {
-                                if let Ok(walk) = std::fs::read_dir(entry.path()) {
-                                    for f in walk.flatten() {
-                                        if let Ok(m) = f.metadata() {
-                                            if m.is_file() {
-                                                total_bytes += m.len();
-                                                file_count += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                            } else if meta.is_file() {
-                                total_bytes += meta.len();
-                                file_count += 1;
-                            }
-                        }
-                    }
-                }
                 let _ = std::fs::remove_dir_all(&target);
                 let _ = std::fs::create_dir_all(&target);
             }
@@ -746,38 +748,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/cache/size") => {
             let home = dirs::home_dir().unwrap_or_default();
-            let base = home.join(".metalsharp").join("shader-cache");
-            let mut shader_bytes: u64 = 0;
-            let mut shader_files: u32 = 0;
-            if base.exists() {
-                if let Ok(entries) = std::fs::read_dir(&base) {
-                    for entry in entries.flatten() {
-                        if let Ok(meta) = entry.metadata() {
-                            if meta.is_dir() {
-                                if let Ok(walk) = std::fs::read_dir(entry.path()) {
-                                    for f in walk.flatten() {
-                                        if let Ok(m) = f.metadata() {
-                                            if m.is_file() {
-                                                shader_bytes += m.len();
-                                                shader_files += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                            } else if meta.is_file() {
-                                shader_bytes += meta.len();
-                                shader_files += 1;
-                            }
-                        }
-                    }
-                }
-            }
+            let shader_dir = cache_dir_for_type(&home, "shader");
+            let pipeline_dir = cache_dir_for_type(&home, "pipeline");
+            let (shader_bytes, shader_files) = dir_stats(&shader_dir);
+            let (pipeline_bytes, pipeline_files) = dir_stats(&pipeline_dir);
             resp(
                 200,
                 json!({
                     "ok": true,
                     "shader_cache": {"bytes": shader_bytes, "files": shader_files},
-                    "pipeline_cache": {"bytes": 0, "files": 0},
+                    "pipeline_cache": {"bytes": pipeline_bytes, "files": pipeline_files},
                 }),
             )
         },
@@ -808,30 +788,53 @@ fn app_log(msg: &str) {
 }
 
 fn chrono_now() -> String {
-    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = d.as_secs();
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
-    let s = secs % 60;
-    format!("{:02}:{:02}:{:02}", h, m, s)
+    local_date(&["+%Y-%m-%d %H:%M:%S %Z"]).unwrap_or_else(|| {
+        let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        format!("{}", d.as_secs())
+    })
 }
 
 fn chrono_date() -> String {
-    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = d.as_secs();
-    let days = secs / 86400;
-    let y = 1970 + (days * 400).div_ceil(146097);
-    let mut remaining = days - (((y - 1) * 365) + ((y - 1) / 4) - ((y - 1) / 100) + ((y - 1) / 400));
-    let ml = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut mo = 1;
-    for (i, &md) in ml.iter().enumerate() {
-        if remaining < md {
-            mo = i + 1;
-            break;
-        }
-        remaining -= md;
+    local_date(&["+%Y-%m-%d"]).unwrap_or_else(|| {
+        let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        format!("{}", d.as_secs() / 86400)
+    })
+}
+
+fn local_date(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("/bin/date").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
     }
-    format!("{:04}-{:02}-{:02}", y, mo, remaining + 1)
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn local_date_for_epoch(secs: u64) -> String {
+    local_date(&["-r", &secs.to_string(), "+%Y-%m-%d %H:%M:%S %Z"]).unwrap_or_else(|| secs.to_string())
+}
+
+fn cache_dir_for_type(home: &std::path::Path, cache_type: &str) -> std::path::PathBuf {
+    match cache_type {
+        "pipeline" => home.join(".metalsharp").join("pipeline-cache"),
+        _ => home.join(".metalsharp").join("shader-cache"),
+    }
+}
+
+fn dir_stats(path: &std::path::Path) -> (u64, u64) {
+    let mut bytes = 0;
+    let mut files = 0;
+    if !path.exists() {
+        return (bytes, files);
+    }
+    for entry in walkdir::WalkDir::new(path).into_iter().flatten() {
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                bytes += meta.len();
+                files += 1;
+            }
+        }
+    }
+    (bytes, files)
 }
 
 fn resolve_game_exe(appid: u32) -> String {
@@ -901,11 +904,7 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde
                 let timestamp = modified
                     .map(|t| {
                         let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-                        let secs = d.as_secs();
-                        let h = (secs / 3600) % 24;
-                        let m = (secs / 60) % 60;
-                        let s = secs % 60;
-                        format!("{:02}:{:02}:{:02}", h, m, s)
+                        local_date_for_epoch(d.as_secs())
                     })
                     .unwrap_or_else(|| "unknown".into());
                 reports.push(json!({

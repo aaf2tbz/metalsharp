@@ -6,6 +6,14 @@ import type { SharpApp } from "../api-types";
 
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
+const engineOptions = [
+  { id: "wine_bare", name: "Wine" },
+  { id: "m11", name: "M11" },
+  { id: "m12", name: "M12" },
+  { id: "m10", name: "M10" },
+  { id: "m9", name: "M9" },
+  { id: "m32", name: "M32" },
+];
 
 async function load() {
   const result = await api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
@@ -32,6 +40,16 @@ async function launchApp(id: string, engine: string) {
   const result = await api<{ ok: boolean; pid?: number; error?: string }>("POST", "/sharp-library/launch", { id, engine });
   if (result?.ok && result.pid) toast.show(`Launched ${app.name}`, "success");
   else toast.show(result?.error ?? `Failed to launch ${app.name}`, "error");
+}
+
+async function updateEngine(id: string, engine: string) {
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-engine", { id, engine });
+  if (result?.ok) {
+    const app = apps.value.find((a) => a.id === id);
+    if (app) app.engine = engine;
+  } else {
+    toast.show(result?.error ?? "Failed to set engine", "error");
+  }
 }
 
 async function uninstallApp(id: string) {
@@ -94,9 +112,10 @@ onMounted(load);
           <div class="sharp-card-actions">
             <div class="sharp-card-actions-row">
               <button class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
-              <select class="control-input" :value="app.engine" @change="api('POST', '/sharp-library/set-engine', { id: app.id, engine: ($event.target as HTMLSelectElement).value })">
-                <option value="wine_bare">Wine (Default)</option>
-                <option value="m64">M64</option>
+              <select class="control-input" :value="app.engine" @change="updateEngine(app.id, ($event.target as HTMLSelectElement).value)">
+                <option v-for="option in engineOptions" :key="option.id" :value="option.id">
+                  {{ option.name }}
+                </option>
               </select>
             </div>
             <div class="sharp-card-actions-row subtle">
@@ -120,7 +139,10 @@ onMounted(load);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin: -24px -28px 20px;
+  padding: 24px 28px 18px;
+  background: var(--page-header-bg);
+  border-bottom: 1px solid var(--border);
 }
 .sharp-header h1 {
   font-size: 22px;

@@ -38,6 +38,8 @@ const backendConnected = ref(false);
 const backendVersion = ref<string | null>(null);
 const wineSteamInstalled = ref(false);
 const wineSteamRunning = ref(false);
+const macSteamInstalled = ref(false);
+const macSteamRunning = ref(false);
 const library = ref<SteamLibrary | null>(null);
 const config = ref<AppConfig | null>(null);
 const updateStatus = ref<UpdateStatus | null>(null);
@@ -60,6 +62,8 @@ provide("library", library);
 provide("config", config);
 provide("wineSteamInstalled", wineSteamInstalled);
 provide("wineSteamRunning", wineSteamRunning);
+provide("macSteamInstalled", macSteamInstalled);
+provide("macSteamRunning", macSteamRunning);
 provide("backendConnected", backendConnected);
 provide("backendVersion", backendVersion);
 provide("updateStatus", updateStatus);
@@ -78,11 +82,15 @@ async function loadLibrary() {
   const steamStatus = await api<{
     installed: boolean;
     running: boolean;
+    mac_installed: boolean;
+    mac_running: boolean;
     metalsharp_wine_available: boolean;
   }>("GET", "/steam/status");
   if (steamStatus) {
     wineSteamInstalled.value = steamStatus.installed;
     wineSteamRunning.value = steamStatus.running;
+    macSteamInstalled.value = steamStatus.mac_installed;
+    macSteamRunning.value = steamStatus.mac_running;
   }
 }
 
