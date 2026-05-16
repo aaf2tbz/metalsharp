@@ -230,11 +230,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let running = mtsp::launcher::bridge_is_running();
             resp(200, json!({"ok": true, "running": running, "port": 18733}))
         },
-        (Method::Post, "/steam/bridge-start") => {
-            match mtsp::launcher::ensure_bridge_running() {
-                Ok(_) => resp(200, json!({"ok": true, "port": 18733})),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
-            }
+        (Method::Post, "/steam/bridge-start") => match mtsp::launcher::ensure_bridge_running() {
+            Ok(_) => resp(200, json!({"ok": true, "port": 18733})),
+            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
             Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
@@ -554,11 +552,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let mut game_type = "native";
             if let Some(sid) = steam_app_id {
                 let home = dirs::home_dir().unwrap_or_default();
-                let marker = home
-                    .join(".metalsharp")
-                    .join("games")
-                    .join(sid.to_string())
-                    .join(".metalsharp_prepared");
+                let marker = home.join(".metalsharp").join("games").join(sid.to_string()).join(".metalsharp_prepared");
                 if let Ok(content) = std::fs::read_to_string(&marker) {
                     if content.contains("is_dotnet=true") {
                         app_log("Detected XNA/FNA game — using mono runtime");
@@ -622,10 +616,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/game/running") => {
             let map = running_games().lock().unwrap_or_else(|e| e.into_inner());
-            let running: Vec<serde_json::Value> = map
-                .iter()
-                .map(|(&appid, &pid)| json!({"appid": appid, "pid": pid}))
-                .collect();
+            let running: Vec<serde_json::Value> =
+                map.iter().map(|(&appid, &pid)| json!({"appid": appid, "pid": pid})).collect();
             resp(200, json!({"ok": true, "running": running}))
         },
         (Method::Get, "/game/dual-info") => {
@@ -640,14 +632,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 return resp(400, json!({"ok": false, "error": "appid required"}));
             }
             let dual = scan::resolve_dual_game_dir(appid);
-            resp(200, json!({
-                "ok": true,
-                "appid": appid,
-                "has_native_build": dual.has_native_build,
-                "macos_dir": dual.macos_dir.map(|p| p.to_string_lossy().to_string()),
-                "macos_app": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
-                "wine_dir": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
-            }))
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "appid": appid,
+                    "has_native_build": dual.has_native_build,
+                    "macos_dir": dual.macos_dir.map(|p| p.to_string_lossy().to_string()),
+                    "macos_app": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
+                    "wine_dir": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
+                }),
+            )
         },
         (Method::Post, "/kill") => {
             let body = read_body(req);

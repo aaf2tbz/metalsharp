@@ -9,7 +9,9 @@
 
 .slide-enter-active,
 .slide-leave-active {
-  transition: transform 0.25s ease, opacity 0.25s ease;
+  transition:
+    transform 0.25s ease,
+    opacity 0.25s ease;
 }
 .slide-enter-from {
   transform: translateY(8px);

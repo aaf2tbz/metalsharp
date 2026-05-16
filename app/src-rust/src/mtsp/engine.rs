@@ -59,7 +59,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                 ],
-                env_vars: vec![EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" }, EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" }],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                ],
                 alternatives: vec![PipelineId::WineBare],
                 shader_cache_subdir: Some("dxmt-metal"),
             },
@@ -144,8 +147,9 @@ pub fn get_pipeline(id: PipelineId) -> &'static PipelineNode {
 impl PipelineId {
     pub fn from_legacy_method(method: &str) -> Option<PipelineId> {
         match method {
-            "dxmt_metal" | "d3d9_metal" | "wined3d_32" | "dxvk_metal32" | "steam_d3dmetal_perf"
-            | "steam_metalfx" => Some(PipelineId::M11),
+            "dxmt_metal" | "d3d9_metal" | "wined3d_32" | "dxvk_metal32" | "steam_d3dmetal_perf" | "steam_metalfx" => {
+                Some(PipelineId::M11)
+            },
             "dxmt_metal12" => Some(PipelineId::M12),
             "metalsharp_wine" => Some(PipelineId::WineBare),
             "steam" => Some(PipelineId::Steam),
