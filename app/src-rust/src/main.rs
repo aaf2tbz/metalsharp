@@ -571,20 +571,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     let resolved_pipeline =
                         if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                             Some(pipeline_id)
-                        } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
-                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
                         } else {
-                            None
+                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
                         };
                     let engine_desc = resolved_pipeline
                         .map(|p| crate::mtsp::engine::get_pipeline(p).description)
-                        .unwrap_or_else(|| launch::engine_description_for_appid(id as u32));
+                        .unwrap_or("Unknown");
                     app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
-                    let result = if let Some(pipeline_id) = resolved_pipeline {
-                        crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline_id)
-                    } else {
-                        launch::launch_with_method(id as u32, launch_method)
-                    };
+                    let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, resolved_pipeline.unwrap());
                     match result {
                         Ok((pid, game_type)) => {
                             register_game_pid(id as u32, pid);
