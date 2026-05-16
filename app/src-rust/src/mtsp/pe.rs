@@ -124,7 +124,7 @@ pub fn detect_d3d_api(imports: &[String]) -> D3dApi {
     if lower.iter().any(|d| d == "d3d11.dll") {
         return D3dApi::D3D11;
     }
-    if lower.iter().any(|d| d == "d3d10.dll") {
+    if lower.iter().any(|d| d == "d3d10.dll" || d == "d3d10_1.dll" || d == "d3d10core.dll") {
         return D3dApi::D3D10;
     }
     if lower.iter().any(|d| d == "d3d9.dll") {
@@ -158,4 +158,21 @@ pub fn analyze_game_exe(game_dir: &Path) -> Option<PeInfo> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_d3d10_from_public_and_core_imports() {
+        assert_eq!(detect_d3d_api(&["d3d10.dll".into()]), D3dApi::D3D10);
+        assert_eq!(detect_d3d_api(&["d3d10_1.dll".into()]), D3dApi::D3D10);
+        assert_eq!(detect_d3d_api(&["d3d10core.dll".into()]), D3dApi::D3D10);
+    }
+
+    #[test]
+    fn d3d12_import_takes_priority_over_d3d10_compat_imports() {
+        assert_eq!(detect_d3d_api(&["d3d10core.dll".into(), "d3d12.dll".into()]), D3dApi::D3D12);
+    }
 }

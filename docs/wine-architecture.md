@@ -48,7 +48,7 @@ Other runtime pieces live beside it:
 |---|---|
 | M11 | Wine + DXMT D3D11/DXGI |
 | M12 | Wine + DXMT D3D12/D3D11/DXGI |
-| M10 | Wine + DXMT D3D10/D3D11/DXGI |
+| M10 | Wine + DXMT D3D10 core over D3D11/DXGI |
 | M9 | Wine + DXVK D3D9 + MoltenVK |
 | M32 | Wine 32-bit fallback |
 | Steam | Wine Steam prefix |
@@ -66,6 +66,8 @@ dxgi.dll
 d3d10core.dll
 winemetal.dll
 ```
+
+M10 uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11. A standalone deployed `d3d10.dll` is not part of the current payload.
 
 M12:
 

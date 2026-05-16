@@ -161,3 +161,13 @@ fn merge_preset_into_user(preset_db: &PathBuf, user_db: &PathBuf) -> Option<u64>
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m10_reuses_shared_dxmt_metal_preset_family() {
+        assert_eq!(preset_lookup_subdirs("m10"), vec!["m10", "dxmt-metal"]);
+    }
+}

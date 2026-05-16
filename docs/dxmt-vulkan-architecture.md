@@ -19,6 +19,8 @@ MetalSharp has two graphics translation families:
 
 DXMT is used by M12, M11, and M10.
 
+M10 is the D3D10 DXMT path. It is backed by DXMT's `d3d10core.dll` and the shared D3D11/DXGI/winemetal stack; MetalSharp does not expect a separate deployed `d3d10.dll` for this path.
+
 DXMT DLLs:
 
 | DLL | Used by |
@@ -43,6 +45,9 @@ Game
 DXMT uses per-game shader caches under:
 
 ```text
+~/.metalsharp/shader-cache/m10/<appid>/
+~/.metalsharp/shader-cache/m11/<appid>/
+~/.metalsharp/shader-cache/m12/<appid>/
 ~/.metalsharp/shader-cache/dxmt-metal/<appid>/
 ~/.metalsharp/shader-cache/dxmt-metal12/<appid>/
 ```
@@ -92,6 +97,7 @@ MoltenVK ICD:
 ## Notes
 
 - DXMT is the direct Metal path.
+- M10 and M11 share the `dxmt-metal` preset fallback family.
 - M9 has an extra Vulkan/MoltenVK hop.
 - M12 is still marked experimental in source.
 - M32 is the fallback for 32-bit Wine cases.
