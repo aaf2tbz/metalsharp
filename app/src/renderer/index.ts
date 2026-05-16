@@ -1124,9 +1124,7 @@ class App {
             </label>
           </div>
           <div class="game-card-actions-row subtle">
-            <select class="launch-method-select" data-appid="${game.appid}" title="${this.esc(this.launchMethodHelp(game))}">
-              ${this.launchMethodOptions(game)}
-            </select>
+            <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">${this.esc(this.getPipelineDisplayName(game.appid))}</span>
             <button class="btn btn-danger btn-card" data-action="uninstall" data-appid="${game.appid}">Uninstall</button>
           </div>
         </div>
@@ -1298,13 +1296,6 @@ class App {
     const fnaAppids = [105600, 504230];
     const isFna = fnaAppids.includes(game.appid);
 
-    const selectEl = document.querySelector(`.launch-method-select[data-appid="${game.appid}"]`) as HTMLSelectElement;
-    const selectedMethod = selectEl?.value ?? "native";
-
-    if (selectedMethod && selectedMethod !== "native") {
-      this.lastLaunchMethod.set(game.appid, selectedMethod);
-    }
-
     this.launchingAppId = game.appid;
     this.renderLibrary();
 
@@ -1316,7 +1307,7 @@ class App {
       engine?: string;
     }>("POST", "/game/launch-auto", {
       appid: game.appid,
-      launchMethod: selectedMethod,
+      launchMethod: "auto",
     });
 
     this.launchingAppId = null;
