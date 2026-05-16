@@ -214,6 +214,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/steam/is-running") => resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()})),
+        (Method::Get, "/steam/bridge-status") => {
+            let running = mtsp::launcher::bridge_is_running();
+            resp(200, json!({"ok": true, "running": running, "port": 18733}))
+        },
+        (Method::Post, "/steam/bridge-start") => {
+            match mtsp::launcher::ensure_bridge_running() {
+                Ok(_) => resp(200, json!({"ok": true, "port": 18733})),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        },
         (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
             Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
             None => resp(200, json!({"ok": true, "new_appids": []})),
