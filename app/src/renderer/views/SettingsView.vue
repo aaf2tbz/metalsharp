@@ -18,6 +18,9 @@ const toast = useToast();
 const shaderCacheSize = ref(-1);
 const pipelineCacheSize = ref(-1);
 const apiKeyInput = ref("");
+const updateDownloading = ref(false);
+const updateProgress = ref(0);
+const updateMessage = ref("");
 
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
@@ -96,6 +99,59 @@ async function checkForUpdates() {
   if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
   else if (result?.ok) toast.show("You're up to date!", "success");
   else toast.show("Could not check for updates", "error");
+}
+
+async function startUpdateDownload() {
+  if (updateDownloading.value) return;
+  const backend = getAPI();
+  const pid = await backend.backendGetPid();
+  if (!pid) { toast.show("Cannot get backend PID", "error"); return; }
+  const ready = await backend.updaterEnsureReady();
+  if (!ready) { toast.show("Updater not available", "error"); return; }
+  updateDownloading.value = true;
+  updateProgress.value = 0;
+  updateMessage.value = "Starting download...";
+
+  const startResult = await api<{ ok: boolean; error?: string }>("POST", "/update/start");
+  if (!startResult?.ok) {
+    toast.show(startResult?.error ?? "Failed to start download", "error");
+    updateDownloading.value = false;
+    return;
+  }
+
+  const pollDownload = setInterval(async () => {
+    const progress = await api<{ status: string; percent: number; message: string; error: string | null }>("GET", "/update/progress");
+    if (!progress) return;
+    updateProgress.value = progress.percent ?? 0;
+    updateMessage.value = progress.message ?? "";
+    if (progress.status === "downloaded" || progress.status === "complete") {
+      clearInterval(pollDownload);
+      const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
+      if (!dmgResult?.path) { toast.show("Download complete but DMG not found", "error"); updateDownloading.value = false; return; }
+      const targetVersion = updateStatus.value?.latest_version ?? "";
+      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
+      if (!spawnResult?.ok) { toast.show(spawnResult?.error ?? "Failed to start installer", "error"); updateDownloading.value = false; return; }
+      updateMessage.value = "Installing update...";
+      updateProgress.value = 90;
+      const pollInstall = setInterval(async () => {
+        const installStatus = await backend.updaterInstallStatus();
+        if (!installStatus) return;
+        updateProgress.value = installStatus.percent ?? 90;
+        updateMessage.value = installStatus.message ?? "Installing...";
+        if (installStatus.phase === "complete") {
+          clearInterval(pollInstall);
+          updateDownloading.value = false;
+          toast.show("Update installed — restarting...", "success");
+          await new Promise((r) => setTimeout(r, 2000));
+          backend.quitApp();
+        }
+      }, 1000);
+    } else if (progress.status === "error") {
+      clearInterval(pollDownload);
+      updateDownloading.value = false;
+      toast.show(progress.error ?? "Download failed", "error");
+    }
+  }, 500);
 }
 </script>
 
@@ -215,7 +271,28 @@ async function checkForUpdates() {
           <span class="badge" :class="updateStatus?.ok ? 'badge-ok' : 'badge-warn'">
             v{{ updateStatus?.current_version ?? "unknown" }}
           </span>
-          <button class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
+          <button v-if="!updateDownloading" class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
+        </div>
+      </div>
+      <div v-if="updateStatus?.ok && updateStatus?.available && !updateDownloading" class="settings-row">
+        <div>
+          <div class="settings-label">Download Update</div>
+          <div class="settings-desc">v{{ updateStatus.latest_version }} is ready to download</div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-primary btn-sm" @click="startUpdateDownload">Download &amp; Install</button>
+        </div>
+      </div>
+      <div v-if="updateDownloading" class="settings-row">
+        <div>
+          <div class="settings-label">{{ updateMessage || "Updating..." }}</div>
+          <div class="settings-desc">Do not close MetalSharp during the update</div>
+        </div>
+        <div class="settings-value">
+          <div class="update-progress-bar">
+            <div class="update-progress-fill" :style="{ width: updateProgress + '%' }"></div>
+          </div>
+          <span class="settings-version">{{ updateProgress }}%</span>
         </div>
       </div>
     </div>
@@ -289,5 +366,18 @@ async function checkForUpdates() {
 .settings-version {
   font-size: 12px;
   color: var(--text-dim);
+}
+.update-progress-bar {
+  width: 140px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
 }
 </style>
