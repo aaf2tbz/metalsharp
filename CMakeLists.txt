@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.32.0 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.33.0 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -226,6 +226,12 @@ add_executable(metalsharp_native
 )
 target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
+
+add_executable(metalsharp_migrator
+    tools/migrator/main.m
+)
+target_link_libraries(metalsharp_migrator PRIVATE ${APPKIT_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
+set_target_properties(metalsharp_migrator PROPERTIES OUTPUT_NAME "MetalSharpMigrator")
 
 if(BUILD_TESTS)
     enable_testing()

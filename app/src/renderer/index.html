@@ -5,50 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; font-src 'self'; img-src 'self' https://steamcdn-a.akamaihd.net https://cdn.akamai.steamstatic.com https://store.steampowered.com data:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+      content="default-src 'self'; font-src 'self'; img-src 'self' https://steamcdn-a.akamaihd.net https://cdn.akamai.steamstatic.com https://store.steampowered.com data: http://127.0.0.1:9274; style-src 'self' 'unsafe-inline'; script-src 'self';"
     />
     <title>MetalSharp</title>
-    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="app">
-      <div class="drag-bar"></div>
-      <nav class="sidebar">
-        <div class="logo">
-          <img src="icon.png" class="logo-icon" alt="MetalSharp" />
-          <span class="logo-text">MetalSharp</span>
-        </div>
-        <div class="nav-items">
-          <button type="button" class="nav-item active" data-view="library">
-            <i class="nav-icon">&#x1F3AE;</i><span class="nav-label">Library</span>
-          </button>
-          <button type="button" class="nav-item" data-view="sharp-library">
-            <i class="nav-icon">&#x2B50;</i><span class="nav-label">Sharp</span>
-          </button>
-          <button type="button" class="nav-item" data-view="logs">
-            <i class="nav-icon">&#x1F4CB;</i><span class="nav-label">Logs</span>
-          </button>
-          <button type="button" class="theme-toggle-sidebar" id="btn-theme" title="Toggle light mode">
-            <i class="nav-icon">&#x1F319;</i><span class="nav-label">Light Mode</span>
-          </button>
-        </div>
-        <div class="nav-settings">
-          <button type="button" class="nav-item" data-view="settings">
-            <i class="nav-icon">&#x2699;</i><span class="nav-label">Settings</span>
-          </button>
-        </div>
-        <div class="sidebar-footer">
-          <div class="status-dot" id="backend-status"></div>
-          <span class="status-text" id="backend-status-text">Connecting...</span>
-        </div>
-      </nav>
-      <main class="content" id="main-content">
-        <div class="view" id="view-library"></div>
-        <div class="view hidden" id="view-sharp-library"></div>
-        <div class="view hidden" id="view-logs"></div>
-        <div class="view hidden" id="view-settings"></div>
-      </main>
-    </div>
-    <script src="index.js"></script>
+    <div id="app"></div>
+    <script type="module" src="/main.ts"></script>
   </body>
 </html>

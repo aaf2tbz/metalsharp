@@ -1,0 +1,62 @@
+:root {
+  --bg-deep: #1b2838;
+  --bg-surface: #1e2d3d;
+  --bg-card: #233347;
+  --bg-card-hover: #2a475e;
+  --bg-input: #1b2838;
+  --accent: #66c0f4;
+  --accent-hover: #4fc5f1;
+  --accent-dim: #4a90b8;
+  --accent-glow: rgba(102, 192, 244, 0.25);
+  --success: #5cb870;
+  --success-bg: rgba(92, 184, 112, 0.12);
+  --error: #d45050;
+  --error-bg: rgba(212, 80, 80, 0.12);
+  --warn: #c7a033;
+  --warn-bg: rgba(199, 160, 51, 0.12);
+  --text-primary: #c7d5e0;
+  --text-secondary: #8f98a0;
+  --text-dim: #56707f;
+  --text-bright: #ffffff;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --sidebar-bg: #171a21;
+  --sidebar-hover: #2a475e;
+  --sidebar-active: rgba(102, 192, 244, 0.12);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --transition: 0.18s ease;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", monospace;
+  --font-logo: "PressStart2P", monospace;
+  --sidebar-width-collapsed: 56px;
+  --sidebar-width-expanded: 200px;
+}
+
+:root[data-theme="light"] {
+  --bg-deep: #f5f7fa;
+  --bg-surface: #eef1f5;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f0f3f7;
+  --bg-input: #ffffff;
+  --accent: #1b7cb8;
+  --accent-hover: #156a9e;
+  --accent-dim: #2a8fc9;
+  --accent-glow: rgba(27, 124, 184, 0.15);
+  --success: #3d8c50;
+  --success-bg: rgba(61, 140, 80, 0.08);
+  --error: #c04040;
+  --error-bg: rgba(192, 64, 64, 0.08);
+  --warn: #a88520;
+  --warn-bg: rgba(168, 133, 32, 0.08);
+  --text-primary: #1b2838;
+  --text-secondary: #556773;
+  --text-dim: #8a9baa;
+  --text-bright: #0e1a26;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --sidebar-bg: #dde2e8;
+  --sidebar-hover: #cdd4dc;
+  --sidebar-active: rgba(27, 124, 184, 0.12);
+}

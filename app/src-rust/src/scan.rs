@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(serde::Serialize, Clone)]
@@ -11,6 +11,108 @@ pub struct Game {
     pub steam_app_id: Option<u32>,
     pub size_bytes: Option<u64>,
     pub metalsharp_compatible: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DualGameDir {
+    pub appid: u32,
+    pub macos_dir: Option<PathBuf>,
+    pub wine_dir: Option<PathBuf>,
+    pub macos_app: Option<PathBuf>,
+    pub has_native_build: bool,
+}
+
+pub fn macos_steam_library_paths() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = vec![
+        home.join("Library/Application Support/Steam/steamapps"),
+        home.join(".steam/steam/steamapps"),
+        home.join(".local/share/Steam/steamapps"),
+    ];
+    let mut paths = Vec::new();
+    for mac_path in &candidates {
+        if mac_path.exists() {
+            paths.push(mac_path.clone());
+            paths.extend(parse_library_folders(mac_path));
+        }
+    }
+    paths
+}
+
+pub fn resolve_dual_game_dir(appid: u32) -> DualGameDir {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+    let mut macos_dir: Option<PathBuf> = None;
+    let mut wine_dir: Option<PathBuf> = None;
+    let mut install_dir_name: Option<String> = None;
+
+    for steamapps in macos_steam_library_paths() {
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Some(dir_name) = parse_installdir_from_acf(&contents) {
+                let dir = steamapps.join("common").join(&dir_name);
+                if dir.exists() {
+                    macos_dir = Some(dir);
+                    install_dir_name = Some(dir_name);
+                    break;
+                }
+            }
+        }
+    }
+
+    for steamapps in wine_steam_library_paths() {
+        if let Some(ref dir_name) = install_dir_name {
+            let dir = steamapps.join("common").join(dir_name);
+            if dir.exists() {
+                wine_dir = Some(dir);
+                break;
+            }
+        } else {
+            let manifest_path = steamapps.join(&manifest_name);
+            if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+                if let Some(dir_name) = parse_installdir_from_acf(&contents) {
+                    let dir = steamapps.join("common").join(&dir_name);
+                    if dir.exists() {
+                        wine_dir = Some(dir);
+                        let _ = install_dir_name.insert(dir_name);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let macos_app = macos_dir.as_ref().and_then(|d| find_macos_app(d));
+    let has_native_build = macos_app.is_some();
+
+    DualGameDir { appid, macos_dir, wine_dir, macos_app, has_native_build }
+}
+
+pub fn find_macos_app(dir: &Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.extension().map(|e| e == "app").unwrap_or(false) && path.is_dir() {
+            return Some(path);
+        }
+    }
+    for entry in WalkDir::new(dir).max_depth(2).into_iter().flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "app").unwrap_or(false) && path.is_dir() {
+            return Some(path.to_path_buf());
+        }
+    }
+    None
+}
+
+fn parse_installdir_from_acf(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("\"installdir\"") {
+            let parts: Vec<&str> = trimmed.splitn(2, ['\t', ' ']).collect();
+            return parts.last().map(|s| s.trim().trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 pub fn scan_all() -> Result<Value, Box<dyn std::error::Error>> {
@@ -64,24 +166,8 @@ fn detect_windows_steam() -> Option<Game> {
 }
 
 fn steam_library_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    let home = dirs::home_dir().unwrap_or_default();
-
-    let mac_candidates = vec![
-        home.join("Library/Application Support/Steam/steamapps"),
-        home.join(".steam/steam/steamapps"),
-        home.join(".local/share/Steam/steamapps"),
-    ];
-
-    for mac_path in &mac_candidates {
-        if mac_path.exists() {
-            paths.push(mac_path.clone());
-            paths.extend(parse_library_folders(mac_path));
-        }
-    }
-
+    let mut paths = macos_steam_library_paths();
     paths.extend(wine_steam_library_paths());
-
     paths
 }
 

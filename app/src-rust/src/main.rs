@@ -19,6 +19,7 @@
 
 mod installer;
 mod launch;
+mod migrate;
 mod mtsp;
 mod scan;
 mod setup;
@@ -27,8 +28,31 @@ mod steam;
 mod updater;
 
 use serde_json::json;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use tiny_http::{Header, Method, Response, Server};
+
+static RUNNING_GAMES: OnceLock<Mutex<HashMap<u32, i32>>> = OnceLock::new();
+
+fn running_games() -> &'static Mutex<HashMap<u32, i32>> {
+    RUNNING_GAMES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_game_pid(appid: u32, pid: u32) {
+    if let Ok(mut map) = running_games().lock() {
+        map.insert(appid, pid as i32);
+    }
+}
+
+fn unregister_game_pid(appid: u32) {
+    if let Ok(mut map) = running_games().lock() {
+        map.remove(&appid);
+    }
+}
+
+fn get_game_pid(appid: u32) -> Option<i32> {
+    running_games().lock().ok()?.get(&appid).copied()
+}
 
 enum RouteResponse {
     Json(u16, Vec<u8>),
@@ -42,6 +66,18 @@ fn main() {
         eprintln!("failed to bind {}: {}", addr, e);
         std::process::exit(1);
     }));
+
+    ctrlc::set_handler(move || {
+        app_log("Shutting down — cleaning up running games");
+        if let Ok(map) = running_games().lock() {
+            for (&appid, &pid) in map.iter() {
+                app_log(&format!("Killing game appid={} pid={}", appid, pid));
+                let _ = launch::kill_process_tree(pid);
+            }
+        }
+        std::process::exit(0);
+    })
+    .unwrap_or_else(|e| eprintln!("ctrlc handler warning: {}", e));
 
     eprintln!("metalsharp-backend listening on {}", addr);
     app_log(&format!("MetalSharp v{} backend started on {}", env!("CARGO_PKG_VERSION"), addr));
@@ -105,6 +141,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
         },
         (Method::Post, "/update/cleanup") => resp(200, updater::cleanup_downloaded_dmgs()),
+        (Method::Get, "/update/migrate/check") => resp(200, migrate::needs_migration()),
+        (Method::Post, "/update/migrate/start") => match migrate::start_migration() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+        },
+        (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
@@ -191,6 +233,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/steam/is-running") => resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()})),
+        (Method::Get, "/steam/bridge-status") => {
+            let running = mtsp::launcher::bridge_is_running();
+            resp(200, json!({"ok": true, "running": running, "port": 18733}))
+        },
+        (Method::Post, "/steam/bridge-start") => match mtsp::launcher::ensure_bridge_running() {
+            Ok(_) => resp(200, json!({"ok": true, "port": 18733})),
+            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+        },
         (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
             Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
             None => resp(200, json!({"ok": true, "new_appids": []})),
@@ -495,21 +545,21 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let exe = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
             let steam_app_id = body.get("steamAppId").and_then(|v| v.as_u64());
-            let resolved = if steam_app_id.is_some() && !exe.contains(".exe") {
-                resolve_game_exe(steam_app_id.unwrap() as u32)
+            let resolved = if let Some(sid) = steam_app_id {
+                if !exe.contains(".exe") {
+                    resolve_game_exe(sid as u32)
+                } else {
+                    exe.to_string()
+                }
             } else {
                 exe.to_string()
             };
             app_log(&format!("Launching: {}", resolved));
 
             let mut game_type = "native";
-            if steam_app_id.is_some() {
+            if let Some(sid) = steam_app_id {
                 let home = dirs::home_dir().unwrap_or_default();
-                let marker = home
-                    .join(".metalsharp")
-                    .join("games")
-                    .join(steam_app_id.unwrap().to_string())
-                    .join(".metalsharp_prepared");
+                let marker = home.join(".metalsharp").join("games").join(sid.to_string()).join(".metalsharp_prepared");
                 if let Ok(content) = std::fs::read_to_string(&marker) {
                     if content.contains("is_dotnet=true") {
                         app_log("Detected XNA/FNA game — using mono runtime");
@@ -538,22 +588,24 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     let resolved_pipeline =
                         if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                             Some(pipeline_id)
-                        } else if launch_method == "auto" || launch_method.is_empty() || launch_method == "native" {
-                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
                         } else {
-                            None
+                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
                         };
                     let engine_desc = resolved_pipeline
                         .map(|p| crate::mtsp::engine::get_pipeline(p).description)
-                        .unwrap_or_else(|| launch::engine_description_for_appid(id as u32));
+                        .unwrap_or("Unknown");
                     app_log(&format!("[LAUNCH] appid {} | engine: {} | method: {}", id, engine_desc, launch_method));
-                    let result = if let Some(pipeline_id) = resolved_pipeline {
-                        crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline_id)
-                    } else {
-                        launch::launch_with_method(id as u32, launch_method)
+                    let pipeline = match resolved_pipeline {
+                        Some(p) => p,
+                        None => {
+                            app_log(&format!("[LAUNCH FAILED] appid {} | no pipeline resolved", id));
+                            return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
+                        },
                     };
+                    let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline);
                     match result {
                         Ok((pid, game_type)) => {
+                            register_game_pid(id as u32, pid);
                             app_log(&format!("[LAUNCHED] appid {} | pid {} | engine: {}", id, pid, game_type));
                             resp(
                                 200,
@@ -569,30 +621,67 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Get, "/game/running") => {
+            let map = running_games().lock().unwrap_or_else(|e| e.into_inner());
+            let running: Vec<serde_json::Value> =
+                map.iter().map(|(&appid, &pid)| json!({"appid": appid, "pid": pid})).collect();
+            resp(200, json!({"ok": true, "running": running}))
+        },
+        (Method::Get, "/game/dual-info") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            if appid == 0 {
+                return resp(400, json!({"ok": false, "error": "appid required"}));
+            }
+            let dual = scan::resolve_dual_game_dir(appid);
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "appid": appid,
+                    "has_native_build": dual.has_native_build,
+                    "macos_dir": dual.macos_dir.map(|p| p.to_string_lossy().to_string()),
+                    "macos_app": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
+                    "wine_dir": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
+                }),
+            )
+        },
         (Method::Post, "/kill") => {
             let body = read_body(req);
-            let pid = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
+            let pid_param = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
             let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
-            app_log(&format!("[STOP] pid {} appid {:?}", pid, appid));
-            if let Some(aid) = appid {
-                match launch::kill_game(aid) {
+
+            let target_pid = if let Some(aid) = appid {
+                let registered = get_game_pid(aid);
+                let pid = registered.unwrap_or(pid_param);
+                app_log(&format!("[STOP] appid {} | registered pid {:?} | param pid {}", aid, registered, pid_param));
+
+                match launch::kill_game_with_pid(aid, pid) {
                     Ok(_) => {
-                        app_log(&format!("[STOPPED] appid {}", aid));
-                        resp(200, json!({"ok": true}))
+                        unregister_game_pid(aid);
+                        app_log(&format!("[STOPPED] appid {} | pid {}", aid, pid));
+                        return resp(200, json!({"ok": true, "pid": pid}));
                     },
                     Err(e) => {
                         app_log(&format!("[STOP FAILED] appid {} | error: {}", aid, e));
-                        resp(500, json!({"ok": false, "error": e.to_string()}))
+                        return resp(500, json!({"ok": false, "error": e.to_string()}));
                     },
                 }
             } else {
-                match launch::kill(pid) {
-                    Ok(_) => {
-                        app_log(&format!("[STOPPED] pid {}", pid));
-                        resp(200, json!({"ok": true}))
-                    },
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
-                }
+                pid_param
+            };
+
+            match launch::kill_process_tree(target_pid) {
+                Ok(_) => {
+                    app_log(&format!("[STOPPED] pid {}", target_pid));
+                    resp(200, json!({"ok": true, "pid": target_pid}))
+                },
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
         (Method::Post, "/steam/uninstall-game") => {

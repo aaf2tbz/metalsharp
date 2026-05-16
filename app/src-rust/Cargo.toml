@@ -1,6 +1,6 @@
 [package]
 name = "metalsharp-backend"
-version = "0.32.0"
+version = "0.33.0"
 edition = "2021"
 
 [dependencies]
@@ -13,3 +13,4 @@ zstd = "0.13"
 ureq = { version = "3", features = ["json"] }
 toml = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
+ctrlc = "3"
