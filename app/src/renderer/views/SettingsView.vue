@@ -1,0 +1,293 @@
+<script setup lang="ts">
+import { ref, inject, onMounted, type Ref } from "vue";
+import { useToast } from "../composables/useToast";
+import { api, getAPI } from "../composables/useApi";
+import type { AppConfig, UpdateStatus } from "../api-types";
+
+const config = inject<Ref<AppConfig | null>>("config")!;
+const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
+const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
+const backendConnected = inject<Ref<boolean>>("backendConnected")!;
+const backendVersion = inject<Ref<string | null>>("backendVersion")!;
+const updateStatus = inject<Ref<UpdateStatus | null>>("updateStatus")!;
+const steamApiKey = inject<Ref<string | null>>("steamApiKey")!;
+const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
+const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
+
+const toast = useToast();
+const shaderCacheSize = ref(-1);
+const pipelineCacheSize = ref(-1);
+const apiKeyInput = ref("");
+
+onMounted(async () => {
+  apiKeyInput.value = steamApiKey.value ?? "";
+  const result = await api<{
+    ok: boolean;
+    shader_cache: { bytes: number };
+    pipeline_cache: { bytes: number };
+  }>("GET", "/cache/size");
+  if (result?.ok) {
+    shaderCacheSize.value = result.shader_cache.bytes;
+    pipelineCacheSize.value = result.pipeline_cache.bytes;
+  }
+});
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+async function saveApiKey() {
+  const key = apiKeyInput.value.trim();
+  if (!key) { toast.show("Please enter a Steam API key", "error"); return; }
+  await api("POST", "/steam/save-api-key", { key });
+  toast.show("API key saved — syncing library...", "success");
+  await reloadLibrary();
+  steamApiKey.value = key;
+}
+
+async function changeDeviceName() {
+  const result = await api<{ name: string }>("GET", "/setup/device-name");
+  if (result?.name) {
+    setupDeviceName.value = result.name;
+    await api("POST", "/setup/save", { deviceName: result.name });
+    toast.show(`Device name changed to ${result.name}`);
+  }
+}
+
+async function toggleSteam() {
+  if (wineSteamRunning.value) {
+    await api("POST", "/steam/stop");
+    wineSteamRunning.value = false;
+    toast.show("Steam stopped");
+  } else {
+    toast.show("Starting Steam...", "success");
+    await api("POST", "/steam/launch");
+    wineSteamRunning.value = true;
+    toast.show("Steam started", "success");
+  }
+}
+
+async function restartBackend() {
+  toast.show("Restarting backend...", "success");
+  const result = await getAPI().restartBackend();
+  if (result.ok) toast.show("Backend restarted", "success");
+  else toast.show(result.error ?? "Failed to restart", "error");
+}
+
+async function clearShaderCache() {
+  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "shader" });
+  if (result?.ok) toast.show(`Shader cache cleared — ${formatBytes(result.bytes_freed)} freed`);
+  shaderCacheSize.value = 0;
+}
+
+async function clearPipelineCache() {
+  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "pipeline" });
+  if (result?.ok) toast.show(`Pipeline cache cleared — ${formatBytes(result.bytes_freed)} freed`);
+  pipelineCacheSize.value = 0;
+}
+
+async function checkForUpdates() {
+  toast.show("Checking for updates...", "success");
+  const result = await api<UpdateStatus>("GET", "/update/check");
+  if (result) updateStatus.value = result;
+  if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
+  else if (result?.ok) toast.show("You're up to date!", "success");
+  else toast.show("Could not check for updates", "error");
+}
+</script>
+
+<template>
+  <div class="settings-view">
+    <div class="settings-header"><h1>Settings</h1></div>
+
+    <div class="settings-section">
+      <h2>Steam Integration</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Steam Web API Key</div>
+          <div class="settings-desc">
+            Required to load your full game library. Get a free key at
+            <a href="https://steamcommunity.com/dev/apikey" target="_blank">steamcommunity.com/dev/apikey</a>.
+          </div>
+        </div>
+        <div class="settings-value">
+          <div class="settings-input-row">
+            <input v-model="apiKeyInput" type="password" class="control-input" placeholder="Enter your Steam Web API key..." />
+            <button class="btn btn-primary btn-sm" @click="saveApiKey">Save &amp; Sync</button>
+          </div>
+          <span v-if="steamApiKey" class="badge badge-ok">Key saved</span>
+          <span v-else class="badge badge-warn">No key — only installed games shown</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Device Name</div>
+          <div class="settings-desc">Identifies this machine to Steam for persistent login</div>
+        </div>
+        <div class="settings-value">
+          <span>{{ setupDeviceName || "Not set" }}</span>
+          <button class="btn btn-secondary btn-sm" @click="changeDeviceName">Change</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Steam</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Wine Steam (MetalSharp)</div>
+          <div class="settings-desc">Windows Steam running in MetalSharp Wine</div>
+        </div>
+        <div class="settings-value">
+          <span v-if="wineSteamInstalled" class="badge badge-ok">Installed</span>
+          <span v-else class="badge badge-warn">Not Installed</span>
+          <button v-if="wineSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleSteam">
+            {{ wineSteamRunning ? "Stop Steam" : "Start Steam" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Backend</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Game Runtime Backend</div>
+          <div class="settings-desc">The Rust backend handles game launches, Steam integration, and shader management</div>
+        </div>
+        <div class="settings-value">
+          <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-warn'">
+            {{ backendConnected ? "Connected" : "Offline" }}
+          </span>
+          <span v-if="backendVersion" class="settings-version">v{{ backendVersion }}</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Restart Backend</div>
+          <div class="settings-desc">Kill and restart the backend process</div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-secondary btn-sm" @click="restartBackend">Restart Backend</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Cache</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Shader Cache</div>
+          <div class="settings-desc">Persist compiled shaders to disk for faster loading</div>
+        </div>
+        <div class="settings-value">
+          <span class="badge badge-ok">{{ shaderCacheSize >= 0 ? formatBytes(shaderCacheSize) : "..." }}</span>
+          <button class="btn btn-secondary btn-sm" @click="clearShaderCache">Clear</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Pipeline Cache</div>
+          <div class="settings-desc">Persist compiled pipeline state objects</div>
+        </div>
+        <div class="settings-value">
+          <span class="badge badge-ok">{{ pipelineCacheSize >= 0 ? formatBytes(pipelineCacheSize) : "..." }}</span>
+          <button class="btn btn-secondary btn-sm" @click="clearPipelineCache">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Updates</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Version</div>
+          <div class="settings-desc">
+            {{ updateStatus?.ok && updateStatus?.available
+              ? `v${updateStatus.latest_version} available (current: v${updateStatus.current_version})`
+              : updateStatus?.ok ? "You're up to date" : "Could not check for updates" }}
+          </div>
+        </div>
+        <div class="settings-value">
+          <span class="badge" :class="updateStatus?.ok ? 'badge-ok' : 'badge-warn'">
+            v{{ updateStatus?.current_version ?? "unknown" }}
+          </span>
+          <button class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.settings-view {
+  padding: 24px 28px;
+  height: 100%;
+  overflow-y: auto;
+}
+.settings-header {
+  margin-bottom: 24px;
+}
+.settings-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.settings-section {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:last-child {
+  border-bottom: none;
+}
+.settings-section h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 10px 0;
+}
+.settings-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.settings-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.settings-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.settings-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-input-row input {
+  width: 280px;
+}
+.settings-version {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+</style>
