@@ -62,7 +62,6 @@ const navItems = [
         </svg>
         <span v-if="!collapsed" class="sidebar-nav-label">{{ item.label }}</span>
       </button>
-
     </div>
 
     <div class="sidebar-bottom">
@@ -114,7 +113,7 @@ const navItems = [
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 12px 10px;
+  padding: 38px 12px 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -206,6 +205,9 @@ const navItems = [
 .sidebar-bottom {
   padding: 6px;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .sidebar.collapsed .sidebar-top {

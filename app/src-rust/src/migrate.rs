@@ -201,6 +201,7 @@ fn kill_steam_wine() {
 
 struct PreservedData {
     setup_json: Option<Vec<u8>>,
+    steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
@@ -213,13 +214,19 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
 
     let setup_json = ms_dir.join("setup.json").exists().then(|| fs::read(ms_dir.join("setup.json")).ok()).flatten();
 
+    let steam_config_path = ms_dir.join("cache").join("steam_config.json");
+    let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
+
+    write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
     let prefix_steam = ms_dir.join("prefix-steam");
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
-        copy_dir_recursive(&prefix_steam, &prefix_steam_tmp);
+        let skip = ["dosdevices", "windows", "ProgramData"];
+        preserve_selective(&prefix_steam, &prefix_steam_tmp, &skip);
     }
 
+    write_migrate_progress("running", 2, 5, "Preserving user data (games)...", None);
     let games_tmp = tmp.join("games");
     let games = ms_dir.join("games");
     if games.exists() {
@@ -227,6 +234,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         copy_dir_recursive(&games, &games_tmp);
     }
 
+    write_migrate_progress("running", 2, 5, "Preserving user data (library)...", None);
     let sharp_library_tmp = tmp.join("sharp-library");
     let sharp_library = ms_dir.join("sharp-library");
     if sharp_library.exists() {
@@ -234,7 +242,38 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         copy_dir_recursive(&sharp_library, &sharp_library_tmp);
     }
 
-    PreservedData { setup_json, prefix_steam_tmp, games_tmp, sharp_library_tmp }
+    PreservedData { setup_json, steam_config_json, prefix_steam_tmp, games_tmp, sharp_library_tmp }
+}
+
+fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
+    if let Ok(entries) = fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy().to_string();
+            let src_path = entry.path();
+            let dst_path = dst.join(&name);
+
+            if skip_names.contains(&name_str.as_str()) {
+                continue;
+            }
+
+            match fs::symlink_metadata(&src_path) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        if let Ok(target) = fs::read_link(&src_path) {
+                            let _ = std::os::unix::fs::symlink(&target, &dst_path);
+                        }
+                    } else if meta.is_dir() {
+                        let _ = fs::create_dir_all(&dst_path);
+                        preserve_selective(&src_path, &dst_path, skip_names);
+                    } else {
+                        let _ = fs::copy(&src_path, &dst_path);
+                    }
+                },
+                Err(_) => {},
+            }
+        }
+    }
 }
 
 fn remove_old_runtime(ms_dir: &PathBuf) {
@@ -253,9 +292,11 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
 
     for name in &dirs_to_remove {
         let p = ms_dir.join(name);
-        if p.is_dir() {
+        let is_dir = fs::symlink_metadata(&p).map(|m| m.is_dir()).unwrap_or(false);
+        let is_file = fs::symlink_metadata(&p).map(|m| m.is_file()).unwrap_or(false);
+        if is_dir {
             let _ = fs::remove_dir_all(&p);
-        } else if p.is_file() {
+        } else if is_file {
             let _ = fs::remove_file(&p);
         }
     }
@@ -274,6 +315,19 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         copy_dir_recursive(&preserved.prefix_steam_tmp, &dst);
+
+        let dosdevices = dst.join("dosdevices");
+        if !dosdevices.exists() {
+            let _ = fs::create_dir_all(&dosdevices);
+        }
+        let c_link = dosdevices.join("c:");
+        if !c_link.exists() {
+            let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
+        }
+        let z_link = dosdevices.join("z:");
+        if !z_link.exists() {
+            let _ = std::os::unix::fs::symlink("/", &z_link);
+        }
     }
 
     if preserved.games_tmp.exists() {
@@ -295,6 +349,12 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
     if let Some(ref data) = preserved.setup_json {
         let _ = fs::write(ms_dir.join("setup.json"), data);
     }
+
+    if let Some(ref data) = preserved.steam_config_json {
+        let cache_dir = ms_dir.join("cache");
+        let _ = fs::create_dir_all(&cache_dir);
+        let _ = fs::write(cache_dir.join("steam_config.json"), data);
+    }
 }
 
 fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
@@ -302,11 +362,20 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
         for entry in entries.flatten() {
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
-            if src_path.is_dir() {
-                let _ = fs::create_dir_all(&dst_path);
-                copy_dir_recursive(&src_path, &dst_path);
-            } else {
-                let _ = fs::copy(&src_path, &dst_path);
+            match fs::symlink_metadata(&src_path) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        if let Ok(target) = fs::read_link(&src_path) {
+                            let _ = std::os::unix::fs::symlink(&target, &dst_path);
+                        }
+                    } else if meta.is_dir() {
+                        let _ = fs::create_dir_all(&dst_path);
+                        copy_dir_recursive(&src_path, &dst_path);
+                    } else {
+                        let _ = fs::copy(&src_path, &dst_path);
+                    }
+                },
+                Err(_) => {},
             }
         }
     }

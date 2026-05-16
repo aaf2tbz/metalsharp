@@ -106,17 +106,17 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
         return;
     }
 
-    let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+    let needs_redeploy = if real.exists() {
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+        real_size < 100_000
+    } else {
+        let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+        wrapper_size > 100_000
+    };
 
-    if wrapper_size < 100_000 {
-        return;
+    if needs_redeploy {
+        deploy_steamwebhelper_wrapper(steam_dir);
     }
-
-    if real.exists() {
-        let _ = std::fs::remove_file(&real);
-    }
-    let _ = std::fs::rename(&wrapper, &real);
-    deploy_steamwebhelper_wrapper(steam_dir);
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
