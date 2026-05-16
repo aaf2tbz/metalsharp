@@ -226,7 +226,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "wine_devel",
                 "name": "Wine (Devel)",
-                "desc": "No longer required — MetalSharp Wine handles all pipelines including DXVK D3D9 (Portal 2).",
+                "desc": "No longer required — MetalSharp Wine handles all pipelines including M9 D3D9 Metal (Portal 2).",
                 "installed": wine_devel,
                 "required": false,
                 "installCmd": "brew install --cask wine@devel",
@@ -395,7 +395,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         2050650 | 3164500 | 848450 => "dxmt_metal12",
         535520 => "wined3d_32",
         945360 | 1139900 => "steam",
-        620 | 265930 => "dxvk_metal32",
+        620 | 265930 => "d3d9_metal",
         _ => {
             if is_dotnet {
                 "xna_fna"

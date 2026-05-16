@@ -808,3 +808,23 @@ pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m9_cache_env_uses_dxmt_family_not_dxvk() {
+        let node = get_pipeline(PipelineId::M9);
+        let cache = CachePaths { shader: "/tmp/m9-shaders".into(), pipeline: "/tmp/m9-pipelines".into() };
+
+        let env = cache_env_pairs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"));
+        let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+        assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
+        assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
+        assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
+        assert!(!keys.contains("DXVK_LOG_PATH"));
+        assert!(!keys.contains("VK_ICD_FILENAMES"));
+    }
+}
