@@ -44,6 +44,10 @@ const launchingAppId = ref<number | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
+function isMacSteamLaunch(launchMethod: string) {
+  return launchMethod === "mac_steam" || launchMethod === "macos_steam" || launchMethod === "native_steam";
+}
+
 function applyFilter() {
   if (!library.value) {
     filteredGames.value = [];
@@ -61,9 +65,14 @@ function applyFilter() {
 
 async function toggleSteam() {
   if (wineSteamRunning.value) {
-    await api("POST", "/steam/stop");
-    wineSteamRunning.value = false;
-    toast.show("Steam stopped");
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+    if (result?.ok && result.running === false) {
+      wineSteamRunning.value = false;
+      toast.show("Wine Steam stopped");
+    } else {
+      wineSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "Wine Steam is still running", "error");
+    }
   } else {
     toast.show("Starting Steam...", "success");
     const result = await api<{ ok: boolean }>("POST", "/steam/launch");
@@ -92,6 +101,16 @@ async function toggleMacSteam() {
       toast.show(result?.error ?? "Mac Steam is still running", "error");
     }
   } else {
+    if (wineSteamRunning.value) {
+      if (!confirm("Stop Wine Steam and start Mac Steam?")) return;
+      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+      if (!stopResult?.ok || stopResult.running !== false) {
+        wineSteamRunning.value = stopResult?.running ?? true;
+        toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+        return;
+      }
+      wineSteamRunning.value = false;
+    }
     toast.show("Starting Mac Steam...", "success");
     const result = await api<{ ok: boolean }>("POST", "/steam/mac-launch");
     if (result?.ok) {
@@ -103,12 +122,24 @@ async function toggleMacSteam() {
 }
 
 async function launchGame(game: SteamGame, launchMethod = "auto") {
+  if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
+    if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
+    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+    if (!stopResult?.ok || stopResult.running !== false) {
+      wineSteamRunning.value = stopResult?.running ?? true;
+      toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+      return;
+    }
+    wineSteamRunning.value = false;
+  }
+
   launchingAppId.value = game.appid;
   const launchResult = await api<{
     ok: boolean;
     pid?: number;
     error?: string;
     engine?: string;
+    gameType?: string;
   }>("POST", "/game/launch-auto", { appid: game.appid, launchMethod });
 
   launchingAppId.value = null;
@@ -116,6 +147,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
     runningAppId.value = game.appid;
+    if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
@@ -177,7 +209,11 @@ watch([library, search, filter], applyFilter);
           </svg>
           <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
         </button>
-        <button class="btn btn-secondary library-control-button" title="MacOS Steam" @click="toggleMacSteam">
+        <button
+          class="btn btn-secondary library-control-button"
+          title="MacOS Steam"
+          @click="toggleMacSteam"
+        >
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2" /><path d="M9 18h6" />
           </svg>
