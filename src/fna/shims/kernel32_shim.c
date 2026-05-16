@@ -1,18 +1,18 @@
+#include <dirent.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <mach/mach_time.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <dlfcn.h>
-#include <dirent.h>
-#include <errno.h>
-#include <signal.h>
 #include <time.h>
-#include <mach/mach_time.h>
+#include <unistd.h>
 
 typedef uint32_t DWORD;
 typedef uint64_t DWORD64;
@@ -31,44 +31,70 @@ typedef int32_t INT;
 
 static __thread DWORD t_lastError = 0;
 
-DWORD GetLastError(void) { return t_lastError; }
-void SetLastError(DWORD code) { t_lastError = code; }
+DWORD GetLastError(void) {
+    return t_lastError;
+}
+void SetLastError(DWORD code) {
+    t_lastError = code;
+}
 
 HANDLE GetStdHandle(DWORD nStdHandle) {
     switch (nStdHandle) {
-        case 0xFFFFFFF6: return (HANDLE)(intptr_t)STDIN_FILENO;
-        case 0xFFFFFFF5: return (HANDLE)(intptr_t)STDOUT_FILENO;
-        case 0xFFFFFFF4: return (HANDLE)(intptr_t)STDERR_FILENO;
-        default: return (HANDLE)(intptr_t)-1;
+    case 0xFFFFFFF6:
+        return (HANDLE)(intptr_t)STDIN_FILENO;
+    case 0xFFFFFFF5:
+        return (HANDLE)(intptr_t)STDOUT_FILENO;
+    case 0xFFFFFFF4:
+        return (HANDLE)(intptr_t)STDERR_FILENO;
+    default:
+        return (HANDLE)(intptr_t)-1;
     }
 }
 
 BOOL SetConsoleMode(HANDLE hConsoleHandle, DWORD dwMode) {
-    (void)hConsoleHandle; (void)dwMode;
+    (void)hConsoleHandle;
+    (void)dwMode;
     return 1;
 }
 
 BOOL GetConsoleMode(HANDLE hConsoleHandle, DWORD* lpMode) {
     (void)hConsoleHandle;
-    if (lpMode) *lpMode = 0x0007;
+    if (lpMode)
+        *lpMode = 0x0007;
     return 1;
 }
 
-BOOL AllocConsole(void) { return 1; }
-BOOL FreeConsole(void) { return 1; }
-UINT GetConsoleCP(void) { return 437; }
-UINT GetConsoleOutputCP(void) { return 437; }
+BOOL AllocConsole(void) {
+    return 1;
+}
+BOOL FreeConsole(void) {
+    return 1;
+}
+UINT GetConsoleCP(void) {
+    return 437;
+}
+UINT GetConsoleOutputCP(void) {
+    return 437;
+}
 
-UINT GetACP(void) { return 65001; }
-UINT GetOEMCP(void) { return 437; }
+UINT GetACP(void) {
+    return 65001;
+}
+UINT GetOEMCP(void) {
+    return 437;
+}
 
 DWORD GetFileType(HANDLE hFile) {
     int fd = (int)(intptr_t)hFile;
     struct stat st;
-    if (fstat(fd, &st) != 0) return 0;
-    if (S_ISCHR(st.st_mode)) return 0x0002;
-    if (S_ISFIFO(st.st_mode)) return 0x0003;
-    if (S_ISREG(st.st_mode)) return 0x0001;
+    if (fstat(fd, &st) != 0)
+        return 0;
+    if (S_ISCHR(st.st_mode))
+        return 0x0002;
+    if (S_ISFIFO(st.st_mode))
+        return 0x0003;
+    if (S_ISREG(st.st_mode))
+        return 0x0001;
     return 0;
 }
 
@@ -76,9 +102,15 @@ LPCSTR GetCommandLineA(void) {
     return getenv("METALSHARP_COMMAND_LINE") ? getenv("METALSHARP_COMMAND_LINE") : "";
 }
 
-HANDLE GetCurrentProcess(void) { return (HANDLE)(intptr_t)-1; }
-HANDLE GetCurrentThread(void) { return (HANDLE)(intptr_t)-2; }
-DWORD GetCurrentProcessId(void) { return (DWORD)getpid(); }
+HANDLE GetCurrentProcess(void) {
+    return (HANDLE)(intptr_t)-1;
+}
+HANDLE GetCurrentThread(void) {
+    return (HANDLE)(intptr_t)-2;
+}
+DWORD GetCurrentProcessId(void) {
+    return (DWORD)getpid();
+}
 DWORD GetCurrentThreadId(void) {
     uint64_t tid;
     pthread_threadid_np(NULL, &tid);
@@ -87,24 +119,36 @@ DWORD GetCurrentThreadId(void) {
 
 DWORD GetEnvironmentVariableA(LPCSTR lpName, LPSTR lpBuffer, DWORD nSize) {
     const char* val = getenv(lpName);
-    if (!val) { t_lastError = 203; return 0; }
+    if (!val) {
+        t_lastError = 203;
+        return 0;
+    }
     size_t len = strlen(val);
-    if (!lpBuffer || nSize == 0) return (DWORD)(len + 1);
-    if (len >= nSize) { t_lastError = 122; return (DWORD)(len + 1); }
+    if (!lpBuffer || nSize == 0)
+        return (DWORD)(len + 1);
+    if (len >= nSize) {
+        t_lastError = 122;
+        return (DWORD)(len + 1);
+    }
     memcpy(lpBuffer, val, len + 1);
     return (DWORD)len;
 }
 
 BOOL SetEnvironmentVariableA(LPCSTR lpName, LPCSTR lpValue) {
-    if (lpValue) { setenv(lpName, lpValue, 1); }
-    else { unsetenv(lpName); }
+    if (lpValue) {
+        setenv(lpName, lpValue, 1);
+    } else {
+        unsetenv(lpName);
+    }
     return 1;
 }
 
 DWORD ExpandEnvironmentStringsA(LPCSTR lpSrc, LPSTR lpDst, DWORD nSize) {
-    if (!lpSrc) return 0;
+    if (!lpSrc)
+        return 0;
     size_t srcLen = strlen(lpSrc);
-    if (!lpDst || nSize == 0) return (DWORD)(srcLen + 1);
+    if (!lpDst || nSize == 0)
+        return (DWORD)(srcLen + 1);
     strncpy(lpDst, lpSrc, nSize - 1);
     lpDst[nSize - 1] = '\0';
     return (DWORD)strlen(lpDst) + 1;
@@ -112,11 +156,16 @@ DWORD ExpandEnvironmentStringsA(LPCSTR lpSrc, LPSTR lpDst, DWORD nSize) {
 
 DWORD GetTempPathA(DWORD nBufferLength, LPSTR lpBuffer) {
     const char* tmp = getenv("TMPDIR");
-    if (!tmp) tmp = "/tmp";
+    if (!tmp)
+        tmp = "/tmp";
     size_t len = strlen(tmp);
     if (lpBuffer && nBufferLength > len) {
         strcpy(lpBuffer, tmp);
-        if (lpBuffer[len - 1] != '/') { lpBuffer[len] = '/'; lpBuffer[len + 1] = '\0'; len++; }
+        if (lpBuffer[len - 1] != '/') {
+            lpBuffer[len] = '/';
+            lpBuffer[len + 1] = '\0';
+            len++;
+        }
     }
     return (DWORD)(len + 1);
 }
@@ -164,89 +213,124 @@ void GetSystemTimeAsFileTime(void* lpFileTime) {
 
 BOOL GetComputerNameA(LPSTR lpBuffer, DWORD* nSize) {
     const char* name = getenv("HOSTNAME");
-    if (!name) name = "metalsharp";
+    if (!name)
+        name = "metalsharp";
     size_t len = strlen(name);
-    if (*nSize > len) { strcpy(lpBuffer, name); *nSize = (DWORD)len; return 1; }
+    if (*nSize > len) {
+        strcpy(lpBuffer, name);
+        *nSize = (DWORD)len;
+        return 1;
+    }
     *nSize = (DWORD)(len + 1);
     return 0;
 }
 
 BOOL GetUserNameA(LPSTR lpBuffer, DWORD* pcbBuffer) {
     const char* user = getenv("USER");
-    if (!user) user = "player";
+    if (!user)
+        user = "player";
     size_t len = strlen(user);
-    if (*pcbBuffer > len) { strcpy(lpBuffer, user); *pcbBuffer = (DWORD)len; return 1; }
+    if (*pcbBuffer > len) {
+        strcpy(lpBuffer, user);
+        *pcbBuffer = (DWORD)len;
+        return 1;
+    }
     *pcbBuffer = (DWORD)(len + 1);
     return 0;
 }
 
-int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr,
-                        int cbMultiByte, void* lpWideCharStr, int cchWideChar) {
-    (void)CodePage; (void)dwFlags;
+int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte, void* lpWideCharStr,
+                        int cchWideChar) {
+    (void)CodePage;
+    (void)dwFlags;
     int len = cbMultiByte == 0 ? (int)strlen(lpMultiByteStr) : cbMultiByte;
-    if (cchWideChar == 0) return len;
+    if (cchWideChar == 0)
+        return len;
     uint16_t* out = (uint16_t*)lpWideCharStr;
-    for (int i = 0; i < len && i < cchWideChar; i++) out[i] = (uint16_t)(unsigned char)lpMultiByteStr[i];
+    for (int i = 0; i < len && i < cchWideChar; i++)
+        out[i] = (uint16_t)(unsigned char)lpMultiByteStr[i];
     return len < cchWideChar ? len : 0;
 }
 
-int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, const void* lpWideCharStr,
-                        int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte,
-                        LPCSTR lpDefaultChar, BOOL* lpUsedDefaultChar) {
-    (void)CodePage; (void)dwFlags; (void)lpDefaultChar;
-    if (lpUsedDefaultChar) *lpUsedDefaultChar = 0;
+int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, const void* lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr,
+                        int cbMultiByte, LPCSTR lpDefaultChar, BOOL* lpUsedDefaultChar) {
+    (void)CodePage;
+    (void)dwFlags;
+    (void)lpDefaultChar;
+    if (lpUsedDefaultChar)
+        *lpUsedDefaultChar = 0;
     const uint16_t* in = (const uint16_t*)lpWideCharStr;
     int len = cchWideChar == 0 ? 0 : cchWideChar;
-    if (cbMultiByte == 0) return len;
+    if (cbMultiByte == 0)
+        return len;
     for (int i = 0; i < len && i < cbMultiByte - 1; i++) {
         lpMultiByteStr[i] = in[i] < 128 ? (char)in[i] : '?';
     }
-    if (len < cbMultiByte) lpMultiByteStr[len] = '\0';
+    if (len < cbMultiByte)
+        lpMultiByteStr[len] = '\0';
     return len;
 }
 
-int lstrlenA(LPCSTR lpString) { return lpString ? (int)strlen(lpString) : 0; }
-
-void OutputDebugStringA(LPCSTR lpOutputString) {
-    if (lpOutputString) fprintf(stderr, "[DEBUG] %s\n", lpOutputString);
+int lstrlenA(LPCSTR lpString) {
+    return lpString ? (int)strlen(lpString) : 0;
 }
 
-BOOL IsDebuggerPresent(void) { return 0; }
+void OutputDebugStringA(LPCSTR lpOutputString) {
+    if (lpOutputString)
+        fprintf(stderr, "[DEBUG] %s\n", lpOutputString);
+}
+
+BOOL IsDebuggerPresent(void) {
+    return 0;
+}
 
 BOOL CloseHandle(HANDLE hObject) {
-    if (!hObject) return 0;
+    if (!hObject)
+        return 0;
     int fd = (int)(intptr_t)hObject;
-    if (fd >= 0 && fd < 1024) { close(fd); return 1; }
+    if (fd >= 0 && fd < 1024) {
+        close(fd);
+        return 1;
+    }
     return 1;
 }
 
 void* VirtualAlloc(void* lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect) {
-    (void)flAllocationType; (void)flProtect;
+    (void)flAllocationType;
+    (void)flProtect;
     int prot = PROT_READ | PROT_WRITE;
     return mmap(lpAddress, dwSize, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }
 
 BOOL VirtualFree(void* lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
     (void)dwSize;
-    if (dwFreeType & 0x8000) { munmap(lpAddress, dwSize); return 1; }
+    if (dwFreeType & 0x8000) {
+        munmap(lpAddress, dwSize);
+        return 1;
+    }
     return 1;
 }
 
 BOOL VirtualProtect(void* lpAddress, SIZE_T dwSize, DWORD flNewProtect, DWORD* lpflOldProtect) {
-    (void)lpAddress; (void)dwSize; (void)flNewProtect;
-    if (lpflOldProtect) *lpflOldProtect = 0x40;
+    (void)lpAddress;
+    (void)dwSize;
+    (void)flNewProtect;
+    if (lpflOldProtect)
+        *lpflOldProtect = 0x40;
     return 1;
 }
 
 void* GetProcAddress(void* hModule, LPCSTR lpProcName) {
     (void)hModule;
     void* sym = dlsym(RTLD_DEFAULT, lpProcName);
-    if (!sym) sym = dlsym(RTLD_DEFAULT, lpProcName);
+    if (!sym)
+        sym = dlsym(RTLD_DEFAULT, lpProcName);
     return sym;
 }
 
 void* LoadLibraryA(LPCSTR lpLibFileName) {
-    if (!lpLibFileName) return NULL;
+    if (!lpLibFileName)
+        return NULL;
     void* h = dlopen(lpLibFileName, RTLD_LAZY);
     if (!h) {
         char buf[512];
