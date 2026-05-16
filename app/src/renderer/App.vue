@@ -44,6 +44,10 @@ const updateStatus = ref<UpdateStatus | null>(null);
 const steamApiKey = ref<string | null>(null);
 const setupDeviceName = ref("");
 
+const updateDownloading = ref(false);
+const updateProgress = ref(0);
+const updateMessage = ref("");
+
 const { theme, toggle: toggleTheme } = useTheme();
 const toast = useToast();
 
@@ -102,10 +106,6 @@ async function checkBackend() {
     backendConnected.value = false;
   }
 }
-
-const updateDownloading = ref(false);
-const updateProgress = ref(0);
-const updateMessage = ref("");
 
 async function checkForUpdates() {
   const result = await api<UpdateStatus>("GET", "/update/check");
