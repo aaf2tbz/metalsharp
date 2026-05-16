@@ -56,7 +56,7 @@ fn parse_rules(toml_str: &str) -> std::collections::HashMap<u32, PipelineId> {
     for (appid_str, entry) in overrides {
         if let Ok(appid) = appid_str.parse::<u32>() {
             if let Some(pipeline_str) = entry.get("pipeline").and_then(|v| v.as_str()) {
-                if let Some(pipeline) = parse_pipeline_id(pipeline_str) {
+                if let Some(pipeline) = PipelineId::from_str_flexible(pipeline_str) {
                     map.insert(appid, pipeline);
                 }
             }
@@ -64,26 +64,6 @@ fn parse_rules(toml_str: &str) -> std::collections::HashMap<u32, PipelineId> {
     }
 
     map
-}
-
-fn parse_pipeline_id(s: &str) -> Option<PipelineId> {
-    match s {
-        "m11" => Some(PipelineId::M11),
-        "m12" => Some(PipelineId::M12),
-        "m9" => Some(PipelineId::M9),
-        "m9_gl" => Some(PipelineId::M9Gl),
-        "m32_vk" => Some(PipelineId::M32Vk),
-        "m32_w" => Some(PipelineId::M32W),
-        "m64" => Some(PipelineId::M64),
-        "steam" => Some(PipelineId::Steam),
-        "steam_metalfx" => Some(PipelineId::SteamMetalfx),
-        "steam_d3dmetal_perf" => Some(PipelineId::SteamD3DMetalPerf),
-        "fna_arm64" => Some(PipelineId::FnaArm64),
-        "fna_x86" => Some(PipelineId::FnaX86),
-        "mono_generic" => Some(PipelineId::MonoGeneric),
-        "wine_bare" => Some(PipelineId::WineBare),
-        _ => PipelineId::from_legacy_method(s),
-    }
 }
 
 pub fn resolve_pipeline(appid: u32) -> PipelineId {
@@ -116,7 +96,7 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
         }
     }
 
-    PipelineId::SteamD3DMetalPerf
+    PipelineId::M11
 }
 
 fn detect_from_directory(dir: &PathBuf) -> Option<PipelineId> {
@@ -155,27 +135,27 @@ fn detect_from_directory(dir: &PathBuf) -> Option<PipelineId> {
     };
 
     if has_file_ci("unityplayer.dll") || has_file_ci("gameassembly.dll") {
-        return Some(PipelineId::SteamD3DMetalPerf);
+        return Some(PipelineId::M11);
     }
 
     if has_dir_ci("engine") && has_dir_ci("binaries") {
-        return Some(PipelineId::SteamMetalfx);
+        return Some(PipelineId::M11);
     }
 
     if has_glob(".pak") {
-        return Some(PipelineId::SteamD3DMetalPerf);
+        return Some(PipelineId::M11);
     }
 
     if has_dir_ci("engine") && has_dir_ci("content") {
-        return Some(PipelineId::SteamMetalfx);
+        return Some(PipelineId::M11);
     }
 
     if has_glob(".bdt") || has_glob(".bhd") {
-        return Some(PipelineId::SteamMetalfx);
+        return Some(PipelineId::M11);
     }
 
     if has_glob("re_chunk_") || has_file_ci("re2_config.ini") || has_file_ci("re8_config.ini") {
-        return Some(PipelineId::SteamD3DMetalPerf);
+        return Some(PipelineId::M11);
     }
 
     if has_file_ci("d3dx9_43.dll") {
@@ -183,7 +163,7 @@ fn detect_from_directory(dir: &PathBuf) -> Option<PipelineId> {
     }
 
     if has_file_ci("steam_api64.dll") || has_file_ci("steam_api.dll") {
-        return Some(PipelineId::SteamD3DMetalPerf);
+        return Some(PipelineId::M11);
     }
 
     None
@@ -195,23 +175,11 @@ fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
             if pe.is_64_bit {
                 Some(PipelineId::M12)
             } else {
-                Some(PipelineId::SteamD3DMetalPerf)
-            }
-        },
-        D3dApi::D3D11 => {
-            if pe.is_64_bit {
                 Some(PipelineId::M11)
-            } else {
-                Some(PipelineId::SteamD3DMetalPerf)
             }
         },
-        D3dApi::D3D9 => {
-            if pe.is_64_bit {
-                Some(PipelineId::M9)
-            } else {
-                Some(PipelineId::M32Vk)
-            }
-        },
+        D3dApi::D3D11 => Some(PipelineId::M11),
+        D3dApi::D3D9 => Some(PipelineId::M11),
         D3dApi::D3D10 => Some(PipelineId::M11),
         D3dApi::Unknown => None,
     }
