@@ -87,6 +87,75 @@ pub fn generate_device_name() -> String {
 pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
+    if crate::platform::current() == crate::platform::HostPlatform::Linux {
+        let tar = check_command("tar");
+        let curl = check_command("curl");
+        let clang = check_command("clang") || check_command("gcc");
+        let mono = check_command("mono") || check_path(&home.join(".metalsharp/runtime/mono-arm64/bin/mono"));
+        let wine = check_command("wine");
+        let steam =
+            check_path(&home.join(".steam/steam/steamapps")) || check_path(&home.join(".local/share/Steam/steamapps"));
+        let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
+            || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
+        let all_ok = tar && curl && (metalsharp_wine || wine);
+
+        return json!({
+            "ok": true,
+            "allInstalled": all_ok,
+            "platform": crate::platform::name(),
+            "dependencies": [
+                {
+                    "id": "system_tools",
+                    "name": "Linux runtime tools",
+                    "desc": "Provides tar and curl for installing bundled Wine runtime assets.",
+                    "installed": tar && curl,
+                    "required": true,
+                    "installCmd": "sudo apt install -y tar curl",
+                },
+                {
+                    "id": "build_tools",
+                    "name": "Build tools",
+                    "desc": "Provides clang or gcc for optional native shims.",
+                    "installed": clang,
+                    "required": false,
+                    "installCmd": "sudo apt install -y build-essential clang",
+                },
+                {
+                    "id": "wine",
+                    "name": "Wine",
+                    "desc": "System Wine fallback used when no bundled Linux runtime is packaged.",
+                    "installed": wine,
+                    "required": true,
+                    "installCmd": "sudo apt install -y wine",
+                },
+                {
+                    "id": "metalsharp_wine",
+                    "name": "MetalSharp Wine Runtime",
+                    "desc": "Bundled Linux Wine runtime used for Windows Steam and game launches.",
+                    "installed": metalsharp_wine,
+                    "required": true,
+                    "installCmd": "metalsharp-setup-wine",
+                },
+                {
+                    "id": "mono",
+                    "name": "Mono Runtime",
+                    "desc": "Optional runtime for XNA/FNA games.",
+                    "installed": mono,
+                    "required": false,
+                    "installCmd": "sudo apt install -y mono-complete",
+                },
+                {
+                    "id": "steam",
+                    "name": "Steam Client (Linux)",
+                    "desc": "Optional native Linux Steam library source and game detector.",
+                    "installed": steam,
+                    "required": false,
+                    "installCmd": "sudo apt install -y steam",
+                },
+            ],
+        });
+    }
+
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
     let _mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
     let rosetta = check_rosetta();
@@ -104,6 +173,7 @@ pub fn dependencies() -> Value {
     json!({
         "ok": true,
         "allInstalled": all_ok,
+        "platform": crate::platform::name(),
         "dependencies": [
             {
                 "id": "homebrew",
@@ -192,12 +262,21 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
     let mut results = Vec::new();
 
     for id in ids {
-        let result = match id {
-            "mono" => run_brew_install("mono"),
-            "sdl3" => run_brew_install("sdl3"),
-            _ => {
-                json!({"id": id, "ok": false, "error": "unknown dependency"})
-            },
+        let result = if crate::platform::current() == crate::platform::HostPlatform::Linux {
+            match id {
+                "system_tools" => run_apt_install(&["tar", "curl"]),
+                "build_tools" => run_apt_install(&["build-essential", "clang"]),
+                "wine" => run_apt_install(&["wine"]),
+                "mono" => run_apt_install(&["mono-complete"]),
+                "steam" => run_apt_install(&["steam"]),
+                _ => json!({"id": id, "ok": false, "error": "unknown dependency"}),
+            }
+        } else {
+            match id {
+                "mono" => run_brew_install("mono"),
+                "sdl3" => run_brew_install("sdl3"),
+                _ => json!({"id": id, "ok": false, "error": "unknown dependency"}),
+            }
         };
         results.push(result);
     }
@@ -208,6 +287,41 @@ pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn 
         "ok": all_ok,
         "results": results,
     }))
+}
+
+fn run_apt_install(packages: &[&str]) -> Value {
+    let mut args = vec!["apt-get", "install", "-y"];
+    args.extend(packages);
+
+    let output = std::process::Command::new("pkexec")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .or_else(|_| {
+            let mut sudo_args = vec!["apt-get", "install", "-y"];
+            sudo_args.extend(packages);
+            std::process::Command::new("sudo")
+                .args(&sudo_args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output()
+        });
+
+    match output {
+        Ok(o) => {
+            let success = o.status.success();
+            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            let combined = format!("{}{}", stdout, stderr);
+            json!({
+                "id": packages.join(","),
+                "ok": success,
+                "error": if success { Value::Null } else { json!(combined.lines().last().unwrap_or("apt install failed")) },
+            })
+        },
+        Err(e) => json!({"id": packages.join(","), "ok": false, "error": e.to_string()}),
+    }
 }
 
 fn run_brew_install(package: &str) -> Value {
@@ -517,17 +631,14 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
     if !prefix.exists() {
         std::fs::create_dir_all(&prefix)?;
         if wine.exists() {
-            let _ = std::process::Command::new(&wine)
-                .env("WINEPREFIX", &prefix_str)
-                .env(
-                    "DYLD_FALLBACK_LIBRARY_PATH",
-                    ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
-                )
+            let mut cmd = std::process::Command::new(&wine);
+            cmd.env("WINEPREFIX", &prefix_str)
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+                .stderr(std::process::Stdio::null());
+            crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+            let _ = cmd.status();
         }
     }
 
@@ -571,28 +682,19 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
     deploy_goldberg_to_dir(&deploy_dir, &goldberg_dir, appid)?;
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_wine = crate::platform::runtime_wine_binary(&ms_root);
     if !prefix.join("drive_c/windows/system32").exists() {
         let _ = std::fs::create_dir_all(&prefix);
         if ms_wine.exists() {
-            let _ = std::process::Command::new(&ms_wine)
-                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-                .env(
-                    "DYLD_FALLBACK_LIBRARY_PATH",
-                    home.join(".metalsharp")
-                        .join("runtime")
-                        .join("wine")
-                        .join("lib")
-                        .join("wine")
-                        .join("x86_64-unix")
-                        .to_string_lossy()
-                        .to_string(),
-                )
+            let mut cmd = std::process::Command::new(&ms_wine);
+            cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+                .stderr(std::process::Stdio::null());
+            crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+            let _ = cmd.status();
         }
     }
 

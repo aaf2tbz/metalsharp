@@ -7,13 +7,8 @@ static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 
 fn ms_wine() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".metalsharp")
-        .join("runtime")
-        .join("wine")
-        .join("bin")
-        .join("metalsharp-wine")
+    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    crate::platform::runtime_wine_binary(&ms_root)
 }
 
 fn steam_prefix() -> PathBuf {
@@ -223,15 +218,6 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     }
 }
 
-fn steam_runtime_dyld_path() -> String {
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
-    format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    )
-}
-
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     spawn_wine_steam_with_env(args, &[])
 }
@@ -252,7 +238,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     ensure_steam_launch_ready(&steam_dir);
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
-    let dyld = steam_runtime_dyld_path();
+    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&steam_dir)
@@ -260,7 +246,6 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env(
             "WINEDLLOVERRIDES",
             "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
@@ -269,6 +254,8 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .args(args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     for (key, val) in extra_env {
         cmd.env(key, val);
@@ -559,8 +546,7 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
 }
 
 fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let resources = exe.parent()?.parent()?.join("Resources");
+    if let Some(resources) = crate::platform::app_resources_dir() {
         let wrapper = resources.join("bundles").join("steamwebhelper.exe");
         if wrapper.exists() {
             return Some(wrapper);
@@ -1138,21 +1124,17 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let prefix_str = prefix.to_string_lossy().to_string();
 
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
-    let dyld = format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    );
 
-    let wineboot_result = Command::new(&wine)
+    let mut wineboot_cmd = Command::new(&wine);
+    wineboot_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut wineboot_cmd, &ms_root);
+    let wineboot_result = wineboot_cmd.status();
 
     if wineboot_result.is_err() {
         return Err("wineboot --init failed — MetalSharp Wine may not be properly installed".into());
@@ -1171,14 +1153,15 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
         return Err("wineboot --init timed out — Wine prefix was not created within 60 seconds".into());
     }
 
-    let _child = Command::new(&wine)
+    let mut install_cmd = Command::new(&wine);
+    install_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg(&installer)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut install_cmd, &ms_root);
+    let _child = install_cmd.spawn()?;
 
     let steam_exe = steam_dir.join("Steam.exe");
     let steam_ui_dll = steam_dir.join("steamui.dll");

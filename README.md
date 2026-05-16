@@ -15,7 +15,7 @@
 
 ---
 
-MetalSharp is a macOS app for playing Windows Steam games on Apple Silicon.
+MetalSharp is a macOS app for playing Windows Steam games on Apple Silicon, with a Linux runtime package path for Debian-based releases.
 
 It includes its own Wine runtime, DXMT Metal graphics support, Steam setup, game detection, and updater.
 
@@ -38,15 +38,31 @@ When you click Play, MetalSharp picks a pipeline, prepares the needed DLLs and c
 
 Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it.
 
+Linux `.deb` release builds are produced from a Linux host so the bundled `metalsharp-backend` is a Linux binary:
+
+```bash
+cd app
+npm run deb
+```
+
+From macOS, build the Linux package through Docker:
+
+```bash
+cd app
+npm run deb:docker
+```
+
+The Debian package installs the Electron shell plus bundled runtime assets. On first launch, the setup flow installs the Wine runtime under `~/.metalsharp/runtime` and uses `LD_LIBRARY_PATH` for the Linux Wine library path.
+
 ## Requirements
 
-- Apple Silicon Mac
-- macOS 14 or newer
+- macOS DMG: Apple Silicon Mac, macOS 14 or newer
+- Linux `.deb`: x64 Debian or Ubuntu host with `tar`, `curl`, `zstd`, and Wine
 - About 2 GB free space
 
 ## Upgrade
 
-Install the new DMG over the old app. MetalSharp keeps your Steam install and game data when it migrates the runtime.
+Install the new DMG or `.deb` over the old app. MetalSharp keeps your Steam install and game data when it migrates the runtime.
 
 ## Help
 
