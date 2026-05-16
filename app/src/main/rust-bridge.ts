@@ -26,6 +26,7 @@ export class RustBridge {
   private proc: ChildProcess | null = null;
   private port: number = 9274;
   private base: string;
+  private startPromise: Promise<{ ok: boolean; error?: string }> | null = null;
 
   constructor() {
     this.port = parseInt(process.env.METALSHARP_PORT || "9274", 10);
@@ -36,11 +37,35 @@ export class RustBridge {
     return this.port;
   }
 
-  async start(): Promise<void> {
+  async start(): Promise<{ ok: boolean; error?: string }> {
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = this.startInner().finally(() => {
+      this.startPromise = null;
+    });
+
+    return this.startPromise;
+  }
+
+  async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
+    if (await this.isAlive()) return { ok: true };
+
+    const started = await this.start();
+    if (!started.ok) return started;
+
+    try {
+      await this.waitForReady(maxMs);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  private async startInner(): Promise<{ ok: boolean; error?: string }> {
     const binPath = this.findBinary();
     if (!binPath) {
       console.warn("metalsharp-backend binary not found, running in offline mode");
-      return;
+      return { ok: false, error: "metalsharp-backend binary not found" };
     }
 
     const needsRestart = await this.shouldRestart(binPath);
@@ -50,11 +75,16 @@ export class RustBridge {
       await new Promise((r) => setTimeout(r, 500));
     } else if (await this.isAlive()) {
       console.log("Backend already running and up to date");
-      return;
+      return { ok: true };
     }
 
     this.spawnBackend(binPath);
-    await this.waitForReady();
+    try {
+      await this.waitForReady();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
   }
 
   async restart(): Promise<{ ok: boolean; error?: string }> {
@@ -168,6 +198,11 @@ export class RustBridge {
     this.proc.stdout?.on("data", (d: Buffer) => process.stdout.write(d));
     this.proc.stderr?.on("data", (d: Buffer) => process.stderr.write(d));
 
+    this.proc.on("error", (e) => {
+      console.error(`metalsharp-backend failed to start: ${e.message}`);
+      this.proc = null;
+    });
+
     this.proc.on("exit", (code) => {
       console.log(`metalsharp-backend exited with code ${code}`);
       this.proc = null;
@@ -224,14 +259,14 @@ export class RustBridge {
 
     for (const c of candidates) {
       try {
-        fs.accessSync(c);
+        fs.accessSync(c, fs.constants.X_OK);
         return c;
       } catch {}
     }
     return null;
   }
 
-  private waitForReady(maxMs = 5000): Promise<void> {
+  private waitForReady(maxMs = 15000): Promise<void> {
     const start = Date.now();
     return new Promise((resolve, reject) => {
       const check = () => {
@@ -239,12 +274,24 @@ export class RustBridge {
           reject(new Error("backend did not start in time"));
           return;
         }
+        let settled = false;
         const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+          if (settled) return;
+          settled = true;
           res.resume();
           resolve();
         });
-        req.on("error", () => setTimeout(check, 200));
-        req.setTimeout(1000);
+        req.on("error", () => {
+          if (settled) return;
+          settled = true;
+          setTimeout(check, 200);
+        });
+        req.setTimeout(1000, () => {
+          if (settled) return;
+          settled = true;
+          req.destroy();
+          setTimeout(check, 200);
+        });
       };
       setTimeout(check, 300);
     });
