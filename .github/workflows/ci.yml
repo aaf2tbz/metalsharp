@@ -34,7 +34,7 @@ jobs:
           cmake --build . --parallel $(sysctl -n hw.ncpu)
           mkdir -p ../app/native
           cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib ../app/native/ 2>/dev/null || true
-          cp metalsharp metalsharp_launcher ../app/native/ 2>/dev/null || true
+          cp metalsharp metalsharp_launcher MetalSharpMigrator ../app/native/ 2>/dev/null || true
 
       - name: Install Electron deps
         run: cd app && npm install
