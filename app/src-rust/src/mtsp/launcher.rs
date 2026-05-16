@@ -525,16 +525,13 @@ fn find_config(name: &str) -> String {
 }
 
 fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(dir) = crate::setup::resolve_game_dir(appid) {
-        if dir.join(".metalsharp_prepared").exists() {
-            return Ok(dir);
-        }
-        if has_exe_files(&dir) {
-            return Ok(dir);
-        }
+    let home = dirs::home_dir().ok_or("no home dir")?;
+
+    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    if local_dir.join(".metalsharp_prepared").exists() {
+        return Ok(local_dir);
     }
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
     let wine_steamapps = home
         .join(".metalsharp")
         .join("prefix-steam")
