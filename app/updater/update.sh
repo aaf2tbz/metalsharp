@@ -133,6 +133,10 @@ fi
 
 write_status "installed" 80 "New version installed"
 
+MS_DIR="$HOME/.metalsharp"
+mkdir -p "$MS_DIR"
+printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
+
 write_status "unmounting" 82 "Unmounting update disk..."
 hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
 MOUNT_POINT=""
