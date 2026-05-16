@@ -276,6 +276,20 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+        let _ = Command::new("pkill")
+            .args(["-TERM", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if is_macos_steam_running() {
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     Ok(json!({"ok": true}))
