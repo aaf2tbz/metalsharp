@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
+import * as http from "http";
 import * as path from "path";
 import { RustBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
@@ -52,13 +53,36 @@ function ensureMetalsharpDirs() {
   }
 }
 
-async function createWindow() {
+async function checkNeedsMigration(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get("http://127.0.0.1:9274/update/migrate/check", (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        try {
+          const data = JSON.parse(Buffer.concat(chunks).toString());
+          resolve(data.ok && data.needed === true);
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(3000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function createWindow(migrating = false) {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    title: "MetalSharp",
+    width: migrating ? 640 : 1200,
+    height: migrating ? 420 : 800,
+    minWidth: migrating ? 640 : 900,
+    minHeight: migrating ? 420 : 600,
+    resizable: !migrating,
+    title: migrating ? "MetalSharp Migration" : "MetalSharp",
     backgroundColor: "#1b2838",
     icon: path.join(__dirname, "..", "..", "build", "icon.png"),
     titleBarStyle: "hiddenInset",
@@ -112,19 +136,27 @@ function cleanup() {
   bridge?.stop();
 }
 
+let migrationMode = false;
+
 app.whenReady().then(async () => {
   ensureMetalsharpDirs();
   bridge = new RustBridge();
   updaterBridge = new UpdaterBridge(bridge.getPort());
   await bridge.start();
 
+  const needsMigration = await checkNeedsMigration();
+  migrationMode = needsMigration;
+
   registerIpc();
 
-  await createWindow();
-  startSteamappsWatcher();
+  await createWindow(needsMigration);
+
+  if (!needsMigration) {
+    startSteamappsWatcher();
+  }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
   });
 });
 
@@ -147,6 +179,15 @@ function registerIpc() {
 
   ipcMain.handle("app:is-first-launch", () => {
     return isFirstLaunch();
+  });
+
+  ipcMain.handle("app:is-migration-mode", () => {
+    return migrationMode;
+  });
+
+  ipcMain.handle("app:restart-after-migration", async () => {
+    app.relaunch();
+    app.exit(0);
   });
 
   ipcMain.handle("app:eject-dmg", async () => {
@@ -331,6 +372,18 @@ function registerIpc() {
 
   ipcMain.handle("backend:get-pid", async () => {
     return bridge.getBackendPid();
+  });
+
+  ipcMain.handle("migrate:check", async () => {
+    return bridge.request("GET", "/update/migrate/check");
+  });
+
+  ipcMain.handle("migrate:start", async () => {
+    return bridge.request("POST", "/update/migrate/start");
+  });
+
+  ipcMain.handle("migrate:progress", async () => {
+    return bridge.request("GET", "/update/migrate/progress");
   });
 
   ipcMain.on("app:quit", () => {

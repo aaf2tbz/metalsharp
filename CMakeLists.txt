@@ -227,6 +227,12 @@ add_executable(metalsharp_native
 target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
 
+add_executable(metalsharp_migrator
+    tools/migrator/main.m
+)
+target_link_libraries(metalsharp_migrator PRIVATE ${APPKIT_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
+set_target_properties(metalsharp_migrator PROPERTIES OUTPUT_NAME "MetalSharpMigrator")
+
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

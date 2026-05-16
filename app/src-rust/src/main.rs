@@ -19,6 +19,7 @@
 
 mod installer;
 mod launch;
+mod migrate;
 mod mtsp;
 mod scan;
 mod setup;
@@ -140,6 +141,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
         },
         (Method::Post, "/update/cleanup") => resp(200, updater::cleanup_downloaded_dmgs()),
+        (Method::Get, "/update/migrate/check") => resp(200, migrate::needs_migration()),
+        (Method::Post, "/update/migrate/start") => match migrate::start_migration() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+        },
+        (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
