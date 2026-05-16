@@ -1,8 +1,8 @@
+#include <dlfcn.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <dlfcn.h>
 
 typedef uint32_t DWORD;
 typedef int32_t BOOL;
@@ -11,24 +11,30 @@ typedef void* HANDLE;
 typedef const char* LPCSTR;
 
 BOOL ShowWindow(HANDLE hWnd, int nCmdShow) {
-    (void)hWnd; (void)nCmdShow;
+    (void)hWnd;
+    (void)nCmdShow;
     return 1;
 }
 
 int MessageBoxA(HANDLE hWnd, LPCSTR lpText, LPCSTR lpCaption, DWORD uType) {
-    (void)hWnd; (void)uType;
+    (void)hWnd;
+    (void)uType;
     fprintf(stderr, "[%s] %s\n", lpCaption ? lpCaption : "MetalSharp", lpText ? lpText : "");
     return 1;
 }
 
 int MessageBoxW(HANDLE hWnd, const void* lpText, const void* lpCaption, DWORD uType) {
-    (void)hWnd; (void)lpText; (void)lpCaption; (void)uType;
+    (void)hWnd;
+    (void)lpText;
+    (void)lpCaption;
+    (void)uType;
     return 1;
 }
 
 int GetWindowTextA(HANDLE hWnd, char* lpString, int nMaxCount) {
     (void)hWnd;
-    if (lpString && nMaxCount > 0) lpString[0] = '\0';
+    if (lpString && nMaxCount > 0)
+        lpString[0] = '\0';
     return 0;
 }
 
@@ -38,7 +44,8 @@ int GetWindowTextLengthA(HANDLE hWnd) {
 }
 
 BOOL SetWindowTextA(HANDLE hWnd, LPCSTR lpString) {
-    (void)hWnd; (void)lpString;
+    (void)hWnd;
+    (void)lpString;
     return 1;
 }
 
@@ -48,7 +55,8 @@ HANDLE GetDC(HANDLE hWnd) {
 }
 
 int ReleaseDC(HANDLE hWnd, HANDLE hDC) {
-    (void)hWnd; (void)hDC;
+    (void)hWnd;
+    (void)hDC;
     return 1;
 }
 
@@ -62,17 +70,24 @@ BOOL SetForegroundWindow(HANDLE hWnd) {
 }
 
 HANDLE FindWindowA(LPCSTR lpClassName, LPCSTR lpWindowName) {
-    (void)lpClassName; (void)lpWindowName;
+    (void)lpClassName;
+    (void)lpWindowName;
     return NULL;
 }
 
 BOOL PostMessageA(HANDLE hWnd, DWORD Msg, void* wParam, void* lParam) {
-    (void)hWnd; (void)Msg; (void)wParam; (void)lParam;
+    (void)hWnd;
+    (void)Msg;
+    (void)wParam;
+    (void)lParam;
     return 1;
 }
 
 void* SendMessageA(HANDLE hWnd, DWORD Msg, void* wParam, void* lParam) {
-    (void)hWnd; (void)Msg; (void)wParam; (void)lParam;
+    (void)hWnd;
+    (void)Msg;
+    (void)wParam;
+    (void)lParam;
     return NULL;
 }
 
@@ -87,32 +102,51 @@ int16_t GetAsyncKeyState(int vKey) {
 }
 
 BOOL SetRect(void* lprc, int xLeft, int yTop, int xRight, int yBottom) {
-    (void)lprc; (void)xLeft; (void)yTop; (void)xRight; (void)yBottom;
+    (void)lprc;
+    (void)xLeft;
+    (void)yTop;
+    (void)xRight;
+    (void)yBottom;
     return 1;
 }
 
 BOOL AdjustWindowRect(void* lpRect, DWORD dwStyle, BOOL bMenu) {
-    (void)lpRect; (void)dwStyle; (void)bMenu;
+    (void)lpRect;
+    (void)dwStyle;
+    (void)bMenu;
     return 1;
 }
 
 BOOL SetWindowPos(HANDLE hWnd, HANDLE hWndInsertAfter, int X, int Y, int cx, int cy, DWORD uFlags) {
-    (void)hWnd; (void)hWndInsertAfter; (void)X; (void)Y; (void)cx; (void)cy; (void)uFlags;
+    (void)hWnd;
+    (void)hWndInsertAfter;
+    (void)X;
+    (void)Y;
+    (void)cx;
+    (void)cy;
+    (void)uFlags;
     return 1;
 }
 
 BOOL GetWindowRect(HANDLE hWnd, void* lpRect) {
-    (void)hWnd; (void)lpRect;
+    (void)hWnd;
+    (void)lpRect;
     return 1;
 }
 
 BOOL GetClientRect(HANDLE hWnd, void* lpRect) {
-    (void)hWnd; (void)lpRect;
+    (void)hWnd;
+    (void)lpRect;
     return 1;
 }
 
 BOOL MoveWindow(HANDLE hWnd, int X, int Y, int nWidth, int nHeight, BOOL bRepaint) {
-    (void)hWnd; (void)X; (void)Y; (void)nWidth; (void)nHeight; (void)bRepaint;
+    (void)hWnd;
+    (void)X;
+    (void)Y;
+    (void)nWidth;
+    (void)nHeight;
+    (void)bRepaint;
     return 1;
 }
 
@@ -127,7 +161,8 @@ BOOL IsWindowVisible(HANDLE hWnd) {
 }
 
 BOOL EnableWindow(HANDLE hWnd, BOOL bEnable) {
-    (void)hWnd; (void)bEnable;
+    (void)hWnd;
+    (void)bEnable;
     return 1;
 }
 
@@ -141,12 +176,19 @@ HANDLE GetFocus(void) {
 }
 
 BOOL PeekMessageA(void* lpMsg, HANDLE hWnd, DWORD wMsgFilterMin, DWORD wMsgFilterMax, DWORD wRemoveMsg) {
-    (void)lpMsg; (void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax; (void)wRemoveMsg;
+    (void)lpMsg;
+    (void)hWnd;
+    (void)wMsgFilterMin;
+    (void)wMsgFilterMax;
+    (void)wRemoveMsg;
     return 0;
 }
 
 BOOL GetMessageA(void* lpMsg, HANDLE hWnd, DWORD wMsgFilterMin, DWORD wMsgFilterMax) {
-    (void)lpMsg; (void)hWnd; (void)wMsgFilterMin; (void)wMsgFilterMax;
+    (void)lpMsg;
+    (void)hWnd;
+    (void)wMsgFilterMin;
+    (void)wMsgFilterMax;
     return 0;
 }
 
@@ -160,6 +202,9 @@ void* DispatchMessageA(const void* lpMsg) {
 }
 
 void* DefWindowProcA(HANDLE hWnd, DWORD Msg, void* wParam, void* lParam) {
-    (void)hWnd; (void)Msg; (void)wParam; (void)lParam;
+    (void)hWnd;
+    (void)Msg;
+    (void)wParam;
+    (void)lParam;
     return NULL;
 }
