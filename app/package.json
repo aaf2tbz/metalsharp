@@ -17,7 +17,7 @@
     "rust:dev": "cd src-rust && cargo build",
     "build:all": "npm run rust:build && npm run build",
     "pack": "npm run build:all && electron-builder --dir",
-    "dist": "npm run build:all && electron-builder",
+    "dist": "mkdir -p native bundles && for f in metalsharp metalsharp_launcher d3d11.dylib d3d12.dylib dxgi.dylib xaudio2_9.dylib xinput1_4.dylib; do [ -f native/$f ] || touch native/$f; done && for f in metalsharp_bundle.tar.zst SteamSetup.exe steamwebhelper.exe steamwebhelper-wrapper.c updater.tar.gz; do [ -f bundles/$f ] || touch bundles/$f; done && npm run build:all && electron-builder",
     "dmg": "npm run dist -- --mac dmg"
   },
   "dependencies": {
@@ -129,7 +129,7 @@
       },
       {
         "from": "bundles/steamwebhelper-wrapper.c",
-        "to": "steamwebhelper-wrapper.c"
+        "to": "bundles/steamwebhelper-wrapper.c"
       },
       {
         "from": "updater/update.sh",
@@ -138,10 +138,6 @@
       {
         "from": "updater/update.py",
         "to": "updater/update.py"
-      },
-      {
-        "from": "bundles/updater.tar.gz",
-        "to": "updater.tar.gz"
       }
     ],
     "directories": {
