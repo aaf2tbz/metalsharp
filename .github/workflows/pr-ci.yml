@@ -1,0 +1,131 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  metal:
+    name: Metal CI
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-metal --parallel $(sysctl -n hw.ncpu)
+
+      - name: Metal tests
+        run: ctest --test-dir build-metal --output-on-failure -R '^(metal_device|dxbc|format_translation|phase17)$'
+
+  vue:
+    name: Vue CI
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Biome
+        run: npx @biomejs/biome ci src/renderer
+
+      - name: Prettier
+        run: npx prettier --check 'src/renderer/**/*.{ts,js,html,css,json}'
+
+      - name: Build renderer
+        run: npx vite build
+
+  rust:
+    name: Rust CI
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app/src-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-rust
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
+
+  electron:
+    name: Electron CI
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Biome
+        run: npx @biomejs/biome ci src/main src/shared
+
+      - name: Prettier
+        run: npx prettier --check 'src/main/**/*.{ts,js,json}' 'src/shared/**/*.{ts,js,json}'
+
+      - name: Shell check
+        run: bash -n updater/update.sh
+
+  native:
+    name: C/C++/Obj-C CI
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: brew install clang-format
+
+      - name: Format check
+        run: find src include tests tools \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) -print0 | xargs -0 clang-format --dry-run --Werror
+
+      - name: Configure
+        run: cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-native --parallel $(sysctl -n hw.ncpu)
+
+      - name: Runtime tests
+        run: ctest --test-dir build-native --output-on-failure -E '^(metal_device|dxbc|format_translation|phase17)$'
