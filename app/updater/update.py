@@ -370,6 +370,15 @@ def main():
 
     write_status(sf, "installed", 80, "New version installed.", new_version=tv)
 
+    ms_dir = os.path.expanduser("~/.metalsharp")
+    os.makedirs(ms_dir, exist_ok=True)
+    migration_marker = os.path.join(ms_dir, ".post-update-migration")
+    try:
+        with open(migration_marker, "w") as f:
+            json.dump({"needed": True, "target_version": tv, "timestamp": time.time()}, f)
+    except Exception:
+        pass
+
     # ── 7. Unmount ───────────────────────────────────────────────────
     write_status(sf, "unmounting", 82, "Unmounting update disk...", new_version=tv)
     run(["hdiutil", "detach", mount_point, "-quiet"])

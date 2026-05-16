@@ -175,8 +175,12 @@ fn run_migration() {
             });
             let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
         }
+        let marker = ms_dir.join(".post-update-migration");
+        let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
     } else {
+        let marker = ms_dir.join(".post-update-migration");
+        let _ = fs::remove_file(&marker);
         write_migrate_progress(
             "warning",
             total_steps,
