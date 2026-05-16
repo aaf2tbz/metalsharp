@@ -83,9 +83,14 @@ async function toggleMacSteam() {
     return;
   }
   if (macSteamRunning.value) {
-    await api("POST", "/steam/mac-stop");
-    macSteamRunning.value = false;
-    toast.show("Mac Steam stopped");
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/mac-stop");
+    if (result?.ok && result.running === false) {
+      macSteamRunning.value = false;
+      toast.show("Mac Steam stopped");
+    } else {
+      macSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "Mac Steam is still running", "error");
+    }
   } else {
     toast.show("Starting Mac Steam...", "success");
     const result = await api<{ ok: boolean }>("POST", "/steam/mac-launch");

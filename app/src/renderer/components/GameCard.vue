@@ -48,8 +48,14 @@ const pipelineOptions = ref<PipelineOption[]>([]);
 const launchModeOptions = computed(() => {
   const byId = new Map<string, PipelineOption>();
   byId.set("auto", { id: "auto", name: `Auto${pipelineName.value !== "Auto" ? ` (${pipelineName.value})` : ""}` });
-  for (const option of pipelineOptions.value) byId.set(option.id, option);
-  for (const option of props.game.available_pipelines ?? []) byId.set(option.id, option);
+  for (const option of pipelineOptions.value) {
+    if (option.id === "mac_steam" && !props.game.has_native_build) continue;
+    byId.set(option.id, option);
+  }
+  for (const option of props.game.available_pipelines ?? []) {
+    if (option.id === "mac_steam" && !props.game.has_native_build) continue;
+    byId.set(option.id, option);
+  }
   if (props.game.has_native_build) byId.set("mac_steam", { id: "mac_steam", name: "MacOS Steam" });
   return [...byId.values()];
 });
