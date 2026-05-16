@@ -33,6 +33,10 @@ fn macos_steam_app() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
+fn macos_steam_install_url() -> &'static str {
+    "https://store.steampowered.com/about/"
+}
+
 pub fn status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
@@ -62,6 +66,7 @@ pub fn status() -> Value {
         "login_state": login_state,
         "mac_installed": mac_installed,
         "mac_path": mac_app.map(|p| p.to_string_lossy().to_string()),
+        "mac_install_url": macos_steam_install_url(),
         "mac_running": mac_running,
         "running": running,
         "metalsharp_wine_available": ms_available,
@@ -70,8 +75,31 @@ pub fn status() -> Value {
 }
 
 pub fn is_wine_steam_running() -> bool {
-    Command::new("pgrep").args(["-f", "Steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
-        || Command::new("pgrep").args(["-f", "steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
+    pgrep_lines("Steam.exe|steam.exe").iter().any(|line| is_wine_steam_process_line(line))
+}
+
+fn pgrep_lines(pattern: &str) -> Vec<String> {
+    Command::new("pgrep")
+        .args(["-af", pattern])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn is_wine_steam_process_line(line: &str) -> bool {
+    if line.contains("Steam.app/Contents/MacOS") || line.contains("steam_osx") {
+        return false;
+    }
+
+    let prefix = steam_prefix().to_string_lossy().to_string();
+    let exe = steam_exe_path().to_string_lossy().to_string();
+
+    line.contains(&exe)
+        || (line.contains(&prefix) && (line.contains("Steam.exe") || line.contains("steam.exe")))
+        || (line.contains("Program Files (x86)") && line.contains("Steam") && line.contains(".metalsharp"))
 }
 
 pub fn is_macos_steam_running() -> bool {
@@ -119,6 +147,53 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     }
 }
 
+fn steam_runtime_dyld_path() -> String {
+    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    )
+}
+
+fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
+    let wine = ms_wine();
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+
+    let exe = steam_exe_path();
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+
+    if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
+        return Err("Steam is not installed — use the setup wizard to install it first".into());
+    }
+
+    ensure_steam_launch_ready(&steam_dir);
+
+    let prefix_str = steam_prefix().to_string_lossy().to_string();
+    let dyld = steam_runtime_dyld_path();
+
+    let child = Command::new(&wine)
+        .current_dir(&steam_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("STEAM_RUNTIME", "0")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+        .env(
+            "WINEDLLOVERRIDES",
+            "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        )
+        .arg(&exe)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(child.id())
+}
+
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
@@ -138,35 +213,11 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 
     ensure_steam_launch_ready(&steam_dir);
 
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
-    let dyld = format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    );
-
-    let prefix_str = steam_prefix().to_string_lossy().to_string();
-
-    let child = Command::new(&wine)
-        .current_dir(&steam_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("STEAM_RUNTIME", "0")
-        .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env(
-            "WINEDLLOVERRIDES",
-            "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
-        )
-        .arg(&exe)
-        .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let pid = spawn_wine_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])?;
 
     let _ = open_wine_steam_library();
 
-    Ok(json!({"ok": true, "pid": child.id()}))
+    Ok(json!({"ok": true, "pid": pid}))
 }
 
 pub fn open_wine_steam_library() -> Result<Value, Box<dyn std::error::Error>> {
@@ -178,13 +229,7 @@ pub fn open_wine_steam_library() -> Result<Value, Box<dyn std::error::Error>> {
         return Err("Wine Steam is not running".into());
     }
 
-    Command::new(&wine)
-        .env("WINEPREFIX", steam_prefix().to_string_lossy().to_string())
-        .env("WINEDEBUG", "-all")
-        .args(["start", "steam://open/library"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let _ = spawn_wine_steam(&["steam://open/library"])?;
 
     Ok(json!({"ok": true}))
 }
@@ -201,6 +246,20 @@ pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .spawn()?;
 
     Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id())}))
+}
+
+pub fn install_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    if let Some(app) = macos_steam_app() {
+        return Ok(json!({"ok": true, "installed": true, "path": app.to_string_lossy()}));
+    }
+
+    let child = Command::new("open")
+        .arg(macos_steam_install_url())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true, "installed": false, "pid": child.id(), "url": macos_steam_install_url()}))
 }
 
 pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
@@ -313,26 +372,10 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    let prefix_str = steam_prefix().to_string_lossy().to_string();
     let url = format!("steam://run/{}", appid);
+    let pid = spawn_wine_steam(&[&url])?;
 
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
-    let dyld = format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    );
-
-    let child = Command::new(&wine)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .args(["start", &url])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
-
-    Ok(json!({"ok": true, "pid": child.id(), "appid": appid}))
+    Ok(json!({"ok": true, "pid": pid, "appid": appid}))
 }
 
 pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -344,24 +387,8 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
         return Err("Steam is not running".into());
     }
 
-    let prefix_str = steam_prefix().to_string_lossy().to_string();
     let url = format!("steam://nav/games/details/{}", appid);
-
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
-    let dyld = format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    );
-
-    Command::new(&wine)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .args(["start", &url])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let _ = spawn_wine_steam(&[&url])?;
 
     Ok(json!({"ok": true, "appid": appid}))
 }
@@ -486,6 +513,7 @@ fn get_game_name_from_manifest(appid: u32) -> Option<String> {
 pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let manifest_name = format!("appmanifest_{}.acf", appid);
+    let mut removed = false;
 
     let _ = crate::launch::kill_game_with_pid(appid, 0);
 
@@ -505,6 +533,7 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
                 }
             }
             let _ = std::fs::remove_file(&manifest_path);
+            removed = true;
             break;
         }
     }
@@ -512,9 +541,19 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
     if local_dir.exists() {
         let _ = std::fs::remove_dir_all(&local_dir);
+        removed = true;
+    }
+
+    if !removed && macos_manifest_exists(appid) {
+        return Err("This game is installed in macOS Steam. Uninstall it from macOS Steam, or install the Windows copy before using MetalSharp uninstall.".into());
     }
 
     Ok(json!({"ok": true, "appid": appid}))
+}
+
+fn macos_manifest_exists(appid: u32) -> bool {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+    crate::scan::macos_steam_library_paths().iter().any(|steamapps| steamapps.join(&manifest_name).exists())
 }
 
 pub fn get_api_key() -> Value {

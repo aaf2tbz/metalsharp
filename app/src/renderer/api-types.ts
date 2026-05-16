@@ -16,6 +16,7 @@ interface SteamStatus {
   mac_installed?: boolean;
   mac_running?: boolean;
   mac_path?: string;
+  mac_install_url?: string;
   running: boolean;
 }
 
