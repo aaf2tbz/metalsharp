@@ -10,7 +10,7 @@
 # supported CodeQL languages.
 #
 
-name: CodeQL
+name: Main CodeQL
 
 on:
   push:
@@ -23,27 +23,87 @@ permissions:
   security-events: write
 
 jobs:
-  analyze:
-    name: Analyze
+  rust:
+    name: CodeQL Rust
     runs-on: macos-14
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [cpp, javascript]
     steps:
       - uses: actions/checkout@v4
 
       - uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
-
-      - if: matrix.language == 'cpp'
-        run: mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && cmake --build . --parallel $(sysctl -n hw.ncpu)
-
-      - if: matrix.language == 'javascript'
-        run: cd app && npm install
+          languages: rust
+          config-file: .github/codeql/codeql-rust.yml
 
       - uses: github/codeql-action/analyze@v3
         with:
-          category: '/language:${{ matrix.language }}'
+          category: '/language:rust'
+
+  vue:
+    name: CodeQL Vue
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+        working-directory: app
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config-file: .github/codeql/codeql-vue.yml
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:vue'
+
+  js:
+    name: CodeQL JS
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+        working-directory: app
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config-file: .github/codeql/codeql-js.yml
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript'
+
+  cpp:
+    name: CodeQL C++
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          config-file: .github/codeql/codeql-cpp.yml
+
+      - name: Build native code
+        run: cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release && cmake --build build-codeql --parallel $(sysctl -n hw.ncpu)
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:c-cpp'
