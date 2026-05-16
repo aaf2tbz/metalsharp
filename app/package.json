@@ -9,10 +9,10 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc && npm run copy-renderer-assets",
-    "copy-renderer-assets": "mkdir -p dist/renderer && cp src/renderer/index.html src/renderer/styles.css src/renderer/icon.png src/renderer/pressstart2p.ttf dist/renderer/",
+    "build": "tsc && vite build && cp src/renderer/icon.png src/renderer/pressstart2p.ttf dist/renderer/",
     "start": "npm run build && electron .",
-    "dev": "tsc -w & electron .",
+    "dev": "tsc -w & vite build --watch & electron .",
+    "dev:vite": "vite",
     "rust:build": "cd src-rust && cargo build --release",
     "rust:dev": "cd src-rust && cargo build",
     "build:all": "npm run rust:build && npm run build",
@@ -25,9 +25,12 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitejs/plugin-vue": "^6.0.7",
     "electron": "^39.8.10",
     "electron-builder": "^26.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vite": "^8.0.13",
+    "vue": "^3.5.34"
   },
   "build": {
     "appId": "com.metalsharp.app",
