@@ -156,6 +156,10 @@ fn steam_runtime_dyld_path() -> String {
 }
 
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
+    spawn_wine_steam_with_env(args, &[])
+}
+
+fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> Result<u32, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -173,8 +177,8 @@ fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     let prefix_str = steam_prefix().to_string_lossy().to_string();
     let dyld = steam_runtime_dyld_path();
 
-    let child = Command::new(&wine)
-        .current_dir(&steam_dir)
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
@@ -187,13 +191,22 @@ fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
         .arg(&exe)
         .args(args)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+
+    let child = cmd.spawn()?;
 
     Ok(child.id())
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    launch_wine_steam_with_env(&[])
+}
+
+pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -206,13 +219,26 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Err("Steam is not installed — use the setup wizard to install it first".into());
     }
 
-    if is_wine_steam_running() {
+    if is_wine_steam_running() && extra_env.is_empty() {
         return Ok(json!({"ok": true, "message": "Steam already running"}));
+    }
+
+    if is_wine_steam_running() {
+        stop_wine_steam()?;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if !is_wine_steam_running() {
+                break;
+            }
+        }
     }
 
     ensure_steam_launch_ready(&steam_dir);
 
-    let pid = spawn_wine_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])?;
+    let pid = spawn_wine_steam_with_env(
+        &["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"],
+        extra_env,
+    )?;
 
     let _ = open_wine_steam_library();
 
@@ -303,6 +329,19 @@ pub fn launch_macos_steam_game_with_env(
     appid: u32,
     extra_env: &[(String, String)],
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if !extra_env.is_empty() {
+        for (key, val) in extra_env {
+            let _ = Command::new("launchctl")
+                .args(["setenv", key, val])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        if is_macos_steam_running() {
+            stop_macos_steam()?;
+        }
+    }
+
     if !is_macos_steam_running() {
         launch_macos_steam()?;
         for _ in 0..20 {

@@ -51,8 +51,19 @@ pub fn launch_via_steam_with_env(
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    if !crate::steam::is_wine_steam_running() {
-        crate::steam::launch_wine_steam()?;
+    if extra_env.is_empty() {
+        if !crate::steam::is_wine_steam_running() {
+            crate::steam::launch_wine_steam()?;
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if crate::steam::is_wine_steam_running() {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    } else {
+        crate::steam::launch_wine_steam_with_env(extra_env)?;
         for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_secs(2));
             if crate::steam::is_wine_steam_running() {
