@@ -19,6 +19,21 @@ MetalSharp is a macOS app for playing Windows Steam games on Apple Silicon.
 
 It includes its own Wine runtime, DXMT Metal graphics support, Steam setup, game detection, and updater.
 
+## Runtime
+
+MetalSharp keeps its files in `~/.metalsharp/`:
+
+```text
+~/.metalsharp/
+├── runtime/        Wine, DXMT, Goldberg, Mono, and shims
+├── prefix-steam/   Windows Steam prefix
+├── shader-cache/   Per-game graphics caches
+├── configs/        Pipeline rules
+└── logs/           Setup and launch logs
+```
+
+When you click Play, MetalSharp picks a pipeline, prepares the needed DLLs and cache, then starts the game through Wine, Steam, native macOS Steam, or the native Mono runtime.
+
 ## Download
 
 Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it.
