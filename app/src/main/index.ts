@@ -53,7 +53,30 @@ function ensureMetalsharpDirs() {
   }
 }
 
+function hasPostUpdateMigrationMarker(): { needed: boolean; targetVersion?: string } {
+  const markerPath = path.join(getMetalsharpDir(), ".post-update-migration");
+  try {
+    if (!fs.existsSync(markerPath)) return { needed: false };
+    const data = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+    return { needed: data.needed === true, targetVersion: data.target_version };
+  } catch {
+    return { needed: false };
+  }
+}
+
+function clearPostUpdateMigrationMarker() {
+  const markerPath = path.join(getMetalsharpDir(), ".post-update-migration");
+  try {
+    fs.unlinkSync(markerPath);
+  } catch {}
+}
+
 async function checkNeedsMigration(): Promise<boolean> {
+  const marker = hasPostUpdateMigrationMarker();
+  if (marker.needed) {
+    return true;
+  }
+
   return new Promise((resolve) => {
     const req = http.get("http://127.0.0.1:9274/update/migrate/check", (res) => {
       const chunks: Buffer[] = [];
@@ -186,6 +209,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:restart-after-migration", async () => {
+    clearPostUpdateMigrationMarker();
     app.relaunch();
     app.exit(0);
   });
