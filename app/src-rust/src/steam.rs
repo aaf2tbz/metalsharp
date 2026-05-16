@@ -135,20 +135,41 @@ fn is_wine_steam_process_line(line: &str) -> bool {
 }
 
 pub fn is_macos_steam_running() -> bool {
-    process_lines().iter().any(|line| {
-        line.contains("Steam.app/Contents/MacOS/steam_osx")
-            || line.contains("Steam.AppBundle/Steam/Contents/MacOS/ipcserver")
-    })
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .any(|(_, command)| is_macos_steam_command(command))
 }
 
 fn latest_macos_steam_pid() -> u32 {
-    Command::new("pgrep")
-        .args(["-n", "steam_osx"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
+    macos_steam_process_pids().into_iter().max().unwrap_or(0)
+}
+
+fn parse_process_line(line: &str) -> Option<(u32, &str)> {
+    let line = line.trim_start();
+    let mut parts = line.splitn(2, char::is_whitespace);
+    let pid = parts.next()?.parse::<u32>().ok()?;
+    let command = parts.next().unwrap_or("").trim_start();
+    Some((pid, command))
+}
+
+fn is_macos_steam_command(command: &str) -> bool {
+    if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
+        return false;
+    }
+
+    command.contains("/Steam.app/Contents/MacOS/steam_osx")
+        || command.ends_with("/steam_osx")
+        || command.contains("Steam.AppBundle/Steam/Contents/MacOS/ipcserver")
+        || command.contains("Steam Helper.app/Contents/MacOS")
+}
+
+fn macos_steam_process_pids() -> Vec<u32> {
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .filter_map(|(pid, command)| is_macos_steam_command(command).then_some(pid))
+        .collect()
 }
 
 pub fn is_installing_steam() -> bool {
@@ -330,31 +351,33 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    if is_macos_steam_running() {
-        let _ = Command::new("pkill")
-            .args(["-TERM", "-x", "steam_osx"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let _ = Command::new("pkill")
-            .args(["-TERM", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+    let term_pids = macos_steam_process_pids();
+    if !term_pids.is_empty() {
+        for pid in term_pids {
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    if is_macos_steam_running() {
-        let _ = Command::new("pkill")
-            .args(["-KILL", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+    let kill_pids = macos_steam_process_pids();
+    if !kill_pids.is_empty() {
+        for pid in kill_pids {
+            let _ = Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     clear_macos_steam_env_marker();
 
-    Ok(json!({"ok": true}))
+    Ok(json!({"ok": true, "running": is_macos_steam_running()}))
 }
 
 pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -1279,5 +1302,16 @@ mod tests {
         assert!(!is_single_path_component("../Steam"));
         assert!(!is_single_path_component("nested/game"));
         assert!(!is_single_path_component("/Applications/Steam.app"));
+    }
+
+    #[test]
+    fn detects_macos_steam_process_lines_without_matching_shell_searches() {
+        let line = "26398 /Users/alex/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/ipcserver";
+        let (pid, command) = parse_process_line(line).expect("process line should parse");
+        assert_eq!(pid, 26398);
+        assert!(is_macos_steam_command(command));
+        assert!(
+            !is_macos_steam_command("/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",)
+        );
     }
 }
