@@ -132,35 +132,20 @@ fn run_migration() {
     remove_old_runtime(&ms_dir);
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Reinstalling runtime from bundled assets...", None);
+    write_migrate_progress("running", step, total_steps, "Restoring user data...", None);
     restore_user_data(&ms_dir, &preserved);
-
-    let setup_path = ms_dir.join("setup.json");
-    if setup_path.exists() {
-        if let Ok(contents) = fs::read_to_string(&setup_path) {
-            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
-                cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
-                let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-            }
-        }
-    } else {
-        let cfg = json!({
-            "completed": true,
-            "last_migrated_version": MIGRATE_VERSION,
-        });
-        let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-    }
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Running full runtime install...", None);
-    match crate::installer::start_install_all() {
+    let install_ok = match crate::installer::start_install_all() {
         Ok(_) => {
-            for _ in 0..300 {
+            for _ in 0..600 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if !crate::installer::is_installing() {
                     break;
                 }
             }
+            true
         },
         Err(e) => {
             write_migrate_progress(
@@ -170,25 +155,42 @@ fn run_migration() {
                 &format!("Runtime install had issues: {}. Migration will continue.", e),
                 None,
             );
+            false
         },
+    };
+
+    if install_ok {
+        let setup_path = ms_dir.join("setup.json");
+        if setup_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&setup_path) {
+                if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
+                    cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
+                    let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+                }
+            }
+        } else {
+            let cfg = json!({
+                "completed": true,
+                "last_migrated_version": MIGRATE_VERSION,
+            });
+            let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+        }
+        write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
+    } else {
+        write_migrate_progress(
+            "warning",
+            total_steps,
+            total_steps,
+            "Runtime install incomplete — re-run setup wizard after restart",
+            None,
+        );
     }
 
-    write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
-
-    log_to_file(&format!("Migration to v{} completed successfully", MIGRATE_VERSION));
+    log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
 }
 
 fn kill_steam_wine() {
-    let patterns = [
-        "steam",
-        "steam.exe",
-        "steamwebhelper",
-        "steamwebhelper.exe",
-        "wine",
-        "wine64",
-        "wineserver",
-        "metalsharp-backend",
-    ];
+    let patterns = ["steam", "steam.exe", "steamwebhelper", "steamwebhelper.exe", "wine", "wine64", "wineserver"];
 
     for pat in &patterns {
         let _ = Command::new("pkill").arg("-x").arg(pat).output();
