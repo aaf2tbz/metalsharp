@@ -23,6 +23,16 @@ fn steam_exe_path() -> PathBuf {
     steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
 }
 
+fn macos_steam_app() -> Option<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let candidates = [
+        PathBuf::from("/Applications/Steam.app"),
+        home.join("Applications/Steam.app"),
+        home.join("Library/Application Support/Steam/Steam.AppBundle/Steam/Steam.app"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
 pub fn status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
@@ -38,7 +48,9 @@ pub fn status() -> Value {
         home.join(".local/share/Steam/steamapps"),
         home.join("Library/Application Support/Steam/steamapps"),
     ];
-    let mac_installed = mac_paths.iter().any(|p| p.exists());
+    let mac_app = macos_steam_app();
+    let mac_installed = mac_app.is_some() || mac_paths.iter().any(|p| p.exists());
+    let mac_running = is_macos_steam_running();
 
     let running = is_wine_steam_running();
     let ms_available = ms_wine().exists();
@@ -49,6 +61,8 @@ pub fn status() -> Value {
         "path": windows_path,
         "login_state": login_state,
         "mac_installed": mac_installed,
+        "mac_path": mac_app.map(|p| p.to_string_lossy().to_string()),
+        "mac_running": mac_running,
         "running": running,
         "metalsharp_wine_available": ms_available,
         "installing": installing
@@ -58,6 +72,25 @@ pub fn status() -> Value {
 pub fn is_wine_steam_running() -> bool {
     Command::new("pgrep").args(["-f", "Steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
         || Command::new("pgrep").args(["-f", "steam.exe"]).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+pub fn is_macos_steam_running() -> bool {
+    Command::new("pgrep").args(["-x", "steam_osx"]).output().map(|o| o.status.success()).unwrap_or(false)
+        || Command::new("pgrep")
+            .args(["-f", "Steam.app/Contents/MacOS/steam_osx"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+}
+
+fn latest_macos_steam_pid() -> u32 {
+    Command::new("pgrep")
+        .args(["-n", "steam_osx"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 pub fn is_installing_steam() -> bool {
@@ -131,7 +164,84 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
+    let _ = open_wine_steam_library();
+
     Ok(json!({"ok": true, "pid": child.id()}))
+}
+
+pub fn open_wine_steam_library() -> Result<Value, Box<dyn std::error::Error>> {
+    let wine = ms_wine();
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    if !is_wine_steam_running() {
+        return Err("Wine Steam is not running".into());
+    }
+
+    Command::new(&wine)
+        .env("WINEPREFIX", steam_prefix().to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .args(["start", "steam://open/library"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true}))
+}
+
+pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    if macos_steam_app().is_none() {
+        return Err("macOS Steam is not installed".into());
+    }
+
+    let child = Command::new("open")
+        .args(["-a", "Steam", "steam://open/library"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id())}))
+}
+
+pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let _ = Command::new("osascript")
+        .args(["-e", "tell application \"Steam\" to quit"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    if is_macos_steam_running() {
+        let _ = Command::new("pkill")
+            .args(["-TERM", "-x", "steam_osx"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    Ok(json!({"ok": true}))
+}
+
+pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    if !is_macos_steam_running() {
+        launch_macos_steam()?;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if is_macos_steam_running() {
+                break;
+            }
+        }
+    }
+
+    let url = format!("steam://run/{}", appid);
+    let child = Command::new("open")
+        .arg(&url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id()), "appid": appid}))
 }
 
 pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {

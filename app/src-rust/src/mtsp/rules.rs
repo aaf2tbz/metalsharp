@@ -179,8 +179,8 @@ fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
             }
         },
         D3dApi::D3D11 => Some(PipelineId::M11),
-        D3dApi::D3D9 => Some(PipelineId::M11),
-        D3dApi::D3D10 => Some(PipelineId::M11),
+        D3dApi::D3D9 => Some(PipelineId::M9),
+        D3dApi::D3D10 => Some(PipelineId::M10),
         D3dApi::Unknown => None,
     }
 }

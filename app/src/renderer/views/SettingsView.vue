@@ -7,6 +7,8 @@ import type { AppConfig, UpdateStatus } from "../api-types";
 const config = inject<Ref<AppConfig | null>>("config")!;
 const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
+const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
+const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const updateStatus = inject<Ref<UpdateStatus | null>>("updateStatus")!;
@@ -21,6 +23,10 @@ const apiKeyInput = ref("");
 
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
+  await refreshCacheSizes();
+});
+
+async function refreshCacheSizes() {
   const result = await api<{
     ok: boolean;
     shader_cache: { bytes: number };
@@ -30,7 +36,7 @@ onMounted(async () => {
     shaderCacheSize.value = result.shader_cache.bytes;
     pipelineCacheSize.value = result.pipeline_cache.bytes;
   }
-});
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -70,6 +76,21 @@ async function toggleSteam() {
   }
 }
 
+async function toggleMacSteam() {
+  if (macSteamRunning.value) {
+    await api("POST", "/steam/mac-stop");
+    macSteamRunning.value = false;
+    toast.show("Mac Steam stopped");
+  } else {
+    toast.show("Starting Mac Steam...", "success");
+    const result = await api<{ ok: boolean }>("POST", "/steam/mac-launch");
+    if (result?.ok) {
+      macSteamRunning.value = true;
+      toast.show("Mac Steam started", "success");
+    }
+  }
+}
+
 async function restartBackend() {
   toast.show("Restarting backend...", "success");
   const result = await getAPI().restartBackend();
@@ -80,13 +101,13 @@ async function restartBackend() {
 async function clearShaderCache() {
   const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "shader" });
   if (result?.ok) toast.show(`Shader cache cleared — ${formatBytes(result.bytes_freed)} freed`);
-  shaderCacheSize.value = 0;
+  await refreshCacheSizes();
 }
 
 async function clearPipelineCache() {
   const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "pipeline" });
   if (result?.ok) toast.show(`Pipeline cache cleared — ${formatBytes(result.bytes_freed)} freed`);
-  pipelineCacheSize.value = 0;
+  await refreshCacheSizes();
 }
 
 async function checkForUpdates() {
@@ -146,6 +167,19 @@ async function checkForUpdates() {
           <span v-else class="badge badge-warn">Not Installed</span>
           <button v-if="wineSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleSteam">
             {{ wineSteamRunning ? "Stop Steam" : "Start Steam" }}
+          </button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Steam Mac</div>
+          <div class="settings-desc">Native macOS Steam used for games with Mac builds</div>
+        </div>
+        <div class="settings-value">
+          <span v-if="macSteamInstalled" class="badge badge-ok">Installed</span>
+          <span v-else class="badge badge-warn">Not Installed</span>
+          <button v-if="macSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleMacSteam">
+            {{ macSteamRunning ? "Stop Steam Mac" : "Start Steam Mac" }}
           </button>
         </div>
       </div>
@@ -229,7 +263,10 @@ async function checkForUpdates() {
   overflow-y: auto;
 }
 .settings-header {
-  margin-bottom: 24px;
+  margin: -24px -28px 24px;
+  padding: 24px 28px 18px;
+  background: var(--page-header-bg);
+  border-bottom: 1px solid var(--border);
 }
 .settings-header h1 {
   font-size: 22px;

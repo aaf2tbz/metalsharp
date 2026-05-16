@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 
@@ -12,6 +12,15 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  available_pipelines?: PipelineOption[];
+  has_native_build?: boolean;
+}
+
+interface PipelineOption {
+  id: string;
+  name: string;
+  description?: string;
+  recommended?: boolean;
 }
 
 const props = defineProps<{
@@ -22,7 +31,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  play: [];
+  play: [launchMethod: string];
   stop: [];
   install: [];
   uninstall: [];
@@ -32,14 +41,28 @@ const toast = useToast();
 const goldbergActive = ref(false);
 const eacActive = ref(false);
 const pipelineName = ref("Auto");
+const selectedLaunchMode = ref("auto");
+const pipelineOptions = ref<PipelineOption[]>([]);
+
+const launchModeOptions = computed(() => {
+  const byId = new Map<string, PipelineOption>();
+  byId.set("auto", { id: "auto", name: `Auto${pipelineName.value !== "Auto" ? ` (${pipelineName.value})` : ""}` });
+  for (const option of pipelineOptions.value) byId.set(option.id, option);
+  for (const option of props.game.available_pipelines ?? []) byId.set(option.id, option);
+  if (props.game.has_native_build) byId.set("mac_steam", { id: "mac_steam", name: "MacOS Steam" });
+  return [...byId.values()];
+});
 
 onMounted(async () => {
   if (props.game.installed) {
-    const gp = await api<{ ok: boolean; recommended: string; recommended_name: string }>(
+    const gp = await api<{ ok: boolean; recommended: string; recommended_name: string; pipelines: PipelineOption[] }>(
       "GET",
       `/mtsp/pipelines?appid=${props.game.appid}`,
     );
-    if (gp?.ok && gp.recommended_name) pipelineName.value = gp.recommended_name;
+    if (gp?.ok && gp.recommended_name) {
+      pipelineName.value = gp.recommended_name;
+      pipelineOptions.value = gp.pipelines ?? [];
+    }
 
     const gs = await api<{ ok: boolean; goldberg_active: boolean }>(
       "GET",
@@ -121,7 +144,12 @@ function formatBytes(bytes: number): string {
         </div>
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="game-card-actions-row">
-            <button class="btn btn-play" @click="emit('play')">Play</button>
+            <button class="btn btn-play" @click="emit('play', selectedLaunchMode)">Play</button>
+            <select v-model="selectedLaunchMode" class="launch-mode-select" title="Launch mode">
+              <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
+                {{ option.name }}
+              </option>
+            </select>
             <label class="toggle-label" title="Goldberg Steam emulator">
               <input type="checkbox" :checked="goldbergActive" @change="toggleGoldberg(($event.target as HTMLInputElement).checked)" />
               <span class="toggle-switch"></span>
@@ -149,11 +177,12 @@ function formatBytes(bytes: number): string {
 
 <style scoped>
 .game-card {
-  background: var(--bg-card);
+  background: var(--game-card-bg, var(--bg-card));
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition: border-color var(--transition), box-shadow var(--transition);
+  box-shadow: 0 0 18px var(--card-glow);
 }
 .game-card:hover {
   border-color: var(--border-strong);
@@ -185,6 +214,8 @@ function formatBytes(bytes: number): string {
 }
 
 .game-card-body {
+  background: var(--game-card-body-bg, transparent);
+  color: var(--game-card-text, var(--text-primary));
   padding: 12px 14px 14px;
 }
 .game-card-title {
@@ -204,7 +235,7 @@ function formatBytes(bytes: number): string {
 }
 .game-card-size {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--game-card-dim, var(--text-dim));
 }
 
 .game-card-actions {
@@ -220,6 +251,18 @@ function formatBytes(bytes: number): string {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.launch-mode-select {
+  min-width: 118px;
+  max-width: 150px;
+  height: 30px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
 }
 .game-card-actions-row.subtle {
   opacity: 0.7;

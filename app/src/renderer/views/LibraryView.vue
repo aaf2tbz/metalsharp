@@ -13,6 +13,8 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  available_pipelines?: { id: string; name: string; recommended?: boolean }[];
+  has_native_build?: boolean;
 }
 
 interface SteamLibrary {
@@ -25,6 +27,8 @@ interface SteamLibrary {
 const library = inject<Ref<SteamLibrary | null>>("library")!;
 const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
+const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
+const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
@@ -70,14 +74,30 @@ async function toggleSteam() {
   reloadLibrary();
 }
 
-async function launchGame(game: SteamGame) {
+async function toggleMacSteam() {
+  if (macSteamRunning.value) {
+    await api("POST", "/steam/mac-stop");
+    macSteamRunning.value = false;
+    toast.show("Mac Steam stopped");
+  } else {
+    toast.show("Starting Mac Steam...", "success");
+    const result = await api<{ ok: boolean }>("POST", "/steam/mac-launch");
+    if (result?.ok) {
+      macSteamRunning.value = true;
+      toast.show("Mac Steam started", "success");
+    }
+  }
+  reloadLibrary();
+}
+
+async function launchGame(game: SteamGame, launchMethod = "auto") {
   launchingAppId.value = game.appid;
   const launchResult = await api<{
     ok: boolean;
     pid?: number;
     error?: string;
     engine?: string;
-  }>("POST", "/game/launch-auto", { appid: game.appid, launchMethod: "auto" });
+  }>("POST", "/game/launch-auto", { appid: game.appid, launchMethod });
 
   launchingAppId.value = null;
 
@@ -135,8 +155,17 @@ watch([library, search, filter], applyFilter);
     <div class="library-header">
       <h1>Library</h1>
       <div class="library-controls">
-        <button class="btn btn-secondary" @click="toggleSteam">
-          {{ wineSteamRunning ? "Stop Steam" : "Start Steam" }}
+        <button class="btn btn-secondary library-control-button" title="Wine Steam" @click="toggleSteam">
+          <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" /><path d="M3 12h6" /><path d="M15 12h6" /><path d="M12 3v6" /><path d="M12 15v6" />
+          </svg>
+          <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
+        </button>
+        <button class="btn btn-secondary library-control-button" title="MacOS Steam" @click="toggleMacSteam">
+          <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2" /><path d="M9 18h6" />
+          </svg>
+          <span class="control-label">{{ macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}</span>
         </button>
         <div class="library-controls-center">
           <input
@@ -151,12 +180,19 @@ watch([library, search, filter], applyFilter);
             <option value="not_installed">Not Installed</option>
           </select>
         </div>
-        <button class="btn btn-secondary" @click="reloadLibrary()">Refresh</button>
+        <button class="btn btn-secondary library-control-button refresh-button" title="Refresh" @click="reloadLibrary()">
+          <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 1-15.5 6.2" /><path d="M3 12A9 9 0 0 1 18.5 5.8" /><path d="M18 2v4h4" /><path d="M6 22v-4H2" />
+          </svg>
+          <span class="control-label">Refresh</span>
+        </button>
       </div>
       <p class="library-stats">
         {{ library?.total ?? 0 }} games &middot; {{ library?.games.filter(g => g.installed).length ?? 0 }} installed
         <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
         <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
+        <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
+        <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
         <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
           {{ backendConnected ? `Backend${backendVersion ? ' v' + backendVersion : ''}` : 'Backend Offline' }}
         </span>
@@ -179,7 +215,7 @@ watch([library, search, filter], applyFilter);
         :running="runningAppId === game.appid"
         :launching="launchingAppId === game.appid"
         :steam-installed="wineSteamInstalled"
-        @play="launchGame(game)"
+        @play="launchGame(game, $event)"
         @stop="stopGame(game)"
         @install="installGame(game)"
         @uninstall="uninstallGame(game)"
@@ -196,7 +232,11 @@ watch([library, search, filter], applyFilter);
 }
 
 .library-header {
-  margin-bottom: 20px;
+  margin: -24px -28px 20px;
+  padding: 24px 28px 18px;
+  background: var(--page-header-bg);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
 }
 .library-header h1 {
   font-size: 22px;
@@ -207,18 +247,36 @@ watch([library, search, filter], applyFilter);
 .library-controls {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .library-controls-center {
   display: flex;
   gap: 8px;
-  flex: 1;
-  min-width: 200px;
+  flex: 0 1 330px;
+  min-width: 230px;
+  max-width: 340px;
 }
 .library-controls-center input {
-  flex: 1;
+  flex: 1 1 160px;
   min-width: 120px;
+}
+.library-controls-center select {
+  flex: 0 0 116px;
+  min-width: 98px;
+}
+.library-control-button {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.control-icon {
+  flex: 0 0 15px;
+}
+.control-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .library-stats {
@@ -227,8 +285,30 @@ watch([library, search, filter], applyFilter);
   color: var(--text-dim);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+@media (max-width: 880px) {
+  .library-controls {
+    gap: 6px;
+  }
+  .library-control-button {
+    width: 34px;
+    height: 32px;
+    padding: 6px;
+  }
+  .library-control-button .control-label {
+    display: none;
+  }
+  .library-controls-center {
+    flex-basis: 250px;
+    min-width: 190px;
+  }
+  .library-controls-center select {
+    flex-basis: 88px;
+  }
 }
 
 .game-grid {

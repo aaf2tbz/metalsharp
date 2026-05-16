@@ -14,6 +14,8 @@ interface SteamStatus {
   path?: string;
   login_state?: LoginState;
   mac_installed?: boolean;
+  mac_running?: boolean;
+  mac_path?: string;
   running: boolean;
 }
 

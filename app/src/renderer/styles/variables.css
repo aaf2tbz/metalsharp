@@ -3,11 +3,16 @@
   --bg-surface: #1e2d3d;
   --bg-card: #233347;
   --bg-card-hover: #2a475e;
+  --game-card-bg: #233347;
+  --game-card-body-bg: transparent;
+  --game-card-text: var(--text-primary);
+  --game-card-dim: var(--text-dim);
   --bg-input: #1b2838;
   --accent: #66c0f4;
   --accent-hover: #4fc5f1;
   --accent-dim: #4a90b8;
   --accent-glow: rgba(102, 192, 244, 0.25);
+  --card-glow: rgba(102, 192, 244, 0.12);
   --success: #5cb870;
   --success-bg: rgba(92, 184, 112, 0.12);
   --error: #d45050;
@@ -23,6 +28,7 @@
   --sidebar-bg: #171a21;
   --sidebar-hover: #2a475e;
   --sidebar-active: rgba(102, 192, 244, 0.12);
+  --page-header-bg: #202f40;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
@@ -39,11 +45,16 @@
   --bg-surface: #eef1f5;
   --bg-card: #ffffff;
   --bg-card-hover: #f0f3f7;
+  --game-card-bg: #3a414b;
+  --game-card-body-bg: #343b44;
+  --game-card-text: #eef3f7;
+  --game-card-dim: #bac6cf;
   --bg-input: #ffffff;
   --accent: #1b7cb8;
   --accent-hover: #156a9e;
   --accent-dim: #2a8fc9;
   --accent-glow: rgba(27, 124, 184, 0.15);
+  --card-glow: rgba(27, 124, 184, 0.14);
   --success: #3d8c50;
   --success-bg: rgba(61, 140, 80, 0.08);
   --error: #c04040;
@@ -59,4 +70,5 @@
   --sidebar-bg: #dde2e8;
   --sidebar-hover: #cdd4dc;
   --sidebar-active: rgba(27, 124, 184, 0.12);
+  --page-header-bg: #e5ebf2;
 }
