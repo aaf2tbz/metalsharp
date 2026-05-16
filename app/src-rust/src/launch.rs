@@ -38,7 +38,10 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     Ok(child.id())
 }
 
-pub fn launch_via_steam_with_env(appid: u32, extra_env: &[(&str, &str)]) -> Result<u32, Box<dyn std::error::Error>> {
+pub fn launch_via_steam_with_env(
+    appid: u32,
+    extra_env: &[(String, String)],
+) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
     if !wine.exists() {

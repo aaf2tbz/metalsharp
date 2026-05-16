@@ -76,12 +76,12 @@ pub fn status() -> Value {
 }
 
 pub fn is_wine_steam_running() -> bool {
-    pgrep_lines("Steam.exe|steam.exe").iter().any(|line| is_wine_steam_process_line(line))
+    process_lines().iter().any(|line| is_wine_steam_process_line(line))
 }
 
-fn pgrep_lines(pattern: &str) -> Vec<String> {
-    Command::new("pgrep")
-        .args(["-af", pattern])
+fn process_lines() -> Vec<String> {
+    Command::new("ps")
+        .args(["axo", "pid=,command="])
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -97,19 +97,22 @@ fn is_wine_steam_process_line(line: &str) -> bool {
 
     let prefix = steam_prefix().to_string_lossy().to_string();
     let exe = steam_exe_path().to_string_lossy().to_string();
+    let lower = line.to_lowercase();
 
     line.contains(&exe)
         || (line.contains(&prefix) && (line.contains("Steam.exe") || line.contains("steam.exe")))
-        || (line.contains("Program Files (x86)") && line.contains("Steam") && line.contains(".metalsharp"))
+        || (lower.contains("c:\\program files (x86)\\steam")
+            && (lower.contains("steam.exe")
+                || lower.contains("steamwebhelper")
+                || lower.contains("steamservice.exe")
+                || lower.contains("steamerrorreporter")))
 }
 
 pub fn is_macos_steam_running() -> bool {
-    Command::new("pgrep").args(["-x", "steam_osx"]).output().map(|o| o.status.success()).unwrap_or(false)
-        || Command::new("pgrep")
-            .args(["-f", "Steam.app/Contents/MacOS/steam_osx"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    process_lines().iter().any(|line| {
+        line.contains("Steam.app/Contents/MacOS/steam_osx")
+            || line.contains("Steam.AppBundle/Steam/Contents/MacOS/ipcserver")
+    })
 }
 
 fn latest_macos_steam_pid() -> u32 {
@@ -279,6 +282,13 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    launch_macos_steam_game_with_env(appid, &[])
+}
+
+pub fn launch_macos_steam_game_with_env(
+    appid: u32,
+    extra_env: &[(String, String)],
+) -> Result<Value, Box<dyn std::error::Error>> {
     if !is_macos_steam_running() {
         launch_macos_steam()?;
         for _ in 0..20 {
@@ -290,11 +300,12 @@ pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::
     }
 
     let url = format!("steam://run/{}", appid);
-    let child = Command::new("open")
-        .arg(&url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let mut cmd = Command::new("open");
+    cmd.arg(&url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+    let child = cmd.spawn()?;
 
     Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id()), "appid": appid}))
 }
