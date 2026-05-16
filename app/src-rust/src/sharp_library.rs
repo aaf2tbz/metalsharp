@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
 const MANIFEST_FILE: &str = "library.json";
@@ -123,8 +124,13 @@ pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Error>> {
-    let library = load_library()?;
-    let app = library.iter().find(|a| a.id == id).ok_or("App not found")?;
+    let mut library = load_library()?;
+    let idx = library.iter().position(|a| a.id == id).ok_or("App not found")?;
+    let changed = refresh_setup_reference(&mut library[idx]);
+    if changed {
+        save_library(&library)?;
+    }
+    let app = library.get(idx).ok_or("App not found")?.clone();
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
@@ -143,7 +149,16 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let dyld = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+    let pipeline =
+        crate::mtsp::engine::PipelineId::from_str_flexible(engine).unwrap_or(crate::mtsp::engine::PipelineId::WineBare);
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    crate::mtsp::launcher::deploy_dlls_for_pipeline(&work_dir, node);
+
+    let dyld = if node.dyld_paths.is_empty() {
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string()
+    } else {
+        node.dyld_paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
+    };
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&work_dir)
@@ -151,14 +166,14 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld);
 
-    match engine {
-        "m64" => {
-            cmd.arg(&app.exe_path);
-        },
-        _ => {
-            cmd.arg(&app.exe_path);
-        },
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
     }
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    cmd.arg(&app.exe_path);
+    cmd.args(&node.launch_args);
 
     let child = cmd.spawn()?;
     Ok(child.id())
@@ -191,9 +206,9 @@ pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::E
 }
 
 pub fn set_engine(id: &str, engine: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let valid = ["wine_bare", "m64"];
+    let valid = ["wine_bare", "m64", "m9", "m10", "m11", "m12", "m32"];
     if !valid.contains(&engine) {
-        return Err(format!("Unknown engine: {}. Valid: wine_bare, m64", engine).into());
+        return Err(format!("Unknown engine: {}. Valid: {}", engine, valid.join(", ")).into());
     }
 
     let mut library = load_library()?;
@@ -222,6 +237,83 @@ pub fn get_cover_path(id: &str) -> Option<PathBuf> {
 fn chrono_now() -> String {
     let dur = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     format!("{}", dur.as_secs())
+}
+
+fn refresh_setup_reference(app: &mut SharpApp) -> bool {
+    let install_dir = PathBuf::from(&app.install_dir);
+    let current = install_dir.join(&app.exe_path);
+    let current_is_setup = is_setup_exe(&app.exe_path);
+    if current.exists() && !current_is_setup {
+        return false;
+    }
+
+    let Some(real_exe) = find_real_exe(&install_dir) else {
+        return false;
+    };
+
+    let Some(file_name) = real_exe.file_name().map(|n| n.to_string_lossy().to_string()) else {
+        return false;
+    };
+
+    if file_name == app.exe_path {
+        return false;
+    }
+
+    app.exe_path = file_name;
+    app.size_bytes = dir_size(&install_dir);
+    true
+}
+
+fn is_setup_exe(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("setup") || lower.contains("installer") || lower.contains("install")
+}
+
+fn is_valid_app_exe(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with(".exe")
+        && !lower.contains("setup")
+        && !lower.contains("redist")
+        && !lower.contains("dotnet")
+        && !lower.contains("installer")
+        && !lower.contains("uninstall")
+        && !lower.contains("vcredist")
+        && !lower.contains("crashhandler")
+        && !lower.contains("server")
+}
+
+fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
+    let mut best: Option<PathBuf> = None;
+    for entry in WalkDir::new(dir).max_depth(4).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !is_valid_app_exe(&name) {
+            continue;
+        }
+        let lower = name.to_lowercase();
+        if lower == "game.exe" || lower == "launcher.exe" || lower.contains("shipping") {
+            return Some(path.to_path_buf());
+        }
+        if best.is_none() {
+            best = Some(path.to_path_buf());
+        }
+    }
+    best
+}
+
+fn dir_size(dir: &PathBuf) -> u64 {
+    let mut total = 0;
+    for entry in WalkDir::new(dir).into_iter().flatten() {
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 pub fn handle_get_library() -> Value {

@@ -14,9 +14,21 @@ const emit = defineEmits<{
 const collapsed = ref(false);
 
 const navItems = [
-  { view: "library", label: "Library", icon: "M21 6H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1zM21 14H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1z" },
-  { view: "sharp-library", label: "Sharp", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
-  { view: "logs", label: "Logs", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8" },
+  {
+    view: "library",
+    label: "Library",
+    paths: ["M21 6H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1z", "M21 14H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1z"],
+  },
+  {
+    view: "sharp-library",
+    label: "Sharp",
+    paths: ["M12 2L2 7l10 5 10-5-10-5z", "M2 12l10 5 10-5", "M2 17l10 5 10-5"],
+  },
+  {
+    view: "logs",
+    label: "Logs",
+    paths: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"],
+  },
 ];
 </script>
 
@@ -45,14 +57,16 @@ const navItems = [
         @click="emit('navigate', item.view)"
         :title="collapsed ? item.label : undefined"
       >
-        <svg class="sidebar-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="item.icon" />
+        <svg class="sidebar-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path v-for="path in item.paths" :key="path" :d="path" />
+        </svg>
         <span v-if="!collapsed" class="sidebar-nav-label">{{ item.label }}</span>
       </button>
     </div>
 
     <div class="sidebar-bottom">
       <button
-        class="sidebar-nav-item"
+        class="sidebar-nav-item sidebar-theme-toggle"
         @click="emit('toggleTheme')"
         :title="collapsed ? (theme === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
       >
@@ -185,7 +199,7 @@ const navItems = [
 }
 
 .sidebar-theme-toggle {
-  margin-top: 8px;
+  margin-bottom: 4px;
 }
 
 .sidebar-bottom {
@@ -194,5 +208,22 @@ const navItems = [
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.sidebar.collapsed .sidebar-top {
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.sidebar.collapsed .sidebar-logo {
+  display: none;
+}
+.sidebar.collapsed .sidebar-nav-item {
+  justify-content: center;
+  padding: 8px;
+  gap: 0;
+}
+.sidebar.collapsed .sidebar-nav-icon {
+  display: block;
 }
 </style>
