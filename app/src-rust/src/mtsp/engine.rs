@@ -50,6 +50,38 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
         vec![
             PipelineNode {
+                id: PipelineId::M12,
+                name: "M12",
+                description: "D3D12 -> Metal via DXMT",
+                backend: "dxmt",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
+                ],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
+                    EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                ],
+                launch_args: vec!["-dx12"],
+                alternatives: vec![
+                    PipelineId::M11,
+                    PipelineId::M10,
+                    PipelineId::M9,
+                    PipelineId::Steam,
+                    PipelineId::MacSteam,
+                ],
+                shader_cache_subdir: Some("m12"),
+            },
+            PipelineNode {
                 id: PipelineId::M11,
                 name: "M11",
                 description: "D3D11 -> Metal via DXMT",
@@ -78,38 +110,6 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::WineBare,
                 ],
                 shader_cache_subdir: Some("m11"),
-            },
-            PipelineNode {
-                id: PipelineId::M12,
-                name: "M12",
-                description: "D3D12 -> Metal via DXMT",
-                backend: "dxmt",
-                experimental: true,
-                requires_wine: true,
-                wine_overrides: Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                deploy_dlls: vec![
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
-                ],
-                env_vars: vec![
-                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
-                    EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
-                    EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
-                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
-                ],
-                launch_args: vec!["-dx12"],
-                alternatives: vec![
-                    PipelineId::M11,
-                    PipelineId::M10,
-                    PipelineId::M9,
-                    PipelineId::Steam,
-                    PipelineId::MacSteam,
-                ],
-                shader_cache_subdir: Some("m12"),
             },
             PipelineNode {
                 id: PipelineId::M10,
@@ -290,5 +290,52 @@ impl PipelineId {
             PipelineId::MacSteam => "macos_steam",
             PipelineId::WineBare => "metalsharp_wine",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m12_is_primary_stable_pipeline() {
+        let pipeline_list = pipelines();
+        assert_eq!(pipeline_list.first().map(|p| p.id), Some(PipelineId::M12));
+
+        let m12 = get_pipeline(PipelineId::M12);
+        assert!(!m12.experimental);
+        assert_eq!(m12.backend, "dxmt");
+        assert_eq!(m12.launch_args, vec!["-dx12"]);
+        assert!(m12.deploy_dlls.iter().any(|dll| dll.filename == "d3d12.dll"));
+        assert_eq!(m12.shader_cache_subdir, Some("m12"));
+    }
+
+    #[test]
+    fn m12_is_stronger_than_other_dxmt_d3d_paths() {
+        let m12 = get_pipeline(PipelineId::M12);
+        let m11 = get_pipeline(PipelineId::M11);
+        let m10 = get_pipeline(PipelineId::M10);
+
+        for required in ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"] {
+            assert!(m12.dyld_paths.contains(&required));
+        }
+
+        let m12_dlls: std::collections::HashSet<_> = m12.deploy_dlls.iter().map(|dll| dll.filename).collect();
+        for dll in m11.deploy_dlls.iter().chain(m10.deploy_dlls.iter()) {
+            assert!(m12_dlls.contains(dll.filename), "M12 missing shared DXMT DLL {}", dll.filename);
+        }
+        assert!(m12_dlls.contains("d3d12.dll"));
+
+        let m12_env: std::collections::HashSet<_> = m12.env_vars.iter().map(|env| env.key).collect();
+        assert!(m12_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert!(m12_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
+        assert!(m12_env.contains("DXMT_METALFX_SPATIAL"));
+        assert!(m12_env.contains("DXMT_METALFX_TEMPORAL"));
+
+        assert_eq!(
+            m12.wine_overrides,
+            Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+        assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 }

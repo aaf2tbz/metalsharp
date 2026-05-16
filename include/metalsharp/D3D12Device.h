@@ -57,6 +57,7 @@
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -348,6 +349,8 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
     ULONG refCount = 1;
     void* m_renderPipeline = nullptr;
     void* m_computePipeline = nullptr;
+    void* m_ownedRenderPipeline = nullptr;
+    void* m_ownedComputePipeline = nullptr;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -489,6 +492,7 @@ class D3D12ResourceImpl final : public ID3D12Resource {
     void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
     UINT __getResourceState() const override { return m_resourceState; }
     void __setResourceState(UINT state) override { m_resourceState = state; }
+    size_t bufferSize() const { return metalBuffer ? metalBuffer->size() : 0; }
 };
 
 class D3D12DeviceImpl final : public ID3D12Device {
@@ -566,6 +570,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 std::unique_ptr<MetalBuffer>(MetalBuffer::create(*m_metalDevice, (size_t)pDesc->Width, nullptr));
             if (res->metalBuffer) {
                 res->m_gpuAddress = reinterpret_cast<UINT64>(res->metalBuffer->nativeBuffer());
+                m_gpuAddressResources[res->m_gpuAddress] = res;
             }
         } else {
             uint32_t fmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
@@ -706,12 +711,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
     HRESULT CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid,
                                         void** ppPSO) override;
 
-    HRESULT CreateComputePipelineState(const void* pDesc, REFIID riid, void** ppPSO) override {
-        if (!ppPSO)
-            return E_POINTER;
-        *ppPSO = new D3D12PipelineStateImpl();
-        return S_OK;
-    }
+    HRESULT CreateComputePipelineState(const void* pDesc, REFIID riid, void** ppPSO) override;
 
     HRESULT CreateFence(UINT64 InitialValue, UINT Flags, REFIID riid, void** ppFence) override {
         if (!ppFence)
@@ -1072,8 +1072,11 @@ class D3D12DeviceImpl final : public ID3D12Device {
     }
 
     std::vector<D3D12DescriptorHeapImpl*> m_trackedHeaps;
+    std::unordered_map<UINT64, D3D12ResourceImpl*> m_gpuAddressResources;
 
     D3D12DescriptorHeapImpl* findHeapForHandle(D3D12_CPU_DESCRIPTOR_HANDLE handle) const;
+    D3D12DescriptorHeapImpl* findHeapForGPUHandle(D3D12_GPU_DESCRIPTOR_HANDLE handle) const;
+    D3D12ResourceImpl* findResourceForGPUAddress(D3D12_GPU_VIRTUAL_ADDRESS address, UINT64* offset = nullptr) const;
 };
 
 } // namespace metalsharp

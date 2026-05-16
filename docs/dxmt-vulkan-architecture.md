@@ -77,7 +77,7 @@ MoltenVK ICD:
 
 | Game | Best/current pipeline |
 |---|---|
-| Schedule 1 | M11 recommended, M12 works |
+| Schedule 1 | M12 recommended |
 | Subnautica | M11 |
 | Subnautica: Below Zero | M12 recommended, M11 optimized |
 | Rain World | M11, M9 also works |
@@ -93,5 +93,5 @@ MoltenVK ICD:
 
 - DXMT is the direct Metal path.
 - M9 has an extra Vulkan/MoltenVK hop.
-- M12 is still marked experimental in source.
+- M12 is the primary stable DXMT D3D engine method in source.
 - M32 is the fallback for 32-bit Wine cases.

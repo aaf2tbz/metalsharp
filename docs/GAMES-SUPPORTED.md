@@ -24,7 +24,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 
 | Game | Status | Recommended |
 |---|---|---|
-| Schedule 1 | M12 works. M11 is more optimized. | **M11**, Medium settings |
+| Schedule 1 | M12 is the primary path. | **M12**, Medium settings |
 | Subnautica | M11 works well and is most optimized. | **M11**, High/Medium settings |
 | Subnautica: Below Zero | M12 looks better. M11 is more optimized. | **M12**, Medium/Low settings |
 | Rain World | M11 is best. M9 also works well. | **M11** |

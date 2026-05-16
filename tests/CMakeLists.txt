@@ -43,6 +43,11 @@ add_executable(test_d3d12
 )
 target_link_libraries(test_d3d12 PRIVATE metalsharp_d3d12 metalsharp_core)
 
+add_executable(test_d3d12_entrypoint
+    test_d3d12_entrypoint.cpp
+)
+target_link_libraries(test_d3d12_entrypoint PRIVATE metalsharp_d3d12 metalsharp_core)
+
 add_executable(test_runtime
     test_runtime.cpp
 )
@@ -77,6 +82,7 @@ add_test(NAME phase2 COMMAND test_phase2)
 add_test(NAME dxbc COMMAND test_dxbc)
 add_test(NAME deferred_context COMMAND test_deferred_context)
 add_test(NAME d3d12 COMMAND test_d3d12)
+add_test(NAME d3d12_entrypoint COMMAND test_d3d12_entrypoint)
 add_test(NAME runtime COMMAND test_runtime)
 add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
