@@ -3,6 +3,7 @@ import { ref, computed, onMounted, provide, type Component } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import Toast from "./components/Toast.vue";
 import SetupWizard from "./components/SetupWizard.vue";
+import MigrationView from "./components/MigrationView.vue";
 import LibraryView from "./views/LibraryView.vue";
 import SharpView from "./views/SharpView.vue";
 import LogsView from "./views/LogsView.vue";
@@ -32,6 +33,7 @@ interface SteamLibrary {
 
 const currentView = ref("library");
 const showSetup = ref(false);
+const showMigration = ref(false);
 const backendConnected = ref(false);
 const backendVersion = ref<string | null>(null);
 const wineSteamInstalled = ref(false);
@@ -139,6 +141,11 @@ async function initApp() {
 
 onMounted(async () => {
   await checkBackend();
+  const migrationMode = await getAPI().isMigrationMode?.();
+  if (migrationMode) {
+    showMigration.value = true;
+    return;
+  }
   const firstLaunch = await getAPI().isFirstLaunch();
   if (firstLaunch) {
     showSetup.value = true;
@@ -150,7 +157,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <SetupWizard v-if="showSetup" @done="onSetupDone()" />
+  <MigrationView v-if="showMigration" />
+  <SetupWizard v-else-if="showSetup" @done="onSetupDone()" />
   <template v-else>
     <Sidebar
       :current-view="currentView"
