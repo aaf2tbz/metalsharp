@@ -1,159 +1,117 @@
-# MetalSharp Wine Architecture
+# Wine Architecture
 
-MetalSharp Wine is a custom Wine 11.5 runtime that runs Windows applications on macOS via Rosetta 2 (x86_64). Single self-contained tree at `~/.metalsharp/runtime/wine/`.
+MetalSharp ships a self-contained Wine runtime at:
 
-## Runtime Layout
-
+```text
+~/.metalsharp/runtime/wine/
 ```
+
+It is used by M11, M12, M10, M9, M32, Steam, and Wine. Native macOS and MacOS Steam do not use this Wine runtime.
+
+## Layout
+
+```text
 ~/.metalsharp/runtime/wine/
 ├── bin/
-│   ├── metalsharp-wine     Main entry point — env setup + backend dispatch
-│   ├── wine                Symlink to wineloader
-│   ├── wineloader          Wine binary (x86_64, runs under Rosetta 2)
-│   └── wineserver          Wine server process
+│   ├── metalsharp-wine
+│   ├── wine
+│   ├── wineloader
+│   └── wineserver
 ├── lib/
 │   ├── wine/
-│   │   ├── x86_64-unix/    Unix .so modules (ntdll.so, opengl32.so, etc.)
-│   │   │                       Includes mscompatdb.so.disabled (dead rules engine)
-│   │   ├── x86_64-windows/ 64-bit PE DLLs (Wine builtins)
-│   │   └── i386-windows/   32-bit PE DLLs
-│   │                           DXMT builtins for d3d11/dxgi/d3d10core/winemetal
-│   │                           Originals backed up as .bak
+│   │   ├── x86_64-unix/
+│   │   ├── x86_64-windows/
+│   │   └── i386-windows/
 │   ├── dxmt/
-│   │   ├── x86_64-unix/    winemetal.so (47MB, Mach-O x86_64)
-│   │   │                       Metal command buffer bridge
-│   │   │                       Exports __wine_unix_call_wow64_funcs for 32-bit
-│   │   └── x86_64-windows/ 64-bit DXMT PE DLLs
-│   │       d3d11.dll (72MB), dxgi.dll (20MB), d3d10core.dll (14MB)
-│   │       d3d12.dll (36MB), winemetal.dll (269KB)
+│   │   ├── x86_64-unix/
+│   │   └── x86_64-windows/
 │   └── dxvk/
-│       └── i386-windows/    DXVK 1.10.3 32-bit DLLs
-│           d3d9.dll, d3d11.dll, d3d10core.dll, dxgi.dll
-├── etc/
-│   ├── dxmt.conf           DXMT config (MetalFX upscaling, framerate cap)
-│   └── vulkan/
-│       └── icd.d/
-│           └── MoltenVK_icd.json  MoltenVK ICD manifest
-└── share/
-    └── wine/               Wine data files (fonts, inf, nls)
+│       └── i386-windows/
+└── etc/
+    ├── dxmt.conf
+    └── vulkan/icd.d/MoltenVK_icd.json
 ```
 
-Also present outside the wine tree:
+Other runtime pieces live beside it:
 
-```
+```text
 ~/.metalsharp/runtime/
-├── wine/                   (see above)
-├── dxvk-1.10.3/            DXVK archive (x32/ and x64/ dirs, used by installer)
-├── mono-x86/               x86 Mono runtime for legacy FNA games
-├── mono-arm64/             ARM64 Mono runtime (or Homebrew mono)
-└── shims/                  Pre-built shims (SDL3, FNA3D, FMOD stubs, CSteamworks)
+├── goldberg/
+├── mono-arm64/
+├── shims/
+└── wine/
 ```
 
-## How It Works
+## Pipeline Use
 
-### WoW64 Architecture
+| Pipeline | Wine use |
+|---|---|
+| M11 | Wine + DXMT D3D11/DXGI |
+| M12 | Wine + DXMT D3D12/D3D11/DXGI |
+| M10 | Wine + DXMT D3D10/D3D11/DXGI |
+| M9 | Wine + DXVK D3D9 + MoltenVK |
+| M32 | Wine 32-bit fallback |
+| Steam | Wine Steam prefix |
+| Wine | Plain Wine |
 
-MetalSharp Wine uses WoW64 to run 32-bit Windows PE binaries on the 64-bit Wine server:
+## DLL Deployment
 
-```
-32-bit PE game (e.g., Nidhogg 2)
-  → loads i386-windows/d3d11.dll (DXMT, PE32)
-    → DXMT DLL calls into winemetal.so (x86_64-unix, Mach-O)
-      → Wine's WoW64 handles 32→64 bit transition
-        → winemetal.so creates Metal command buffers
-          → Metal framework renders to screen
-```
+The backend copies graphics DLLs into the game directory before launch.
 
-There is **no i386-unix directory**. All unix .so modules are x86_64 only. `winemetal.so` exports `__wine_unix_call_wow64_funcs` with full `thunk32_*` implementations for 32-bit PE clients.
+M11/M10:
 
-### DXMT DLL Injection for 64-bit Games
-
-For DxmtMetal games (Rain World, Schedule I, Subnautica BZ), the Rust backend copies DXMT PE DLLs directly into the game directory on every launch:
-
-```rust
-std::fs::copy(dxmt_x64.join("d3d11.dll"), game.join("d3d11.dll"));
-std::fs::copy(dxmt_x64.join("dxgi.dll"), game.join("dxgi.dll"));
-std::fs::copy(dxmt_x64.join("d3d10core.dll"), game.join("d3d10core.dll"));
-std::fs::copy(dxmt_x64.join("winemetal.dll"), game.join("winemetal.dll"));
+```text
+d3d11.dll
+dxgi.dll
+d3d10core.dll
+winemetal.dll
 ```
 
-With `WINEDLLOVERRIDES="dxgi,d3d11,d3d10core,winemetal=n,b"`, Wine loads these from the game dir instead of its builtins. The `winebuild --builtin` post-processing ensures they're loaded as proper Wine builtins, not native overrides.
+M12:
 
-### DXVK d3d9.dll Injection for 32-bit Games
-
-For DxvkMetal32 games (Portal 2, Goat Simulator), the Rust backend copies DXVK's i386 d3d9.dll into the game's binary directory:
-
-```rust
-let dxvk_i386 = ms_root.join("lib").join("dxvk").join("i386-windows");
-std::fs::copy(dxvk_i386.join("d3d9.dll"), game.join("bin").join("d3d9.dll"));
+```text
+d3d12.dll
+d3d11.dll
+dxgi.dll
+d3d10core.dll
+winemetal.dll
 ```
 
-With `WINEDLLOVERRIDES="d3d9=n,b"` and `VK_ICD_FILENAMES` pointing to the bundled MoltenVK ICD, D3D9 calls go through DXVK → MoltenVK → Metal.
+M9:
 
-### Why mscompatdb Is Dead
-
-The old `mscompatdb.so` hooked ntdll syscalls for per-game overrides. Fragile — broke when Wine's syscall patterns changed. Now disabled (`.so.disabled`).
-
-Game routing is handled entirely by the Rust backend in `launch.rs`.
-
-## Environment Variables
-
-The `metalsharp-wine` wrapper sets:
-
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `MS_ROOT` | `~/.metalsharp/runtime/wine` | Base of Wine tree |
-| `CX_ROOT` | Same as `MS_ROOT` | Back-compat for Wine patches |
-| `WINEPREFIX` | `~/.metalsharp/prefix-steam` | Default prefix |
-| `WINEDLLPATH` | `lib/wine/x86_64-windows:lib/wine/i386-windows` | PE builtin search |
-| `WINELOADER` | `bin/wineloader` | Wine binary |
-| `WINESERVER` | `bin/wineserver` | Wine server |
-| `DYLD_FALLBACK_LIBRARY_PATH` | Includes `lib/wine/x86_64-unix/`, `lib/dxmt/x86_64-unix/` | Unix .so resolution |
-
-### DYLD_FALLBACK_LIBRARY_PATH
-
-Critical for DXMT — `winemetal.so` lives outside Wine's standard search paths. Without it:
-
-```
-DYLD_FALLBACK_LIBRARY_PATH="$MS_LIB/wine/x86_64-unix:$MS_LIB/dxmt/x86_64-unix:..."
+```text
+d3d9.dll
 ```
 
-The PE→unix bridge can't locate `winemetal.so` and D3D11 device creation fails.
+## Prefixes
 
-For SteamD3DMetalPerf games, DYLD is also augmented with GPTK paths so the Steam child process loads Apple's d3d11.dll.
+The shared Steam prefix is:
 
-### Vulkan / MoltenVK
-
-For DxvkMetal32 games, the MoltenVK ICD is bundled in the wine runtime:
-
-```
-VK_ICD_FILENAMES=~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json
+```text
+~/.metalsharp/prefix-steam/
 ```
 
-This replaces the previous Homebrew-only path (`/opt/homebrew/share/vulkan/icd.d/MoltenVK_icd.json`).
+Steam is installed inside that prefix. External Steam libraries may be mounted into the prefix by drive letter.
 
-## Wine Prefix
+Some prepared games can also use app-specific prefixes:
 
-Single shared prefix at `~/.metalsharp/prefix-steam/`:
-- Steam installed inside it (`drive_c/Program Files (x86)/Steam/`)
-- External SSD Steam library mapped as F: drive
-- `steamwebhelper.exe` wrapper deployed for CEF rendering (re-deploy after Steam auto-updates)
+```text
+~/.metalsharp/prefix-<appid>/
+```
 
-Some games get their own prefix (appid-specific) via `prepare_metalsharp_game()` in `setup.rs` — e.g., `~/.metalsharp/prefix-{appid}/`.
+## Important Environment
 
-## Building Wine 11.5
+| Variable | Purpose |
+|---|---|
+| `WINEPREFIX` | Prefix location |
+| `WINEDLLPATH` | Wine PE DLL lookup |
+| `DYLD_FALLBACK_LIBRARY_PATH` | Unix library lookup for Wine and DXMT |
+| `WINEDLLOVERRIDES` | Selects injected/native DLL behavior |
+| `DXMT_SHADER_CACHE_PATH` | DXMT shader cache |
+| `DXMT_CONFIG_FILE` | DXMT config file |
+| `VK_ICD_FILENAMES` | MoltenVK ICD for M9 |
+| `DXVK_STATE_CACHE_PATH` | DXVK cache for M9 |
 
-From upstream source with 7 custom patches (A-G). Key build details:
-- MinGW GCC for PE cross-compilation
-- `-fno-function-sections` (MinGW 15.2 linker drops symbols with `-ffunction-sections`)
-- `__attribute__((used))` on specific exports
-- Bison 3.8+ required (Homebrew, not macOS system bison 2.3)
-- freetype 2.13.3, gnutls, MoltenVK linked
+## Steam Wrapper
 
-## GPTK (Game Porting Toolkit)
-
-GPTK is used for `SteamD3DMetalPerf` games only. It's installed at `/Applications/Game Porting Toolkit.app/` and provides:
-- `x86_64-windows/d3d11.dll` — Apple's D3DMetal implementation
-- `x86_64-unix/` unix support libs
-
-The Rust backend prepends GPTK's paths to `WINEDLLPATH` and `DYLD_FALLBACK_LIBRARY_PATH` so Steam child processes load Apple's D3DMetal. GPTK is **not** needed for DxmtMetal (64-bit D3D11) or DxvkMetal32 (32-bit D3D9) games.
+Wine Steam uses the bundled `steamwebhelper.exe` wrapper. Steam updates may replace it, so MetalSharp redeploys it when preparing or launching Steam.
