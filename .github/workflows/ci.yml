@@ -54,16 +54,17 @@ jobs:
 
       - name: Download bundles for DMG
         run: |
-          mkdir -p app/bundles
-          gh release download bundles \
-            --repo ${{ github.repository }} \
-            --pattern "*.tar.zst" \
-            --pattern "*.exe" \
-            --pattern "*.c" \
-            --dir app/bundles \
-            --clobber || echo "No bundles found — building without"
-          cp app/bundles/steamwebhelper-wrapper.c app/bundles/steamwebhelper-wrapper.c 2>/dev/null || true
-          ls -lh app/bundles/ 2>/dev/null || true
+          tools/dmg/create-bundles.sh
+          for required in \
+            metalsharp_bundle.tar.zst \
+            metalsharp_bundle2.tar.zst \
+            SteamSetup.exe \
+            steamwebhelper.exe \
+            steamwebhelper-wrapper.c
+          do
+            test -s "app/bundles/$required"
+          done
+          ls -lh app/bundles/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
