@@ -15,8 +15,8 @@ class TerrariaLauncher {
             Console.Error.WriteLine("[FIRSTCHANCE] " + e.Exception.GetType().Name + ": " + e.Exception.Message + " in " + e.Exception.Source);
         };
         
-        _ta = Assembly.LoadFrom("Terraria.exe");
         AppDomain.CurrentDomain.AssemblyResolve += OnResolve;
+        _ta = Assembly.LoadFrom("Terraria.exe");
         
         using (var stream = _ta.GetManifestResourceStream("Terraria.Libraries.ReLogic.ReLogic.dll")) {
             byte[] data = new byte[stream.Length];
