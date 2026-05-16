@@ -239,6 +239,13 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
+        (Method::Post, "/steam/mac-install") => {
+            app_log("Opening macOS Steam installer...");
+            match steam::install_macos_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
+        },
         (Method::Post, "/steam/mac-stop") => {
             app_log("Stopping macOS Steam...");
             match steam::stop_macos_steam() {
@@ -716,6 +723,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             match body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32) {
                 Some(appid) => {
+                    if migrate::is_migrating() {
+                        return resp(
+                            409,
+                            json!({"ok": false, "error": "Migration is running. Wait for it to finish before uninstalling games."}),
+                        );
+                    }
                     app_log(&format!("Uninstalling game: appid {}", appid));
                     match steam::uninstall_game(appid) {
                         Ok(r) => resp(200, r),
@@ -750,14 +763,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let home = dirs::home_dir().unwrap_or_default();
             let shader_dir = cache_dir_for_type(&home, "shader");
             let pipeline_dir = cache_dir_for_type(&home, "pipeline");
-            let (shader_bytes, shader_files) = dir_stats(&shader_dir);
-            let (pipeline_bytes, pipeline_files) = dir_stats(&pipeline_dir);
             resp(
                 200,
                 json!({
                     "ok": true,
-                    "shader_cache": {"bytes": shader_bytes, "files": shader_files},
-                    "pipeline_cache": {"bytes": pipeline_bytes, "files": pipeline_files},
+                    "shader_cache": cache_summary(&shader_dir),
+                    "pipeline_cache": cache_summary(&pipeline_dir),
                 }),
             )
         },
@@ -835,6 +846,48 @@ fn dir_stats(path: &std::path::Path) -> (u64, u64) {
         }
     }
     (bytes, files)
+}
+
+fn cache_summary(path: &std::path::Path) -> serde_json::Value {
+    let (bytes, files) = dir_stats(path);
+    let mut directories = 0u64;
+    let mut app_dirs = 0u64;
+    let mut newest_modified = 0u64;
+
+    if path.exists() {
+        for entry in walkdir::WalkDir::new(path).min_depth(1).into_iter().flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    directories += 1;
+                    if entry.depth() == 2 && entry.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit()) {
+                        app_dirs += 1;
+                    }
+                }
+                if let Ok(modified) = meta.modified() {
+                    let secs = modified.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                    newest_modified = newest_modified.max(secs);
+                }
+            }
+        }
+    }
+
+    let status = if !path.exists() {
+        "missing"
+    } else if files == 0 {
+        "empty"
+    } else {
+        "active"
+    };
+
+    json!({
+        "bytes": bytes,
+        "files": files,
+        "directories": directories,
+        "apps": app_dirs,
+        "path": path.to_string_lossy(),
+        "status": status,
+        "last_modified": if newest_modified > 0 { json!(local_date_for_epoch(newest_modified)) } else { json!(null) },
+    })
 }
 
 fn resolve_game_exe(appid: u32) -> String {

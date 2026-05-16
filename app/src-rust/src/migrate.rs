@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MIGRATE_SCHEMA_VERSION: u64 = 1;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -70,17 +71,32 @@ pub fn needs_migration() -> serde_json::Value {
         Err(_) => return json!({"ok": true, "needed": false, "reason": "cannot_parse_setup"}),
     };
 
-    let current_version = setup.get("last_migrated_version").and_then(|v| v.as_str()).unwrap_or("0.0.0");
+    let current_schema = setup.get("runtime_migration_schema").and_then(|v| v.as_u64());
+    let legacy_migrated_version = setup.get("last_migrated_version").and_then(|v| v.as_str());
+    let current_version = legacy_migrated_version.unwrap_or("0.0.0");
 
-    let needed = semver_lt(current_version, MIGRATE_VERSION);
+    let needed = match current_schema {
+        Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
+        None if legacy_migrated_version.is_some() => false,
+        None => runtime_needs_repair(&home),
+    };
 
     json!({
         "ok": true,
         "needed": needed,
         "current_version": current_version,
         "target_version": MIGRATE_VERSION,
-        "reason": if needed { "version_mismatch" } else { "up_to_date" },
+        "current_schema": current_schema.unwrap_or(0),
+        "target_schema": MIGRATE_SCHEMA_VERSION,
+        "reason": if needed { "runtime_schema_or_repair_needed" } else { "up_to_date" },
     })
+}
+
+fn runtime_needs_repair(home: &PathBuf) -> bool {
+    let runtime_wine = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = runtime_wine.join("bin").join("metalsharp-wine");
+    let steam_prefix = home.join(".metalsharp").join("prefix-steam");
+    !wine.exists() && steam_prefix.exists()
 }
 
 pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -165,6 +181,7 @@ fn run_migration() {
             if let Ok(contents) = fs::read_to_string(&setup_path) {
                 if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
                     cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
+                    cfg.insert("runtime_migration_schema".into(), json!(MIGRATE_SCHEMA_VERSION));
                     let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
                 }
             }
@@ -172,6 +189,7 @@ fn run_migration() {
             let cfg = json!({
                 "completed": true,
                 "last_migrated_version": MIGRATE_VERSION,
+                "runtime_migration_schema": MIGRATE_SCHEMA_VERSION,
             });
             let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
         }
@@ -385,31 +403,6 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
     }
 }
 
-fn semver_lt(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.trim_start_matches('v')
-            .split('.')
-            .filter_map(|p| {
-                let clean: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
-                clean.parse::<u32>().ok()
-            })
-            .collect()
-    };
-    let av = parse(a);
-    let bv = parse(b);
-    for i in 0..std::cmp::max(av.len(), bv.len()) {
-        let x = av.get(i).unwrap_or(&0);
-        let y = bv.get(i).unwrap_or(&0);
-        if x < y {
-            return true;
-        }
-        if x > y {
-            return false;
-        }
-    }
-    false
-}
-
 fn log_to_file(msg: &str) {
     let home = dirs::home_dir().unwrap_or_default();
     let log_dir = home.join(".metalsharp").join("logs");
@@ -438,18 +431,4 @@ fn log_to_file(msg: &str) {
         .append(true)
         .open(&log_path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_semver_lt() {
-        assert!(semver_lt("0.0.0", "0.33.0"));
-        assert!(semver_lt("0.32.0", "0.33.0"));
-        assert!(!semver_lt("0.33.0", "0.33.0"));
-        assert!(!semver_lt("0.34.0", "0.33.0"));
-        assert!(semver_lt("0.16.0", "0.33.0"));
-    }
 }
