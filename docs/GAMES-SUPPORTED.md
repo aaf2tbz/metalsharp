@@ -1,153 +1,55 @@
-# Games Supported — MetalSharp v0.24.0
+# Games Supported
 
-## Rendering Engines
+These notes reflect the current MetalSharp pipeline names.
 
-| Engine | Method | How It Works |
-|---|---|---|
-| **DxmtMetal** | Direct exe via Wine | DXMT D3D11/DXGI Metal-native. DLLs injected into game dir. Per-game shader cache + MetalFX upscaling. No GPTK needed. |
-| **DxmtMetal12** | Direct exe via Wine | DXMT D3D12/D3D11/DXGI Metal-native. Same as DxmtMetal with additional d3d12.dll injection. |
-| **DxvkMetal32** | Direct exe via Wine | DXVK d3d9→MoltenVK→Metal for 32-bit D3D9 games. d3d9.dll injected into game's binary dir. Per-game state cache. |
-| **Wined3d32** | Direct exe via Wine | WineD3D OpenGL for 32-bit games. No Metal on macOS for 32-bit D3D11. |
-| **MetalsharpWine** | Direct exe via Wine | Bare Wine launch. No DLL overrides. For legacy D3D9 games. |
-| **SteamD3DMetalPerf** | `steam://run/` via Wine Steam | Steam DRM games. Launches through Wine Steam with GPTK's D3DMetal loaded via WINEDLLPATH. D3DM perf env vars. |
-| **SteamMetalfx** | `steam://run/` via Wine Steam | Steam DRM games with D3DMetal MetalFX env vars. |
-| **SteamBare** | `steam://run/` via Wine Steam | Steam DRM games. No extra env vars. |
-| **FnaArm64** | Direct exe via .NET ARM64 | FNA/XNA games. Native ARM64 .NET runtime. |
+## Test System
 
----
+Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write over USB-C 3.1, on an M4 MacBook Air with 16GB RAM.
 
-## Confirmed Working
+## Pipelines
 
-These games have been tested and confirmed running on MetalSharp.
-
-### Rain World
-- **AppID:** 312520
-- **Engine:** DxmtMetal (D3D11 → Metal via DXMT)
-- **Launch:** Direct exe. DXMT injects `d3d11.dll`, `dxgi.dll`, `d3d10core.dll`, `winemetal.dll` into game dir. Per-appid shader cache at `~/.metalsharp/shader-cache/dxmt-metal/312520/`. MetalFX 2x spatial upscaling enabled.
-- **Recommended Settings:** Default preset / Medium settings, V-Sync ON
-
-### Schedule I
-- **AppID:** 3164500
-- **Engine:** DxmtMetal (D3D11 → Metal via DXMT)
-- **Launch:** Direct exe. Same DXMT injection as Rain World. Per-appid shader cache + MetalFX upscaling.
-- **Recommended Settings:** Low preset, SSAO enabled, V-Sync ON, God Rays OFF
-
-### Subnautica: Below Zero
-- **AppID:** 848450
-- **Engine:** DxmtMetal (D3D11 → Metal via DXMT)
-- **Launch:** Direct exe. Same DXMT injection. Per-appid shader cache + MetalFX upscaling.
-- **Recommended Settings:** Low preset, V-Sync ON, FXAA
-
-### Undertale
-- **AppID:** 375520
-- **Engine:** DxmtMetal (D3D11 → Metal via DXMT)
-- **Launch:** Direct exe. Same DXMT injection. Per-appid shader cache + MetalFX upscaling.
-- **Recommended Settings:** Default
-
-### Portal 2
-- **AppID:** 620
-- **Engine:** DxvkMetal32 (D3D9 → Vulkan → Metal via DXVK + MoltenVK)
-- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `bin/` dir. Goldberg Steam emulator deployed to `bin/` — replaces `steam_api.dll` (x86) and `bin/win64/steam_api64.dll` (x64) for offline/LAN play without Steam DRM. MoltenVK bundled in wine runtime. VK_ICD_FILENAMES set to bundled ICD. Per-appid state cache at `~/.metalsharp/shader-cache/dxvk-metal32/620/`. Steam client/overlay disabled via WINEDLLOVERRIDES.
-- **Recommended Settings:** Low/Medium settings, V-Sync ON
-
-### Goat Simulator
-- **AppID:** 265930
-- **Engine:** DxvkMetal32 (D3D9 → Vulkan → Metal via DXVK + MoltenVK)
-- **Launch:** Direct exe via Wine. DXVK `d3d9.dll` injected into `Binaries/Win32/`. Goldberg Steam emulator deployed to `Binaries/Win32/` — replaces `steam_api.dll` for offline/LAN play. Working dir set to `Binaries/Win32/`. Same MoltenVK setup as Portal 2. Steam client/overlay disabled via WINEDLLOVERRIDES.
-- **Recommended Settings:** Low settings, V-Sync ON
-
-### Nidhogg 2
-- **AppID:** 535520
-- **Engine:** Wined3d32 (D3D11 → OpenGL via WineD3D)
-- **Launch:** Direct exe via Wine. No DLL injection — uses Wine's builtin WineD3D. 32-bit game, no Metal API available on macOS. Steam overlay disabled.
-- **Recommended Settings:** High settings, V-Sync ON
-
-### Celeste
-- **AppID:** 504230
-- **Engine:** SteamD3DMetalPerf (via Wine Steam + GPTK D3DMetal)
-- **Launch:** `steam://run/504230` through Wine Steam client. WINEDLLPATH prepended with GPTK's d3d11.dll path. D3DM async commit + multithreaded interface enabled. Previously used FnaX86 — now uses Steam DRM + GPTK D3DMetal.
-- **Recommended Settings:** Default
-
-### Terraria
-- **AppID:** 105600
-- **Engine:** FnaArm64 (Native .NET ARM64 + FNA + SDL3)
-- **Launch:** Native Mono ARM64. No Wine. FNA + SDL3 + Metal rendering. macOS Steam libraries (libsteam_api.dylib, SDL3, FAudio, FNA3D) copied from macOS Terraria install. Custom launcher (`TerrariaLauncher.exe`) built from source.
-- **Recommended Settings:** Default
-
----
-
-## In Progress
-
-### Resident Evil 4 (2023)
-- **AppID:** 2050650
-- **Engine:** SteamD3DMetalPerf (mapped)
-- **Status:** Crashes with GPTK D3DMetal. Launches via `steam://run/` with D3DM perf env vars. UE4 compatibility limitation under investigation.
-
-### High on Life
-- **AppID:** 1583230
-- **Engine:** SteamD3DMetalPerf (mapped)
-- **Status:** Crashes after loading screen with GPTK D3DMetal. Squanch Games UE4 compatibility issue.
-
----
-
-## Auto-Detection Fallback
-
-Games not explicitly mapped are auto-detected by scanning the game directory:
-
-| Detection | Engine |
+| Pipeline | Use |
 |---|---|
-| `.NET managed DLLs` (`*_Data/Managed/` dir, no native PE DLLs) | FnaArm64 |
-| `UnityPlayer.dll` or `GameAssembly.dll` present | SteamD3DMetalPerf |
-| `engine/` + `binaries/` dirs (Unreal Engine) | SteamMetalfx |
-| `.pak` files (Source/Unreal) | SteamD3DMetalPerf |
-| `engine/` + `content/` dirs | SteamMetalfx |
-| `.bdt` / `.bhd` files (Dark Souls / FromSoft) | SteamMetalfx |
-| `re_chunk_` or RE config files | SteamD3DMetalPerf |
-| `d3dx9_43.dll` (legacy D3D9) | MetalsharpWine |
-| `steam_api64.dll` or `steam_api.dll` | SteamD3DMetalPerf |
-| Default fallback | SteamD3DMetalPerf |
+| **M11** | D3D11 to Metal via DXMT |
+| **M12** | D3D12 to Metal via DXMT |
+| **M10** | D3D10 to Metal via DXMT |
+| **M9** | D3D9 via DXVK/MoltenVK |
+| **M32** | 32-bit Wine fallback |
+| **Native macOS** | FNA/XNA/Mono ARM64 native runtime |
+| **Steam** | Wine Steam |
+| **MacOS Steam** | Native macOS Steam |
+| **Wine** | Plain Wine custom-library fallback |
 
----
+## Compatibility Notes
 
-## DXMT Configuration
-
-Config file: `~/.metalsharp/runtime/wine/etc/dxmt.conf`
-
-```
-d3d11.metalSpatialUpscaleFactor = 2.0
-d3d11.preferredMaxFrameRate = 60
-d3d11.maxFeatureLevel = 12_1
-```
-
-Environment variables set for DxmtMetal games:
-- `DXMT_SHADER_CACHE_PATH` — per-appid cache dir under `~/.metalsharp/shader-cache/dxmt-metal/<appid>/`
-- `DXMT_CONFIG_FILE` — points to `dxmt.conf`
-- `DXMT_METALFX_SPATIAL_SWAPCHAIN=1` — enables MetalFX spatial upscaling
-
-## Goldberg Steam Emulator
-
-Used by DxvkMetal32 games (Portal 2, Goat Simulator) to bypass Steam DRM for offline/LAN play.
-
-- **Source:** `Detanup01/gbe_fork` (GitHub releases), fallback to official `Mr_Goldberg/goldberg_emulator` (GitLab CI)
-- **Cache:** `~/.metalsharp/runtime/goldberg/{x86,x64}/` — downloaded once, reused for all games
-- **Deployment per game:** `steam_api.dll` (x86) and `steam_api64.dll` (x64) placed in the game's binary directory, originals backed up as `.orig`
-- **Settings:** `steam_settings/force_steam_appid.txt` written with the game's appid
-- **Triggered by:** `prepare_game()` during first-time setup, and `launch_dxvk_metal32()` on every launch (auto-deploys if missing)
-
-## DXVK Configuration
-
-Environment variables set for DxvkMetal32 games:
-- `VK_ICD_FILENAMES` — points to bundled MoltenVK ICD at `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
-- `DXVK_STATE_CACHE_PATH` — per-appid cache dir under `~/.metalsharp/shader-cache/dxvk-metal32/<appid>/`
-- `WINEDLLOVERRIDES=d3d9=n,b` — loads DXVK d3d9 from game dir
-
----
+| Game | Status | Recommended |
+|---|---|---|
+| Schedule 1 | M12 works. M11 is more optimized. | **M11**, Medium settings |
+| Subnautica | M11 works well and is most optimized. | **M11**, High/Medium settings |
+| Subnautica: Below Zero | M12 looks better. M11 is more optimized. | **M12**, Medium/Low settings |
+| Rain World | M11 is best. M9 also works well. | **M11** |
+| Undertale | M32 is best. M9 also works. | **M32**, fallback **M9** |
+| Nidhogg 2 | M32 is best. | **M32**, High settings |
+| Ghostrunner | Only M12 works. | **M12**, FSR Balanced/Performance, Medium/High, V-Sync Off |
+| Garry's Mod | Launches on M9 and M32, but needs more work. M32 reports Steam connection issues. | Work in progress |
+| Portal 2 | Best with M9. Audio does not work once inside the game. Goldberg deploys. | **M9** |
+| Hollow Knight | Works with native Mono ARM launch. | **Native macOS**, High settings |
+| Hollow Knight: Silksong | Works with Native macOS and M12. | **Native macOS**, High settings |
+| Skate 2 | Not compatible because of kernel-level anti-cheat. | Unsupported |
+| Cyberpunk 2077 | Errors out. | Work in progress |
+| Resident Evil 4 | Work in progress. | Work in progress |
+| Goat Simulator | Does not load yet. | Work in progress |
+| Borderlands 3 | Works through Wine Steam. | **Steam**, DX12, Low settings |
+| Among Us | Works through native Steam / D3DMetalFX. | **MacOS Steam** |
+| Stardew Valley | Runs through native macOS Steam. | **MacOS Steam** |
+| Fall Guys | Fails due to anti-cheat. | Unsupported |
+| Dredge | Already has Mac support. Native Steam launches an invisible window. | Work in progress |
+| Elden Ring | Needs current notes. | Untested |
+| High on Life | Works through Steam with `-dx11`. DX12 reports unsupported. | **Steam**, with `-dx11` launch option |
 
 ## Notes
 
-- First launch of any DxmtMetal game will stutter while the shader cache builds. Subsequent launches are smoother.
-- All games use the shared Wine prefix at `~/.metalsharp/prefix-steam/` unless game-specific setup creates a separate one.
-- Steam library on external SSD should be mapped as F: drive in Wine prefix.
-- Shader caches are per-appid and persist across launches. Safe to delete `~/.metalsharp/shader-cache/` to force rebuild.
-- Portal 2 and Goat Simulator require DXVK + MoltenVK — no GPTK needed for these.
-- Celeste no longer uses the FNA path — it launches through Steam DRM + GPTK D3DMetal.
+- Game cards can be tested through the pipeline dropdown.
+- Shader caches are per appid and can be cleared from Settings.
+- Portal 2 uses Goldberg Steam emulator deployment.
+- Steam and MacOS Steam are separate launch paths.
