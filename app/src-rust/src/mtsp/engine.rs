@@ -77,7 +77,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::MacSteam,
                     PipelineId::WineBare,
                 ],
-                shader_cache_subdir: Some("dxmt-metal"),
+                shader_cache_subdir: Some("m11"),
             },
             PipelineNode {
                 id: PipelineId::M12,
@@ -109,7 +109,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::Steam,
                     PipelineId::MacSteam,
                 ],
-                shader_cache_subdir: Some("dxmt-metal12"),
+                shader_cache_subdir: Some("m12"),
             },
             PipelineNode {
                 id: PipelineId::M10,
@@ -135,7 +135,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::MacSteam,
                     PipelineId::WineBare,
                 ],
-                shader_cache_subdir: Some("dxmt-metal"),
+                shader_cache_subdir: Some("m10"),
             },
             PipelineNode {
                 id: PipelineId::M9,
@@ -157,7 +157,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::MacSteam,
                     PipelineId::WineBare,
                 ],
-                shader_cache_subdir: Some("dxvk-metal9"),
+                shader_cache_subdir: Some("m9"),
             },
             PipelineNode {
                 id: PipelineId::M32,

@@ -763,6 +763,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let home = dirs::home_dir().unwrap_or_default();
             let shader_dir = cache_dir_for_type(&home, "shader");
             let pipeline_dir = cache_dir_for_type(&home, "pipeline");
+            let _ = std::fs::create_dir_all(&shader_dir);
+            let _ = std::fs::create_dir_all(&pipeline_dir);
             resp(
                 200,
                 json!({

@@ -7,6 +7,11 @@ use std::time::Duration;
 
 static BRIDGE_PORT: u16 = 18733;
 
+struct CachePaths {
+    shader: String,
+    pipeline: String,
+}
+
 pub fn bridge_is_running() -> bool {
     if let Ok(mut stream) =
         TcpStream::connect_timeout(&format!("127.0.0.1:{}", BRIDGE_PORT).parse().unwrap(), Duration::from_millis(500))
@@ -158,11 +163,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
 
-    if let Some(subdir) = node.shader_cache_subdir {
-        super::shader_cache::deploy_preset_cache(&home, subdir, appid);
-    }
-
-    let shader_cache_path = build_shader_cache(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid);
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
@@ -175,9 +176,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
-    if let Some(cache) = &shader_cache_path {
-        cmd.env("DXMT_SHADER_CACHE_PATH", format!("{}/", cache));
-    }
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
 
     for ev in &node.env_vars {
@@ -217,6 +216,9 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
+    let cache_paths = build_cache_paths(&home, node, appid);
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
     let child = cmd.spawn()?;
@@ -224,12 +226,22 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let pid = crate::launch::launch_via_steam(appid)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let node = get_pipeline(PipelineId::Steam);
+    let cache_paths = build_cache_paths(&home, node, appid);
+    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
+    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
     Ok((pid, "steam"))
 }
 
 fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let result = crate::steam::launch_macos_steam_game(appid)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let node = get_pipeline(PipelineId::MacSteam);
+    let cache_paths = build_cache_paths(&home, node, appid);
+    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
+    let result = crate::steam::launch_macos_steam_game_with_env(appid, &env)?;
     let pid = result.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     Ok((pid, "macos_steam"))
 }
@@ -265,6 +277,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         .env("MONO_ENV_OPTIONS", "--runtime=v4.0")
         .env("MONO_PATH", dir.to_string_lossy().to_string());
 
+    let cache_paths = build_cache_paths(&home, node, appid);
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &home.join(".metalsharp").join("runtime").join("wine"));
+
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
@@ -294,11 +309,63 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
-fn build_shader_cache(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<String> {
+fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
-    let cache_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
-    let _ = std::fs::create_dir_all(&cache_base);
-    Some(cache_base.to_string_lossy().to_string())
+    let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
+    let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
+    let _ = std::fs::create_dir_all(&shader_base);
+    let _ = std::fs::create_dir_all(&pipeline_base);
+    super::shader_cache::deploy_preset_cache(home, subdir, appid);
+    Some(CachePaths {
+        shader: shader_base.to_string_lossy().to_string(),
+        pipeline: pipeline_base.to_string_lossy().to_string(),
+    })
+}
+
+fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
+    for (key, val) in cache_env_pairs(node, cache_paths, ms_root) {
+        cmd.env(key, val);
+    }
+}
+
+fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) -> Vec<(String, String)> {
+    let Some(cache) = cache_paths else {
+        return Vec::new();
+    };
+
+    let shader_dir = format!("{}/", cache.shader);
+    let pipeline_dir = format!("{}/", cache.pipeline);
+    let mut env = vec![
+        ("METALSHARP_SHADER_CACHE_PATH".to_string(), shader_dir.clone()),
+        ("METALSHARP_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()),
+        ("MTL_SHADER_CACHE_DIR".to_string(), shader_dir.clone()),
+    ];
+
+    match node.backend {
+        "dxmt" => {
+            env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir));
+            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
+        },
+        "dxvk" => {
+            env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
+            env.push(("DXVK_LOG_PATH".to_string(), cache.pipeline.clone()));
+            let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+            if moltenvk_icd.exists() {
+                env.push(("VK_ICD_FILENAMES".to_string(), moltenvk_icd.to_string_lossy().to_string()));
+            }
+        },
+        "wine32" | "wine" | "wine-steam" => {
+            env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir.clone()));
+            env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
+            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
+        },
+        "mono" | "macos-steam" => {
+            env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
+        },
+        _ => {},
+    }
+
+    env
 }
 
 fn resolve_game_exe(game_dir: &PathBuf) -> String {

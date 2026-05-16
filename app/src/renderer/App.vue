@@ -81,12 +81,7 @@ provide("toast", toast);
 provide("loadLibrary", loadLibrary);
 provide("api", api);
 
-async function loadLibrary() {
-  const lib = await api<SteamLibrary>("GET", "/steam/library");
-  if (lib) library.value = lib;
-
-  await api<{ steam: SteamStatus }>("GET", "/scan");
-
+async function refreshSteamStatus() {
   const steamStatus = await api<{
     installed: boolean;
     running: boolean;
@@ -100,6 +95,14 @@ async function loadLibrary() {
     macSteamInstalled.value = steamStatus.mac_installed;
     macSteamRunning.value = steamStatus.mac_running;
   }
+}
+
+async function loadLibrary() {
+  const lib = await api<SteamLibrary>("GET", "/steam/library");
+  if (lib) library.value = lib;
+
+  await api<{ steam: SteamStatus }>("GET", "/scan");
+  await refreshSteamStatus();
 }
 
 async function checkBackend() {
@@ -198,6 +201,8 @@ async function getSteamApiKey() {
 }
 
 function startHealthPolling() {
+  setInterval(refreshSteamStatus, 5000);
+
   setInterval(async () => {
     const prev = backendConnected.value;
     backendConnected.value = await getAPI().isBackendAlive();
