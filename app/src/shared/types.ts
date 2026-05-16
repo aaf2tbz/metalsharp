@@ -15,6 +15,10 @@ export interface SteamStatus {
   installed: boolean;
   path?: string;
   loginState?: LoginState;
+  macInstalled?: boolean;
+  macRunning?: boolean;
+  macPath?: string;
+  macInstallUrl?: string;
   running: boolean;
 }
 
