@@ -28,29 +28,49 @@ const START_RETRY_DELAY_MS = 500;
 
 async function startMigration(retriesLeft = MAX_START_RETRIES) {
   try {
-    const res = await window.metalsharp.request("POST", "/update/migrate/start", undefined, 10000);
+    const res = await window.metalsharp.migrateStart();
     if (res?.ok) {
       message.value = "Migration started...";
       startPolling();
+    } else if (res?.error?.includes("migration already in progress")) {
+      message.value = "Migration already running...";
+      startPolling();
     } else {
-      error.value = res?.error ?? "Failed to start migration";
-      message.value = `Error: ${error.value}`;
+      const errorText = res?.error ?? "Failed to start migration";
+      if (retriesLeft > 0 && shouldRetryBackendError(errorText)) {
+        message.value = "Waiting for backend to start...";
+        await new Promise((r) => setTimeout(r, START_RETRY_DELAY_MS));
+        await startMigration(retriesLeft - 1);
+      } else {
+        error.value = errorText;
+        message.value = `Error: ${error.value}`;
+      }
     }
-  } catch (e: any) {
-    if (retriesLeft > 0 && (e.message?.includes("ECONNREFUSED") || e.message?.includes("timeout"))) {
+  } catch (e: unknown) {
+    const errorText = e instanceof Error ? e.message : "Network error";
+    if (retriesLeft > 0 && shouldRetryBackendError(errorText)) {
       message.value = "Waiting for backend to start...";
       await new Promise((r) => setTimeout(r, START_RETRY_DELAY_MS));
-      startMigration(retriesLeft - 1);
+      await startMigration(retriesLeft - 1);
     } else {
-      error.value = e.message ?? "Network error";
+      error.value = errorText;
       message.value = `Error: ${error.value}`;
     }
   }
 }
 
+function shouldRetryBackendError(errorText: string) {
+  return (
+    errorText.includes("ECONNREFUSED") ||
+    errorText.includes("timeout") ||
+    errorText.includes("did not start in time") ||
+    errorText.includes("Migration backend unavailable")
+  );
+}
+
 async function pollProgress() {
   try {
-    const res = await window.metalsharp.request("GET", "/update/migrate/progress");
+    const res = await window.metalsharp.migrateProgress();
     if (!res) return;
     const data = res.data ?? res;
     status.value = data.status ?? "idle";

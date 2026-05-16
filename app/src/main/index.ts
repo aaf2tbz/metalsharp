@@ -176,7 +176,10 @@ app.whenReady().then(async () => {
   ensureMetalsharpDirs();
   bridge = new RustBridge();
   updaterBridge = new UpdaterBridge(bridge.getPort());
-  await bridge.start();
+  const backendStart = await bridge.start();
+  if (!backendStart.ok) {
+    console.warn(`MetalSharp backend did not start during app launch: ${backendStart.error}`);
+  }
 
   const needsMigration = await checkNeedsMigration();
   migrationMode = needsMigration;
@@ -203,11 +206,52 @@ app.on("before-quit", () => {
   cleanup();
 });
 
+function backendErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Backend request failed";
+}
+
+async function requestBackend(
+  method: string,
+  url: string,
+  body?: Record<string, unknown>,
+  timeoutMs?: number,
+): Promise<unknown> {
+  const ready = await bridge.ensureRunning();
+  if (!ready.ok) {
+    return { ok: false, error: ready.error ?? "Backend is not available" };
+  }
+
+  try {
+    return await bridge.request(method, url, body, timeoutMs);
+  } catch (e) {
+    return { ok: false, error: backendErrorMessage(e) };
+  }
+}
+
+async function requestMigrationBackend(
+  method: string,
+  url: string,
+  body?: Record<string, unknown>,
+  timeoutMs?: number,
+): Promise<unknown> {
+  const ready = await bridge.ensureRunning(30000);
+  if (!ready.ok) {
+    return {
+      ok: false,
+      error: `Migration backend unavailable: ${ready.error ?? "could not start metalsharp-backend"}`,
+    };
+  }
+
+  return requestBackend(method, url, body, timeoutMs);
+}
+
 function registerIpc() {
   ipcMain.handle(
     "backend:request",
     async (_e, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
-      return bridge.request(method, url, body, timeoutMs);
+      return requestBackend(method, url, body, timeoutMs);
     },
   );
 
@@ -418,15 +462,15 @@ function registerIpc() {
   });
 
   ipcMain.handle("migrate:check", async () => {
-    return bridge.request("GET", "/update/migrate/check");
+    return requestMigrationBackend("GET", "/update/migrate/check");
   });
 
   ipcMain.handle("migrate:start", async () => {
-    return bridge.request("POST", "/update/migrate/start");
+    return requestMigrationBackend("POST", "/update/migrate/start", undefined, 10000);
   });
 
   ipcMain.handle("migrate:progress", async () => {
-    return bridge.request("GET", "/update/migrate/progress");
+    return requestMigrationBackend("GET", "/update/migrate/progress");
   });
 
   ipcMain.on("app:quit", () => {
