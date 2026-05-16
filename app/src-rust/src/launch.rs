@@ -681,15 +681,15 @@ fn resolve_game_exe_fallback(game_dir: &PathBuf) -> String {
     game_dir.to_string_lossy().to_string()
 }
 
-pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = Command::new("kill")
-        .args(["-9", &pid.to_string()])
+pub fn kill_process_tree(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = Command::new("pkill")
+        .args(["-9", "-P", &pid.to_string()])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
 
-    let _ = Command::new("pkill")
-        .args(["-9", "-P", &pid.to_string()])
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -705,12 +705,13 @@ pub fn kill(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+pub fn kill_game_with_pid(appid: u32, pid: i32) -> Result<(), Box<dyn std::error::Error>> {
+    kill_process_tree(pid)?;
+
     let home = dirs::home_dir().ok_or("no home dir")?;
     let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
 
     let resolved = crate::setup::resolve_game_dir(appid);
-
     let dirs_to_check =
         if let Some(ref rd) = resolved { vec![rd.clone(), game_dir.clone()] } else { vec![game_dir.clone()] };
 
@@ -719,8 +720,10 @@ pub fn kill_game(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(output) = Command::new("pgrep").args(["-a", "-f", &dir.to_string_lossy()]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if let Some(pid_str) = line.split_whitespace().next() {
-                        if let Ok(pid) = pid_str.parse::<i32>() {
-                            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+                        if let Ok(p) = pid_str.parse::<i32>() {
+                            if p != pid {
+                                let _ = Command::new("kill").args(["-9", &p.to_string()]).status();
+                            }
                         }
                     }
                 }
