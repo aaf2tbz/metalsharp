@@ -21,6 +21,7 @@ mod installer;
 mod launch;
 mod migrate;
 mod mtsp;
+mod platform;
 mod scan;
 mod setup;
 mod sharp_library;

@@ -25,6 +25,7 @@ node_modules/
 
 # Rust build artifacts
 app/src-rust/target/
+app/native/
 src/fna/FNA/
 src/fna/FNA3D/
 build-x86/

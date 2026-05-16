@@ -73,17 +73,29 @@ fn run_install_all() {
         },
     };
 
-    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
-        ("Rosetta 2", Box::new(|_| install_rosetta())),
-        ("System Tools", Box::new(|_| install_xcode_cli())),
-        ("Runtime Assets", Box::new(install_metalsharp_bundle)),
-        ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
-        ("Goldberg Steam Emulator", Box::new(install_goldberg)),
-        ("EAC Bypass", Box::new(install_eac_toggle)),
-        ("Pipeline Rules", Box::new(install_mtsp_rules)),
-        ("Mono Configs", Box::new(install_mono_configs)),
-        ("Runtime Support", Box::new(|_| install_mono_arm64())),
-    ];
+    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> =
+        if crate::platform::current() == crate::platform::HostPlatform::Linux {
+            vec![
+                ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+                ("DXVK Runtime", Box::new(install_dxvk_fallback)),
+                ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+                ("EAC Bypass", Box::new(install_eac_toggle)),
+                ("Pipeline Rules", Box::new(install_mtsp_rules)),
+                ("Mono Configs", Box::new(install_mono_configs)),
+            ]
+        } else {
+            vec![
+                ("Rosetta 2", Box::new(|_| install_rosetta())),
+                ("System Tools", Box::new(|_| install_xcode_cli())),
+                ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+                ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+                ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+                ("EAC Bypass", Box::new(install_eac_toggle)),
+                ("Pipeline Rules", Box::new(install_mtsp_rules)),
+                ("Mono Configs", Box::new(install_mono_configs)),
+                ("Runtime Support", Box::new(|_| install_mono_arm64())),
+            ]
+        };
 
     let total = steps.len();
 
@@ -100,7 +112,19 @@ fn run_install_all() {
         return;
     }
 
-    if !check_command("brew") {
+    if !check_command("curl") {
+        write_progress(
+            0,
+            total,
+            "Prerequisites",
+            "error",
+            "curl not found — install curl before installing runtime assets.",
+            Some("curl command not found"),
+        );
+        return;
+    }
+
+    if crate::platform::current() == crate::platform::HostPlatform::Macos && !check_command("brew") {
         write_progress(
             0,
             total,
@@ -260,7 +284,29 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
+    if crate::platform::current() == crate::platform::HostPlatform::Linux {
+        return install_linux_system_wine_runtime(home);
+    }
+
     Err("MetalSharp runtime not found — no bundled metalsharp_bundle.tar.zst available".into())
+}
+
+fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
+    let wine = find_system_command("wine").ok_or_else(|| {
+        "Linux Wine runtime not found — install wine or bundle metalsharp_linux_runtime.tar.zst".to_string()
+    })?;
+
+    let bin_dir = home.join(".metalsharp").join("runtime").join("wine").join("bin");
+    fs::create_dir_all(&bin_dir).map_err(|e| format!("create wine runtime bin dir: {}", e))?;
+
+    for wrapper_name in &["wine", "metalsharp-wine"] {
+        let wrapper = bin_dir.join(wrapper_name);
+        let contents = format!("#!/bin/sh\nexec '{}' \"$@\"\n", wine.to_string_lossy());
+        fs::write(&wrapper, contents).map_err(|e| format!("write {}: {}", wrapper.display(), e))?;
+        make_executable(&wrapper);
+    }
+
+    Ok(true)
 }
 
 fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
@@ -724,32 +770,27 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let _ = fs::create_dir_all(&prefix);
 
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let dyld = format!(
-        "{}:{}",
-        ms_root.join("lib").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
-    );
-
-    let _ = Command::new(&ms_wine)
+    let mut wineboot_cmd = Command::new(&ms_wine);
+    wineboot_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("WINEDEBUG", "-all")
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut wineboot_cmd, &ms_root);
+    let _ = wineboot_cmd.status();
 
-    let _ = Command::new(&ms_wine)
+    let mut install_cmd = Command::new(&ms_wine);
+    install_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("WINEDEBUG", "-all")
         .arg(&installer)
         .args(["/S"])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Steam install spawn failed: {}", e))?;
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut install_cmd, &ms_root);
+    let _ = install_cmd.spawn().map_err(|e| format!("Steam install spawn failed: {}", e))?;
 
     for _ in 0..90 {
         std::thread::sleep(Duration::from_secs(2));
@@ -772,17 +813,48 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn check_command(cmd: &str) -> bool {
+    find_system_command(cmd).is_some()
+}
+
+fn find_system_command(cmd: &str) -> Option<PathBuf> {
     let candidates = match cmd {
         "which" => vec![PathBuf::from("/usr/bin/which")],
-        "mono" => vec![PathBuf::from("/opt/homebrew/bin/mono"), PathBuf::from("/usr/local/bin/mono")],
+        "mono" => vec![
+            PathBuf::from("/opt/homebrew/bin/mono"),
+            PathBuf::from("/usr/local/bin/mono"),
+            PathBuf::from("/usr/bin/mono"),
+        ],
+        "wine" => vec![PathBuf::from("/usr/bin/wine"), PathBuf::from("/usr/local/bin/wine")],
         _ => vec![PathBuf::from(cmd)],
     };
     for c in &candidates {
         if c.exists() {
-            return true;
+            return Some(c.clone());
         }
     }
-    Command::new("/usr/bin/which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("/usr/bin/which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+        .then(|| {
+            let output = Command::new("/usr/bin/which").arg(cmd).output().ok()?;
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!path.is_empty()).then_some(PathBuf::from(path))
+        })
+        .flatten()
+}
+
+fn make_executable(path: &PathBuf) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o755);
+            let _ = fs::set_permissions(path, permissions);
+        }
+    }
 }
 
 fn install_mono_arm64() -> Result<bool, String> {
@@ -929,8 +1001,7 @@ fn find_bundled_archive(name: &str) -> Option<PathBuf> {
 }
 
 fn find_bundled_file(name: &str) -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let resources = exe.parent()?.parent()?.join("Resources");
+    if let Some(resources) = crate::platform::app_resources_dir() {
         let file = resources.join(format!("bundles/{}", name));
         if file.exists() {
             return Some(file);
@@ -973,8 +1044,7 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
 }
 
 fn find_in_resources(name: &str) -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let resources = exe.parent()?.parent()?.join("Resources");
+    if let Some(resources) = crate::platform::app_resources_dir() {
         let archive = resources.join(format!("bundles/{}.tar.zst", name));
         if archive.exists() {
             return Some(archive);

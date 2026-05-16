@@ -13,6 +13,7 @@ function ensureShellPath() {
   const candidates = [
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    "/usr/local/sbin",
     "/usr/bin",
     "/bin",
     "/usr/sbin",
@@ -225,6 +226,10 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:eject-dmg", async () => {
+    if (process.platform !== "darwin") {
+      return { ok: false, error: "DMG ejection is only available on macOS." };
+    }
+
     const exePath = app.getPath("exe");
     const dmgMatch = exePath.match(/\/Volumes\/([^/]+)/);
     if (dmgMatch) {
@@ -344,6 +349,10 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:install-homebrew", async () => {
+    if (process.platform !== "darwin") {
+      return { ok: false, error: "Homebrew setup is only available on macOS." };
+    }
+
     const { exec } = require("child_process");
     return new Promise((resolve) => {
       const script = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;

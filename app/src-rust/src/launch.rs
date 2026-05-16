@@ -12,7 +12,8 @@ pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error
 
 pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
@@ -27,13 +28,14 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
 
     let url = format!("steam://run/{}", appid);
 
-    let child = Command::new(&wine)
-        .env("WINEPREFIX", &prefix_str)
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
 
     Ok(child.id())
 }
@@ -43,7 +45,8 @@ pub fn launch_via_steam_with_env(
     extra_env: &[(String, String)],
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
@@ -77,6 +80,7 @@ pub fn launch_via_steam_with_env(
 
     let mut cmd = Command::new(&wine);
     cmd.env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all");
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     for (key, val) in extra_env {
         cmd.env(key, val);
@@ -239,7 +243,8 @@ fn find_mono() -> Result<String, Box<dyn std::error::Error>> {
 fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_wine = crate::platform::runtime_wine_binary(&ms_root);
     if ms_wine.exists() {
         return Ok(ms_wine.to_string_lossy().to_string());
     }
@@ -247,6 +252,8 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     let candidates = vec![
         PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"),
         PathBuf::from("/opt/homebrew/bin/wine64"),
+        PathBuf::from("/usr/bin/wine"),
+        PathBuf::from("/usr/local/bin/wine"),
     ];
 
     for c in candidates {
@@ -265,13 +272,15 @@ pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Er
     }
 
     let wine = find_wine()?;
-    let status = Command::new(&wine)
-        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let status = cmd.status()?;
 
     if !status.success() {
         return Err("failed to initialize Wine prefix".into());
@@ -292,7 +301,11 @@ fn launch_via_wine(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>> {
 
     ensure_wine_prefix(&prefix)?;
 
-    let child = Command::new(&wine).env("WINEPREFIX", &prefix_str).arg(exe_path).spawn()?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", &prefix_str).arg(exe_path);
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
 
     Ok(child.id())
 }
@@ -302,12 +315,14 @@ fn launch_via_fna_mono(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>
     let exe = PathBuf::from(exe_path);
     let game_dir = exe.parent().ok_or("no parent dir for exe")?;
 
-    let child = Command::new(&mono)
-        .current_dir(game_dir)
-        .env("DYLD_LIBRARY_PATH", ".")
-        .env("METAL_DEVICE_WRAPPER_TYPE", "0")
-        .arg(&exe)
-        .spawn()?;
+    let mut cmd = Command::new(&mono);
+    cmd.current_dir(game_dir).env("METAL_DEVICE_WRAPPER_TYPE", "0").arg(&exe);
+    if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        cmd.env("DYLD_LIBRARY_PATH", ".");
+    } else if crate::platform::current() == crate::platform::HostPlatform::Linux {
+        cmd.env("LD_LIBRARY_PATH", ".");
+    }
+    let child = cmd.spawn()?;
 
     Ok(child.id())
 }

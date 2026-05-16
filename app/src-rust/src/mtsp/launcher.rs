@@ -34,7 +34,8 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let bridge_exe = home.join(".metalsharp").join("runtime").join("steam-bridge").join("steambridge.exe");
-    let wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
     let prefix = home.join(".metalsharp").join("prefix-steam");
 
     if !bridge_exe.exists() {
@@ -59,6 +60,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
         .env("WINEDEBUG", "-all")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     let _child = cmd.spawn()?;
 
@@ -147,7 +149,7 @@ pub fn deploy_dlls_for_pipeline(game_dir: &PathBuf, node: &PipelineNode) {
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
 
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -162,15 +164,14 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     deploy_dlls_for_pipeline(&game_dir, node);
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
+    let runtime_lib_key =
+        crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, appid);
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(&game_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path);
+    cmd.current_dir(&game_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -192,7 +193,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
 
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -205,12 +206,11 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
+    let runtime_lib_key =
+        crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(&game_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path);
+    cmd.current_dir(&game_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -267,11 +267,23 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
     let mono_config = find_config("terraria-mono.config");
     let shims_dir = find_shims_dir();
     let mono_lib = mono_bin.parent().unwrap_or(std::path::Path::new("")).join("..").join("lib");
-    let dyld = format!("{}:{}:{}:/opt/homebrew/lib", dir.to_string_lossy(), shims_dir, mono_lib.to_string_lossy());
+    let mut library_paths = vec![dir.to_string_lossy().to_string(), shims_dir, mono_lib.to_string_lossy().to_string()];
+    if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        library_paths.push("/opt/homebrew/lib".into());
+    } else {
+        library_paths.push("/usr/lib".into());
+        library_paths.push("/usr/local/lib".into());
+    }
+    let runtime_lib_path = library_paths.join(":");
+    let runtime_lib_key = if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
 
     let mut cmd = Command::new(&mono_bin);
     cmd.current_dir(dir)
-        .env("DYLD_LIBRARY_PATH", &dyld)
+        .env(runtime_lib_key, &runtime_lib_path)
         .env("MONO_CONFIG", mono_config)
         .env("MONO_ENV_OPTIONS", "--runtime=v4.0")
         .env("MONO_PATH", dir.to_string_lossy().to_string());
@@ -294,6 +306,7 @@ fn find_mono_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let candidates = vec![
         PathBuf::from("/opt/homebrew/bin/mono"),
         PathBuf::from("/usr/local/bin/mono"),
+        PathBuf::from("/usr/bin/mono"),
         home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono"),
     ];
     for c in candidates {
@@ -301,7 +314,7 @@ fn find_mono_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
             return Ok(c);
         }
     }
-    Err("Mono not found — install with: brew install mono".into())
+    Err("Mono not found — install Mono or use setup to install runtime support".into())
 }
 
 fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {

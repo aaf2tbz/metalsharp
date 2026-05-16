@@ -17,9 +17,14 @@
     "rust:dev": "cd src-rust && cargo build",
     "build:all": "npm run rust:build && npm run build",
     "pack": "npm run build:all && electron-builder --dir",
-    "fetch:bundles": "../tools/dmg/create-bundles.sh",
-    "dist": "mkdir -p native && for f in metalsharp metalsharp_launcher d3d11.dylib d3d12.dylib dxgi.dylib xaudio2_9.dylib xinput1_4.dylib; do [ -f native/$f ] || touch native/$f; done && npm run fetch:bundles && npm run build:all && electron-builder",
-    "dmg": "npm run dist -- --mac dmg"
+    "prepare:native": "../tools/package/prepare-native-placeholders.sh",
+    "fetch:bundles:mac": "../tools/dmg/create-bundles.sh",
+    "fetch:bundles:linux": "../tools/linux/create-bundles.sh",
+    "fetch:bundles": "if [ \"${METALSHARP_TARGET:-}\" = \"linux\" ]; then npm run fetch:bundles:linux; else npm run fetch:bundles:mac; fi",
+    "dist": "npm run prepare:native && npm run fetch:bundles && npm run build:all && electron-builder",
+    "dmg": "npm run dist -- --mac dmg",
+    "deb": "../tools/linux/build-deb.sh",
+    "deb:docker": "../tools/linux/build-deb-docker.sh"
   },
   "dependencies": {
     "electron-store": "^10.0.0"
@@ -62,6 +67,31 @@
             "metalsharp"
           ]
         }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Game",
+      "icon": "build/icon.png",
+      "executableName": "metalsharp",
+      "maintainer": "MetalSharp <noreply@metalsharp.local>"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libasound2 | libasound2t64",
+        "wine | wine64",
+        "tar",
+        "curl"
       ]
     },
     "dmg": {
@@ -120,6 +150,26 @@
       {
         "from": "native/xinput1_4.dylib",
         "to": "xinput1_4.dylib"
+      },
+      {
+        "from": "native/d3d11.so",
+        "to": "d3d11.so"
+      },
+      {
+        "from": "native/d3d12.so",
+        "to": "d3d12.so"
+      },
+      {
+        "from": "native/dxgi.so",
+        "to": "dxgi.so"
+      },
+      {
+        "from": "native/xaudio2_9.so",
+        "to": "xaudio2_9.so"
+      },
+      {
+        "from": "native/xinput1_4.so",
+        "to": "xinput1_4.so"
       },
       {
         "from": "bundles/metalsharp_bundle.tar.zst",

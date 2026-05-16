@@ -94,7 +94,7 @@ pub fn needs_migration() -> serde_json::Value {
 
 fn runtime_needs_repair(home: &PathBuf) -> bool {
     let runtime_wine = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = runtime_wine.join("bin").join("metalsharp-wine");
+    let wine = crate::platform::runtime_wine_binary(&runtime_wine);
     let steam_prefix = home.join(".metalsharp").join("prefix-steam");
     !wine.exists() && steam_prefix.exists()
 }

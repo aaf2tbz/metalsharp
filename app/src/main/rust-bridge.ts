@@ -8,6 +8,7 @@ function getShellPath(): string {
   const candidates = [
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    "/usr/local/sbin",
     "/usr/bin",
     "/bin",
     "/usr/sbin",
@@ -218,6 +219,7 @@ export class RustBridge {
       path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",
+      "/usr/bin/metalsharp-backend",
     ];
 
     for (const c of candidates) {

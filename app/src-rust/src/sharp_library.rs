@@ -152,7 +152,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = ms_root.join("bin").join("metalsharp-wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
 
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -172,17 +172,19 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
     let node = crate::mtsp::engine::get_pipeline(pipeline);
     crate::mtsp::launcher::deploy_dlls_for_pipeline(&work_dir, node);
 
-    let dyld = if node.dyld_paths.is_empty() {
+    let runtime_lib_path = if node.dyld_paths.is_empty() {
         ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string()
     } else {
         node.dyld_paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
     };
+    let runtime_lib_key =
+        crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&work_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld);
+        .env(runtime_lib_key, &runtime_lib_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
