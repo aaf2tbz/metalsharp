@@ -504,8 +504,8 @@ pub fn library() -> Value {
                 || downloaded_appids.contains(appid)
                 || wine_steam_appids.contains(appid);
             let dual = crate::scan::resolve_dual_game_dir(*appid);
-            let recommended = crate::launch::recommended_method_for_appid(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
+            let recommended = pipeline_id.to_legacy_method();
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
                 "id": node.id,
