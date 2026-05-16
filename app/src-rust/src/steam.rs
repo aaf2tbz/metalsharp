@@ -34,6 +34,32 @@ fn macos_steam_app() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
+fn macos_steam_executable() -> Option<PathBuf> {
+    let app = macos_steam_app()?;
+    let candidates = [app.join("Contents/MacOS/steam_osx"), app.join("Contents/MacOS/Steam")];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+fn macos_steam_env_marker() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("cache").join("macos_steam_env_scoped")
+}
+
+fn macos_steam_env_scoped() -> bool {
+    macos_steam_env_marker().exists()
+}
+
+fn mark_macos_steam_env_scoped() {
+    let marker = macos_steam_env_marker();
+    if let Some(parent) = marker.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(marker, b"1");
+}
+
+fn clear_macos_steam_env_marker() {
+    let _ = std::fs::remove_file(macos_steam_env_marker());
+}
+
 fn macos_steam_install_url() -> &'static str {
     "https://store.steampowered.com/about/"
 }
@@ -264,6 +290,14 @@ pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Err("macOS Steam is not installed".into());
     }
 
+    if macos_steam_env_scoped() {
+        if is_macos_steam_running() {
+            stop_macos_steam()?;
+        } else {
+            clear_macos_steam_env_marker();
+        }
+    }
+
     let child = Command::new("open")
         .args(["-a", "Steam", "steam://open/library"])
         .stdout(std::process::Stdio::null())
@@ -318,6 +352,8 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
             .status();
     }
 
+    clear_macos_steam_env_marker();
+
     Ok(json!({"ok": true}))
 }
 
@@ -330,15 +366,26 @@ pub fn launch_macos_steam_game_with_env(
     extra_env: &[(String, String)],
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if !extra_env.is_empty() {
-        for (key, val) in extra_env {
-            let _ = Command::new("launchctl")
-                .args(["setenv", key, val])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
         if is_macos_steam_running() {
             stop_macos_steam()?;
+        }
+        launch_macos_steam_process_with_env(extra_env)?;
+        mark_macos_steam_env_scoped();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if is_macos_steam_running() {
+                break;
+            }
+        }
+        if !is_macos_steam_running() {
+            clear_macos_steam_env_marker();
+            return Err("macOS Steam failed to start with scoped launch environment".into());
+        }
+    } else if macos_steam_env_scoped() {
+        if is_macos_steam_running() {
+            stop_macos_steam()?;
+        } else {
+            clear_macos_steam_env_marker();
         }
     }
 
@@ -361,6 +408,19 @@ pub fn launch_macos_steam_game_with_env(
     let child = cmd.spawn()?;
 
     Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id()), "appid": appid}))
+}
+
+fn launch_macos_steam_process_with_env(extra_env: &[(String, String)]) -> Result<u32, Box<dyn std::error::Error>> {
+    let exe = macos_steam_executable().ok_or("macOS Steam executable not found")?;
+    let mut cmd = Command::new(&exe);
+    if let Some(parent) = exe.parent() {
+        cmd.current_dir(parent);
+    }
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+    let child = cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
+    Ok(child.id())
 }
 
 pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
