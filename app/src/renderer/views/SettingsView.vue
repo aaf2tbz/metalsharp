@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI } from "../composables/useApi";
+import { api } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
 
 const config = inject<Ref<AppConfig | null>>("config")!;
@@ -10,6 +10,10 @@ const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const updateStatus = inject<Ref<UpdateStatus | null>>("updateStatus")!;
+const updateDownloading = inject<Ref<boolean>>("updateDownloading")!;
+const updateProgress = inject<Ref<number>>("updateProgress")!;
+const updateMessage = inject<Ref<string>>("updateMessage")!;
+const startUpdateDownload = inject<() => void>("startUpdateDownload")!;
 const steamApiKey = inject<Ref<string | null>>("steamApiKey")!;
 const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
@@ -215,7 +219,28 @@ async function checkForUpdates() {
           <span class="badge" :class="updateStatus?.ok ? 'badge-ok' : 'badge-warn'">
             v{{ updateStatus?.current_version ?? "unknown" }}
           </span>
-          <button class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
+          <button v-if="!updateDownloading" class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
+        </div>
+      </div>
+      <div v-if="updateStatus?.ok && updateStatus?.available && !updateDownloading" class="settings-row">
+        <div>
+          <div class="settings-label">Download Update</div>
+          <div class="settings-desc">v{{ updateStatus.latest_version }} is ready to download</div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-primary btn-sm" @click="startUpdateDownload">Download &amp; Install</button>
+        </div>
+      </div>
+      <div v-if="updateDownloading" class="settings-row">
+        <div>
+          <div class="settings-label">{{ updateMessage || "Updating..." }}</div>
+          <div class="settings-desc">Do not close MetalSharp during the update</div>
+        </div>
+        <div class="settings-value">
+          <div class="update-progress-bar">
+            <div class="update-progress-fill" :style="{ width: updateProgress + '%' }"></div>
+          </div>
+          <span class="settings-version">{{ updateProgress }}%</span>
         </div>
       </div>
     </div>
@@ -289,5 +314,18 @@ async function checkForUpdates() {
 .settings-version {
   font-size: 12px;
   color: var(--text-dim);
+}
+.update-progress-bar {
+  width: 140px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
 }
 </style>

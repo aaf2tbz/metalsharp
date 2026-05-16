@@ -63,6 +63,10 @@ provide("wineSteamRunning", wineSteamRunning);
 provide("backendConnected", backendConnected);
 provide("backendVersion", backendVersion);
 provide("updateStatus", updateStatus);
+provide("updateDownloading", updateDownloading);
+provide("updateProgress", updateProgress);
+provide("updateMessage", updateMessage);
+provide("startUpdateDownload", startUpdateDownload);
 provide("steamApiKey", steamApiKey);
 provide("setupDeviceName", setupDeviceName);
 provide("toast", toast);
@@ -99,9 +103,85 @@ async function checkBackend() {
   }
 }
 
+const updateDownloading = ref(false);
+const updateProgress = ref(0);
+const updateMessage = ref("");
+
 async function checkForUpdates() {
   const result = await api<UpdateStatus>("GET", "/update/check");
   if (result) updateStatus.value = result;
+  if (result?.ok && result.available) {
+    toast.show(`Update available: v${result.latest_version}`, "success");
+  }
+}
+
+async function startUpdateDownload() {
+  if (updateDownloading.value) return;
+  const backend = getAPI();
+  const pid = await backend.backendGetPid();
+  if (!pid) {
+    toast.show("Cannot get backend PID", "error");
+    return;
+  }
+  const ready = await backend.updaterEnsureReady();
+  if (!ready) {
+    toast.show("Updater not available", "error");
+    return;
+  }
+  updateDownloading.value = true;
+  updateProgress.value = 0;
+  updateMessage.value = "Starting download...";
+
+  const startResult = await api<{ ok: boolean; error?: string }>("POST", "/update/start");
+  if (!startResult?.ok) {
+    toast.show(startResult?.error ?? "Failed to start download", "error");
+    updateDownloading.value = false;
+    return;
+  }
+
+  const pollDownload = setInterval(async () => {
+    const progress = await api<{ status: string; percent: number; message: string; error: string | null }>("GET", "/update/progress");
+    if (!progress) return;
+    updateProgress.value = progress.percent ?? 0;
+    updateMessage.value = progress.message ?? "";
+    if (progress.status === "downloaded" || progress.status === "complete") {
+      clearInterval(pollDownload);
+      const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
+      if (!dmgResult?.path) {
+        toast.show("Download complete but DMG not found", "error");
+        updateDownloading.value = false;
+        return;
+      }
+      const targetVersion = updateStatus.value?.latest_version ?? "";
+      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
+      if (!spawnResult?.ok) {
+        toast.show(spawnResult?.error ?? "Failed to start installer", "error");
+        updateDownloading.value = false;
+        return;
+      }
+      updateMessage.value = "Installing update...";
+      updateProgress.value = 90;
+      const pollInstall = setInterval(async () => {
+        const installStatus = await backend.updaterInstallStatus();
+        if (!installStatus) return;
+        updateProgress.value = installStatus.percent ?? 90;
+        updateMessage.value = installStatus.message ?? "Installing...";
+        if (installStatus.phase === "complete") {
+          clearInterval(pollInstall);
+          updateDownloading.value = false;
+          updateProgress.value = 100;
+          updateMessage.value = "";
+          toast.show("Update installed — restarting...", "success");
+          await new Promise((r) => setTimeout(r, 2000));
+          backend.quitApp();
+        }
+      }, 1000);
+    } else if (progress.status === "error") {
+      clearInterval(pollDownload);
+      updateDownloading.value = false;
+      toast.show(progress.error ?? "Download failed", "error");
+    }
+  }, 500);
 }
 
 async function getSteamApiKey() {
@@ -168,6 +248,14 @@ onMounted(async () => {
     />
     <main class="content">
       <div class="drag-strip"></div>
+      <div v-if="updateStatus?.ok && updateStatus?.available" class="update-banner">
+        <span class="update-banner-text" v-if="!updateDownloading">MetalSharp v{{ updateStatus.latest_version }} is available</span>
+        <span class="update-banner-text" v-else>{{ updateMessage }}</span>
+        <div v-if="updateDownloading" class="update-banner-progress">
+          <div class="update-banner-progress-fill" :style="{ width: updateProgress + '%' }"></div>
+        </div>
+        <button v-if="!updateDownloading" class="update-banner-btn" @click="startUpdateDownload">Download &amp; Install</button>
+      </div>
       <component :is="activeView" :key="currentView" />
     </main>
   </template>
@@ -179,6 +267,51 @@ onMounted(async () => {
   height: 38px;
   -webkit-app-region: drag;
   flex-shrink: 0;
+}
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #1b2838;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.update-banner:hover {
+  opacity: 0.9;
+}
+.update-banner-text {
+  white-space: nowrap;
+}
+.update-banner-btn {
+  background: rgba(0, 0, 0, 0.15);
+  border: none;
+  color: #1b2838;
+  padding: 3px 14px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.update-banner-btn:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+.update-banner-progress {
+  width: 120px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.update-banner-progress-fill {
+  height: 100%;
+  background: #1b2838;
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 .content {
   flex: 1;
