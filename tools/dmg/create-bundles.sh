@@ -15,7 +15,10 @@ mkdir -p "$BUNDLE_DIR"
 
 BUNDLES=(
     "metalsharp_bundle.tar.zst"
+    "metalsharp_bundle2.tar.zst"
     "SteamSetup.exe"
+    "steamwebhelper.exe"
+    "steamwebhelper-wrapper.c"
 )
 
 for bundle in "${BUNDLES[@]}"; do
@@ -25,12 +28,14 @@ for bundle in "${BUNDLES[@]}"; do
         continue
     fi
     echo "Downloading $bundle..."
-    curl -sL -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$bundle"
-    if [ -f "$dest" ]; then
+    curl -fL -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$bundle"
+    if [ -s "$dest" ]; then
         size=$(du -sh "$dest" | cut -f1)
         echo "  -> $dest ($size)"
     else
         echo "  FAILED: $bundle"
+        rm -f "$dest"
+        exit 1
     fi
 done
 
