@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI } from "../composables/useApi";
+import { api } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
 
 const config = inject<Ref<AppConfig | null>>("config")!;
@@ -10,6 +10,10 @@ const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const updateStatus = inject<Ref<UpdateStatus | null>>("updateStatus")!;
+const updateDownloading = inject<Ref<boolean>>("updateDownloading")!;
+const updateProgress = inject<Ref<number>>("updateProgress")!;
+const updateMessage = inject<Ref<string>>("updateMessage")!;
+const startUpdateDownload = inject<() => void>("startUpdateDownload")!;
 const steamApiKey = inject<Ref<string | null>>("steamApiKey")!;
 const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
@@ -18,9 +22,6 @@ const toast = useToast();
 const shaderCacheSize = ref(-1);
 const pipelineCacheSize = ref(-1);
 const apiKeyInput = ref("");
-const updateDownloading = ref(false);
-const updateProgress = ref(0);
-const updateMessage = ref("");
 
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
@@ -99,59 +100,6 @@ async function checkForUpdates() {
   if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
   else if (result?.ok) toast.show("You're up to date!", "success");
   else toast.show("Could not check for updates", "error");
-}
-
-async function startUpdateDownload() {
-  if (updateDownloading.value) return;
-  const backend = getAPI();
-  const pid = await backend.backendGetPid();
-  if (!pid) { toast.show("Cannot get backend PID", "error"); return; }
-  const ready = await backend.updaterEnsureReady();
-  if (!ready) { toast.show("Updater not available", "error"); return; }
-  updateDownloading.value = true;
-  updateProgress.value = 0;
-  updateMessage.value = "Starting download...";
-
-  const startResult = await api<{ ok: boolean; error?: string }>("POST", "/update/start");
-  if (!startResult?.ok) {
-    toast.show(startResult?.error ?? "Failed to start download", "error");
-    updateDownloading.value = false;
-    return;
-  }
-
-  const pollDownload = setInterval(async () => {
-    const progress = await api<{ status: string; percent: number; message: string; error: string | null }>("GET", "/update/progress");
-    if (!progress) return;
-    updateProgress.value = progress.percent ?? 0;
-    updateMessage.value = progress.message ?? "";
-    if (progress.status === "downloaded" || progress.status === "complete") {
-      clearInterval(pollDownload);
-      const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
-      if (!dmgResult?.path) { toast.show("Download complete but DMG not found", "error"); updateDownloading.value = false; return; }
-      const targetVersion = updateStatus.value?.latest_version ?? "";
-      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
-      if (!spawnResult?.ok) { toast.show(spawnResult?.error ?? "Failed to start installer", "error"); updateDownloading.value = false; return; }
-      updateMessage.value = "Installing update...";
-      updateProgress.value = 90;
-      const pollInstall = setInterval(async () => {
-        const installStatus = await backend.updaterInstallStatus();
-        if (!installStatus) return;
-        updateProgress.value = installStatus.percent ?? 90;
-        updateMessage.value = installStatus.message ?? "Installing...";
-        if (installStatus.phase === "complete") {
-          clearInterval(pollInstall);
-          updateDownloading.value = false;
-          toast.show("Update installed — restarting...", "success");
-          await new Promise((r) => setTimeout(r, 2000));
-          backend.quitApp();
-        }
-      }, 1000);
-    } else if (progress.status === "error") {
-      clearInterval(pollDownload);
-      updateDownloading.value = false;
-      toast.show(progress.error ?? "Download failed", "error");
-    }
-  }, 500);
 }
 </script>
 
