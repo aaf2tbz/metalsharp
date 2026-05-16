@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
 
@@ -106,11 +106,14 @@ pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut library = load_library()?;
     let idx = library.iter().position(|a| a.id == id).ok_or("App not found")?;
-    let app = &library[idx];
 
-    let app_dir = PathBuf::from(&app.install_dir);
-    if app_dir.exists() && app_dir.starts_with(base_dir()) {
-        let _ = fs::remove_dir_all(&app_dir);
+    if !is_safe_library_id(id) {
+        return Err("Invalid app id".into());
+    }
+
+    let app_dir = base_dir().join(id);
+    if app_dir.exists() {
+        remove_dir_all_under(&app_dir, &base_dir())?;
     }
 
     let cover_path = base_dir().join(format!("{}.cover", id));
@@ -120,6 +123,21 @@ pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     library.remove(idx);
     save_library(&library)?;
+    Ok(())
+}
+
+fn is_safe_library_id(id: &str) -> bool {
+    let mut components = Path::new(id).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+fn remove_dir_all_under(target: &Path, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let target = fs::canonicalize(target)?;
+    let root = fs::canonicalize(root)?;
+    if target == root || !target.starts_with(&root) {
+        return Err(format!("Refusing to remove path outside Sharp library: {}", target.display()).into());
+    }
+    fs::remove_dir_all(target)?;
     Ok(())
 }
 
@@ -379,5 +397,18 @@ pub fn handle_set_engine(body: &serde_json::Map<String, Value>) -> Value {
     match set_engine(id, engine) {
         Ok(()) => json!({"ok": true}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_path_like_library_ids() {
+        assert!(is_safe_library_id("game_123"));
+        assert!(!is_safe_library_id("../runtime"));
+        assert!(!is_safe_library_id("nested/game"));
+        assert!(!is_safe_library_id("/tmp/game"));
     }
 }
