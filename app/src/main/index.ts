@@ -47,7 +47,17 @@ function isFirstLaunch(): boolean {
 
 function ensureMetalsharpDirs() {
   const base = getMetalsharpDir();
-  const dirs = ["games", "cache", "logs", "runtime/fna", "runtime/shims", "runtime/mono-x86", "runtime/dxvk-1.10.3"];
+  const dirs = [
+    "games",
+    "cache",
+    "logs",
+    "shader-cache",
+    "pipeline-cache",
+    "runtime/fna",
+    "runtime/shims",
+    "runtime/mono-x86",
+    "runtime/dxvk-1.10.3",
+  ];
   for (const d of dirs) {
     fs.mkdirSync(path.join(base, d), { recursive: true });
   }

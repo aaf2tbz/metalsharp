@@ -1,9 +1,10 @@
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
+const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 
 fn ms_wine() -> PathBuf {
     dirs::home_dir()
@@ -75,12 +76,12 @@ pub fn status() -> Value {
 }
 
 pub fn is_wine_steam_running() -> bool {
-    pgrep_lines("Steam.exe|steam.exe").iter().any(|line| is_wine_steam_process_line(line))
+    process_lines().iter().any(|line| is_wine_steam_process_line(line))
 }
 
-fn pgrep_lines(pattern: &str) -> Vec<String> {
-    Command::new("pgrep")
-        .args(["-af", pattern])
+fn process_lines() -> Vec<String> {
+    Command::new("ps")
+        .args(["axo", "pid=,command="])
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -96,19 +97,22 @@ fn is_wine_steam_process_line(line: &str) -> bool {
 
     let prefix = steam_prefix().to_string_lossy().to_string();
     let exe = steam_exe_path().to_string_lossy().to_string();
+    let lower = line.to_lowercase();
 
     line.contains(&exe)
         || (line.contains(&prefix) && (line.contains("Steam.exe") || line.contains("steam.exe")))
-        || (line.contains("Program Files (x86)") && line.contains("Steam") && line.contains(".metalsharp"))
+        || (lower.contains("c:\\program files (x86)\\steam")
+            && (lower.contains("steam.exe")
+                || lower.contains("steamwebhelper")
+                || lower.contains("steamservice.exe")
+                || lower.contains("steamerrorreporter")))
 }
 
 pub fn is_macos_steam_running() -> bool {
-    Command::new("pgrep").args(["-x", "steam_osx"]).output().map(|o| o.status.success()).unwrap_or(false)
-        || Command::new("pgrep")
-            .args(["-f", "Steam.app/Contents/MacOS/steam_osx"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    process_lines().iter().any(|line| {
+        line.contains("Steam.app/Contents/MacOS/steam_osx")
+            || line.contains("Steam.AppBundle/Steam/Contents/MacOS/ipcserver")
+    })
 }
 
 fn latest_macos_steam_pid() -> u32 {
@@ -130,19 +134,14 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     let wrapper = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
 
-    if !wrapper.exists() {
-        return;
-    }
+    let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
 
-    let needs_redeploy = if real.exists() {
-        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
-        real_size < 100_000
-    } else {
-        let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
-        wrapper_size > 100_000
-    };
+    let wrapper_missing = wrapper_size == 0;
+    let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+    let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
-    if needs_redeploy {
+    if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
         deploy_steamwebhelper_wrapper(steam_dir);
     }
 }
@@ -157,6 +156,10 @@ fn steam_runtime_dyld_path() -> String {
 }
 
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
+    spawn_wine_steam_with_env(args, &[])
+}
+
+fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> Result<u32, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -174,8 +177,8 @@ fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     let prefix_str = steam_prefix().to_string_lossy().to_string();
     let dyld = steam_runtime_dyld_path();
 
-    let child = Command::new(&wine)
-        .current_dir(&steam_dir)
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
@@ -188,13 +191,22 @@ fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
         .arg(&exe)
         .args(args)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+
+    let child = cmd.spawn()?;
 
     Ok(child.id())
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    launch_wine_steam_with_env(&[])
+}
+
+pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -207,13 +219,26 @@ pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Err("Steam is not installed — use the setup wizard to install it first".into());
     }
 
-    if is_wine_steam_running() {
+    if is_wine_steam_running() && extra_env.is_empty() {
         return Ok(json!({"ok": true, "message": "Steam already running"}));
+    }
+
+    if is_wine_steam_running() {
+        stop_wine_steam()?;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if !is_wine_steam_running() {
+                break;
+            }
+        }
     }
 
     ensure_steam_launch_ready(&steam_dir);
 
-    let pid = spawn_wine_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])?;
+    let pid = spawn_wine_steam_with_env(
+        &["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"],
+        extra_env,
+    )?;
 
     let _ = open_wine_steam_library();
 
@@ -277,12 +302,46 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+        let _ = Command::new("pkill")
+            .args(["-TERM", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if is_macos_steam_running() {
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-f", "Steam.AppBundle/Steam/Contents/MacOS/ipcserver"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     Ok(json!({"ok": true}))
 }
 
 pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    launch_macos_steam_game_with_env(appid, &[])
+}
+
+pub fn launch_macos_steam_game_with_env(
+    appid: u32,
+    extra_env: &[(String, String)],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if !extra_env.is_empty() {
+        for (key, val) in extra_env {
+            let _ = Command::new("launchctl")
+                .args(["setenv", key, val])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        if is_macos_steam_running() {
+            stop_macos_steam()?;
+        }
+    }
+
     if !is_macos_steam_running() {
         launch_macos_steam()?;
         for _ in 0..20 {
@@ -294,11 +353,12 @@ pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::
     }
 
     let url = format!("steam://run/{}", appid);
-    let child = Command::new("open")
-        .arg(&url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    let mut cmd = Command::new("open");
+    cmd.arg(&url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+    let child = cmd.spawn()?;
 
     Ok(json!({"ok": true, "pid": latest_macos_steam_pid().max(child.id()), "appid": appid}))
 }
@@ -397,6 +457,9 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
     let mut appids = Vec::new();
 
     for steamapps in crate::scan::wine_steam_library_paths() {
+        if is_macos_steamapps_path(&steamapps) {
+            continue;
+        }
         if let Ok(entries) = std::fs::read_dir(&steamapps) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -422,30 +485,38 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     let real = cef_dir.join("steamwebhelper_real.exe");
     let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
 
-    if wrapper_marker.exists() && real.exists() {
-        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
-        if real_size > 100_000 {
+    let wrapper = match find_bundled_steamwebhelper_wrapper() {
+        Some(wrapper) => wrapper,
+        None => return,
+    };
+
+    let original_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
+    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+    let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+
+    if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        return;
+    }
+
+    if original_size > 0 && original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        if !wrapper_marker.exists() {
+            let _ = std::fs::write(&wrapper_marker, "deployed");
+        }
+        return;
+    }
+
+    if real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        if original_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            let _ = std::fs::remove_file(&real);
+            let _ = std::fs::rename(&original, &real);
+        } else {
             return;
         }
+    } else if original.exists() {
+        let _ = std::fs::remove_file(&original);
     }
 
-    if !original.exists() {
-        return;
-    }
-
-    let real_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
-    if real_size < 100_000 {
-        return;
-    }
-
-    if real.exists() {
-        let _ = std::fs::remove_file(&real);
-    }
-    let _ = std::fs::rename(&original, &real);
-
-    let wrapper = find_bundled_steamwebhelper_wrapper();
-    if let Some(wrapper_src) = wrapper {
-        let _ = std::fs::copy(&wrapper_src, &original);
+    if std::fs::copy(&wrapper, &original).is_ok() {
         let _ = std::fs::write(&wrapper_marker, "deployed");
     }
 }
@@ -471,7 +542,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 
     if cached.exists() {
         let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 100_000 {
+        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
             return Some(cached);
         }
     }
@@ -481,7 +552,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 
     if output.status.success() && cached.exists() {
         let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 100_000 {
+        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
             return Some(cached);
         }
     }
@@ -496,13 +567,8 @@ fn get_game_name_from_manifest(appid: u32) -> Option<String> {
     for steamapps in crate::scan::wine_steam_library_paths() {
         let manifest_path = steamapps.join(&manifest_name);
         if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("\"name\"") {
-                    if let Some((_, val)) = trimmed.split_once('\t') {
-                        return Some(val.trim().trim_matches('"').to_string());
-                    }
-                }
+            if let Some(name) = parse_acf_field(&contents, "name") {
+                return Some(name);
             }
         }
     }
@@ -510,45 +576,119 @@ fn get_game_name_from_manifest(appid: u32) -> Option<String> {
     None
 }
 
+fn parse_acf_field(contents: &str, key: &str) -> Option<String> {
+    for line in contents.lines() {
+        let mut quoted = line.trim().split('"');
+        let _ = quoted.next();
+        let Some(parsed_key) = quoted.next() else {
+            continue;
+        };
+        if parsed_key == key {
+            let _ = quoted.next();
+            if let Some(value) = quoted.next().map(str::trim).filter(|value| !value.is_empty()) {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn is_single_path_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+fn canonical_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+fn path_is_under(path: &Path, root: &Path) -> bool {
+    match (canonical_path(path), canonical_path(root)) {
+        (Some(path), Some(root)) => path != root && path.starts_with(root),
+        _ => false,
+    }
+}
+
+fn is_macos_steamapps_path(path: &Path) -> bool {
+    crate::scan::macos_steam_library_paths().iter().any(|macos_path| {
+        match (canonical_path(path), canonical_path(macos_path)) {
+            (Some(path), Some(macos_path)) => path == macos_path,
+            _ => false,
+        }
+    })
+}
+
+fn remove_dir_all_under(target: &Path, root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if !target.exists() {
+        return Ok(false);
+    }
+    if !path_is_under(target, root) {
+        return Err(format!("Refusing to remove path outside uninstall root: {}", target.display()).into());
+    }
+    std::fs::remove_dir_all(target)?;
+    Ok(true)
+}
+
+fn remove_file_under(target: &Path, root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if !target.exists() {
+        return Ok(false);
+    }
+    if !path_is_under(target, root) {
+        return Err(format!("Refusing to remove file outside uninstall root: {}", target.display()).into());
+    }
+    std::fs::remove_file(target)?;
+    Ok(true)
+}
+
 pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let manifest_name = format!("appmanifest_{}.acf", appid);
-    let mut removed = false;
+    let mut removed_wine = false;
+    let mut removed_local = false;
 
     let _ = crate::launch::kill_game_with_pid(appid, 0);
 
     for steamapps in crate::scan::wine_steam_library_paths() {
+        if is_macos_steamapps_path(&steamapps) {
+            eprintln!("Refusing to uninstall appid {} from macOS Steam library {}", appid, steamapps.display());
+            continue;
+        }
+
         let manifest_path = steamapps.join(&manifest_name);
         if manifest_path.exists() {
             let contents = std::fs::read_to_string(&manifest_path).unwrap_or_default();
-            let install_dir = contents.lines().find(|l| l.contains("\"installdir\"")).and_then(|l| {
-                let parts: Vec<&str> = l.splitn(2, ['\t', ' ']).collect();
-                parts.last().map(|s| s.trim().trim_matches('"').to_string())
-            });
+            let install_dir = parse_acf_field(&contents, "installdir");
 
             if let Some(dir_name) = install_dir {
+                if !is_single_path_component(&dir_name) {
+                    return Err(format!("Refusing unsafe Steam install dir for appid {}: {}", appid, dir_name).into());
+                }
                 let game_dir = steamapps.join("common").join(&dir_name);
-                if game_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&game_dir);
+                if remove_dir_all_under(&game_dir, &steamapps.join("common"))? {
+                    removed_wine = true;
                 }
             }
-            let _ = std::fs::remove_file(&manifest_path);
-            removed = true;
+            if remove_file_under(&manifest_path, &steamapps)? {
+                removed_wine = true;
+            }
             break;
         }
     }
 
     let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-    if local_dir.exists() {
-        let _ = std::fs::remove_dir_all(&local_dir);
-        removed = true;
+    if remove_dir_all_under(&local_dir, &home.join(".metalsharp").join("games"))? {
+        removed_local = true;
     }
 
-    if !removed && macos_manifest_exists(appid) {
+    if !removed_wine && !removed_local && macos_manifest_exists(appid) {
         return Err("This game is installed in macOS Steam. Uninstall it from macOS Steam, or install the Windows copy before using MetalSharp uninstall.".into());
     }
 
-    Ok(json!({"ok": true, "appid": appid}))
+    if !removed_wine && !removed_local {
+        return Err("No Windows Steam or MetalSharp local install was found to uninstall.".into());
+    }
+
+    Ok(json!({"ok": true, "appid": appid, "wine_removed": removed_wine, "local_removed": removed_local}))
 }
 
 fn macos_manifest_exists(appid: u32) -> bool {
@@ -652,6 +792,7 @@ pub fn library() -> Value {
             let is_installed = installed_appids.contains(appid)
                 || downloaded_appids.contains(appid)
                 || wine_steam_appids.contains(appid);
+            let can_uninstall = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
             let dual = crate::scan::resolve_dual_game_dir(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
             let recommended = pipeline_id.to_legacy_method();
@@ -675,6 +816,7 @@ pub fn library() -> Value {
                 "name": name,
                 "installed": is_installed,
                 "state": if is_installed { "installed" } else { "not_installed" },
+                "can_uninstall": can_uninstall,
                 "launch_method": recommended,
                 "available_pipelines": available_pipelines,
                 "has_native_build": dual.has_native_build,
@@ -1049,5 +1191,33 @@ pub fn watch_steamapps() -> Option<String> {
         None
     } else {
         Some(serde_json::to_string(&new_appids).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_acf_quoted_fields() {
+        let acf = r#"
+"AppState"
+{
+    "appid"        "123"
+    "name"         "Example Game"
+    "installdir"   "Example Game"
+}
+"#;
+
+        assert_eq!(parse_acf_field(acf, "name"), Some("Example Game".to_string()));
+        assert_eq!(parse_acf_field(acf, "installdir"), Some("Example Game".to_string()));
+    }
+
+    #[test]
+    fn rejects_nested_steam_install_dirs() {
+        assert!(is_single_path_component("Example Game"));
+        assert!(!is_single_path_component("../Steam"));
+        assert!(!is_single_path_component("nested/game"));
+        assert!(!is_single_path_component("/Applications/Steam.app"));
     }
 }

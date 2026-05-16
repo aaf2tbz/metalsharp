@@ -25,13 +25,24 @@ fn find_preset(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<PathBuf
         dirs
     };
 
-    for preset_dir in &search_dirs {
-        if let Some(p) = check_preset_dir(preset_dir, cache_subdir, appid) {
-            return Some(p);
+    for subdir in preset_lookup_subdirs(cache_subdir) {
+        for preset_dir in &search_dirs {
+            if let Some(p) = check_preset_dir(preset_dir, subdir, appid) {
+                return Some(p);
+            }
         }
     }
 
     None
+}
+
+fn preset_lookup_subdirs(cache_subdir: &str) -> Vec<&str> {
+    match cache_subdir {
+        "m10" | "m11" => vec![cache_subdir, "dxmt-metal"],
+        "m12" => vec![cache_subdir, "dxmt-metal12"],
+        "m9" => vec![cache_subdir, "dxvk-metal9", "dxvk-metal32"],
+        _ => vec![cache_subdir],
+    }
 }
 
 fn find_exe_relative_presets() -> Vec<PathBuf> {
