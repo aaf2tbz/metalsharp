@@ -1,0 +1,95 @@
+name: Publish Linux Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without leading v
+        required: true
+        default: 0.33.11
+      release_tag:
+        description: GitHub release tag containing the deb assets
+        required: true
+        default: v0.33.11
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish Linux artifacts to GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install ORAS
+        env:
+          ORAS_VERSION: 1.3.2
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" -o oras.tar.gz
+          tar -xzf oras.tar.gz oras
+          sudo install -m 0755 oras /usr/local/bin/oras
+          oras version
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/electron dist/packages
+          gh release download "${RELEASE_TAG}" \
+            --pattern 'metalsharp_*_amd64.deb' \
+            --pattern 'latest-linux.yml' \
+            --dir dist/electron
+          gh release download bundles \
+            --pattern 'metalsharp_linux_runtime*' \
+            --dir dist/packages
+
+      - name: Publish OCI artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          SOURCE="https://github.com/${GITHUB_REPOSITORY}"
+          RUNTIME_IMAGE="ghcr.io/${OWNER}/metalsharp-linux-runtime"
+          DEB_IMAGE="ghcr.io/${OWNER}/metalsharp-linux-deb"
+
+          echo "${GH_TOKEN}" | oras login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+          for tag in "${VERSION}" "${RELEASE_TAG}" latest; do
+            oras push "${RUNTIME_IMAGE}:${tag}" \
+              --artifact-type application/vnd.metalsharp.linux-runtime.v1 \
+              --annotation "org.opencontainers.image.source=${SOURCE}" \
+              --annotation "org.opencontainers.image.description=MetalSharp Linux runtime tarballs" \
+              --annotation "org.opencontainers.image.revision=${REVISION}" \
+              dist/packages/metalsharp_linux_runtime.tar.zst:application/vnd.metalsharp.runtime.tar+zstd \
+              dist/packages/metalsharp_linux_runtime2.tar.zst:application/vnd.metalsharp.runtime.tar+zstd \
+              dist/packages/metalsharp_linux_runtime.sha256:text/plain
+
+            oras push "${DEB_IMAGE}:${tag}" \
+              --artifact-type application/vnd.metalsharp.linux-deb.v1 \
+              --annotation "org.opencontainers.image.source=${SOURCE}" \
+              --annotation "org.opencontainers.image.description=MetalSharp Linux debian release installer" \
+              --annotation "org.opencontainers.image.revision=${REVISION}" \
+              dist/electron/metalsharp_"${VERSION}"_amd64.deb:application/vnd.debian.binary-package \
+              dist/electron/latest-linux.yml:application/x-yaml
+          done
+
+      - name: Verify package tags
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          oras repo tags "ghcr.io/${OWNER}/metalsharp-linux-runtime" | grep -E "^(${VERSION}|${RELEASE_TAG}|latest)$"
+          oras repo tags "ghcr.io/${OWNER}/metalsharp-linux-deb" | grep -E "^(${VERSION}|${RELEASE_TAG}|latest)$"
