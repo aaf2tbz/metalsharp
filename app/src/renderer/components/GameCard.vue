@@ -14,6 +14,7 @@ interface SteamGame {
   launch_method?: string;
   available_pipelines?: PipelineOption[];
   has_native_build?: boolean;
+  can_uninstall?: boolean;
 }
 
 interface PipelineOption {
@@ -163,7 +164,7 @@ function formatBytes(bytes: number): string {
           </div>
           <div class="game-card-actions-row subtle">
             <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">{{ pipelineName }}</span>
-            <button class="btn btn-danger btn-sm" @click="emit('uninstall')">Uninstall</button>
+            <button v-if="game.can_uninstall !== false" class="btn btn-danger btn-sm" @click="emit('uninstall')">Uninstall</button>
           </div>
         </div>
         <div v-else-if="steamInstalled" class="game-card-actions-stack">

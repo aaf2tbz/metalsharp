@@ -15,6 +15,7 @@ interface SteamGame {
   launch_method?: string;
   available_pipelines?: { id: string; name: string; recommended?: boolean }[];
   has_native_build?: boolean;
+  can_uninstall?: boolean;
 }
 
 interface SteamLibrary {
@@ -137,6 +138,10 @@ async function installGame(game: SteamGame) {
 }
 
 async function uninstallGame(game: SteamGame) {
+  if (game.can_uninstall === false) {
+    toast.show(`${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`, "error");
+    return;
+  }
   if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;
   toast.show(`Uninstalling ${game.name}...`);
   const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/uninstall-game", { appid: game.appid });

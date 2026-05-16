@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api } from "../composables/useApi";
+import { api, getAPI } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
 
 interface CacheSummary {
