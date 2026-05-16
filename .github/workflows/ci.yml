@@ -27,6 +27,15 @@ jobs:
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
 
+      - name: Build C++ engine
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build . --parallel $(sysctl -n hw.ncpu)
+          mkdir -p ../app/native
+          cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib ../app/native/ 2>/dev/null || true
+          cp metalsharp metalsharp_launcher ../app/native/ 2>/dev/null || true
+
       - name: Install Electron deps
         run: cd app && npm install
 
@@ -53,9 +62,17 @@ jobs:
             --pattern "*.c" \
             --dir app/bundles \
             --clobber || echo "No bundles found — building without"
-          ls -lh app/bundles/
+          cp app/bundles/steamwebhelper-wrapper.c app/bundles/steamwebhelper-wrapper.c 2>/dev/null || true
+          ls -lh app/bundles/ 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Adhoc-sign backend binary
+        run: |
+          codesign --force --sign - app/src-rust/target/release/metalsharp-backend || true
+          for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
+            codesign --force --sign - "$f" 2>/dev/null || true
+          done
 
       - name: Package DMG
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never
