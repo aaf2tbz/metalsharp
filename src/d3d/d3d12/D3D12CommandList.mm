@@ -35,6 +35,7 @@
 ///   - Sample feedback (WriteBufferImmediate)
 ///   - Bundle command lists (execute inline only)
 
+#include <array>
 #include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
@@ -81,6 +82,37 @@ static uint32_t d3d12FormatSize(UINT format) {
     default:
         return 0;
     }
+}
+
+static uint32_t d3d12VertexStrideForSlot(const D3D12_INPUT_ELEMENT_DESC* elements, UINT numElements, UINT inputSlot) {
+    if (!elements)
+        return 0;
+
+    std::array<uint64_t, 32> nextOffsets = {};
+    std::array<uint64_t, 32> strides = {};
+
+    for (UINT i = 0; i < numElements; ++i) {
+        const D3D12_INPUT_ELEMENT_DESC& elem = elements[i];
+        if (elem.InputSlot >= nextOffsets.size())
+            continue;
+
+        uint32_t elemSize = d3d12FormatSize(elem.Format);
+        if (elemSize == 0)
+            continue;
+
+        uint64_t elemOffset = elem.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT ? nextOffsets[elem.InputSlot]
+                                                                                     : elem.AlignedByteOffset;
+        uint64_t elemEnd = elemOffset + elemSize;
+        nextOffsets[elem.InputSlot] = elemEnd;
+        if (elemEnd > strides[elem.InputSlot])
+            strides[elem.InputSlot] = elemEnd;
+    }
+
+    if (inputSlot >= strides.size())
+        return 0;
+    if (strides[inputSlot] > UINT32_MAX)
+        return UINT32_MAX;
+    return static_cast<uint32_t>(strides[inputSlot]);
 }
 
 HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState*,
@@ -937,15 +969,7 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
 
     if (pDesc->VS && pDesc->VSsize > 0) {
         PipelineStateDesc pipeDesc;
-        pipeDesc.vertexStride = 0;
-
-        for (UINT i = 0; pDesc->InputLayout && i < pDesc->NumInputElements; ++i) {
-            const D3D12_INPUT_ELEMENT_DESC& elem = pDesc->InputLayout[i];
-            uint32_t elemSize = d3d12FormatSize(elem.Format);
-            uint32_t elemEnd = elem.AlignedByteOffset + elemSize;
-            if (elem.InputSlot == 0 && elemEnd > pipeDesc.vertexStride)
-                pipeDesc.vertexStride = elemEnd;
-        }
+        pipeDesc.vertexStride = d3d12VertexStrideForSlot(pDesc->InputLayout, pDesc->NumInputElements, 0);
 
         CompiledShader compiled;
         const uint8_t* shaderData = static_cast<const uint8_t*>(pDesc->VS);
