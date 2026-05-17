@@ -43,6 +43,14 @@ pub struct RuntimeAsset {
     pub present: bool,
 }
 
+fn launch_args_for(appid: u32, node: &PipelineNode) -> Vec<String> {
+    if node.id == PipelineId::M12 && matches!(appid, 848450 | 1326470) {
+        return vec!["-force-d3d12".into()];
+    }
+
+    node.launch_args.iter().map(|arg| arg.to_string()).collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchDoctorReport {
     pub ready: bool,
@@ -112,7 +120,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: launch_args_for(appid, node),
         env: node
             .env_vars
             .iter()
@@ -170,7 +178,7 @@ pub fn build_custom_launch_recipe(
         game_dir: Some(game_dir),
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: launch_args_for(appid, node),
         env: node
             .env_vars
             .iter()
@@ -754,6 +762,14 @@ mod tests {
         assert!(report.summary.contains("Blocked"));
         assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
         assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
+    }
+
+    #[test]
+    fn m12_unity_titles_use_force_d3d12() {
+        let m12 = super::super::engine::get_pipeline(PipelineId::M12);
+
+        assert_eq!(launch_args_for(1326470, m12), vec!["-force-d3d12"]);
+        assert_eq!(launch_args_for(848450, m12), vec!["-force-d3d12"]);
     }
 
     fn test_dir(name: &str) -> PathBuf {

@@ -245,10 +245,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env(
-            "WINEDLLOVERRIDES",
-            "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
-        )
+        .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .arg(&exe)
         .args(args)
         .stdout(std::process::Stdio::null())

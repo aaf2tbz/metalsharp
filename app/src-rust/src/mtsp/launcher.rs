@@ -421,7 +421,7 @@ pub fn verify_m12_title_smoke(appid: u32, timeout_ms: u64) -> Result<serde_json:
         cmd.env(ev.key, ev.value);
     }
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
 
     let timeout_ms = timeout_ms.clamp(5_000, 120_000);
     let started = Instant::now();
@@ -1179,9 +1179,9 @@ fn m12_probe_coverage(probe_name: &str) -> Vec<&'static str> {
     if probe_name.contains("probe2") {
         vec!["compute_pso", "root_signature", "committed_buffer", "fence"]
     } else if probe_name.contains("probe3") {
-        vec!["triangle_render", "sm50_shader_compile", "sv_vertex_id", "swapchain_present"]
+        vec!["triangle_render", "sm50_shader_compile", "sv_vertex_id", "swapchain_present", "pixel_readback"]
     } else if probe_name.contains("probe4") {
-        vec!["indexed_draw", "vertex_buffer", "index_buffer", "input_layout"]
+        vec!["indexed_draw", "vertex_buffer", "index_buffer", "input_layout", "pixel_readback"]
     } else if probe_name.contains("probe5") {
         vec!["depth_stencil_state", "depth_clear", "depth_compare", "render_encoder_state"]
     } else if probe_name.contains("probe6") {
@@ -1283,7 +1283,7 @@ pub fn launch_custom_with_pipeline(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method(), recipe))
 }
@@ -1365,7 +1365,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
@@ -1404,7 +1404,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
