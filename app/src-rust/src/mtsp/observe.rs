@@ -13,6 +13,10 @@ struct RuntimeSignals {
     d3d11on12_created: bool,
     d3d11_fallback: bool,
     dxgi_factory_or_swapchain: bool,
+    d3d12_sdk_configuration: bool,
+    d3d12_sdk_version: bool,
+    shader_translation_failure: bool,
+    state_object_notimpl: bool,
     pso_failure: bool,
 }
 
@@ -194,6 +198,25 @@ fn detect_signals(line: &str) -> Vec<&'static str> {
     {
         signals.push("dxgi_factory_or_swapchain");
     }
+    if lower.contains("d3d12getinterface") && lower.contains("sdkconfiguration") {
+        signals.push("d3d12_sdk_configuration");
+    }
+    if lower.contains("d3d12sdkversion()") {
+        signals.push("d3d12_sdk_version");
+    }
+    if lower.contains("dxilcontainer::parse failed")
+        || lower.contains("bitcodereader::parse failed")
+        || lower.contains("dxiltomsl::convert failed")
+        || lower.contains("newlibrarywithsource failed")
+        || lower.contains("newfunction returned null")
+        || lower.contains("dxil msl compilation failed")
+        || lower.contains("failed to get function from compiled library")
+    {
+        signals.push("shader_translation_failure");
+    }
+    if lower.contains("createstateobject") && lower.contains("e_notimpl") {
+        signals.push("state_object_notimpl");
+    }
     if lower.contains("failed to create pso") {
         signals.push("pso_failure");
     }
@@ -210,14 +233,24 @@ fn apply_signal(signals: &mut RuntimeSignals, signal: &str) {
         "d3d11on12_created" => signals.d3d11on12_created = true,
         "d3d11_fallback" => signals.d3d11_fallback = true,
         "dxgi_factory_or_swapchain" => signals.dxgi_factory_or_swapchain = true,
+        "d3d12_sdk_configuration" => signals.d3d12_sdk_configuration = true,
+        "d3d12_sdk_version" => signals.d3d12_sdk_version = true,
+        "shader_translation_failure" => signals.shader_translation_failure = true,
+        "state_object_notimpl" => signals.state_object_notimpl = true,
         "pso_failure" => signals.pso_failure = true,
         _ => {},
     }
 }
 
 fn classify_runtime(signals: &RuntimeSignals) -> &'static str {
+    if signals.shader_translation_failure {
+        return "shader_translation_failure";
+    }
     if signals.pso_failure {
         return "pso_failure";
+    }
+    if signals.state_object_notimpl {
+        return "state_object_notimpl";
     }
     if signals.d3d12_device_created && signals.d3d11on12_created {
         return "d3d11on12_over_d3d12";
@@ -254,12 +287,20 @@ fn warnings_for_status(status: &str, signals: &RuntimeSignals) -> Vec<&'static s
     if status == "pso_failure" {
         warnings.push("Shader or graphics pipeline state creation failed; inspect PSO/shader translation next.");
     }
+    if status == "shader_translation_failure" {
+        warnings.push("DXIL or Metal shader translation failed before a usable shader function was created.");
+    }
+    if status == "state_object_notimpl" {
+        warnings.push("The title requested a D3D12 state object path that is not implemented yet.");
+    }
     warnings
 }
 
 fn summary_for_status(status: &str) -> &'static str {
     match status {
+        "shader_translation_failure" => "DXIL-to-Metal shader translation failed during launch.",
         "pso_failure" => "D3D/Metal PSO creation failed after launch.",
+        "state_object_notimpl" => "The title hit an unimplemented D3D12 state object path.",
         "d3d11on12_over_d3d12" => "A D3D12 device was created and D3D11On12 was layered on top.",
         "d3d12_device_created" => "A D3D12 device was created through the DXMT Metal path.",
         "d3d11_fallback_after_dx12_request" => "The title was launched with DX12 arguments but initialized D3D11.",
@@ -347,5 +388,33 @@ mod tests {
             classify(&["info:  D3D12 device created via DXMT Metal backend", "err:   Failed to create PSO:",]),
             "pso_failure"
         );
+    }
+
+    #[test]
+    fn classifies_shader_translation_failure_before_device_success() {
+        assert_eq!(
+            classify(&["info:  D3D12 device created via DXMT Metal backend", "DXILToMSL::convert FAILED",]),
+            "shader_translation_failure"
+        );
+    }
+
+    #[test]
+    fn classifies_unimplemented_state_object_path() {
+        assert_eq!(classify(&["ID3D12Device5::CreateStateObject -> E_NOTIMPL"]), "state_object_notimpl");
+    }
+
+    #[test]
+    fn detects_agility_sdk_configuration_without_changing_success_status() {
+        let mut signals = RuntimeSignals::default();
+        for signal in detect_signals("D3D12GetInterface SDKConfiguration riid={...} -> 0x0 out=0x1234") {
+            apply_signal(&mut signals, signal);
+        }
+        for signal in detect_signals("D3D12SDKVersion() -> 620") {
+            apply_signal(&mut signals, signal);
+        }
+
+        assert!(signals.d3d12_sdk_configuration);
+        assert!(signals.d3d12_sdk_version);
+        assert_eq!(classify_runtime(&signals), "unknown");
     }
 }
