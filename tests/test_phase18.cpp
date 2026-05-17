@@ -454,7 +454,8 @@ static bool test_d3d12_command_list_retains_bound_gpu_address_resource() {
     res->GetGPUVirtualAddress(&address);
 
     void* allocPtr = nullptr;
-    HRESULT allocHr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, &allocPtr);
+    HRESULT allocHr =
+        device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, &allocPtr);
     auto* allocator = static_cast<ID3D12CommandAllocator*>(allocPtr);
 
     void* listPtr = nullptr;
