@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -26,6 +27,15 @@ pub struct SharpApp {
     pub engine: String,
     pub installed_at: String,
     pub size_bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SharpLaunchResult {
+    pub pid: u32,
+    pub game_type: &'static str,
+    pub pipeline: crate::mtsp::engine::PipelineId,
+    pub exe_path: String,
+    pub warnings: Vec<String>,
 }
 
 fn ensure_base_dir() -> Result<(), Box<dyn std::error::Error>> {
@@ -76,11 +86,16 @@ pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp
     let app_dir = base_dir().join(&id);
     fs::create_dir_all(&app_dir)?;
 
-    let dst = app_dir.join(&file_name);
-    fs::copy(&src, &dst)?;
+    let import_root = import_root_for_exe(&src);
+    copy_app_tree(&import_root, &app_dir)?;
+    let exe_rel = src.strip_prefix(&import_root).unwrap_or_else(|_| Path::new(&file_name));
+    let copied_exe = app_dir.join(exe_rel);
+    if !copied_exe.exists() {
+        return Err(format!("Copied app is missing selected EXE: {}", copied_exe.display()).into());
+    }
 
-    let metadata = fs::metadata(&dst)?;
-    let size_bytes = metadata.len();
+    let exe_path = relative_path_string(&app_dir, &copied_exe)?;
+    let size_bytes = dir_size(&app_dir);
     let install_dir = app_dir.to_string_lossy().to_string();
 
     let installed_at = chrono_now();
@@ -88,10 +103,10 @@ pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp
     let app = SharpApp {
         id,
         name: app_name,
-        exe_path: file_name,
+        exe_path,
         install_dir,
         cover: None,
-        engine: "wine_bare".to_string(),
+        engine: "auto".to_string(),
         installed_at,
         size_bytes,
     };
@@ -141,7 +156,7 @@ fn remove_dir_all_under(target: &Path, root: &Path) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Error>> {
+pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn std::error::Error>> {
     let mut library = load_library()?;
     let idx = library.iter().position(|a| a.id == id).ok_or("App not found")?;
     let changed = refresh_setup_reference(&mut library[idx]);
@@ -150,14 +165,6 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
     }
     let app = library.get(idx).ok_or("App not found")?.clone();
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let wine = crate::platform::runtime_wine_binary(&ms_root);
-
-    if !wine.exists() {
-        return Err("MetalSharp Wine not found — run setup first".into());
-    }
-
     let work_dir = PathBuf::from(&app.install_dir);
     let exe_path = work_dir.join(&app.exe_path);
 
@@ -165,38 +172,18 @@ pub fn launch_app(id: &str, engine: &str) -> Result<u32, Box<dyn std::error::Err
         return Err(format!("EXE not found: {}", exe_path.display()).into());
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
-    let prefix_str = prefix.to_string_lossy().to_string();
-    let pipeline =
-        crate::mtsp::engine::PipelineId::from_str_flexible(engine).unwrap_or(crate::mtsp::engine::PipelineId::WineBare);
-    let node = crate::mtsp::engine::get_pipeline(pipeline);
-    crate::mtsp::launcher::deploy_dlls_for_pipeline(&work_dir, node);
+    let pipeline = resolve_sharp_pipeline(engine, &exe_path);
+    let launch_id = stable_launch_id(&app.id);
+    let (pid, game_type, recipe) =
+        crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline)?;
 
-    let runtime_lib_path = if node.dyld_paths.is_empty() {
-        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string()
-    } else {
-        node.dyld_paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
-    };
-    let runtime_lib_key =
-        crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
-
-    let mut cmd = Command::new(&wine);
-    cmd.current_dir(&work_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env(runtime_lib_key, &runtime_lib_path);
-
-    if let Some(overrides) = node.wine_overrides {
-        cmd.env("WINEDLLOVERRIDES", overrides);
-    }
-    for ev in &node.env_vars {
-        cmd.env(ev.key, ev.value);
-    }
-    cmd.arg(&app.exe_path);
-    cmd.args(&node.launch_args);
-
-    let child = cmd.spawn()?;
-    Ok(child.id())
+    Ok(SharpLaunchResult {
+        pid,
+        game_type,
+        pipeline,
+        exe_path: exe_path.to_string_lossy().to_string(),
+        warnings: recipe.warnings,
+    })
 }
 
 pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -226,14 +213,14 @@ pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::E
 }
 
 pub fn set_engine(id: &str, engine: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let valid = ["wine_bare", "m64", "m9", "m10", "m11", "m12", "m32"];
-    if !valid.contains(&engine) {
+    let valid = ["auto", "wine_bare", "m64", "m9", "m10", "m11", "m12", "m32"];
+    if engine != "auto" && crate::mtsp::engine::PipelineId::from_str_flexible(engine).is_none() {
         return Err(format!("Unknown engine: {}. Valid: {}", engine, valid.join(", ")).into());
     }
 
     let mut library = load_library()?;
     if let Some(app) = library.iter_mut().find(|a| a.id == id) {
-        app.engine = engine.to_string();
+        app.engine = normalize_engine(engine);
         save_library(&library)?;
     } else {
         return Err("App not found".into());
@@ -259,6 +246,120 @@ fn chrono_now() -> String {
     format!("{}", dur.as_secs())
 }
 
+fn import_root_for_exe(exe_path: &Path) -> PathBuf {
+    let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+    let dir_name = exe_dir.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let parent_name =
+        exe_dir.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+
+    if matches!(dir_name.as_str(), "win64" | "win32" | "x64" | "x86") && parent_name == "binaries" {
+        if let Some(project_dir) = exe_dir.parent().and_then(Path::parent) {
+            if let Some(root) = project_dir.parent() {
+                return root.to_path_buf();
+            }
+            return project_dir.to_path_buf();
+        }
+    }
+
+    exe_dir.to_path_buf()
+}
+
+fn copy_app_tree(src_root: &Path, dest_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(dest_root)?;
+    for entry in WalkDir::new(src_root).into_iter().flatten() {
+        let path = entry.path();
+        let rel = path.strip_prefix(src_root)?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let dest = dest_root.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(path, dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn relative_path_string(root: &Path, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(path.strip_prefix(root)?.to_string_lossy().to_string())
+}
+
+fn normalize_engine(engine: &str) -> String {
+    if engine.trim().eq_ignore_ascii_case("auto") {
+        "auto".to_string()
+    } else {
+        pipeline_engine_id(
+            crate::mtsp::engine::PipelineId::from_str_flexible(engine)
+                .unwrap_or(crate::mtsp::engine::PipelineId::WineBare),
+        )
+        .to_string()
+    }
+}
+
+fn pipeline_engine_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str {
+    match pipeline {
+        crate::mtsp::engine::PipelineId::M9 => "m9",
+        crate::mtsp::engine::PipelineId::M10 => "m10",
+        crate::mtsp::engine::PipelineId::M11 => "m11",
+        crate::mtsp::engine::PipelineId::M12 => "m12",
+        crate::mtsp::engine::PipelineId::M32 => "m32",
+        crate::mtsp::engine::PipelineId::WineBare => "wine_bare",
+        crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
+        crate::mtsp::engine::PipelineId::Steam => "steam",
+        crate::mtsp::engine::PipelineId::MacSteam => "macos_steam",
+    }
+}
+
+fn resolve_sharp_pipeline(engine: &str, exe_path: &Path) -> crate::mtsp::engine::PipelineId {
+    if !engine.trim().eq_ignore_ascii_case("auto") {
+        return crate::mtsp::engine::PipelineId::from_str_flexible(engine)
+            .unwrap_or(crate::mtsp::engine::PipelineId::WineBare);
+    }
+
+    let Ok(data) = fs::read(exe_path) else {
+        return crate::mtsp::engine::PipelineId::WineBare;
+    };
+    let Some(pe) = crate::mtsp::pe::parse_pe_imports(&data) else {
+        return crate::mtsp::engine::PipelineId::WineBare;
+    };
+
+    match pe.detected_api {
+        crate::mtsp::pe::D3dApi::D3D12 => {
+            if pe.is_64_bit {
+                crate::mtsp::engine::PipelineId::M12
+            } else {
+                crate::mtsp::engine::PipelineId::M11
+            }
+        },
+        crate::mtsp::pe::D3dApi::D3D11 => crate::mtsp::engine::PipelineId::M11,
+        crate::mtsp::pe::D3dApi::D3D10 => {
+            if pe.is_64_bit {
+                crate::mtsp::engine::PipelineId::M10
+            } else {
+                crate::mtsp::engine::PipelineId::M32
+            }
+        },
+        crate::mtsp::pe::D3dApi::D3D9 => crate::mtsp::engine::PipelineId::M9,
+        crate::mtsp::pe::D3dApi::Unknown => crate::mtsp::engine::PipelineId::WineBare,
+    }
+}
+
+fn stable_launch_id(id: &str) -> u32 {
+    let mut hasher = DefaultHasher::new();
+    id.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
+}
+
 fn refresh_setup_reference(app: &mut SharpApp) -> bool {
     let install_dir = PathBuf::from(&app.install_dir);
     let current = install_dir.join(&app.exe_path);
@@ -279,7 +380,7 @@ fn refresh_setup_reference(app: &mut SharpApp) -> bool {
         return false;
     }
 
-    app.exe_path = file_name;
+    app.exe_path = relative_path_string(&install_dir, &real_exe).unwrap_or(file_name);
     app.size_bytes = dir_size(&install_dir);
     true
 }
@@ -314,7 +415,7 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
             continue;
         }
         let lower = name.to_lowercase();
-        if lower == "game.exe" || lower == "launcher.exe" || lower.contains("shipping") {
+        if lower == "game.exe" || lower.contains("shipping") {
             return Some(path.to_path_buf());
         }
         if best.is_none() {
@@ -373,7 +474,9 @@ pub fn handle_launch(body: &serde_json::Map<String, Value>) -> Value {
         return json!({"ok": false, "error": "id required"});
     }
     match launch_app(id, engine) {
-        Ok(pid) => json!({"ok": true, "pid": pid}),
+        Ok(result) => {
+            json!({"ok": true, "pid": result.pid, "gameType": result.game_type, "pipeline": result.pipeline, "exePath": result.exe_path, "warnings": result.warnings})
+        },
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -412,5 +515,42 @@ mod tests {
         assert!(!is_safe_library_id("../runtime"));
         assert!(!is_safe_library_id("nested/game"));
         assert!(!is_safe_library_id("/tmp/game"));
+    }
+
+    #[test]
+    fn unreal_binary_import_root_uses_game_root() {
+        let root = PathBuf::from("/tmp/SharpGame");
+        let exe = root.join("Game").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
+
+        assert_eq!(import_root_for_exe(&exe), root);
+    }
+
+    #[test]
+    fn selected_exe_relative_path_survives_nested_layout() {
+        let root = test_dir("relative");
+        let exe_dir = root.join("bin").join("win64");
+        fs::create_dir_all(&exe_dir).expect("create test dir");
+        let exe = exe_dir.join("Tool.exe");
+        fs::write(&exe, b"not pe").expect("write exe");
+
+        assert_eq!(relative_path_string(&root, &exe).unwrap(), "bin/win64/Tool.exe");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_unknown_windows_app_uses_plain_wine() {
+        let exe = test_dir("unknown").join("Tool.exe");
+
+        assert_eq!(resolve_sharp_pipeline("auto", &exe), crate::mtsp::engine::PipelineId::WineBare);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("metalsharp-sharp-library-{}-{}-{}", name, std::process::id(), unique_suffix()));
+        dir
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
     }
 }

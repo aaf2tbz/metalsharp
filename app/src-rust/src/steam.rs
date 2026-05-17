@@ -283,18 +283,17 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
         return Err("Steam is not installed — use the setup wizard to install it first".into());
     }
 
-    if is_wine_steam_running() && extra_env.is_empty() {
-        return Ok(json!({"ok": true, "message": "Steam already running"}));
-    }
-
     if is_wine_steam_running() {
-        stop_wine_steam()?;
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            if !is_wine_steam_running() {
-                break;
-            }
+        if !extra_env.is_empty() {
+            return Err(
+                "Wine Steam is already running; per-game environment cannot be inherited without restarting Steam"
+                    .into(),
+            );
         }
+        return Ok(json!({
+            "ok": true,
+            "message": "Steam already running"
+        }));
     }
 
     ensure_steam_launch_ready(&steam_dir);

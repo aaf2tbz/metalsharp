@@ -460,6 +460,38 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Post, "/mtsp/recipe") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
+                    let pipeline = mtsp::engine::PipelineId::from_str_flexible(method)
+                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    let node = mtsp::engine::get_pipeline(pipeline);
+                    match mtsp::recipe::build_launch_recipe(id as u32, node) {
+                        Ok(recipe) => resp(200, json!({"ok": true, "appid": id, "recipe": recipe})),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Post, "/mtsp/doctor") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
+                    let pipeline = mtsp::engine::PipelineId::from_str_flexible(method)
+                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    let node = mtsp::engine::get_pipeline(pipeline);
+                    let report = mtsp::recipe::diagnose_launch_request(id as u32, node);
+                    resp(200, json!({"ok": true, "appid": id, "report": report}))
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Get, "/goldberg/status") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str

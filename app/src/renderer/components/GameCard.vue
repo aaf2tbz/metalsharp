@@ -24,6 +24,27 @@ interface PipelineOption {
   recommended?: boolean;
 }
 
+interface LaunchDoctorCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface LaunchDoctorReport {
+  ready: boolean;
+  summary: string;
+  blockers: string[];
+  warnings: string[];
+  checks: LaunchDoctorCheck[];
+  recipe: {
+    pipeline: string;
+    pipeline_name: string;
+    backend: string;
+    exe_name?: string | null;
+  };
+}
+
 const props = defineProps<{
   game: SteamGame;
   running: boolean;
@@ -44,6 +65,9 @@ const eacActive = ref(false);
 const pipelineName = ref("Auto");
 const selectedLaunchMode = ref("auto");
 const pipelineOptions = ref<PipelineOption[]>([]);
+const doctorOpen = ref(false);
+const doctorLoading = ref(false);
+const doctorReport = ref<LaunchDoctorReport | null>(null);
 
 const launchModeOptions = computed(() => {
   const byId = new Map<string, PipelineOption>();
@@ -111,6 +135,23 @@ async function toggleEac(enable: boolean) {
   }
 }
 
+async function runDoctor() {
+  doctorOpen.value = true;
+  doctorLoading.value = true;
+  doctorReport.value = null;
+  const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/mtsp/doctor", {
+    appid: props.game.appid,
+    launchMethod: selectedLaunchMode.value,
+  });
+  doctorLoading.value = false;
+
+  if (result?.ok && result.report) {
+    doctorReport.value = result.report;
+  } else {
+    toast.show(result?.error ?? "Launch Doctor failed", "error");
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -167,10 +208,42 @@ function formatBytes(bytes: number): string {
               <span class="toggle-switch"></span>
               <span class="toggle-text">No EAC</span>
             </label>
+            <button class="btn btn-secondary btn-sm" :disabled="doctorLoading" @click="runDoctor">
+              {{ doctorLoading ? "Checking" : "Doctor" }}
+            </button>
           </div>
           <div class="game-card-actions-row subtle">
             <span class="badge badge-ok" style="font-size:10px;padding:2px 8px;">{{ pipelineName }}</span>
             <button v-if="game.can_uninstall !== false" class="btn btn-danger btn-sm" @click="emit('uninstall')">Uninstall</button>
+          </div>
+          <div v-if="doctorOpen" class="doctor-panel">
+            <div v-if="doctorLoading" class="doctor-loading">Checking launch prerequisites...</div>
+            <template v-else-if="doctorReport">
+              <div class="doctor-summary">
+                <span class="badge" :class="doctorReport.ready ? 'badge-ok' : 'badge-warn'">
+                  {{ doctorReport.ready ? "Ready" : "Blocked" }}
+                </span>
+                <span>{{ doctorReport.summary }}</span>
+              </div>
+              <div class="doctor-checks">
+                <div
+                  v-for="check in doctorReport.checks"
+                  :key="check.id"
+                  class="doctor-check"
+                  :class="{ failed: !check.ok }"
+                >
+                  <span class="doctor-check-state">{{ check.ok ? "OK" : "!" }}</span>
+                  <span class="doctor-check-label">{{ check.label }}</span>
+                  <span class="doctor-check-detail">{{ check.detail }}</span>
+                </div>
+              </div>
+              <div v-if="doctorReport.blockers.length" class="doctor-notes blocked">
+                <div v-for="blocker in doctorReport.blockers" :key="blocker">{{ blocker }}</div>
+              </div>
+              <div v-if="doctorReport.warnings.length" class="doctor-notes">
+                <div v-for="warning in doctorReport.warnings" :key="warning">{{ warning }}</div>
+              </div>
+            </template>
           </div>
         </div>
         <div v-else-if="steamInstalled" class="game-card-actions-stack">
@@ -281,5 +354,71 @@ function formatBytes(bytes: number): string {
   gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.doctor-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.doctor-loading,
+.doctor-summary,
+.doctor-check {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.doctor-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.doctor-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.doctor-check {
+  display: grid;
+  grid-template-columns: 28px 82px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+.doctor-check.failed .doctor-check-state,
+.doctor-notes.blocked {
+  color: var(--error);
+}
+.doctor-check-state {
+  color: var(--success);
+  font-weight: 700;
+}
+.doctor-check-label {
+  color: var(--text-primary);
+}
+.doctor-check-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+.doctor-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .doctor-check {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+  .doctor-check-detail {
+    grid-column: 2;
+  }
 }
 </style>

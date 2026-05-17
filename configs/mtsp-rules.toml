@@ -1,6 +1,14 @@
 # MTSP Pipeline Override Rules
-# appid → pipeline_id mapping
-# These take highest priority in the 3-tier resolver.
+# appid -> pipeline_id mapping.
+#
+# Rules are intentionally appid-first because Steam titles drift less than display
+# names. Pipeline choices are based on verified Windows renderer/API data:
+# - fna_arm64/fna_x86: XNA/FNA/Mono titles.
+# - m9/m10/m11/m12: Direct3D generation routed through MetalSharp/DXMT.
+# - wine_bare: non-D3D or Vulkan-first titles where DXMT is not the renderer.
+#
+# If a title supports both D3D11 and D3D12, prefer the older D3D path unless the
+# game is effectively D3D12-only or known to use the D3D12 renderer by default.
 
 [overrides.105600]
 pipeline = "fna_arm64"
@@ -15,144 +23,148 @@ pipeline = "m11"
 name = "Rain World"
 
 [overrides.375520]
-pipeline = "m11"
-name = "Rain World Downpour"
+pipeline = "m9"
+name = "Taimumari: Definitive Edition"
 
 [overrides.848450]
-pipeline = "m12"
+pipeline = "m11"
 name = "Subnautica: Below Zero"
 
 [overrides.3164500]
 pipeline = "m11"
-name = "Persona 3 Reload"
+name = "Schedule I"
+
+[overrides.508440]
+pipeline = "m11"
+name = "Totally Accurate Battle Simulator"
 
 [overrides.535520]
-pipeline = "m11"
+pipeline = "m9"
 name = "Nidhogg 2"
 
 [overrides.620]
-pipeline = "m11"
+pipeline = "m9"
 name = "Portal 2"
 
 [overrides.265930]
-pipeline = "m11"
+pipeline = "m9"
 name = "Goat Simulator"
 
 [overrides.391540]
-pipeline = "steam"
+pipeline = "m9"
 name = "Undertale"
 
 [overrides.945360]
-pipeline = "steam"
+pipeline = "m11"
 name = "Among Us"
 
 [overrides.1139900]
-pipeline = "steam"
-name = "Stardew Valley"
+pipeline = "m11"
+name = "Ghostrunner"
 
 [overrides.1245620]
-pipeline = "m11"
-name = "Elden Ring"
+pipeline = "m12"
+name = "ELDEN RING"
 
 [overrides.814380]
 pipeline = "m11"
-name = "Resident Evil 2"
+name = "Sekiro: Shadows Die Twice - GOTY Edition"
 
 [overrides.1593500]
 pipeline = "m11"
-name = "Resident Evil 4"
+name = "God of War"
 
 [overrides.2050650]
-pipeline = "m11"
-name = "Cyberpunk 2077"
+pipeline = "m12"
+name = "Resident Evil 4"
 
 [overrides.1583230]
-pipeline = "m11"
-name = "The Witcher 3"
+pipeline = "m12"
+name = "High On Life"
 
 [overrides.397540]
 pipeline = "m11"
-name = "Dark Souls III"
+name = "Borderlands 3"
 
 [overrides.298110]
 pipeline = "m11"
-name = "Dark Souls Remastered"
+name = "Far Cry 4"
 
 [overrides.552520]
 pipeline = "m11"
-name = "Control"
+name = "Far Cry 5"
 
 [overrides.1091500]
-pipeline = "m11"
-name = "Sekiro"
+pipeline = "m12"
+name = "Cyberpunk 2077"
 
 [overrides.1868140]
 pipeline = "m11"
-name = "Hogwarts Legacy"
+name = "DAVE THE DIVER"
 
 [overrides.1551360]
-pipeline = "m11"
-name = "A Plague Tale: Requiem"
+pipeline = "m12"
+name = "Forza Horizon 5"
 
 [overrides.1716740]
-pipeline = "m11"
-name = "Lies of P"
+pipeline = "m12"
+name = "Starfield"
 
 [overrides.1203620]
-pipeline = "m11"
-name = "Baldur's Gate 3"
+pipeline = "wine_bare"
+name = "Enshrouded"
 
 [overrides.1282100]
-pipeline = "m11"
-name = "Death Stranding"
+pipeline = "m12"
+name = "REMNANT II"
 
 [overrides.750920]
 pipeline = "m11"
-name = "Hellblade: Senua's Sacrifice"
+name = "Shadow of the Tomb Raider: Definitive Edition"
 
 [overrides.1172380]
 pipeline = "m11"
-name = "Satisfactory"
+name = "STAR WARS Jedi: Fallen Order"
 
 [overrides.870780]
 pipeline = "m11"
-name = "NieR: Automata"
+name = "CONTROL Ultimate Edition"
 
 [overrides.1196590]
-pipeline = "m11"
-name = "Raft"
+pipeline = "m12"
+name = "Resident Evil Village"
 
 [overrides.1236300]
-pipeline = "m11"
-name = "Scorn"
+pipeline = "m12"
+name = "Resident Evil Re:Verse"
 
 [overrides.1888160]
-pipeline = "m11"
-name = "The Callisto Protocol"
+pipeline = "m12"
+name = "ARMORED CORE VI FIRES OF RUBICON"
 
 [overrides.976310]
 pipeline = "m11"
-name = "Icarus"
+name = "Mortal Kombat 11"
 
 [overrides.2767030]
-pipeline = "m11"
-name = "Pacific Drive"
+pipeline = "m12"
+name = "Marvel Rivals"
 
 [overrides.292030]
 pipeline = "m11"
-name = "A Plague Tale: Innocence"
+name = "The Witcher 3: Wild Hunt"
 
 [overrides.990080]
-pipeline = "m11"
-name = "MHRise"
+pipeline = "m12"
+name = "Hogwarts Legacy"
 
 [overrides.1172470]
 pipeline = "m11"
-name = "Disco Elysium"
+name = "Apex Legends"
 
 [overrides.2290180]
-pipeline = "m11"
-name = "Helldivers 2"
+pipeline = "m12"
+name = "Riders Republic"
 
 [overrides.548430]
 pipeline = "m11"
@@ -164,104 +176,104 @@ name = "Valheim"
 
 [overrides.1313140]
 pipeline = "m11"
-name = "Phasmophobia"
+name = "Cult of the Lamb"
 
 [overrides.1623730]
-pipeline = "m11"
-name = "It Takes Two"
+pipeline = "m12"
+name = "Palworld"
 
 [overrides.553850]
-pipeline = "m11"
-name = "Hades II"
+pipeline = "m12"
+name = "HELLDIVERS 2"
 
 [overrides.367520]
 pipeline = "m11"
 name = "Hollow Knight"
 
 [overrides.413150]
-pipeline = "m11"
-name = "Stardew Valley (alt)"
+pipeline = "fna_arm64"
+name = "Stardew Valley"
 
 [overrides.1145360]
 pipeline = "m11"
-name = "Ghostrunner"
+name = "Hades"
 
 [overrides.588650]
-pipeline = "m11"
-name = "Immortals Fenyx Rising"
+pipeline = "wine_bare"
+name = "Dead Cells"
 
 [overrides.1637320]
-pipeline = "m11"
-name = "Dying Light 2"
+pipeline = "wine_bare"
+name = "Dome Keeper"
 
 [overrides.1562430]
 pipeline = "m11"
-name = "Stray"
+name = "DREDGE"
 
 [overrides.1092790]
 pipeline = "m11"
-name = "A Short Hike"
+name = "Inscryption"
 
 [overrides.1229490]
 pipeline = "m11"
-name = "Unpacking"
+name = "ULTRAKILL"
 
 [overrides.1971650]
 pipeline = "m11"
-name = "Cult of the Lamb"
+name = "OCTOPATH TRAVELER II"
 
 [overrides.1809540]
 pipeline = "m11"
-name = "Vampire Survivors"
+name = "Nine Sols"
 
 [overrides.1237320]
 pipeline = "m11"
-name = "The Forgotten City"
+name = "Sonic Frontiers"
 
 [overrides.1326470]
 pipeline = "m11"
-name = "Solar Ash"
+name = "Sons Of The Forest"
 
 [overrides.275850]
-pipeline = "m11"
-name = "Insurgency: Sandstorm"
+pipeline = "wine_bare"
+name = "No Man's Sky"
 
 [overrides.1643320]
-pipeline = "m11"
-name = "LEGO Star Wars"
+pipeline = "m12"
+name = "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
 
 [overrides.379720]
-pipeline = "m11"
-name = "Doom Eternal"
+pipeline = "wine_bare"
+name = "DOOM"
 
 [overrides.782330]
-pipeline = "m11"
-name = "A Way Out"
+pipeline = "wine_bare"
+name = "DOOM Eternal"
 
 [overrides.289070]
 pipeline = "m11"
-name = "Rise of the Tomb Raider"
+name = "Sid Meier's Civilization VI"
 
 [overrides.1147560]
 pipeline = "m11"
-name = "GreedFall"
+name = "Skul: The Hero Slayer"
 
 [overrides.1222680]
 pipeline = "m11"
-name = "Haven"
+name = "Need for Speed Heat"
 
 [overrides.252950]
 pipeline = "m11"
-name = "Borderlands 3"
+name = "Rocket League"
 
 [overrides.230410]
 pipeline = "m11"
-name = "Shadow of the Tomb Raider"
+name = "Warframe"
 
 [overrides.252490]
 pipeline = "m11"
-name = "The Outer Worlds"
+name = "Rust"
 
 [overrides.730]
 pipeline = "m11"
-name = "Tomb Raider (2013)"
+name = "Counter-Strike 2"
