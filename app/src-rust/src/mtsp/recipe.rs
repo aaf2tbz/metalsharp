@@ -426,6 +426,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(runtime);
     }
 
+    #[test]
+    fn m9_selects_i386_d3d9_for_32_bit_exes() {
+        let game_dir = test_dir("m9-32");
+        let runtime = test_dir("runtime-32");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        let exe = game_dir.join("portal2.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        let selected = selected_deploy_dlls_for_pipeline(
+            &game_dir,
+            Some(&exe),
+            super::super::engine::get_pipeline(PipelineId::M9),
+            &runtime,
+        );
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+
+        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
+        assert_eq!(selected.len(), 1);
+        let _ = std::fs::remove_dir_all(game_dir);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn m9_selects_x86_64_d3d9_for_64_bit_exes() {
+        let game_dir = test_dir("m9-64");
+        let runtime = test_dir("runtime-64");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        let exe = game_dir.join("valheim.exe");
+        write_test_pe(&exe, 0x8664, 0x20b);
+
+        let selected = selected_deploy_dlls_for_pipeline(
+            &game_dir,
+            Some(&exe),
+            super::super::engine::get_pipeline(PipelineId::M9),
+            &runtime,
+        );
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+
+        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/x86_64-windows"]));
+        assert_eq!(selected.len(), 1);
+        let _ = std::fs::remove_dir_all(game_dir);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
     fn test_dir(name: &str) -> PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-recipe-{}-{}-{}", name, std::process::id(), unique_suffix()));
@@ -434,5 +478,18 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    fn write_test_pe(path: &std::path::Path, machine: u16, optional_magic: u16) {
+        let mut data = vec![0_u8; 0x200];
+        data[0] = b'M';
+        data[1] = b'Z';
+        data[0x3c..0x40].copy_from_slice(&(0x80_u32).to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        data[0x86..0x88].copy_from_slice(&(0_u16).to_le_bytes());
+        data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
+        data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
+        std::fs::write(path, data).expect("write test PE");
     }
 }
