@@ -163,11 +163,12 @@ Latest Subnautica Below Zero result: passed for installed appid `848450`.
 Below Zero was installed in the legacy Wine Steam library under
 `~/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps/common/SubnauticaZero`
 while the active runtime home was `/Volumes/AverySSD/metalsharp`. The scanner
-now includes that legacy Wine Steam library as a fallback, the forced M12 doctor
-selected `SubnauticaZero.exe`, verified `-dx12`, deployed the current AverySSD
-M12 DLLs beside the game executable, and `/mtsp/m12-title-smoke` kept the title
-alive until the 15s smoke timeout before killing the process tree with
-`status=launched_timeout_killed`.
+now includes that legacy Wine Steam library as a fallback. The forced M12 title
+readiness endpoint selected `SubnauticaZero.exe`, verified `-dx12`, and reported
+`ok:true` with `resolved_pipeline=m11` retained as auto-rule context.
+`/mtsp/m12-title-smoke` deployed the current AverySSD M12 DLLs beside the game
+executable and kept the title alive until the 15s smoke timeout before killing
+the process tree with `status=launched_timeout_killed`.
 
 Current Avery DXMT accepted-change audit:
 
@@ -202,7 +203,7 @@ ninja -C /Volumes/AverySSD/metalsharp/dxmt-src/build \
 | Avery DXMT probes | Strongest external proof | `tests/ROADMAP.md` in `dxmt-src` marks probes 2-6 complete, including compute, triangle, indexed draw, depth, and texture sampling. |
 | M12 readiness gate | Ready | `/mtsp/m12-readiness` passes source cleanliness, probe suite, performance gate, and deployed runtime parity. |
 | M12 runtime deployment | Applied | `/mtsp/deploy-m12-runtime` deployed current DXMT build artifacts with runtime backups. |
-| M12 AAA title readiness | Ready for installed M12 title | `/mtsp/m12-title-readiness` verifies M12 mapping plus launch-doctor prerequisites for installed High On Life on `/Volumes/AverySSD/SteamLibrary`. |
+| M12 AAA title readiness | Ready for installed M12 titles | `/mtsp/m12-title-readiness` forces the M12 pipeline for requested title checks, while reporting the auto-resolved pipeline for context; High On Life and Subnautica Below Zero both pass locally. |
 | M12 AAA title smoke | Passed | `/mtsp/m12-title-smoke` launched High On Life and Subnautica Below Zero through M12 for bounded 15s smokes and killed the process trees at timeout. |
 | Legacy Wine Steam discovery | Fixed | Active AverySSD runtime discovery now also checks the legacy `~/.metalsharp/prefix-steam` Steam library, which is where Below Zero is installed locally. |
 | Deployed runtime parity | Passed | The parity route shows all comparable M12 artifacts match the current Avery build outputs. |

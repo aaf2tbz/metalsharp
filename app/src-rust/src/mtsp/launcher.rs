@@ -285,18 +285,9 @@ pub fn verify_m12_title_readiness(
     let mut results = Vec::new();
 
     for appid in appids {
-        let pipeline = super::rules::resolve_pipeline(appid);
-        let node = get_pipeline(pipeline);
+        let (pipeline, node, resolved_pipeline, resolved_node) = m12_title_readiness_pipelines(appid);
         let doctor = super::recipe::diagnose_launch_request(appid, node);
         let mut blockers = Vec::new();
-
-        if pipeline != PipelineId::M12 {
-            blockers.push(serde_json::json!({
-                "id": "pipeline_not_m12",
-                "detail": format!("Resolved pipeline is {}, not M12", node.name),
-                "pipeline": pipeline,
-            }));
-        }
 
         if !doctor.ready {
             blockers.push(serde_json::json!({
@@ -311,6 +302,8 @@ pub fn verify_m12_title_readiness(
             "appid": appid,
             "pipeline": pipeline,
             "pipeline_name": node.name,
+            "resolved_pipeline": resolved_pipeline,
+            "resolved_pipeline_name": resolved_node.name,
             "blockers": blockers,
             "doctor": doctor,
         }));
@@ -365,6 +358,11 @@ pub fn verify_m12_title_readiness(
         &report,
     )?;
     Ok(report)
+}
+
+fn m12_title_readiness_pipelines(appid: u32) -> (PipelineId, &'static PipelineNode, PipelineId, &'static PipelineNode) {
+    let resolved_pipeline = super::rules::resolve_pipeline(appid);
+    (PipelineId::M12, get_pipeline(PipelineId::M12), resolved_pipeline, get_pipeline(resolved_pipeline))
 }
 
 pub fn verify_m12_title_smoke(appid: u32, timeout_ms: u64) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -2013,6 +2011,17 @@ mod tests {
         };
 
         deploy_recipe_dlls(&recipe).expect("no-op deploy should succeed");
+    }
+
+    #[test]
+    fn m12_title_readiness_forces_m12_even_when_auto_rules_pick_m11() {
+        let (pipeline, node, resolved_pipeline, resolved_node) = m12_title_readiness_pipelines(848450);
+
+        assert_eq!(resolved_pipeline, PipelineId::M11);
+        assert_eq!(resolved_node.name, "M11");
+        assert_eq!(pipeline, PipelineId::M12);
+        assert_eq!(node.name, "M12");
+        assert!(node.launch_args.contains(&"-dx12"));
     }
 
     #[test]
