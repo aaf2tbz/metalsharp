@@ -284,13 +284,15 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
     }
 
     if is_wine_steam_running() {
+        if !extra_env.is_empty() {
+            return Err(
+                "Wine Steam is already running; per-game environment cannot be inherited without restarting Steam"
+                    .into(),
+            );
+        }
         return Ok(json!({
             "ok": true,
-            "message": if extra_env.is_empty() {
-                "Steam already running"
-            } else {
-                "Steam already running; keeping Steam alive and applying launch env to the game request"
-            }
+            "message": "Steam already running"
         }));
     }
 

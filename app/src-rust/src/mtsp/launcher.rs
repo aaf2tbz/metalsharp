@@ -369,12 +369,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let node = get_pipeline(PipelineId::Steam);
-    let cache_paths = build_cache_paths(&home, node, appid);
-    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
-    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
+    let pid = crate::launch::launch_via_steam(appid)?;
     Ok((pid, "steam"))
 }
 

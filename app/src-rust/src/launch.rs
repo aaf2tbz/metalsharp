@@ -52,7 +52,10 @@ pub fn launch_via_steam_with_env(
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    if !crate::steam::is_wine_steam_running() {
+    let steam_running = crate::steam::is_wine_steam_running();
+    ensure_steam_env_handoff_supported(steam_running, extra_env)?;
+
+    if !steam_running {
         crate::steam::launch_wine_steam_with_env(extra_env)?;
         for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -75,6 +78,13 @@ pub fn launch_via_steam_with_env(
 
     cmd.args(["start", &url]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     spawn_and_reap(cmd)
+}
+
+fn ensure_steam_env_handoff_supported(steam_running: bool, extra_env: &[(String, String)]) -> Result<(), String> {
+    if steam_running && !extra_env.is_empty() {
+        return Err("Wine Steam is already running; per-game environment cannot be inherited without restarting Steam. Use a direct MTSP pipeline for env-dependent launches.".into());
+    }
+    Ok(())
 }
 
 pub fn kill_process_tree(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
@@ -364,5 +374,14 @@ mod tests {
         }
 
         assert!(!is_process_active(pid as i32));
+    }
+
+    #[test]
+    fn rejects_env_dependent_handoff_when_steam_is_already_running() {
+        let env = vec![("DXMT_SHADER_CACHE_PATH".to_string(), "/tmp/cache".to_string())];
+
+        assert!(ensure_steam_env_handoff_supported(true, &env).is_err());
+        assert!(ensure_steam_env_handoff_supported(true, &[]).is_ok());
+        assert!(ensure_steam_env_handoff_supported(false, &env).is_ok());
     }
 }
