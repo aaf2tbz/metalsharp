@@ -45,8 +45,10 @@ Common marker behavior:
 | `d3dx9_43.dll` | Wine |
 | PE imports D3D12 | M12 for 64-bit games, M11 otherwise |
 | PE imports D3D11 | M11 |
-| PE imports D3D10 | M10 |
+| 64-bit PE imports D3D10 | M10 |
 | PE imports D3D9 | M9 |
+
+D3D10 PE imports are checked before broad Unity, Unreal, Source, RE Engine, and Steam marker heuristics so D3D10 games stay on `[m10]`.
 
 ## Runtime Prep
 
@@ -56,6 +58,8 @@ M11/M10 copy:
 - `dxgi.dll`
 - `d3d10core.dll`
 - `winemetal.dll`
+
+M10 is selected by 64-bit `d3d10.dll`, `d3d10_1.dll`, or `d3d10core.dll` imports. It deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints plus DXMT's `d3d10core.dll`, so public D3D10 imports and the DXMT core handoff are both owned by the x86_64 M10 runtime contract.
 
 M12 also copies:
 
