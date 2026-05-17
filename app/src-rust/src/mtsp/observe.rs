@@ -15,6 +15,7 @@ struct RuntimeSignals {
     dxgi_factory_or_swapchain: bool,
     d3d12_sdk_configuration: bool,
     d3d12_sdk_version: bool,
+    shader_translation_incomplete: bool,
     shader_translation_failure: bool,
     state_object_notimpl: bool,
     pso_failure: bool,
@@ -223,6 +224,14 @@ fn detect_signals(line: &str) -> Vec<&'static str> {
     {
         signals.push("shader_translation_failure");
     }
+    if lower.contains("unsupported_intrinsics=")
+        || lower.contains("unsupported_opcodes=")
+        || lower.contains("dxil unknown intrinsic")
+        || lower.contains("dxil unhandled opcode")
+        || lower.contains("dxil intrinsic id is not a literal")
+    {
+        signals.push("shader_translation_incomplete");
+    }
     if lower.contains("createstateobject") && lower.contains("e_notimpl") {
         signals.push("state_object_notimpl");
     }
@@ -257,6 +266,7 @@ fn apply_signal(signals: &mut RuntimeSignals, signal: &str) {
         "dxgi_factory_or_swapchain" => signals.dxgi_factory_or_swapchain = true,
         "d3d12_sdk_configuration" => signals.d3d12_sdk_configuration = true,
         "d3d12_sdk_version" => signals.d3d12_sdk_version = true,
+        "shader_translation_incomplete" => signals.shader_translation_incomplete = true,
         "shader_translation_failure" => signals.shader_translation_failure = true,
         "state_object_notimpl" => signals.state_object_notimpl = true,
         "pso_failure" => signals.pso_failure = true,
@@ -269,6 +279,9 @@ fn apply_signal(signals: &mut RuntimeSignals, signal: &str) {
 fn classify_runtime(signals: &RuntimeSignals) -> &'static str {
     if signals.shader_translation_failure {
         return "shader_translation_failure";
+    }
+    if signals.shader_translation_incomplete {
+        return "shader_translation_incomplete";
     }
     if signals.pso_failure {
         return "pso_failure";
@@ -326,6 +339,11 @@ fn warnings_for_status(status: &str, signals: &RuntimeSignals) -> Vec<&'static s
     if status == "shader_translation_failure" {
         warnings.push("DXIL or Metal shader translation failed before a usable shader function was created.");
     }
+    if status == "shader_translation_incomplete" {
+        warnings.push(
+            "DXIL translated to MSL with unsupported intrinsic or opcode fallbacks; visual output may be incomplete.",
+        );
+    }
     if status == "state_object_notimpl" {
         warnings.push("The title requested a D3D12 state object path that is not implemented yet.");
     }
@@ -335,6 +353,7 @@ fn warnings_for_status(status: &str, signals: &RuntimeSignals) -> Vec<&'static s
 fn summary_for_status(status: &str) -> &'static str {
     match status {
         "shader_translation_failure" => "DXIL-to-Metal shader translation failed during launch.",
+        "shader_translation_incomplete" => "DXIL-to-Metal shader translation completed with unsupported operations.",
         "pso_failure" => "D3D/Metal PSO creation failed after launch.",
         "pso_bind_failure" => "Rendering reached command replay, but no usable Metal PSO was bound.",
         "draw_or_dispatch_skipped" => "Rendering reached command replay, but a draw or dispatch was skipped.",
@@ -444,6 +463,17 @@ mod tests {
                 "PSO COMPILE FAILURE: this=0x123 compute=0 stage=shader/metal_library_source detail=ps_main MSL compile failed",
             ]),
             "shader_translation_failure"
+        );
+    }
+
+    #[test]
+    fn classifies_incomplete_shader_translation() {
+        assert_eq!(
+            classify(&[
+                "info:  D3D12 device created via DXMT Metal backend",
+                "DXILToMSL: generated 4096 bytes of MSL unsupported_intrinsics=2 unsupported_opcodes=1",
+            ]),
+            "shader_translation_incomplete"
         );
     }
 
