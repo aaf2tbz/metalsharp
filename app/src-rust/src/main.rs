@@ -448,6 +448,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             )
         },
         (Method::Get, "/mtsp/d3dmetal-status") => resp(200, mtsp::d3dmetal::d3dmetal_status()),
+        (Method::Get, "/mtsp/d3d12-sdk-package") => resp(200, mtsp::d3d12sdk::inspect_d3d12_sdk_package(None)),
+        (Method::Post, "/mtsp/d3d12-sdk-package") => {
+            let body = read_body(req);
+            let package_path = body.get("path").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            resp(200, mtsp::d3d12sdk::inspect_d3d12_sdk_package(package_path))
+        },
         (Method::Post, "/mtsp/prepare") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());
