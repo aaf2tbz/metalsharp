@@ -59,7 +59,7 @@ M11/M10 copy:
 - `d3d10core.dll`
 - `winemetal.dll`
 
-M10 is selected by `d3d10.dll`, `d3d10_1.dll`, or `d3d10core.dll` imports. Its deployed D3D10 boundary is `d3d10core.dll`; it does not require a separate `d3d10.dll` payload.
+M10 is selected by `d3d10.dll`, `d3d10_1.dll`, or `d3d10core.dll` imports. It deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints plus DXMT's `d3d10core.dll`, so public D3D10 imports and the DXMT core handoff are both owned by the M10 runtime contract.
 
 M12 also copies:
 

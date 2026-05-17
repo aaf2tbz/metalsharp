@@ -7,6 +7,7 @@ M10 is the stable D3D10 engine path. It launches Windows D3D10 titles through Wi
 ```text
 D3D10 game
   -> Wine
+  -> Wine d3d10.dll / d3d10_1.dll public entrypoints
   -> DXMT d3d10core.dll
   -> DXMT d3d11.dll + dxgi.dll
   -> winemetal.dll / winemetal.so
@@ -14,9 +15,14 @@ D3D10 game
   -> Apple GPU
 ```
 
-The runtime payload does not ship a separate M10-specific `d3d10.dll` shim. The D3D10 handoff is `d3d10core.dll` plus the same DXMT D3D11, DXGI, and winemetal runtime used by M11.
+M10 deploys Wine's public D3D10 entrypoint DLLs for games that import `d3d10.dll` or `d3d10_1.dll`, then routes the core handoff through DXMT's `d3d10core.dll` plus the same DXMT D3D11, DXGI, and winemetal runtime used by M11.
 
-M10 deploys these DLLs from `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`:
+M10 deploys these public D3D10 entrypoints from `~/.metalsharp/runtime/wine/lib/wine/x86_64-windows/`:
+
+- `d3d10.dll`
+- `d3d10_1.dll`
+
+M10 deploys these DXMT handoff DLLs from `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`:
 
 - `d3d11.dll`
 - `dxgi.dll`
@@ -32,7 +38,7 @@ M10 deliberately does not deploy `d3d12.dll`.
 | Pipeline | `M10` |
 | Backend | `dxmt` |
 | Launch args | `-dx10` |
-| Wine overrides | `dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
+| Wine overrides | `d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
 | Shader cache subdir | `m10` |
 | Preset fallback family | `m10`, then `dxmt-metal` |
 

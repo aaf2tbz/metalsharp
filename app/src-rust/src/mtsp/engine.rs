@@ -118,9 +118,13 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some(
+                    "d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll" },
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
@@ -318,10 +322,13 @@ mod tests {
         let m11 = get_pipeline(PipelineId::M11);
 
         assert_eq!(m10.dyld_paths, m11.dyld_paths);
-        assert_eq!(m10.wine_overrides, Some("dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+        assert_eq!(
+            m10.wine_overrides,
+            Some("d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
 
         let m10_dlls: std::collections::HashSet<_> = m10.deploy_dlls.iter().map(|dll| dll.filename).collect();
-        for required in ["d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
+        for required in ["d3d10.dll", "d3d10_1.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
             assert!(m10_dlls.contains(required), "M10 missing {}", required);
         }
         assert!(!m10_dlls.contains("d3d12.dll"));

@@ -19,7 +19,7 @@ MetalSharp has two graphics translation families:
 
 DXMT is used by M12, M11, and M10.
 
-M10 is the D3D10 DXMT path. It is backed by DXMT's `d3d10core.dll` and the shared D3D11/DXGI/winemetal stack; MetalSharp does not expect a separate deployed `d3d10.dll` for this path.
+M10 is the D3D10 DXMT path. It deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for imported D3D10 APIs, then routes the core handoff through DXMT's `d3d10core.dll` and the shared D3D11/DXGI/winemetal stack.
 
 DXMT DLLs:
 
@@ -29,6 +29,7 @@ DXMT DLLs:
 | `d3d11.dll` | M12, M11, M10 |
 | `dxgi.dll` | M12, M11, M10 |
 | `d3d10core.dll` | M12, M11, M10 |
+| `d3d10.dll`, `d3d10_1.dll` | M10 public Wine D3D10 entrypoints |
 | `winemetal.dll` | M12, M11, M10 |
 | `winemetal.so` | Unix Metal bridge |
 
