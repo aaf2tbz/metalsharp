@@ -323,9 +323,15 @@ int main() {
             "fragment float4 fragmentShader(VSOut in [[stage_in]]) { return in.color; }\n";
 
         ID3D12PipelineState* indexedPso = nullptr;
+        D3D12_INPUT_ELEMENT_DESC inputElements[2] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, 0, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, 0, 0},
+        };
         D3D12_GRAPHICS_PIPELINE_STATE_DESC indexedDesc = {};
         indexedDesc.VS = graphicsMSL;
         indexedDesc.VSsize = strlen(graphicsMSL);
+        indexedDesc.InputLayout = inputElements;
+        indexedDesc.NumInputElements = 2;
         indexedDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         indexedDesc.NumRenderTargets = 1;
         indexedDesc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
