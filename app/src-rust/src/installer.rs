@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -208,10 +208,10 @@ fn install_xcode_cli() -> Result<bool, String> {
 }
 
 fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
     let runtime_dir = home.join(".metalsharp").join("runtime");
     let _ = fs::create_dir_all(&runtime_dir);
 
+    let ms_wine = metalsharp_wine_binary(home);
     let already_installed = ms_wine.exists()
         && home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono").exists()
         && home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
@@ -253,6 +253,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         if let Some(archive2) = bundle2 {
             let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
         }
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
@@ -277,6 +278,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         let wine_dir = runtime_dir.join("wine");
         let _ = fs::create_dir_all(&wine_dir);
         extract_zst(&archive, &wine_dir, "wine")?;
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             let _ = install_mono_x86_fallback(home);
             let _ = install_dxvk_fallback(home);
@@ -289,6 +291,10 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     }
 
     Err("MetalSharp runtime not found — no bundled metalsharp_bundle.tar.zst available".into())
+}
+
+fn metalsharp_wine_binary(home: &Path) -> PathBuf {
+    crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
 }
 
 fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -359,7 +365,7 @@ fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    let ms_wine = metalsharp_wine_binary(home);
     if ms_wine.exists() {
         return Ok(false);
     }
@@ -370,6 +376,7 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
     let bundled = find_bundled_archive("wine");
     if let Some(archive) = bundled {
         extract_zst(&archive, &wine_dir, "wine")?;
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             return Ok(true);
         }
@@ -621,7 +628,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    let ms_wine = metalsharp_wine_binary(home);
     if !ms_wine.exists() {
         return Err("MetalSharp Wine not found — cannot install Steam".into());
     }
@@ -936,4 +943,29 @@ fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), Stri
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metalsharp_wine_binary_accepts_renamed_runtime_binary() {
+        let home = test_home("renamed-runtime-binary");
+        let bin = home.join(".metalsharp").join("runtime").join("wine").join("bin");
+        fs::create_dir_all(&bin).expect("create runtime bin");
+        fs::write(bin.join("metalsharp-wine"), b"#!/bin/sh\n").expect("write renamed wine");
+
+        assert_eq!(metalsharp_wine_binary(&home), bin.join("metalsharp-wine"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn test_home(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "metalsharp-installer-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ))
+    }
 }
