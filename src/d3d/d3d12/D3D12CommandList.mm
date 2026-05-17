@@ -738,15 +738,15 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                                 [enc setVertexBuffer:argBuf offset:0 atIndex:16];
                                 [enc setFragmentBuffer:argBuf offset:0 atIndex:16];
                             }
-
-                            for (UINT i = 0; i < 32; ++i) {
-                                if (!m_vertexBuffers[i].metalBuffer)
-                                    continue;
-                                [enc setVertexBuffer:(__bridge id<MTLBuffer>)m_vertexBuffers[i].metalBuffer
-                                              offset:m_vertexBuffers[i].offset
-                                             atIndex:i];
-                            }
                         }
+                    }
+
+                    for (UINT i = 0; i < 32; ++i) {
+                        if (!m_vertexBuffers[i].metalBuffer)
+                            continue;
+                        [enc setVertexBuffer:(__bridge id<MTLBuffer>)m_vertexBuffers[i].metalBuffer
+                                      offset:m_vertexBuffers[i].offset
+                                     atIndex:i];
                     }
 
                     for (auto* res : m_referencedResources) {

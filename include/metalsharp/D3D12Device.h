@@ -497,6 +497,14 @@ class D3D12ResourceImpl final : public ID3D12Resource {
 
 class D3D12DeviceImpl final : public ID3D12Device {
   public:
+    ~D3D12DeviceImpl() {
+        for (auto& entry : m_gpuAddressResources) {
+            if (entry.second)
+                entry.second->Release();
+        }
+        m_gpuAddressResources.clear();
+    }
+
     static HRESULT create(D3D12DeviceImpl** ppDevice) {
         if (!ppDevice)
             return E_POINTER;
@@ -570,6 +578,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 std::unique_ptr<MetalBuffer>(MetalBuffer::create(*m_metalDevice, (size_t)pDesc->Width, nullptr));
             if (res->metalBuffer) {
                 res->m_gpuAddress = reinterpret_cast<UINT64>(res->metalBuffer->nativeBuffer());
+                res->AddRef();
                 m_gpuAddressResources[res->m_gpuAddress] = res;
             }
         } else {

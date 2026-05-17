@@ -15,7 +15,7 @@ uses for Wine-launched games.
 | Pipeline definition | `app/src-rust/src/mtsp/engine.rs` | M12 is named `D3D12 -> Metal via DXMT`, is the first stable pipeline, deploys DXMT DLLs, and sets D3D12/DXGI/D3D11 overrides. | Present in current project |
 | Launcher handoff | `app/src-rust/src/mtsp/launcher.rs` | M12 routes through `launch_dxmt_metal`, copies DLLs into the game directory, sets Wine/DYLD/cache env, and adds `-dx12`. | Present in current project |
 | Shader/cache routing | `app/src-rust/src/mtsp/shader_cache.rs` | M12 uses `m12` and `dxmt-metal12` cache directories. | Present in current project |
-| DXMT D3D12 implementation | `/Volumes/AverySSD/metalsharp/dxmt-src` | Conformance branch contains the real DXMT D3D12/DXIL/winemetal work used by M12 runtime DLLs. | External source tree |
+| DXMT D3D12 implementation | External DXMT source tree | Conformance branch contains the real DXMT D3D12/DXIL/winemetal work used by M12 runtime DLLs. | External source tree |
 | Native D3D12 target | `include/metalsharp/D3D12Device.h`, `src/d3d/d3d12/*` | Builds `build/d3d12.dylib` and exposes `D3D12CreateDevice`. | In-tree, smoke-tested |
 | Cocoa surface | `src/win32/user32/WindowManager.mm`, `src/dxgi/DXGISwapChain.mm` | Creates NSWindow/CAMetalLayer for the native loader path. | In-tree, not the Wine M12 surface |
 | Wine M12 surface | DXMT `winemetal.so` plus Wine/macOS windowing | DXMT presents through Wine/winemetal, not through the native `WindowManager` path. | External runtime path |
@@ -35,7 +35,7 @@ uses for Wine-launched games.
 
 ## Current Verification
 
-These checks were run from `/Users/alexmondello/repos/metalsharp`:
+These checks were run from the repository root:
 
 ```sh
 cmake --build build --target test_d3d12
@@ -56,10 +56,10 @@ Results:
 - `build/d3d12.dylib` links Metal, Foundation, QuartzCore, AppKit, and
   `libmetalirconverter`.
 
-The AverySSD DXMT source also rebuilt successfully with:
+The external DXMT source tree also rebuilt successfully with:
 
 ```sh
-ninja -C /Volumes/AverySSD/metalsharp/dxmt-src/build src/winemetal/unix/winemetal.so src/d3d12/d3d12.dll
+ninja -C <dxmt-source>/build src/winemetal/unix/winemetal.so src/d3d12/d3d12.dll
 ```
 
 No runtime DLL deployment was performed during this mapping pass.
