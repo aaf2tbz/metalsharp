@@ -146,7 +146,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                deploy_dlls: vec![DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" }],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
+                ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
@@ -305,9 +308,15 @@ mod tests {
         assert_eq!(m9.shader_cache_subdir, Some("m9"));
         assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
 
-        let m9_dlls: std::collections::HashSet<_> = m9.deploy_dlls.iter().map(|dll| dll.filename).collect();
-        assert_eq!(m9_dlls, std::collections::HashSet::from(["d3d9.dll"]));
-        assert_eq!(m9.deploy_dlls[0].source_subpath, "lib/wine/x86_64-windows");
+        let m9_dlls: std::collections::HashSet<_> =
+            m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
+        assert_eq!(
+            m9_dlls,
+            std::collections::HashSet::from([
+                ("lib/wine/x86_64-windows", "d3d9.dll"),
+                ("lib/wine/i386-windows", "d3d9.dll"),
+            ])
+        );
         assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
         assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
 
