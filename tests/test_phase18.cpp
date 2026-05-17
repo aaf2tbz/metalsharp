@@ -426,6 +426,36 @@ static bool test_d3d12_gpu_address_lookup_unregisters_released_resource() {
     return registered && unregistered;
 }
 
+static bool test_d3d12_gpu_address_resource_can_outlive_device() {
+    D3D12DeviceImpl* device = nullptr;
+    D3D12DeviceImpl::create(&device);
+    if (!device)
+        return false;
+
+    D3D12_HEAP_PROPERTIES heapProps = {D3D12_HEAP_TYPE_UPLOAD, 0, 0, 0, 0};
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = 128;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc = {1, 0};
+
+    void* resPtr = nullptr;
+    HRESULT hr = device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                 IID_ID3D12Resource, &resPtr);
+    auto* res = static_cast<ID3D12Resource*>(resPtr);
+    if (FAILED(hr) || !res) {
+        device->Release();
+        return false;
+    }
+
+    bool registered = device->gpuAddressResourceCountForTesting() == 1;
+    device->Release();
+    res->Release();
+    return registered;
+}
+
 static bool test_d3d12_command_list_retains_bound_gpu_address_resource() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
@@ -480,6 +510,38 @@ static bool test_d3d12_command_list_retains_bound_gpu_address_resource() {
     return bound && retained_by_list && unregistered_after_list_release;
 }
 
+static bool test_d3d12_unresolved_gpu_address_bind_is_ignored() {
+    D3D12DeviceImpl* device = nullptr;
+    D3D12DeviceImpl::create(&device);
+    if (!device)
+        return false;
+
+    void* allocPtr = nullptr;
+    HRESULT allocHr =
+        device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, &allocPtr);
+    auto* allocator = static_cast<ID3D12CommandAllocator*>(allocPtr);
+
+    void* listPtr = nullptr;
+    HRESULT listHr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
+                                               IID_ID3D12GraphicsCommandList, &listPtr);
+    auto* list = static_cast<ID3D12GraphicsCommandList*>(listPtr);
+
+    bool bound = false;
+    if (SUCCEEDED(allocHr) && allocator && SUCCEEDED(listHr) && list) {
+        D3D12_VERTEX_BUFFER_VIEW vertexView = {0x12345678, 128, 16};
+        D3D12_INDEX_BUFFER_VIEW indexView = {0x87654321, 128, DXGI_FORMAT_R16_UINT};
+        bound = SUCCEEDED(list->IASetVertexBuffers(0, 1, &vertexView)) && SUCCEEDED(list->IASetIndexBuffer(&indexView));
+    }
+
+    bool registryUnchanged = device->gpuAddressResourceCountForTesting() == 0;
+    if (list)
+        list->Release();
+    if (allocator)
+        allocator->Release();
+    device->Release();
+    return bound && registryUnchanged;
+}
+
 static bool test_d3d12_fence_signal() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
@@ -517,7 +579,9 @@ int main() {
     TEST(d3d12_committed_resource_buffer);
     TEST(d3d12_buffer_map_unmap);
     TEST(d3d12_gpu_address_lookup_unregisters_released_resource);
+    TEST(d3d12_gpu_address_resource_can_outlive_device);
     TEST(d3d12_command_list_retains_bound_gpu_address_resource);
+    TEST(d3d12_unresolved_gpu_address_bind_is_ignored);
     TEST(d3d12_fence_signal);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);

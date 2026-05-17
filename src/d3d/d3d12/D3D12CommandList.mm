@@ -254,9 +254,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             for (UINT i = 0; i < num && (start + i) < 32; ++i) {
                 UINT64 offset = 0;
                 D3D12ResourceImpl* res = device.findResourceForGPUAddress(pViews[i].BufferLocation, &offset);
-                m_vertexBuffers[start + i].metalBuffer =
-                    res ? res->__metalBufferPtr() : reinterpret_cast<void*>(pViews[i].BufferLocation);
-                m_vertexBuffers[start + i].offset = offset;
+                m_vertexBuffers[start + i].metalBuffer = res ? res->__metalBufferPtr() : nullptr;
+                m_vertexBuffers[start + i].offset = res ? offset : 0;
                 m_vertexBuffers[start + i].size = pViews[i].SizeInBytes;
                 m_vertexBuffers[start + i].stride = pViews[i].StrideInBytes;
                 retainResource(res);
@@ -269,8 +268,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 return S_OK;
             UINT64 offset = 0;
             D3D12ResourceImpl* res = device.findResourceForGPUAddress(pView->BufferLocation, &offset);
-            m_indexBuffer.metalBuffer = res ? res->__metalBufferPtr() : reinterpret_cast<void*>(pView->BufferLocation);
-            m_indexBuffer.offset = offset;
+            m_indexBuffer.metalBuffer = res ? res->__metalBufferPtr() : nullptr;
+            m_indexBuffer.offset = res ? offset : 0;
             m_indexBuffer.size = pView->SizeInBytes;
             m_indexBuffer.format = pView->Format;
             retainResource(res);
@@ -1100,7 +1099,12 @@ D3D12DescriptorHeapImpl* D3D12DeviceImpl::findHeapForGPUHandle(D3D12_GPU_DESCRIP
 }
 
 D3D12ResourceImpl* D3D12DeviceImpl::findResourceForGPUAddress(D3D12_GPU_VIRTUAL_ADDRESS address, UINT64* offset) const {
-    for (const auto& [base, resource] : m_gpuAddressResources) {
+    if (!m_gpuAddressResources) {
+        if (offset)
+            *offset = 0;
+        return nullptr;
+    }
+    for (const auto& [base, resource] : *m_gpuAddressResources) {
         if (!resource || address < base)
             continue;
         UINT64 localOffset = address - base;
