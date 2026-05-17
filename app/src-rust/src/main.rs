@@ -447,6 +447,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 }),
             )
         },
+        (Method::Get, "/mtsp/d3dmetal-status") => resp(200, mtsp::d3dmetal::d3dmetal_status()),
         (Method::Post, "/mtsp/prepare") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());

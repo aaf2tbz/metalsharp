@@ -1,3 +1,4 @@
+pub mod d3dmetal;
 pub mod engine;
 pub mod launcher;
 pub mod observe;
