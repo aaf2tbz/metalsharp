@@ -253,7 +253,7 @@ pub fn get_pipeline(id: PipelineId) -> &'static PipelineNode {
 
 impl PipelineId {
     pub fn from_legacy_method(method: &str) -> Option<PipelineId> {
-        match method {
+        match method.trim().to_ascii_lowercase().as_str() {
             "dxmt_metal" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "dxmt_metal12" => Some(PipelineId::M12),
             "d3d9_metal" => Some(PipelineId::M9),
@@ -267,10 +267,11 @@ impl PipelineId {
     }
 
     pub fn from_str_flexible(s: &str) -> Option<PipelineId> {
-        if let Some(p) = Self::from_legacy_method(s) {
+        let normalized = s.trim().to_ascii_lowercase().replace('-', "_");
+        if let Some(p) = Self::from_legacy_method(&normalized) {
             return Some(p);
         }
-        match s {
+        match normalized.as_str() {
             "m11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" => Some(PipelineId::M12),
             "m10" => Some(PipelineId::M10),
@@ -419,5 +420,12 @@ mod tests {
         assert_eq!(PipelineId::from_legacy_method("dxvk_metal32"), None);
         assert_eq!(PipelineId::from_str_flexible("m9_gl"), None);
         assert_eq!(PipelineId::from_str_flexible("m32_vk"), None);
+    }
+
+    #[test]
+    fn launch_method_parsing_is_case_and_separator_tolerant() {
+        assert_eq!(PipelineId::from_str_flexible(" M12 "), Some(PipelineId::M12));
+        assert_eq!(PipelineId::from_str_flexible("wine-steam"), Some(PipelineId::Steam));
+        assert_eq!(PipelineId::from_legacy_method("DXMT_METAL"), Some(PipelineId::M11));
     }
 }

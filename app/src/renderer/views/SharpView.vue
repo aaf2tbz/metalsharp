@@ -7,6 +7,7 @@ import type { SharpApp } from "../api-types";
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
 const engineOptions = [
+  { id: "auto", name: "Auto" },
   { id: "wine_bare", name: "Wine" },
   { id: "m11", name: "M11" },
   { id: "m12", name: "M12" },
@@ -37,8 +38,11 @@ async function launchApp(id: string, engine: string) {
   const app = apps.value.find((a) => a.id === id);
   if (!app) return;
   toast.show(`Launching ${app.name}...`);
-  const result = await api<{ ok: boolean; pid?: number; error?: string }>("POST", "/sharp-library/launch", { id, engine });
-  if (result?.ok && result.pid) toast.show(`Launched ${app.name}`, "success");
+  const result = await api<{ ok: boolean; pid?: number; pipeline?: string; warnings?: string[]; error?: string }>("POST", "/sharp-library/launch", { id, engine });
+  if (result?.ok && result.pid) {
+    const warning = result.warnings?.[0];
+    toast.show(warning ? `Launched ${app.name}: ${warning}` : `Launched ${app.name}`, "success");
+  }
   else toast.show(result?.error ?? `Failed to launch ${app.name}`, "error");
 }
 

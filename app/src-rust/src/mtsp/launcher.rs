@@ -114,65 +114,173 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
-
-    let game_dir =
-        crate::setup::resolve_game_dir(appid).ok_or_else(|| format!("game directory not found for appid {}", appid))?;
-
-    let deploy_dlls = selected_deploy_dlls_for_pipeline(&game_dir, node);
-    let deployed_sources: Vec<&str> = deploy_dlls.iter().map(|dll| dll.source_subpath).collect();
-    deploy_dlls_for_pipeline(&game_dir, node);
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+    deploy_recipe_dlls(&recipe)?;
 
     Ok(serde_json::json!({
         "ok": true,
         "appid": appid,
         "pipeline": node.id,
         "pipeline_name": node.name,
-        "deployed_dlls": deploy_dlls.len(),
+        "recipe": recipe,
+        "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
     }))
 }
 
-pub fn deploy_dlls_for_pipeline(game_dir: &PathBuf, node: &PipelineNode) {
-    if node.deploy_dlls.is_empty() {
-        return;
+pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
+    validate_recipe_runtime(recipe)?;
+
+    if recipe.dlls.is_empty() {
+        return Ok(());
     }
 
-    let home = dirs::home_dir().unwrap_or_default();
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let injection_dir = game_dir.join(".metalsharp");
+    let originals_dir = injection_dir.join("originals");
+    std::fs::create_dir_all(&originals_dir)?;
+
+    let mut manifest_dlls = Vec::new();
+    for deploy in &recipe.dlls {
+        if !deploy.source_present {
+            return Err(format!(
+                "required runtime DLL {} missing at {}",
+                deploy.filename,
+                deploy.source_path.display()
+            )
+            .into());
+        }
+        if let Some(parent) = deploy.dest_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let backup_path = originals_dir.join(backup_name_for(game_dir, &deploy.dest_path));
+        if deploy.dest_path.exists() && !files_match(&deploy.source_path, &deploy.dest_path) && !backup_path.exists() {
+            std::fs::copy(&deploy.dest_path, &backup_path)?;
+        }
+
+        std::fs::copy(&deploy.source_path, &deploy.dest_path)?;
+        manifest_dlls.push(serde_json::json!({
+            "filename": deploy.filename,
+            "source_path": deploy.source_path,
+            "dest_path": deploy.dest_path,
+            "backup_path": if backup_path.exists() { Some(backup_path) } else { None },
+        }));
+    }
+
+    let manifest = serde_json::json!({
+        "appid": recipe.appid,
+        "pipeline": recipe.pipeline,
+        "pipeline_name": recipe.pipeline_name,
+        "backend": recipe.backend,
+        "exe_path": recipe.exe_path,
+        "updated_at_unix": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        "dlls": manifest_dlls,
+    });
+    std::fs::write(injection_dir.join("injections.json"), serde_json::to_string_pretty(&manifest)?)?;
+    Ok(())
+}
+
+pub fn launch_custom_with_pipeline(
+    launch_id: u32,
+    game_dir: &std::path::Path,
+    exe_path: &std::path::Path,
+    pipeline_id: PipelineId,
+) -> Result<(u32, &'static str, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
+    let node = get_pipeline(pipeline_id);
+    match pipeline_id {
+        PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M32
+        | PipelineId::WineBare => {},
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, or M32".into());
+        },
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let deploy_dlls = selected_deploy_dlls_for_pipeline(game_dir, node);
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
 
-    for deploy in deploy_dlls {
-        let src = ms_root.join(deploy.source_subpath).join(deploy.filename);
-        let dst = game_dir.join(deploy.filename);
-        if src.exists() {
-            let _ = std::fs::copy(&src, &dst);
-        }
+    let recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
+    if node.deploy_dlls.is_empty() {
+        validate_recipe_runtime(&recipe)?;
+    } else {
+        deploy_recipe_dlls(&recipe)?;
+    }
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_dir = launch_working_dir(game_dir, exe_path);
+    let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
+    let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
+    let runtime_lib_key =
+        crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
+
+    let cache_paths = build_cache_paths(&home, node, launch_id);
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
+    }
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+    if node.backend == "dxmt" {
+        cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
+    }
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.arg(&exe_name);
+    cmd.args(&node.launch_args);
+    let child = cmd.spawn()?;
+    Ok((child.id(), node.id.to_legacy_method(), recipe))
+}
+
+fn backup_name_for(game_dir: &std::path::Path, dest_path: &std::path::Path) -> String {
+    dest_path
+        .strip_prefix(game_dir)
+        .unwrap_or(dest_path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("__")
+}
+
+fn files_match(left: &std::path::Path, right: &std::path::Path) -> bool {
+    match (std::fs::read(left), std::fs::read(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
-fn selected_deploy_dlls_for_pipeline<'a>(
-    game_dir: &PathBuf,
-    node: &'a PipelineNode,
-) -> Vec<&'a super::engine::DllDeploy> {
-    if node.id != PipelineId::M9 {
-        return node.deploy_dlls.iter().collect();
-    }
-
-    let source_subpath = m9_d3d9_source_subpath(game_dir);
-    node.deploy_dlls.iter().filter(|dll| dll.source_subpath == source_subpath).collect()
+fn launch_working_dir<'a>(game_dir: &'a std::path::Path, exe_path: &'a std::path::Path) -> &'a std::path::Path {
+    exe_path.parent().unwrap_or(game_dir)
 }
 
-fn m9_d3d9_source_subpath(game_dir: &PathBuf) -> &'static str {
-    let exe = PathBuf::from(resolve_game_exe(game_dir));
-    if let Ok(data) = std::fs::read(&exe) {
-        if let Some(pe) = super::pe::parse_pe_imports(&data) {
-            if !pe.is_64_bit {
-                return "lib/wine/i386-windows";
-            }
-        }
-    }
+fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
+    let missing: Vec<String> = recipe
+        .runtime_assets
+        .iter()
+        .filter(|asset| asset.required && !asset.present)
+        .map(|asset| format!("{} ({})", asset.name, asset.path.display()))
+        .collect();
 
-    "lib/wine/x86_64-windows"
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("MetalSharp runtime is incomplete: {}", missing.join(", ")).into())
+    }
 }
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -184,13 +292,15 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
+    let exe_dir = launch_working_dir(game_dir, exe_path);
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe = resolve_game_exe(&game_dir);
-    let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    deploy_dlls_for_pipeline(&game_dir, node);
+    deploy_recipe_dlls(&recipe)?;
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
@@ -200,7 +310,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(&game_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -228,18 +338,22 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
+    let exe_dir = launch_working_dir(game_dir, exe_path);
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe = resolve_game_exe(&game_dir);
-    let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    validate_recipe_runtime(&recipe)?;
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(&game_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -255,12 +369,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let node = get_pipeline(PipelineId::Steam);
-    let cache_paths = build_cache_paths(&home, node, appid);
-    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
-    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
+    let pid = crate::launch::launch_via_steam(appid)?;
     Ok((pid, "steam"))
 }
 
@@ -410,22 +519,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
 }
 
 fn resolve_game_exe(game_dir: &PathBuf) -> String {
-    if let Ok(entries) = std::fs::read_dir(game_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.ends_with(".exe")
-                && !name.contains("setup")
-                && !name.contains("redist")
-                && !name.contains("uninstall")
-                && !name.contains("vcredist")
-                && !name.contains("installer")
-                && !name.contains("crashhandler")
-            {
-                return entry.path().to_string_lossy().to_string();
-            }
-        }
-    }
-    game_dir.to_string_lossy().to_string()
+    super::recipe::resolve_game_exe(0, game_dir).unwrap_or_else(|_| game_dir.clone()).to_string_lossy().to_string()
 }
 
 fn find_config(name: &str) -> String {
@@ -858,64 +952,31 @@ mod tests {
     }
 
     #[test]
-    fn m9_selects_i386_d3d9_for_32_bit_exes() {
-        let game_dir = test_game_dir("m9-32");
-        std::fs::create_dir_all(&game_dir).expect("create test game dir");
-        write_test_pe(&game_dir.join("portal2.exe"), 0x014c, 0x10b);
+    fn no_dll_recipes_do_not_require_game_dir_for_deploy() {
+        let recipe = super::super::recipe::LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::Steam,
+            pipeline_name: "Steam".into(),
+            backend: "wine-steam".into(),
+            game_dir: None,
+            exe_path: None,
+            exe_name: None,
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            warnings: vec![],
+        };
 
-        let selected = selected_deploy_dlls_for_pipeline(&game_dir, get_pipeline(PipelineId::M9));
-        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath).collect();
-
-        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
-        let _ = std::fs::remove_dir_all(game_dir);
+        deploy_recipe_dlls(&recipe).expect("no-op deploy should succeed");
     }
 
     #[test]
-    fn m9_selects_x86_64_d3d9_for_64_bit_exes() {
-        let game_dir = test_game_dir("m9-64");
-        std::fs::create_dir_all(&game_dir).expect("create test game dir");
-        write_test_pe(&game_dir.join("valheim.exe"), 0x8664, 0x20b);
+    fn nested_executables_launch_from_their_parent_directory() {
+        let game_dir = PathBuf::from("/tmp/Game");
+        let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
 
-        let selected = selected_deploy_dlls_for_pipeline(&game_dir, get_pipeline(PipelineId::M9));
-        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath).collect();
-
-        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/x86_64-windows"]));
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn selected_m9_deploy_count_matches_architecture_filter() {
-        let game_dir = test_game_dir("m9-count");
-        std::fs::create_dir_all(&game_dir).expect("create test game dir");
-        write_test_pe(&game_dir.join("portal2.exe"), 0x014c, 0x10b);
-
-        let selected = selected_deploy_dlls_for_pipeline(&game_dir, get_pipeline(PipelineId::M9));
-
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].source_subpath, "lib/wine/i386-windows");
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    fn test_game_dir(name: &str) -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        dir.push(format!("metalsharp-{}-{}-{}", name, std::process::id(), unique_suffix()));
-        dir
-    }
-
-    fn unique_suffix() -> u128 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
-    }
-
-    fn write_test_pe(path: &std::path::Path, machine: u16, optional_magic: u16) {
-        let mut data = vec![0_u8; 0x200];
-        data[0] = b'M';
-        data[1] = b'Z';
-        data[0x3c..0x40].copy_from_slice(&(0x80_u32).to_le_bytes());
-        data[0x80..0x84].copy_from_slice(b"PE\0\0");
-        data[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
-        data[0x86..0x88].copy_from_slice(&(0_u16).to_le_bytes());
-        data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
-        data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
-        std::fs::write(path, data).expect("write test PE");
+        assert_eq!(launch_working_dir(&game_dir, &exe_path), exe_path.parent().unwrap());
     }
 }

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -208,10 +208,10 @@ fn install_xcode_cli() -> Result<bool, String> {
 }
 
 fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
     let runtime_dir = home.join(".metalsharp").join("runtime");
     let _ = fs::create_dir_all(&runtime_dir);
 
+    let ms_wine = metalsharp_wine_binary(home);
     let already_installed = ms_wine.exists()
         && home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono").exists()
         && home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
@@ -253,6 +253,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         if let Some(archive2) = bundle2 {
             let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
         }
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
@@ -277,6 +278,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         let wine_dir = runtime_dir.join("wine");
         let _ = fs::create_dir_all(&wine_dir);
         extract_zst(&archive, &wine_dir, "wine")?;
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             let _ = install_mono_x86_fallback(home);
             let _ = install_dxvk_fallback(home);
@@ -289,6 +291,10 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     }
 
     Err("MetalSharp runtime not found — no bundled metalsharp_bundle.tar.zst available".into())
+}
+
+fn metalsharp_wine_binary(home: &Path) -> PathBuf {
+    crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
 }
 
 fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -359,7 +365,7 @@ fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    let ms_wine = metalsharp_wine_binary(home);
     if ms_wine.exists() {
         return Ok(false);
     }
@@ -370,6 +376,7 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
     let bundled = find_bundled_archive("wine");
     if let Some(archive) = bundled {
         extract_zst(&archive, &wine_dir, "wine")?;
+        let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             return Ok(true);
         }
@@ -609,126 +616,6 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
     Ok(any_installed)
 }
 
-fn install_gptk(_home: &PathBuf) -> Result<bool, String> {
-    let gptk_wine = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64");
-    if gptk_wine.exists() {
-        return Ok(false);
-    }
-
-    let bundled = find_bundled_archive("gptk");
-    if let Some(archive) = bundled {
-        extract_to_applications(&archive, "Game Porting Toolkit.app")?;
-        if gptk_wine.exists() {
-            return Ok(true);
-        }
-    }
-
-    brew_cask_install("gcenx/wine/game-porting-toolkit")?;
-
-    if !gptk_wine.exists() {
-        return Err("GPTK wine binary not found after installation".into());
-    }
-    Ok(true)
-}
-
-fn install_mono_x86(home: &PathBuf) -> Result<bool, String> {
-    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
-    if mono_x86.exists() {
-        return Ok(false);
-    }
-
-    let bundled = find_bundled_archive("mono-x86");
-    let runtime_dir = home.join(".metalsharp").join("runtime");
-    let _ = fs::create_dir_all(&runtime_dir);
-
-    if let Some(archive) = bundled {
-        extract_zst(&archive, &runtime_dir, "mono-x86")?;
-        if mono_x86.exists() {
-            return Ok(true);
-        }
-    }
-
-    Err("mono x86 not found - no bundled archive available and cannot auto-install".into())
-}
-
-fn install_dxvk(home: &PathBuf) -> Result<bool, String> {
-    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
-    if dxvk_dir.join("x32").join("d3d11.dll").exists() {
-        return Ok(false);
-    }
-
-    let _ = fs::create_dir_all(&dxvk_dir);
-
-    let bundled = find_bundled_archive("dxvk");
-    if let Some(archive) = bundled {
-        let tmp = std::env::temp_dir().join("metalsharp-dxvk-extract");
-        let _ = fs::remove_dir_all(&tmp);
-        let _ = fs::create_dir_all(&tmp);
-        extract_zst(&archive, &tmp, "dxvk")?;
-
-        let src = tmp.join("dxvk-1.10.3");
-        if !src.exists() {
-            return Err("DXVK archive missing dxvk-1.10.3 directory".into());
-        }
-
-        let x32 = src.join("x32");
-        let x64 = src.join("x64");
-        if x32.exists() {
-            let _ = fs::create_dir_all(dxvk_dir.join("x32"));
-            for entry in fs::read_dir(&x32).map_err(|e| format!("read x32: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let _ = fs::copy(entry.path(), dxvk_dir.join("x32").join(entry.file_name()));
-            }
-        }
-        if x64.exists() {
-            let _ = fs::create_dir_all(dxvk_dir.join("x64"));
-            for entry in fs::read_dir(&x64).map_err(|e| format!("read x64: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let _ = fs::copy(entry.path(), dxvk_dir.join("x64").join(entry.file_name()));
-            }
-        }
-
-        let _ = fs::remove_dir_all(&tmp);
-
-        if dxvk_dir.join("x32").join("d3d11.dll").exists() {
-            return Ok(true);
-        }
-    }
-
-    let url = "https://github.com/doitsujin/dxvk/releases/download/v1.10.3/dxvk-1.10.3.tar.gz";
-    let tar_path = dxvk_dir.join("dxvk.tar.gz");
-
-    let output = Command::new("curl")
-        .args(["-sL", "-o"])
-        .arg(&tar_path)
-        .arg(url)
-        .output()
-        .map_err(|e| format!("curl failed: {}", e))?;
-
-    if !output.status.success() {
-        return Err("failed to download DXVK".into());
-    }
-
-    let tar_output = Command::new("tar")
-        .args(["-xzf"])
-        .arg(&tar_path)
-        .arg("-C")
-        .arg(&dxvk_dir)
-        .output()
-        .map_err(|e| format!("tar failed: {}", e))?;
-
-    let _ = fs::remove_file(&tar_path);
-
-    if !tar_output.status.success() {
-        return Err("failed to extract DXVK".into());
-    }
-
-    if !dxvk_dir.join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists() {
-        return Err("DXVK d3d11.dll not found after extraction".into());
-    }
-    Ok(true)
-}
-
 fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let steam_exe = home
         .join(".metalsharp")
@@ -741,7 +628,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let ms_wine = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("wine");
+    let ms_wine = metalsharp_wine_binary(home);
     if !ms_wine.exists() {
         return Err("MetalSharp Wine not found — cannot install Steam".into());
     }
@@ -882,23 +769,6 @@ fn install_mono_arm64() -> Result<bool, String> {
     brew_install("mono")
 }
 
-fn install_wine_devel() -> Result<bool, String> {
-    let wine = PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine");
-    if wine.exists() {
-        return Ok(false);
-    }
-
-    let bundled = find_bundled_archive("wine");
-    if let Some(archive) = bundled {
-        extract_to_applications(&archive, "Wine Devel.app")?;
-        if wine.exists() {
-            return Ok(true);
-        }
-    }
-
-    brew_cask_install("wine@devel")
-}
-
 fn install_moltenvk() -> Result<bool, String> {
     let icd = PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json");
     if icd.exists() {
@@ -947,46 +817,6 @@ fn brew_install(package: &str) -> Result<bool, String> {
         Ok(true)
     } else {
         Err(combined.lines().last().unwrap_or("brew install failed").into())
-    }
-}
-
-fn brew_cask_install(package: &str) -> Result<bool, String> {
-    let brew = find_brew()?;
-
-    let install_output = Command::new(&brew)
-        .args(["install", "--cask", package])
-        .output()
-        .map_err(|e| format!("brew cask failed: {}", e))?;
-
-    let install_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&install_output.stdout),
-        String::from_utf8_lossy(&install_output.stderr)
-    );
-
-    if install_output.status.success() && !install_combined.contains("already installed") {
-        return Ok(true);
-    }
-
-    let reinstall_output = Command::new(&brew)
-        .args(["reinstall", "--cask", package])
-        .output()
-        .map_err(|e| format!("brew cask reinstall failed: {}", e))?;
-
-    let reinstall_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&reinstall_output.stdout),
-        String::from_utf8_lossy(&reinstall_output.stderr)
-    );
-
-    if reinstall_output.status.success()
-        || reinstall_combined.contains("already installed")
-        || reinstall_combined.contains("It seems there is already an app")
-    {
-        Ok(true)
-    } else {
-        let combined = format!("{}\n{}", install_combined, reinstall_combined);
-        Err(combined.lines().last().unwrap_or("brew cask install failed").into())
     }
 }
 
@@ -1069,52 +899,6 @@ fn find_in_dev_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn extract_to_applications(archive: &PathBuf, app_name: &str) -> Result<(), String> {
-    let tmp_dir = std::env::temp_dir().join("metalsharp_extract");
-    let _ = fs::remove_dir_all(&tmp_dir);
-    let _ = fs::create_dir_all(&tmp_dir);
-
-    extract_zst(archive, &tmp_dir, app_name)?;
-
-    let extracted = tmp_dir.join(app_name);
-    if !extracted.exists() {
-        return Err(format!("{} not found in extracted archive", app_name));
-    }
-
-    let app_path = format!("/Applications/{}", app_name);
-    if PathBuf::from(&app_path).exists() {
-        let rm_script = format!("rm -rf '{}'", app_path);
-        let admin_result = Command::new("osascript")
-            .args(["-e", &format!("do shell script \"{}\" with administrator privileges", rm_script)])
-            .output()
-            .map_err(|e| format!("admin auth failed: {}", e))?;
-        if !admin_result.status.success() {
-            let stderr = String::from_utf8_lossy(&admin_result.stderr);
-            if stderr.contains("User canceled") {
-                return Err("authentication cancelled".into());
-            }
-            return Err(format!("failed to remove existing {}: {}", app_name, stderr));
-        }
-    }
-
-    let cp_script = format!("cp -R '{}' '/Applications/'", extracted.to_string_lossy());
-    let admin_result = Command::new("osascript")
-        .args(["-e", &format!("do shell script \"{}\" with administrator privileges", cp_script)])
-        .output()
-        .map_err(|e| format!("admin auth failed: {}", e))?;
-
-    if !admin_result.status.success() {
-        let stderr = String::from_utf8_lossy(&admin_result.stderr);
-        if stderr.contains("User canceled") {
-            return Err("authentication cancelled".into());
-        }
-        return Err(format!("failed to install {}: {}", app_name, stderr));
-    }
-
-    let _ = fs::remove_dir_all(&tmp_dir);
-    Ok(())
-}
-
 fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
     if let Ok(entries) = fs::read_dir(src) {
         for entry in entries.flatten() {
@@ -1159,4 +943,29 @@ fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), Stri
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metalsharp_wine_binary_accepts_renamed_runtime_binary() {
+        let home = test_home("renamed-runtime-binary");
+        let bin = home.join(".metalsharp").join("runtime").join("wine").join("bin");
+        fs::create_dir_all(&bin).expect("create runtime bin");
+        fs::write(bin.join("metalsharp-wine"), b"#!/bin/sh\n").expect("write renamed wine");
+
+        assert_eq!(metalsharp_wine_binary(&home), bin.join("metalsharp-wine"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn test_home(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "metalsharp-installer-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ))
+    }
 }

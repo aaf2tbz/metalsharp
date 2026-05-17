@@ -1,6 +1,6 @@
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -74,11 +74,12 @@ pub fn needs_migration() -> serde_json::Value {
     let current_schema = setup.get("runtime_migration_schema").and_then(|v| v.as_u64());
     let legacy_migrated_version = setup.get("last_migrated_version").and_then(|v| v.as_str());
     let current_version = legacy_migrated_version.unwrap_or("0.0.0");
+    let setup_completed = setup.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let needed = match current_schema {
         Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
         None if legacy_migrated_version.is_some() => false,
-        None => runtime_needs_repair(&home),
+        None => runtime_needs_repair(&home, setup_completed),
     };
 
     json!({
@@ -92,11 +93,41 @@ pub fn needs_migration() -> serde_json::Value {
     })
 }
 
-fn runtime_needs_repair(home: &PathBuf) -> bool {
-    let runtime_wine = home.join(".metalsharp").join("runtime").join("wine");
+fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
+    let ms_dir = home.join(".metalsharp");
+    if runtime_core_ready(&ms_dir) {
+        return false;
+    }
+
+    setup_completed || ms_dir.join("prefix-steam").exists()
+}
+
+fn runtime_core_ready(ms_dir: &Path) -> bool {
+    let runtime_wine = ms_dir.join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&runtime_wine);
-    let steam_prefix = home.join(".metalsharp").join("prefix-steam");
-    !wine.exists() && steam_prefix.exists()
+    if !wine.exists() {
+        return false;
+    }
+
+    if crate::platform::current() == crate::platform::HostPlatform::Linux {
+        return true;
+    }
+
+    [
+        runtime_wine.join("lib").join("wine").join("x86_64-unix"),
+        runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
+        runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
+        runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-unix"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
+        runtime_wine.join("etc").join("dxmt.conf"),
+    ]
+    .iter()
+    .all(|path| path.exists())
 }
 
 pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -154,22 +185,31 @@ fn run_migration() {
     step += 1;
     write_migrate_progress("running", step, total_steps, "Running full runtime install...", None);
     let install_ok = match crate::installer::start_install_all() {
-        Ok(_) => {
-            for _ in 0..600 {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if !crate::installer::is_installing() {
-                    break;
-                }
-            }
-            true
+        Ok(v) if v.get("ok").and_then(|ok| ok.as_bool()).unwrap_or(false) => match wait_for_install_complete() {
+            Ok(()) => true,
+            Err(e) => {
+                write_migrate_progress("error", step, total_steps, &format!("Runtime install failed: {}", e), Some(&e));
+                false
+            },
+        },
+        Ok(v) => {
+            let error = v.get("error").and_then(|e| e.as_str()).unwrap_or("runtime install did not start");
+            write_migrate_progress(
+                "error",
+                step,
+                total_steps,
+                &format!("Runtime install failed: {}", error),
+                Some(error),
+            );
+            false
         },
         Err(e) => {
             write_migrate_progress(
-                "warning",
+                "error",
                 step,
                 total_steps,
-                &format!("Runtime install had issues: {}. Migration will continue.", e),
-                None,
+                &format!("Runtime install failed: {}", e),
+                Some(&e.to_string()),
             );
             false
         },
@@ -197,18 +237,39 @@ fn run_migration() {
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
     } else {
-        let marker = ms_dir.join(".post-update-migration");
-        let _ = fs::remove_file(&marker);
         write_migrate_progress(
-            "warning",
+            "error",
             total_steps,
             total_steps,
             "Runtime install incomplete — re-run setup wizard after restart",
-            None,
+            Some("runtime_install_incomplete"),
         );
     }
 
     log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
+}
+
+fn wait_for_install_complete() -> Result<(), String> {
+    for _ in 0..600 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !crate::installer::is_installing() {
+            let progress = crate::installer::read_progress();
+            return match progress.get("status").and_then(|v| v.as_str()) {
+                Some("complete") => Ok(()),
+                Some(status) => {
+                    let detail = progress
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| progress.get("log").and_then(|v| v.as_str()))
+                        .unwrap_or(status);
+                    Err(detail.to_string())
+                },
+                None => Err("installer stopped without a final status".into()),
+            };
+        }
+    }
+
+    Err("runtime install timed out".into())
 }
 
 fn kill_steam_wine() {
@@ -431,4 +492,76 @@ fn log_to_file(msg: &str) {
         .append(true)
         .open(&log_path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_setups_repair_missing_runtime_without_steam_prefix() {
+        let home = test_dir("missing-runtime");
+        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+
+        assert!(runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn incomplete_fresh_setups_do_not_enter_migration_without_prefix() {
+        let home = test_dir("fresh-incomplete");
+        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+
+        assert!(!runtime_needs_repair(&home, false));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn complete_runtime_does_not_request_repair() {
+        let home = test_dir("complete-runtime");
+        let ms_dir = home.join(".metalsharp");
+        write_runtime_core(&ms_dir);
+
+        assert!(runtime_core_ready(&ms_dir));
+        assert!(!runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn write_runtime_core(ms_dir: &Path) {
+        let runtime_wine = ms_dir.join("runtime").join("wine");
+        let wine = runtime_wine.join("bin").join("metalsharp-wine");
+        fs::create_dir_all(wine.parent().unwrap()).expect("create wine bin");
+        fs::write(&wine, b"#!/bin/sh\n").expect("write wine");
+
+        if crate::platform::current() == crate::platform::HostPlatform::Linux {
+            return;
+        }
+
+        for path in [
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join(".keep"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join(".keep"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
+            runtime_wine.join("etc").join("dxmt.conf"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
+            fs::write(path, b"test").expect("write runtime file");
+        }
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("metalsharp-migrate-{}-{}-{}", name, std::process::id(), unique_suffix()));
+        dir
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
 }
