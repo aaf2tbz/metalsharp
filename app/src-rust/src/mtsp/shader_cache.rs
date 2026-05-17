@@ -166,6 +166,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn m10_reuses_shared_dxmt_metal_preset_family() {
+        assert_eq!(preset_lookup_subdirs("m10"), vec!["m10", "dxmt-metal"]);
+    }
+
+    #[test]
     fn m9_reuses_dxmt_preset_family() {
         assert_eq!(preset_lookup_subdirs("m9"), vec!["m9", "dxmt-metal"]);
     }

@@ -65,6 +65,8 @@ d3d10core.dll
 winemetal.dll
 ```
 
+M10 deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for D3D10 imports, then uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11.
+
 M12:
 
 ```text
