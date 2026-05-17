@@ -93,9 +93,15 @@ fn default_observation_logs(exe_name: Option<&str>, ms_home: &Path, prefix: &Pat
     push_recent_metalsharp_logs(&mut logs, ms_home);
     push_unity_player_logs(&mut logs, prefix, exe_name);
 
-    let dxmt_trace = PathBuf::from("/private/tmp/dxmt_dxgi_trace.log");
-    if dxmt_trace.exists() {
-        push_log(&mut logs, "dxmt_trace", dxmt_trace);
+    for (kind, path) in [
+        ("dxmt_trace", "/private/tmp/dxmt_dxgi_trace.log"),
+        ("dxmt_dxil_trace", "/private/tmp/dxmt_dxil_trace.log"),
+        ("dxmt_ps_args_trace", "/private/tmp/dxmt_ps_args_debug.log"),
+    ] {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            push_log(&mut logs, kind, path);
+        }
     }
 
     logs
