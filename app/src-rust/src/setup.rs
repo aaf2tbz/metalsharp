@@ -163,7 +163,8 @@ pub fn dependencies() -> Value {
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
     let homebrew = check_command("brew");
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
-    let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"));
+    let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
+        || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
 
     let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine;
 
