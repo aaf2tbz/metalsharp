@@ -1005,18 +1005,22 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
 HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID riid, void** ppPSO) {
     if (!ppPSO)
         return E_POINTER;
+    *ppPSO = nullptr;
 
     auto* pso = new D3D12PipelineStateImpl();
-    *ppPSO = pso;
 
-    if (!pDesc)
+    if (!pDesc) {
+        *ppPSO = pso;
         return S_OK;
+    }
 
     auto* desc = static_cast<const D3D12_COMPUTE_PIPELINE_STATE_DESC*>(pDesc);
     const uint8_t* shaderData = static_cast<const uint8_t*>(desc->CS.pShaderBytecode);
     size_t shaderSize = desc->CS.BytecodeLength;
-    if (!shaderData || shaderSize == 0)
+    if (!shaderData || shaderSize == 0) {
+        *ppPSO = pso;
         return S_OK;
+    }
 
     CompiledShader compiled;
     D3D12RootSignatureImpl* rootSig = static_cast<D3D12RootSignatureImpl*>(desc->pRootSignature);
@@ -1049,8 +1053,10 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
         }
     }
 
-    if (!function)
+    if (!function) {
+        pso->Release();
         return E_FAIL;
+    }
 
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)m_metalDevice->nativeDevice();
     NSError* error = nil;
@@ -1058,11 +1064,13 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     if (!pipeline) {
         if (error)
             NSLog(@"MetalSharp D3D12 compute pipeline error: %@", [error localizedDescription]);
+        pso->Release();
         return E_FAIL;
     }
 
     pso->m_computePipeline = (__bridge_retained void*)pipeline;
     pso->m_ownedComputePipeline = pso->m_computePipeline;
+    *ppPSO = pso;
     return S_OK;
 }
 

@@ -390,6 +390,16 @@ int main() {
         CHECK(SUCCEEDED(hr) && computePso && computePso->__metalComputePipelineState() != nullptr,
               "CreateComputePipelineState (MSL)");
 
+        static const char* badComputeMSL = "#include <metal_stdlib>\n"
+                                           "using namespace metal;\n"
+                                           "kernel void computeShader( { }\n";
+        D3D12_COMPUTE_PIPELINE_STATE_DESC badComputeDesc = {};
+        badComputeDesc.CS.pShaderBytecode = badComputeMSL;
+        badComputeDesc.CS.BytecodeLength = strlen(badComputeMSL);
+        ID3D12PipelineState* failedComputePso = reinterpret_cast<ID3D12PipelineState*>(0x1);
+        hr = device->CreateComputePipelineState(&badComputeDesc, IID_ID3D12PipelineState, (void**)&failedComputePso);
+        CHECK(FAILED(hr) && failedComputePso == nullptr, "Failed compute PSO leaves null output");
+
         if (cmdQueue && cmdAlloc && computePso) {
             ID3D12GraphicsCommandList* computeList = nullptr;
             hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, cmdAlloc, computePso,
