@@ -6,6 +6,27 @@ MetalSharp ships a self-contained Wine runtime at:
 ~/.metalsharp/runtime/wine/
 ```
 
+Set `METALSHARP_HOME` to run the same runtime layout from another volume. For
+example, `METALSHARP_HOME=/Volumes/AverySSD/metalsharp` makes the backend use:
+
+```text
+/Volumes/AverySSD/metalsharp/runtime/wine/
+/Volumes/AverySSD/metalsharp/prefix-steam/
+/Volumes/AverySSD/metalsharp/shader-cache/
+/Volumes/AverySSD/metalsharp/pipeline-cache/
+```
+
+The launch-critical backend paths now resolve from `METALSHARP_HOME`: MTSP
+recipe/runtime roots, M12 verification/deploy/title-readiness reports, Wine
+Steam prefix helpers, Wine Steam library scanning, local MetalSharp game
+scanning, setup state, shader/pipeline caches, Sharp Library state, and
+Electron's MetalSharp directory helper. Installer and updater runtime/cache
+paths also resolve from `METALSHARP_HOME`, so runtime bundle extraction, DXMT
+deployment, Steam setup, downloaded bundles, and update DMG caches stay on the
+selected volume. Migration remains a legacy repair path for `~/.metalsharp` and
+should be audited separately before claiming complete external-drive parity for
+old installs.
+
 It is used by M11, M12, M10, M9, M32, Steam, and Wine. Native macOS and MacOS Steam do not use this Wine runtime.
 
 ## Layout

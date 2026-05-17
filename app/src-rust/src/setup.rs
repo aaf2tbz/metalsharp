@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn state() -> Value {
-    let home = dirs::home_dir().unwrap_or_default();
-    let config_path = home.join(".metalsharp").join("setup.json");
+    let config_path = crate::platform::metalsharp_home().join("setup.json");
 
     if config_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
@@ -30,8 +29,7 @@ pub fn state() -> Value {
 }
 
 pub fn save_step(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let config_dir = home.join(".metalsharp");
+    let config_dir = crate::platform::metalsharp_home();
     std::fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("setup.json");
 
@@ -86,17 +84,18 @@ pub fn generate_device_name() -> String {
 
 pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
+    let runtime_dir = crate::platform::runtime_dir();
 
     if crate::platform::current() == crate::platform::HostPlatform::Linux {
         let tar = check_command("tar");
         let curl = check_command("curl");
         let clang = check_command("clang") || check_command("gcc");
-        let mono = check_command("mono") || check_path(&home.join(".metalsharp/runtime/mono-arm64/bin/mono"));
+        let mono = check_command("mono") || check_path(&runtime_dir.join("mono-arm64/bin/mono"));
         let wine = check_command("wine");
         let steam =
             check_path(&home.join(".steam/steam/steamapps")) || check_path(&home.join(".local/share/Steam/steamapps"));
-        let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
-            || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
+        let metalsharp_wine =
+            check_path(&runtime_dir.join("wine/bin/wine")) || check_path(&runtime_dir.join("wine/bin/metalsharp-wine"));
         let all_ok = tar && curl && (metalsharp_wine || wine);
 
         return json!({
@@ -163,8 +162,8 @@ pub fn dependencies() -> Value {
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
     let homebrew = check_command("brew");
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
-    let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
-        || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
+    let metalsharp_wine =
+        check_path(&runtime_dir.join("wine/bin/wine")) || check_path(&runtime_dir.join("wine/bin/metalsharp-wine"));
 
     let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine;
 
@@ -331,9 +330,7 @@ fn run_brew_install(package: &str) -> Value {
 }
 
 pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
-
-    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let local_dir = crate::platform::metalsharp_home().join("games").join(appid.to_string());
     if local_dir.join(".metalsharp_prepared").exists() {
         return Some(local_dir);
     }
@@ -410,7 +407,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
     let node = crate::mtsp::engine::get_pipeline(pipeline);
     if let Some(subdir) = node.shader_cache_subdir {
-        crate::mtsp::shader_cache::deploy_preset_cache(&home, subdir, appid);
+        crate::mtsp::shader_cache::deploy_preset_cache(&crate::platform::metalsharp_home(), subdir, appid);
     }
 
     std::fs::write(&marker, format!("prepared: game_type={}", game_type))?;
@@ -500,12 +497,13 @@ fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
 }
 
 fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
+    let ms_home = crate::platform::metalsharp_home();
+    let mono_x86 = ms_home.join("runtime").join("mono-x86").join("bin").join("mono");
     if !mono_x86.exists() {
         let _ = crate::launch::run_game_setup_script(504230);
     }
 
-    let shims_dir = home.join(".metalsharp").join("runtime").join("shims");
+    let shims_dir = ms_home.join("runtime").join("shims");
     let _ = std::fs::create_dir_all(&shims_dir);
 
     let steam_dylib = find_steam_api(home);
@@ -604,10 +602,11 @@ fn prepare_nidhogg_2(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn 
 }
 
 fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_home = crate::platform::metalsharp_home();
+    let ms_root = crate::platform::wine_runtime_root();
     let wine = ms_root.join("bin").join("wine");
 
-    let prefix = home.join(".metalsharp").join(format!("prefix-{}", appid));
+    let prefix = ms_home.join(format!("prefix-{}", appid));
     let prefix_str = prefix.to_string_lossy().to_string();
 
     if !prefix.exists() {
@@ -633,7 +632,7 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
 }
 
 fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_dir = crate::platform::metalsharp_home().join("runtime").join("goldberg");
     let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
     let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
 
@@ -663,8 +662,8 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
 
     deploy_goldberg_to_dir(&deploy_dir, &goldberg_dir, appid)?;
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = crate::platform::steam_prefix_dir();
+    let ms_root = crate::platform::wine_runtime_root();
     let ms_wine = crate::platform::runtime_wine_binary(&ms_root);
     if !prefix.join("drive_c/windows/system32").exists() {
         let _ = std::fs::create_dir_all(&prefix);
@@ -684,7 +683,8 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
 }
 
 fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let ms_home = crate::platform::metalsharp_home();
+    let goldberg_dir = ms_home.join("runtime").join("goldberg");
     let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
     let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
 
@@ -695,7 +695,7 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     std::fs::create_dir_all(goldberg_dir.join("x86"))?;
     std::fs::create_dir_all(goldberg_dir.join("x64"))?;
 
-    let tmpdir = home.join(".metalsharp").join("tmp").join("goldberg-download");
+    let tmpdir = ms_home.join("tmp").join("goldberg-download");
     let _ = std::fs::create_dir_all(&tmpdir);
 
     let gbe_fork_url = "https://api.github.com/repos/Detanup01/gbe_fork/releases/latest";
@@ -844,7 +844,7 @@ pub fn deploy_goldberg_for_launch(
     game_dir: &PathBuf,
     appid: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_dir = crate::platform::metalsharp_home().join("runtime").join("goldberg");
     let goldberg_x86 = goldberg_dir.join("x86").join("steam_api.dll");
     let goldberg_x64 = goldberg_dir.join("x64").join("steam_api64.dll");
 

@@ -68,8 +68,7 @@ struct ExeCandidate {
 }
 
 pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::wine_runtime_root();
     let game_dir = crate::setup::resolve_game_dir(appid);
 
     let exe_path = match node.id {
@@ -132,8 +131,7 @@ pub fn build_custom_launch_recipe(
     game_dir: &Path,
     exe_path: Option<&Path>,
 ) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::wine_runtime_root();
     let exe_path = match node.id {
         PipelineId::M9
         | PipelineId::M10
@@ -252,8 +250,7 @@ pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorR
     match build_launch_recipe(appid, node) {
         Ok(recipe) => diagnose_recipe(recipe),
         Err(error) => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+            let ms_root = crate::platform::wine_runtime_root();
             let error = error.to_string();
             let recipe = LaunchRecipe {
                 appid,

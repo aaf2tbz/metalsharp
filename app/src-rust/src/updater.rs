@@ -11,7 +11,7 @@ static UPDATING: AtomicBool = AtomicBool::new(false);
 static DOWNLOAD_PERCENT: AtomicU32 = AtomicU32::new(0);
 
 fn progress_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("update_progress.json")
+    crate::platform::metalsharp_home().join("update_progress.json")
 }
 
 fn write_update_progress(status: &str, percent: u32, message: &str, error: Option<&str>) {
@@ -185,15 +185,7 @@ fn run_download() {
 
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
 
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            write_update_progress("error", 0, "no home directory", Some("no_home"));
-            return;
-        },
-    };
-
-    let cache_dir = home.join(".metalsharp").join("cache").join("updates");
+    let cache_dir = crate::platform::metalsharp_home().join("cache").join("updates");
     let _ = fs::create_dir_all(&cache_dir);
     let dmg_path = cache_dir.join(format!("MetalSharp-{}.dmg", latest_version));
 
@@ -258,12 +250,7 @@ fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
 }
 
 pub fn cleanup_downloaded_dmgs() -> serde_json::Value {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return json!({"ok": false, "error": "no home dir"}),
-    };
-
-    let cache_dir = home.join(".metalsharp").join("cache").join("updates");
+    let cache_dir = crate::platform::metalsharp_home().join("cache").join("updates");
     if !cache_dir.exists() {
         return json!({"ok": true, "removed": 0, "bytes_freed": 0});
     }
@@ -294,9 +281,10 @@ pub fn cleanup_downloaded_dmgs() -> serde_json::Value {
 pub fn get_downloaded_dmg_path() -> Option<String> {
     let update_info = check_for_update();
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str())?;
-    let home = dirs::home_dir()?;
-    let dmg_path =
-        home.join(".metalsharp").join("cache").join("updates").join(format!("MetalSharp-{}.dmg", latest_version));
+    let dmg_path = crate::platform::metalsharp_home()
+        .join("cache")
+        .join("updates")
+        .join(format!("MetalSharp-{}.dmg", latest_version));
 
     if dmg_path.exists() {
         Some(dmg_path.to_string_lossy().to_string())
@@ -306,8 +294,7 @@ pub fn get_downloaded_dmg_path() -> Option<String> {
 }
 
 fn app_log(msg: &str) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = crate::platform::metalsharp_home().join("logs");
     let _ = fs::create_dir_all(&log_dir);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
