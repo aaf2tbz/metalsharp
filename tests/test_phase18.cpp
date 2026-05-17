@@ -392,7 +392,7 @@ static bool test_d3d12_buffer_map_unmap() {
     return mapped;
 }
 
-static bool test_d3d12_gpu_address_lookup_retains_resource() {
+static bool test_d3d12_gpu_address_lookup_unregisters_released_resource() {
     D3D12DeviceImpl* device = nullptr;
     D3D12DeviceImpl::create(&device);
     if (!device)
@@ -418,7 +418,40 @@ static bool test_d3d12_gpu_address_lookup_retains_resource() {
 
     D3D12_GPU_VIRTUAL_ADDRESS address = 0;
     res->GetGPUVirtualAddress(&address);
+    bool registered = device->gpuAddressResourceCountForTesting() == 1;
     res->Release();
+
+    bool unregistered = device->gpuAddressResourceCountForTesting() == 0;
+    device->Release();
+    return registered && unregistered;
+}
+
+static bool test_d3d12_command_list_retains_bound_gpu_address_resource() {
+    D3D12DeviceImpl* device = nullptr;
+    D3D12DeviceImpl::create(&device);
+    if (!device)
+        return false;
+
+    D3D12_HEAP_PROPERTIES heapProps = {D3D12_HEAP_TYPE_UPLOAD, 0, 0, 0, 0};
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = 128;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc = {1, 0};
+
+    void* resPtr = nullptr;
+    HRESULT hr = device->CreateCommittedResource(&heapProps, 0, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                 IID_ID3D12Resource, &resPtr);
+    auto* res = static_cast<ID3D12Resource*>(resPtr);
+    if (FAILED(hr) || !res) {
+        device->Release();
+        return false;
+    }
+
+    D3D12_GPU_VIRTUAL_ADDRESS address = 0;
+    res->GetGPUVirtualAddress(&address);
 
     void* allocPtr = nullptr;
     HRESULT allocHr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, &allocPtr);
@@ -435,12 +468,15 @@ static bool test_d3d12_gpu_address_lookup_retains_resource() {
         bound = SUCCEEDED(list->IASetVertexBuffers(0, 1, &view));
     }
 
+    res->Release();
+    bool retained_by_list = device->gpuAddressResourceCountForTesting() == 1;
     if (list)
         list->Release();
+    bool unregistered_after_list_release = device->gpuAddressResourceCountForTesting() == 0;
     if (allocator)
         allocator->Release();
     device->Release();
-    return bound;
+    return bound && retained_by_list && unregistered_after_list_release;
 }
 
 static bool test_d3d12_fence_signal() {
@@ -479,7 +515,8 @@ int main() {
     TEST(d3d12_root_binding_descriptor_table);
     TEST(d3d12_committed_resource_buffer);
     TEST(d3d12_buffer_map_unmap);
-    TEST(d3d12_gpu_address_lookup_retains_resource);
+    TEST(d3d12_gpu_address_lookup_unregisters_released_resource);
+    TEST(d3d12_command_list_retains_bound_gpu_address_resource);
     TEST(d3d12_fence_signal);
 
     printf("\n%d/%d passed", testsPassed, testsPassed + testsFailed);

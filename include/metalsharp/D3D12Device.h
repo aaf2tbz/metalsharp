@@ -441,8 +441,16 @@ class D3D12ResourceImpl final : public ID3D12Resource {
     std::unique_ptr<MetalTexture> metalTexture;
     UINT m_resourceState;
     UINT64 m_gpuAddress = 0;
+    std::unordered_map<UINT64, D3D12ResourceImpl*>* m_gpuAddressRegistry = nullptr;
 
     D3D12ResourceImpl(const D3D12_RESOURCE_DESC& d) : desc(d), m_resourceState(D3D12_RESOURCE_STATE_COMMON) {}
+    ~D3D12ResourceImpl() {
+        if (m_gpuAddressRegistry && m_gpuAddress != 0) {
+            auto it = m_gpuAddressRegistry->find(m_gpuAddress);
+            if (it != m_gpuAddressRegistry->end() && it->second == this)
+                m_gpuAddressRegistry->erase(it);
+        }
+    }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -497,14 +505,6 @@ class D3D12ResourceImpl final : public ID3D12Resource {
 
 class D3D12DeviceImpl final : public ID3D12Device {
   public:
-    ~D3D12DeviceImpl() {
-        for (auto& entry : m_gpuAddressResources) {
-            if (entry.second)
-                entry.second->Release();
-        }
-        m_gpuAddressResources.clear();
-    }
-
     static HRESULT create(D3D12DeviceImpl** ppDevice) {
         if (!ppDevice)
             return E_POINTER;
@@ -524,6 +524,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
     ULONG m_refCount = 1;
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
+    size_t gpuAddressResourceCountForTesting() const { return m_gpuAddressResources.size(); }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -578,7 +579,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 std::unique_ptr<MetalBuffer>(MetalBuffer::create(*m_metalDevice, (size_t)pDesc->Width, nullptr));
             if (res->metalBuffer) {
                 res->m_gpuAddress = reinterpret_cast<UINT64>(res->metalBuffer->nativeBuffer());
-                res->AddRef();
+                res->m_gpuAddressRegistry = &m_gpuAddressResources;
                 m_gpuAddressResources[res->m_gpuAddress] = res;
             }
         } else {
