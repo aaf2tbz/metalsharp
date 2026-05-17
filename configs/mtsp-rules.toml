@@ -235,7 +235,7 @@ pipeline = "steam"
 name = "DOOM"
 
 [overrides.782330]
-pipeline = "steam"
+pipeline = "m11"
 name = "DOOM Eternal"
 
 [overrides.289070]

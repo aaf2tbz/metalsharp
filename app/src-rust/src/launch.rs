@@ -159,6 +159,7 @@ pub fn is_process_active(pid: i32) -> bool {
 }
 
 fn spawn_and_reap(mut cmd: Command) -> Result<u32, Box<dyn std::error::Error>> {
+    detach_process_group(&mut cmd);
     let mut child = cmd.spawn()?;
     let pid = child.id();
     std::thread::spawn(move || {
@@ -166,6 +167,15 @@ fn spawn_and_reap(mut cmd: Command) -> Result<u32, Box<dyn std::error::Error>> {
     });
     Ok(pid)
 }
+
+#[cfg(unix)]
+fn detach_process_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn detach_process_group(_cmd: &mut Command) {}
 
 pub fn get_config() -> Value {
     let native_available = find_metalsharp_native().is_ok();

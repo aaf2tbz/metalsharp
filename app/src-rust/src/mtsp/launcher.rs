@@ -188,8 +188,8 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe = resolve_game_exe(&game_dir);
-    let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let exe = resolve_pipeline_exe(appid, &game_dir, node);
+    let exe_arg = launch_arg_for_exe(&game_dir, &exe);
 
     deploy_dlls_for_pipeline(&game_dir, node);
 
@@ -214,7 +214,7 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
         cmd.env(ev.key, ev.value);
     }
 
-    cmd.arg(&exe_name);
+    cmd.arg(&exe_arg);
     cmd.args(&node.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -232,8 +232,8 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     let game_dir = crate::setup::resolve_game_dir(appid).ok_or("game dir not found")?;
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
-    let exe = resolve_game_exe(&game_dir);
-    let exe_name = std::path::Path::new(&exe).file_name().unwrap_or_default().to_string_lossy().to_string();
+    let exe = resolve_pipeline_exe(appid, &game_dir, node);
+    let exe_arg = launch_arg_for_exe(&game_dir, &exe);
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
@@ -249,7 +249,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
 
-    cmd.arg(&exe_name);
+    cmd.arg(&exe_arg);
     cmd.args(&node.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -403,6 +403,25 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
     }
 
     env
+}
+
+fn resolve_pipeline_exe(appid: u32, game_dir: &PathBuf, node: &PipelineNode) -> PathBuf {
+    if appid == 782330 && node.id == PipelineId::M11 {
+        let launcher = game_dir.join("launcher").join("idTechLauncher.exe");
+        if launcher.exists() {
+            return launcher;
+        }
+    }
+
+    PathBuf::from(resolve_game_exe(game_dir))
+}
+
+fn launch_arg_for_exe(game_dir: &PathBuf, exe: &PathBuf) -> String {
+    if exe.parent() == Some(game_dir.as_path()) {
+        return exe.file_name().unwrap_or_default().to_string_lossy().to_string();
+    }
+
+    exe.to_string_lossy().to_string()
 }
 
 fn resolve_game_exe(game_dir: &PathBuf) -> String {
@@ -948,6 +967,21 @@ mod tests {
         let selected = preferred_game_exe(&game_dir).expect("select exe");
 
         assert_eq!(selected.file_name().and_then(|n| n.to_str()), Some("DOOMEternalx64vk.exe"));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn doom_eternal_m11_uses_idtech_launcher_handoff() {
+        let game_dir = test_game_dir("doom-m11-launcher");
+        let launcher_dir = game_dir.join("launcher");
+        std::fs::create_dir_all(&launcher_dir).expect("create launcher dir");
+        std::fs::write(launcher_dir.join("idTechLauncher.exe"), []).expect("write launcher");
+        std::fs::write(game_dir.join("DOOMEternalx64vk.exe"), []).expect("write game exe");
+
+        let selected = resolve_pipeline_exe(782330, &game_dir, get_pipeline(PipelineId::M11));
+
+        assert_eq!(selected.file_name().and_then(|n| n.to_str()), Some("idTechLauncher.exe"));
+        assert_eq!(launch_arg_for_exe(&game_dir, &selected), selected.to_string_lossy());
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
