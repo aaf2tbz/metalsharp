@@ -51,7 +51,7 @@ lib/dxmt/x86_64-unix
 
 ## Selection Rules
 
-The backend resolves M10 from PE imports before broad directory heuristics. That keeps D3D10 games from being demoted to M11 just because their folder also includes common engine or Steam markers.
+The backend resolves M10 from 64-bit PE imports before broad directory heuristics. That keeps 64-bit D3D10 games from being demoted to M11 just because their folder also includes common engine or Steam markers. 32-bit D3D10 executables are not routed into M10 because this runtime contract deploys the x86_64 D3D10/DXMT payload.
 
 Recognized D3D10 imports:
 
