@@ -18,6 +18,8 @@ struct RuntimeSignals {
     shader_translation_failure: bool,
     state_object_notimpl: bool,
     pso_failure: bool,
+    pso_bind_failure: bool,
+    draw_or_dispatch_skipped: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,14 +213,28 @@ fn detect_signals(line: &str) -> Vec<&'static str> {
         || lower.contains("newfunction returned null")
         || lower.contains("dxil msl compilation failed")
         || lower.contains("failed to get function from compiled library")
+        || (lower.contains("pso compile failure") && lower.contains("shader/"))
     {
         signals.push("shader_translation_failure");
     }
     if lower.contains("createstateobject") && lower.contains("e_notimpl") {
         signals.push("state_object_notimpl");
     }
-    if lower.contains("failed to create pso") {
+    if lower.contains("failed to create pso")
+        || lower.contains("failed to create render pso")
+        || lower.contains("failed to create compute pso")
+        || lower.contains("pso compile failure")
+    {
         signals.push("pso_failure");
+    }
+    if lower.contains("render_pso_not_bound") {
+        signals.push("pso_bind_failure");
+    }
+    if lower.contains("drawinstanced skipped")
+        || lower.contains("drawindexedinstanced skipped")
+        || lower.contains("dispatch skipped")
+    {
+        signals.push("draw_or_dispatch_skipped");
     }
 
     signals
@@ -238,6 +254,8 @@ fn apply_signal(signals: &mut RuntimeSignals, signal: &str) {
         "shader_translation_failure" => signals.shader_translation_failure = true,
         "state_object_notimpl" => signals.state_object_notimpl = true,
         "pso_failure" => signals.pso_failure = true,
+        "pso_bind_failure" => signals.pso_bind_failure = true,
+        "draw_or_dispatch_skipped" => signals.draw_or_dispatch_skipped = true,
         _ => {},
     }
 }
@@ -248,6 +266,12 @@ fn classify_runtime(signals: &RuntimeSignals) -> &'static str {
     }
     if signals.pso_failure {
         return "pso_failure";
+    }
+    if signals.pso_bind_failure {
+        return "pso_bind_failure";
+    }
+    if signals.draw_or_dispatch_skipped {
+        return "draw_or_dispatch_skipped";
     }
     if signals.state_object_notimpl {
         return "state_object_notimpl";
@@ -287,6 +311,12 @@ fn warnings_for_status(status: &str, signals: &RuntimeSignals) -> Vec<&'static s
     if status == "pso_failure" {
         warnings.push("Shader or graphics pipeline state creation failed; inspect PSO/shader translation next.");
     }
+    if status == "pso_bind_failure" {
+        warnings.push("A command stream reached rendering, but no usable Metal PSO was bound.");
+    }
+    if status == "draw_or_dispatch_skipped" {
+        warnings.push("A draw or dispatch call was skipped before useful GPU work was encoded.");
+    }
     if status == "shader_translation_failure" {
         warnings.push("DXIL or Metal shader translation failed before a usable shader function was created.");
     }
@@ -300,6 +330,8 @@ fn summary_for_status(status: &str) -> &'static str {
     match status {
         "shader_translation_failure" => "DXIL-to-Metal shader translation failed during launch.",
         "pso_failure" => "D3D/Metal PSO creation failed after launch.",
+        "pso_bind_failure" => "Rendering reached command replay, but no usable Metal PSO was bound.",
+        "draw_or_dispatch_skipped" => "Rendering reached command replay, but a draw or dispatch was skipped.",
         "state_object_notimpl" => "The title hit an unimplemented D3D12 state object path.",
         "d3d11on12_over_d3d12" => "A D3D12 device was created and D3D11On12 was layered on top.",
         "d3d12_device_created" => "A D3D12 device was created through the DXMT Metal path.",
@@ -395,6 +427,39 @@ mod tests {
         assert_eq!(
             classify(&["info:  D3D12 device created via DXMT Metal backend", "DXILToMSL::convert FAILED",]),
             "shader_translation_failure"
+        );
+    }
+
+    #[test]
+    fn classifies_structured_shader_pso_compile_failure() {
+        assert_eq!(
+            classify(&[
+                "info:  D3D12 device created via DXMT Metal backend",
+                "PSO COMPILE FAILURE: this=0x123 compute=0 stage=shader/metal_library_source detail=ps_main MSL compile failed",
+            ]),
+            "shader_translation_failure"
+        );
+    }
+
+    #[test]
+    fn classifies_unbound_render_pso() {
+        assert_eq!(
+            classify(&[
+                "info:  D3D12 device created via DXMT Metal backend",
+                "EnsureRenderEncoder: RENDER_PSO_NOT_BOUND pso=0x123 compiled=0 render_handle=0 stage=pso/metal_render_pso detail=unknown",
+            ]),
+            "pso_bind_failure"
+        );
+    }
+
+    #[test]
+    fn classifies_skipped_draw_or_dispatch() {
+        assert_eq!(
+            classify(&[
+                "info:  D3D12 device created via DXMT Metal backend",
+                "DrawInstanced SKIPPED v=3 i=1 enc_open=0 pso=0x123 compiled=0 stage=pso/metal_render_pso detail=unknown",
+            ]),
+            "draw_or_dispatch_skipped"
         );
     }
 
