@@ -157,14 +157,11 @@ pub fn dependencies() -> Value {
     }
 
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
-    let _mono_x86 = check_path(&home.join(".metalsharp/runtime/mono-x86/bin/mono"));
     let rosetta = check_rosetta();
-    let gptk = check_path(&PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"));
     let xcode_cli = check_command("clang") || check_command("xcodebuild");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
     let homebrew = check_command("brew");
-    let wine_devel = check_path(&PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"));
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
     let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"));
 
@@ -214,22 +211,6 @@ pub fn dependencies() -> Value {
                 "installed": mono,
                 "required": false,
                 "installCmd": "brew install mono",
-            },
-            {
-                "id": "gptk",
-                "name": "Game Porting Toolkit",
-                "desc": "Optional. MTSP engine uses bundled DXMT Metal translation. Only needed for SteamD3DMetalPerf pipeline.",
-                "installed": gptk,
-                "required": false,
-                "installCmd": "brew install --cask gcenx/wine/game-porting-toolkit",
-            },
-            {
-                "id": "wine_devel",
-                "name": "Wine (Devel)",
-                "desc": "No longer required — MetalSharp Wine handles all pipelines including M9 D3D9 Metal (Portal 2).",
-                "installed": wine_devel,
-                "required": false,
-                "installCmd": "brew install --cask wine@devel",
             },
             {
                 "id": "moltenvk",

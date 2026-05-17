@@ -264,7 +264,6 @@ fn find_wine() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     let candidates = vec![
-        PathBuf::from("/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine"),
         PathBuf::from("/opt/homebrew/bin/wine64"),
         PathBuf::from("/usr/bin/wine"),
         PathBuf::from("/usr/local/bin/wine"),
