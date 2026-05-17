@@ -80,18 +80,14 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
                 return PipelineId::FnaArm64;
             }
 
-            if let Some(detected) = detect_from_directory(dir) {
-                return detected;
-            }
-        }
-    }
-
-    if let Some(ref dir) = game_dir {
-        if dir.exists() {
             if let Some(pe_info) = super::pe::analyze_game_exe(dir) {
                 if let Some(pipeline) = pe_info_to_pipeline(&pe_info) {
                     return pipeline;
                 }
+            }
+
+            if let Some(detected) = detect_from_directory(dir) {
+                return detected;
             }
         }
     }
@@ -182,5 +178,34 @@ fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
         D3dApi::D3D9 => Some(PipelineId::M9),
         D3dApi::D3D10 => Some(PipelineId::M10),
         D3dApi::Unknown => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d3d9_pe_maps_to_m9() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d9.dll".into()],
+            detected_api: D3dApi::D3D9,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
+    }
+
+    #[test]
+    fn d3d9_pe_mapping_is_not_demoted_to_m11_by_heuristics() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d9.dll".into(), "steam_api.dll".into()],
+            detected_api: D3dApi::D3D9,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
     }
 }

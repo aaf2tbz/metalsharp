@@ -35,3 +35,7 @@ app/bundles/SteamSetup.exe
 # Code intelligence
 .graphiq/
 metalsharp-*/
+
+# SQLite runtime sidecars
+*.db-shm
+*.db-wal

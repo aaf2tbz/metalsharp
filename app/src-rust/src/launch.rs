@@ -35,9 +35,7 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
-    let child = cmd.spawn()?;
-
-    Ok(child.id())
+    spawn_and_reap(cmd)
 }
 
 pub fn launch_via_steam_with_env(
@@ -86,13 +84,15 @@ pub fn launch_via_steam_with_env(
         cmd.env(key, val);
     }
 
-    let child =
-        cmd.args(["start", &url]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
-
-    Ok(child.id())
+    cmd.args(["start", &url]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    spawn_and_reap(cmd)
 }
 
 pub fn kill_process_tree(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
+    if pid <= 0 {
+        return Ok(());
+    }
+
     let _ = Command::new("pkill")
         .args(["-9", "-P", &pid.to_string()])
         .stdout(std::process::Stdio::null())
@@ -117,7 +117,9 @@ pub fn kill_process_tree(pid: i32) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn kill_game_with_pid(appid: u32, pid: i32) -> Result<(), Box<dyn std::error::Error>> {
-    kill_process_tree(pid)?;
+    if pid > 0 {
+        kill_process_tree(pid)?;
+    }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
@@ -145,6 +147,29 @@ pub fn kill_game_with_pid(appid: u32, pid: i32) -> Result<(), Box<dyn std::error
     let _ = Command::new("pkill").args(["-9", "-f", "UnityCrashHandler"]).status();
 
     Ok(())
+}
+
+pub fn is_process_active(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+
+    match Command::new("ps").args(["-p", &pid.to_string(), "-o", "stat="]).output() {
+        Ok(output) if output.status.success() => {
+            let stat = String::from_utf8_lossy(&output.stdout);
+            !stat.trim().is_empty() && !stat.contains('Z')
+        },
+        _ => false,
+    }
+}
+
+fn spawn_and_reap(mut cmd: Command) -> Result<u32, Box<dyn std::error::Error>> {
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 pub fn get_config() -> Value {
@@ -325,4 +350,31 @@ fn launch_via_fna_mono(exe_path: &str) -> Result<u32, Box<dyn std::error::Error>
     let child = cmd.spawn()?;
 
     Ok(child.id())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn non_positive_pids_are_not_active() {
+        assert!(!is_process_active(0));
+        assert!(!is_process_active(-1));
+    }
+
+    #[test]
+    fn spawned_handoff_process_is_reaped_after_exit() {
+        let cmd = Command::new("/usr/bin/true");
+        let pid = spawn_and_reap(cmd).expect("spawn handoff process");
+
+        for _ in 0..20 {
+            if !is_process_active(pid as i32) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(!is_process_active(pid as i32));
+    }
 }

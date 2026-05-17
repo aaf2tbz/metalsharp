@@ -38,9 +38,8 @@ fn find_preset(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<PathBuf
 
 fn preset_lookup_subdirs(cache_subdir: &str) -> Vec<&str> {
     match cache_subdir {
-        "m10" | "m11" => vec![cache_subdir, "dxmt-metal"],
+        "m9" | "m10" | "m11" => vec![cache_subdir, "dxmt-metal"],
         "m12" => vec![cache_subdir, "dxmt-metal12"],
-        "m9" => vec![cache_subdir, "dxvk-metal9", "dxvk-metal32"],
         _ => vec![cache_subdir],
     }
 }
@@ -159,5 +158,15 @@ fn merge_preset_into_user(preset_db: &PathBuf, user_db: &PathBuf) -> Option<u64>
         Some(inserted)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn m9_reuses_dxmt_preset_family() {
+        assert_eq!(preset_lookup_subdirs("m9"), vec!["m9", "dxmt-metal"]);
     }
 }
