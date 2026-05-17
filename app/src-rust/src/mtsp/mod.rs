@@ -1,5 +1,6 @@
 pub mod engine;
 pub mod launcher;
+pub mod observe;
 pub mod pe;
 pub mod recipe;
 pub mod rules;

@@ -668,6 +668,35 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Post, "/mtsp/m12-title-observe") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let extra_logs: Vec<std::path::PathBuf> = body
+                .get("extraLogs")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).map(std::path::PathBuf::from).collect())
+                .unwrap_or_default();
+            match appid {
+                Some(id) => {
+                    app_log(&format!("[M12] title observation started: appid={} extra_logs={}", id, extra_logs.len()));
+                    match mtsp::observe::observe_m12_title(id, extra_logs) {
+                        Ok(v) => {
+                            app_log(&format!(
+                                "[M12] title observation finished: appid={} status={}",
+                                id,
+                                v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                            ));
+                            resp(200, v)
+                        },
+                        Err(e) => {
+                            app_log(&format!("[M12] title observation failed: appid={} error={}", id, e));
+                            resp(500, json!({"ok": false, "error": e.to_string()}))
+                        },
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Get, "/goldberg/status") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str
