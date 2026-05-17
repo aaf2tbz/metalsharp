@@ -118,6 +118,8 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let game_dir =
         crate::setup::resolve_game_dir(appid).ok_or_else(|| format!("game directory not found for appid {}", appid))?;
 
+    let deploy_dlls = selected_deploy_dlls_for_pipeline(&game_dir, node);
+    let deployed_sources: Vec<&str> = deploy_dlls.iter().map(|dll| dll.source_subpath).collect();
     deploy_dlls_for_pipeline(&game_dir, node);
 
     Ok(serde_json::json!({
@@ -125,7 +127,8 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "appid": appid,
         "pipeline": node.id,
         "pipeline_name": node.name,
-        "deployed_dlls": node.deploy_dlls.len(),
+        "deployed_dlls": deploy_dlls.len(),
+        "deployed_sources": deployed_sources,
     }))
 }
 
@@ -877,6 +880,19 @@ mod tests {
         let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath).collect();
 
         assert_eq!(sources, std::collections::HashSet::from(["lib/wine/x86_64-windows"]));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn selected_m9_deploy_count_matches_architecture_filter() {
+        let game_dir = test_game_dir("m9-count");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        write_test_pe(&game_dir.join("portal2.exe"), 0x014c, 0x10b);
+
+        let selected = selected_deploy_dlls_for_pipeline(&game_dir, get_pipeline(PipelineId::M9));
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].source_subpath, "lib/wine/i386-windows");
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
