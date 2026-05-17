@@ -4,6 +4,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
+use walkdir::WalkDir;
 
 static BRIDGE_PORT: u16 = 18733;
 
@@ -255,12 +256,7 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let node = get_pipeline(PipelineId::Steam);
-    let cache_paths = build_cache_paths(&home, node, appid);
-    let env = cache_env_pairs(node, cache_paths.as_ref(), &ms_root);
-    let pid = crate::launch::launch_via_steam_with_env(appid, &env)?;
+    let pid = crate::launch::launch_via_steam_with_env(appid, &[])?;
     Ok((pid, "steam"))
 }
 
@@ -410,22 +406,66 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
 }
 
 fn resolve_game_exe(game_dir: &PathBuf) -> String {
-    if let Ok(entries) = std::fs::read_dir(game_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.ends_with(".exe")
-                && !name.contains("setup")
-                && !name.contains("redist")
-                && !name.contains("uninstall")
-                && !name.contains("vcredist")
-                && !name.contains("installer")
-                && !name.contains("crashhandler")
-            {
-                return entry.path().to_string_lossy().to_string();
-            }
-        }
+    preferred_game_exe(game_dir).unwrap_or_else(|| game_dir.clone()).to_string_lossy().to_string()
+}
+
+fn preferred_game_exe(game_dir: &PathBuf) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = WalkDir::new(game_dir)
+        .max_depth(3)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|path| path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")).unwrap_or(false))
+        .collect();
+
+    candidates.sort_by_key(|path| executable_score(game_dir, path));
+    candidates.into_iter().next()
+}
+
+fn executable_score(game_dir: &PathBuf, path: &PathBuf) -> i32 {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let rel_depth = path.strip_prefix(game_dir).map(|p| p.components().count()).unwrap_or(10) as i32;
+    let parent_has_launcher = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_lowercase().contains("launcher"))
+        .unwrap_or(false);
+
+    let mut score = rel_depth * 10;
+    let directory_token = game_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase())
+        .unwrap_or_default();
+    let name_token = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+
+    if !directory_token.is_empty() && name_token.contains(&directory_token) {
+        score -= 100;
     }
-    game_dir.to_string_lossy().to_string()
+    if name.contains("x64") || name.contains("win64") || name.contains("64") {
+        score -= 25;
+    }
+    if name.contains("shipping") {
+        score -= 10;
+    }
+
+    if parent_has_launcher || name.contains("launcher") {
+        score += 500;
+    }
+    if name.contains("sandbox") {
+        score += 100;
+    }
+    if name.contains("setup")
+        || name.contains("redist")
+        || name.contains("uninstall")
+        || name.contains("vcredist")
+        || name.contains("installer")
+        || name.contains("crashhandler")
+    {
+        score += 1000;
+    }
+
+    score
 }
 
 fn find_config(name: &str) -> String {
@@ -893,6 +933,33 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].source_subpath, "lib/wine/i386-windows");
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn executable_selection_prefers_real_doom_binary_over_launcher() {
+        let game_dir = test_game_dir("doom-exe");
+        let launcher_dir = game_dir.join("launcher");
+        std::fs::create_dir_all(&launcher_dir).expect("create launcher dir");
+        std::fs::write(game_dir.join("DOOM Launcher.exe"), []).expect("write launcher");
+        std::fs::write(launcher_dir.join("idTechLauncher.exe"), []).expect("write nested launcher");
+        std::fs::write(game_dir.join("DOOMEternalx64vk.exe"), []).expect("write game exe");
+
+        let selected = preferred_game_exe(&game_dir).expect("select exe");
+
+        assert_eq!(selected.file_name().and_then(|n| n.to_str()), Some("DOOMEternalx64vk.exe"));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn executable_selection_can_fall_back_to_launcher_when_it_is_the_only_exe() {
+        let game_dir = test_game_dir("launcher-only");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        std::fs::write(game_dir.join("Game Launcher.exe"), []).expect("write launcher");
+
+        let selected = preferred_game_exe(&game_dir).expect("select exe");
+
+        assert_eq!(selected.file_name().and_then(|n| n.to_str()), Some("Game Launcher.exe"));
         let _ = std::fs::remove_dir_all(game_dir);
     }
 

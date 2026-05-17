@@ -445,21 +445,146 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
+    ensure_game_launch_options(appid)?;
+    kill_known_game_processes(appid);
     if !is_wine_steam_running() {
         launch_wine_steam()?;
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_secs(2));
+        for _ in 0..12 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
             if is_wine_steam_running() {
                 break;
             }
         }
-        std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
     let url = format!("steam://run/{}", appid);
     let pid = spawn_wine_steam(&[&url])?;
 
     Ok(json!({"ok": true, "pid": pid, "appid": appid}))
+}
+
+pub fn kill_known_game_processes(appid: u32) {
+    let patterns: &[&str] = match appid {
+        782330 => &["idTechLauncher.exe", "DOOMEternalx64vk.exe", "DOOMSandBox64vk.exe"],
+        _ => &[],
+    };
+
+    for pattern in patterns {
+        let _ = Command::new("pkill")
+            .args(["-f", pattern])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+pub fn ensure_game_launch_options(appid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(options) = required_launch_options(appid) else {
+        return Ok(());
+    };
+
+    let userdata = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("userdata");
+    if !userdata.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(userdata)?.flatten() {
+        let localconfig = entry.path().join("config").join("localconfig.vdf");
+        if localconfig.exists() {
+            upsert_app_launch_options(&localconfig, appid, &options)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn required_launch_options(appid: u32) -> Option<String> {
+    match appid {
+        782330 => {
+            let game_dir = crate::setup::resolve_game_dir(appid)?;
+            let exe = game_dir.join("DOOMEternalx64vk.exe");
+            if !exe.exists() {
+                return None;
+            }
+            let exe_path = windows_z_path(&exe);
+            Some(format!("\"{}\" %COMMAND% +com_skipIntroVideo 1", exe_path))
+        },
+        _ => None,
+    }
+}
+
+fn windows_z_path(path: &Path) -> String {
+    let unix_path = path.to_string_lossy().replace('/', "\\");
+    if unix_path.starts_with('\\') {
+        format!("Z:{}", unix_path)
+    } else {
+        unix_path
+    }
+}
+
+fn upsert_app_launch_options(path: &Path, appid: u32, options: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let original = std::fs::read_to_string(path)?;
+    let appid_line = format!("\"{}\"", appid);
+    let escaped_options = escape_vdf_value(options);
+    let option_line = format!("\t\t\t\t\t\t\t\"LaunchOptions\"\t\t\"{}\"", escaped_options);
+    let mut lines: Vec<String> = original.lines().map(|line| line.to_string()).collect();
+
+    let Some(appid_idx) = lines.iter().position(|line| line.trim() == appid_line) else {
+        return Ok(());
+    };
+
+    let Some(open_idx) =
+        lines.iter().enumerate().skip(appid_idx + 1).find_map(
+            |(idx, line)| {
+                if line.trim() == "{" {
+                    Some(idx)
+                } else {
+                    None
+                }
+            },
+        )
+    else {
+        return Ok(());
+    };
+
+    let mut depth = 0_i32;
+    let mut launch_idx = None;
+    let mut close_idx = None;
+    for (idx, line) in lines.iter().enumerate().skip(open_idx) {
+        match line.trim() {
+            "{" => depth += 1,
+            "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    close_idx = Some(idx);
+                    break;
+                }
+            },
+            trimmed if depth == 1 && trimmed.starts_with("\"LaunchOptions\"") => {
+                launch_idx = Some(idx);
+            },
+            _ => {},
+        }
+    }
+
+    if let Some(idx) = launch_idx {
+        if lines[idx] != option_line {
+            lines[idx] = option_line;
+        }
+    } else if let Some(idx) = close_idx {
+        lines.insert(idx, option_line);
+    }
+
+    let updated = format!("{}\n", lines.join("\n"));
+    if updated != original {
+        std::fs::write(path, updated)?;
+    }
+
+    Ok(())
+}
+
+fn escape_vdf_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -1254,5 +1379,40 @@ mod tests {
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
         ));
+    }
+
+    #[test]
+    fn windows_z_path_maps_unix_paths_for_wine_steam() {
+        assert_eq!(
+            windows_z_path(Path::new(
+                "/Volumes/AverySSD/SteamLibrary/steamapps/common/DOOMEternal/DOOMEternalx64vk.exe"
+            )),
+            "Z:\\Volumes\\AverySSD\\SteamLibrary\\steamapps\\common\\DOOMEternal\\DOOMEternalx64vk.exe"
+        );
+    }
+
+    #[test]
+    fn upsert_app_launch_options_updates_existing_app_block() {
+        let dir = std::env::temp_dir().join(format!("metalsharp-localconfig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("localconfig.vdf");
+        std::fs::write(
+            &path,
+            "\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"782330\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"-dx12\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n",
+        )
+        .expect("write localconfig");
+
+        upsert_app_launch_options(
+            &path,
+            782330,
+            "\"Z:\\Volumes\\AverySSD\\SteamLibrary\\steamapps\\common\\DOOMEternal\\DOOMEternalx64vk.exe\" %COMMAND%",
+        )
+        .expect("upsert launch options");
+
+        let updated = std::fs::read_to_string(&path).expect("read updated localconfig");
+        assert!(updated.contains(
+            "\"LaunchOptions\"\t\t\"\\\"Z:\\\\Volumes\\\\AverySSD\\\\SteamLibrary\\\\steamapps\\\\common\\\\DOOMEternal\\\\DOOMEternalx64vk.exe\\\" %COMMAND%\""
+        ));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

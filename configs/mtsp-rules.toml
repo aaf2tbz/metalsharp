@@ -231,12 +231,12 @@ pipeline = "m11"
 name = "LEGO Star Wars"
 
 [overrides.379720]
-pipeline = "m11"
-name = "Doom Eternal"
+pipeline = "steam"
+name = "DOOM"
 
 [overrides.782330]
-pipeline = "m11"
-name = "A Way Out"
+pipeline = "steam"
+name = "DOOM Eternal"
 
 [overrides.289070]
 pipeline = "m11"
