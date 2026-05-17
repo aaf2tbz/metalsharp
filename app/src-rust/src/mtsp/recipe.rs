@@ -108,6 +108,65 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
     })
 }
 
+pub fn build_custom_launch_recipe(
+    appid: u32,
+    node: &PipelineNode,
+    game_dir: &Path,
+    exe_path: Option<&Path>,
+) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let exe_path = match node.id {
+        PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M32
+        | PipelineId::WineBare => Some(match exe_path {
+            Some(path) => path.to_path_buf(),
+            None => resolve_game_exe(appid, game_dir)?,
+        }),
+        _ => None,
+    };
+    let game_dir = game_dir.to_path_buf();
+    let dlls = selected_deploy_dlls_for_pipeline(&game_dir, exe_path.as_deref(), node, &ms_root);
+    let anti_cheat = detect_anti_cheat(&game_dir);
+    let mut warnings = Vec::new();
+
+    if !anti_cheat.is_empty() {
+        warnings.push(format!(
+            "Detected anti-cheat components: {}. MetalSharp should use publisher-supported modes only.",
+            anti_cheat.join(", ")
+        ));
+    }
+    if exe_path.as_ref().map(|p| is_likely_launcher_exe(p)).unwrap_or(false) {
+        warnings.push(
+            "Selected executable still looks like a launcher; add an app-specific exe override if launch stalls."
+                .into(),
+        );
+    }
+
+    Ok(LaunchRecipe {
+        appid,
+        pipeline: node.id,
+        pipeline_name: node.name.to_string(),
+        backend: node.backend.to_string(),
+        game_dir: Some(game_dir),
+        exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
+        exe_path,
+        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        env: node
+            .env_vars
+            .iter()
+            .map(|ev| RecipeEnv { key: ev.key.to_string(), value: ev.value.to_string() })
+            .collect(),
+        dlls,
+        runtime_assets: runtime_assets_for_node(node, &ms_root),
+        anti_cheat,
+        warnings,
+    })
+}
+
 pub fn resolve_game_exe(appid: u32, game_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     for preferred in preferred_exe_names(appid) {
         let path = find_case_insensitive(game_dir, preferred);
