@@ -226,4 +226,24 @@ const navItems = [
 .sidebar.collapsed .sidebar-nav-icon {
   display: block;
 }
+
+@media (max-width: 720px) {
+  .sidebar {
+    width: var(--sidebar-width-collapsed);
+  }
+  .sidebar-top {
+    justify-content: center;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .sidebar-logo,
+  .sidebar-nav-label {
+    display: none;
+  }
+  .sidebar-nav-item {
+    justify-content: center;
+    padding: 8px;
+    gap: 0;
+  }
+}
 </style>
