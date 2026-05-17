@@ -180,7 +180,13 @@ fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
         },
         D3dApi::D3D11 => Some(PipelineId::M11),
         D3dApi::D3D9 => Some(PipelineId::M9),
-        D3dApi::D3D10 => Some(PipelineId::M10),
+        D3dApi::D3D10 => {
+            if pe.is_64_bit {
+                Some(PipelineId::M10)
+            } else {
+                Some(PipelineId::M32)
+            }
+        },
         D3dApi::Unknown => None,
     }
 }
@@ -216,5 +222,65 @@ mod tests {
     #[test]
     fn unresolved_games_default_to_main_m12_engine() {
         assert_eq!(default_pipeline(), PipelineId::M12);
+    }
+
+    #[test]
+    fn d3d10_pe_maps_to_m10() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d10core.dll".into()],
+            detected_api: D3dApi::D3D10,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M10));
+    }
+
+    #[test]
+    fn d3d10_pe_mapping_is_not_demoted_to_m11_by_heuristics() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d10core.dll".into(), "steam_api64.dll".into()],
+            detected_api: D3dApi::D3D10,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M10));
+    }
+
+    #[test]
+    fn d3d10_32_bit_pe_does_not_map_to_x86_64_m10_runtime() {
+        let pe = PeInfo {
+            machine_type: 0x014c,
+            is_64_bit: false,
+            imports: vec!["d3d10.dll".into()],
+            detected_api: D3dApi::D3D10,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M32));
+    }
+
+    #[test]
+    fn d3d9_pe_maps_to_m9() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d9.dll".into()],
+            detected_api: D3dApi::D3D9,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
+    }
+
+    #[test]
+    fn d3d9_pe_mapping_is_not_demoted_to_m11_by_heuristics() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d9.dll".into(), "steam_api.dll".into()],
+            detected_api: D3dApi::D3D9,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
     }
 }

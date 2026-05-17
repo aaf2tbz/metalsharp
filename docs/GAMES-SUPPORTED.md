@@ -13,7 +13,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | **M11** | D3D11 to Metal via DXMT |
 | **M12** | D3D12 to Metal via DXMT |
 | **M10** | D3D10 to Metal via DXMT |
-| **M9** | D3D9 via DXVK/MoltenVK |
+| **M9** | D3D9 via DXMT launch family |
 | **M32** | 32-bit Wine fallback |
 | **Native macOS** | FNA/XNA/Mono ARM64 native runtime |
 | **Steam** | Wine Steam |

@@ -118,15 +118,22 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some(
+                    "d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll" },
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                 ],
-                env_vars: vec![EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" }],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                ],
                 launch_args: vec!["-dx10"],
                 alternatives: vec![
                     PipelineId::M11,
@@ -140,23 +147,22 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             PipelineNode {
                 id: PipelineId::M9,
                 name: "M9",
-                description: "D3D9 -> Metal via DXVK/MoltenVK",
-                backend: "dxvk",
+                description: "D3D9 -> Metal via DXMT launch family",
+                backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/wine/x86_64-unix"],
-                deploy_dlls: vec![DllDeploy { source_subpath: "lib/dxvk/i386-windows", filename: "d3d9.dll" }],
-                env_vars: vec![],
-                launch_args: vec!["-dx9"],
-                alternatives: vec![
-                    PipelineId::M11,
-                    PipelineId::M10,
-                    PipelineId::M32,
-                    PipelineId::Steam,
-                    PipelineId::MacSteam,
-                    PipelineId::WineBare,
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
                 ],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                ],
+                launch_args: vec!["-dx9"],
+                alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::Steam, PipelineId::MacSteam],
                 shader_cache_subdir: Some("m9"),
             },
             PipelineNode {
@@ -250,7 +256,7 @@ impl PipelineId {
         match method {
             "dxmt_metal" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "dxmt_metal12" => Some(PipelineId::M12),
-            "d3d9_metal" | "dxvk_metal32" => Some(PipelineId::M9),
+            "d3d9_metal" => Some(PipelineId::M9),
             "wined3d_32" => Some(PipelineId::M32),
             "metalsharp_wine" => Some(PipelineId::WineBare),
             "steam" => Some(PipelineId::Steam),
@@ -268,7 +274,7 @@ impl PipelineId {
             "m11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" => Some(PipelineId::M12),
             "m10" => Some(PipelineId::M10),
-            "m9" | "m9_gl" | "m32_vk" => Some(PipelineId::M9),
+            "m9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
             "fna_arm64" | "fna_x86" | "mono_generic" => Some(PipelineId::FnaArm64),
             "steam" | "wine_steam" => Some(PipelineId::Steam),
@@ -313,18 +319,15 @@ mod tests {
     #[test]
     fn m12_is_stronger_than_other_dxmt_d3d_paths() {
         let m12 = get_pipeline(PipelineId::M12);
-        let m11 = get_pipeline(PipelineId::M11);
-        let m10 = get_pipeline(PipelineId::M10);
 
         for required in ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"] {
             assert!(m12.dyld_paths.contains(&required));
         }
 
         let m12_dlls: std::collections::HashSet<_> = m12.deploy_dlls.iter().map(|dll| dll.filename).collect();
-        for dll in m11.deploy_dlls.iter().chain(m10.deploy_dlls.iter()) {
-            assert!(m12_dlls.contains(dll.filename), "M12 missing shared DXMT DLL {}", dll.filename);
+        for required in ["d3d12.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
+            assert!(m12_dlls.contains(required), "M12 missing shared DXMT DLL {}", required);
         }
-        assert!(m12_dlls.contains("d3d12.dll"));
 
         let m12_env: std::collections::HashSet<_> = m12.env_vars.iter().map(|env| env.key).collect();
         assert!(m12_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
@@ -337,5 +340,84 @@ mod tests {
             Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
+    }
+
+    #[test]
+    fn m10_is_stable_dxmt_d3d10_pipeline() {
+        let m10 = get_pipeline(PipelineId::M10);
+
+        assert_eq!(m10.name, "M10");
+        assert_eq!(m10.description, "D3D10 -> Metal via DXMT");
+        assert_eq!(m10.backend, "dxmt");
+        assert!(!m10.experimental);
+        assert_eq!(m10.launch_args, vec!["-dx10"]);
+        assert_eq!(m10.shader_cache_subdir, Some("m10"));
+    }
+
+    #[test]
+    fn m10_matches_shared_dxmt_handoff_shape() {
+        let m10 = get_pipeline(PipelineId::M10);
+        let m11 = get_pipeline(PipelineId::M11);
+
+        assert_eq!(m10.dyld_paths, m11.dyld_paths);
+        assert_eq!(
+            m10.wine_overrides,
+            Some("d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+
+        let m10_dlls: std::collections::HashSet<_> = m10.deploy_dlls.iter().map(|dll| dll.filename).collect();
+        for required in ["d3d10.dll", "d3d10_1.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
+            assert!(m10_dlls.contains(required), "M10 missing {}", required);
+        }
+        assert!(!m10_dlls.contains("d3d12.dll"));
+
+        let m10_env: std::collections::HashSet<_> = m10.env_vars.iter().map(|env| env.key).collect();
+        assert!(m10_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert!(m10_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
+
+        assert!(m10.alternatives.contains(&PipelineId::M11));
+        assert!(m10.alternatives.contains(&PipelineId::M9));
+        assert!(m10.alternatives.contains(&PipelineId::WineBare));
+    }
+
+    #[test]
+    fn m9_is_dxmt_family_without_dxvk_or_wined3d_fallbacks() {
+        let m9 = get_pipeline(PipelineId::M9);
+
+        assert_eq!(m9.name, "M9");
+        assert_eq!(m9.description, "D3D9 -> Metal via DXMT launch family");
+        assert_eq!(m9.backend, "dxmt");
+        assert!(!m9.experimental);
+        assert_eq!(m9.launch_args, vec!["-dx9"]);
+        assert_eq!(m9.shader_cache_subdir, Some("m9"));
+        assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+
+        let m9_dlls: std::collections::HashSet<_> =
+            m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
+        assert_eq!(
+            m9_dlls,
+            std::collections::HashSet::from([
+                ("lib/wine/x86_64-windows", "d3d9.dll"),
+                ("lib/wine/i386-windows", "d3d9.dll"),
+            ])
+        );
+        assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
+        assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
+
+        let m9_env: std::collections::HashSet<_> = m9.env_vars.iter().map(|env| env.key).collect();
+        assert!(m9_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert!(m9_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
+
+        assert!(m9.alternatives.contains(&PipelineId::M11));
+        assert!(m9.alternatives.contains(&PipelineId::M10));
+        assert!(!m9.alternatives.contains(&PipelineId::M32));
+        assert!(!m9.alternatives.contains(&PipelineId::WineBare));
+    }
+
+    #[test]
+    fn legacy_dxvk_and_wined3d_m9_aliases_are_not_m9() {
+        assert_eq!(PipelineId::from_legacy_method("dxvk_metal32"), None);
+        assert_eq!(PipelineId::from_str_flexible("m9_gl"), None);
+        assert_eq!(PipelineId::from_str_flexible("m32_vk"), None);
     }
 }
