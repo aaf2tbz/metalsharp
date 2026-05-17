@@ -619,6 +619,19 @@ struct D3D12_GRAPHICS_PIPELINE_STATE_DESC {
     } SampleDesc;
 };
 
+struct D3D12_SHADER_BYTECODE {
+    const void* pShaderBytecode;
+    SIZE_T BytecodeLength;
+};
+
+struct D3D12_COMPUTE_PIPELINE_STATE_DESC {
+    ID3D12RootSignature* pRootSignature;
+    D3D12_SHADER_BYTECODE CS;
+    UINT NodeMask;
+    UINT CachedPSO;
+    UINT Flags;
+};
+
 class ID3D12GraphicsCommandList : public ID3D12CommandList {
   public:
     STDMETHOD(Close)() PURE;
