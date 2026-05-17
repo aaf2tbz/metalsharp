@@ -92,7 +92,11 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
         }
     }
 
-    PipelineId::M11
+    default_pipeline()
+}
+
+fn default_pipeline() -> PipelineId {
+    PipelineId::M12
 }
 
 fn detect_from_directory(dir: &PathBuf) -> Option<PipelineId> {
@@ -190,6 +194,35 @@ fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn d3d12_pe_maps_to_m12() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d12.dll".into()],
+            detected_api: D3dApi::D3D12,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M12));
+    }
+
+    #[test]
+    fn broad_directory_heuristics_do_not_override_d3d12_pe_mapping() {
+        let pe = PeInfo {
+            machine_type: 0x8664,
+            is_64_bit: true,
+            imports: vec!["d3d12.dll".into(), "steam_api64.dll".into()],
+            detected_api: D3dApi::D3D12,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M12));
+    }
+
+    #[test]
+    fn unresolved_games_default_to_main_m12_engine() {
+        assert_eq!(default_pipeline(), PipelineId::M12);
+    }
 
     #[test]
     fn d3d10_pe_maps_to_m10() {

@@ -253,6 +253,7 @@ int main() {
 
     printf("\n--- Pipeline State ---\n");
     ID3D12PipelineState* pso = nullptr;
+    ID3D12PipelineState* computePso = nullptr;
     if (device) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.NumRenderTargets = 1;
@@ -264,6 +265,161 @@ int main() {
         CHECK(SUCCEEDED(hr) && pso, "CreateGraphicsPipelineState (no shaders)");
     }
 
+    printf("\n--- Indexed Graphics Pipeline ---\n");
+    if (device && cmdQueue && cmdAlloc && rtTexture && rtvHeap) {
+        struct Vertex {
+            float position[3];
+            float color[4];
+        };
+        const Vertex vertices[3] = {
+            {{0.0f, 0.5f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+            {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+            {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+        };
+        const uint16_t indices[3] = {0, 1, 2};
+
+        D3D12_HEAP_PROPERTIES heapProps = {};
+        heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC vbDesc = {};
+        vbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        vbDesc.Width = sizeof(vertices);
+        vbDesc.Height = 1;
+        vbDesc.DepthOrArraySize = 1;
+        vbDesc.MipLevels = 1;
+        vbDesc.Format = DXGI_FORMAT_UNKNOWN;
+        vbDesc.SampleDesc = {1, 0};
+        D3D12_RESOURCE_DESC ibDesc = vbDesc;
+        ibDesc.Width = sizeof(indices);
+
+        ID3D12Resource* vertexBuffer = nullptr;
+        ID3D12Resource* indexBuffer = nullptr;
+        hr = device->CreateCommittedResource(&heapProps, 0, &vbDesc, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                                             nullptr, IID_ID3D12Resource, (void**)&vertexBuffer);
+        CHECK(SUCCEEDED(hr) && vertexBuffer, "Create indexed draw vertex buffer");
+        hr = device->CreateCommittedResource(&heapProps, 0, &ibDesc, D3D12_RESOURCE_STATE_INDEX_BUFFER, nullptr,
+                                             IID_ID3D12Resource, (void**)&indexBuffer);
+        CHECK(SUCCEEDED(hr) && indexBuffer, "Create indexed draw index buffer");
+
+        if (vertexBuffer && indexBuffer) {
+            void* mapped = nullptr;
+            vertexBuffer->Map(0, nullptr, &mapped);
+            if (mapped)
+                memcpy(mapped, vertices, sizeof(vertices));
+            vertexBuffer->Unmap(0, nullptr);
+            indexBuffer->Map(0, nullptr, &mapped);
+            if (mapped)
+                memcpy(mapped, indices, sizeof(indices));
+            indexBuffer->Unmap(0, nullptr);
+        }
+
+        static const char* graphicsMSL =
+            "#include <metal_stdlib>\n"
+            "using namespace metal;\n"
+            "struct Vertex { float3 position; float4 color; };\n"
+            "struct VSOut { float4 position [[position]]; float4 color; };\n"
+            "vertex VSOut vertexShader(uint vid [[vertex_id]], const device Vertex* vertices [[buffer(0)]]) { "
+            "VSOut out; Vertex in = vertices[vid]; out.position = float4(in.position, 1.0); out.color = in.color; "
+            "return out; }\n"
+            "fragment float4 fragmentShader(VSOut in [[stage_in]]) { return in.color; }\n";
+
+        ID3D12PipelineState* indexedPso = nullptr;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC indexedDesc = {};
+        indexedDesc.VS = graphicsMSL;
+        indexedDesc.VSsize = strlen(graphicsMSL);
+        indexedDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        indexedDesc.NumRenderTargets = 1;
+        indexedDesc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+        indexedDesc.SampleDesc = {1, 0};
+        indexedDesc.SampleMask = 0xFFFFFFFF;
+        hr = device->CreateGraphicsPipelineState(&indexedDesc, IID_ID3D12PipelineState, (void**)&indexedPso);
+        CHECK(SUCCEEDED(hr) && indexedPso && indexedPso->__metalRenderPipelineState() != nullptr,
+              "CreateGraphicsPipelineState (MSL indexed)");
+
+        if (indexedPso && vertexBuffer && indexBuffer) {
+            ID3D12GraphicsCommandList* drawList = nullptr;
+            hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, indexedPso,
+                                           IID_ID3D12GraphicsCommandList, (void**)&drawList);
+            CHECK(SUCCEEDED(hr) && drawList, "Create indexed draw command list");
+            if (drawList) {
+                D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->__getCPUDescriptorHandleForHeapStart();
+                D3D12_VIEWPORT vp = {0, 0, 512, 512, 0.0f, 1.0f};
+                D3D12_RECT scissor = {0, 0, 512, 512};
+                D3D12_GPU_VIRTUAL_ADDRESS vbAddr = 0;
+                D3D12_GPU_VIRTUAL_ADDRESS ibAddr = 0;
+                vertexBuffer->GetGPUVirtualAddress(&vbAddr);
+                indexBuffer->GetGPUVirtualAddress(&ibAddr);
+                D3D12_VERTEX_BUFFER_VIEW vbView = {vbAddr, (UINT)sizeof(vertices), (UINT)sizeof(Vertex)};
+                D3D12_INDEX_BUFFER_VIEW ibView = {ibAddr, (UINT)sizeof(indices), DXGI_FORMAT_R16_UINT};
+
+                drawList->SetPipelineState(indexedPso);
+                drawList->IASetPrimitiveTopology(D3D12_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                drawList->RSSetViewports(1, &vp);
+                drawList->RSSetScissorRects(1, &scissor);
+                drawList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+                drawList->IASetVertexBuffers(0, 1, &vbView);
+                drawList->IASetIndexBuffer(&ibView);
+                hr = drawList->DrawIndexedInstanced(3, 1, 0, 0, 0);
+                CHECK(SUCCEEDED(hr), "Record indexed draw");
+                hr = drawList->Close();
+                CHECK(SUCCEEDED(hr), "Close indexed draw list");
+                ID3D12CommandList* lists[] = {drawList};
+                hr = cmdQueue->ExecuteCommandLists(1, lists);
+                CHECK(SUCCEEDED(hr), "Execute indexed draw list");
+                drawList->Release();
+            }
+        }
+
+        if (indexedPso)
+            indexedPso->Release();
+        if (indexBuffer)
+            indexBuffer->Release();
+        if (vertexBuffer)
+            vertexBuffer->Release();
+    }
+
+    printf("\n--- Compute Pipeline State ---\n");
+    if (device) {
+        static const char* computeMSL = "#include <metal_stdlib>\n"
+                                        "using namespace metal;\n"
+                                        "kernel void computeShader(uint3 tid [[thread_position_in_grid]]) {}\n";
+        D3D12_COMPUTE_PIPELINE_STATE_DESC computeDesc = {};
+        computeDesc.CS.pShaderBytecode = computeMSL;
+        computeDesc.CS.BytecodeLength = strlen(computeMSL);
+
+        hr = device->CreateComputePipelineState(&computeDesc, IID_ID3D12PipelineState, (void**)&computePso);
+        CHECK(SUCCEEDED(hr) && computePso && computePso->__metalComputePipelineState() != nullptr,
+              "CreateComputePipelineState (MSL)");
+
+        static const char* badComputeMSL = "#include <metal_stdlib>\n"
+                                           "using namespace metal;\n"
+                                           "kernel void computeShader( { }\n";
+        D3D12_COMPUTE_PIPELINE_STATE_DESC badComputeDesc = {};
+        badComputeDesc.CS.pShaderBytecode = badComputeMSL;
+        badComputeDesc.CS.BytecodeLength = strlen(badComputeMSL);
+        ID3D12PipelineState* failedComputePso = reinterpret_cast<ID3D12PipelineState*>(0x1);
+        hr = device->CreateComputePipelineState(&badComputeDesc, IID_ID3D12PipelineState, (void**)&failedComputePso);
+        CHECK(FAILED(hr) && failedComputePso == nullptr, "Failed compute PSO leaves null output");
+
+        if (cmdQueue && cmdAlloc && computePso) {
+            ID3D12GraphicsCommandList* computeList = nullptr;
+            hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, cmdAlloc, computePso,
+                                           IID_ID3D12GraphicsCommandList, (void**)&computeList);
+            CHECK(SUCCEEDED(hr) && computeList, "Create compute command list");
+            if (computeList) {
+                hr = computeList->SetPipelineState(computePso);
+                CHECK(SUCCEEDED(hr), "Set compute pipeline state");
+                hr = computeList->Dispatch(1, 1, 1);
+                CHECK(SUCCEEDED(hr), "Dispatch with compute PSO");
+                hr = computeList->Close();
+                CHECK(SUCCEEDED(hr), "Close compute list");
+                ID3D12CommandList* lists[] = {computeList};
+                hr = cmdQueue->ExecuteCommandLists(1, lists);
+                CHECK(SUCCEEDED(hr), "Execute compute command list");
+                computeList->Release();
+            }
+        }
+    }
+
     printf("\n--- Descriptor handle increment ---\n");
     if (device) {
         UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -272,6 +428,8 @@ int main() {
 
     if (pso)
         pso->Release();
+    if (computePso)
+        computePso->Release();
     if (cmdSig)
         cmdSig->Release();
     if (fence)

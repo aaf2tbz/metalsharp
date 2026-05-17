@@ -77,7 +77,7 @@ M9 cache path:
 
 | Game | Best/current pipeline |
 |---|---|
-| Schedule 1 | M11 recommended, M12 works |
+| Schedule 1 | M12 recommended |
 | Subnautica | M11 |
 | Subnautica: Below Zero | M12 recommended, M11 optimized |
 | Rain World | M11, M9 also works |
@@ -92,7 +92,7 @@ M9 cache path:
 ## Notes
 
 - DXMT is the direct Metal path.
+- M12 is the primary stable DXMT D3D engine method in source.
 - M10 and M11 share the `dxmt-metal` preset fallback family.
 - M9 no longer has a Vulkan/MoltenVK hop in MTSP selection.
-- M12 is still marked experimental in source.
 - M32 is the fallback for 32-bit Wine cases.

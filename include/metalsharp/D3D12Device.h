@@ -52,17 +52,22 @@
 
 #include <cstring>
 #include <d3d/D3D12.h>
+#include <memory>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace metalsharp {
 
 static HRESULT E_NOT_IMPL = E_NOTIMPL;
+
+class D3D12ResourceImpl;
+using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
@@ -348,6 +353,8 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
     ULONG refCount = 1;
     void* m_renderPipeline = nullptr;
     void* m_computePipeline = nullptr;
+    void* m_ownedRenderPipeline = nullptr;
+    void* m_ownedComputePipeline = nullptr;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -438,8 +445,19 @@ class D3D12ResourceImpl final : public ID3D12Resource {
     std::unique_ptr<MetalTexture> metalTexture;
     UINT m_resourceState;
     UINT64 m_gpuAddress = 0;
+    std::weak_ptr<GPUAddressRegistry> m_gpuAddressRegistry;
 
     D3D12ResourceImpl(const D3D12_RESOURCE_DESC& d) : desc(d), m_resourceState(D3D12_RESOURCE_STATE_COMMON) {}
+    ~D3D12ResourceImpl() {
+        if (m_gpuAddress != 0) {
+            auto registry = m_gpuAddressRegistry.lock();
+            if (registry) {
+                auto it = registry->find(m_gpuAddress);
+                if (it != registry->end() && it->second == this)
+                    registry->erase(it);
+            }
+        }
+    }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -489,6 +507,7 @@ class D3D12ResourceImpl final : public ID3D12Resource {
     void* __metalTexturePtr() const override { return metalTexture ? metalTexture->nativeTexture() : nullptr; }
     UINT __getResourceState() const override { return m_resourceState; }
     void __setResourceState(UINT state) override { m_resourceState = state; }
+    size_t bufferSize() const { return metalBuffer ? metalBuffer->size() : 0; }
 };
 
 class D3D12DeviceImpl final : public ID3D12Device {
@@ -512,6 +531,9 @@ class D3D12DeviceImpl final : public ID3D12Device {
     ULONG m_refCount = 1;
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
+    size_t gpuAddressResourceCountForTesting() const {
+        return m_gpuAddressResources ? m_gpuAddressResources->size() : 0;
+    }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -566,6 +588,8 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 std::unique_ptr<MetalBuffer>(MetalBuffer::create(*m_metalDevice, (size_t)pDesc->Width, nullptr));
             if (res->metalBuffer) {
                 res->m_gpuAddress = reinterpret_cast<UINT64>(res->metalBuffer->nativeBuffer());
+                res->m_gpuAddressRegistry = m_gpuAddressResources;
+                (*m_gpuAddressResources)[res->m_gpuAddress] = res;
             }
         } else {
             uint32_t fmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
@@ -706,12 +730,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
     HRESULT CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pDesc, REFIID riid,
                                         void** ppPSO) override;
 
-    HRESULT CreateComputePipelineState(const void* pDesc, REFIID riid, void** ppPSO) override {
-        if (!ppPSO)
-            return E_POINTER;
-        *ppPSO = new D3D12PipelineStateImpl();
-        return S_OK;
-    }
+    HRESULT CreateComputePipelineState(const void* pDesc, REFIID riid, void** ppPSO) override;
 
     HRESULT CreateFence(UINT64 InitialValue, UINT Flags, REFIID riid, void** ppFence) override {
         if (!ppFence)
@@ -1072,8 +1091,11 @@ class D3D12DeviceImpl final : public ID3D12Device {
     }
 
     std::vector<D3D12DescriptorHeapImpl*> m_trackedHeaps;
+    std::shared_ptr<GPUAddressRegistry> m_gpuAddressResources = std::make_shared<GPUAddressRegistry>();
 
     D3D12DescriptorHeapImpl* findHeapForHandle(D3D12_CPU_DESCRIPTOR_HANDLE handle) const;
+    D3D12DescriptorHeapImpl* findHeapForGPUHandle(D3D12_GPU_DESCRIPTOR_HANDLE handle) const;
+    D3D12ResourceImpl* findResourceForGPUAddress(D3D12_GPU_VIRTUAL_ADDRESS address, UINT64* offset = nullptr) const;
 };
 
 } // namespace metalsharp
