@@ -1,6 +1,6 @@
 use super::engine::PipelineId;
 use super::pe::{D3dApi, PeInfo};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static RULES: OnceLock<std::collections::HashMap<u32, PipelineId>> = OnceLock::new();
@@ -8,27 +8,9 @@ static RULES: OnceLock<std::collections::HashMap<u32, PipelineId>> = OnceLock::n
 fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
     RULES.get_or_init(|| {
         let home = dirs::home_dir().unwrap_or_default();
+        let current_exe = std::env::current_exe().ok();
 
-        let mut candidates = vec![
-            home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
-            home.join(".metalsharp").join("configs").join("mtsp-rules.toml"),
-            home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
-            PathBuf::from("configs/mtsp-rules.toml"),
-        ];
-
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(mut dir) = exe.parent() {
-                for _ in 0..8 {
-                    candidates.push(dir.join("configs").join("mtsp-rules.toml"));
-                    match dir.parent() {
-                        Some(p) => dir = p,
-                        None => break,
-                    }
-                }
-            }
-        }
-
-        for path in &candidates {
+        for path in rule_candidates(&home, current_exe.as_deref()) {
             if path.exists() {
                 if let Ok(contents) = std::fs::read_to_string(path) {
                     return parse_rules(&contents);
@@ -38,6 +20,29 @@ fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
 
         std::collections::HashMap::new()
     })
+}
+
+fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
+        PathBuf::from("configs/mtsp-rules.toml"),
+    ];
+
+    if let Some(exe) = current_exe {
+        if let Some(mut dir) = exe.parent() {
+            for _ in 0..8 {
+                candidates.push(dir.join("configs").join("mtsp-rules.toml"));
+                match dir.parent() {
+                    Some(p) => dir = p,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    candidates.push(home.join("metalsharp").join("configs").join("mtsp-rules.toml"));
+    candidates.push(home.join(".metalsharp").join("configs").join("mtsp-rules.toml"));
+    candidates
 }
 
 fn parse_rules(toml_str: &str) -> std::collections::HashMap<u32, PipelineId> {
@@ -282,5 +287,36 @@ mod tests {
         };
 
         assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
+    }
+
+    #[test]
+    fn shipped_rules_cover_researched_installed_titles() {
+        let rules = parse_rules(include_str!("../../../../configs/mtsp-rules.toml"));
+
+        for (appid, pipeline) in [
+            (312520, PipelineId::M11),
+            (508440, PipelineId::M11),
+            (535520, PipelineId::M9),
+            (1237320, PipelineId::M11),
+            (1326470, PipelineId::M11),
+            (1583230, PipelineId::M12),
+            (3164500, PipelineId::M11),
+        ] {
+            assert_eq!(rules.get(&appid), Some(&pipeline), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn shipped_rules_precede_stale_user_copies() {
+        let home = Path::new("/Users/alex");
+        let current_exe = Path::new("/Applications/MetalSharp.app/Contents/MacOS/metalsharp-backend");
+        let candidates = rule_candidates(home, Some(current_exe));
+
+        let repo_rules = home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml");
+        let stale_user_rules = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
+        let repo_pos = candidates.iter().position(|path| path == &repo_rules).unwrap();
+        let stale_user_pos = candidates.iter().position(|path| path == &stale_user_rules).unwrap();
+
+        assert!(repo_pos < stale_user_pos);
     }
 }

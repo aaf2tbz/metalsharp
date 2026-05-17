@@ -8,9 +8,15 @@ MetalSharp launches games through the Rust backend and the current MTSP pipeline
 Play clicked
   -> renderer calls backend
   -> backend resolves a pipeline
-  -> backend prepares DLLs/env/cache
+  -> backend builds a LaunchRecipe
+  -> backend preflights runtime assets
+  -> backend prepares DLLs/env/cache beside the selected executable
   -> Wine, Steam, MacOS Steam, or Native macOS starts the game
 ```
+
+The launch recipe is the backend contract for click-to-play. It records the appid, selected pipeline, game directory,
+selected executable, launch arguments, environment, DLL placement, runtime asset status, anti-cheat markers, and warnings.
+Manual launch methods still work; they force the pipeline before the recipe is built.
 
 ## Current Pipelines
 
@@ -34,7 +40,7 @@ The resolver checks, in order:
 2. Managed .NET/FNA eligibility
 3. PE header analysis
 4. Installed game directory markers
-5. M11 fallback
+5. M12 fallback
 
 Common marker behavior:
 
@@ -51,6 +57,10 @@ Common marker behavior:
 D3D10 PE imports are checked before broad Unity, Unreal, Source, RE Engine, and Steam marker heuristics so D3D10 games stay on `[m10]`.
 
 ## Runtime Prep
+
+Runtime prep is recipe-driven. DXMT/Wine DLL overrides are deployed next to the selected executable rather than blindly
+into the game root, which keeps nested layouts such as `Binaries/Win64` and launcher-heavy games from loading the wrong
+binary or missing local overrides.
 
 M11/M10 copy:
 
@@ -78,4 +88,6 @@ Native macOS does not use Wine. Steam and MacOS Steam are separate paths.
 - Running games are tracked by the backend.
 - Stop/kill actions terminate the registered process and child processes.
 - Steam process management lives in `steam.rs`.
+- Launching a Steam game no longer restarts Wine Steam only to apply per-game launch environment. If Steam is already
+  running, it is kept alive and the game request carries the env.
 - Shader cache paths are per appid under `~/.metalsharp/shader-cache/`.
