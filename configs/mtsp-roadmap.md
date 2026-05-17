@@ -39,9 +39,7 @@ TOML, not Rust code.
 |---|---|---|---|
 | M11 | DXMT D3D11 → Metal | dxmt | Primary pipeline for D3D11 games |
 | M12 | DXMT D3D12 → Metal | dxmt | WIP — compute works, graphics PSO in progress |
-| M9 | D3D9 → Metal (custom) | d3d9-metal | Custom via MojoShader, experimental |
-| M9Gl | WineD3D D3D9 → OpenGL | wined3d | CPU fallback |
-| M32Vk | DXVK D3D9 → MoltenVK | dxvk | 32-bit Vulkan translation |
+| M9 | D3D9 → Metal | dxmt | Primary D3D9 path under the DXMT launch family |
 | M32W | WineD3D 32-bit | wined3d | Without Vulkan |
 | M64 | Bare Wine 64-bit | wine | No translation layer |
 | Steam | Steam Native | steam | macOS native |

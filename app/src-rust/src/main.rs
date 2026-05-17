@@ -55,6 +55,12 @@ fn get_game_pid(appid: u32) -> Option<i32> {
     running_games().lock().ok()?.get(&appid).copied()
 }
 
+fn prune_inactive_game_pids() {
+    if let Ok(mut map) = running_games().lock() {
+        map.retain(|_, &mut pid| launch::is_process_active(pid));
+    }
+}
+
 enum RouteResponse {
     Json(u16, Vec<u8>),
     Raw(u16, Vec<u8>, String),
@@ -658,6 +664,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/game/running") => {
+            prune_inactive_game_pids();
             let map = running_games().lock().unwrap_or_else(|e| e.into_inner());
             let running: Vec<serde_json::Value> =
                 map.iter().map(|(&appid, &pid)| json!({"appid": appid, "pid": pid})).collect();
@@ -711,6 +718,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             } else {
                 pid_param
             };
+
+            if target_pid <= 0 {
+                return resp(400, json!({"ok": false, "error": "pid required"}));
+            }
 
             match launch::kill_process_tree(target_pid) {
                 Ok(_) => {
