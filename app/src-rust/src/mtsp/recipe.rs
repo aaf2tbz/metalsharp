@@ -43,6 +43,24 @@ pub struct RuntimeAsset {
     pub present: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchDoctorReport {
+    pub ready: bool,
+    pub summary: String,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+    pub checks: Vec<LaunchDoctorCheck>,
+    pub recipe: LaunchRecipe,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchDoctorCheck {
+    pub id: String,
+    pub label: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 struct ExeCandidate {
     path: PathBuf,
@@ -228,6 +246,200 @@ pub fn selected_deploy_dlls_for_pipeline(
 pub fn is_likely_launcher_exe(path: &Path) -> bool {
     let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
     ["launcher", "bootstrap", "updater", "webhelper"].iter().any(|needle| name.contains(needle))
+}
+
+pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorReport {
+    match build_launch_recipe(appid, node) {
+        Ok(recipe) => diagnose_recipe(recipe),
+        Err(error) => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+            let error = error.to_string();
+            let recipe = LaunchRecipe {
+                appid,
+                pipeline: node.id,
+                pipeline_name: node.name.to_string(),
+                backend: node.backend.to_string(),
+                game_dir: crate::setup::resolve_game_dir(appid),
+                exe_path: None,
+                exe_name: None,
+                launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+                env: node
+                    .env_vars
+                    .iter()
+                    .map(|ev| RecipeEnv { key: ev.key.to_string(), value: ev.value.to_string() })
+                    .collect(),
+                dlls: Vec::new(),
+                runtime_assets: runtime_assets_for_node(node, &ms_root),
+                anti_cheat: Vec::new(),
+                warnings: Vec::new(),
+            };
+            let mut report = diagnose_recipe(recipe);
+            report.ready = false;
+            report.blockers.insert(0, format!("Recipe build did not complete: {}", error));
+            report.summary = format!("Blocked: {}", error);
+            report
+        },
+    }
+}
+
+pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
+    let mut checks = Vec::new();
+    let mut blockers = Vec::new();
+    let mut warnings = recipe.warnings.clone();
+    let direct_wine_pipeline = matches!(
+        recipe.pipeline,
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 | PipelineId::WineBare
+    );
+    let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
+
+    if requires_game_dir {
+        match recipe.game_dir.as_deref() {
+            Some(path) if path.is_dir() => {
+                push_check(&mut checks, "game_dir", "Game folder", true, format!("Found {}", path.display()))
+            },
+            Some(path) => {
+                let detail = format!("Missing {}", path.display());
+                blockers.push(detail.clone());
+                push_check(&mut checks, "game_dir", "Game folder", false, detail);
+            },
+            None => {
+                let detail = "No installed game folder was resolved".to_string();
+                blockers.push(detail.clone());
+                push_check(&mut checks, "game_dir", "Game folder", false, detail);
+            },
+        }
+    } else {
+        push_check(&mut checks, "game_dir", "Game folder", true, "Steam owns install resolution");
+    }
+
+    if direct_wine_pipeline {
+        match recipe.exe_path.as_deref() {
+            Some(path) if path.is_file() => {
+                push_check(&mut checks, "exe", "Executable", true, format!("Selected {}", path.display()))
+            },
+            Some(path) => {
+                let detail = format!("Selected executable is missing: {}", path.display());
+                blockers.push(detail.clone());
+                push_check(&mut checks, "exe", "Executable", false, detail);
+            },
+            None => {
+                let detail = "No Windows executable was selected".to_string();
+                blockers.push(detail.clone());
+                push_check(&mut checks, "exe", "Executable", false, detail);
+            },
+        }
+    } else {
+        push_check(&mut checks, "exe", "Executable", true, "Not required for this pipeline");
+    }
+
+    let missing_assets: Vec<_> =
+        recipe.runtime_assets.iter().filter(|asset| asset.required && !asset.present).collect();
+    if missing_assets.is_empty() {
+        let detail = if recipe.runtime_assets.is_empty() {
+            "No runtime assets required".to_string()
+        } else {
+            format!("{} runtime asset(s) available", recipe.runtime_assets.len())
+        };
+        push_check(&mut checks, "runtime_assets", "Runtime assets", true, detail);
+    } else {
+        let detail = missing_assets
+            .iter()
+            .map(|asset| format!("{} ({})", asset.name, asset.path.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        blockers.push(format!("Missing required runtime asset(s): {}", detail));
+        push_check(&mut checks, "runtime_assets", "Runtime assets", false, detail);
+    }
+
+    let missing_dlls: Vec<_> = recipe.dlls.iter().filter(|dll| !dll.source_present).collect();
+    if missing_dlls.is_empty() {
+        let detail = if recipe.dlls.is_empty() {
+            "No DLL deployment needed".to_string()
+        } else {
+            format!("{} DLL source(s) available", recipe.dlls.len())
+        };
+        push_check(&mut checks, "dll_sources", "DLL sources", true, detail);
+    } else {
+        let detail = missing_dlls
+            .iter()
+            .map(|dll| format!("{} ({})", dll.filename, dll.source_path.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        blockers.push(format!("Missing DLL source(s): {}", detail));
+        push_check(&mut checks, "dll_sources", "DLL sources", false, detail);
+    }
+
+    let missing_target_dirs: Vec<_> =
+        recipe.dlls.iter().filter_map(|dll| dll.dest_path.parent()).filter(|parent| !parent.is_dir()).collect();
+    if missing_target_dirs.is_empty() {
+        let detail = if recipe.dlls.is_empty() {
+            "No DLL target needed".to_string()
+        } else {
+            "DLLs will be placed next to the selected executable".to_string()
+        };
+        push_check(&mut checks, "dll_targets", "DLL targets", true, detail);
+    } else {
+        let detail =
+            missing_target_dirs.iter().map(|parent| parent.display().to_string()).collect::<Vec<_>>().join(", ");
+        blockers.push(format!("Missing DLL target folder(s): {}", detail));
+        push_check(&mut checks, "dll_targets", "DLL targets", false, detail);
+    }
+
+    if recipe.anti_cheat.is_empty() {
+        push_check(&mut checks, "anti_cheat", "Anti-cheat", true, "No common anti-cheat folders detected");
+    } else {
+        push_check(
+            &mut checks,
+            "anti_cheat",
+            "Anti-cheat",
+            true,
+            format!("Detected {}; use publisher-supported modes only", recipe.anti_cheat.join(", ")),
+        );
+    }
+
+    if recipe.exe_path.as_ref().map(|path| is_likely_launcher_exe(path)).unwrap_or(false) {
+        let detail = "Selected executable looks like a launcher and may stall".to_string();
+        warnings.push(detail.clone());
+        push_check(&mut checks, "launcher_exe", "Launcher check", true, detail);
+    } else {
+        push_check(
+            &mut checks,
+            "launcher_exe",
+            "Launcher check",
+            true,
+            "Selected executable does not look like a launcher",
+        );
+    }
+
+    let ready = blockers.is_empty();
+    let summary = if ready {
+        format!("Ready for {} via {}", recipe.pipeline_name, recipe.backend)
+    } else {
+        format!("Blocked by {} launch prerequisite(s)", blockers.len())
+    };
+
+    LaunchDoctorReport { ready, summary, blockers, warnings: dedupe_strings(warnings), checks, recipe }
+}
+
+fn push_check(
+    checks: &mut Vec<LaunchDoctorCheck>,
+    id: impl Into<String>,
+    label: impl Into<String>,
+    ok: bool,
+    detail: impl Into<String>,
+) {
+    checks.push(LaunchDoctorCheck { id: id.into(), label: label.into(), ok, detail: detail.into() });
+}
+
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for value in values {
+        if !deduped.iter().any(|existing| existing == &value) {
+            deduped.push(value);
+        }
+    }
+    deduped
 }
 
 fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
@@ -468,6 +680,83 @@ mod tests {
         assert_eq!(selected.len(), 1);
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn doctor_blocks_missing_runtime_and_dll_sources() {
+        let game_dir = test_dir("doctor-blocks");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        let exe = game_dir.join("Game.exe");
+        std::fs::write(&exe, b"not pe").expect("write exe");
+
+        let report = diagnose_recipe(LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M11,
+            pipeline_name: "M11".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(exe),
+            exe_name: Some("Game.exe".into()),
+            launch_args: vec!["-dx11".into()],
+            env: vec![],
+            dlls: vec![RecipeDll {
+                source_subpath: "lib/dxmt/x86_64-windows".into(),
+                filename: "d3d11.dll".into(),
+                source_path: game_dir.join("missing-d3d11.dll"),
+                dest_path: game_dir.join("d3d11.dll"),
+                source_present: false,
+            }],
+            runtime_assets: vec![RuntimeAsset {
+                name: "wine".into(),
+                path: game_dir.join("missing-wine"),
+                required: true,
+                present: false,
+            }],
+            anti_cheat: vec![],
+            warnings: vec![],
+        });
+
+        assert!(!report.ready);
+        assert_eq!(report.blockers.len(), 2);
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("Missing required runtime asset")));
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("Missing DLL source")));
+        assert!(report.checks.iter().any(|check| check.id == "runtime_assets" && !check.ok));
+        assert!(report.checks.iter().any(|check| check.id == "dll_sources" && !check.ok));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn doctor_allows_steam_route_without_local_exe_resolution() {
+        let report = diagnose_recipe(LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::Steam,
+            pipeline_name: "Steam".into(),
+            backend: "wine-steam".into(),
+            game_dir: None,
+            exe_path: None,
+            exe_name: None,
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            warnings: vec![],
+        });
+
+        assert!(report.ready);
+        assert!(report.blockers.is_empty());
+        assert!(report.checks.iter().any(|check| check.id == "game_dir" && check.ok));
+        assert!(report.checks.iter().any(|check| check.id == "exe" && check.ok));
+    }
+
+    #[test]
+    fn doctor_request_reports_recipe_build_failures_as_blockers() {
+        let report = diagnose_launch_request(4_000_000_000, super::super::engine::get_pipeline(PipelineId::M11));
+
+        assert!(!report.ready);
+        assert!(report.summary.contains("Blocked"));
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
+        assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
     }
 
     fn test_dir(name: &str) -> PathBuf {
