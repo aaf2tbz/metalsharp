@@ -222,9 +222,10 @@ pub fn verify_m12_runtime_suite(
 
 pub fn verify_m12_runtime_parity(dxmt_root: Option<&Path>) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let dxmt_root = dxmt_root.map(Path::to_path_buf).unwrap_or_else(default_m12_dxmt_root);
-    let build_root = dxmt_root.join("build");
+    let build_root = select_m12_build_root(&dxmt_root);
     let ms_root = crate::platform::wine_runtime_root();
     let artifacts = m12_runtime_artifacts(&build_root, &ms_root);
+    let agility_shim = inspect_m12_agility_shim(&dxmt_root, &build_root);
 
     let mut entries = Vec::new();
     for artifact in &artifacts {
@@ -269,6 +270,7 @@ pub fn verify_m12_runtime_parity(dxmt_root: Option<&Path>) -> Result<serde_json:
         "mismatched": mismatched,
         "missing_required": missing_required,
         "unverified": unverified,
+        "agility_shim": agility_shim,
         "artifacts": entries,
     }))
 }
@@ -329,6 +331,14 @@ pub fn verify_m12_title_readiness(
             "detail": "Active M12 runtime does not match the current DXMT build artifacts",
             "mismatched": parity.get("mismatched").cloned().unwrap_or_else(|| serde_json::json!([])),
             "missing_required": parity.get("missing_required").cloned().unwrap_or_else(|| serde_json::json!([])),
+        }));
+    }
+
+    if parity.pointer("/agility_shim/ok").and_then(|v| v.as_bool()) != Some(true) {
+        blockers.push(serde_json::json!({
+            "id": "d3d12_agility_shim",
+            "detail": "DXMT D3D12 build does not expose the expected Agility SDK compatibility surface",
+            "agility_shim": parity.get("agility_shim").cloned().unwrap_or_else(|| serde_json::json!(null)),
         }));
     }
 
@@ -492,7 +502,7 @@ pub fn deploy_m12_runtime(
     allow_dirty: bool,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let dxmt_root = dxmt_root.map(Path::to_path_buf).unwrap_or_else(default_m12_dxmt_root);
-    let build_root = dxmt_root.join("build");
+    let build_root = select_m12_build_root(&dxmt_root);
     let ms_home = crate::platform::metalsharp_home();
     let ms_root = crate::platform::wine_runtime_root();
     let source_status = inspect_dxmt_source_tree(&dxmt_root);
@@ -635,6 +645,14 @@ pub fn verify_m12_readiness(
         }));
     }
 
+    if parity.pointer("/agility_shim/ok").and_then(|v| v.as_bool()) != Some(true) {
+        blockers.push(serde_json::json!({
+            "id": "d3d12_agility_shim",
+            "detail": "DXMT D3D12 build does not expose the expected Agility SDK compatibility surface",
+            "agility_shim": parity.get("agility_shim").cloned().unwrap_or_else(|| serde_json::json!(null)),
+        }));
+    }
+
     let ok = blockers.is_empty();
     let report = serde_json::json!({
         "ok": ok,
@@ -704,11 +722,107 @@ fn m12_runtime_artifacts(build_root: &Path, ms_root: &Path) -> Vec<M12RuntimeArt
         },
         M12RuntimeArtifact {
             name: "d3d10core.dll",
-            source_path: None,
+            source_path: Some(build_root.join("src").join("d3d10").join("d3d10core.dll")),
             runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
             required: true,
         },
     ]
+}
+
+fn select_m12_build_root(dxmt_root: &Path) -> PathBuf {
+    if let Ok(value) = std::env::var("METALSHARP_DXMT_BUILD_ROOT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    for name in ["build64", "build"] {
+        let candidate = dxmt_root.join(name);
+        if candidate.join("src").join("d3d12").join("d3d12.dll").is_file() {
+            return candidate;
+        }
+    }
+
+    for name in ["build64", "build"] {
+        let candidate = dxmt_root.join(name);
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+
+    dxmt_root.join("build64")
+}
+
+fn inspect_m12_agility_shim(dxmt_root: &Path, build_root: &Path) -> serde_json::Value {
+    let source_path = dxmt_root.join("src").join("d3d12").join("d3d12.cpp");
+    let source_text = std::fs::read_to_string(&source_path).unwrap_or_default();
+    let source_present = source_path.is_file();
+    let source_sdk_620 = source_text.contains("kD3D12AgilitySDKVersion = 620");
+    let source_sdk_configuration = source_text.contains("kCLSID_D3D12SDKConfiguration")
+        && source_text.contains("D3D12GetInterface SDKConfiguration");
+    let source_sdk_version_trace = source_text.contains("D3D12SDKVersion() -> %u");
+    let dll_path = build_root.join("src").join("d3d12").join("d3d12.dll");
+    let export_status = inspect_d3d12_exports(&dll_path);
+    let exports_ok = export_status.get("ok").and_then(|v| v.as_bool()) == Some(true);
+    let source_ok = source_present && source_sdk_620 && source_sdk_configuration && source_sdk_version_trace;
+    let ok = source_ok && (!dll_path.is_file() || exports_ok);
+
+    serde_json::json!({
+        "ok": ok,
+        "status": if ok { "ready" } else { "incomplete" },
+        "source": {
+            "path": source_path,
+            "present": source_present,
+            "sdk_version_620": source_sdk_620,
+            "sdk_configuration_interface": source_sdk_configuration,
+            "sdk_version_trace": source_sdk_version_trace,
+        },
+        "built_dll": export_status,
+    })
+}
+
+fn inspect_d3d12_exports(dll_path: &Path) -> serde_json::Value {
+    if !dll_path.is_file() {
+        return serde_json::json!({
+            "ok": false,
+            "status": "missing",
+            "path": dll_path,
+        });
+    }
+
+    let output = match Command::new("objdump").arg("-p").arg(dll_path).output() {
+        Ok(output) => output,
+        Err(error) => {
+            return serde_json::json!({
+                "ok": false,
+                "status": "objdump_failed",
+                "path": dll_path,
+                "error": error.to_string(),
+            });
+        },
+    };
+    if !output.status.success() {
+        return serde_json::json!({
+            "ok": false,
+            "status": "objdump_failed",
+            "path": dll_path,
+            "stderr": String::from_utf8_lossy(&output.stderr).trim(),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let has_get_interface = stdout.contains("D3D12GetInterface");
+    let has_sdk_version = stdout.contains("D3D12SDKVersion");
+    serde_json::json!({
+        "ok": has_get_interface && has_sdk_version,
+        "status": if has_get_interface && has_sdk_version { "ready" } else { "missing_exports" },
+        "path": dll_path,
+        "exports": {
+            "D3D12GetInterface": has_get_interface,
+            "D3D12SDKVersion": has_sdk_version,
+        },
+    })
 }
 
 fn inspect_dxmt_source_tree(dxmt_root: &Path) -> serde_json::Value {
@@ -2022,6 +2136,17 @@ mod tests {
         assert_eq!(pipeline, PipelineId::M12);
         assert_eq!(node.name, "M12");
         assert!(node.launch_args.contains(&"-dx12"));
+    }
+
+    #[test]
+    fn m12_build_root_prefers_x64_build_artifacts() {
+        let root = std::env::temp_dir().join(format!("metalsharp-m12-build-root-{}", std::process::id()));
+        let d3d12_dir = root.join("build64").join("src").join("d3d12");
+        std::fs::create_dir_all(&d3d12_dir).unwrap();
+        std::fs::write(d3d12_dir.join("d3d12.dll"), b"not-a-real-dll").unwrap();
+
+        assert_eq!(select_m12_build_root(&root), root.join("build64"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
