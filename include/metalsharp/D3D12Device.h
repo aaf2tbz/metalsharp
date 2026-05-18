@@ -50,6 +50,7 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -78,7 +79,7 @@ using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     UINT64 m_value = 0;
     UINT64 m_completed = 0;
     std::mutex m_mutex;
@@ -163,7 +164,7 @@ class D3D12FenceImpl final : public ID3D12Fence {
 
 class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -191,7 +192,7 @@ class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
 
 class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     MetalDevice& metalDevice;
     struct QueueState {
         std::mutex mutex;
@@ -259,7 +260,7 @@ struct D3D12Descriptor {
 
 class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     D3D12_DESCRIPTOR_HEAP_DESC desc;
     std::vector<D3D12Descriptor> descriptors;
     void* metalArgumentBuffer = nullptr;
@@ -337,7 +338,7 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
 
 class D3D12RootSignatureImpl final : public ID3D12RootSignature {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     std::vector<D3D12_ROOT_PARAMETER> parameters;
     std::vector<D3D12_STATIC_SAMPLER_DESC> staticSamplers;
     UINT flags = 0;
@@ -415,7 +416,7 @@ class D3D12RootSignatureImpl final : public ID3D12RootSignature {
 
 class D3D12PipelineStateImpl final : public ID3D12PipelineState {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     void* m_renderPipeline = nullptr;
     void* m_computePipeline = nullptr;
     void* m_ownedRenderPipeline = nullptr;
@@ -448,7 +449,7 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
 
 class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
             return E_POINTER;
@@ -474,7 +475,7 @@ class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
 
 class D3D12StateObjectImpl final : public ID3D12StateObject {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     void* m_rtPipeline = nullptr;
     std::vector<uint8_t> m_shaderIdentifierData;
 
@@ -504,7 +505,7 @@ class D3D12StateObjectImpl final : public ID3D12StateObject {
 
 class D3D12ResourceImpl final : public ID3D12Resource {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     D3D12_RESOURCE_DESC desc;
     std::unique_ptr<MetalBuffer> metalBuffer;
     std::unique_ptr<MetalTexture> metalTexture;
@@ -593,7 +594,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
 
     MetalDevice& metalDevice() { return *m_metalDevice; }
 
-    ULONG m_refCount = 1;
+    std::atomic<ULONG> m_refCount{1};
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
     size_t gpuAddressResourceCountForTesting() const {

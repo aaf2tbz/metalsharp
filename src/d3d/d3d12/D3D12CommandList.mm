@@ -36,6 +36,7 @@
 ///   - Bundle command lists (execute inline only)
 
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
@@ -122,7 +123,7 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         return E_POINTER;
 
     struct CmdListImpl final : public ID3D12GraphicsCommandList {
-        ULONG refCount = 1;
+        std::atomic<ULONG> refCount{1};
         D3D12DeviceImpl& device;
         bool m_closed = false;
         bool m_recording = true;

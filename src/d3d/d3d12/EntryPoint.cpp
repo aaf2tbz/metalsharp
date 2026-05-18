@@ -5,6 +5,7 @@
 /// D3D12SerializeVersionedRootSignature, D3D12GetDebugInterface, and
 /// D3D12EnableExperimentalFeatures.
 
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <metalsharp/D3D12Device.h>
@@ -39,7 +40,7 @@ class D3DBlobImpl final : public ID3DBlob {
     SIZE_T GetBufferSize() override { return m_data.size(); }
 
   private:
-    ULONG m_refCount = 1;
+    std::atomic<ULONG> m_refCount{1};
     std::vector<uint8_t> m_data;
 };
 
