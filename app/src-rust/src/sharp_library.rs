@@ -9,8 +9,7 @@ const LIBRARY_DIR: &str = "sharp-library";
 const MANIFEST_FILE: &str = "library.json";
 
 fn base_dir() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_default();
-    home.join(".metalsharp").join(LIBRARY_DIR)
+    crate::platform::metalsharp_home().join(LIBRARY_DIR)
 }
 
 fn manifest_path() -> PathBuf {

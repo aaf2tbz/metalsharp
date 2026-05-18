@@ -6,6 +6,27 @@ MetalSharp ships a self-contained Wine runtime at:
 ~/.metalsharp/runtime/wine/
 ```
 
+Set `METALSHARP_HOME` to run the same runtime layout from another volume. For
+example, `METALSHARP_HOME=/Volumes/AverySSD/metalsharp` makes the backend use:
+
+```text
+/Volumes/AverySSD/metalsharp/runtime/wine/
+/Volumes/AverySSD/metalsharp/prefix-steam/
+/Volumes/AverySSD/metalsharp/shader-cache/
+/Volumes/AverySSD/metalsharp/pipeline-cache/
+```
+
+The launch-critical backend paths now resolve from `METALSHARP_HOME`: MTSP
+recipe/runtime roots, M12 verification/deploy/title-readiness reports, Wine
+Steam prefix helpers, Wine Steam library scanning, local MetalSharp game
+scanning, setup state, shader/pipeline caches, Sharp Library state, and
+Electron's MetalSharp directory helper. Installer and updater runtime/cache
+paths also resolve from `METALSHARP_HOME`, so runtime bundle extraction, DXMT
+deployment, Steam setup, downloaded bundles, and update DMG caches stay on the
+selected volume. Migration remains a legacy repair path for `~/.metalsharp` and
+should be audited separately before claiming complete external-drive parity for
+old installs.
+
 It is used by M11, M12, M10, M9, M32, Steam, and Wine. Native macOS and MacOS Steam do not use this Wine runtime.
 
 ## Layout
@@ -113,3 +134,18 @@ Some prepared games can also use app-specific prefixes:
 ## Steam Wrapper
 
 Wine Steam uses the bundled `steamwebhelper.exe` wrapper. Steam updates may replace it, so MetalSharp redeploys it when preparing or launching Steam.
+
+## Operational Notes
+
+The backend treats Wine Steam and native macOS Steam as separate launch surfaces.
+Wine Steam launches should go through the wrapper-backed Steam URL handoff so
+the prefix, DLL overrides, and process pickup logic stay consistent.
+
+Before relaunching a title during debugging, check whether a prior game process
+is still alive. The backend process pickup logic rejects shell probes and Steam
+URL helper commands so status checks do not get mistaken for the game process.
+
+For external-drive installs, set `METALSHARP_HOME` before starting the backend
+and keep the Steam library path visible to the Wine prefix. Runtime reports,
+shader caches, deployment backups, and probe output will then stay under the
+selected MetalSharp home.

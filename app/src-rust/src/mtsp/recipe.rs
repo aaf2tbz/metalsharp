@@ -43,6 +43,21 @@ pub struct RuntimeAsset {
     pub present: bool,
 }
 
+fn launch_args_for(appid: u32, node: &PipelineNode) -> Vec<String> {
+    if node.id == PipelineId::M12 {
+        match appid {
+            // Unity 2019 accepts -dx12 as a Steam prompt argument but still initializes D3D11.
+            // -force-gfx-without-build lets us test D3D12 even if the title's normal API list
+            // omits it from the player build.
+            848450 => return vec!["-force-d3d12".into(), "-force-gfx-without-build".into()],
+            1326470 => return vec!["-force-d3d12".into()],
+            _ => {},
+        }
+    }
+
+    node.launch_args.iter().map(|arg| arg.to_string()).collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchDoctorReport {
     pub ready: bool,
@@ -68,8 +83,7 @@ struct ExeCandidate {
 }
 
 pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::wine_runtime_root();
     let game_dir = crate::setup::resolve_game_dir(appid);
 
     let exe_path = match node.id {
@@ -113,7 +127,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: launch_args_for(appid, node),
         env: node
             .env_vars
             .iter()
@@ -132,8 +146,7 @@ pub fn build_custom_launch_recipe(
     game_dir: &Path,
     exe_path: Option<&Path>,
 ) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::wine_runtime_root();
     let exe_path = match node.id {
         PipelineId::M9
         | PipelineId::M10
@@ -172,7 +185,7 @@ pub fn build_custom_launch_recipe(
         game_dir: Some(game_dir),
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: launch_args_for(appid, node),
         env: node
             .env_vars
             .iter()
@@ -252,8 +265,7 @@ pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorR
     match build_launch_recipe(appid, node) {
         Ok(recipe) => diagnose_recipe(recipe),
         Err(error) => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+            let ms_root = crate::platform::wine_runtime_root();
             let error = error.to_string();
             let recipe = LaunchRecipe {
                 appid,
@@ -444,6 +456,9 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
 
 fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
     match appid {
+        848450 => &["SubnauticaZero.exe"],
+        1326470 => &["SonsOfTheForest.exe"],
+        1669000 => &["AOW4.exe"],
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
@@ -757,6 +772,14 @@ mod tests {
         assert!(report.summary.contains("Blocked"));
         assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
         assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
+    }
+
+    #[test]
+    fn m12_titles_use_title_specific_dx12_flags() {
+        let m12 = super::super::engine::get_pipeline(PipelineId::M12);
+
+        assert_eq!(launch_args_for(1326470, m12), vec!["-force-d3d12"]);
+        assert_eq!(launch_args_for(848450, m12), vec!["-force-d3d12", "-force-gfx-without-build"]);
     }
 
     fn test_dir(name: &str) -> PathBuf {

@@ -205,6 +205,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/steam/status") => resp(200, steam::status()),
+        (Method::Post, "/steam/cef-mode") => {
+            let body = read_body(req);
+            let mode = body.get("mode").and_then(|v| v.as_str());
+            match mode {
+                Some(mode) => match steam::set_steam_cef_mode(mode) {
+                    Ok(v) => resp(200, v),
+                    Err(e) => resp(400, json!({"ok": false, "error": e.to_string()})),
+                },
+                None => resp(400, json!({"ok": false, "error": "mode required"})),
+            }
+        },
         (Method::Get, "/steam/library") => {
             app_log("Loading Steam library...");
             let result = steam::library();
@@ -306,9 +317,43 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Launching game via Wine Steam: appid {}", id));
-                    match steam::launch_game_via_steam(id as u32) {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible);
+                    app_log(&format!(
+                        "Launching game via Wine Steam: appid {}{}",
+                        id,
+                        requested_pipeline.map(|pipeline| format!(" pipeline {:?}", pipeline)).unwrap_or_default()
+                    ));
+                    match steam::launch_game_via_steam(id as u32, requested_pipeline) {
                         Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Post, "/steam/pickup-game") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible);
+                    let steam_log_offset = body.get("steamLogOffset").and_then(|v| v.as_u64()).unwrap_or(0);
+                    match steam::pickup_game_via_steam(id as u32, requested_pipeline, steam_log_offset) {
+                        Ok(v) => {
+                            let host_pid = v.get("hostGamePid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                            if host_pid > 0 {
+                                register_game_pid(id as u32, host_pid);
+                            }
+                            resp(200, v)
+                        },
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 },
@@ -330,8 +375,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/logs") => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let log_path = home.join(".metalsharp").join("logs");
+            let log_path = crate::platform::metalsharp_home().join("logs");
             let mut entries = Vec::new();
             if let Ok(rd) = std::fs::read_dir(&log_path) {
                 let mut files: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
@@ -357,8 +401,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             resp(200, json!({"ok": true, "logs": entries}))
         },
         (Method::Get, "/logs/stream") => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let log_dir = home.join(".metalsharp").join("logs");
+            let log_dir = crate::platform::metalsharp_home().join("logs");
             let url_str = req.url().to_string();
             let after: usize = url_str
                 .split("after=")
@@ -384,9 +427,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/logs/crash-reports") => {
-            let home = dirs::home_dir().unwrap_or_default();
+            let ms_home = crate::platform::metalsharp_home();
             let mut reports = Vec::new();
-            let game_base = home.join(".metalsharp").join("games");
+            let game_base = ms_home.join("games");
             if let Ok(rd) = std::fs::read_dir(&game_base) {
                 for entry in rd.flatten() {
                     if entry.path().is_dir() {
@@ -395,7 +438,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     }
                 }
             }
-            let prefix = home.join(".metalsharp").join("prefix-steam").join("drive_c");
+            let prefix = ms_home.join("prefix-steam").join("drive_c");
             let _ = scan_crash_files(&prefix, "system", &mut reports);
             reports.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
                 b.get("timestamp")
@@ -449,13 +492,28 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 }),
             )
         },
+        (Method::Get, "/mtsp/d3dmetal-status") => resp(200, mtsp::d3dmetal::d3dmetal_status()),
+        (Method::Get, "/mtsp/d3d12-sdk-package") => resp(200, mtsp::d3d12sdk::inspect_d3d12_sdk_package(None)),
+        (Method::Post, "/mtsp/d3d12-sdk-package") => {
+            let body = read_body(req);
+            let package_path = body.get("path").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            resp(200, mtsp::d3d12sdk::inspect_d3d12_sdk_package(package_path))
+        },
         (Method::Post, "/mtsp/prepare") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
-                Some(id) => match mtsp::launcher::prepare_pipeline(id as u32) {
-                    Ok(v) => resp(200, v),
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Some(id) => {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible)
+                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    match mtsp::launcher::prepare_pipeline_with_pipeline(id as u32, requested_pipeline) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
@@ -488,6 +546,223 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     let node = mtsp::engine::get_pipeline(pipeline);
                     let report = mtsp::recipe::diagnose_launch_request(id as u32, node);
                     resp(200, json!({"ok": true, "appid": id, "report": report}))
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Post, "/mtsp/verify-m12") => {
+            let body = read_body(req);
+            let probe_path = body.get("probePath").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            let timeout_ms = body.get("timeoutMs").and_then(|v| v.as_u64()).unwrap_or(30_000);
+            app_log(&format!(
+                "[M12] runtime verification started: {}",
+                probe_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "auto probe".into())
+            ));
+            match mtsp::launcher::verify_m12_runtime(probe_path.as_deref(), timeout_ms) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] runtime verification finished: {}",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] runtime verification failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/verify-m12-suite") => {
+            let body = read_body(req);
+            let probe_paths: Vec<std::path::PathBuf> = body
+                .get("probePaths")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).map(std::path::PathBuf::from).collect())
+                .unwrap_or_default();
+            let timeout_ms = body.get("timeoutMs").and_then(|v| v.as_u64()).unwrap_or(30_000);
+            let max_probe_ms = body.get("maxProbeMs").and_then(|v| v.as_u64());
+            let max_total_ms = body.get("maxTotalMs").and_then(|v| v.as_u64());
+            app_log(&format!("[M12] runtime verification suite started: {} probe override(s)", probe_paths.len()));
+            match mtsp::launcher::verify_m12_runtime_suite(probe_paths, timeout_ms, max_probe_ms, max_total_ms) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] runtime verification suite finished: {} ({}/{})",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown"),
+                        v.get("passed").and_then(|s| s.as_u64()).unwrap_or(0),
+                        v.get("probe_count").and_then(|s| s.as_u64()).unwrap_or(0)
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] runtime verification suite failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/verify-m12-parity") => {
+            let body = read_body(req);
+            let dxmt_root = body.get("dxmtRoot").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            app_log(&format!(
+                "[M12] runtime parity verification started: {}",
+                dxmt_root.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "default dxmt root".into())
+            ));
+            match mtsp::launcher::verify_m12_runtime_parity(dxmt_root.as_deref()) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] runtime parity verification finished: {} ({}/{})",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown"),
+                        v.get("matching").and_then(|s| s.as_u64()).unwrap_or(0),
+                        v.get("comparable").and_then(|s| s.as_u64()).unwrap_or(0)
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] runtime parity verification failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/m12-readiness") => {
+            let body = read_body(req);
+            let probe_paths: Vec<std::path::PathBuf> = body
+                .get("probePaths")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).map(std::path::PathBuf::from).collect())
+                .unwrap_or_default();
+            let timeout_ms = body.get("timeoutMs").and_then(|v| v.as_u64()).unwrap_or(30_000);
+            let max_probe_ms = body.get("maxProbeMs").and_then(|v| v.as_u64());
+            let max_total_ms = body.get("maxTotalMs").and_then(|v| v.as_u64());
+            let dxmt_root = body.get("dxmtRoot").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            app_log("[M12] readiness verification started");
+            match mtsp::launcher::verify_m12_readiness(
+                probe_paths,
+                timeout_ms,
+                max_probe_ms,
+                max_total_ms,
+                dxmt_root.as_deref(),
+            ) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] readiness verification finished: {}",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] readiness verification failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/deploy-m12-runtime") => {
+            let body = read_body(req);
+            let dxmt_root = body.get("dxmtRoot").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            let apply = body.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
+            let allow_dirty = body.get("allowDirty").and_then(|v| v.as_bool()).unwrap_or(false);
+            app_log(&format!(
+                "[M12] runtime deploy {} started: {}",
+                if apply { "apply" } else { "dry-run" },
+                dxmt_root.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "default dxmt root".into())
+            ));
+            match mtsp::launcher::deploy_m12_runtime(dxmt_root.as_deref(), apply, allow_dirty) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] runtime deploy finished: {}",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] runtime deploy failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/m12-title-readiness") => {
+            let body = read_body(req);
+            let appids: Vec<u32> = body
+                .get("appids")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_u64()).map(|v| v as u32).collect())
+                .unwrap_or_default();
+            let dxmt_root = body.get("dxmtRoot").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+            app_log(&format!("[M12] title readiness started: {} appid override(s)", appids.len()));
+            match mtsp::launcher::verify_m12_title_readiness(appids, dxmt_root.as_deref()) {
+                Ok(v) => {
+                    app_log(&format!(
+                        "[M12] title readiness finished: {} ({}/{})",
+                        v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown"),
+                        v.get("ready_titles").and_then(|s| s.as_u64()).unwrap_or(0),
+                        v.get("title_count").and_then(|s| s.as_u64()).unwrap_or(0)
+                    ));
+                    resp(200, v)
+                },
+                Err(e) => {
+                    app_log(&format!("[M12] title readiness failed: {}", e));
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/mtsp/m12-title-smoke") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let timeout_ms = body.get("timeoutMs").and_then(|v| v.as_u64()).unwrap_or(15_000);
+            match appid {
+                Some(id) => {
+                    app_log(&format!("[M12] title smoke started: appid={} timeout={}ms", id, timeout_ms));
+                    match mtsp::launcher::verify_m12_title_smoke(id, timeout_ms) {
+                        Ok(v) => {
+                            app_log(&format!(
+                                "[M12] title smoke finished: appid={} status={}",
+                                id,
+                                v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                            ));
+                            resp(200, v)
+                        },
+                        Err(e) => {
+                            app_log(&format!("[M12] title smoke failed: appid={} error={}", id, e));
+                            resp(500, json!({"ok": false, "error": e.to_string()}))
+                        },
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Post, "/mtsp/m12-title-observe") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let steam_log_offset = body.get("steamLogOffset").and_then(|v| v.as_u64());
+            let extra_logs: Vec<std::path::PathBuf> = body
+                .get("extraLogs")
+                .and_then(|v| v.as_array())
+                .map(|values| values.iter().filter_map(|v| v.as_str()).map(std::path::PathBuf::from).collect())
+                .unwrap_or_default();
+            match appid {
+                Some(id) => {
+                    app_log(&format!(
+                        "[M12] title observation started: appid={} extra_logs={} steam_log_offset={:?}",
+                        id,
+                        extra_logs.len(),
+                        steam_log_offset
+                    ));
+                    match mtsp::observe::observe_m12_title(
+                        id,
+                        extra_logs,
+                        mtsp::observe::ObservationScope { steam_log_offset },
+                    ) {
+                        Ok(v) => {
+                            app_log(&format!(
+                                "[M12] title observation finished: appid={} status={}",
+                                id,
+                                v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                            ));
+                            resp(200, v)
+                        },
+                        Err(e) => {
+                            app_log(&format!("[M12] title observation failed: appid={} error={}", id, e));
+                            resp(500, json!({"ok": false, "error": e.to_string()}))
+                        },
+                    }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
@@ -632,8 +907,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
             let mut game_type = "native";
             if let Some(sid) = steam_app_id {
-                let home = dirs::home_dir().unwrap_or_default();
-                let marker = home.join(".metalsharp").join("games").join(sid.to_string()).join(".metalsharp_prepared");
+                let marker =
+                    crate::platform::metalsharp_home().join("games").join(sid.to_string()).join(".metalsharp_prepared");
                 if let Ok(content) = std::fs::read_to_string(&marker) {
                     if content.contains("is_dotnet=true") {
                         app_log("Detected XNA/FNA game — using mono runtime");
@@ -676,6 +951,45 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
                         },
                     };
+                    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+                        let result = steam::launch_game_via_steam(id as u32, Some(pipeline));
+                        match result {
+                            Ok(v) => {
+                                let pid = v.get("pid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                                let launch_pending =
+                                    v.get("launchPending").and_then(|value| value.as_bool()).unwrap_or(false);
+                                let host_pid =
+                                    v.get("hostGamePid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                                if host_pid > 0 && !launch_pending {
+                                    register_game_pid(id as u32, host_pid);
+                                }
+                                app_log(&format!(
+                                    "[LAUNCHED] appid {} | pid {} | engine: {} | route: wine_steam | pending={}",
+                                    id, pid, engine_desc, launch_pending
+                                ));
+                                return resp(
+                                    200,
+                                    json!({
+                                        "ok": true,
+                                        "pid": pid,
+                                        "gameType": "m12_steam",
+                                        "appid": id,
+                                        "engine": engine_desc,
+                                        "launchPending": launch_pending,
+                                        "steamConfirmed": v.get("steamConfirmed").and_then(|value| value.as_bool()).unwrap_or(false),
+                                        "steamLogOffset": v.get("steamLogOffset").and_then(|value| value.as_u64()).unwrap_or(0),
+                                        "hostGamePid": v.get("hostGamePid").cloned().unwrap_or(serde_json::Value::Null),
+                                        "steamGamePid": v.get("steamGamePid").cloned().unwrap_or(serde_json::Value::Null),
+                                        "steam": v,
+                                    }),
+                                );
+                            },
+                            Err(e) => {
+                                app_log(&format!("[LAUNCH FAILED] appid {} | steam m12 route: {}", id, e));
+                                return resp(500, json!({"ok": false, "error": e.to_string()}));
+                            },
+                        }
+                    }
                     let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline);
                     match result {
                         Ok((pid, game_type)) => {
@@ -785,8 +1099,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/cache/clear") => {
             let body = read_body(req);
             let cache_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("shader");
-            let home = dirs::home_dir().unwrap_or_default();
-            let target = cache_dir_for_type(&home, cache_type);
+            let ms_home = crate::platform::metalsharp_home();
+            let target = cache_dir_for_type(&ms_home, cache_type);
             let (total_bytes, file_count) = dir_stats(&target);
             if target.exists() {
                 let _ = std::fs::remove_dir_all(&target);
@@ -804,9 +1118,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             )
         },
         (Method::Get, "/cache/size") => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let shader_dir = cache_dir_for_type(&home, "shader");
-            let pipeline_dir = cache_dir_for_type(&home, "pipeline");
+            let ms_home = crate::platform::metalsharp_home();
+            let shader_dir = cache_dir_for_type(&ms_home, "shader");
+            let pipeline_dir = cache_dir_for_type(&ms_home, "pipeline");
             let _ = std::fs::create_dir_all(&shader_dir);
             let _ = std::fs::create_dir_all(&pipeline_dir);
             resp(
@@ -831,8 +1145,7 @@ fn resp_raw(code: u16, data: Vec<u8>, mime: &str) -> RouteResponse {
 }
 
 fn app_log(msg: &str) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = crate::platform::metalsharp_home().join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let now = chrono_now();
     let line = format!("[{}] {}\n", now, msg);
@@ -872,8 +1185,8 @@ fn local_date_for_epoch(secs: u64) -> String {
 
 fn cache_dir_for_type(home: &std::path::Path, cache_type: &str) -> std::path::PathBuf {
     match cache_type {
-        "pipeline" => home.join(".metalsharp").join("pipeline-cache"),
-        _ => home.join(".metalsharp").join("shader-cache"),
+        "pipeline" => home.join("pipeline-cache"),
+        _ => home.join("shader-cache"),
     }
 }
 
@@ -937,8 +1250,7 @@ fn cache_summary(path: &std::path::Path) -> serde_json::Value {
 }
 
 fn resolve_game_exe(appid: u32) -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let game_dir = crate::platform::metalsharp_home().join("games").join(appid.to_string());
 
     for entry in walkdir::WalkDir::new(&game_dir).max_depth(3).into_iter().flatten() {
         if let Some(ext) = entry.path().extension() {

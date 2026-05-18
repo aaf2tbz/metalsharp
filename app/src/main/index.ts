@@ -32,6 +32,8 @@ let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
 
 function getMetalsharpDir(): string {
+  const override = process.env.METALSHARP_HOME?.trim();
+  if (override) return override;
   return path.join(require("os").homedir(), ".metalsharp");
 }
 
@@ -421,7 +423,7 @@ function registerIpc() {
 
   ipcMain.handle("app:open-in-finder", async (_e, inputPath: string) => {
     const home = require("os").homedir();
-    const metalsharpDir = path.join(home, ".metalsharp");
+    const metalsharpDir = path.resolve(getMetalsharpDir());
     const resolved = inputPath.replace(/^~/, home);
     const fullPath = path.resolve(resolved);
     if (!fullPath.startsWith(metalsharpDir) && !fullPath.startsWith(home)) {

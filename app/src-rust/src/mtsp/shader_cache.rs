@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-pub fn deploy_preset_cache(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<u64> {
-    let preset_db = find_preset(home, cache_subdir, appid)?;
+pub fn deploy_preset_cache(ms_home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<u64> {
+    let preset_db = find_preset(ms_home, cache_subdir, appid)?;
 
-    let cache_base = home.join(".metalsharp").join("shader-cache").join(cache_subdir).join(appid.to_string());
+    let cache_base = ms_home.join("shader-cache").join(cache_subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&cache_base);
 
     let user_db = cache_base.join(preset_db.file_name()?.to_string_lossy().to_string());
@@ -15,8 +15,8 @@ pub fn deploy_preset_cache(home: &PathBuf, cache_subdir: &str, appid: u32) -> Op
     std::fs::copy(&preset_db, &user_db).ok()
 }
 
-fn find_preset(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<PathBuf> {
-    let ms_share = home.join(".metalsharp").join("runtime").join("wine").join("share").join("shader-presets");
+fn find_preset(ms_home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<PathBuf> {
+    let ms_share = ms_home.join("runtime").join("wine").join("share").join("shader-presets");
     let exe_presets = find_exe_relative_presets();
 
     let search_dirs: Vec<PathBuf> = {

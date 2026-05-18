@@ -8,9 +8,10 @@ static RULES: OnceLock<std::collections::HashMap<u32, PipelineId>> = OnceLock::n
 fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
     RULES.get_or_init(|| {
         let home = dirs::home_dir().unwrap_or_default();
+        let ms_home = crate::platform::metalsharp_home();
         let current_exe = std::env::current_exe().ok();
 
-        for path in rule_candidates(&home, current_exe.as_deref()) {
+        for path in rule_candidates(&home, &ms_home, current_exe.as_deref()) {
             if path.exists() {
                 if let Ok(contents) = std::fs::read_to_string(path) {
                     return parse_rules(&contents);
@@ -22,9 +23,10 @@ fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
     })
 }
 
-fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
+fn rule_candidates(home: &Path, ms_home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
     let mut candidates = vec![
         home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
+        ms_home.join("configs").join("mtsp-rules.toml"),
         PathBuf::from("configs/mtsp-rules.toml"),
     ];
 
@@ -41,7 +43,10 @@ fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
     }
 
     candidates.push(home.join("metalsharp").join("configs").join("mtsp-rules.toml"));
-    candidates.push(home.join(".metalsharp").join("configs").join("mtsp-rules.toml"));
+    let fallback_user_rules = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
+    if fallback_user_rules != ms_home.join("configs").join("mtsp-rules.toml") {
+        candidates.push(fallback_user_rules);
+    }
     candidates
 }
 
@@ -309,14 +314,18 @@ mod tests {
     #[test]
     fn shipped_rules_precede_stale_user_copies() {
         let home = Path::new("/Users/alex");
+        let ms_home = Path::new("/Volumes/AverySSD/metalsharp");
         let current_exe = Path::new("/Applications/MetalSharp.app/Contents/MacOS/metalsharp-backend");
-        let candidates = rule_candidates(home, Some(current_exe));
+        let candidates = rule_candidates(home, ms_home, Some(current_exe));
 
         let repo_rules = home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml");
+        let external_rules = ms_home.join("configs").join("mtsp-rules.toml");
         let stale_user_rules = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
         let repo_pos = candidates.iter().position(|path| path == &repo_rules).unwrap();
+        let external_pos = candidates.iter().position(|path| path == &external_rules).unwrap();
         let stale_user_pos = candidates.iter().position(|path| path == &stale_user_rules).unwrap();
 
         assert!(repo_pos < stale_user_pos);
+        assert!(external_pos < stale_user_pos);
     }
 }
