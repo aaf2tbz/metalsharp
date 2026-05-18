@@ -70,6 +70,27 @@ static uint32_t rootParameterRecordSize(UINT type) {
     return type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS ? 20 : 16;
 }
 
+static std::vector<uint8_t> wrapRootSignatureInDXBC(std::vector<uint8_t>&& rootSignature) {
+    constexpr uint32_t dxbcMagic = 0x43425844;
+    constexpr uint32_t rts0Magic = 0x30535452;
+    constexpr uint32_t headerSize = 32;
+    constexpr uint32_t chunkCount = 1;
+    constexpr uint32_t chunkTableSize = chunkCount * 4;
+    constexpr uint32_t chunkOffset = headerSize + chunkTableSize;
+    uint32_t chunkSize = static_cast<uint32_t>(rootSignature.size());
+    uint32_t totalSize = chunkOffset + 8 + chunkSize;
+
+    std::vector<uint8_t> container(totalSize);
+    memcpy(container.data(), &dxbcMagic, 4);
+    memcpy(container.data() + 24, &totalSize, 4);
+    memcpy(container.data() + 28, &chunkCount, 4);
+    memcpy(container.data() + 32, &chunkOffset, 4);
+    memcpy(container.data() + chunkOffset, &rts0Magic, 4);
+    memcpy(container.data() + chunkOffset + 4, &chunkSize, 4);
+    memcpy(container.data() + chunkOffset + 8, rootSignature.data(), rootSignature.size());
+    return container;
+}
+
 HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignatureDesc, UINT Version, void** ppBlob,
                                     void** ppErrorBlob) {
     if (!pRootSignatureDesc || !ppBlob)
@@ -88,11 +109,11 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
             descriptorRangeCount += param.DescriptorTable.NumDescriptorRanges;
     }
 
-    uint32_t blobSize = 16 + parameterBytes + descriptorRangeCount * 20 + numSamplers * 32;
+    uint32_t rootBlobSize = 16 + parameterBytes + descriptorRangeCount * 20 + numSamplers * 32;
 
-    std::vector<uint8_t> blob(blobSize);
+    std::vector<uint8_t> rootBlob(rootBlobSize);
 
-    writeRootSignatureHeader(blob.data(), numParams, numSamplers, pRootSignatureDesc->Flags);
+    writeRootSignatureHeader(rootBlob.data(), numParams, numSamplers, pRootSignatureDesc->Flags);
 
     uint32_t offset = 16;
     for (uint32_t i = 0; i < numParams; i++) {
@@ -111,7 +132,7 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
             paramData[3] = param.Descriptor.RegisterSpace;
         }
         uint32_t paramSize = rootParameterRecordSize(param.ParameterType);
-        memcpy(blob.data() + offset, paramData, paramSize);
+        memcpy(rootBlob.data() + offset, paramData, paramSize);
         offset += paramSize;
 
         if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
@@ -119,7 +140,7 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
                 const D3D12_DESCRIPTOR_RANGE& range = param.DescriptorTable.pDescriptorRanges[rangeIndex];
                 uint32_t rangeData[5] = {range.RangeType, range.NumDescriptors, range.BaseShaderRegister,
                                          range.RegisterSpace, range.OffsetInDescriptorsFromTableStart};
-                memcpy(blob.data() + offset, rangeData, 20);
+                memcpy(rootBlob.data() + offset, rangeData, 20);
                 offset += 20;
             }
         }
@@ -139,10 +160,11 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
         memcpy(&samplerData[5], &maxLod, 4);
         samplerData[6] = sampler.ShaderRegister | (sampler.RegisterSpace << 16);
         samplerData[7] = sampler.ShaderVisibility;
-        memcpy(blob.data() + offset, samplerData, 32);
+        memcpy(rootBlob.data() + offset, samplerData, 32);
         offset += 32;
     }
 
+    std::vector<uint8_t> blob = wrapRootSignatureInDXBC(std::move(rootBlob));
     auto* blobObject = new (std::nothrow) D3DBlobImpl(std::move(blob));
     if (!blobObject)
         return E_OUTOFMEMORY;

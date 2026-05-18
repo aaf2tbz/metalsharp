@@ -9,6 +9,9 @@ int main() {
     assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_B8G8R8A8_UNORM) != 0);
     assert(dxgiFormatToMetal(DXGI_FORMAT_D32_FLOAT) != 0);
     assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_UNKNOWN) == 0);
+    assert(static_cast<unsigned int>(DXGITranslation::DXGI_FORMAT_R16G16_UNORM) == 35);
+    assert(dxgiFormatToMetal(static_cast<DXGITranslation>(35)) ==
+           dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_R16G16_UNORM));
     assert(dxgiDepthFormatToMetal(DXGI_FORMAT_D32_FLOAT) != 0);
     assert(dxgiDepthFormatToMetal(DXGI_FORMAT_D32_FLOAT) != dxgiFormatToMetal(DXGI_FORMAT_D32_FLOAT));
 

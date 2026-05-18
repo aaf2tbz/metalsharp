@@ -40,9 +40,6 @@ uint32_t dxgiFormatToMetal(DXGITranslation format) {
         return MTLPixelFormatRGBA16Snorm;
     case DXGITranslation::DXGI_FORMAT_R16G16B16A16_SINT:
         return MTLPixelFormatRGBA16Sint;
-    case DXGITranslation::DXGI_FORMAT_R16G16B16A16_UNORM_SRGB:
-        return MTLPixelFormatRGBA16Float;
-
     case DXGITranslation::DXGI_FORMAT_R32G32_TYPELESS:
     case DXGITranslation::DXGI_FORMAT_R32G32_FLOAT:
         return MTLPixelFormatRG32Float;

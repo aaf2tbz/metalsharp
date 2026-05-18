@@ -497,10 +497,10 @@ int main() {
         CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature empty signature");
         if (blob) {
             auto* blobObject = static_cast<ID3DBlob*>(blob);
-            uint32_t version = 0;
-            memcpy(&version, blobObject->GetBufferPointer(), 4);
-            CHECK(version == 1, "Serialized blob uses raw root signature layout");
-            CHECK(blobObject->GetBufferSize() == 16, "Serialized blob reports COM buffer size");
+            uint32_t magic = 0;
+            memcpy(&magic, blobObject->GetBufferPointer(), 4);
+            CHECK(magic == 0x43425844, "Serialized blob uses DXBC container layout");
+            CHECK(blobObject->GetBufferSize() == 60, "Serialized blob reports DXBC buffer size");
             blobObject->Release();
         }
 
@@ -552,7 +552,7 @@ int main() {
         CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature mixed parameter signature");
         if (blob && device) {
             auto* blobObject = static_cast<ID3DBlob*>(blob);
-            CHECK(blobObject->GetBufferSize() == 88, "Serialized mixed root signature uses parser record sizes");
+            CHECK(blobObject->GetBufferSize() == 132, "Serialized mixed root signature wraps parser record sizes");
             ID3D12RootSignature* parsedRootSig = nullptr;
             hr = device->CreateRootSignature(0, blobObject->GetBufferPointer(), blobObject->GetBufferSize(),
                                              IID_ID3D12RootSignature, (void**)&parsedRootSig);

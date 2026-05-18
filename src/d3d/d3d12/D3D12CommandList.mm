@@ -1102,18 +1102,13 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
 
 D3D12CommandQueueImpl::~D3D12CommandQueueImpl() {
     auto state = m_queueState;
-    bool hasOutstandingWork = false;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->stopping = true;
-        hasOutstandingWork = state->busy || !state->work.empty();
     }
     state->cond.notify_all();
     if (state->worker.joinable()) {
-        if (hasOutstandingWork)
-            state->worker.detach();
-        else
-            state->worker.join();
+        state->worker.join();
     }
 }
 
