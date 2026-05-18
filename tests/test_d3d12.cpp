@@ -630,7 +630,14 @@ int main() {
         CHECK(hr == E_NOINTERFACE && debugPtr == nullptr, "D3D12GetDebugInterface returns E_NOINTERFACE");
 
         hr = D3D12EnableExperimentalFeatures(0, nullptr, nullptr, nullptr);
-        CHECK(SUCCEEDED(hr), "D3D12EnableExperimentalFeatures succeeds");
+        CHECK(SUCCEEDED(hr), "D3D12EnableExperimentalFeatures accepts no-feature no-op");
+
+        hr = D3D12EnableExperimentalFeatures(1, nullptr, nullptr, nullptr);
+        CHECK(hr == E_INVALIDARG, "D3D12EnableExperimentalFeatures rejects missing feature GUID array");
+
+        GUID unsupportedFeature = IID_ID3D12Device;
+        hr = D3D12EnableExperimentalFeatures(1, &unsupportedFeature, nullptr, nullptr);
+        CHECK(hr == E_NOINTERFACE, "D3D12EnableExperimentalFeatures rejects unsupported features");
     }
 
     if (pso)

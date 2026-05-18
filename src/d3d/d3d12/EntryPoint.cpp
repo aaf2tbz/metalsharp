@@ -202,6 +202,10 @@ HRESULT D3D12GetDebugInterface(const GUID& riid, void** ppvDebug) {
 
 HRESULT D3D12EnableExperimentalFeatures(UINT NumFeatures, const GUID* pFeatureGUIDs, void* pConfigurationStructs,
                                         UINT* pConfigurationStructSizes) {
-    return S_OK;
+    if (NumFeatures == 0)
+        return S_OK;
+    if (!pFeatureGUIDs)
+        return E_INVALIDARG;
+    return E_NOINTERFACE;
 }
 }
