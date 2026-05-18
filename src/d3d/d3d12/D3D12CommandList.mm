@@ -43,6 +43,7 @@
 #include <metalsharp/D3D12Device.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/PipelineState.h>
+#include <thread>
 
 namespace metalsharp {
 
@@ -1100,6 +1101,36 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
 }
 
 HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
+    std::vector<std::pair<ID3D12Fence*, UINT64>> waits;
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        waits.swap(m_pendingWaits);
+    }
+
+    if (!waits.empty()) {
+        std::vector<ID3D12CommandList*> lists;
+        lists.reserve(numLists);
+        for (UINT i = 0; i < numLists; ++i) {
+            if (!ppLists[i])
+                continue;
+            ppLists[i]->AddRef();
+            lists.push_back(ppLists[i]);
+        }
+
+        MetalDevice* queuedMetalDevice = &metalDevice;
+        std::thread([queuedMetalDevice, waits = std::move(waits), lists = std::move(lists)]() mutable {
+            for (auto& wait : waits) {
+                wait.first->SetEventOnCompletion(wait.second, nullptr);
+                wait.first->Release();
+            }
+            for (auto* list : lists) {
+                list->__execute(queuedMetalDevice);
+                list->Release();
+            }
+        }).detach();
+        return S_OK;
+    }
+
     for (UINT i = 0; i < numLists; ++i) {
         if (!ppLists[i])
             continue;

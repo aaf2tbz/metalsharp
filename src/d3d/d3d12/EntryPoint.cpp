@@ -8,6 +8,42 @@
 #include <cstdlib>
 #include <cstring>
 #include <metalsharp/D3D12Device.h>
+#include <new>
+#include <vector>
+
+namespace {
+
+class D3DBlobImpl final : public ID3DBlob {
+  public:
+    explicit D3DBlobImpl(std::vector<uint8_t>&& data) : m_data(std::move(data)) {}
+
+    HRESULT QueryInterface(REFIID riid, void** ppvObject) override {
+        if (!ppvObject)
+            return E_POINTER;
+        if (riid == IID_IUnknown) {
+            AddRef();
+            *ppvObject = this;
+            return S_OK;
+        }
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG AddRef() override { return ++m_refCount; }
+    ULONG Release() override {
+        ULONG count = --m_refCount;
+        if (count == 0)
+            delete this;
+        return count;
+    }
+    void* GetBufferPointer() override { return m_data.data(); }
+    SIZE_T GetBufferSize() override { return m_data.size(); }
+
+  private:
+    ULONG m_refCount = 1;
+    std::vector<uint8_t> m_data;
+};
+
+} // namespace
 
 extern "C" {
 
@@ -48,12 +84,9 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
 
     uint32_t blobSize = 16 + numParams * 20 + descriptorRangeCount * 20 + numSamplers * 32;
 
-    uint8_t* blob = (uint8_t*)malloc(blobSize);
-    if (!blob)
-        return E_OUTOFMEMORY;
-    memset(blob, 0, blobSize);
+    std::vector<uint8_t> blob(blobSize);
 
-    writeRootSignatureHeader(blob, numParams, numSamplers, pRootSignatureDesc->Flags);
+    writeRootSignatureHeader(blob.data(), numParams, numSamplers, pRootSignatureDesc->Flags);
 
     uint32_t offset = 16;
     for (uint32_t i = 0; i < numParams; i++) {
@@ -71,7 +104,7 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
             paramData[2] = param.Descriptor.ShaderRegister;
             paramData[3] = param.Descriptor.RegisterSpace;
         }
-        memcpy(blob + offset, paramData, 20);
+        memcpy(blob.data() + offset, paramData, 20);
         offset += 20;
 
         if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
@@ -79,7 +112,7 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
                 const D3D12_DESCRIPTOR_RANGE& range = param.DescriptorTable.pDescriptorRanges[rangeIndex];
                 uint32_t rangeData[5] = {range.RangeType, range.NumDescriptors, range.BaseShaderRegister,
                                          range.RegisterSpace, range.OffsetInDescriptorsFromTableStart};
-                memcpy(blob + offset, rangeData, 20);
+                memcpy(blob.data() + offset, rangeData, 20);
                 offset += 20;
             }
         }
@@ -99,22 +132,27 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
         memcpy(&samplerData[5], &maxLod, 4);
         samplerData[6] = sampler.ShaderRegister | (sampler.RegisterSpace << 16);
         samplerData[7] = sampler.ShaderVisibility;
-        memcpy(blob + offset, samplerData, 32);
+        memcpy(blob.data() + offset, samplerData, 32);
         offset += 32;
     }
 
-    *ppBlob = blob;
+    auto* blobObject = new (std::nothrow) D3DBlobImpl(std::move(blob));
+    if (!blobObject)
+        return E_OUTOFMEMORY;
+    *ppBlob = blobObject;
     if (ppErrorBlob)
         *ppErrorBlob = nullptr;
     return S_OK;
 }
 
-HRESULT D3D12SerializeVersionedRootSignature(const void* pVersionedRootSignatureDesc, UINT Version, void** ppBlob,
-                                             void** ppErrorBlob) {
+HRESULT D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC* pVersionedRootSignatureDesc,
+                                             void** ppBlob, void** ppErrorBlob) {
     if (!pVersionedRootSignatureDesc || !ppBlob)
         return E_INVALIDARG;
-    return D3D12SerializeRootSignature(static_cast<const D3D12_ROOT_SIGNATURE_DESC*>(pVersionedRootSignatureDesc),
-                                       Version, ppBlob, ppErrorBlob);
+    if (pVersionedRootSignatureDesc->Version != D3D_ROOT_SIGNATURE_VERSION_1_0)
+        return E_INVALIDARG;
+    return D3D12SerializeRootSignature(&pVersionedRootSignatureDesc->Desc_1_0, D3D_ROOT_SIGNATURE_VERSION_1_0, ppBlob,
+                                       ppErrorBlob);
 }
 
 HRESULT D3D12GetDebugInterface(const GUID& riid, void** ppvDebug) {

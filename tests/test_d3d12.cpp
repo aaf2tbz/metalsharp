@@ -5,7 +5,7 @@
 
 extern "C" {
 HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC*, unsigned int, void**, void**);
-HRESULT D3D12SerializeVersionedRootSignature(const void*, unsigned int, void**, void**);
+HRESULT D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC*, void**, void**);
 HRESULT D3D12GetDebugInterface(const GUID&, void**);
 HRESULT D3D12EnableExperimentalFeatures(unsigned int, const GUID*, void*, unsigned int*);
 }
@@ -456,10 +456,12 @@ int main() {
         hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
         CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature empty signature");
         if (blob) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
             uint32_t version = 0;
-            memcpy(&version, blob, 4);
+            memcpy(&version, blobObject->GetBufferPointer(), 4);
             CHECK(version == 1, "Serialized blob uses raw root signature layout");
-            free(blob);
+            CHECK(blobObject->GetBufferSize() == 16, "Serialized blob reports COM buffer size");
+            blobObject->Release();
         }
 
         D3D12_ROOT_PARAMETER rsParam = {};
@@ -474,8 +476,10 @@ int main() {
         hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
         CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature constants signature");
         if (blob && device) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
             ID3D12RootSignature* parsedRootSig = nullptr;
-            hr = device->CreateRootSignature(0, blob, 36, IID_ID3D12RootSignature, (void**)&parsedRootSig);
+            hr = device->CreateRootSignature(0, blobObject->GetBufferPointer(), blobObject->GetBufferSize(),
+                                             IID_ID3D12RootSignature, (void**)&parsedRootSig);
             auto* parsedImpl = static_cast<metalsharp::D3D12RootSignatureImpl*>(parsedRootSig);
             CHECK(SUCCEEDED(hr) && parsedImpl && parsedImpl->numParameters == 1,
                   "CreateRootSignature parses serialized parameter count");
@@ -484,14 +488,17 @@ int main() {
                   "CreateRootSignature preserves serialized root constants");
             if (parsedRootSig)
                 parsedRootSig->Release();
-            free(blob);
+            blobObject->Release();
         }
 
+        D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
+        versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_0;
+        versionedDesc.Desc_1_0 = rsDesc;
         void* vBlob = nullptr;
-        hr = D3D12SerializeVersionedRootSignature(&rsDesc, 0, &vBlob, nullptr);
+        hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &vBlob, nullptr);
         CHECK(SUCCEEDED(hr) && vBlob != nullptr, "D3D12SerializeVersionedRootSignature");
         if (vBlob)
-            free(vBlob);
+            static_cast<ID3DBlob*>(vBlob)->Release();
     }
 
     printf("\n--- Debug Interface Stubs ---\n");

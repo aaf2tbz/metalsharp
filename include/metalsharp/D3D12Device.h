@@ -62,6 +62,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace metalsharp {
@@ -188,6 +189,8 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
   public:
     ULONG refCount = 1;
     MetalDevice& metalDevice;
+    std::mutex m_queueMutex;
+    std::vector<std::pair<ID3D12Fence*, UINT64>> m_pendingWaits;
 
     explicit D3D12CommandQueueImpl(MetalDevice& dev) : metalDevice(dev) {}
 
@@ -222,10 +225,10 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
     HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override {
         if (!pFence)
             return E_INVALIDARG;
-        auto* fence = dynamic_cast<D3D12FenceImpl*>(pFence);
-        if (!fence)
-            return E_INVALIDARG;
-        return fence->WaitForValue(Value);
+        pFence->AddRef();
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        m_pendingWaits.push_back({pFence, Value});
+        return S_OK;
     }
 };
 
