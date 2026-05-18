@@ -134,3 +134,18 @@ Some prepared games can also use app-specific prefixes:
 ## Steam Wrapper
 
 Wine Steam uses the bundled `steamwebhelper.exe` wrapper. Steam updates may replace it, so MetalSharp redeploys it when preparing or launching Steam.
+
+## Operational Notes
+
+The backend treats Wine Steam and native macOS Steam as separate launch surfaces.
+Wine Steam launches should go through the wrapper-backed Steam URL handoff so
+the prefix, DLL overrides, and process pickup logic stay consistent.
+
+Before relaunching a title during debugging, check whether a prior game process
+is still alive. The backend process pickup logic rejects shell probes and Steam
+URL helper commands so status checks do not get mistaken for the game process.
+
+For external-drive installs, set `METALSHARP_HOME` before starting the backend
+and keep the Steam library path visible to the Wine prefix. Runtime reports,
+shader caches, deployment backups, and probe output will then stay under the
+selected MetalSharp home.
