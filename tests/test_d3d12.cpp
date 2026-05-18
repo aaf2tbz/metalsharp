@@ -289,6 +289,32 @@ int main() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             CHECK(completed == 2, "Queued signal completes after wait fence");
+
+            ID3D12Fence* sameQueueWaitFence = nullptr;
+            ID3D12Fence* sameQueueSignalFence = nullptr;
+            hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&sameQueueWaitFence);
+            CHECK(SUCCEEDED(hr) && sameQueueWaitFence, "Create same-queue wait fence");
+            hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&sameQueueSignalFence);
+            CHECK(SUCCEEDED(hr) && sameQueueSignalFence, "Create same-queue signal fence");
+            if (sameQueueWaitFence && sameQueueSignalFence) {
+                hr = cmdQueue->Wait(sameQueueWaitFence, 3);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Wait accepts same-queue signal target");
+                hr = cmdQueue->Signal(sameQueueWaitFence, 3);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Signal can satisfy prior same-queue wait");
+                hr = cmdQueue->Signal(sameQueueSignalFence, 4);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Signal queues after same-queue wait");
+                for (int attempt = 0; attempt < 100; ++attempt) {
+                    sameQueueSignalFence->GetCompletedValue(&completed);
+                    if (completed == 4)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                CHECK(completed == 4, "Same-queue signal unblocks queued wait");
+            }
+            if (sameQueueWaitFence)
+                sameQueueWaitFence->Release();
+            if (sameQueueSignalFence)
+                sameQueueSignalFence->Release();
         }
 
         if (waitFence)

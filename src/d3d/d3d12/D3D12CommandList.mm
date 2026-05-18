@@ -1115,19 +1115,19 @@ D3D12CommandQueueImpl::~D3D12CommandQueueImpl() {
 
 void D3D12CommandQueueImpl::runQueueWorker(std::shared_ptr<QueueState> state) {
     for (;;) {
-        std::function<void()> operation;
+        QueueWorkItem item;
         {
             std::unique_lock<std::mutex> lock(state->mutex);
             state->cond.wait(lock, [&] { return state->stopping || !state->work.empty(); });
             if (state->stopping && state->work.empty())
                 return;
-            operation = std::move(state->work.front());
+            item = std::move(state->work.front());
             state->work.pop_front();
             state->busy = true;
         }
 
-        if (operation)
-            operation();
+        if (item.operation)
+            item.operation();
 
         {
             std::lock_guard<std::mutex> lock(state->mutex);
@@ -1137,11 +1137,12 @@ void D3D12CommandQueueImpl::runQueueWorker(std::shared_ptr<QueueState> state) {
     }
 }
 
-HRESULT D3D12CommandQueueImpl::enqueueQueueWork(std::function<void()> operation) {
+HRESULT D3D12CommandQueueImpl::enqueueQueueWork(std::function<void()> operation, ID3D12Fence* signalFence,
+                                                UINT64 signalValue) {
     auto state = m_queueState;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        state->work.push_back(std::move(operation));
+        state->work.push_back(QueueWorkItem{std::move(operation), signalFence, signalValue});
         if (!state->workerStarted) {
             state->workerStarted = true;
             state->worker = std::thread([state] { runQueueWorker(state); });
@@ -1159,10 +1160,12 @@ HRESULT D3D12CommandQueueImpl::Signal(ID3D12Fence* pFence, UINT64 Value) {
         return pFence->Signal(Value);
 
     pFence->AddRef();
-    return enqueueQueueWork([pFence, Value] {
-        pFence->Signal(Value);
-        pFence->Release();
-    });
+    return enqueueQueueWork(
+        [pFence, Value] {
+            pFence->Signal(Value);
+            pFence->Release();
+        },
+        pFence, Value);
 }
 
 HRESULT D3D12CommandQueueImpl::Wait(ID3D12Fence* pFence, UINT64 Value) {
@@ -1182,6 +1185,22 @@ HRESULT D3D12CommandQueueImpl::Wait(ID3D12Fence* pFence, UINT64 Value) {
             UINT64 completed = 0;
             if (SUCCEEDED(pFence->GetCompletedValue(&completed)) && completed >= Value)
                 break;
+
+            QueueWorkItem satisfyingSignal;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                for (auto it = state->work.begin(); it != state->work.end(); ++it) {
+                    if (it->signalFence == pFence && it->signalValue >= Value) {
+                        satisfyingSignal = std::move(*it);
+                        state->work.erase(it);
+                        break;
+                    }
+                }
+            }
+            if (satisfyingSignal.operation) {
+                satisfyingSignal.operation();
+                continue;
+            }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }

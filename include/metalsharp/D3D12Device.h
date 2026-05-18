@@ -194,10 +194,15 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
   public:
     std::atomic<ULONG> refCount{1};
     MetalDevice& metalDevice;
+    struct QueueWorkItem {
+        std::function<void()> operation;
+        ID3D12Fence* signalFence = nullptr;
+        UINT64 signalValue = 0;
+    };
     struct QueueState {
         std::mutex mutex;
         std::condition_variable cond;
-        std::deque<std::function<void()>> work;
+        std::deque<QueueWorkItem> work;
         std::thread worker;
         bool workerStarted = false;
         bool stopping = false;
@@ -239,7 +244,8 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
         return m_queueState->busy || !m_queueState->work.empty();
     }
 
-    HRESULT enqueueQueueWork(std::function<void()> operation);
+    HRESULT enqueueQueueWork(std::function<void()> operation, ID3D12Fence* signalFence = nullptr,
+                             UINT64 signalValue = 0);
     static void runQueueWorker(std::shared_ptr<QueueState> state);
 };
 
