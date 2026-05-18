@@ -61,7 +61,8 @@ MetalSwapChain::~MetalSwapChain() {
     delete m_impl;
 }
 
-bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount, DXGI_FORMAT format) {
+bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount,
+                          DXGI_FORMAT format) {
     m_impl->device = (__bridge id<MTLDevice>)device.nativeDevice();
     m_impl->commandQueue = (__bridge id<MTLCommandQueue>)device.nativeCommandQueue();
     m_impl->width = width;
@@ -108,8 +109,8 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
                 m_impl->height = (uint32_t)view.bounds.size.height;
             }
 
-            fprintf(stderr, "[MetalSharp] Swapchain: DXGI 0x%x -> MTLPixelFormat %u, HDR=%s\n",
-                    format, (unsigned)metalFormat, m_impl->hdrEnabled ? "true" : "false");
+            fprintf(stderr, "[MetalSharp] Swapchain: DXGI 0x%x -> MTLPixelFormat %u, HDR=%s\n", format,
+                    (unsigned)metalFormat, m_impl->hdrEnabled ? "true" : "false");
         }
     }
 
@@ -117,7 +118,7 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
 }
 
 MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32_t width, uint32_t height,
-                                        uint32_t bufferCount, DXGI_FORMAT format) {
+                                       uint32_t bufferCount, DXGI_FORMAT format) {
     auto* chain = new MetalSwapChain();
     if (!chain->init(device, window, width, height, bufferCount, format)) {
         delete chain;
@@ -241,7 +242,8 @@ HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_
     swapChain->m_format = format;
     swapChain->m_bufferCount = bufferCount;
 
-    swapChain->m_metalSwapChain.reset(MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount, format));
+    swapChain->m_metalSwapChain.reset(
+        MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount, format));
 
     if (!swapChain->m_metalSwapChain) {
         delete swapChain;

@@ -5,9 +5,9 @@
 /// D3D12SerializeVersionedRootSignature, D3D12GetDebugInterface, and
 /// D3D12EnableExperimentalFeatures.
 
-#include <metalsharp/D3D12Device.h>
 #include <cstdlib>
 #include <cstring>
+#include <metalsharp/D3D12Device.h>
 
 extern "C" {
 
@@ -36,8 +36,8 @@ static void writeRootSignatureHeader(uint8_t* out, uint32_t numParameters, uint3
     memcpy(out + 20, &flags, 4);
 }
 
-HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignatureDesc, UINT Version,
-                                     void** ppBlob, void** ppErrorBlob) {
+HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignatureDesc, UINT Version, void** ppBlob,
+                                    void** ppErrorBlob) {
     if (!pRootSignatureDesc || !ppBlob)
         return E_INVALIDARG;
     if (Version > 0x1)
@@ -98,8 +98,8 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
     return S_OK;
 }
 
-HRESULT D3D12SerializeVersionedRootSignature(const void* pVersionedRootSignatureDesc, UINT Version,
-                                              void** ppBlob, void** ppErrorBlob) {
+HRESULT D3D12SerializeVersionedRootSignature(const void* pVersionedRootSignatureDesc, UINT Version, void** ppBlob,
+                                             void** ppErrorBlob) {
     if (!pVersionedRootSignatureDesc || !ppBlob)
         return E_INVALIDARG;
 
@@ -140,8 +140,7 @@ HRESULT D3D12GetDebugInterface(const GUID& riid, void** ppvDebug) {
 }
 
 HRESULT D3D12EnableExperimentalFeatures(UINT NumFeatures, const GUID* pFeatureGUIDs, void* pConfigurationStructs,
-                                         UINT* pConfigurationStructSizes) {
+                                        UINT* pConfigurationStructSizes) {
     return S_OK;
 }
-
 }

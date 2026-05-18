@@ -58,10 +58,10 @@
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
 #include <mutex>
+#include <os/lock.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <os/lock.h>
 
 #ifdef __APPLE__
 extern "C" {
@@ -69,7 +69,7 @@ int os_sync_wait_on_address(volatile void* addr, uint64_t value, uint32_t size, 
 int os_sync_wake_by_address_all(volatile void* addr, uint32_t size, uint32_t flags);
 }
 #define OS_SYNC_WAIT_ON_ADDRESS_EQUAL 0x01
-#define OS_SYNC_WAKE_BY_ADDRESS_ALL 0x00
+#define OS_SYNC_WAKE_BY_ADDRESS_ALL   0x00
 #endif
 
 namespace metalsharp {
