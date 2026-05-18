@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.33.17 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.33.18 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +61,7 @@ add_library(metalsharp_core STATIC
     src/runtime/CrashReporter.cpp
     src/runtime/UpdateChecker.cpp
     src/runtime/SettingsManager.cpp
+    src/win32/kernel32/SyncContext.cpp
     src/perf/ShaderCache.cpp
     src/perf/ShaderCache.mm
     src/perf/PipelineCache.cpp
@@ -211,7 +212,6 @@ add_library(metalsharp_loader STATIC
     src/win32/kernel32/Registry.cpp
     src/win32/kernel32/NetworkContext.cpp
     src/win32/kernel32/SecureTransport.mm
-    src/win32/kernel32/SyncContext.cpp
     src/win32/user32/User32Shim.cpp
     src/win32/user32/WindowManager.mm
     src/win32/extra/ExtraShims.cpp

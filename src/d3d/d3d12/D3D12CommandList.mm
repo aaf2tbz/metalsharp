@@ -36,6 +36,7 @@
 ///   - Bundle command lists (execute inline only)
 
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
@@ -43,6 +44,7 @@
 #include <metalsharp/D3D12Device.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/PipelineState.h>
+#include <thread>
 
 namespace metalsharp {
 
@@ -121,7 +123,7 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         return E_POINTER;
 
     struct CmdListImpl final : public ID3D12GraphicsCommandList {
-        ULONG refCount = 1;
+        std::atomic<ULONG> refCount{1};
         D3D12DeviceImpl& device;
         bool m_closed = false;
         bool m_recording = true;
@@ -1013,7 +1015,9 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
         for (UINT i = 0; i < pDesc->NumRenderTargets && i < 8; ++i) {
             pipeDesc.colorPixelFormats[i] = dxgiFormatToMetal((DXGITranslation)pDesc->RTVFormats[i]);
         }
-        pipeDesc.depthPixelFormat = dxgiFormatToMetal((DXGITranslation)pDesc->DSVFormat);
+        if (pDesc->DSVFormat != 0 && dxgiFormatIsDepth((DXGITranslation)pDesc->DSVFormat)) {
+            pipeDesc.depthPixelFormat = dxgiDepthFormatToMetal((DXGITranslation)pDesc->DSVFormat);
+        }
 
         PipelineState* pipeline = PipelineState::create(*m_metalDevice, pipeDesc);
         if (pipeline) {
@@ -1097,7 +1101,133 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     return S_OK;
 }
 
+D3D12CommandQueueImpl::~D3D12CommandQueueImpl() {
+    auto state = m_queueState;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->stopping = true;
+    }
+    state->cond.notify_all();
+    if (state->worker.joinable()) {
+        state->worker.join();
+    }
+}
+
+void D3D12CommandQueueImpl::runQueueWorker(std::shared_ptr<QueueState> state) {
+    for (;;) {
+        QueueWorkItem item;
+        {
+            std::unique_lock<std::mutex> lock(state->mutex);
+            state->cond.wait(lock, [&] { return state->stopping || !state->work.empty(); });
+            if (state->stopping && state->work.empty())
+                return;
+            item = std::move(state->work.front());
+            state->work.pop_front();
+            state->busy = true;
+        }
+
+        if (item.operation)
+            item.operation();
+
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->busy = false;
+        }
+        state->cond.notify_all();
+    }
+}
+
+HRESULT D3D12CommandQueueImpl::enqueueQueueWork(std::function<void()> operation, ID3D12Fence* signalFence,
+                                                UINT64 signalValue) {
+    auto state = m_queueState;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->work.push_back(QueueWorkItem{std::move(operation), signalFence, signalValue});
+        if (!state->workerStarted) {
+            state->workerStarted = true;
+            state->worker = std::thread([state] { runQueueWorker(state); });
+        }
+    }
+    state->cond.notify_one();
+    return S_OK;
+}
+
+HRESULT D3D12CommandQueueImpl::Signal(ID3D12Fence* pFence, UINT64 Value) {
+    if (!pFence)
+        return E_INVALIDARG;
+
+    if (!hasQueuedWork())
+        return pFence->Signal(Value);
+
+    pFence->AddRef();
+    return enqueueQueueWork(
+        [pFence, Value] {
+            pFence->Signal(Value);
+            pFence->Release();
+        },
+        pFence, Value);
+}
+
+HRESULT D3D12CommandQueueImpl::Wait(ID3D12Fence* pFence, UINT64 Value) {
+    if (!pFence)
+        return E_INVALIDARG;
+
+    pFence->AddRef();
+    auto state = m_queueState;
+    return enqueueQueueWork([state, pFence, Value] {
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->stopping)
+                    break;
+            }
+
+            UINT64 completed = 0;
+            if (SUCCEEDED(pFence->GetCompletedValue(&completed)) && completed >= Value)
+                break;
+
+            QueueWorkItem satisfyingSignal;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                for (auto it = state->work.begin(); it != state->work.end(); ++it) {
+                    if (it->signalFence == pFence && it->signalValue >= Value) {
+                        satisfyingSignal = std::move(*it);
+                        state->work.erase(it);
+                        break;
+                    }
+                }
+            }
+            if (satisfyingSignal.operation) {
+                satisfyingSignal.operation();
+                continue;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        pFence->Release();
+    });
+}
+
 HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
+    if (hasQueuedWork()) {
+        std::vector<ID3D12CommandList*> lists;
+        lists.reserve(numLists);
+        for (UINT i = 0; i < numLists; ++i) {
+            if (!ppLists[i])
+                continue;
+            ppLists[i]->AddRef();
+            lists.push_back(ppLists[i]);
+        }
+
+        MetalDevice* queuedMetalDevice = &metalDevice;
+        return enqueueQueueWork([queuedMetalDevice, lists = std::move(lists)]() mutable {
+            for (auto* list : lists) {
+                list->__execute(queuedMetalDevice);
+                list->Release();
+            }
+        });
+    }
+
     for (UINT i = 0; i < numLists; ++i) {
         if (!ppLists[i])
             continue;

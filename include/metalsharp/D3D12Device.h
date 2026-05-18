@@ -50,16 +50,24 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <d3d/D3D12.h>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
+#include <metalsharp/SyncContext.h>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace metalsharp {
@@ -71,9 +79,12 @@ using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     UINT64 m_value = 0;
     UINT64 m_completed = 0;
+    std::mutex m_mutex;
+    std::condition_variable m_completionCond;
+    std::vector<std::pair<UINT64, HANDLE>> m_completionEvents;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -100,20 +111,60 @@ class D3D12FenceImpl final : public ID3D12Fence {
     HRESULT GetCompletedValue(UINT64* pValue) override {
         if (!pValue)
             return E_POINTER;
+        std::lock_guard<std::mutex> lock(m_mutex);
         *pValue = m_completed;
         return S_OK;
     }
-    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override { return S_OK; }
+    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (m_completed >= Value) {
+            lock.unlock();
+            if (hEvent)
+                win32::SyncContext::instance().setEvent(hEvent);
+            return S_OK;
+        }
+
+        if (!hEvent) {
+            m_completionCond.wait(lock, [&] { return m_completed >= Value; });
+            return S_OK;
+        }
+
+        m_completionEvents.push_back({Value, hEvent});
+        return S_OK;
+    }
     HRESULT Signal(UINT64 Value) override {
-        m_value = Value;
-        m_completed = Value;
+        std::vector<HANDLE> eventsToSignal;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_value = Value;
+            m_completed = Value;
+            auto it = m_completionEvents.begin();
+            while (it != m_completionEvents.end()) {
+                if (m_completed >= it->first) {
+                    eventsToSignal.push_back(it->second);
+                    it = m_completionEvents.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        m_completionCond.notify_all();
+        for (HANDLE eventHandle : eventsToSignal) {
+            win32::SyncContext::instance().setEvent(eventHandle);
+        }
+        return S_OK;
+    }
+
+    HRESULT WaitForValue(UINT64 Value) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_completionCond.wait(lock, [&] { return m_completed >= Value; });
         return S_OK;
     }
 };
 
 class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -141,10 +192,26 @@ class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
 
 class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     MetalDevice& metalDevice;
+    struct QueueWorkItem {
+        std::function<void()> operation;
+        ID3D12Fence* signalFence = nullptr;
+        UINT64 signalValue = 0;
+    };
+    struct QueueState {
+        std::mutex mutex;
+        std::condition_variable cond;
+        std::deque<QueueWorkItem> work;
+        std::thread worker;
+        bool workerStarted = false;
+        bool stopping = false;
+        bool busy = false;
+    };
+    std::shared_ptr<QueueState> m_queueState;
 
-    explicit D3D12CommandQueueImpl(MetalDevice& dev) : metalDevice(dev) {}
+    explicit D3D12CommandQueueImpl(MetalDevice& dev) : metalDevice(dev), m_queueState(std::make_shared<QueueState>()) {}
+    ~D3D12CommandQueueImpl();
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -169,12 +236,17 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
     STDMETHOD(SetName)(const char*) override { return S_OK; }
 
     HRESULT ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) override;
-    HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override {
-        if (!pFence)
-            return E_INVALIDARG;
-        return pFence->Signal(Value);
+    HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override;
+    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override;
+
+    bool hasQueuedWork() {
+        std::lock_guard<std::mutex> lock(m_queueState->mutex);
+        return m_queueState->busy || !m_queueState->work.empty();
     }
-    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override { return S_OK; }
+
+    HRESULT enqueueQueueWork(std::function<void()> operation, ID3D12Fence* signalFence = nullptr,
+                             UINT64 signalValue = 0);
+    static void runQueueWorker(std::shared_ptr<QueueState> state);
 };
 
 struct D3D12Descriptor {
@@ -194,7 +266,7 @@ struct D3D12Descriptor {
 
 class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     D3D12_DESCRIPTOR_HEAP_DESC desc;
     std::vector<D3D12Descriptor> descriptors;
     void* metalArgumentBuffer = nullptr;
@@ -272,7 +344,7 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
 
 class D3D12RootSignatureImpl final : public ID3D12RootSignature {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     std::vector<D3D12_ROOT_PARAMETER> parameters;
     std::vector<D3D12_STATIC_SAMPLER_DESC> staticSamplers;
     UINT flags = 0;
@@ -350,7 +422,7 @@ class D3D12RootSignatureImpl final : public ID3D12RootSignature {
 
 class D3D12PipelineStateImpl final : public ID3D12PipelineState {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     void* m_renderPipeline = nullptr;
     void* m_computePipeline = nullptr;
     void* m_ownedRenderPipeline = nullptr;
@@ -383,7 +455,7 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
 
 class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
             return E_POINTER;
@@ -409,7 +481,7 @@ class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
 
 class D3D12StateObjectImpl final : public ID3D12StateObject {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     void* m_rtPipeline = nullptr;
     std::vector<uint8_t> m_shaderIdentifierData;
 
@@ -439,7 +511,7 @@ class D3D12StateObjectImpl final : public ID3D12StateObject {
 
 class D3D12ResourceImpl final : public ID3D12Resource {
   public:
-    ULONG refCount = 1;
+    std::atomic<ULONG> refCount{1};
     D3D12_RESOURCE_DESC desc;
     std::unique_ptr<MetalBuffer> metalBuffer;
     std::unique_ptr<MetalTexture> metalTexture;
@@ -528,7 +600,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
 
     MetalDevice& metalDevice() { return *m_metalDevice; }
 
-    ULONG m_refCount = 1;
+    std::atomic<ULONG> m_refCount{1};
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
     size_t gpuAddressResourceCountForTesting() const {
@@ -592,7 +664,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 (*m_gpuAddressResources)[res->m_gpuAddress] = res;
             }
         } else {
-            uint32_t fmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
+            DXGITranslation dxgiFormat = (DXGITranslation)pDesc->Format;
+            bool isDepthStencil =
+                (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) && dxgiFormatIsDepth(dxgiFormat);
+            uint32_t fmt = isDepthStencil ? dxgiDepthFormatToMetal(dxgiFormat) : dxgiFormatToMetal(dxgiFormat);
             uint32_t usage = 0;
             if (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
                 usage |= 0x1;

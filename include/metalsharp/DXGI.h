@@ -18,7 +18,7 @@ namespace metalsharp {
 class MetalSwapChain {
   public:
     static MetalSwapChain* create(MetalDevice& device, void* window, uint32_t width, uint32_t height,
-                                  uint32_t bufferCount);
+                                  uint32_t bufferCount, DXGI_FORMAT format);
     ~MetalSwapChain();
 
     void present(uint32_t syncInterval);
@@ -29,7 +29,8 @@ class MetalSwapChain {
 
   private:
     MetalSwapChain();
-    bool init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount);
+    bool init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount,
+              DXGI_FORMAT format);
 
     struct Impl;
     Impl* m_impl;

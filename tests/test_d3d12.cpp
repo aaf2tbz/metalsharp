@@ -1,7 +1,16 @@
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <d3d/D3D12.h>
 #include <metalsharp/D3D12Device.h>
+#include <thread>
+
+extern "C" {
+HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC*, unsigned int, void**, void**);
+HRESULT D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC*, void**, void**);
+HRESULT D3D12GetDebugInterface(const GUID&, void**);
+HRESULT D3D12EnableExperimentalFeatures(unsigned int, const GUID*, void*, unsigned int*);
+}
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -226,6 +235,15 @@ int main() {
 
             hr = fence->GetCompletedValue(&completed);
             CHECK(SUCCEEDED(hr) && completed == 42, "Fence completed value is 42");
+
+            void* eventHandle = metalsharp::win32::SyncContext::instance().createEvent(true, false, "");
+            hr = fence->SetEventOnCompletion(100, eventHandle);
+            CHECK(SUCCEEDED(hr), "Fence::SetEventOnCompletion registers event");
+
+            hr = cmdQueue->Signal(fence, 100);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Signal reaches event target");
+            uint32_t waitResult = metalsharp::win32::SyncContext::instance().waitForSingleObject(eventHandle, 0);
+            CHECK(waitResult == metalsharp::win32::WAIT_OBJECT_0, "Fence completion signals event");
         }
     }
 
@@ -239,6 +257,91 @@ int main() {
             hr = cmdQueue->Signal(fence, 100);
             CHECK(SUCCEEDED(hr), "CommandQueue::Signal fence");
         }
+    }
+
+    printf("\n--- Command Queue Wait Ordering ---\n");
+    if (device && cmdQueue) {
+        ID3D12Fence* waitFence = nullptr;
+        ID3D12Fence* signalFence = nullptr;
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&waitFence);
+        CHECK(SUCCEEDED(hr) && waitFence, "Create wait fence");
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&signalFence);
+        CHECK(SUCCEEDED(hr) && signalFence, "Create signal fence");
+
+        if (waitFence && signalFence) {
+            hr = cmdQueue->Wait(waitFence, 1);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Wait queues fence dependency");
+            hr = cmdQueue->ExecuteCommandLists(0, nullptr);
+            CHECK(SUCCEEDED(hr), "ExecuteCommandLists queues behind wait");
+            hr = cmdQueue->Signal(signalFence, 2);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Signal queues behind pending wait");
+
+            UINT64 completed = 99;
+            hr = signalFence->GetCompletedValue(&completed);
+            CHECK(SUCCEEDED(hr) && completed == 0, "Queued signal does not complete before wait fence");
+
+            hr = waitFence->Signal(1);
+            CHECK(SUCCEEDED(hr), "Wait fence unblocks queued work");
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                signalFence->GetCompletedValue(&completed);
+                if (completed == 2)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            CHECK(completed == 2, "Queued signal completes after wait fence");
+
+            ID3D12Fence* sameQueueWaitFence = nullptr;
+            ID3D12Fence* sameQueueSignalFence = nullptr;
+            hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&sameQueueWaitFence);
+            CHECK(SUCCEEDED(hr) && sameQueueWaitFence, "Create same-queue wait fence");
+            hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&sameQueueSignalFence);
+            CHECK(SUCCEEDED(hr) && sameQueueSignalFence, "Create same-queue signal fence");
+            if (sameQueueWaitFence && sameQueueSignalFence) {
+                hr = cmdQueue->Wait(sameQueueWaitFence, 3);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Wait accepts same-queue signal target");
+                hr = cmdQueue->Signal(sameQueueWaitFence, 3);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Signal can satisfy prior same-queue wait");
+                hr = cmdQueue->Signal(sameQueueSignalFence, 4);
+                CHECK(SUCCEEDED(hr), "CommandQueue::Signal queues after same-queue wait");
+                for (int attempt = 0; attempt < 100; ++attempt) {
+                    sameQueueSignalFence->GetCompletedValue(&completed);
+                    if (completed == 4)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                CHECK(completed == 4, "Same-queue signal unblocks queued wait");
+            }
+            if (sameQueueWaitFence)
+                sameQueueWaitFence->Release();
+            if (sameQueueSignalFence)
+                sameQueueSignalFence->Release();
+        }
+
+        if (waitFence)
+            waitFence->Release();
+        if (signalFence)
+            signalFence->Release();
+    }
+
+    printf("\n--- Command Queue Pending Wait Teardown ---\n");
+    if (device) {
+        ID3D12CommandQueue* teardownQueue = nullptr;
+        ID3D12Fence* pendingFence = nullptr;
+        hr = device->CreateCommandQueue(nullptr, IID_ID3D12CommandQueue, (void**)&teardownQueue);
+        CHECK(SUCCEEDED(hr) && teardownQueue, "Create teardown command queue");
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&pendingFence);
+        CHECK(SUCCEEDED(hr) && pendingFence, "Create pending wait fence");
+        if (teardownQueue && pendingFence) {
+            hr = teardownQueue->Wait(pendingFence, 1);
+            CHECK(SUCCEEDED(hr), "Queue wait can remain pending before teardown");
+            teardownQueue->Release();
+            teardownQueue = nullptr;
+            CHECK(true, "Command queue teardown cancels pending wait worker");
+        }
+        if (teardownQueue)
+            teardownQueue->Release();
+        if (pendingFence)
+            pendingFence->Release();
     }
 
     printf("\n--- Command Signature ---\n");
@@ -430,6 +533,137 @@ int main() {
     if (device) {
         UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
         CHECK(inc == 1, "GetDescriptorHandleIncrementSize returns 1");
+    }
+
+    printf("\n--- Root Signature Serialization ---\n");
+    {
+        D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+        rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        void* blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature empty signature");
+        if (blob) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
+            uint32_t magic = 0;
+            memcpy(&magic, blobObject->GetBufferPointer(), 4);
+            CHECK(magic == 0x43425844, "Serialized blob uses DXBC container layout");
+            CHECK(blobObject->GetBufferSize() == 60, "Serialized blob reports DXBC buffer size");
+            blobObject->Release();
+        }
+
+        D3D12_ROOT_PARAMETER rsParam = {};
+        rsParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        rsParam.Constants.ShaderRegister = 3;
+        rsParam.Constants.RegisterSpace = 2;
+        rsParam.Constants.Num32BitValues = 4;
+        rsParam.ShaderVisibility = 0;
+        rsDesc.NumParameters = 1;
+        rsDesc.pParameters = &rsParam;
+        blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature constants signature");
+        if (blob && device) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
+            ID3D12RootSignature* parsedRootSig = nullptr;
+            hr = device->CreateRootSignature(0, blobObject->GetBufferPointer(), blobObject->GetBufferSize(),
+                                             IID_ID3D12RootSignature, (void**)&parsedRootSig);
+            auto* parsedImpl = static_cast<metalsharp::D3D12RootSignatureImpl*>(parsedRootSig);
+            CHECK(SUCCEEDED(hr) && parsedImpl && parsedImpl->numParameters == 1,
+                  "CreateRootSignature parses serialized parameter count");
+            CHECK(parsedImpl && parsedImpl->parameters.size() == 1 &&
+                      parsedImpl->parameters[0].Constants.Num32BitValues == 4,
+                  "CreateRootSignature preserves serialized root constants");
+            if (parsedRootSig)
+                parsedRootSig->Release();
+            blobObject->Release();
+        }
+
+        D3D12_DESCRIPTOR_RANGE range = {};
+        range.RangeType = 0;
+        range.NumDescriptors = 2;
+        range.BaseShaderRegister = 1;
+        range.RegisterSpace = 0;
+        range.OffsetInDescriptorsFromTableStart = 0;
+        D3D12_ROOT_PARAMETER mixedParams[3] = {};
+        mixedParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        mixedParams[0].DescriptorTable.NumDescriptorRanges = 1;
+        mixedParams[0].DescriptorTable.pDescriptorRanges = &range;
+        mixedParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        mixedParams[1].Descriptor.ShaderRegister = 5;
+        mixedParams[1].Descriptor.RegisterSpace = 1;
+        mixedParams[2] = rsParam;
+        rsDesc.NumParameters = 3;
+        rsDesc.pParameters = mixedParams;
+        blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature mixed parameter signature");
+        if (blob && device) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
+            CHECK(blobObject->GetBufferSize() == 132, "Serialized mixed root signature wraps parser record sizes");
+            ID3D12RootSignature* parsedRootSig = nullptr;
+            hr = device->CreateRootSignature(0, blobObject->GetBufferPointer(), blobObject->GetBufferSize(),
+                                             IID_ID3D12RootSignature, (void**)&parsedRootSig);
+            auto* parsedImpl = static_cast<metalsharp::D3D12RootSignatureImpl*>(parsedRootSig);
+            CHECK(SUCCEEDED(hr) && parsedImpl && parsedImpl->parameters.size() == 3,
+                  "CreateRootSignature parses mixed serialized parameters");
+            CHECK(parsedImpl && parsedImpl->parameters[1].Descriptor.ShaderRegister == 5 &&
+                      parsedImpl->parameters[2].Constants.Num32BitValues == 4,
+                  "CreateRootSignature keeps parameter alignment after descriptor records");
+            if (parsedRootSig)
+                parsedRootSig->Release();
+            blobObject->Release();
+        }
+
+        D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
+        versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_0;
+        versionedDesc.Desc_1_0 = rsDesc;
+        void* vBlob = nullptr;
+        hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &vBlob, nullptr);
+        CHECK(SUCCEEDED(hr) && vBlob != nullptr, "D3D12SerializeVersionedRootSignature");
+        if (vBlob)
+            static_cast<ID3DBlob*>(vBlob)->Release();
+
+        D3D12_ROOT_SIGNATURE_DESC invalidDesc = {};
+        invalidDesc.NumParameters = 1;
+        invalidDesc.pParameters = nullptr;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null parameter array");
+
+        invalidDesc = {};
+        invalidDesc.NumStaticSamplers = 1;
+        invalidDesc.pStaticSamplers = nullptr;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null static sampler array");
+
+        D3D12_ROOT_PARAMETER invalidTable = {};
+        invalidTable.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        invalidTable.DescriptorTable.NumDescriptorRanges = 1;
+        invalidTable.DescriptorTable.pDescriptorRanges = nullptr;
+        invalidDesc = {};
+        invalidDesc.NumParameters = 1;
+        invalidDesc.pParameters = &invalidTable;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null descriptor range array");
+    }
+
+    printf("\n--- Debug Interface Stubs ---\n");
+    {
+        void* debugPtr = reinterpret_cast<void*>(0x1);
+        hr = D3D12GetDebugInterface(IID_ID3D12Device, &debugPtr);
+        CHECK(hr == E_NOINTERFACE && debugPtr == nullptr, "D3D12GetDebugInterface returns E_NOINTERFACE");
+
+        hr = D3D12EnableExperimentalFeatures(0, nullptr, nullptr, nullptr);
+        CHECK(SUCCEEDED(hr), "D3D12EnableExperimentalFeatures accepts no-feature no-op");
+
+        hr = D3D12EnableExperimentalFeatures(1, nullptr, nullptr, nullptr);
+        CHECK(hr == E_INVALIDARG, "D3D12EnableExperimentalFeatures rejects missing feature GUID array");
+
+        GUID unsupportedFeature = IID_ID3D12Device;
+        hr = D3D12EnableExperimentalFeatures(1, &unsupportedFeature, nullptr, nullptr);
+        CHECK(hr == E_NOINTERFACE, "D3D12EnableExperimentalFeatures rejects unsupported features");
     }
 
     if (pso)
