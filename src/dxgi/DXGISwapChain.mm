@@ -22,11 +22,13 @@
 static MTLPixelFormat dxgiFormatToSwapchainMetal(DXGI_FORMAT format) {
     switch (format) {
     case DXGI_FORMAT_R8G8B8A8_UNORM:
+        return MTLPixelFormatRGBA8Unorm;
     case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-        return MTLPixelFormatBGRA8Unorm;
+        return MTLPixelFormatRGBA8Unorm_sRGB;
     case DXGI_FORMAT_B8G8R8A8_UNORM:
-    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
         return MTLPixelFormatBGRA8Unorm;
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return MTLPixelFormatBGRA8Unorm_sRGB;
     case DXGI_FORMAT_R16G16B16A16_FLOAT:
         return MTLPixelFormatRGBA16Float;
     case DXGI_FORMAT_R10G10B10A2_UNORM:
