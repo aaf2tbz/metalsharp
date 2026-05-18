@@ -1,10 +1,14 @@
 use serde_json::{json, Value};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
+const DEFAULT_STEAM_CEF_MODE: &str = "disable_gpu";
+const STEAM_CEF_MODES: &[&str] = &["disable_gpu", "swiftshader", "passthrough"];
+const WINE_STEAM_DLL_OVERRIDES: &str = "bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d";
 
 fn ms_wine() -> PathBuf {
     crate::platform::runtime_wine_binary(&crate::platform::wine_runtime_root())
@@ -16,6 +20,18 @@ fn steam_prefix() -> PathBuf {
 
 fn steam_exe_path() -> PathBuf {
     steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+}
+
+fn steam_run_url(appid: u32, launch_args: &[String]) -> String {
+    if launch_args.is_empty() {
+        return format!("steam://run/{}", appid);
+    }
+
+    format!("steam://run/{}//{}", appid, launch_args.join(" "))
+}
+
+fn steam_gameprocess_log_path() -> PathBuf {
+    steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("logs").join("gameprocess_log.txt")
 }
 
 fn macos_steam_app() -> Option<PathBuf> {
@@ -64,9 +80,36 @@ pub fn status() -> Value {
         "mac_install_url": macos_steam_install_url(),
         "mac_running": mac_running,
         "running": running,
+        "cef": steam_cef_status(&wine_steam_dir),
         "metalsharp_wine_available": ms_available,
         "installing": installing
     })
+}
+
+pub fn set_steam_cef_mode(mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let Some(mode) = normalize_steam_cef_mode(mode) else {
+        return Err(
+            format!("unsupported Steam CEF mode '{}'; expected one of {}", mode, STEAM_CEF_MODES.join(", ")).into()
+        );
+    };
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    if !steam_dir.join("steamui.dll").exists() {
+        return Err("Steam is not installed — use the setup wizard to install it first".into());
+    }
+    let mode_path = steam_cef_mode_path(&steam_dir);
+    if let Some(parent) = mode_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&mode_path, format!("{}\n", mode))?;
+    if !is_wine_steam_running() {
+        deploy_steamwebhelper_wrapper(&steam_dir);
+    }
+    Ok(json!({
+        "ok": true,
+        "mode": mode,
+        "restartRequired": is_wine_steam_running(),
+        "cef": steam_cef_status(&steam_dir),
+    }))
 }
 
 pub fn is_wine_steam_running() -> bool {
@@ -162,6 +205,277 @@ fn parse_process_line(line: &str) -> Option<(u32, &str)> {
     Some((pid, command))
 }
 
+fn process_command_matches_exe(command: &str, exe_name: &str) -> bool {
+    let lower = command.to_lowercase();
+    let exe_lower = exe_name.to_lowercase();
+
+    if is_process_probe_command(command) {
+        return false;
+    }
+
+    lower.contains(&exe_lower)
+}
+
+fn steam_launch_process_names(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> Vec<String> {
+    let mut names = Vec::new();
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    if let Ok(recipe) = crate::mtsp::recipe::build_launch_recipe(appid, node) {
+        if let Some(exe_name) = recipe.exe_name {
+            names.push(exe_name);
+        }
+    }
+    names.extend(known_launcher_process_names(appid).into_iter().map(str::to_string));
+    names.sort_by_key(|name| name.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
+
+fn known_launcher_process_names(appid: u32) -> Vec<&'static str> {
+    match appid {
+        1669000 => vec!["Paradox Launcher.exe"],
+        _ => Vec::new(),
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct SteamCefProcessTopology {
+    wrapper_pids: Vec<u32>,
+    real_pids: Vec<u32>,
+    renderer_pids: Vec<u32>,
+    utility_pids: Vec<u32>,
+    gpu_disabled: bool,
+    in_process_gpu: bool,
+}
+
+fn steam_cef_dir(steam_dir: &Path) -> PathBuf {
+    steam_dir.join("bin").join("cef").join("cef.win64")
+}
+
+fn steam_cef_mode_path(steam_dir: &Path) -> PathBuf {
+    steam_cef_dir(steam_dir).join("steamwebhelper_mode.txt")
+}
+
+fn normalize_steam_cef_mode(mode: &str) -> Option<&'static str> {
+    let mode = mode.trim();
+    STEAM_CEF_MODES.iter().copied().find(|candidate| *candidate == mode)
+}
+
+fn active_steam_cef_mode(steam_dir: &Path) -> &'static str {
+    let Ok(mode) = std::fs::read_to_string(steam_cef_mode_path(steam_dir)) else {
+        return DEFAULT_STEAM_CEF_MODE;
+    };
+    normalize_steam_cef_mode(&mode).unwrap_or(DEFAULT_STEAM_CEF_MODE)
+}
+
+fn steam_cef_status(steam_dir: &Path) -> Value {
+    let cef_dir = steam_cef_dir(steam_dir);
+    let wrapper = cef_dir.join("steamwebhelper.exe");
+    let real = cef_dir.join("steamwebhelper_real.exe");
+    let marker = cef_dir.join(".ms_wrapper_deployed");
+    let mode_path = steam_cef_mode_path(steam_dir);
+    let active_mode = active_steam_cef_mode(steam_dir);
+
+    let dir_present = cef_dir.exists();
+    let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+    let bundled_wrapper = find_bundled_steamwebhelper_wrapper();
+    let bundled_path = bundled_wrapper.as_ref().map(|path| path.to_string_lossy().to_string());
+    let bundled_size =
+        bundled_wrapper.as_ref().and_then(|path| std::fs::metadata(path).ok()).map(|m| m.len()).unwrap_or(0);
+    let marker_present = marker.exists();
+    let wrapper_present = wrapper_size > 0;
+    let real_present = real_size > 0;
+    let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+    let wrapper_matches_bundled = bundled_wrapper.as_ref().is_some_and(|path| files_equal(&wrapper, path));
+    let pending_wrapper_update = bundled_size > 0 && wrapper_present && !wrapper_matches_bundled;
+    let real_missing_or_bad = real_size == 0 || real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+    let wrapper_deployed =
+        marker_present && wrapper_present && !wrapper_overwritten && real_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+
+    let process_topology = steam_cef_process_topology_from_lines(&process_lines());
+    let real_process_running = !process_topology.real_pids.is_empty();
+    let renderer_running = !process_topology.renderer_pids.is_empty();
+    let ready = wrapper_deployed && real_process_running && renderer_running;
+    let reason = steam_cef_status_reason(SteamCefReadiness {
+        dir_present,
+        wrapper_present,
+        wrapper_overwritten,
+        real_present,
+        real_missing_or_bad,
+        wrapper_deployed,
+        real_process_running,
+        renderer_running,
+    });
+
+    json!({
+        "ready": ready,
+        "reason": reason,
+        "cef_dir": cef_dir.to_string_lossy().to_string(),
+        "wrapper_path": wrapper.to_string_lossy().to_string(),
+        "real_path": real.to_string_lossy().to_string(),
+        "marker_path": marker.to_string_lossy().to_string(),
+        "mode_path": mode_path.to_string_lossy().to_string(),
+        "mode": active_mode,
+        "supported_modes": STEAM_CEF_MODES,
+        "bundled_wrapper_path": bundled_path,
+        "bundled_wrapper_size": bundled_size,
+        "dir_present": dir_present,
+        "wrapper_present": wrapper_present,
+        "real_present": real_present,
+        "marker_present": marker_present,
+        "wrapper_size": wrapper_size,
+        "wrapper_matches_bundled": wrapper_matches_bundled,
+        "pending_wrapper_update": pending_wrapper_update,
+        "real_size": real_size,
+        "wrapper_deployed": wrapper_deployed,
+        "wrapper_overwritten": wrapper_overwritten,
+        "real_missing_or_bad": real_missing_or_bad,
+        "wrapper_pids": process_topology.wrapper_pids,
+        "real_pids": process_topology.real_pids,
+        "renderer_pids": process_topology.renderer_pids,
+        "utility_pids": process_topology.utility_pids,
+        "real_process_running": real_process_running,
+        "renderer_running": renderer_running,
+        "gpu_disabled": process_topology.gpu_disabled,
+        "in_process_gpu": process_topology.in_process_gpu,
+    })
+}
+
+struct SteamCefReadiness {
+    dir_present: bool,
+    wrapper_present: bool,
+    wrapper_overwritten: bool,
+    real_present: bool,
+    real_missing_or_bad: bool,
+    wrapper_deployed: bool,
+    real_process_running: bool,
+    renderer_running: bool,
+}
+
+fn steam_cef_status_reason(readiness: SteamCefReadiness) -> &'static str {
+    if !readiness.dir_present {
+        "cef_dir_missing"
+    } else if readiness.wrapper_overwritten {
+        "wrapper_overwritten"
+    } else if !readiness.wrapper_present {
+        "wrapper_missing"
+    } else if !readiness.real_present {
+        "real_helper_missing"
+    } else if readiness.real_missing_or_bad {
+        "real_helper_too_small"
+    } else if !readiness.wrapper_deployed {
+        "wrapper_marker_missing"
+    } else if !readiness.real_process_running {
+        "real_helper_not_running"
+    } else if !readiness.renderer_running {
+        "renderer_not_running"
+    } else {
+        "ready"
+    }
+}
+
+fn steam_cef_process_topology_from_lines(lines: &[String]) -> SteamCefProcessTopology {
+    let mut topology = SteamCefProcessTopology::default();
+    for line in lines {
+        let Some((pid, command)) = parse_process_line(line) else {
+            continue;
+        };
+        if is_process_probe_command(command) {
+            continue;
+        }
+        if is_steamwebhelper_real_command(command) {
+            topology.real_pids.push(pid);
+            let lower = command.to_lowercase();
+            if lower.contains("--type=renderer") {
+                topology.renderer_pids.push(pid);
+            }
+            if lower.contains("--type=utility") {
+                topology.utility_pids.push(pid);
+            }
+            if lower.contains("--disable-gpu") {
+                topology.gpu_disabled = true;
+            }
+            if lower.contains("--in-process-gpu") {
+                topology.in_process_gpu = true;
+            }
+        } else if is_steamwebhelper_wrapper_command(command) {
+            topology.wrapper_pids.push(pid);
+        }
+    }
+    topology
+}
+
+fn is_process_probe_command(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    if lower.contains(" rg ")
+        || lower.contains("rg -i")
+        || lower.contains("ps axo")
+        || lower.contains("ps -axo")
+        || lower.contains("pgrep -afil")
+    {
+        return true;
+    }
+
+    let shell_invocation = lower.contains("/bin/zsh")
+        || lower.contains("/bin/bash")
+        || lower.contains("/bin/sh")
+        || lower.starts_with("zsh ")
+        || lower.starts_with("bash ")
+        || lower.starts_with("sh ");
+
+    shell_invocation
+        && (lower.contains("curl")
+            || lower.contains("/steam/pickup-game")
+            || lower.contains("processnames")
+            || lower.contains("steam://run/"))
+}
+
+fn is_steamwebhelper_wrapper_command(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    lower.contains("steamwebhelper.exe") && !lower.contains("steamwebhelper_real.exe")
+}
+
+fn is_steamwebhelper_real_command(command: &str) -> bool {
+    command.to_lowercase().contains("steamwebhelper_real.exe")
+}
+
+fn steam_game_process_pids(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> Vec<u32> {
+    let process_names = steam_launch_process_names(appid, pipeline);
+    if process_names.is_empty() {
+        return Vec::new();
+    }
+
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .filter_map(|(pid, command)| {
+            process_names.iter().any(|exe_name| process_command_matches_exe(command, exe_name)).then_some(pid)
+        })
+        .collect()
+}
+
+fn parse_steam_gameprocess_added_pid(line: &str, appid: u32) -> Option<u32> {
+    if !line.contains(&format!("AppID {} adding PID ", appid)) {
+        return None;
+    }
+
+    let pid_text = line.split(" adding PID ").nth(1)?.split_whitespace().next()?;
+    pid_text.parse::<u32>().ok()
+}
+
+fn read_steam_gameprocess_pid_since(appid: u32, previous_len: u64) -> Option<u32> {
+    let log_path = steam_gameprocess_log_path();
+    let mut file = std::fs::File::open(&log_path).ok()?;
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = previous_len.min(len);
+    let _ = file.seek(SeekFrom::Start(start));
+
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+
+    text.lines().filter_map(|line| parse_steam_gameprocess_added_pid(line, appid)).next_back()
+}
+
 fn is_macos_steam_search_command(command: &str) -> bool {
     if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
         return true;
@@ -207,13 +521,48 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
 
     let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
     let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+    let bundled_wrapper = find_bundled_steamwebhelper_wrapper();
+    let wrapper_differs_from_bundle = bundled_wrapper.as_ref().is_some_and(|path| !files_equal(&wrapper, path));
 
     let wrapper_missing = wrapper_size == 0;
     let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
     let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
-    if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
+    if wrapper_missing || wrapper_overwritten || real_missing_or_bad || wrapper_differs_from_bundle {
         deploy_steamwebhelper_wrapper(steam_dir);
+    }
+    configure_steam_appdefault_overrides();
+}
+
+fn configure_steam_appdefault_overrides() {
+    for exe_name in ["Steam.exe", "steamwebhelper.exe", "steamwebhelper_real.exe"] {
+        for (dll, mode) in [("dxgi", "builtin"), ("d3d11", "builtin"), ("d3d10core", "builtin")] {
+            let _ = set_wine_appdefault_dll_override(exe_name, dll, mode);
+        }
+    }
+}
+
+fn set_wine_appdefault_dll_override(exe_name: &str, dll: &str, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let wine = ms_wine();
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+
+    let ms_root = crate::platform::wine_runtime_root();
+    let key = format!("HKCU\\Software\\Wine\\AppDefaults\\{}\\DllOverrides", exe_name);
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", steam_prefix().to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .args(["reg", "add", &key, "/v", dll, "/t", "REG_SZ", "/d", mode, "/f"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+
+    let status = cmd.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("failed to set Wine AppDefaults override {}={} for {}", dll, mode, exe_name).into())
     }
 }
 
@@ -235,6 +584,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     }
 
     ensure_steam_launch_ready(&steam_dir);
+    let cef_mode = active_steam_cef_mode(&steam_dir);
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
     let ms_root = crate::platform::wine_runtime_root();
@@ -245,7 +595,8 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env("WINEDLLOVERRIDES", "dxgi,d3d11,d3d10core=b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        .env("METALSHARP_STEAM_CEF_MODE", cef_mode)
+        .env("WINEDLLOVERRIDES", WINE_STEAM_DLL_OVERRIDES)
         .arg(&exe)
         .args(args)
         .stdout(std::process::Stdio::null())
@@ -260,6 +611,39 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     let child = cmd.spawn()?;
 
     Ok(child.id())
+}
+
+fn handoff_steam_url(url: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let wine = ms_wine();
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+
+    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    let prefix_str = steam_prefix().to_string_lossy().to_string();
+    let ms_root = crate::platform::wine_runtime_root();
+
+    ensure_steam_launch_ready(&steam_dir);
+
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(&steam_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("STEAM_RUNTIME", "0")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("WINEDLLOVERRIDES", WINE_STEAM_DLL_OVERRIDES)
+        .args(["start", url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    let _ = std::thread::Builder::new().name("steam-url-handoff-reaper".to_string()).spawn(move || {
+        let _ = child.wait();
+    });
+
+    Ok(pid)
 }
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
@@ -435,7 +819,10 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
     Ok(json!({"ok": true, "appid": appid, "method": "steam_ui"}))
 }
 
-pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+pub fn launch_game_via_steam(
+    appid: u32,
+    requested_pipeline: Option<crate::mtsp::engine::PipelineId>,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -451,10 +838,65 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    let url = format!("steam://run/{}", appid);
-    let pid = spawn_wine_steam(&[&url])?;
+    let pipeline = requested_pipeline.unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+    let prepare_result = if pipeline == crate::mtsp::engine::PipelineId::M12 {
+        Some(crate::mtsp::launcher::prepare_pipeline_with_pipeline(appid, pipeline)?)
+    } else {
+        None
+    };
+    let launch_args: Vec<String> = prepare_result
+        .as_ref()
+        .and_then(|result| result.get("recipe"))
+        .and_then(|recipe| recipe.get("launch_args"))
+        .and_then(|args| args.as_array())
+        .map(|args| args.iter().filter_map(|arg| arg.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let gameprocess_log_len = std::fs::metadata(steam_gameprocess_log_path()).map(|m| m.len()).unwrap_or(0);
+    let url = steam_run_url(appid, &launch_args);
+    let thread_url = url.clone();
+    std::thread::Builder::new().name(format!("steam-handoff-{}", appid)).spawn(move || {
+        if let Err(err) = handoff_steam_url(thread_url.as_str()) {
+            eprintln!("steam handoff failed for appid {}: {}", appid, err);
+        }
+    })?;
 
-    Ok(json!({"ok": true, "pid": pid, "appid": appid}))
+    Ok(json!({
+        "ok": true,
+        "pid": 0,
+        "hostGamePid": null,
+        "steamGamePid": null,
+        "steamConfirmed": false,
+        "launchPending": true,
+        "steamLogOffset": gameprocess_log_len,
+        "steamHandoffPid": null,
+        "appid": appid,
+        "pipeline": pipeline,
+        "launchArgs": launch_args,
+        "prepared": prepare_result
+    }))
+}
+
+pub fn pickup_game_via_steam(
+    appid: u32,
+    requested_pipeline: Option<crate::mtsp::engine::PipelineId>,
+    steam_log_offset: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let pipeline = requested_pipeline.unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+    let host_game_pid = steam_game_process_pids(appid, pipeline).into_iter().next();
+    let steam_game_pid = read_steam_gameprocess_pid_since(appid, steam_log_offset);
+    let steam_confirmed = host_game_pid.is_some() || steam_game_pid.is_some();
+
+    Ok(json!({
+        "ok": true,
+        "appid": appid,
+        "pid": host_game_pid.unwrap_or(0),
+        "hostGamePid": host_game_pid,
+        "steamGamePid": steam_game_pid,
+        "steamConfirmed": steam_confirmed,
+        "launchPending": !steam_confirmed,
+        "pipeline": pipeline,
+        "steamLogOffset": steam_log_offset,
+    }))
 }
 
 pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -467,7 +909,7 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
     }
 
     let url = format!("steam://nav/games/details/{}", appid);
-    let _ = spawn_wine_steam(&[&url])?;
+    let _ = handoff_steam_url(&url)?;
 
     Ok(json!({"ok": true, "appid": appid}))
 }
@@ -518,6 +960,9 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     }
 
     if original_size > 0 && original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        if !files_equal(&original, &wrapper) {
+            let _ = std::fs::copy(&wrapper, &original);
+        }
         if !wrapper_marker.exists() {
             let _ = std::fs::write(&wrapper_marker, "deployed");
         }
@@ -538,6 +983,16 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     if std::fs::copy(&wrapper, &original).is_ok() {
         let _ = std::fs::write(&wrapper_marker, "deployed");
     }
+}
+
+fn files_equal(a: &Path, b: &Path) -> bool {
+    let Ok(a_bytes) = std::fs::read(a) else {
+        return false;
+    };
+    let Ok(b_bytes) = std::fs::read(b) else {
+        return false;
+    };
+    a_bytes == b_bytes
 }
 
 fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
@@ -1230,6 +1685,176 @@ mod tests {
         assert!(!is_single_path_component("../Steam"));
         assert!(!is_single_path_component("nested/game"));
         assert!(!is_single_path_component("/Applications/Steam.app"));
+    }
+
+    #[test]
+    fn wine_steam_uses_ui_safe_dll_overrides() {
+        assert!(!WINE_STEAM_DLL_OVERRIDES.contains("dxgi"));
+        assert!(!WINE_STEAM_DLL_OVERRIDES.contains("d3d11"));
+        assert!(!WINE_STEAM_DLL_OVERRIDES.contains("d3d12"));
+        assert!(!WINE_STEAM_DLL_OVERRIDES.contains("winemetal"));
+        assert!(WINE_STEAM_DLL_OVERRIDES.contains("gameoverlayrenderer"));
+    }
+
+    #[test]
+    fn steam_run_url_carries_launch_args_for_m12_games() {
+        let args = vec!["-force-d3d12".to_string()];
+        assert_eq!(steam_run_url(1326470, &args), "steam://run/1326470//-force-d3d12");
+    }
+
+    #[test]
+    fn steam_run_url_omits_empty_launch_arg_separator() {
+        assert_eq!(steam_run_url(1326470, &[]), "steam://run/1326470");
+    }
+
+    #[test]
+    fn game_process_pickup_matches_real_windows_exe_command() {
+        assert!(process_command_matches_exe(
+            r#""Z:\Volumes\AverySSD\SteamLibrary\steamapps\common\Ghostrunner\Ghostrunner\Binaries\Win64\Ghostrunner-Win64-Shipping.exe" Ghostrunner -STEAM -dx12"#,
+            "Ghostrunner-Win64-Shipping.exe",
+        ));
+    }
+
+    #[test]
+    fn game_process_pickup_rejects_polling_shell_command() {
+        assert!(!process_command_matches_exe(
+            r#"/bin/zsh -lc for i in {1..30}; do curl -sS http://127.0.0.1:9274/steam/pickup-game --data '{"processNames":["Ghostrunner-Win64-Shipping.exe"]}'; sleep 1; done"#,
+            "Ghostrunner-Win64-Shipping.exe",
+        ));
+    }
+
+    #[test]
+    fn game_process_pickup_rejects_steam_url_handoff_shell_command() {
+        assert!(!process_command_matches_exe(
+            r#"/bin/zsh -lc /Users/alexmondello/.metalsharp/runtime/wine/bin/wine start steam://run/1139900//-dx12"#,
+            "Ghostrunner-Win64-Shipping.exe",
+        ));
+    }
+
+    #[test]
+    fn aow4_process_pickup_includes_paradox_launcher_stage() {
+        let names = steam_launch_process_names(1669000, crate::mtsp::engine::PipelineId::M12);
+        assert!(names.iter().any(|name| name == "AOW4.exe"));
+        assert!(names.iter().any(|name| name == "Paradox Launcher.exe"));
+        assert!(process_command_matches_exe(
+            "49883 Z:\\Volumes\\AverySSD\\SteamLibrary\\steamapps\\common\\Age of Wonders 4\\launcher-se\\Paradox Launcher.exe --pdxlEnableSteamDeckCompatibilityMode -dx12",
+            "Paradox Launcher.exe",
+        ));
+    }
+
+    #[test]
+    fn steam_gameprocess_added_pid_matches_appid() {
+        let line = r#"[2026-05-18 00:58:11] AppID 1326470 adding PID 1552 as a tracked process ""Z:\Volumes\AverySSD\SteamLibrary\steamapps\common\Sons Of The Forest\SonsOfTheForest.exe" -force-d3d12""#;
+        assert_eq!(parse_steam_gameprocess_added_pid(line, 1326470), Some(1552));
+        assert_eq!(parse_steam_gameprocess_added_pid(line, 848450), None);
+    }
+
+    #[test]
+    fn steam_gameprocess_added_pid_rejects_non_launch_lines() {
+        let removed = r#"[2026-05-18 00:58:31] AppID 1326470 no longer tracking PID 1552, exit code 0"#;
+        assert_eq!(parse_steam_gameprocess_added_pid(removed, 1326470), None);
+    }
+
+    #[test]
+    fn cef_process_topology_distinguishes_wrapper_and_real_helpers() {
+        let lines = vec![
+            "26896 C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe -nocrashdialog".to_string(),
+            "26898 C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper_real.exe -nocrashdialog --in-process-gpu --disable-gpu".to_string(),
+            "26912 C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper_real.exe --type=renderer --disable-gpu-compositing".to_string(),
+            "26905 C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper_real.exe --type=utility --utility-sub-type=network.mojom.NetworkService".to_string(),
+            "45737 pgrep -afil steamwebhelper".to_string(),
+        ];
+
+        let topology = steam_cef_process_topology_from_lines(&lines);
+        assert_eq!(topology.wrapper_pids, vec![26896]);
+        assert_eq!(topology.real_pids, vec![26898, 26912, 26905]);
+        assert_eq!(topology.renderer_pids, vec![26912]);
+        assert_eq!(topology.utility_pids, vec![26905]);
+        assert!(topology.gpu_disabled);
+        assert!(topology.in_process_gpu);
+    }
+
+    #[test]
+    fn cef_mode_accepts_only_supported_profiles() {
+        assert_eq!(normalize_steam_cef_mode("disable_gpu"), Some("disable_gpu"));
+        assert_eq!(normalize_steam_cef_mode("swiftshader\n"), Some("swiftshader"));
+        assert_eq!(normalize_steam_cef_mode("passthrough"), Some("passthrough"));
+        assert_eq!(normalize_steam_cef_mode("native_gpu"), None);
+    }
+
+    #[test]
+    fn files_equal_detects_wrapper_drift() {
+        let base = std::env::temp_dir().join(format!(
+            "metalsharp-wrapper-drift-{}-{}",
+            std::process::id(),
+            std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let a = base.join("a.exe");
+        let b = base.join("b.exe");
+        std::fs::write(&a, b"wrapper-v1").unwrap();
+        std::fs::write(&b, b"wrapper-v1").unwrap();
+        assert!(files_equal(&a, &b));
+
+        std::fs::write(&b, b"wrapper-v2").unwrap();
+        assert!(!files_equal(&a, &b));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn cef_status_reason_flags_wrapper_drift_before_process_state() {
+        assert_eq!(
+            steam_cef_status_reason(SteamCefReadiness {
+                dir_present: true,
+                wrapper_present: true,
+                wrapper_overwritten: true,
+                real_present: true,
+                real_missing_or_bad: false,
+                wrapper_deployed: false,
+                real_process_running: true,
+                renderer_running: true,
+            }),
+            "wrapper_overwritten"
+        );
+        assert_eq!(
+            steam_cef_status_reason(SteamCefReadiness {
+                dir_present: true,
+                wrapper_present: true,
+                wrapper_overwritten: false,
+                real_present: false,
+                real_missing_or_bad: true,
+                wrapper_deployed: false,
+                real_process_running: true,
+                renderer_running: true,
+            }),
+            "real_helper_missing"
+        );
+        assert_eq!(
+            steam_cef_status_reason(SteamCefReadiness {
+                dir_present: true,
+                wrapper_present: true,
+                wrapper_overwritten: false,
+                real_present: true,
+                real_missing_or_bad: false,
+                wrapper_deployed: true,
+                real_process_running: false,
+                renderer_running: false,
+            }),
+            "real_helper_not_running"
+        );
+        assert_eq!(
+            steam_cef_status_reason(SteamCefReadiness {
+                dir_present: true,
+                wrapper_present: true,
+                wrapper_overwritten: false,
+                real_present: true,
+                real_missing_or_bad: false,
+                wrapper_deployed: true,
+                real_process_running: true,
+                renderer_running: true,
+            }),
+            "ready"
+        );
     }
 
     #[test]

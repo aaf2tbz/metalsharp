@@ -10,7 +10,7 @@ const DEFAULT_M12_SUITE_MAX_PROBE_MS: u64 = 15_000;
 const DEFAULT_M12_SUITE_MAX_TOTAL_MS: u64 = 60_000;
 
 struct M12RuntimeArtifact {
-    name: &'static str,
+    name: String,
     source_path: Option<PathBuf>,
     runtime_path: PathBuf,
     required: bool,
@@ -118,10 +118,18 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
+    prepare_pipeline_with_pipeline(appid, pipeline_id)
+}
+
+pub fn prepare_pipeline_with_pipeline(
+    appid: u32,
+    pipeline_id: PipelineId,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
     deploy_recipe_dlls(&recipe)?;
+    let wine_appdefaults = apply_recipe_appdefault_dll_overrides(&recipe, node)?;
 
     Ok(serde_json::json!({
         "ok": true,
@@ -131,7 +139,90 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "wine_appdefaults": wine_appdefaults,
     }))
+}
+
+fn apply_recipe_appdefault_dll_overrides(
+    recipe: &super::recipe::LaunchRecipe,
+    node: &PipelineNode,
+) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let Some(exe_name) = recipe.exe_name.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let Some(overrides) = node.wine_overrides else {
+        return Ok(Vec::new());
+    };
+
+    let mut applied = Vec::new();
+    for (dll, mode) in appdefault_dll_overrides_for_pipeline(recipe.appid, node.id, overrides) {
+        set_wine_appdefault_dll_override(exe_name, &dll, &mode)?;
+        applied.push(serde_json::json!({
+            "exe": exe_name,
+            "dll": dll,
+            "mode": mode,
+        }));
+    }
+
+    Ok(applied)
+}
+
+fn appdefault_dll_overrides_for_pipeline(_appid: u32, _pipeline: PipelineId, overrides: &str) -> Vec<(String, String)> {
+    parse_wine_dll_overrides(overrides)
+}
+
+fn parse_wine_dll_overrides(overrides: &str) -> Vec<(String, String)> {
+    let mut parsed = Vec::new();
+    for group in overrides.split(';') {
+        let Some((dlls, mode)) = group.split_once('=') else {
+            continue;
+        };
+        let mode = registry_override_mode(mode);
+        for dll in dlls.split(',').map(str::trim).filter(|dll| !dll.is_empty()) {
+            parsed.push((dll.to_string(), mode.clone()));
+        }
+    }
+
+    parsed
+}
+
+fn registry_override_mode(mode: &str) -> String {
+    mode.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| match part {
+            "n" | "native" => "native",
+            "b" | "builtin" => "builtin",
+            "d" | "disabled" => "disabled",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn set_wine_appdefault_dll_override(exe_name: &str, dll: &str, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let ms_root = crate::platform::wine_runtime_root();
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+
+    let prefix = crate::platform::steam_prefix_dir();
+    let key = format!("HKCU\\Software\\Wine\\AppDefaults\\{}\\DllOverrides", exe_name);
+    let mut cmd = Command::new(&wine);
+    cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .args(["reg", "add", &key, "/v", dll, "/t", "REG_SZ", "/d", mode, "/f"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+
+    let status = cmd.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("failed to set Wine AppDefaults override {}={} for {}", dll, mode, exe_name).into())
+    }
 }
 
 pub fn verify_m12_runtime(
@@ -320,7 +411,7 @@ pub fn verify_m12_title_readiness(
             "id": "dxmt_source_cleanliness",
             "detail": "DXMT source tree is not clean enough for AAA title readiness",
             "status": source_status.get("status").cloned().unwrap_or_else(|| serde_json::json!("unknown")),
-            "dirty": source_status.get("dirty").cloned().unwrap_or_else(|| serde_json::json!(null)),
+            "dirty": source_status.get("dirty").cloned().unwrap_or(serde_json::Value::Null),
             "changes": source_status.get("changes").cloned().unwrap_or_else(|| serde_json::json!([])),
         }));
     }
@@ -338,7 +429,7 @@ pub fn verify_m12_title_readiness(
         blockers.push(serde_json::json!({
             "id": "d3d12_agility_shim",
             "detail": "DXMT D3D12 build does not expose the expected Agility SDK compatibility surface",
-            "agility_shim": parity.get("agility_shim").cloned().unwrap_or_else(|| serde_json::json!(null)),
+            "agility_shim": parity.get("agility_shim").cloned().unwrap_or(serde_json::Value::Null),
         }));
     }
 
@@ -566,7 +657,7 @@ pub fn deploy_m12_runtime(
         if let Some(parent) = artifact.runtime_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let backup_path = backup_root.join(artifact.name);
+        let backup_path = backup_root.join(&artifact.name);
         if artifact.runtime_path.exists() {
             if let Some(parent) = backup_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -621,7 +712,7 @@ pub fn verify_m12_readiness(
             "id": "dxmt_source_cleanliness",
             "detail": "DXMT source tree is not clean enough for a safe runtime redeploy",
             "status": source_status.get("status").cloned().unwrap_or_else(|| serde_json::json!("unknown")),
-            "dirty": source_status.get("dirty").cloned().unwrap_or_else(|| serde_json::json!(null)),
+            "dirty": source_status.get("dirty").cloned().unwrap_or(serde_json::Value::Null),
             "changes": source_status.get("changes").cloned().unwrap_or_else(|| serde_json::json!([])),
         }));
     }
@@ -649,7 +740,7 @@ pub fn verify_m12_readiness(
         blockers.push(serde_json::json!({
             "id": "d3d12_agility_shim",
             "detail": "DXMT D3D12 build does not expose the expected Agility SDK compatibility surface",
-            "agility_shim": parity.get("agility_shim").cloned().unwrap_or_else(|| serde_json::json!(null)),
+            "agility_shim": parity.get("agility_shim").cloned().unwrap_or(serde_json::Value::Null),
         }));
     }
 
@@ -689,44 +780,58 @@ fn default_m12_title_appids() -> Vec<u32> {
 }
 
 fn m12_runtime_artifacts(build_root: &Path, ms_root: &Path) -> Vec<M12RuntimeArtifact> {
-    vec![
-        M12RuntimeArtifact {
-            name: "d3d12.dll",
-            source_path: Some(build_root.join("src").join("d3d12").join("d3d12.dll")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
+    let dxmt_windows = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let mut artifacts = Vec::new();
+
+    for (dll, source_dir) in [
+        ("d3d12.dll", "d3d12"),
+        ("d3d11.dll", "d3d11"),
+        ("dxgi.dll", "dxgi"),
+        ("winemetal.dll", "winemetal"),
+        ("d3d10core.dll", "d3d10"),
+    ] {
+        let source_name = if dll == "d3d10core.dll" { "d3d10core.dll" } else { dll };
+        let source_path = build_root.join("src").join(source_dir).join(source_name);
+        artifacts.push(M12RuntimeArtifact {
+            name: format!("dxmt-runtime/{}", dll),
+            source_path: Some(source_path.clone()),
+            runtime_path: dxmt_windows.join(dll),
             required: true,
-        },
-        M12RuntimeArtifact {
-            name: "d3d11.dll",
-            source_path: Some(build_root.join("src").join("d3d11").join("d3d11.dll")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
+        });
+    }
+
+    artifacts.push(M12RuntimeArtifact {
+        name: "dxmt-runtime/winemetal.so".into(),
+        source_path: Some(build_root.join("src").join("winemetal").join("unix").join("winemetal.so")),
+        runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
+        required: true,
+    });
+
+    for (dll, source_dir) in [("d3d12.dll", "d3d12"), ("dxgi.dll", "dxgi"), ("d3d10core.dll", "d3d10")] {
+        let source_path = build_root.join("src").join(source_dir).join(dll);
+        artifacts.push(M12RuntimeArtifact {
+            name: format!("wine-builtin/{}", dll),
+            source_path: Some(source_path),
+            runtime_path: ms_root.join("lib").join("wine").join("x86_64-windows").join(dll),
             required: true,
-        },
-        M12RuntimeArtifact {
-            name: "dxgi.dll",
-            source_path: Some(build_root.join("src").join("dxgi").join("dxgi.dll")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
-            required: true,
-        },
-        M12RuntimeArtifact {
-            name: "winemetal.dll",
-            source_path: Some(build_root.join("src").join("winemetal").join("winemetal.dll")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
-            required: true,
-        },
-        M12RuntimeArtifact {
-            name: "winemetal.so",
-            source_path: Some(build_root.join("src").join("winemetal").join("unix").join("winemetal.so")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
-            required: true,
-        },
-        M12RuntimeArtifact {
-            name: "d3d10core.dll",
-            source_path: Some(build_root.join("src").join("d3d10").join("d3d10core.dll")),
-            runtime_path: ms_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
-            required: true,
-        },
-    ]
+        });
+    }
+
+    artifacts.push(M12RuntimeArtifact {
+        name: "wine-builtin/winemetal.dll".into(),
+        source_path: Some(build_root.join("src").join("winemetal").join("winemetal.dll")),
+        runtime_path: ms_root.join("lib").join("wine").join("x86_64-windows").join("winemetal.dll"),
+        required: true,
+    });
+
+    artifacts.push(M12RuntimeArtifact {
+        name: "wine-builtin/winemetal.so".into(),
+        source_path: Some(build_root.join("src").join("winemetal").join("unix").join("winemetal.so")),
+        runtime_path: ms_root.join("lib").join("wine").join("x86_64-unix").join("winemetal.so"),
+        required: true,
+    });
+
+    artifacts
 }
 
 fn select_m12_build_root(dxmt_root: &Path) -> PathBuf {
@@ -1007,7 +1112,7 @@ fn run_m12_probe(
     let run_dir = create_probe_run_dir(&ms_home)?;
     let probe_name = probe_source.file_name().ok_or("M12 probe path does not have a filename")?;
     let staged_probe = run_dir.join(probe_name);
-    std::fs::copy(&probe_source, &staged_probe)?;
+    std::fs::copy(probe_source, &staged_probe)?;
 
     let recipe = super::recipe::build_custom_launch_recipe(launch_id, node, &run_dir, Some(&staged_probe))?;
     deploy_recipe_dlls(&recipe)?;
@@ -1038,7 +1143,7 @@ fn run_m12_probe(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
-    cmd.arg(&exe_name.to_string());
+    cmd.arg(exe_name.to_string());
     cmd.args(&node.launch_args);
 
     let timeout_ms = timeout_ms.clamp(1_000, 120_000);
@@ -2147,6 +2252,49 @@ mod tests {
 
         assert_eq!(select_m12_build_root(&root), root.join("build64"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn m12_appdefaults_keep_full_native_dx_surface_for_game_exes() {
+        let entries = appdefault_dll_overrides_for_pipeline(
+            1669000,
+            PipelineId::M12,
+            "d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer=d",
+        );
+
+        assert!(entries.contains(&("d3d12".into(), "native,builtin".into())));
+        assert!(entries.contains(&("dxgi".into(), "native,builtin".into())));
+        assert!(entries.contains(&("winemetal".into(), "native,builtin".into())));
+        assert!(entries.contains(&("d3d11".into(), "native,builtin".into())));
+        assert!(entries.contains(&("d3d10core".into(), "native,builtin".into())));
+    }
+
+    #[test]
+    fn sons_m12_appdefaults_keep_d3d11_and_d3d12_native() {
+        let entries = appdefault_dll_overrides_for_pipeline(
+            1326470,
+            PipelineId::M12,
+            "d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer=d",
+        );
+
+        assert!(entries.contains(&("d3d12".into(), "native,builtin".into())));
+        assert!(entries.contains(&("dxgi".into(), "native,builtin".into())));
+        assert!(entries.contains(&("d3d11".into(), "native,builtin".into())));
+        assert!(entries.contains(&("d3d10core".into(), "native,builtin".into())));
+        assert!(entries.contains(&("winemetal".into(), "native,builtin".into())));
+    }
+
+    #[test]
+    fn subnautica_m12_appdefaults_keep_dx12_and_dx11_native() {
+        let entries = appdefault_dll_overrides_for_pipeline(
+            848450,
+            PipelineId::M12,
+            "d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer=d",
+        );
+
+        assert!(entries.contains(&("d3d12".into(), "native,builtin".into())));
+        assert!(entries.contains(&("dxgi".into(), "native,builtin".into())));
+        assert!(entries.contains(&("d3d11".into(), "native,builtin".into())));
     }
 
     #[test]

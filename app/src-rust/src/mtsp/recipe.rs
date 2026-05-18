@@ -44,8 +44,15 @@ pub struct RuntimeAsset {
 }
 
 fn launch_args_for(appid: u32, node: &PipelineNode) -> Vec<String> {
-    if node.id == PipelineId::M12 && matches!(appid, 848450 | 1326470) {
-        return vec!["-force-d3d12".into()];
+    if node.id == PipelineId::M12 {
+        match appid {
+            // Unity 2019 accepts -dx12 as a Steam prompt argument but still initializes D3D11.
+            // -force-gfx-without-build lets us test D3D12 even if the title's normal API list
+            // omits it from the player build.
+            848450 => return vec!["-force-d3d12".into(), "-force-gfx-without-build".into()],
+            1326470 => return vec!["-force-d3d12".into()],
+            _ => {},
+        }
     }
 
     node.launch_args.iter().map(|arg| arg.to_string()).collect()
@@ -449,6 +456,9 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
 
 fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
     match appid {
+        848450 => &["SubnauticaZero.exe"],
+        1326470 => &["SonsOfTheForest.exe"],
+        1669000 => &["AOW4.exe"],
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
@@ -765,11 +775,11 @@ mod tests {
     }
 
     #[test]
-    fn m12_unity_titles_use_force_d3d12() {
+    fn m12_titles_use_title_specific_dx12_flags() {
         let m12 = super::super::engine::get_pipeline(PipelineId::M12);
 
         assert_eq!(launch_args_for(1326470, m12), vec!["-force-d3d12"]);
-        assert_eq!(launch_args_for(848450, m12), vec!["-force-d3d12"]);
+        assert_eq!(launch_args_for(848450, m12), vec!["-force-d3d12", "-force-gfx-without-build"]);
     }
 
     fn test_dir(name: &str) -> PathBuf {

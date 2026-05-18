@@ -168,7 +168,7 @@ fn setup_migration_status(ms_dir: &Path) -> Option<serde_json::Value> {
 }
 
 fn runtime_needs_repair(ms_dir: &Path, setup_completed: bool) -> bool {
-    if runtime_core_ready(&ms_dir) {
+    if runtime_core_ready(ms_dir) {
         return false;
     }
 

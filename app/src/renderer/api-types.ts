@@ -18,6 +18,20 @@ interface SteamStatus {
   mac_path?: string;
   mac_install_url?: string;
   running: boolean;
+  cef?: SteamCefStatus;
+}
+
+interface SteamCefStatus {
+  ready: boolean;
+  reason: string;
+  mode: "disable_gpu" | "swiftshader" | "passthrough";
+  supported_modes: string[];
+  wrapper_deployed: boolean;
+  wrapper_overwritten: boolean;
+  wrapper_matches_bundled: boolean;
+  pending_wrapper_update: boolean;
+  real_process_running: boolean;
+  renderer_running: boolean;
 }
 
 interface LoginState {

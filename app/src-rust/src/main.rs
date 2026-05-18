@@ -205,6 +205,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/steam/status") => resp(200, steam::status()),
+        (Method::Post, "/steam/cef-mode") => {
+            let body = read_body(req);
+            let mode = body.get("mode").and_then(|v| v.as_str());
+            match mode {
+                Some(mode) => match steam::set_steam_cef_mode(mode) {
+                    Ok(v) => resp(200, v),
+                    Err(e) => resp(400, json!({"ok": false, "error": e.to_string()})),
+                },
+                None => resp(400, json!({"ok": false, "error": "mode required"})),
+            }
+        },
         (Method::Get, "/steam/library") => {
             app_log("Loading Steam library...");
             let result = steam::library();
@@ -306,9 +317,43 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Launching game via Wine Steam: appid {}", id));
-                    match steam::launch_game_via_steam(id as u32) {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible);
+                    app_log(&format!(
+                        "Launching game via Wine Steam: appid {}{}",
+                        id,
+                        requested_pipeline.map(|pipeline| format!(" pipeline {:?}", pipeline)).unwrap_or_default()
+                    ));
+                    match steam::launch_game_via_steam(id as u32, requested_pipeline) {
                         Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
+        (Method::Post, "/steam/pickup-game") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible);
+                    let steam_log_offset = body.get("steamLogOffset").and_then(|v| v.as_u64()).unwrap_or(0);
+                    match steam::pickup_game_via_steam(id as u32, requested_pipeline, steam_log_offset) {
+                        Ok(v) => {
+                            let host_pid = v.get("hostGamePid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                            if host_pid > 0 {
+                                register_game_pid(id as u32, host_pid);
+                            }
+                            resp(200, v)
+                        },
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 },
@@ -458,9 +503,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
-                Some(id) => match mtsp::launcher::prepare_pipeline(id as u32) {
-                    Ok(v) => resp(200, v),
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Some(id) => {
+                    let requested_pipeline = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .and_then(mtsp::engine::PipelineId::from_str_flexible)
+                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    match mtsp::launcher::prepare_pipeline_with_pipeline(id as u32, requested_pipeline) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
@@ -678,6 +731,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/mtsp/m12-title-observe") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let steam_log_offset = body.get("steamLogOffset").and_then(|v| v.as_u64());
             let extra_logs: Vec<std::path::PathBuf> = body
                 .get("extraLogs")
                 .and_then(|v| v.as_array())
@@ -685,8 +739,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .unwrap_or_default();
             match appid {
                 Some(id) => {
-                    app_log(&format!("[M12] title observation started: appid={} extra_logs={}", id, extra_logs.len()));
-                    match mtsp::observe::observe_m12_title(id, extra_logs) {
+                    app_log(&format!(
+                        "[M12] title observation started: appid={} extra_logs={} steam_log_offset={:?}",
+                        id,
+                        extra_logs.len(),
+                        steam_log_offset
+                    ));
+                    match mtsp::observe::observe_m12_title(
+                        id,
+                        extra_logs,
+                        mtsp::observe::ObservationScope { steam_log_offset },
+                    ) {
                         Ok(v) => {
                             app_log(&format!(
                                 "[M12] title observation finished: appid={} status={}",
@@ -888,6 +951,45 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
                         },
                     };
+                    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+                        let result = steam::launch_game_via_steam(id as u32, Some(pipeline));
+                        match result {
+                            Ok(v) => {
+                                let pid = v.get("pid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                                let launch_pending =
+                                    v.get("launchPending").and_then(|value| value.as_bool()).unwrap_or(false);
+                                let host_pid =
+                                    v.get("hostGamePid").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+                                if host_pid > 0 && !launch_pending {
+                                    register_game_pid(id as u32, host_pid);
+                                }
+                                app_log(&format!(
+                                    "[LAUNCHED] appid {} | pid {} | engine: {} | route: wine_steam | pending={}",
+                                    id, pid, engine_desc, launch_pending
+                                ));
+                                return resp(
+                                    200,
+                                    json!({
+                                        "ok": true,
+                                        "pid": pid,
+                                        "gameType": "m12_steam",
+                                        "appid": id,
+                                        "engine": engine_desc,
+                                        "launchPending": launch_pending,
+                                        "steamConfirmed": v.get("steamConfirmed").and_then(|value| value.as_bool()).unwrap_or(false),
+                                        "steamLogOffset": v.get("steamLogOffset").and_then(|value| value.as_u64()).unwrap_or(0),
+                                        "hostGamePid": v.get("hostGamePid").cloned().unwrap_or(serde_json::Value::Null),
+                                        "steamGamePid": v.get("steamGamePid").cloned().unwrap_or(serde_json::Value::Null),
+                                        "steam": v,
+                                    }),
+                                );
+                            },
+                            Err(e) => {
+                                app_log(&format!("[LAUNCH FAILED] appid {} | steam m12 route: {}", id, e));
+                                return resp(500, json!({"ok": false, "error": e.to_string()}));
+                            },
+                        }
+                    }
                     let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline);
                     match result {
                         Ok((pid, game_type)) => {

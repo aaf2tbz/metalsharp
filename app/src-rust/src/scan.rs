@@ -318,59 +318,6 @@ fn scan_steam_library() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     Ok(games)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn wine_libraries_include_legacy_prefix_when_active_home_moved() {
-        let root = test_dir("legacy-wine-library");
-        let active_steamapps = root.join("active").join("steamapps");
-        let legacy_steamapps = root.join("legacy").join("steamapps");
-        let external_library = root.join("external");
-
-        fs::create_dir_all(&legacy_steamapps).expect("create legacy steamapps");
-        fs::create_dir_all(external_library.join("steamapps")).expect("create external steamapps");
-        fs::write(
-            legacy_steamapps.join("libraryfolders.vdf"),
-            format!(
-                "\"libraryfolders\"\n{{\n  \"1\"\n  {{\n    \"path\"\t\t\"{}\"\n  }}\n}}\n",
-                external_library.to_string_lossy()
-            ),
-        )
-        .expect("write libraryfolders");
-
-        let paths = collect_wine_steam_library_paths(active_steamapps, Some(legacy_steamapps.clone()));
-
-        assert!(paths.contains(&legacy_steamapps));
-        assert!(paths.contains(&external_library.join("steamapps")));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn wine_libraries_deduplicate_active_and_legacy_prefix() {
-        let root = test_dir("dedupe-wine-library");
-        let steamapps = root.join("steamapps");
-        fs::create_dir_all(&steamapps).expect("create steamapps");
-
-        let paths = collect_wine_steam_library_paths(steamapps.clone(), Some(steamapps.clone()));
-
-        assert_eq!(paths, vec![steamapps]);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    fn test_dir(name: &str) -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        dir.push(format!("metalsharp-scan-{}-{}-{}", name, std::process::id(), unique_suffix()));
-        dir
-    }
-
-    fn unique_suffix() -> u128 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
-    }
-}
-
 fn is_valid_game_exe(name: &str) -> bool {
     let lower = name.to_lowercase();
     !lower.contains("setup")
@@ -449,4 +396,57 @@ fn scan_local_exes() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     }
 
     Ok(games)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn wine_libraries_include_legacy_prefix_when_active_home_moved() {
+        let root = test_dir("legacy-wine-library");
+        let active_steamapps = root.join("active").join("steamapps");
+        let legacy_steamapps = root.join("legacy").join("steamapps");
+        let external_library = root.join("external");
+
+        fs::create_dir_all(&legacy_steamapps).expect("create legacy steamapps");
+        fs::create_dir_all(external_library.join("steamapps")).expect("create external steamapps");
+        fs::write(
+            legacy_steamapps.join("libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\"\n{{\n  \"1\"\n  {{\n    \"path\"\t\t\"{}\"\n  }}\n}}\n",
+                external_library.to_string_lossy()
+            ),
+        )
+        .expect("write libraryfolders");
+
+        let paths = collect_wine_steam_library_paths(active_steamapps, Some(legacy_steamapps.clone()));
+
+        assert!(paths.contains(&legacy_steamapps));
+        assert!(paths.contains(&external_library.join("steamapps")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wine_libraries_deduplicate_active_and_legacy_prefix() {
+        let root = test_dir("dedupe-wine-library");
+        let steamapps = root.join("steamapps");
+        fs::create_dir_all(&steamapps).expect("create steamapps");
+
+        let paths = collect_wine_steam_library_paths(steamapps.clone(), Some(steamapps.clone()));
+
+        assert_eq!(paths, vec![steamapps]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("metalsharp-scan-{}-{}-{}", name, std::process::id(), unique_suffix()));
+        dir
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
 }

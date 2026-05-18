@@ -1,8 +1,12 @@
 use super::engine::{get_pipeline, PipelineId};
 use serde::Serialize;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
+
+const MAX_LOG_SCAN_BYTES: u64 = 512 * 1024;
 
 #[derive(Debug, Default, Clone, Serialize)]
 struct RuntimeSignals {
@@ -39,9 +43,27 @@ struct ObservedLog {
     modified_unix: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ObservedProcess {
+    pid: u32,
+    command: String,
+    modules: Vec<String>,
+    d3d12_dll_loaded: bool,
+    d3d11_dll_loaded: bool,
+    dxgi_dll_loaded: bool,
+    winemetal_loaded: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservationScope {
+    pub steam_log_offset: Option<u64>,
+}
+
 pub fn observe_m12_title(
     appid: u32,
     extra_logs: Vec<PathBuf>,
+    scope: ObservationScope,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let node = get_pipeline(PipelineId::M12);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
@@ -61,8 +83,10 @@ pub fn observe_m12_title(
         if !log.present {
             continue;
         }
-        scan_log_for_signals(&log.path, &mut signals, &mut evidence);
+        let start_offset = if log.kind == "steam_gameprocess" { scope.steam_log_offset } else { None };
+        scan_log_for_signals(&log.path, start_offset, &mut signals, &mut evidence);
     }
+    let processes = observe_live_processes(recipe.exe_name.as_deref(), &mut signals, &mut evidence);
 
     let status = classify_runtime(&signals);
     let ok = matches!(status, "d3d12_device_created" | "d3d11on12_over_d3d12");
@@ -77,6 +101,8 @@ pub fn observe_m12_title(
         "signals": signals,
         "evidence": evidence,
         "logs": logs,
+        "processes": processes,
+        "scope": scope,
         "recipe": recipe,
         "warnings": warnings,
     });
@@ -150,11 +176,22 @@ fn push_unity_player_logs(logs: &mut Vec<ObservedLog>, prefix: &Path, exe_name: 
 }
 
 fn player_log_mentions(path: &Path, needle: &str) -> bool {
-    read_lossy(path).map(|content| content.to_ascii_lowercase().contains(needle)).unwrap_or(false)
+    read_tail_lossy(path, MAX_LOG_SCAN_BYTES)
+        .map(|content| content.to_ascii_lowercase().contains(needle))
+        .unwrap_or(false)
 }
 
-fn scan_log_for_signals(path: &Path, signals: &mut RuntimeSignals, evidence: &mut Vec<SignalEvidence>) {
-    let Ok(content) = read_lossy(path) else {
+fn scan_log_for_signals(
+    path: &Path,
+    start_offset: Option<u64>,
+    signals: &mut RuntimeSignals,
+    evidence: &mut Vec<SignalEvidence>,
+) {
+    let content = match start_offset {
+        Some(offset) => read_from_offset_lossy(path, offset, MAX_LOG_SCAN_BYTES),
+        None => read_tail_lossy(path, MAX_LOG_SCAN_BYTES),
+    };
+    let Ok(content) = content else {
         return;
     };
 
@@ -171,8 +208,121 @@ fn scan_log_for_signals(path: &Path, signals: &mut RuntimeSignals, evidence: &mu
     }
 }
 
-fn read_lossy(path: &Path) -> std::io::Result<String> {
-    let bytes = std::fs::read(path)?;
+fn observe_live_processes(
+    exe_name: Option<&str>,
+    signals: &mut RuntimeSignals,
+    evidence: &mut Vec<SignalEvidence>,
+) -> Vec<ObservedProcess> {
+    let Some(exe_name) = exe_name else {
+        return Vec::new();
+    };
+    let exe_lower = exe_name.to_ascii_lowercase();
+    let mut processes = Vec::new();
+    for line in process_lines() {
+        let Some((pid, command)) = parse_process_line(&line) else {
+            continue;
+        };
+        if is_process_probe_command(command) || !command.to_ascii_lowercase().contains(&exe_lower) {
+            continue;
+        }
+
+        let modules = process_modules(pid);
+        let process = ObservedProcess {
+            pid,
+            command: command.to_string(),
+            d3d12_dll_loaded: modules.iter().any(|path| module_matches(path, "d3d12.dll")),
+            d3d11_dll_loaded: modules.iter().any(|path| module_matches(path, "d3d11.dll")),
+            dxgi_dll_loaded: modules.iter().any(|path| module_matches(path, "dxgi.dll")),
+            winemetal_loaded: modules.iter().any(|path| module_matches(path, "winemetal")),
+            modules,
+        };
+        apply_process_signals(&process, signals, evidence);
+        processes.push(process);
+    }
+    processes
+}
+
+fn apply_process_signals(process: &ObservedProcess, signals: &mut RuntimeSignals, evidence: &mut Vec<SignalEvidence>) {
+    let process_path = PathBuf::from(format!("process:{}", process.pid));
+    if process.d3d12_dll_loaded {
+        signals.d3d12_dll_loaded = true;
+        evidence.push(SignalEvidence {
+            signal: "d3d12_dll_loaded",
+            path: process_path.clone(),
+            line: 0,
+            text: format!("{} loaded d3d12.dll", process.command),
+        });
+    }
+    if process.d3d11_dll_loaded {
+        signals.d3d11_loaded = true;
+        evidence.push(SignalEvidence {
+            signal: "d3d11_loaded",
+            path: process_path,
+            line: 0,
+            text: format!("{} loaded d3d11.dll", process.command),
+        });
+    }
+}
+
+fn process_lines() -> Vec<String> {
+    Command::new("ps")
+        .args(["axo", "pid=,command="])
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().map(|line| line.to_string()).collect())
+        .unwrap_or_default()
+}
+
+fn parse_process_line(line: &str) -> Option<(u32, &str)> {
+    let trimmed = line.trim_start();
+    let split = trimmed.find(char::is_whitespace)?;
+    let pid = trimmed[..split].parse::<u32>().ok()?;
+    Some((pid, trimmed[split..].trim_start()))
+}
+
+fn is_process_probe_command(command: &str) -> bool {
+    command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") || command.contains("lsof -p")
+}
+
+fn process_modules(pid: u32) -> Vec<String> {
+    let output = Command::new("lsof").args(["-p", &pid.to_string()]).output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout).lines().skip(1).filter_map(lsof_path).collect()
+}
+
+fn lsof_path(line: &str) -> Option<String> {
+    let path_start = line.find('/')?;
+    Some(line[path_start..].trim().to_string())
+}
+
+fn module_matches(path: &str, needle: &str) -> bool {
+    path.to_ascii_lowercase().contains(needle)
+}
+
+fn read_tail_lossy(path: &Path, max_bytes: u64) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::Start(len - max_bytes))?;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn read_from_offset_lossy(path: &Path, start_offset: u64, max_bytes: u64) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    if start_offset >= len {
+        return Ok(String::new());
+    }
+    let bytes_available = len - start_offset;
+    let offset = if bytes_available > max_bytes { len - max_bytes } else { start_offset };
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -301,14 +451,14 @@ fn classify_runtime(signals: &RuntimeSignals) -> &'static str {
     if signals.d3d12_device_created {
         return "d3d12_device_created";
     }
+    if signals.d3d12_dll_loaded {
+        return "d3d12_dll_loaded_no_device";
+    }
     if signals.d3d11_fallback && signals.dx12_requested {
         return "d3d11_fallback_after_dx12_request";
     }
     if signals.d3d11_fallback || signals.d3d11_loaded {
         return "d3d11_observed";
-    }
-    if signals.d3d12_dll_loaded {
-        return "d3d12_dll_loaded_no_device";
     }
     if signals.dxgi_factory_or_swapchain {
         return "dxgi_only";
@@ -426,6 +576,48 @@ mod tests {
     #[test]
     fn classifies_d3d12_device_creation() {
         assert_eq!(classify(&["info:  D3D12 device created via DXMT Metal backend"]), "d3d12_device_created");
+    }
+
+    #[test]
+    fn d3d12_dll_load_takes_priority_over_stale_d3d11_fallback() {
+        let mut signals = RuntimeSignals {
+            dx12_requested: true,
+            d3d12_dll_loaded: true,
+            d3d11_fallback: true,
+            ..RuntimeSignals::default()
+        };
+        assert_eq!(classify_runtime(&signals), "d3d12_dll_loaded_no_device");
+
+        signals.d3d12_device_created = true;
+        assert_eq!(classify_runtime(&signals), "d3d12_device_created");
+    }
+
+    #[test]
+    fn lsof_path_extracts_loaded_module_path() {
+        let line = "Subnautic 83764 alexmondello  txt REG 1,24 123 456 /Volumes/AverySSD/SubnauticaZero/d3d12.dll";
+        assert_eq!(lsof_path(line).as_deref(), Some("/Volumes/AverySSD/SubnauticaZero/d3d12.dll"));
+    }
+
+    #[test]
+    fn scan_log_for_signals_honors_start_offset() {
+        let path = std::env::temp_dir().join(format!(
+            "metalsharp-observe-offset-{}-{}.log",
+            std::process::id(),
+            UNIX_EPOCH.elapsed().unwrap().as_nanos()
+        ));
+        let stale = "SubnauticaZero.exe -dx12\ngraphicsDeviceType = Direct3D11\n";
+        let current = "SubnauticaZero.exe -force-d3d12\ninfo:  D3D12 device created via DXMT Metal backend\n";
+        std::fs::write(&path, format!("{}{}", stale, current)).unwrap();
+
+        let mut signals = RuntimeSignals::default();
+        let mut evidence = Vec::new();
+        scan_log_for_signals(&path, Some(stale.len() as u64), &mut signals, &mut evidence);
+        std::fs::remove_file(&path).ok();
+
+        assert!(signals.dx12_requested);
+        assert!(signals.d3d12_device_created);
+        assert!(!signals.d3d11_fallback);
+        assert_eq!(classify_runtime(&signals), "d3d12_device_created");
     }
 
     #[test]
