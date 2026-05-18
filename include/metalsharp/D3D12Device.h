@@ -50,6 +50,7 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <d3d/D3D12.h>
@@ -230,15 +231,7 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
 
     HRESULT ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) override;
     HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override;
-    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override {
-        if (!pFence)
-            return E_INVALIDARG;
-        pFence->AddRef();
-        return enqueueQueueWork([pFence, Value] {
-            pFence->SetEventOnCompletion(Value, nullptr);
-            pFence->Release();
-        });
-    }
+    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override;
 
     bool hasQueuedWork() {
         std::lock_guard<std::mutex> lock(m_queueState->mutex);

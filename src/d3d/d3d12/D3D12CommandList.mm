@@ -1164,6 +1164,30 @@ HRESULT D3D12CommandQueueImpl::Signal(ID3D12Fence* pFence, UINT64 Value) {
     });
 }
 
+HRESULT D3D12CommandQueueImpl::Wait(ID3D12Fence* pFence, UINT64 Value) {
+    if (!pFence)
+        return E_INVALIDARG;
+
+    pFence->AddRef();
+    auto state = m_queueState;
+    return enqueueQueueWork([state, pFence, Value] {
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->stopping)
+                    break;
+            }
+
+            UINT64 completed = 0;
+            if (SUCCEEDED(pFence->GetCompletedValue(&completed)) && completed >= Value)
+                break;
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        pFence->Release();
+    });
+}
+
 HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
     if (hasQueuedWork()) {
         std::vector<ID3D12CommandList*> lists;

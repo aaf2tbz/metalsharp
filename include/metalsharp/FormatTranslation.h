@@ -54,6 +54,7 @@ enum class DXGITranslation {
     DXGI_FORMAT_R16G16_SNORM = 37,
     DXGI_FORMAT_R16G16_SINT = 38,
     DXGI_FORMAT_R32_TYPELESS = 39,
+    DXGI_FORMAT_D32_FLOAT = 40,
     DXGI_FORMAT_R32_FLOAT = 41,
     DXGI_FORMAT_R32_UINT = 42,
     DXGI_FORMAT_R32_SINT = 43,
@@ -121,7 +122,7 @@ enum class DXGITranslation {
     DXGI_FORMAT_R10G10B10A2_TYPELESS_COMPAT = 118,
 };
 
-constexpr DXGITranslation DXGI_FORMAT_D32_FLOAT = DXGITranslation::DXGI_FORMAT_R32_TYPELESS;
+constexpr DXGITranslation DXGI_FORMAT_D32_FLOAT = DXGITranslation::DXGI_FORMAT_D32_FLOAT;
 
 uint32_t dxgiFormatToMetal(DXGITranslation format);
 uint32_t dxgiDepthFormatToMetal(DXGITranslation format);

@@ -91,6 +91,7 @@ uint32_t dxgiFormatToMetal(DXGITranslation format) {
         return MTLPixelFormatRG16Sint;
 
     case DXGITranslation::DXGI_FORMAT_R32_TYPELESS:
+    case DXGITranslation::DXGI_FORMAT_D32_FLOAT:
     case DXGITranslation::DXGI_FORMAT_R32_FLOAT:
         return MTLPixelFormatR32Float;
     case DXGITranslation::DXGI_FORMAT_R32_UINT:
@@ -267,6 +268,7 @@ uint32_t dxgiFormatToBytesPerPixel(DXGITranslation format) {
     case DXGITranslation::DXGI_FORMAT_R16G16_TYPELESS:
     case DXGITranslation::DXGI_FORMAT_D24_UNORM_S8_UINT:
     case DXGITranslation::DXGI_FORMAT_R32_FLOAT:
+    case DXGITranslation::DXGI_FORMAT_D32_FLOAT:
     case DXGITranslation::DXGI_FORMAT_R32_UINT:
     case DXGITranslation::DXGI_FORMAT_R32_SINT:
     case DXGITranslation::DXGI_FORMAT_R9G9B9E5_SHAREDEXP:

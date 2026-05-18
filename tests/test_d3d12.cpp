@@ -297,6 +297,27 @@ int main() {
             signalFence->Release();
     }
 
+    printf("\n--- Command Queue Pending Wait Teardown ---\n");
+    if (device) {
+        ID3D12CommandQueue* teardownQueue = nullptr;
+        ID3D12Fence* pendingFence = nullptr;
+        hr = device->CreateCommandQueue(nullptr, IID_ID3D12CommandQueue, (void**)&teardownQueue);
+        CHECK(SUCCEEDED(hr) && teardownQueue, "Create teardown command queue");
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&pendingFence);
+        CHECK(SUCCEEDED(hr) && pendingFence, "Create pending wait fence");
+        if (teardownQueue && pendingFence) {
+            hr = teardownQueue->Wait(pendingFence, 1);
+            CHECK(SUCCEEDED(hr), "Queue wait can remain pending before teardown");
+            teardownQueue->Release();
+            teardownQueue = nullptr;
+            CHECK(true, "Command queue teardown cancels pending wait worker");
+        }
+        if (teardownQueue)
+            teardownQueue->Release();
+        if (pendingFence)
+            pendingFence->Release();
+    }
+
     printf("\n--- Command Signature ---\n");
     ID3D12CommandSignature* cmdSig = nullptr;
     if (device) {
