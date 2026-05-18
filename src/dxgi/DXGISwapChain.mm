@@ -7,6 +7,7 @@
 
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/DXGI.h>
+#include <metalsharp/FormatTranslation.h>
 #include <metalsharp/Platform.h>
 #ifdef METALSHARP_NATIVE_LOADER
 #include <metalsharp/WindowManager.h>
@@ -18,6 +19,29 @@
 #include <Metal/Metal.h>
 #include <QuartzCore/QuartzCore.h>
 
+static MTLPixelFormat dxgiFormatToSwapchainMetal(DXGI_FORMAT format) {
+    switch (format) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        return MTLPixelFormatBGRA8Unorm;
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return MTLPixelFormatBGRA8Unorm;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        return MTLPixelFormatRGBA16Float;
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+        return MTLPixelFormatRGB10A2Unorm;
+    case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+        return MTLPixelFormatBGR10A2Unorm;
+    default:
+        return MTLPixelFormatBGRA8Unorm;
+    }
+}
+
+static bool isHDRFormat(DXGI_FORMAT format) {
+    return format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM;
+}
+
 namespace metalsharp {
 
 struct MetalSwapChain::Impl {
@@ -28,6 +52,8 @@ struct MetalSwapChain::Impl {
     uint32_t bufferCount = 2;
     uint32_t width = 0;
     uint32_t height = 0;
+    DXGI_FORMAT dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+    bool hdrEnabled = false;
 };
 
 MetalSwapChain::MetalSwapChain() : m_impl(new Impl()) {}
@@ -35,12 +61,15 @@ MetalSwapChain::~MetalSwapChain() {
     delete m_impl;
 }
 
-bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount) {
+bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uint32_t height, uint32_t bufferCount, DXGI_FORMAT format) {
     m_impl->device = (__bridge id<MTLDevice>)device.nativeDevice();
     m_impl->commandQueue = (__bridge id<MTLCommandQueue>)device.nativeCommandQueue();
     m_impl->width = width;
     m_impl->height = height;
     m_impl->bufferCount = bufferCount;
+    m_impl->dxgiFormat = format;
+
+    MTLPixelFormat metalFormat = dxgiFormatToSwapchainMetal(format);
 
     if (window) {
         NSView* view = nil;
@@ -58,7 +87,7 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
         if (view) {
             m_impl->layer = [CAMetalLayer layer];
             m_impl->layer.device = m_impl->device;
-            m_impl->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+            m_impl->layer.pixelFormat = metalFormat;
             m_impl->layer.framebufferOnly = NO;
             m_impl->layer.frame = view.bounds;
             m_impl->layer.drawableSize =
@@ -66,10 +95,21 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
             view.wantsLayer = YES;
             view.layer = m_impl->layer;
 
+            if (isHDRFormat(format)) {
+                m_impl->hdrEnabled = true;
+                m_impl->layer.wantsExtendedDynamicRangeContent = YES;
+                if (@available(macOS 10.15.4, *)) {
+                    m_impl->layer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);
+                }
+            }
+
             if (width == 0 || height == 0) {
                 m_impl->width = (uint32_t)view.bounds.size.width;
                 m_impl->height = (uint32_t)view.bounds.size.height;
             }
+
+            fprintf(stderr, "[MetalSharp] Swapchain: DXGI 0x%x -> MTLPixelFormat %u, HDR=%s\n",
+                    format, (unsigned)metalFormat, m_impl->hdrEnabled ? "true" : "false");
         }
     }
 
@@ -77,9 +117,9 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
 }
 
 MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32_t width, uint32_t height,
-                                       uint32_t bufferCount) {
+                                        uint32_t bufferCount, DXGI_FORMAT format) {
     auto* chain = new MetalSwapChain();
-    if (!chain->init(device, window, width, height, bufferCount)) {
+    if (!chain->init(device, window, width, height, bufferCount, format)) {
         delete chain;
         return nullptr;
     }
@@ -201,7 +241,7 @@ HRESULT DXGISwapChainImpl::create(MetalDevice* metalDevice, HWND window, uint32_
     swapChain->m_format = format;
     swapChain->m_bufferCount = bufferCount;
 
-    swapChain->m_metalSwapChain.reset(MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount));
+    swapChain->m_metalSwapChain.reset(MetalSwapChain::create(*metalDevice, (void*)window, width, height, bufferCount, format));
 
     if (!swapChain->m_metalSwapChain) {
         delete swapChain;

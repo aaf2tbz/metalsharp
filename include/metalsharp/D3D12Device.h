@@ -61,6 +61,16 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <os/lock.h>
+
+#ifdef __APPLE__
+extern "C" {
+int os_sync_wait_on_address(volatile void* addr, uint64_t value, uint32_t size, uint32_t flags);
+int os_sync_wake_by_address_all(volatile void* addr, uint32_t size, uint32_t flags);
+}
+#define OS_SYNC_WAIT_ON_ADDRESS_EQUAL 0x01
+#define OS_SYNC_WAKE_BY_ADDRESS_ALL 0x00
+#endif
 
 namespace metalsharp {
 
@@ -72,8 +82,9 @@ using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
     ULONG refCount = 1;
-    UINT64 m_value = 0;
-    UINT64 m_completed = 0;
+    alignas(8) UINT64 m_value = 0;
+    alignas(8) UINT64 m_completed = 0;
+    os_unfair_lock m_lock = OS_UNFAIR_LOCK_INIT;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -100,13 +111,35 @@ class D3D12FenceImpl final : public ID3D12Fence {
     HRESULT GetCompletedValue(UINT64* pValue) override {
         if (!pValue)
             return E_POINTER;
+        os_unfair_lock_lock(&m_lock);
         *pValue = m_completed;
+        os_unfair_lock_unlock(&m_lock);
         return S_OK;
     }
-    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override { return S_OK; }
+    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override {
+#ifdef __APPLE__
+        while (true) {
+            os_unfair_lock_lock(&m_lock);
+            UINT64 current = m_completed;
+            os_unfair_lock_unlock(&m_lock);
+            if (current >= Value)
+                break;
+            os_sync_wait_on_address(&m_completed, current, 8, OS_SYNC_WAIT_ON_ADDRESS_EQUAL);
+        }
+#else
+        while (m_completed < Value) {
+        }
+#endif
+        return S_OK;
+    }
     HRESULT Signal(UINT64 Value) override {
+        os_unfair_lock_lock(&m_lock);
         m_value = Value;
         m_completed = Value;
+        os_unfair_lock_unlock(&m_lock);
+#ifdef __APPLE__
+        os_sync_wake_by_address_all(&m_completed, 8, OS_SYNC_WAKE_BY_ADDRESS_ALL);
+#endif
         return S_OK;
     }
 };
