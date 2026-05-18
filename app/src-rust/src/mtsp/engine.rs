@@ -56,9 +56,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some(
-                    "d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                ),
+                wine_overrides: Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
@@ -72,7 +70,6 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
                     EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
-                    EnvVar { key: "DXMT_WINEMETAL_DEBUG", value: "1" },
                 ],
                 launch_args: vec!["-dx12"],
                 alternatives: vec![
@@ -338,11 +335,10 @@ mod tests {
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL"));
         assert!(m12_env.contains("DXMT_METALFX_TEMPORAL"));
-        assert!(m12_env.contains("DXMT_WINEMETAL_DEBUG"));
 
         assert_eq!(
             m12.wine_overrides,
-            Some("d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }

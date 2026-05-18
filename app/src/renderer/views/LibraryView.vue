@@ -30,7 +30,6 @@ const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
-const steamStatus = inject<Ref<SteamStatus | null>>("steamStatus")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
@@ -45,44 +44,8 @@ const launchingAppId = ref<number | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
-interface LaunchResult {
-  ok: boolean;
-  pid?: number;
-  error?: string;
-  engine?: string;
-  gameType?: string;
-  launchPending?: boolean;
-  steamConfirmed?: boolean;
-  steamLogOffset?: number;
-  hostGamePid?: number | null;
-  steamGamePid?: number | null;
-}
-
-interface SteamStatus {
-  cef?: {
-    ready: boolean;
-    reason: string;
-    mode: "disable_gpu" | "swiftshader" | "passthrough";
-    supported_modes: string[];
-    wrapper_deployed: boolean;
-    wrapper_matches_bundled: boolean;
-    pending_wrapper_update: boolean;
-  };
-}
-
 function isMacSteamLaunch(launchMethod: string) {
   return launchMethod === "mac_steam" || launchMethod === "macos_steam" || launchMethod === "native_steam";
-}
-
-async function setSteamCefMode(event: Event) {
-  const mode = (event.target as HTMLSelectElement).value;
-  const result = await api<{ ok: boolean; mode?: string; restartRequired?: boolean; error?: string }>("POST", "/steam/cef-mode", { mode });
-  if (result?.ok) {
-    toast.show(result.restartRequired ? "CEF mode will apply after Wine Steam restarts" : "CEF mode updated", "success");
-    await reloadLibrary();
-  } else {
-    toast.show(result?.error ?? "Failed to set CEF mode", "error");
-  }
 }
 
 function applyFilter() {
@@ -171,42 +134,24 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   }
 
   launchingAppId.value = game.appid;
-  const launchResult = await api<LaunchResult>("POST", "/game/launch-auto", { appid: game.appid, launchMethod });
+  const launchResult = await api<{
+    ok: boolean;
+    pid?: number;
+    error?: string;
+    engine?: string;
+    gameType?: string;
+  }>("POST", "/game/launch-auto", { appid: game.appid, launchMethod });
+
+  launchingAppId.value = null;
 
   if (launchResult?.ok && launchResult.pid) {
-    launchingAppId.value = null;
     runningPid.value = launchResult.pid;
     runningAppId.value = game.appid;
     if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
-  } else if (launchResult?.ok && launchResult.launchPending) {
-    toast.show(`Confirm ${game.name} in Steam to continue`, "success");
-    await pickupSteamLaunch(game, launchMethod, launchResult.steamLogOffset ?? 0);
   } else {
-    launchingAppId.value = null;
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
   }
-}
-
-async function pickupSteamLaunch(game: SteamGame, launchMethod: string, steamLogOffset: number) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const result = await api<LaunchResult>("POST", "/steam/pickup-game", {
-      appid: game.appid,
-      launchMethod,
-      steamLogOffset,
-    });
-    if (result?.ok && result.pid) {
-      runningPid.value = result.hostGamePid ?? result.pid;
-      runningAppId.value = game.appid;
-      launchingAppId.value = null;
-      toast.show(`Steam started ${game.name}`, "success");
-      return;
-    }
-  }
-
-  launchingAppId.value = null;
-  toast.show(`Steam is still waiting to launch ${game.name}`, "error");
 }
 
 async function stopGame(game: SteamGame) {
@@ -300,24 +245,6 @@ watch([library, search, filter], applyFilter);
         {{ library?.total ?? 0 }} games &middot; {{ library?.games.filter(g => g.installed).length ?? 0 }} installed
         <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
         <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
-        <span
-          v-if="steamStatus?.cef"
-          class="badge"
-          :class="steamStatus.cef.ready && !steamStatus.cef.pending_wrapper_update ? 'badge-ok' : 'badge-warn'"
-        >
-          CEF {{ steamStatus.cef.pending_wrapper_update ? "Pending" : steamStatus.cef.reason }}
-        </span>
-        <select
-          v-if="steamStatus?.cef"
-          class="cef-mode-select"
-          :value="steamStatus.cef.mode"
-          title="Steam CEF mode"
-          @change="setSteamCefMode"
-        >
-          <option v-for="mode in steamStatus.cef.supported_modes" :key="mode" :value="mode">
-            {{ mode }}
-          </option>
-        </select>
         <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
         <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
         <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
@@ -415,17 +342,6 @@ watch([library, search, filter], applyFilter);
   justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-.cef-mode-select {
-  height: 24px;
-  min-width: 112px;
-  max-width: 126px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel-bg);
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 2px 6px;
 }
 
 @media (max-width: 880px) {

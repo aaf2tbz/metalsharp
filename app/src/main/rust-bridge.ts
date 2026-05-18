@@ -68,8 +68,13 @@ export class RustBridge {
       return { ok: false, error: "metalsharp-backend binary not found" };
     }
 
-    if (await this.isAlive()) {
-      console.log("Backend already running; adopting existing process");
+    const needsRestart = await this.shouldRestart(binPath);
+    if (needsRestart) {
+      console.log("Backend version mismatch or not running — restarting...");
+      this.killExisting();
+      await new Promise((r) => setTimeout(r, 500));
+    } else if (await this.isAlive()) {
+      console.log("Backend already running and up to date");
       return { ok: true };
     }
 
@@ -88,9 +93,8 @@ export class RustBridge {
       return { ok: false, error: "Backend binary not found" };
     }
 
-    const runningPid = await this.getBackendPid();
     this.stop();
-    this.killExisting(runningPid);
+    this.killExisting();
     await new Promise((r) => setTimeout(r, 500));
 
     try {
@@ -205,15 +209,40 @@ export class RustBridge {
     });
   }
 
-  private killExisting(pid?: number | null) {
-    const { execSync } = require("child_process");
-    if (pid && Number.isInteger(pid) && pid > 0) {
-      try {
-        execSync(`kill ${Math.floor(pid)} 2>/dev/null`, { stdio: "ignore" });
-      } catch {}
-      return;
-    }
+  private async shouldRestart(binPath: string): Promise<boolean> {
+    if (!(await this.isAlive())) return true;
 
+    try {
+      const binStat = fs.statSync(binPath);
+      const runningPid = await this.getBackendPid();
+      if (!runningPid) return false;
+
+      const runningPath = await this.getProcessPath(runningPid);
+      if (runningPath && runningPath !== binPath) return true;
+
+      const runningMtime = runningPath ? fs.statSync(runningPath).mtimeMs : 0;
+      if (binStat.mtimeMs > runningMtime + 1000) return true;
+    } catch {}
+
+    return false;
+  }
+
+  private async getProcessPath(pid: number): Promise<string | null> {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return new Promise((resolve) => {
+      const { exec } = require("child_process");
+      exec(`ps -o comm= -p ${Math.floor(pid)} 2>/dev/null`, (err: Error | null, stdout: string) => {
+        if (err || !stdout.trim()) {
+          resolve(null);
+        } else {
+          resolve(stdout.trim());
+        }
+      });
+    });
+  }
+
+  private killExisting() {
+    const { execSync } = require("child_process");
     try {
       execSync("pkill -x metalsharp-backend 2>/dev/null", { stdio: "ignore" });
     } catch {}

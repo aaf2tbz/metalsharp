@@ -34,29 +34,6 @@ MetalSharp keeps its files in `~/.metalsharp/`:
 
 When you click Play, MetalSharp picks a pipeline, prepares the needed DLLs and cache, then starts the game through Wine, Steam, native macOS Steam, or the native Mono runtime.
 
-## Pipelines
-
-MetalSharp routes each game through the most specific runtime path it can identify:
-
-- M12 for D3D12 titles using the DXMT Metal runtime
-- M11 for D3D11 titles using the DXMT Metal runtime
-- M10 and M9 for older Direct3D titles
-- Native Mono or FNA paths where a game has a better macOS-compatible runtime
-- Plain Wine as the fallback for unknown Windows applications
-
-The launcher keeps per-game shader and pipeline caches under the MetalSharp home directory, so moving `METALSHARP_HOME` to an external drive keeps runtime assets, Steam state, logs, and graphics caches together.
-
-## Diagnostics
-
-The backend writes setup and launch state into `~/.metalsharp/logs/`. M12 readiness and runtime reports are written under `~/.metalsharp/probes/m12-runs/` when the diagnostic endpoints are used.
-
-Useful checks while debugging a title:
-
-- confirm the selected pipeline in the Library view
-- check whether the expected DLLs were deployed next to the game executable
-- inspect the latest M12 readiness report for missing runtime assets
-- review Steam process pickup in the backend log before relaunching a game
-
 ## Download
 
 Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it.

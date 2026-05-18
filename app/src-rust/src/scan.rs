@@ -141,8 +141,14 @@ pub fn scan_all() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn detect_windows_steam() -> Option<Game> {
-    let steam_exe =
-        crate::platform::steam_prefix_dir().join("drive_c").join("Program Files (x86)").join("Steam").join("steam.exe");
+    let home = dirs::home_dir()?;
+    let steam_exe = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steam.exe");
 
     if !steam_exe.exists() {
         return None;
@@ -217,36 +223,25 @@ pub fn resolve_wine_path(path: &str) -> String {
 }
 
 pub fn wine_steam_library_paths() -> Vec<PathBuf> {
-    let wine_steamapps =
-        crate::platform::steam_prefix_dir().join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
-    let legacy_steamapps = dirs::home_dir().map(|home| {
-        home.join(".metalsharp")
-            .join("prefix-steam")
-            .join("drive_c")
-            .join("Program Files (x86)")
-            .join("Steam")
-            .join("steamapps")
-    });
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
 
-    collect_wine_steam_library_paths(wine_steamapps, legacy_steamapps)
-}
+    let wine_steamapps = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
 
-fn collect_wine_steam_library_paths(wine_steamapps: PathBuf, legacy_steamapps: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if wine_steamapps.exists() {
-        paths.push(wine_steamapps.clone());
-        paths.extend(parse_library_folders(&wine_steamapps));
+    if !wine_steamapps.exists() {
+        return Vec::new();
     }
 
-    if let Some(legacy_steamapps) = legacy_steamapps {
-        if legacy_steamapps.exists() && legacy_steamapps != wine_steamapps {
-            paths.push(legacy_steamapps.clone());
-            paths.extend(parse_library_folders(&legacy_steamapps));
-        }
-    }
-
-    paths.sort();
-    paths.dedup();
+    let mut paths = vec![wine_steamapps.clone()];
+    paths.extend(parse_library_folders(&wine_steamapps));
     paths
 }
 
@@ -370,7 +365,8 @@ fn dir_size(dir: &PathBuf) -> Option<u64> {
 
 fn scan_local_exes() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     let mut games = Vec::new();
-    let metalsharp_dir = crate::platform::metalsharp_home().join("games");
+    let home = dirs::home_dir().unwrap_or_default();
+    let metalsharp_dir = home.join(".metalsharp").join("games");
 
     if !metalsharp_dir.exists() {
         return Ok(games);
@@ -396,57 +392,4 @@ fn scan_local_exes() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     }
 
     Ok(games)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn wine_libraries_include_legacy_prefix_when_active_home_moved() {
-        let root = test_dir("legacy-wine-library");
-        let active_steamapps = root.join("active").join("steamapps");
-        let legacy_steamapps = root.join("legacy").join("steamapps");
-        let external_library = root.join("external");
-
-        fs::create_dir_all(&legacy_steamapps).expect("create legacy steamapps");
-        fs::create_dir_all(external_library.join("steamapps")).expect("create external steamapps");
-        fs::write(
-            legacy_steamapps.join("libraryfolders.vdf"),
-            format!(
-                "\"libraryfolders\"\n{{\n  \"1\"\n  {{\n    \"path\"\t\t\"{}\"\n  }}\n}}\n",
-                external_library.to_string_lossy()
-            ),
-        )
-        .expect("write libraryfolders");
-
-        let paths = collect_wine_steam_library_paths(active_steamapps, Some(legacy_steamapps.clone()));
-
-        assert!(paths.contains(&legacy_steamapps));
-        assert!(paths.contains(&external_library.join("steamapps")));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn wine_libraries_deduplicate_active_and_legacy_prefix() {
-        let root = test_dir("dedupe-wine-library");
-        let steamapps = root.join("steamapps");
-        fs::create_dir_all(&steamapps).expect("create steamapps");
-
-        let paths = collect_wine_steam_library_paths(steamapps.clone(), Some(steamapps.clone()));
-
-        assert_eq!(paths, vec![steamapps]);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    fn test_dir(name: &str) -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        dir.push(format!("metalsharp-scan-{}-{}-{}", name, std::process::id(), unique_suffix()));
-        dir
-    }
-
-    fn unique_suffix() -> u128 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
-    }
 }

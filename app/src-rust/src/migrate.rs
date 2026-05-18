@@ -10,7 +10,7 @@ const MIGRATE_SCHEMA_VERSION: u64 = 1;
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
 fn migrate_progress_path() -> PathBuf {
-    crate::platform::metalsharp_home().join("migrate_progress.json")
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("migrate_progress.json")
 }
 
 fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str, error: Option<&str>) {
@@ -22,11 +22,7 @@ fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str
         "error": error,
         "version": MIGRATE_VERSION,
     });
-    let path = migrate_progress_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(path, serde_json::to_string(&data).unwrap_or_default());
+    let _ = fs::write(migrate_progress_path(), serde_json::to_string(&data).unwrap_or_default());
 }
 
 pub fn is_migrating() -> bool {
@@ -53,95 +49,26 @@ pub fn read_migrate_progress() -> serde_json::Value {
 }
 
 pub fn needs_migration() -> serde_json::Value {
-    let active_ms_dir = crate::platform::metalsharp_home();
-    let legacy_ms_dir = match legacy_metalsharp_home() {
-        Some(path) => path,
+    let home = match dirs::home_dir() {
+        Some(h) => h,
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    if let Some(status) = setup_migration_status(&active_ms_dir) {
-        return status;
-    }
+    let setup_path = home.join(".metalsharp").join("setup.json");
+    let setup_dir_exists = home.join(".metalsharp").exists();
 
-    if active_ms_dir != legacy_ms_dir && has_local_metalsharp_data(&active_ms_dir) {
-        return json!({
-            "ok": true,
-            "needed": true,
-            "current_version": "0.0.0",
-            "target_version": MIGRATE_VERSION,
-            "current_schema": 0,
-            "target_schema": MIGRATE_SCHEMA_VERSION,
-            "reason": "active_home_setup_metadata_missing",
-            "target_home": active_ms_dir,
-        });
-    }
-
-    if active_ms_dir != legacy_ms_dir && legacy_ms_dir.join("setup.json").exists() {
-        return json!({
-            "ok": true,
-            "needed": true,
-            "current_version": "0.0.0",
-            "target_version": MIGRATE_VERSION,
-            "current_schema": 0,
-            "target_schema": MIGRATE_SCHEMA_VERSION,
-            "reason": "legacy_home_to_active_home",
-            "source_home": legacy_ms_dir,
-            "target_home": active_ms_dir,
-        });
-    }
-
-    json!({
-        "ok": true,
-        "needed": false,
-        "reason": "fresh_install",
-        "target_home": active_ms_dir,
-    })
-}
-
-fn legacy_metalsharp_home() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".metalsharp"))
-}
-
-fn has_local_metalsharp_data(ms_dir: &Path) -> bool {
-    [
-        ms_dir.join("runtime"),
-        ms_dir.join("prefix-steam"),
-        ms_dir.join("games"),
-        ms_dir.join("sharp-library"),
-        ms_dir.join("cache").join("steam_config.json"),
-    ]
-    .iter()
-    .any(|path| path.exists())
-}
-
-fn setup_migration_status(ms_dir: &Path) -> Option<serde_json::Value> {
-    let setup_path = ms_dir.join("setup.json");
-    if !ms_dir.exists() || !setup_path.exists() {
-        return None;
+    if !setup_dir_exists || !setup_path.exists() {
+        return json!({"ok": true, "needed": false, "reason": "fresh_install"});
     }
 
     let setup_data = match fs::read_to_string(&setup_path) {
         Ok(d) => d,
-        Err(_) => {
-            return Some(json!({
-                "ok": true,
-                "needed": false,
-                "reason": "cannot_read_setup",
-                "target_home": ms_dir,
-            }));
-        },
+        Err(_) => return json!({"ok": true, "needed": false, "reason": "cannot_read_setup"}),
     };
 
     let setup: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(&setup_data) {
         Ok(m) => m,
-        Err(_) => {
-            return Some(json!({
-                "ok": true,
-                "needed": false,
-                "reason": "cannot_parse_setup",
-                "target_home": ms_dir,
-            }));
-        },
+        Err(_) => return json!({"ok": true, "needed": false, "reason": "cannot_parse_setup"}),
     };
 
     let current_schema = setup.get("runtime_migration_schema").and_then(|v| v.as_u64());
@@ -151,11 +78,11 @@ fn setup_migration_status(ms_dir: &Path) -> Option<serde_json::Value> {
 
     let needed = match current_schema {
         Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
-        None if legacy_migrated_version.is_some() && runtime_core_ready(ms_dir) => false,
-        None => runtime_needs_repair(ms_dir, setup_completed),
+        None if legacy_migrated_version.is_some() => false,
+        None => runtime_needs_repair(&home, setup_completed),
     };
 
-    Some(json!({
+    json!({
         "ok": true,
         "needed": needed,
         "current_version": current_version,
@@ -163,12 +90,12 @@ fn setup_migration_status(ms_dir: &Path) -> Option<serde_json::Value> {
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
         "reason": if needed { "runtime_schema_or_repair_needed" } else { "up_to_date" },
-        "target_home": ms_dir,
-    }))
+    })
 }
 
-fn runtime_needs_repair(ms_dir: &Path, setup_completed: bool) -> bool {
-    if runtime_core_ready(ms_dir) {
+fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
+    let ms_dir = home.join(".metalsharp");
+    if runtime_core_ready(&ms_dir) {
         return false;
     }
 
@@ -221,31 +148,18 @@ pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>
 }
 
 fn run_migration() {
-    let target_ms_dir = crate::platform::metalsharp_home();
-    let legacy_ms_dir = match legacy_metalsharp_home() {
-        Some(path) => path,
+    let home = match dirs::home_dir() {
+        Some(h) => h,
         None => {
             write_migrate_progress("error", 0, 0, "no home directory", Some("no_home"));
             return;
         },
     };
-    let target_has_setup = target_ms_dir.join("setup.json").exists();
-    let legacy_has_setup = legacy_ms_dir.join("setup.json").exists();
-    let target_has_data = has_local_metalsharp_data(&target_ms_dir);
-    let source_ms_dir = if target_has_setup || target_has_data || target_ms_dir == legacy_ms_dir {
-        target_ms_dir.clone()
-    } else if legacy_has_setup {
-        legacy_ms_dir.clone()
-    } else if target_ms_dir.exists() {
-        target_ms_dir.clone()
-    } else if legacy_ms_dir.exists() {
-        legacy_ms_dir.clone()
-    } else {
-        target_ms_dir.clone()
-    };
 
-    if !source_ms_dir.exists() {
-        write_migrate_progress("error", 0, 0, "MetalSharp data directory not found", Some("no_metalsharp_dir"));
+    let ms_dir = home.join(".metalsharp");
+
+    if !ms_dir.exists() {
+        write_migrate_progress("error", 0, 0, "~/.metalsharp not found", Some("no_metalsharp_dir"));
         return;
     }
 
@@ -258,15 +172,15 @@ fn run_migration() {
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
-    let preserved = preserve_user_data(&source_ms_dir);
+    let preserved = preserve_user_data(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Removing old runtime...", None);
-    remove_old_runtime(&target_ms_dir);
+    remove_old_runtime(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Restoring user data...", None);
-    restore_user_data(&target_ms_dir, &preserved);
+    restore_user_data(&ms_dir, &preserved);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Running full runtime install...", None);
@@ -302,7 +216,7 @@ fn run_migration() {
     };
 
     if install_ok {
-        let setup_path = target_ms_dir.join("setup.json");
+        let setup_path = ms_dir.join("setup.json");
         if setup_path.exists() {
             if let Ok(contents) = fs::read_to_string(&setup_path) {
                 if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
@@ -319,7 +233,7 @@ fn run_migration() {
             });
             let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
         }
-        let marker = target_ms_dir.join(".post-update-migration");
+        let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
     } else {
@@ -332,13 +246,7 @@ fn run_migration() {
         );
     }
 
-    log_to_file(&format!(
-        "Migration to v{} finished (install_ok={}, source={}, target={})",
-        MIGRATE_VERSION,
-        install_ok,
-        source_ms_dir.display(),
-        target_ms_dir.display()
-    ));
+    log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
 }
 
 fn wait_for_install_complete() -> Result<(), String> {
@@ -557,7 +465,8 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
 }
 
 fn log_to_file(msg: &str) {
-    let log_dir = crate::platform::metalsharp_home().join("logs");
+    let home = dirs::home_dir().unwrap_or_default();
+    let log_dir = home.join(".metalsharp").join("logs");
     let _ = fs::create_dir_all(&log_dir);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
@@ -592,20 +501,18 @@ mod tests {
     #[test]
     fn completed_setups_repair_missing_runtime_without_steam_prefix() {
         let home = test_dir("missing-runtime");
-        let ms_dir = home.join(".metalsharp");
-        fs::create_dir_all(&ms_dir).expect("create ms dir");
+        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
 
-        assert!(runtime_needs_repair(&ms_dir, true));
+        assert!(runtime_needs_repair(&home, true));
         let _ = fs::remove_dir_all(home);
     }
 
     #[test]
     fn incomplete_fresh_setups_do_not_enter_migration_without_prefix() {
         let home = test_dir("fresh-incomplete");
-        let ms_dir = home.join(".metalsharp");
-        fs::create_dir_all(&ms_dir).expect("create ms dir");
+        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
 
-        assert!(!runtime_needs_repair(&ms_dir, false));
+        assert!(!runtime_needs_repair(&home, false));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -616,7 +523,7 @@ mod tests {
         write_runtime_core(&ms_dir);
 
         assert!(runtime_core_ready(&ms_dir));
-        assert!(!runtime_needs_repair(&ms_dir, true));
+        assert!(!runtime_needs_repair(&home, true));
         let _ = fs::remove_dir_all(home);
     }
 
