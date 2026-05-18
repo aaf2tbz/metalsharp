@@ -289,6 +289,7 @@ uint32_t dxgiFormatToBytesPerPixel(DXGITranslation format) {
 
 bool dxgiFormatIsDepth(DXGITranslation format) {
     switch (format) {
+    case DXGITranslation::DXGI_FORMAT_D16_UNORM:
     case DXGITranslation::DXGI_FORMAT_D24_UNORM_S8_UINT:
     case DXGI_FORMAT_D32_FLOAT:
     case DXGITranslation::DXGI_FORMAT_D32_FLOAT_S8X24_UINT:

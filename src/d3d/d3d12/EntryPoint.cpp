@@ -102,34 +102,8 @@ HRESULT D3D12SerializeVersionedRootSignature(const void* pVersionedRootSignature
                                              void** ppErrorBlob) {
     if (!pVersionedRootSignatureDesc || !ppBlob)
         return E_INVALIDARG;
-
-    const uint8_t* desc = (const uint8_t*)pVersionedRootSignatureDesc;
-    uint32_t descVersion;
-    memcpy(&descVersion, desc, 4);
-
-    if (descVersion == 0x1) {
-        const D3D12_ROOT_SIGNATURE_DESC* pDesc = (const D3D12_ROOT_SIGNATURE_DESC*)pVersionedRootSignatureDesc;
-        return D3D12SerializeRootSignature(pDesc, Version, ppBlob, ppErrorBlob);
-    }
-
-    if (descVersion == 0x2) {
-        uint32_t numParameters;
-        memcpy(&numParameters, desc + 4, 4);
-        uint32_t numStaticSamplers;
-        memcpy(&numStaticSamplers, desc + 8, 4);
-        uint32_t flags;
-        memcpy(&flags, desc + 12, 4);
-
-        D3D12_ROOT_SIGNATURE_DESC fallbackDesc = {};
-        fallbackDesc.NumParameters = numParameters;
-        fallbackDesc.pParameters = nullptr;
-        fallbackDesc.NumStaticSamplers = numStaticSamplers;
-        fallbackDesc.pStaticSamplers = nullptr;
-        fallbackDesc.Flags = flags;
-        return D3D12SerializeRootSignature(&fallbackDesc, Version, ppBlob, ppErrorBlob);
-    }
-
-    return E_INVALIDARG;
+    return D3D12SerializeRootSignature(static_cast<const D3D12_ROOT_SIGNATURE_DESC*>(pVersionedRootSignatureDesc),
+                                       Version, ppBlob, ppErrorBlob);
 }
 
 HRESULT D3D12GetDebugInterface(const GUID& riid, void** ppvDebug) {

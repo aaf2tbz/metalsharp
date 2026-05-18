@@ -1013,7 +1013,9 @@ HRESULT D3D12DeviceImpl::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELI
         for (UINT i = 0; i < pDesc->NumRenderTargets && i < 8; ++i) {
             pipeDesc.colorPixelFormats[i] = dxgiFormatToMetal((DXGITranslation)pDesc->RTVFormats[i]);
         }
-        pipeDesc.depthPixelFormat = dxgiFormatToMetal((DXGITranslation)pDesc->DSVFormat);
+        if (pDesc->DSVFormat != 0 && dxgiFormatIsDepth((DXGITranslation)pDesc->DSVFormat)) {
+            pipeDesc.depthPixelFormat = dxgiFormatToMetal((DXGITranslation)pDesc->DSVFormat);
+        }
 
         PipelineState* pipeline = PipelineState::create(*m_metalDevice, pipeDesc);
         if (pipeline) {

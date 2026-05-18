@@ -3,6 +3,13 @@
 #include <d3d/D3D12.h>
 #include <metalsharp/D3D12Device.h>
 
+extern "C" {
+HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC*, unsigned int, void**, void**);
+HRESULT D3D12SerializeVersionedRootSignature(const void*, unsigned int, void**, void**);
+HRESULT D3D12GetDebugInterface(const GUID&, void**);
+HRESULT D3D12EnableExperimentalFeatures(unsigned int, const GUID*, void*, unsigned int*);
+}
+
 static int g_pass = 0;
 static int g_fail = 0;
 
@@ -430,6 +437,37 @@ int main() {
     if (device) {
         UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
         CHECK(inc == 1, "GetDescriptorHandleIncrementSize returns 1");
+    }
+
+    printf("\n--- Root Signature Serialization ---\n");
+    {
+        D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+        rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        void* blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature empty signature");
+        if (blob) {
+            uint32_t magic = 0;
+            memcpy(&magic, blob, 4);
+            CHECK(magic == 0x43425844, "Serialized blob has DXBC magic");
+            free(blob);
+        }
+
+        void* vBlob = nullptr;
+        hr = D3D12SerializeVersionedRootSignature(&rsDesc, 0, &vBlob, nullptr);
+        CHECK(SUCCEEDED(hr) && vBlob != nullptr, "D3D12SerializeVersionedRootSignature");
+        if (vBlob)
+            free(vBlob);
+    }
+
+    printf("\n--- Debug Interface Stubs ---\n");
+    {
+        void* debugPtr = reinterpret_cast<void*>(0x1);
+        hr = D3D12GetDebugInterface(IID_ID3D12Device, &debugPtr);
+        CHECK(hr == E_NOINTERFACE && debugPtr == nullptr, "D3D12GetDebugInterface returns E_NOINTERFACE");
+
+        hr = D3D12EnableExperimentalFeatures(0, nullptr, nullptr, nullptr);
+        CHECK(SUCCEEDED(hr), "D3D12EnableExperimentalFeatures succeeds");
     }
 
     if (pso)
