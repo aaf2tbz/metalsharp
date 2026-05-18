@@ -8,7 +8,7 @@ use std::time::Duration;
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 fn progress_path() -> PathBuf {
-    crate::platform::metalsharp_home().join("install_progress.json")
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("install_progress.json")
 }
 
 fn write_progress(step: usize, total: usize, name: &str, status: &str, log_line: &str, error: Option<&str>) {
@@ -65,7 +65,13 @@ pub fn start_install_all() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn run_install_all() {
-    let home = crate::platform::metalsharp_home();
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            write_progress(0, 0, "", "error", "no home directory", Some("no home directory"));
+            return;
+        },
+    };
 
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> =
         if crate::platform::current() == crate::platform::HostPlatform::Linux {
@@ -202,13 +208,13 @@ fn install_xcode_cli() -> Result<bool, String> {
 }
 
 fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
-    let runtime_dir = home.join("runtime");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
     let _ = fs::create_dir_all(&runtime_dir);
 
     let ms_wine = metalsharp_wine_binary(home);
     let already_installed = ms_wine.exists()
-        && home.join("runtime").join("mono-x86").join("bin").join("mono").exists()
-        && home.join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
+        && home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono").exists()
+        && home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
     if already_installed {
         return Ok(false);
     }
@@ -288,7 +294,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn metalsharp_wine_binary(home: &Path) -> PathBuf {
-    crate::platform::runtime_wine_binary(&home.join("runtime").join("wine"))
+    crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
 }
 
 fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -296,7 +302,7 @@ fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
         "Linux Wine runtime not found — install wine or bundle metalsharp_linux_runtime.tar.zst".to_string()
     })?;
 
-    let bin_dir = home.join("runtime").join("wine").join("bin");
+    let bin_dir = home.join(".metalsharp").join("runtime").join("wine").join("bin");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("create wine runtime bin dir: {}", e))?;
 
     for wrapper_name in &["wine", "metalsharp-wine"] {
@@ -310,12 +316,12 @@ fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
-    let mono_x86 = home.join("runtime").join("mono-x86").join("bin").join("mono");
+    let mono_x86 = home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono");
     if mono_x86.exists() {
         return Ok(false);
     }
     let bundled = find_bundled_archive("mono-x86");
-    let runtime_dir = home.join("runtime");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
     if let Some(archive) = bundled {
         extract_zst(&archive, &runtime_dir, "mono-x86")?;
         if mono_x86.exists() {
@@ -326,7 +332,7 @@ fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
-    let dxvk_dir = home.join("runtime").join("dxvk-1.10.3");
+    let dxvk_dir = home.join(".metalsharp").join("runtime").join("dxvk-1.10.3");
     if dxvk_dir.join("x32").join("d3d11.dll").exists() {
         return Ok(false);
     }
@@ -364,7 +370,7 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let wine_dir = home.join("runtime").join("wine");
+    let wine_dir = home.join(".metalsharp").join("runtime").join("wine");
     let _ = fs::create_dir_all(&wine_dir);
 
     let bundled = find_bundled_archive("wine");
@@ -380,7 +386,7 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
-    let dxmt_dir = home.join("runtime").join("wine").join("lib").join("dxmt");
+    let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
     let unix_so = dxmt_dir.join("x86_64-unix").join("winemetal.so");
     let pe_dll = dxmt_dir.join("x86_64-windows").join("d3d11.dll");
 
@@ -416,7 +422,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
 
         let _ = fs::remove_dir_all(&tmp);
     } else {
-        let dxmt_src = home.join("runtime").join("dxmt");
+        let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
         if dxmt_src.join("x86_64-windows").join("d3d11.dll").exists() {
             for subdir in &["x86_64-unix", "x86_64-windows"] {
                 let src = dxmt_src.join(subdir);
@@ -438,12 +444,12 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     {
         Ok(true)
     } else {
-        Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in METALSHARP_HOME/runtime/dxmt/".into())
+        Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
     }
 }
 
 fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
-    let goldberg_dir = home.join("runtime").join("goldberg");
+    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
     let x86_dll = goldberg_dir.join("x86").join("steam_api.dll");
     let x64_dll = goldberg_dir.join("x64").join("steam_api64.dll");
 
@@ -490,7 +496,7 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
-    let eac_dir = home.join("runtime").join("eac-toggle");
+    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle");
     let dll = eac_dir.join("x86_64-windows").join("_winhttp.dll");
 
     if dll.exists() {
@@ -525,14 +531,14 @@ fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
-    let dest = home.join("configs").join("mtsp-rules.toml");
+    let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
     if dest.exists() {
         return Ok(false);
     }
 
     let mut candidates = vec![
         PathBuf::from("configs/mtsp-rules.toml"),
-        home.join("configs").join("mtsp-rules.toml"),
+        home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
         home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
     ];
 
@@ -564,7 +570,7 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
-    let configs_dir = home.join("configs");
+    let configs_dir = home.join(".metalsharp").join("configs");
     let _ = fs::create_dir_all(&configs_dir);
 
     let config_files = ["terraria-mono.config", "celeste-x86-mono.config"];
@@ -578,7 +584,7 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
 
         let mut candidates = vec![
             PathBuf::from(format!("configs/{}", name)),
-            home.join("configs").join(name),
+            home.join(".metalsharp").join("configs").join(name),
             home.join("repos").join("metalsharp").join("configs").join(name),
         ];
 
@@ -611,8 +617,13 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
-    let steam_exe =
-        home.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe");
+    let steam_exe = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("Steam.exe");
     if steam_exe.exists() {
         return Ok(false);
     }
@@ -622,7 +633,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         return Err("MetalSharp Wine not found — cannot install Steam".into());
     }
 
-    let installer = home.join("SteamSetup.exe");
+    let installer = home.join(".metalsharp").join("SteamSetup.exe");
 
     let _ = fs::remove_file(&installer);
 
@@ -642,10 +653,10 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    let prefix = home.join("prefix-steam");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
     let _ = fs::create_dir_all(&prefix);
 
-    let ms_root = home.join("runtime").join("wine");
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let mut wineboot_cmd = Command::new(&ms_wine);
     wineboot_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
@@ -671,14 +682,16 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     for _ in 0..90 {
         std::thread::sleep(Duration::from_secs(2));
         if steam_exe.exists() {
-            let steam_dir = home.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+            let steam_dir =
+                home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
             crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
             return Ok(true);
         }
     }
 
     if steam_exe.exists() {
-        let steam_dir = home.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+        let steam_dir =
+            home.join(".metalsharp").join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
         crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
         Ok(true)
     } else {
@@ -736,14 +749,14 @@ fn install_mono_arm64() -> Result<bool, String> {
         return Ok(false);
     }
 
-    let home = crate::platform::metalsharp_home();
-    let mono_arm64 = home.join("runtime").join("mono-arm64").join("bin").join("mono");
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let mono_arm64 = home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono");
     if mono_arm64.exists() {
         return Ok(false);
     }
 
     let bundled = find_bundled_archive("mono-arm64");
-    let runtime_dir = home.join("runtime");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
     let _ = fs::create_dir_all(&runtime_dir);
 
     if let Some(archive) = bundled {
@@ -834,7 +847,7 @@ fn find_bundled_file(name: &str) -> Option<PathBuf> {
 }
 
 fn download_from_github_release(filename: &str) -> Option<PathBuf> {
-    let cache_dir = crate::platform::metalsharp_home().join("cache").join("bundles");
+    let cache_dir = dirs::home_dir()?.join(".metalsharp").join("cache").join("bundles");
     let _ = fs::create_dir_all(&cache_dir);
     let cached = cache_dir.join(filename);
 
@@ -939,7 +952,7 @@ mod tests {
     #[test]
     fn metalsharp_wine_binary_accepts_renamed_runtime_binary() {
         let home = test_home("renamed-runtime-binary");
-        let bin = home.join("runtime").join("wine").join("bin");
+        let bin = home.join(".metalsharp").join("runtime").join("wine").join("bin");
         fs::create_dir_all(&bin).expect("create runtime bin");
         fs::write(bin.join("metalsharp-wine"), b"#!/bin/sh\n").expect("write renamed wine");
 
