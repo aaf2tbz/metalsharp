@@ -595,7 +595,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 (*m_gpuAddressResources)[res->m_gpuAddress] = res;
             }
         } else {
-            uint32_t fmt = dxgiFormatToMetal((DXGITranslation)pDesc->Format);
+            DXGITranslation dxgiFormat = (DXGITranslation)pDesc->Format;
+            bool isDepthStencil =
+                (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) && dxgiFormatIsDepth(dxgiFormat);
+            uint32_t fmt = isDepthStencil ? dxgiDepthFormatToMetal(dxgiFormat) : dxgiFormatToMetal(dxgiFormat);
             uint32_t usage = 0;
             if (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
                 usage |= 0x1;
