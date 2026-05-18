@@ -50,6 +50,7 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <condition_variable>
 #include <cstring>
 #include <d3d/D3D12.h>
 #include <memory>
@@ -57,6 +58,7 @@
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
+#include <metalsharp/SyncContext.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -75,6 +77,8 @@ class D3D12FenceImpl final : public ID3D12Fence {
     UINT64 m_value = 0;
     UINT64 m_completed = 0;
     std::mutex m_mutex;
+    std::condition_variable m_completionCond;
+    std::vector<std::pair<UINT64, HANDLE>> m_completionEvents;
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -105,11 +109,49 @@ class D3D12FenceImpl final : public ID3D12Fence {
         *pValue = m_completed;
         return S_OK;
     }
-    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override { return S_OK; }
+    HRESULT SetEventOnCompletion(UINT64 Value, HANDLE hEvent) override {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (m_completed >= Value) {
+            lock.unlock();
+            if (hEvent)
+                win32::SyncContext::instance().setEvent(hEvent);
+            return S_OK;
+        }
+
+        if (!hEvent) {
+            m_completionCond.wait(lock, [&] { return m_completed >= Value; });
+            return S_OK;
+        }
+
+        m_completionEvents.push_back({Value, hEvent});
+        return S_OK;
+    }
     HRESULT Signal(UINT64 Value) override {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_value = Value;
-        m_completed = Value;
+        std::vector<HANDLE> eventsToSignal;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_value = Value;
+            m_completed = Value;
+            auto it = m_completionEvents.begin();
+            while (it != m_completionEvents.end()) {
+                if (m_completed >= it->first) {
+                    eventsToSignal.push_back(it->second);
+                    it = m_completionEvents.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        m_completionCond.notify_all();
+        for (HANDLE eventHandle : eventsToSignal) {
+            win32::SyncContext::instance().setEvent(eventHandle);
+        }
+        return S_OK;
+    }
+
+    HRESULT WaitForValue(UINT64 Value) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_completionCond.wait(lock, [&] { return m_completed >= Value; });
         return S_OK;
     }
 };
@@ -177,7 +219,14 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
             return E_INVALIDARG;
         return pFence->Signal(Value);
     }
-    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override { return S_OK; }
+    HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override {
+        if (!pFence)
+            return E_INVALIDARG;
+        auto* fence = dynamic_cast<D3D12FenceImpl*>(pFence);
+        if (!fence)
+            return E_INVALIDARG;
+        return fence->WaitForValue(Value);
+    }
 };
 
 struct D3D12Descriptor {

@@ -233,6 +233,15 @@ int main() {
 
             hr = fence->GetCompletedValue(&completed);
             CHECK(SUCCEEDED(hr) && completed == 42, "Fence completed value is 42");
+
+            void* eventHandle = metalsharp::win32::SyncContext::instance().createEvent(true, false, "");
+            hr = fence->SetEventOnCompletion(100, eventHandle);
+            CHECK(SUCCEEDED(hr), "Fence::SetEventOnCompletion registers event");
+
+            hr = cmdQueue->Signal(fence, 100);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Signal reaches event target");
+            uint32_t waitResult = metalsharp::win32::SyncContext::instance().waitForSingleObject(eventHandle, 0);
+            CHECK(waitResult == metalsharp::win32::WAIT_OBJECT_0, "Fence completion signals event");
         }
     }
 
@@ -447,9 +456,34 @@ int main() {
         hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
         CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature empty signature");
         if (blob) {
-            uint32_t magic = 0;
-            memcpy(&magic, blob, 4);
-            CHECK(magic == 0x43425844, "Serialized blob has DXBC magic");
+            uint32_t version = 0;
+            memcpy(&version, blob, 4);
+            CHECK(version == 1, "Serialized blob uses raw root signature layout");
+            free(blob);
+        }
+
+        D3D12_ROOT_PARAMETER rsParam = {};
+        rsParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        rsParam.Constants.ShaderRegister = 3;
+        rsParam.Constants.RegisterSpace = 2;
+        rsParam.Constants.Num32BitValues = 4;
+        rsParam.ShaderVisibility = 0;
+        rsDesc.NumParameters = 1;
+        rsDesc.pParameters = &rsParam;
+        blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature constants signature");
+        if (blob && device) {
+            ID3D12RootSignature* parsedRootSig = nullptr;
+            hr = device->CreateRootSignature(0, blob, 36, IID_ID3D12RootSignature, (void**)&parsedRootSig);
+            auto* parsedImpl = static_cast<metalsharp::D3D12RootSignatureImpl*>(parsedRootSig);
+            CHECK(SUCCEEDED(hr) && parsedImpl && parsedImpl->numParameters == 1,
+                  "CreateRootSignature parses serialized parameter count");
+            CHECK(parsedImpl && parsedImpl->parameters.size() == 1 &&
+                      parsedImpl->parameters[0].Constants.Num32BitValues == 4,
+                  "CreateRootSignature preserves serialized root constants");
+            if (parsedRootSig)
+                parsedRootSig->Release();
             free(blob);
         }
 

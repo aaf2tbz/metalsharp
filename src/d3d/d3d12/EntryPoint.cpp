@@ -23,17 +23,11 @@ HRESULT D3D12CreateDevice(void* pAdapter, UINT MinimumFeatureLevel, const GUID& 
 }
 
 static void writeRootSignatureHeader(uint8_t* out, uint32_t numParameters, uint32_t numStaticSamplers, uint32_t flags) {
-    out[0] = 0x44;
-    out[1] = 0x58;
-    out[2] = 0x42;
-    out[3] = 0x43;
     uint32_t version = 0x00000001;
-    memcpy(out + 4, &version, 4);
-    uint32_t totalSize = 32 + numParameters * 20 + numStaticSamplers * 32;
-    memcpy(out + 8, &totalSize, 4);
-    memcpy(out + 12, &numParameters, 4);
-    memcpy(out + 16, &numStaticSamplers, 4);
-    memcpy(out + 20, &flags, 4);
+    memcpy(out, &version, 4);
+    memcpy(out + 4, &numParameters, 4);
+    memcpy(out + 8, &numStaticSamplers, 4);
+    memcpy(out + 12, &flags, 4);
 }
 
 HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignatureDesc, UINT Version, void** ppBlob,
@@ -45,7 +39,14 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
 
     uint32_t numParams = pRootSignatureDesc->NumParameters;
     uint32_t numSamplers = pRootSignatureDesc->NumStaticSamplers;
-    uint32_t blobSize = 32 + numParams * 20 + numSamplers * 32;
+    uint32_t descriptorRangeCount = 0;
+    for (uint32_t i = 0; i < numParams; i++) {
+        const D3D12_ROOT_PARAMETER& param = pRootSignatureDesc->pParameters[i];
+        if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+            descriptorRangeCount += param.DescriptorTable.NumDescriptorRanges;
+    }
+
+    uint32_t blobSize = 16 + numParams * 20 + descriptorRangeCount * 20 + numSamplers * 32;
 
     uint8_t* blob = (uint8_t*)malloc(blobSize);
     if (!blob)
@@ -54,7 +55,7 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
 
     writeRootSignatureHeader(blob, numParams, numSamplers, pRootSignatureDesc->Flags);
 
-    uint32_t offset = 32;
+    uint32_t offset = 16;
     for (uint32_t i = 0; i < numParams; i++) {
         const D3D12_ROOT_PARAMETER& param = pRootSignatureDesc->pParameters[i];
         uint32_t paramData[5] = {};
@@ -72,6 +73,16 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
         }
         memcpy(blob + offset, paramData, 20);
         offset += 20;
+
+        if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
+            for (uint32_t rangeIndex = 0; rangeIndex < param.DescriptorTable.NumDescriptorRanges; rangeIndex++) {
+                const D3D12_DESCRIPTOR_RANGE& range = param.DescriptorTable.pDescriptorRanges[rangeIndex];
+                uint32_t rangeData[5] = {range.RangeType, range.NumDescriptors, range.BaseShaderRegister,
+                                         range.RegisterSpace, range.OffsetInDescriptorsFromTableStart};
+                memcpy(blob + offset, rangeData, 20);
+                offset += 20;
+            }
+        }
     }
 
     for (uint32_t i = 0; i < numSamplers; i++) {
