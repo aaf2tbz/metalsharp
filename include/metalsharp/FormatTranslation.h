@@ -125,6 +125,7 @@ enum class DXGITranslation {
 constexpr DXGITranslation DXGI_FORMAT_D32_FLOAT = DXGITranslation::DXGI_FORMAT_R32_TYPELESS;
 
 uint32_t dxgiFormatToMetal(DXGITranslation format);
+uint32_t dxgiDepthFormatToMetal(DXGITranslation format);
 uint32_t dxgiFormatToBytesPerPixel(DXGITranslation format);
 bool dxgiFormatIsDepth(DXGITranslation format);
 bool dxgiFormatIsStencil(DXGITranslation format);

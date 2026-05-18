@@ -208,6 +208,21 @@ uint32_t dxgiFormatToMetal(DXGITranslation format) {
     }
 }
 
+uint32_t dxgiDepthFormatToMetal(DXGITranslation format) {
+    switch (format) {
+    case DXGITranslation::DXGI_FORMAT_D16_UNORM:
+        return MTLPixelFormatDepth16Unorm;
+    case DXGITranslation::DXGI_FORMAT_D24_UNORM_S8_UINT:
+        return MTLPixelFormatDepth24Unorm_Stencil8;
+    case DXGI_FORMAT_D32_FLOAT:
+        return MTLPixelFormatDepth32Float;
+    case DXGITranslation::DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+        return MTLPixelFormatDepth32Float_Stencil8;
+    default:
+        return MTLPixelFormatInvalid;
+    }
+}
+
 uint32_t dxgiFormatToBytesPerPixel(DXGITranslation format) {
     switch (format) {
     case DXGITranslation::DXGI_FORMAT_R32G32B32A32_FLOAT:
