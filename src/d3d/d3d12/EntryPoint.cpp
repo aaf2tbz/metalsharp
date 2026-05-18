@@ -95,7 +95,14 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
                                     void** ppErrorBlob) {
     if (!pRootSignatureDesc || !ppBlob)
         return E_INVALIDARG;
+    *ppBlob = nullptr;
+    if (ppErrorBlob)
+        *ppErrorBlob = nullptr;
     if (Version > 0x1)
+        return E_INVALIDARG;
+    if (pRootSignatureDesc->NumParameters > 0 && !pRootSignatureDesc->pParameters)
+        return E_INVALIDARG;
+    if (pRootSignatureDesc->NumStaticSamplers > 0 && !pRootSignatureDesc->pStaticSamplers)
         return E_INVALIDARG;
 
     uint32_t numParams = pRootSignatureDesc->NumParameters;
@@ -105,8 +112,11 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
     for (uint32_t i = 0; i < numParams; i++) {
         const D3D12_ROOT_PARAMETER& param = pRootSignatureDesc->pParameters[i];
         parameterBytes += rootParameterRecordSize(param.ParameterType);
-        if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+        if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
+            if (param.DescriptorTable.NumDescriptorRanges > 0 && !param.DescriptorTable.pDescriptorRanges)
+                return E_INVALIDARG;
             descriptorRangeCount += param.DescriptorTable.NumDescriptorRanges;
+        }
     }
 
     uint32_t rootBlobSize = 16 + parameterBytes + descriptorRangeCount * 20 + numSamplers * 32;
@@ -169,8 +179,6 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
     if (!blobObject)
         return E_OUTOFMEMORY;
     *ppBlob = blobObject;
-    if (ppErrorBlob)
-        *ppErrorBlob = nullptr;
     return S_OK;
 }
 

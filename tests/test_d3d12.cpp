@@ -596,6 +596,31 @@ int main() {
         CHECK(SUCCEEDED(hr) && vBlob != nullptr, "D3D12SerializeVersionedRootSignature");
         if (vBlob)
             static_cast<ID3DBlob*>(vBlob)->Release();
+
+        D3D12_ROOT_SIGNATURE_DESC invalidDesc = {};
+        invalidDesc.NumParameters = 1;
+        invalidDesc.pParameters = nullptr;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null parameter array");
+
+        invalidDesc = {};
+        invalidDesc.NumStaticSamplers = 1;
+        invalidDesc.pStaticSamplers = nullptr;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null static sampler array");
+
+        D3D12_ROOT_PARAMETER invalidTable = {};
+        invalidTable.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        invalidTable.DescriptorTable.NumDescriptorRanges = 1;
+        invalidTable.DescriptorTable.pDescriptorRanges = nullptr;
+        invalidDesc = {};
+        invalidDesc.NumParameters = 1;
+        invalidDesc.pParameters = &invalidTable;
+        blob = reinterpret_cast<void*>(0x1);
+        hr = D3D12SerializeRootSignature(&invalidDesc, 0, &blob, nullptr);
+        CHECK(hr == E_INVALIDARG && blob == nullptr, "D3D12SerializeRootSignature rejects null descriptor range array");
     }
 
     printf("\n--- Debug Interface Stubs ---\n");
