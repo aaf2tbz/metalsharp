@@ -224,10 +224,18 @@ fn steam_launch_process_names(appid: u32, pipeline: crate::mtsp::engine::Pipelin
             names.push(exe_name);
         }
     }
+    names.extend(known_game_process_names(appid).into_iter().map(str::to_string));
     names.extend(known_launcher_process_names(appid).into_iter().map(str::to_string));
     names.sort_by_key(|name| name.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     names
+}
+
+fn known_game_process_names(appid: u32) -> Vec<&'static str> {
+    match appid {
+        1669000 => vec!["AOW4.exe"],
+        _ => Vec::new(),
+    }
 }
 
 fn known_launcher_process_names(appid: u32) -> Vec<&'static str> {
