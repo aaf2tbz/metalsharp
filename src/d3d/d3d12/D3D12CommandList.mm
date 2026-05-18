@@ -1100,14 +1100,77 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     return S_OK;
 }
 
-HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
-    std::vector<std::pair<ID3D12Fence*, UINT64>> waits;
+D3D12CommandQueueImpl::~D3D12CommandQueueImpl() {
+    auto state = m_queueState;
+    bool hasOutstandingWork = false;
     {
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        waits.swap(m_pendingWaits);
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->stopping = true;
+        hasOutstandingWork = state->busy || !state->work.empty();
     }
+    state->cond.notify_all();
+    if (state->worker.joinable()) {
+        if (hasOutstandingWork)
+            state->worker.detach();
+        else
+            state->worker.join();
+    }
+}
 
-    if (!waits.empty()) {
+void D3D12CommandQueueImpl::runQueueWorker(std::shared_ptr<QueueState> state) {
+    for (;;) {
+        std::function<void()> operation;
+        {
+            std::unique_lock<std::mutex> lock(state->mutex);
+            state->cond.wait(lock, [&] { return state->stopping || !state->work.empty(); });
+            if (state->stopping && state->work.empty())
+                return;
+            operation = std::move(state->work.front());
+            state->work.pop_front();
+            state->busy = true;
+        }
+
+        if (operation)
+            operation();
+
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->busy = false;
+        }
+        state->cond.notify_all();
+    }
+}
+
+HRESULT D3D12CommandQueueImpl::enqueueQueueWork(std::function<void()> operation) {
+    auto state = m_queueState;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->work.push_back(std::move(operation));
+        if (!state->workerStarted) {
+            state->workerStarted = true;
+            state->worker = std::thread([state] { runQueueWorker(state); });
+        }
+    }
+    state->cond.notify_one();
+    return S_OK;
+}
+
+HRESULT D3D12CommandQueueImpl::Signal(ID3D12Fence* pFence, UINT64 Value) {
+    if (!pFence)
+        return E_INVALIDARG;
+
+    if (!hasQueuedWork())
+        return pFence->Signal(Value);
+
+    pFence->AddRef();
+    return enqueueQueueWork([pFence, Value] {
+        pFence->Signal(Value);
+        pFence->Release();
+    });
+}
+
+HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandList* const* ppLists) {
+    if (hasQueuedWork()) {
         std::vector<ID3D12CommandList*> lists;
         lists.reserve(numLists);
         for (UINT i = 0; i < numLists; ++i) {
@@ -1118,17 +1181,12 @@ HRESULT D3D12CommandQueueImpl::ExecuteCommandLists(UINT numLists, ID3D12CommandL
         }
 
         MetalDevice* queuedMetalDevice = &metalDevice;
-        std::thread([queuedMetalDevice, waits = std::move(waits), lists = std::move(lists)]() mutable {
-            for (auto& wait : waits) {
-                wait.first->SetEventOnCompletion(wait.second, nullptr);
-                wait.first->Release();
-            }
+        return enqueueQueueWork([queuedMetalDevice, lists = std::move(lists)]() mutable {
             for (auto* list : lists) {
                 list->__execute(queuedMetalDevice);
                 list->Release();
             }
-        }).detach();
-        return S_OK;
+        });
     }
 
     for (UINT i = 0; i < numLists; ++i) {

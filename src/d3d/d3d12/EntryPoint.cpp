@@ -66,6 +66,10 @@ static void writeRootSignatureHeader(uint8_t* out, uint32_t numParameters, uint3
     memcpy(out + 12, &flags, 4);
 }
 
+static uint32_t rootParameterRecordSize(UINT type) {
+    return type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS ? 20 : 16;
+}
+
 HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignatureDesc, UINT Version, void** ppBlob,
                                     void** ppErrorBlob) {
     if (!pRootSignatureDesc || !ppBlob)
@@ -76,13 +80,15 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
     uint32_t numParams = pRootSignatureDesc->NumParameters;
     uint32_t numSamplers = pRootSignatureDesc->NumStaticSamplers;
     uint32_t descriptorRangeCount = 0;
+    uint32_t parameterBytes = 0;
     for (uint32_t i = 0; i < numParams; i++) {
         const D3D12_ROOT_PARAMETER& param = pRootSignatureDesc->pParameters[i];
+        parameterBytes += rootParameterRecordSize(param.ParameterType);
         if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
             descriptorRangeCount += param.DescriptorTable.NumDescriptorRanges;
     }
 
-    uint32_t blobSize = 16 + numParams * 20 + descriptorRangeCount * 20 + numSamplers * 32;
+    uint32_t blobSize = 16 + parameterBytes + descriptorRangeCount * 20 + numSamplers * 32;
 
     std::vector<uint8_t> blob(blobSize);
 
@@ -104,8 +110,9 @@ HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* pRootSignat
             paramData[2] = param.Descriptor.ShaderRegister;
             paramData[3] = param.Descriptor.RegisterSpace;
         }
-        memcpy(blob.data() + offset, paramData, 20);
-        offset += 20;
+        uint32_t paramSize = rootParameterRecordSize(param.ParameterType);
+        memcpy(blob.data() + offset, paramData, paramSize);
+        offset += paramSize;
 
         if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
             for (uint32_t rangeIndex = 0; rangeIndex < param.DescriptorTable.NumDescriptorRanges; rangeIndex++) {

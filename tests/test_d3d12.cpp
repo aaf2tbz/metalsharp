@@ -1,7 +1,9 @@
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <d3d/D3D12.h>
 #include <metalsharp/D3D12Device.h>
+#include <thread>
 
 extern "C" {
 HRESULT D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC*, unsigned int, void**, void**);
@@ -257,6 +259,44 @@ int main() {
         }
     }
 
+    printf("\n--- Command Queue Wait Ordering ---\n");
+    if (device && cmdQueue) {
+        ID3D12Fence* waitFence = nullptr;
+        ID3D12Fence* signalFence = nullptr;
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&waitFence);
+        CHECK(SUCCEEDED(hr) && waitFence, "Create wait fence");
+        hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&signalFence);
+        CHECK(SUCCEEDED(hr) && signalFence, "Create signal fence");
+
+        if (waitFence && signalFence) {
+            hr = cmdQueue->Wait(waitFence, 1);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Wait queues fence dependency");
+            hr = cmdQueue->ExecuteCommandLists(0, nullptr);
+            CHECK(SUCCEEDED(hr), "ExecuteCommandLists queues behind wait");
+            hr = cmdQueue->Signal(signalFence, 2);
+            CHECK(SUCCEEDED(hr), "CommandQueue::Signal queues behind pending wait");
+
+            UINT64 completed = 99;
+            hr = signalFence->GetCompletedValue(&completed);
+            CHECK(SUCCEEDED(hr) && completed == 0, "Queued signal does not complete before wait fence");
+
+            hr = waitFence->Signal(1);
+            CHECK(SUCCEEDED(hr), "Wait fence unblocks queued work");
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                signalFence->GetCompletedValue(&completed);
+                if (completed == 2)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            CHECK(completed == 2, "Queued signal completes after wait fence");
+        }
+
+        if (waitFence)
+            waitFence->Release();
+        if (signalFence)
+            signalFence->Release();
+    }
+
     printf("\n--- Command Signature ---\n");
     ID3D12CommandSignature* cmdSig = nullptr;
     if (device) {
@@ -486,6 +526,42 @@ int main() {
             CHECK(parsedImpl && parsedImpl->parameters.size() == 1 &&
                       parsedImpl->parameters[0].Constants.Num32BitValues == 4,
                   "CreateRootSignature preserves serialized root constants");
+            if (parsedRootSig)
+                parsedRootSig->Release();
+            blobObject->Release();
+        }
+
+        D3D12_DESCRIPTOR_RANGE range = {};
+        range.RangeType = 0;
+        range.NumDescriptors = 2;
+        range.BaseShaderRegister = 1;
+        range.RegisterSpace = 0;
+        range.OffsetInDescriptorsFromTableStart = 0;
+        D3D12_ROOT_PARAMETER mixedParams[3] = {};
+        mixedParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        mixedParams[0].DescriptorTable.NumDescriptorRanges = 1;
+        mixedParams[0].DescriptorTable.pDescriptorRanges = &range;
+        mixedParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        mixedParams[1].Descriptor.ShaderRegister = 5;
+        mixedParams[1].Descriptor.RegisterSpace = 1;
+        mixedParams[2] = rsParam;
+        rsDesc.NumParameters = 3;
+        rsDesc.pParameters = mixedParams;
+        blob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, 0, &blob, nullptr);
+        CHECK(SUCCEEDED(hr) && blob != nullptr, "D3D12SerializeRootSignature mixed parameter signature");
+        if (blob && device) {
+            auto* blobObject = static_cast<ID3DBlob*>(blob);
+            CHECK(blobObject->GetBufferSize() == 88, "Serialized mixed root signature uses parser record sizes");
+            ID3D12RootSignature* parsedRootSig = nullptr;
+            hr = device->CreateRootSignature(0, blobObject->GetBufferPointer(), blobObject->GetBufferSize(),
+                                             IID_ID3D12RootSignature, (void**)&parsedRootSig);
+            auto* parsedImpl = static_cast<metalsharp::D3D12RootSignatureImpl*>(parsedRootSig);
+            CHECK(SUCCEEDED(hr) && parsedImpl && parsedImpl->parameters.size() == 3,
+                  "CreateRootSignature parses mixed serialized parameters");
+            CHECK(parsedImpl && parsedImpl->parameters[1].Descriptor.ShaderRegister == 5 &&
+                      parsedImpl->parameters[2].Constants.Num32BitValues == 4,
+                  "CreateRootSignature keeps parameter alignment after descriptor records");
             if (parsedRootSig)
                 parsedRootSig->Release();
             blobObject->Release();

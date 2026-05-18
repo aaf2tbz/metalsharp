@@ -53,6 +53,8 @@
 #include <condition_variable>
 #include <cstring>
 #include <d3d/D3D12.h>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/MetalBackend.h>
@@ -61,6 +63,7 @@
 #include <metalsharp/SyncContext.h>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -189,10 +192,19 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
   public:
     ULONG refCount = 1;
     MetalDevice& metalDevice;
-    std::mutex m_queueMutex;
-    std::vector<std::pair<ID3D12Fence*, UINT64>> m_pendingWaits;
+    struct QueueState {
+        std::mutex mutex;
+        std::condition_variable cond;
+        std::deque<std::function<void()>> work;
+        std::thread worker;
+        bool workerStarted = false;
+        bool stopping = false;
+        bool busy = false;
+    };
+    std::shared_ptr<QueueState> m_queueState;
 
-    explicit D3D12CommandQueueImpl(MetalDevice& dev) : metalDevice(dev) {}
+    explicit D3D12CommandQueueImpl(MetalDevice& dev) : metalDevice(dev), m_queueState(std::make_shared<QueueState>()) {}
+    ~D3D12CommandQueueImpl();
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -217,19 +229,24 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
     STDMETHOD(SetName)(const char*) override { return S_OK; }
 
     HRESULT ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) override;
-    HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override {
-        if (!pFence)
-            return E_INVALIDARG;
-        return pFence->Signal(Value);
-    }
+    HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override;
     HRESULT Wait(ID3D12Fence* pFence, UINT64 Value) override {
         if (!pFence)
             return E_INVALIDARG;
         pFence->AddRef();
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        m_pendingWaits.push_back({pFence, Value});
-        return S_OK;
+        return enqueueQueueWork([pFence, Value] {
+            pFence->SetEventOnCompletion(Value, nullptr);
+            pFence->Release();
+        });
     }
+
+    bool hasQueuedWork() {
+        std::lock_guard<std::mutex> lock(m_queueState->mutex);
+        return m_queueState->busy || !m_queueState->work.empty();
+    }
+
+    HRESULT enqueueQueueWork(std::function<void()> operation);
+    static void runQueueWorker(std::shared_ptr<QueueState> state);
 };
 
 struct D3D12Descriptor {
