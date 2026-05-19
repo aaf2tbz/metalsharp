@@ -71,12 +71,14 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-height: 32px;
   padding: 6px 14px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text-primary);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
   white-space: nowrap;
@@ -84,6 +86,7 @@ textarea {
 }
 .btn:hover {
   background: var(--bg-card-hover);
+  border-color: var(--accent-dim);
 }
 .btn:disabled {
   opacity: 0.5;
@@ -107,6 +110,7 @@ textarea {
 .btn-danger {
   color: var(--error);
   border-color: var(--error);
+  background: transparent;
 }
 .btn-danger:hover {
   background: var(--error-bg);
@@ -153,10 +157,12 @@ textarea {
 .badge {
   display: inline-flex;
   align-items: center;
+  min-height: 22px;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 700;
+  letter-spacing: 0;
   white-space: nowrap;
 }
 .badge-ok {
@@ -193,13 +199,15 @@ textarea {
   color: var(--text-primary);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  min-height: 36px;
   padding: 6px 12px;
   font-size: 13px;
   outline: none;
-  transition: border-color var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 .control-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .control-input::placeholder {
   color: var(--text-dim);
@@ -208,7 +216,7 @@ textarea {
 .toggle-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
   font-size: 11px;
   color: var(--text-secondary);
@@ -218,10 +226,10 @@ textarea {
   display: none;
 }
 .toggle-switch {
-  width: 28px;
-  height: 16px;
-  border-radius: 8px;
-  background: var(--border-strong);
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dim) 24%, transparent);
   position: relative;
   transition: background var(--transition);
 }
@@ -230,14 +238,14 @@ textarea {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--text-secondary);
   transition: all var(--transition);
 }
 .toggle-label input:checked + .toggle-switch {
-  background: var(--accent);
+  background: var(--success);
 }
 .toggle-label input:checked + .toggle-switch::after {
   left: 14px;

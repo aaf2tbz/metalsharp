@@ -278,6 +278,7 @@ onMounted(async () => {
 <style>
 .drag-strip {
   height: 38px;
+  background: var(--page-header-bg);
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -333,5 +334,6 @@ onMounted(async () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-deep);
 }
 </style>

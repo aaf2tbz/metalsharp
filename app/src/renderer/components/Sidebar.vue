@@ -113,13 +113,14 @@ const navItems = [
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 38px 12px 10px;
+  min-height: 108px;
+  padding: 38px 12px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .sidebar-hamburger {
-  background: none;
-  border: none;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--text-secondary);
   cursor: pointer;
   padding: 4px;
@@ -133,6 +134,8 @@ const navItems = [
 }
 .sidebar-hamburger:hover {
   color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--sidebar-hover);
 }
 
 .sidebar-logo {
@@ -150,12 +153,13 @@ const navItems = [
   font-family: var(--font-logo);
   font-size: 10px;
   color: var(--accent);
+  line-height: 1.4;
   white-space: nowrap;
 }
 
 .sidebar-nav {
   flex: 1;
-  padding: 8px 6px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -166,8 +170,9 @@ const navItems = [
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 36px;
   padding: 8px 10px;
-  border: none;
+  border: 1px solid transparent;
   background: none;
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
@@ -182,10 +187,12 @@ const navItems = [
 .sidebar-nav-item:hover {
   background: var(--sidebar-hover);
   color: var(--text-primary);
+  border-color: var(--border);
 }
 .sidebar-nav-item.active {
   background: var(--sidebar-active);
   color: var(--accent);
+  border-color: var(--border);
 }
 
 .sidebar-nav-icon {
@@ -203,7 +210,7 @@ const navItems = [
 }
 
 .sidebar-bottom {
-  padding: 6px;
+  padding: 8px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
