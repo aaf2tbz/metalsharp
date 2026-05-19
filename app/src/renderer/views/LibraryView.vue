@@ -58,7 +58,6 @@ function isWineSteamRouteLaunch(launchMethod: string) {
     "m11",
     "m12",
     "m32",
-    "wine_bare",
     "dx9",
     "dx10",
     "dx11",
