@@ -82,14 +82,59 @@ fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
 
 fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonSteamShortcut) -> bool {
     let id = format!("steam_shortcut_{}", stable_shortcut_id(&shortcut.name, &shortcut.exe_path));
-    if let Some(app) = apps.iter_mut().find(|app| app.id == id || app_absolute_exe_path(app) == shortcut.exe_path) {
+    let (install_dir, exe_path) = shortcut_library_paths(&shortcut);
+    let install_dir_string = install_dir.to_string_lossy().to_string();
+    let exe_path_string = exe_path.to_string_lossy().to_string();
+
+    if let Some(app) = apps.iter_mut().find(|app| {
+        app.id == id
+            || app_absolute_exe_path(app) == shortcut.exe_path
+            || (app.id.starts_with("steam_shortcut_") && app.name == shortcut.name)
+    }) {
+        let size_bytes = dir_size(&install_dir);
+        let mut changed = false;
+        if app.id != id {
+            app.id = id;
+            changed = true;
+        }
+        if app.name != shortcut.name {
+            app.name = shortcut.name.clone();
+            changed = true;
+        }
+        if app.install_dir != install_dir_string {
+            app.install_dir = install_dir_string.clone();
+            changed = true;
+        }
+        if app.exe_path != exe_path_string {
+            app.exe_path = exe_path_string.clone();
+            changed = true;
+        }
         if app.launch_args != shortcut.launch_args {
             app.launch_args = shortcut.launch_args;
-            return true;
+            changed = true;
         }
-        return false;
+        if app.size_bytes != size_bytes {
+            app.size_bytes = size_bytes;
+            changed = true;
+        }
+        return changed;
     }
 
+    apps.push(SharpApp {
+        id,
+        name: shortcut.name,
+        exe_path: exe_path_string,
+        install_dir: install_dir_string,
+        cover: None,
+        engine: "auto".to_string(),
+        launch_args: shortcut.launch_args,
+        installed_at: chrono_now(),
+        size_bytes: dir_size(&install_dir),
+    });
+    true
+}
+
+fn shortcut_library_paths(shortcut: &crate::scan::NonSteamShortcut) -> (PathBuf, PathBuf) {
     let install_dir = shortcut
         .start_dir
         .clone()
@@ -100,18 +145,7 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
     let exe_path = relative_path_string(&install_dir, &shortcut.exe_path)
         .unwrap_or_else(|_| shortcut.exe_path.to_string_lossy().to_string());
 
-    apps.push(SharpApp {
-        id,
-        name: shortcut.name,
-        exe_path,
-        install_dir: install_dir.to_string_lossy().to_string(),
-        cover: None,
-        engine: "auto".to_string(),
-        launch_args: shortcut.launch_args,
-        installed_at: chrono_now(),
-        size_bytes: dir_size(&install_dir),
-    });
-    true
+    (install_dir, PathBuf::from(exe_path))
 }
 
 fn app_absolute_exe_path(app: &SharpApp) -> PathBuf {
@@ -671,6 +705,45 @@ mod tests {
         assert!(changed);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].launch_args, vec!["-d3d12", "-windowed"]);
+    }
+
+    #[test]
+    fn non_steam_shortcut_sync_refreshes_existing_metadata_by_name() {
+        let old_root = test_dir("shortcut-old");
+        let new_root = test_dir("shortcut-new");
+        let new_exe = new_root.join("Renamed.exe");
+        let mut apps = vec![SharpApp {
+            id: "steam_shortcut_old_target_hash".into(),
+            name: "Game".into(),
+            exe_path: "Old.exe".into(),
+            install_dir: old_root.to_string_lossy().to_string(),
+            cover: Some("cover.png".into()),
+            engine: "m11".into(),
+            launch_args: vec!["-dx11".into()],
+            installed_at: chrono_now(),
+            size_bytes: 123,
+        }];
+
+        let changed = sync_non_steam_shortcut(
+            &mut apps,
+            crate::scan::NonSteamShortcut {
+                name: "Game".into(),
+                exe_path: new_exe,
+                start_dir: Some(new_root.clone()),
+                launch_args: vec!["-d3d12".into()],
+            },
+        );
+
+        assert!(changed);
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].id.starts_with("steam_shortcut_"));
+        assert_ne!(apps[0].id, "steam_shortcut_old_target_hash");
+        assert_eq!(apps[0].name, "Game");
+        assert_eq!(apps[0].install_dir, new_root.to_string_lossy());
+        assert_eq!(apps[0].exe_path, "Renamed.exe");
+        assert_eq!(apps[0].cover.as_deref(), Some("cover.png"));
+        assert_eq!(apps[0].engine, "m11");
+        assert_eq!(apps[0].launch_args, vec!["-d3d12"]);
     }
 
     #[test]
