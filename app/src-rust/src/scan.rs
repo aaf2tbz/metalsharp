@@ -520,12 +520,13 @@ fn split_shortcut_args(args: &str) -> Vec<String> {
     out
 }
 
-fn shortcut_id(name: &str, exe_path: &Path) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    name.hash(&mut hasher);
-    exe_path.hash(&mut hasher);
-    hasher.finish()
+fn shortcut_id(name: &str, exe_path: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in name.as_bytes().iter().chain(b"\0").chain(exe_path.to_string_lossy().as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", hash)
 }
 
 fn parse_acf(contents: &str) -> Option<(u32, String, String)> {
@@ -753,6 +754,20 @@ mod tests {
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].name, "Tagged Game");
         assert!(shortcuts[0].exe_path.ends_with("tmp/Tagged/Game.exe"));
+    }
+
+    #[test]
+    fn scan_shortcut_ids_use_explicit_stable_hex_hashes() {
+        let path = PathBuf::from("/tmp/Game/Game.exe");
+
+        let first = shortcut_id("Game", &path);
+        let second = shortcut_id("Game", &path);
+        let changed = shortcut_id("Game", Path::new("/tmp/Game/Other.exe"));
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, changed);
     }
 
     fn test_shortcuts_vdf(
