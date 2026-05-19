@@ -509,16 +509,16 @@ fn d3d_api_label(api: super::pe::D3dApi) -> &'static str {
 }
 
 fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
-    match (pipeline, api) {
-        (_, super::pe::D3dApi::Unknown) => false,
-        (PipelineId::WineBare, _) => false,
-        (PipelineId::M9, super::pe::D3dApi::D3D9) => false,
-        (PipelineId::M10, super::pe::D3dApi::D3D10) => false,
-        (PipelineId::M11, super::pe::D3dApi::D3D11) => false,
-        (PipelineId::M12, super::pe::D3dApi::D3D12) => false,
-        (PipelineId::M32, _) => false,
-        _ => true,
-    }
+    !matches!(
+        (pipeline, api),
+        (_, super::pe::D3dApi::Unknown)
+            | (PipelineId::WineBare, _)
+            | (PipelineId::M9, super::pe::D3dApi::D3D9)
+            | (PipelineId::M10, super::pe::D3dApi::D3D10)
+            | (PipelineId::M11, super::pe::D3dApi::D3D11)
+            | (PipelineId::M12, super::pe::D3dApi::D3D12)
+            | (PipelineId::M32, _)
+    )
 }
 
 fn push_check(
