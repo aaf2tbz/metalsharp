@@ -61,7 +61,10 @@ function formatBytes(bytes: number): string {
 
 async function saveApiKey() {
   const key = apiKeyInput.value.trim();
-  if (!key) { toast.show("Please enter a Steam API key", "error"); return; }
+  if (!key) {
+    toast.show("Please enter a Steam API key", "error");
+    return;
+  }
   await api("POST", "/steam/save-api-key", { key });
   toast.show("API key saved — syncing library...", "success");
   await reloadLibrary();
@@ -150,14 +153,44 @@ async function restartBackend() {
   else toast.show(result.error ?? "Failed to restart", "error");
 }
 
+async function openMetalsharpFolder() {
+  const result = await getAPI().openMetalsharpFolder();
+  toast.show(
+    result?.ok ? "MetalSharp data folder opened" : (result?.error ?? "Failed to open data folder"),
+    result?.ok ? "success" : "error",
+  );
+}
+
+async function openLogsFolder() {
+  const result = await getAPI().openLogsFolder();
+  toast.show(
+    result?.ok ? "Logs folder opened" : (result?.error ?? "Failed to open logs"),
+    result?.ok ? "success" : "error",
+  );
+}
+
+async function repairDataAccess() {
+  const result = await getAPI().repairDataAccess();
+  const failed = result?.checks?.filter((check) => !check.ok) ?? [];
+  if (result?.ok) {
+    toast.show("MetalSharp data access verified", "success");
+  } else {
+    toast.show(failed[0]?.error ?? result?.error ?? "MetalSharp data access needs attention", "error");
+  }
+}
+
 async function clearShaderCache() {
-  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "shader" });
+  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", {
+    type: "shader",
+  });
   if (result?.ok) toast.show(`Shader cache cleared — ${formatBytes(result.bytes_freed)} freed`);
   await refreshCacheSizes();
 }
 
 async function clearPipelineCache() {
-  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", { type: "pipeline" });
+  const result = await api<{ ok: boolean; bytes_freed: number; files_removed: number }>("POST", "/cache/clear", {
+    type: "pipeline",
+  });
   if (result?.ok) toast.show(`Pipeline cache cleared — ${formatBytes(result.bytes_freed)} freed`);
   await refreshCacheSizes();
 }
@@ -200,7 +233,12 @@ function cacheStatusText(cache: CacheSummary | null): string {
         </div>
         <div class="settings-value">
           <div class="settings-input-row">
-            <input v-model="apiKeyInput" type="password" class="control-input" placeholder="Enter your Steam Web API key..." />
+            <input
+              v-model="apiKeyInput"
+              type="password"
+              class="control-input"
+              placeholder="Enter your Steam Web API key..."
+            />
             <button class="btn btn-primary btn-sm" @click="saveApiKey">Save &amp; Sync</button>
           </div>
           <span v-if="steamApiKey" class="badge badge-ok">Key saved</span>
@@ -242,11 +280,7 @@ function cacheStatusText(cache: CacheSummary | null): string {
         <div class="settings-value">
           <span v-if="macSteamInstalled" class="badge badge-ok">Installed</span>
           <span v-else class="badge badge-warn">Not Installed</span>
-          <button
-            v-if="macSteamInstalled"
-            class="btn btn-secondary btn-sm"
-            @click="toggleMacSteam"
-          >
+          <button v-if="macSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleMacSteam">
             {{ macSteamRunning ? "Stop Steam Mac" : "Start Steam Mac" }}
           </button>
           <button v-else class="btn btn-primary btn-sm" @click="installMacSteam">Install macOS Steam</button>
@@ -259,7 +293,9 @@ function cacheStatusText(cache: CacheSummary | null): string {
       <div class="settings-row">
         <div>
           <div class="settings-label">Game Runtime Backend</div>
-          <div class="settings-desc">The Rust backend handles game launches, Steam integration, and shader management</div>
+          <div class="settings-desc">
+            The Rust backend handles game launches, Steam integration, and shader management
+          </div>
         </div>
         <div class="settings-value">
           <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-warn'">
@@ -275,6 +311,33 @@ function cacheStatusText(cache: CacheSummary | null): string {
         </div>
         <div class="settings-value">
           <button class="btn btn-secondary btn-sm" @click="restartBackend">Restart Backend</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Data &amp; Permissions</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">MetalSharp Data Folder</div>
+          <div class="settings-desc">
+            Preserves logs, Sharp Library apps, covers, launch options, caches, and runtime state across updates.
+          </div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-secondary btn-sm" @click="openMetalsharpFolder">Open Data</button>
+          <button class="btn btn-secondary btn-sm" @click="openLogsFolder">Open Logs</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Data Access Check</div>
+          <div class="settings-desc">
+            Recreates required folders and verifies MetalSharp can write logs and library metadata after an app update.
+          </div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-primary btn-sm" @click="repairDataAccess">Repair &amp; Verify</button>
         </div>
       </div>
     </div>
@@ -312,9 +375,13 @@ function cacheStatusText(cache: CacheSummary | null): string {
         <div>
           <div class="settings-label">Version</div>
           <div class="settings-desc">
-            {{ updateStatus?.ok && updateStatus?.available
-              ? `v${updateStatus.latest_version} available (current: v${updateStatus.current_version})`
-              : updateStatus?.ok ? "You're up to date" : "Could not check for updates" }}
+            {{
+              updateStatus?.ok && updateStatus?.available
+                ? `v${updateStatus.latest_version} available (current: v${updateStatus.current_version})`
+                : updateStatus?.ok
+                  ? "You're up to date"
+                  : "Could not check for updates"
+            }}
           </div>
         </div>
         <div class="settings-value">

@@ -72,8 +72,11 @@ interface SharpApp {
   exe_path: string;
   install_dir: string;
   cover: string | null;
+  cover_position_x: number;
+  cover_position_y: number;
   engine: string;
   launch_args: string[];
+  user_launch_args: string[];
   installed_at: string;
   size_bytes: number;
 }
@@ -124,6 +127,13 @@ type MetalsharpAPI = {
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;
   openInFinder: (path: string) => Promise<void>;
   openLogsFolder: () => Promise<{ ok: boolean; path?: string; error?: string }>;
+  openMetalsharpFolder: () => Promise<{ ok: boolean; path?: string; error?: string }>;
+  repairDataAccess: () => Promise<{
+    ok: boolean;
+    path?: string;
+    checks?: { dir: string; ok: boolean; error?: string }[];
+    error?: string;
+  }>;
   copyText: (text: string) => Promise<{ ok: boolean; error?: string }>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;

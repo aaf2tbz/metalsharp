@@ -52,6 +52,7 @@ function ensureMetalsharpDirs() {
     "games",
     "cache",
     "logs",
+    "sharp-library",
     "shader-cache",
     "pipeline-cache",
     "runtime/fna",
@@ -62,6 +63,23 @@ function ensureMetalsharpDirs() {
   for (const d of dirs) {
     fs.mkdirSync(path.join(base, d), { recursive: true });
   }
+}
+
+function verifyMetalsharpDataAccess() {
+  ensureMetalsharpDirs();
+  const base = getMetalsharpDir();
+  const checks = ["logs", "sharp-library", "cache"].map((dir) => {
+    const checkPath = path.join(base, dir, ".metalsharp-access-check");
+    try {
+      fs.writeFileSync(checkPath, String(Date.now()));
+      fs.unlinkSync(checkPath);
+      return { dir, ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown filesystem error";
+      return { dir, ok: false, error: message };
+    }
+  });
+  return { ok: checks.every((check) => check.ok), path: base, checks };
 }
 
 function hasPostUpdateMigrationMarker(): { needed: boolean; targetVersion?: string } {
@@ -438,6 +456,17 @@ function registerIpc() {
     fs.mkdirSync(logsPath, { recursive: true });
     await shell.openPath(logsPath);
     return { ok: true, path: logsPath };
+  });
+
+  ipcMain.handle("app:open-metalsharp-folder", async () => {
+    const metalsharpPath = getMetalsharpDir();
+    fs.mkdirSync(metalsharpPath, { recursive: true });
+    await shell.openPath(metalsharpPath);
+    return { ok: true, path: metalsharpPath };
+  });
+
+  ipcMain.handle("app:repair-data-access", async () => {
+    return verifyMetalsharpDataAccess();
   });
 
   ipcMain.handle("app:copy-text", async (_e, text: string) => {

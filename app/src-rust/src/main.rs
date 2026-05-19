@@ -662,9 +662,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, sharp_library::handle_set_cover(&body))
         },
+        (Method::Post, "/sharp-library/set-cover-position") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_set_cover_position(&body))
+        },
         (Method::Post, "/sharp-library/set-engine") => {
             let body = read_body(req);
             resp(200, sharp_library::handle_set_engine(&body))
+        },
+        (Method::Post, "/sharp-library/set-launch-args") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_set_launch_args(&body))
         },
         (Method::Get, "/sharp-library/cover") => {
             let url_str = req.url().to_string();
