@@ -641,7 +641,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     });
     checks.push(BottleCheck {
         id: "components".to_string(),
-        ok: manifest.installed_components.iter().all(|c| c.state != ComponentState::Missing),
+        ok: components_ready(&manifest.installed_components),
         detail: format!("{} tracked components", manifest.installed_components.len()),
     });
     checks.push(BottleCheck {
@@ -1366,7 +1366,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             if drive_c.join("windows").join("gecko").exists() {
                 ComponentState::Installed
             } else {
-                fallback
+                ComponentState::Missing
             }
         },
         "dotnet48" => {
@@ -1380,14 +1380,14 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             if system32.join("vcruntime140.dll").exists() || syswow64.join("vcruntime140.dll").exists() {
                 ComponentState::Installed
             } else {
-                fallback
+                ComponentState::Missing
             }
         },
         "corefonts" => {
             if windows.join("Fonts").exists() {
                 ComponentState::Installed
             } else {
-                fallback
+                ComponentState::Missing
             }
         },
         "directx_jun2010" => {
@@ -1398,10 +1398,10 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             {
                 ComponentState::Installed
             } else {
-                fallback
+                ComponentState::Missing
             }
         },
-        "d3d9" | "d3d11" | "d3d12" | "dxgi" => fallback,
+        "d3d9" | "d3d11" | "d3d12" | "dxgi" => inspect_runtime_dll_component(id).unwrap_or(fallback),
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
                 || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
@@ -1413,6 +1413,19 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         _ => fallback,
     }
+}
+
+fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
+    let filename = format!("{}.dll", id);
+    let home = dirs::home_dir()?;
+    let runtime_wine = home.join(".metalsharp").join("runtime").join("wine");
+    let candidates = [
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join(&filename),
+        runtime_wine.join("lib").join("wine").join("x86_64-windows").join(&filename),
+        runtime_wine.join("lib").join("dxvk").join("x64-windows").join(&filename),
+        runtime_wine.join("lib").join("dxvk").join("i386-windows").join(&filename),
+    ];
+    Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<ComponentInstaller> {
@@ -1597,13 +1610,21 @@ fn run_wine_reg_set_windows_version(
 fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
     components
         .iter()
-        .filter(|component| matches!(component.state, ComponentState::Missing | ComponentState::NeedsRepair))
+        .filter(|component| !component_ready(component))
         .map(|component| BottleAction {
             id: component.id.clone(),
             status: "needed".to_string(),
             detail: component_action_detail(&component.id),
         })
         .collect()
+}
+
+fn component_ready(component: &RuntimeComponent) -> bool {
+    component.state == ComponentState::Installed
+}
+
+fn components_ready(components: &[RuntimeComponent]) -> bool {
+    components.iter().all(component_ready)
 }
 
 fn component_source_policies(components: &[RuntimeComponent], arch: BottleArch) -> Vec<ComponentSourcePolicy> {
@@ -2011,7 +2032,7 @@ fn find_bottle_for(bottles: &[BottleManifest], needles: &[&str]) -> Option<Strin
 fn missing_components_summary(components: &[RuntimeComponent]) -> String {
     let missing = components
         .iter()
-        .filter(|component| matches!(component.state, ComponentState::Missing | ComponentState::NeedsRepair))
+        .filter(|component| !component_ready(component))
         .map(|component| component.id.as_str())
         .collect::<Vec<_>>();
     if missing.is_empty() {
@@ -2278,6 +2299,39 @@ mod tests {
 
         assert!(actions.iter().any(|a| a.id == "wine-mono"));
         assert!(actions.iter().any(|a| a.id == "dotnet48"));
+        assert!(!components_ready(&inspected));
+    }
+
+    #[test]
+    fn unknown_and_needs_repair_components_are_not_ready() {
+        let components = vec![
+            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "directx_jun2010".into(), state: ComponentState::NeedsRepair },
+        ];
+
+        let actions = component_actions(&components);
+
+        assert!(!components_ready(&components));
+        assert_eq!(actions.len(), 2);
+        assert!(missing_components_summary(&components).contains("vcrun2019"));
+        assert!(missing_components_summary(&components).contains("directx_jun2010"));
+    }
+
+    #[test]
+    fn absent_inspectable_redists_are_missing_not_unknown() {
+        let prefix = test_dir("missing-redists-prefix");
+        let components = vec![
+            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "directx_jun2010".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "corefonts".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "gecko".into(), state: ComponentState::Unknown },
+        ];
+
+        let inspected = inspect_components(&prefix, &components);
+
+        assert!(inspected.iter().all(|component| component.state == ComponentState::Missing));
+        assert!(!components_ready(&inspected));
+        let _ = fs::remove_dir_all(prefix);
     }
 
     #[test]
