@@ -99,6 +99,18 @@ interface CompatibilityCase {
   final_app_launches: string;
   known_missing_runtime: string;
   bottle_id?: string | null;
+  notes?: string;
+  evidence_updated_at?: string | null;
+  per_game_prefix_recommendation?: string;
+}
+
+interface RedistSourceGuide {
+  id: string;
+  name: string;
+  source_url: string;
+  local_targets: string[];
+  policy: string;
+  notes: string;
 }
 
 const toast = useToast();
@@ -106,6 +118,7 @@ const apps = ref<SharpApp[]>([]);
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
 const compatibilityCases = ref<CompatibilityCase[]>([]);
+const redistSources = ref<RedistSourceGuide[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const bottleLoading = ref<Record<string, boolean>>({});
 const doctorOpen = ref<Record<string, boolean>>({});
@@ -129,11 +142,12 @@ const engineOptions = [
 ];
 
 async function load() {
-  const [result, bottleResult, profileResult, matrixResult] = await Promise.all([
+  const [result, bottleResult, profileResult, matrixResult, redistResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
     api<{ ok: boolean; cases: CompatibilityCase[] }>("GET", "/bottles/compatibility-matrix"),
+    api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
   ]);
   if (result?.ok) {
     apps.value = result.apps;
@@ -148,6 +162,7 @@ async function load() {
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
   if (matrixResult?.ok) compatibilityCases.value = matrixResult.cases;
+  if (redistResult?.ok) redistSources.value = redistResult.sources;
 }
 
 async function refreshSharpLibrary() {
@@ -274,6 +289,33 @@ async function relaunchBottleInstaller(bottle: BottleManifest) {
   } else {
     toast.show(result?.error ?? "Failed to relaunch installer", "error");
   }
+}
+
+async function recordCompatibility(item: CompatibilityCase, field: keyof CompatibilityCase, value: string) {
+  const updated = { ...item, [field]: value };
+  const result = await api<{ ok: boolean; cases?: CompatibilityCase[]; error?: string }>(
+    "POST",
+    "/bottles/record-compatibility",
+    {
+      id: item.id,
+      installerOpens: updated.installer_opens,
+      finalAppDetected: updated.final_app_detected,
+      finalAppLaunches: updated.final_app_launches,
+      knownMissingRuntime: updated.known_missing_runtime,
+      notes: updated.notes ?? "",
+    },
+  );
+  if (result?.ok && result.cases) {
+    compatibilityCases.value = result.cases;
+    toast.show("Compatibility evidence recorded", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to record compatibility evidence", "error");
+  }
+}
+
+async function openRedistSource(source: RedistSourceGuide) {
+  await getAPI().copyText(source.source_url);
+  toast.show(`${source.name} source URL copied`, "success");
 }
 
 async function addBottleApp(bottle: BottleManifest, app: { name: string; exe_path: string }) {
@@ -708,6 +750,7 @@ onMounted(load);
           <span>Detected</span>
           <span>Launch</span>
           <span>Runtime</span>
+          <span>Prefix</span>
         </div>
         <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
           <span>
@@ -715,11 +758,70 @@ onMounted(load);
             <small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small>
           </span>
           <span>{{ item.required_profile }}</span>
-          <span>{{ item.installer_opens }}</span>
-          <span>{{ item.final_app_detected }}</span>
-          <span>{{ item.final_app_launches }}</span>
-          <span>{{ item.known_missing_runtime }}</span>
+          <select
+            class="compatibility-select"
+            :value="item.installer_opens"
+            @change="recordCompatibility(item, 'installer_opens', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="untested">untested</option>
+            <option value="needs_real_trace">needs trace</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <select
+            class="compatibility-select"
+            :value="item.final_app_detected"
+            @change="recordCompatibility(item, 'final_app_detected', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="pending">pending</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <select
+            class="compatibility-select"
+            :value="item.final_app_launches"
+            @change="recordCompatibility(item, 'final_app_launches', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="pending">pending</option>
+            <option value="unknown">unknown</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <input
+            class="compatibility-input"
+            :value="item.known_missing_runtime"
+            @change="recordCompatibility(item, 'known_missing_runtime', ($event.target as HTMLInputElement).value)"
+          />
+          <span>
+            {{ item.per_game_prefix_recommendation }}
+            <small v-if="item.evidence_updated_at">updated {{ item.evidence_updated_at }}</small>
+          </span>
         </div>
+      </div>
+    </section>
+
+    <section v-if="redistSources.length" class="redist-sources">
+      <div class="bottle-strip-header">
+        <div>
+          <h2>Redistributable Sources</h2>
+          <p>Official source policy and local cache targets for offline bottle repair</p>
+        </div>
+      </div>
+      <div class="redist-source-list">
+        <article v-for="source in redistSources" :key="source.id" class="redist-source-card">
+          <div>
+            <strong>{{ source.name }}</strong>
+            <small>{{ source.policy }}</small>
+          </div>
+          <p>{{ source.notes }}</p>
+          <div class="redist-targets">
+            <span v-for="target in source.local_targets" :key="target">{{ target }}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
+        </article>
       </div>
     </section>
 
@@ -1046,7 +1148,8 @@ onMounted(load);
 .bottle-action-row span {
   overflow-wrap: anywhere;
 }
-.compatibility-matrix {
+.compatibility-matrix,
+.redist-sources {
   margin-bottom: 18px;
 }
 .compatibility-table {
@@ -1057,7 +1160,7 @@ onMounted(load);
 }
 .compatibility-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.4fr) 110px 90px 90px 90px minmax(170px, 1fr);
+  grid-template-columns: minmax(170px, 1.3fr) 100px 92px 92px 92px minmax(150px, 1fr) minmax(130px, 0.9fr);
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
@@ -1080,6 +1183,56 @@ onMounted(load);
 .compatibility-row small {
   margin-top: 2px;
   color: var(--text-dim);
+}
+.compatibility-select,
+.compatibility-input {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compatibility-input {
+  padding: 4px 7px;
+}
+.redist-source-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.redist-source-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.redist-source-card strong,
+.redist-source-card small {
+  display: block;
+}
+.redist-source-card small,
+.redist-source-card p {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.redist-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.redist-targets span {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
 .sharp-grid {

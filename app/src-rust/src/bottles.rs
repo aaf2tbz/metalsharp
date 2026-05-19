@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{hash_map::DefaultHasher, HashSet};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 
 const BOTTLES_DIR: &str = "bottles";
 const MANIFEST_FILE: &str = "bottle.json";
+const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
 
@@ -195,7 +196,7 @@ pub struct ComponentRepairReport {
     pub pid: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CompatibilityCase {
     pub id: String,
     pub name: String,
@@ -206,6 +207,22 @@ pub struct CompatibilityCase {
     pub final_app_launches: String,
     pub known_missing_runtime: String,
     pub bottle_id: Option<String>,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub evidence_updated_at: Option<String>,
+    #[serde(default)]
+    pub per_game_prefix_recommendation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RedistSourceGuide {
+    pub id: String,
+    pub name: String,
+    pub source_url: String,
+    pub local_targets: Vec<String>,
+    pub policy: String,
+    pub notes: String,
 }
 
 struct ComponentInstaller {
@@ -236,6 +253,10 @@ pub fn bottle_dir(id: &str) -> PathBuf {
 
 pub fn bottle_manifest_path(id: &str) -> PathBuf {
     bottle_dir(id).join(MANIFEST_FILE)
+}
+
+fn compatibility_matrix_path() -> PathBuf {
+    bottles_root().join(COMPATIBILITY_MATRIX_FILE)
 }
 
 pub fn installer_payload_dir(id: &str) -> PathBuf {
@@ -936,6 +957,24 @@ pub fn handle_compatibility_matrix() -> Value {
     })
 }
 
+pub fn handle_record_compatibility_case(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match record_compatibility_case(id, body) {
+        Ok(cases) => json!({"ok": true, "cases": cases}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_redist_sources() -> Value {
+    json!({
+        "ok": true,
+        "sources": redist_source_guides(),
+    })
+}
+
 pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Value {
     let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
     let pipeline = body
@@ -1522,6 +1561,7 @@ fn detect_apps_in_prefix(prefix: &Path) -> Vec<AppDetection> {
 
 fn compatibility_matrix() -> Vec<CompatibilityCase> {
     let bottles = list_bottles().unwrap_or_default();
+    let overrides = load_compatibility_overrides();
     let mut cases = vec![
         compatibility_case(
             "minecraft-installer",
@@ -1633,6 +1673,12 @@ fn compatibility_matrix() -> Vec<CompatibilityCase> {
             ));
         }
     }
+    for case in &mut cases {
+        case.per_game_prefix_recommendation = per_game_prefix_recommendation(case);
+        if let Some(saved) = overrides.get(&case.id) {
+            apply_compatibility_override(case, saved);
+        }
+    }
     cases
 }
 
@@ -1658,7 +1704,136 @@ fn compatibility_case(
         final_app_launches: final_app_launches.to_string(),
         known_missing_runtime: known_missing_runtime.to_string(),
         bottle_id,
+        notes: String::new(),
+        evidence_updated_at: None,
+        per_game_prefix_recommendation: String::new(),
     }
+}
+
+fn load_compatibility_overrides() -> HashMap<String, CompatibilityCase> {
+    let path = compatibility_matrix_path();
+    let Ok(data) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str::<Vec<CompatibilityCase>>(&data)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|case| (case.id.clone(), case))
+        .collect()
+}
+
+fn save_compatibility_overrides(
+    overrides: &HashMap<String, CompatibilityCase>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(bottles_root())?;
+    let mut values = overrides.values().cloned().collect::<Vec<_>>();
+    values.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+    fs::write(compatibility_matrix_path(), serde_json::to_string_pretty(&values)?)?;
+    Ok(())
+}
+
+fn record_compatibility_case(
+    id: &str,
+    body: &serde_json::Map<String, Value>,
+) -> Result<Vec<CompatibilityCase>, Box<dyn std::error::Error>> {
+    let current =
+        compatibility_matrix().into_iter().find(|case| case.id == id).ok_or("compatibility case not found")?;
+    let mut overrides = load_compatibility_overrides();
+    let mut saved = overrides.remove(id).unwrap_or(current);
+    if let Some(value) = body.get("installerOpens").and_then(|v| v.as_str()) {
+        saved.installer_opens = value.to_string();
+    }
+    if let Some(value) = body.get("finalAppDetected").and_then(|v| v.as_str()) {
+        saved.final_app_detected = value.to_string();
+    }
+    if let Some(value) = body.get("finalAppLaunches").and_then(|v| v.as_str()) {
+        saved.final_app_launches = value.to_string();
+    }
+    if let Some(value) = body.get("knownMissingRuntime").and_then(|v| v.as_str()) {
+        saved.known_missing_runtime = value.to_string();
+    }
+    if let Some(value) = body.get("notes").and_then(|v| v.as_str()) {
+        saved.notes = value.to_string();
+    }
+    saved.evidence_updated_at = Some(timestamp_secs());
+    saved.per_game_prefix_recommendation = per_game_prefix_recommendation(&saved);
+    overrides.insert(id.to_string(), saved);
+    save_compatibility_overrides(&overrides)?;
+    Ok(compatibility_matrix())
+}
+
+fn apply_compatibility_override(case: &mut CompatibilityCase, saved: &CompatibilityCase) {
+    case.installer_opens = saved.installer_opens.clone();
+    case.final_app_detected = saved.final_app_detected.clone();
+    case.final_app_launches = saved.final_app_launches.clone();
+    case.known_missing_runtime = saved.known_missing_runtime.clone();
+    case.notes = saved.notes.clone();
+    case.evidence_updated_at = saved.evidence_updated_at.clone();
+    case.per_game_prefix_recommendation = per_game_prefix_recommendation(case);
+}
+
+fn per_game_prefix_recommendation(case: &CompatibilityCase) -> String {
+    if !case.id.starts_with("steam_") && !case.case_type.contains("steam") {
+        return "not_applicable".to_string();
+    }
+    let launch = case.final_app_launches.to_ascii_lowercase();
+    let missing = case.known_missing_runtime.to_ascii_lowercase();
+    if launch == "yes" && (missing == "none" || missing == "not_applicable") {
+        "shared_prefix_ok".to_string()
+    } else if launch == "no" || missing.contains("dotnet") || missing.contains("webview") || missing.contains("directx")
+    {
+        "candidate_for_per_game_prefix".to_string()
+    } else {
+        "needs_more_evidence".to_string()
+    }
+}
+
+fn redist_source_guides() -> Vec<RedistSourceGuide> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let redist = home.join(".metalsharp").join("runtime").join("redist");
+    vec![
+        RedistSourceGuide {
+            id: "dotnet48".to_string(),
+            name: ".NET Framework 4.8 Runtime".to_string(),
+            source_url: "https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48".to_string(),
+            local_targets: vec![
+                redist.join("DotNet").join("4.8").join("ndp48-x86-x64-allos-enu.exe").to_string_lossy().to_string(),
+                redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_user_supplied".to_string(),
+            notes: "Use the official offline runtime installer; MetalSharp does not vendor it in this PR.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "webview2".to_string(),
+            name: "Microsoft Edge WebView2 Evergreen Runtime".to_string(),
+            source_url: "https://developer.microsoft.com/en-us/microsoft-edge/webview2/".to_string(),
+            local_targets: vec![
+                redist.join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe").to_string_lossy().to_string(),
+                redist.join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_user_supplied".to_string(),
+            notes: "Use the Evergreen Standalone Installer for offline scenarios; Wine compatibility still needs per-installer evidence.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "vcrun2019".to_string(),
+            name: "Latest Microsoft Visual C++ Redistributable".to_string(),
+            source_url: "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist".to_string(),
+            local_targets: vec![
+                redist.join("VC_redist.x64.exe").to_string_lossy().to_string(),
+                redist.join("VC_redist.x86.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "directx_jun2010".to_string(),
+            name: "DirectX June 2010 Runtime".to_string(),
+            source_url: "https://www.microsoft.com/download/details.aspx?id=8109".to_string(),
+            local_targets: vec![redist.join("DirectX").join("Jun2010").join("DXSETUP.exe").to_string_lossy().to_string()],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Prefer Steam CommonRedist game payloads; local offline payload should contain DXSETUP.exe.".to_string(),
+        },
+    ]
 }
 
 fn find_bottle_for(bottles: &[BottleManifest], needles: &[&str]) -> Option<String> {

@@ -592,6 +592,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
+        (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
+        (Method::Post, "/bottles/record-compatibility") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_record_compatibility_case(&body))
+        },
         (Method::Post, "/bottles/sync-steam") => resp(200, bottles::handle_sync_steam_bottles()),
         (Method::Post, "/bottles/get") => {
             let body = read_body(req);
