@@ -61,6 +61,43 @@ int main() {
         CHECK(SUCCEEDED(hr) && cmdList, "CreateCommandList");
     }
 
+    printf("\n--- Feature Support ---\n");
+    if (device) {
+        UINT requestedLevels[] = {D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_11_0};
+        D3D12_FEATURE_DATA_FEATURE_LEVELS levels = {2, requestedLevels, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &levels, sizeof(levels));
+        CHECK(SUCCEEDED(hr) && levels.MaxSupportedFeatureLevel == D3D_FEATURE_LEVEL_12_0,
+              "CheckFeatureSupport: feature level 12_0");
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options));
+        CHECK(SUCCEEDED(hr) && options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_2,
+              "CheckFeatureSupport: resource binding tier");
+        CHECK(options.TypedUAVLoadAdditionalFormats == TRUE, "CheckFeatureSupport: typed UAV loads");
+
+        D3D12_FEATURE_DATA_SHADER_MODEL shaderModel = {D3D_SHADER_MODEL_6_6};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel));
+        CHECK(SUCCEEDED(hr) && shaderModel.HighestShaderModel == D3D_SHADER_MODEL_6_0,
+              "CheckFeatureSupport: shader model clamped");
+
+        D3D12_FEATURE_DATA_ROOT_SIGNATURE rootSignature = {D3D_ROOT_SIGNATURE_VERSION_1_1};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &rootSignature, sizeof(rootSignature));
+        CHECK(SUCCEEDED(hr) && rootSignature.HighestVersion == D3D_ROOT_SIGNATURE_VERSION_1_1,
+              "CheckFeatureSupport: root signature 1.1");
+
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT formatSupport = {DXGI_FORMAT_B8G8R8A8_UNORM, 0, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &formatSupport, sizeof(formatSupport));
+        CHECK(SUCCEEDED(hr) && (formatSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
+              "CheckFeatureSupport: render target format");
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5 = {};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5));
+        CHECK(SUCCEEDED(hr), "CheckFeatureSupport: options5");
+
+        hr = device->CheckFeatureSupport(0xffffffffu, &options, sizeof(options));
+        CHECK(hr == E_INVALIDARG, "CheckFeatureSupport rejects unknown feature");
+    }
+
     if (cmdList) {
         hr = cmdList->IASetPrimitiveTopology(D3D12_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         CHECK(SUCCEEDED(hr), "IASetPrimitiveTopology");

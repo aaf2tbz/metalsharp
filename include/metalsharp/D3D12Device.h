@@ -678,6 +678,146 @@ class D3D12DeviceImpl final : public ID3D12Device {
     HRESULT CreateCommandList(UINT nodeMask, UINT type, ID3D12CommandAllocator* pAllocator,
                               ID3D12PipelineState* pInitialState, REFIID riid, void** ppCommandList) override;
 
+    HRESULT CheckFeatureSupport(UINT feature, void* pFeatureSupportData, UINT featureSupportDataSize) override {
+        if (!pFeatureSupportData)
+            return E_INVALIDARG;
+
+        switch (feature) {
+        case D3D12_FEATURE_FEATURE_LEVELS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FEATURE_LEVELS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FEATURE_LEVELS*>(pFeatureSupportData);
+            UINT maxRequested = D3D_FEATURE_LEVEL_11_0;
+            for (UINT i = 0; i < data->NumFeatureLevels && data->pFeatureLevelsRequested; ++i) {
+                maxRequested = std::max(maxRequested, data->pFeatureLevelsRequested[i]);
+            }
+            data->MaxSupportedFeatureLevel = std::min(maxRequested, D3D_FEATURE_LEVEL_12_0);
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->OutputMergerLogicOp = TRUE;
+            data->TiledResourcesTier = D3D12_TILED_RESOURCES_TIER_2;
+            data->ResourceBindingTier = m_metalCapabilities.supportsArgumentBuffers ? D3D12_RESOURCE_BINDING_TIER_3
+                                                                                    : D3D12_RESOURCE_BINDING_TIER_2;
+            data->TypedUAVLoadAdditionalFormats = TRUE;
+            data->MaxGPUVirtualAddressBitsPerResource = 40;
+            data->StandardSwizzle64KBSupported = TRUE;
+            data->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ARCHITECTURE: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ARCHITECTURE))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ARCHITECTURE*>(pFeatureSupportData);
+            data->TileBasedRenderer = TRUE;
+            data->UMA = TRUE;
+            data->CacheCoherentUMA = TRUE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ARCHITECTURE1: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ARCHITECTURE1))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ARCHITECTURE1*>(pFeatureSupportData);
+            data->TileBasedRenderer = TRUE;
+            data->UMA = TRUE;
+            data->CacheCoherentUMA = TRUE;
+            data->IsolatedMMU = FALSE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_FORMAT_SUPPORT: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_SUPPORT))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
+            data->Support1 = D3D12_FORMAT_SUPPORT1_TEXTURE1D | D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                             D3D12_FORMAT_SUPPORT1_TEXTURECUBE | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
+            data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+            if (data->Format == ::DXGI_FORMAT_R16_UINT || data->Format == ::DXGI_FORMAT_R32_UINT)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_IA_INDEX_BUFFER;
+            if (data->Format == ::DXGI_FORMAT_B8G8R8A8_UNORM || data->Format == ::DXGI_FORMAT_R8G8B8A8_UNORM ||
+                data->Format == ::DXGI_FORMAT_R16G16B16A16_FLOAT || data->Format == ::DXGI_FORMAT_R10G10B10A2_UNORM)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_RENDER_TARGET;
+            if (data->Format == ::DXGI_FORMAT_D32_FLOAT || data->Format == ::DXGI_FORMAT_D24_UNORM_S8_UINT ||
+                data->Format == ::DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL;
+            if (data->Format != ::DXGI_FORMAT_UNKNOWN)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            return S_OK;
+        }
+        case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(pFeatureSupportData);
+            data->NumQualityLevels =
+                (data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4) ? 1 : 0;
+            return S_OK;
+        }
+        case D3D12_FEATURE_FORMAT_INFO: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_INFO))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_INFO*>(pFeatureSupportData);
+            data->PlaneCount = 1;
+            return S_OK;
+        }
+        case D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT*>(pFeatureSupportData);
+            data->MaxGPUVirtualAddressBitsPerResource = 40;
+            data->MaxGPUVirtualAddressBitsPerProcess = 40;
+            return S_OK;
+        }
+        case D3D12_FEATURE_SHADER_MODEL: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_SHADER_MODEL))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_SHADER_MODEL*>(pFeatureSupportData);
+            if (data->HighestShaderModel == 0 || data->HighestShaderModel > D3D_SHADER_MODEL_6_0)
+                data->HighestShaderModel = D3D_SHADER_MODEL_6_0;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ROOT_SIGNATURE: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ROOT_SIGNATURE))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ROOT_SIGNATURE*>(pFeatureSupportData);
+            if (data->HighestVersion == 0 || data->HighestVersion > D3D_ROOT_SIGNATURE_VERSION_1_1)
+                data->HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS1: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS1))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS1*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->ExpandedComputeResourceStates = TRUE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS5: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS5))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS5*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->RaytracingTier = m_metalCapabilities.supportsRayTracing ? D3D12_RAYTRACING_TIER_1_1
+                                                                          : D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS7: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS7))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS7*>(pFeatureSupportData);
+            data->MeshShaderTier = m_metalCapabilities.supportsMeshShaders ? D3D12_MESH_SHADER_TIER_1
+                                                                           : D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
+            data->SamplerFeedbackTier = 0;
+            return S_OK;
+        }
+        default:
+            return E_INVALIDARG;
+        }
+    }
+
     HRESULT CreateCommittedResource(const D3D12_HEAP_PROPERTIES* pHeap, UINT HeapFlags,
                                     const D3D12_RESOURCE_DESC* pDesc, UINT InitialState, const void* pClearVal,
                                     REFIID riid, void** ppvResource) override {

@@ -185,6 +185,147 @@ constexpr UINT D3D12_TEXTURE_ADDRESS_MODE_BORDER = 4;
 
 constexpr UINT D3D12_FENCE_FLAG_NONE = 0;
 
+constexpr UINT D3D_FEATURE_LEVEL_11_0 = 0xb000;
+constexpr UINT D3D_FEATURE_LEVEL_11_1 = 0xb100;
+constexpr UINT D3D_FEATURE_LEVEL_12_0 = 0xc000;
+
+constexpr UINT D3D12_FEATURE_D3D12_OPTIONS = 0;
+constexpr UINT D3D12_FEATURE_ARCHITECTURE = 1;
+constexpr UINT D3D12_FEATURE_FEATURE_LEVELS = 4;
+constexpr UINT D3D12_FEATURE_FORMAT_SUPPORT = 5;
+constexpr UINT D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS = 6;
+constexpr UINT D3D12_FEATURE_FORMAT_INFO = 7;
+constexpr UINT D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT = 10;
+constexpr UINT D3D12_FEATURE_SHADER_MODEL = 12;
+constexpr UINT D3D12_FEATURE_D3D12_OPTIONS1 = 13;
+constexpr UINT D3D12_FEATURE_ROOT_SIGNATURE = 18;
+constexpr UINT D3D12_FEATURE_ARCHITECTURE1 = 19;
+constexpr UINT D3D12_FEATURE_D3D12_OPTIONS5 = 27;
+constexpr UINT D3D12_FEATURE_D3D12_OPTIONS7 = 32;
+
+constexpr UINT D3D_SHADER_MODEL_5_1 = 0x51;
+constexpr UINT D3D_SHADER_MODEL_6_0 = 0x60;
+constexpr UINT D3D_SHADER_MODEL_6_6 = 0x66;
+
+constexpr UINT D3D_ROOT_SIGNATURE_VERSION_1_1 = 0x2;
+
+constexpr UINT D3D12_RESOURCE_BINDING_TIER_2 = 2;
+constexpr UINT D3D12_RESOURCE_BINDING_TIER_3 = 3;
+constexpr UINT D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED = 0;
+constexpr UINT D3D12_TILED_RESOURCES_TIER_2 = 2;
+constexpr UINT D3D12_RESOURCE_HEAP_TIER_2 = 2;
+constexpr UINT D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED = 0;
+constexpr UINT D3D12_RAYTRACING_TIER_NOT_SUPPORTED = 0;
+constexpr UINT D3D12_RAYTRACING_TIER_1_1 = 11;
+constexpr UINT D3D12_MESH_SHADER_TIER_NOT_SUPPORTED = 0;
+constexpr UINT D3D12_MESH_SHADER_TIER_1 = 10;
+
+constexpr UINT D3D12_FORMAT_SUPPORT1_BUFFER = 0x1;
+constexpr UINT D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER = 0x2;
+constexpr UINT D3D12_FORMAT_SUPPORT1_IA_INDEX_BUFFER = 0x4;
+constexpr UINT D3D12_FORMAT_SUPPORT1_SO_BUFFER = 0x8;
+constexpr UINT D3D12_FORMAT_SUPPORT1_TEXTURE1D = 0x10;
+constexpr UINT D3D12_FORMAT_SUPPORT1_TEXTURE2D = 0x20;
+constexpr UINT D3D12_FORMAT_SUPPORT1_TEXTURE3D = 0x40;
+constexpr UINT D3D12_FORMAT_SUPPORT1_TEXTURECUBE = 0x80;
+constexpr UINT D3D12_FORMAT_SUPPORT1_SHADER_LOAD = 0x100;
+constexpr UINT D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE = 0x200;
+constexpr UINT D3D12_FORMAT_SUPPORT1_RENDER_TARGET = 0x4000;
+constexpr UINT D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL = 0x10000;
+constexpr UINT D3D12_FORMAT_SUPPORT1_SHADER_GATHER = 0x80000;
+constexpr UINT D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD = 0x1;
+constexpr UINT D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE = 0x2;
+
+struct D3D12_FEATURE_DATA_FEATURE_LEVELS {
+    UINT NumFeatureLevels;
+    const UINT* pFeatureLevelsRequested;
+    UINT MaxSupportedFeatureLevel;
+};
+
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS {
+    BOOL DoublePrecisionFloatShaderOps;
+    BOOL OutputMergerLogicOp;
+    UINT MinPrecisionSupport;
+    UINT TiledResourcesTier;
+    UINT ResourceBindingTier;
+    BOOL PSSpecifiedStencilRefSupported;
+    BOOL TypedUAVLoadAdditionalFormats;
+    BOOL ROVsSupported;
+    UINT ConservativeRasterizationTier;
+    UINT MaxGPUVirtualAddressBitsPerResource;
+    BOOL StandardSwizzle64KBSupported;
+    UINT CrossNodeSharingTier;
+    BOOL CrossAdapterRowMajorTextureSupported;
+    BOOL VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation;
+    UINT ResourceHeapTier;
+};
+
+struct D3D12_FEATURE_DATA_ARCHITECTURE {
+    UINT NodeIndex;
+    BOOL TileBasedRenderer;
+    BOOL UMA;
+    BOOL CacheCoherentUMA;
+};
+
+struct D3D12_FEATURE_DATA_ARCHITECTURE1 {
+    UINT NodeIndex;
+    BOOL TileBasedRenderer;
+    BOOL UMA;
+    BOOL CacheCoherentUMA;
+    BOOL IsolatedMMU;
+};
+
+struct D3D12_FEATURE_DATA_FORMAT_SUPPORT {
+    UINT Format;
+    UINT Support1;
+    UINT Support2;
+};
+
+struct D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
+    UINT Format;
+    UINT SampleCount;
+    UINT Flags;
+    UINT NumQualityLevels;
+};
+
+struct D3D12_FEATURE_DATA_FORMAT_INFO {
+    UINT Format;
+    UINT PlaneCount;
+};
+
+struct D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT {
+    UINT MaxGPUVirtualAddressBitsPerResource;
+    UINT MaxGPUVirtualAddressBitsPerProcess;
+};
+
+struct D3D12_FEATURE_DATA_SHADER_MODEL {
+    UINT HighestShaderModel;
+};
+
+struct D3D12_FEATURE_DATA_ROOT_SIGNATURE {
+    UINT HighestVersion;
+};
+
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS1 {
+    BOOL WaveOps;
+    UINT WaveLaneCountMin;
+    UINT WaveLaneCountMax;
+    UINT TotalLaneCount;
+    BOOL ExpandedComputeResourceStates;
+    BOOL Int64ShaderOps;
+};
+
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS5 {
+    BOOL SRVOnlyTiledResourceTier3;
+    UINT RenderPassesTier;
+    UINT RaytracingTier;
+};
+
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS7 {
+    UINT MeshShaderTier;
+    UINT SamplerFeedbackTier;
+};
+
 constexpr UINT D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE = 0;
 constexpr UINT D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS = 1;
 constexpr UINT D3D12_ROOT_PARAMETER_TYPE_CBV = 2;
@@ -726,6 +867,7 @@ class ID3D12Device : public ID3D12Object {
     STDMETHOD(CreateCommandAllocator)(UINT type, REFIID riid, void** ppCommandAllocator) PURE;
     STDMETHOD(CreateCommandList)(UINT nodeMask, UINT type, ID3D12CommandAllocator* pAllocator,
                                  ID3D12PipelineState* pInitialState, REFIID riid, void** ppCommandList) PURE;
+    STDMETHOD(CheckFeatureSupport)(UINT Feature, void* pFeatureSupportData, UINT FeatureSupportDataSize) PURE;
     STDMETHOD(CreateRenderTargetView)(ID3D12Resource* pResource, const void* pDesc,
                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
     STDMETHOD(CreateDepthStencilView)(ID3D12Resource* pResource, const void* pDesc,
