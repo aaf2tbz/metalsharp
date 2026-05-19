@@ -230,7 +230,7 @@ function formatBytes(bytes: number): string {
 </script>
 
 <template>
-  <div class="game-card" :class="{ running }">
+  <div class="game-card" :class="{ running, installed: game.installed, uninstalled: !game.installed }">
     <div class="game-card-banner">
       <img
         v-if="game.header_url || game.cover_url"
@@ -241,6 +241,12 @@ function formatBytes(bytes: number): string {
         @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
       <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
+      <button v-if="running" class="running-close-button" title="Close game" @click="emit('stop')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
     </div>
     <div class="game-card-body">
       <div class="game-card-heading">
@@ -427,6 +433,16 @@ function formatBytes(bytes: number): string {
     box-shadow var(--transition);
   box-shadow: 0 12px 34px var(--card-glow);
 }
+.game-card.installed {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--success) 10%, transparent),
+    0 16px 38px color-mix(in srgb, var(--success) 10%, var(--card-glow));
+}
+.game-card.uninstalled {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--text-dim) 8%, transparent),
+    0 12px 30px color-mix(in srgb, var(--text-dim) 8%, var(--card-glow));
+}
 .game-card:hover {
   border-color: var(--border-strong);
   box-shadow: 0 18px 42px var(--card-glow);
@@ -448,6 +464,7 @@ function formatBytes(bytes: number): string {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 .game-card-cover {
   width: 100%;
@@ -460,6 +477,26 @@ function formatBytes(bytes: number): string {
 .game-card:hover .game-card-cover {
   transform: scale(1.015);
   filter: saturate(1.04);
+}
+.running-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--error) 44%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+  color: var(--error);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 22px var(--card-glow);
+}
+.running-close-button:hover {
+  border-color: var(--error);
+  background: var(--error-bg);
 }
 .game-icon-placeholder {
   font-size: 36px;

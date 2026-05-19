@@ -114,6 +114,7 @@ const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
 const diagnosticsOpen = ref<Record<string, boolean>>({});
 const diagnosticsLoading = ref<Record<string, boolean>>({});
 const launchErrors = ref<Record<string, string>>({});
+const runningSharpPids = ref<Record<string, number>>({});
 const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
@@ -312,6 +313,7 @@ async function launchApp(id: string, engine: string) {
   );
   if (result?.ok && result.pid) {
     const warning = result.warnings?.[0];
+    runningSharpPids.value[id] = result.pid;
     launchErrors.value[id] = "";
     diagnosticsOpen.value[id] = false;
     toast.show(warning ? `Launched ${app.name}: ${warning}` : `Launched ${app.name}`, "success");
@@ -321,6 +323,14 @@ async function launchApp(id: string, engine: string) {
     toast.show(error, "error");
     await openDiagnostics(app);
   }
+}
+
+async function stopSharpApp(app: SharpApp) {
+  const pid = runningSharpPids.value[app.id];
+  if (!pid) return;
+  await api("POST", "/kill", { pid });
+  delete runningSharpPids.value[app.id];
+  toast.show(`Closed ${app.name}`);
 }
 
 async function updateEngine(id: string, engine: string) {
@@ -586,11 +596,19 @@ onMounted(load);
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
                 {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
               </button>
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
-                Prepare
-              </button>
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
                 Scan
+              </button>
+            </div>
+          </div>
+          <details class="bottle-control-surface">
+            <summary class="drawer-summary">
+              <span>Bottle Controls</span>
+              <small>repair, profile, logs, Windows mode</small>
+            </summary>
+            <div class="bottle-control-grid">
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
+                Prepare
               </button>
               <button
                 v-if="bottle.source_installer_path"
@@ -604,31 +622,29 @@ onMounted(load);
               <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">
                 Logs
               </button>
+              <select
+                class="control-input"
+                :value="bottle.runtime_profile"
+                :disabled="bottleLoading[bottle.id]"
+                @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="profile in runtimeProfiles" :key="profile.id" :value="profile.id">
+                  {{ profile.name }}
+                </option>
+              </select>
+              <div class="windows-version-controls">
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">
+                  Win7
+                </button>
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">
+                  Win10
+                </button>
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">
+                  Win11
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="bottle-controls">
-            <select
-              class="control-input"
-              :value="bottle.runtime_profile"
-              :disabled="bottleLoading[bottle.id]"
-              @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="profile in runtimeProfiles" :key="profile.id" :value="profile.id">
-                {{ profile.name }}
-              </option>
-            </select>
-            <div class="windows-version-controls">
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">
-                Win7
-              </button>
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">
-                Win10
-              </button>
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">
-                Win11
-              </button>
-            </div>
-          </div>
+          </details>
           <div class="bottle-components">
             <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
               {{ component.id }}: {{ component.state }}
@@ -720,7 +736,7 @@ onMounted(load);
     </div>
 
     <div v-else class="sharp-grid">
-      <div v-for="app in apps" :key="app.id" class="sharp-card">
+      <div v-for="app in apps" :key="app.id" class="sharp-card" :class="{ running: runningSharpPids[app.id] }">
         <div class="sharp-card-banner">
           <img
             v-if="app.cover"
@@ -729,6 +745,17 @@ onMounted(load);
             :style="{ objectPosition: coverPosition(app) }"
           />
           <span v-else class="sharp-icon-placeholder">{{ app.name.charAt(0) }}</span>
+          <button
+            v-if="runningSharpPids[app.id]"
+            class="running-close-button"
+            title="Close application"
+            @click="stopSharpApp(app)"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
         </div>
         <div class="sharp-card-body">
           <div class="sharp-card-title">{{ app.name }}</div>
@@ -738,7 +765,8 @@ onMounted(load);
           </div>
           <div class="sharp-card-actions">
             <div class="sharp-card-actions-row">
-              <button class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
+              <button v-if="runningSharpPids[app.id]" class="btn btn-stop" @click="stopSharpApp(app)">Stop</button>
+              <button v-else class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
               <select
                 class="control-input"
                 :value="app.engine"
@@ -972,11 +1000,20 @@ onMounted(load);
   justify-content: flex-end;
   gap: 6px;
 }
-.bottle-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+.bottle-control-surface {
   margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+}
+.bottle-control-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, auto));
+  gap: 8px;
+  padding: 9px;
+}
+.bottle-control-grid .control-input {
+  grid-column: span 2;
 }
 .windows-version-controls {
   display: flex;
@@ -1056,15 +1093,37 @@ onMounted(load);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 14px 34px color-mix(in srgb, var(--accent) 9%, var(--card-glow));
+  transition:
+    transform var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+.sharp-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 18px 42px color-mix(in srgb, var(--accent) 12%, var(--card-glow));
+}
+.sharp-card.running {
+  border-color: var(--success);
+  box-shadow:
+    0 0 0 1px var(--success-bg),
+    0 18px 42px color-mix(in srgb, var(--success) 12%, var(--card-glow));
 }
 .sharp-card-banner {
   width: 100%;
-  height: 140px;
+  aspect-ratio: 16 / 6.25;
+  height: auto;
   background: var(--bg-surface);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 .sharp-card-banner img {
   width: 100%;
@@ -1076,6 +1135,26 @@ onMounted(load);
   font-weight: 700;
   color: var(--text-dim);
   opacity: 0.4;
+}
+.running-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--error) 44%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+  color: var(--error);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 22px var(--card-glow);
+}
+.running-close-button:hover {
+  border-color: var(--error);
+  background: var(--error-bg);
 }
 .sharp-card-body {
   padding: 12px 14px 14px;
