@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 use std::collections::{hash_map::DefaultHasher, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use walkdir::WalkDir;
@@ -16,14 +17,6 @@ fn base_dir() -> PathBuf {
 
 fn manifest_path() -> PathBuf {
     base_dir().join(MANIFEST_FILE)
-}
-
-fn metalsharp_wine_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine")
-}
-
-fn ms_wine() -> PathBuf {
-    crate::platform::runtime_wine_binary(&metalsharp_wine_root())
 }
 
 fn steam_prefix() -> PathBuf {
@@ -46,6 +39,8 @@ pub struct SharpApp {
     pub launch_args: Vec<String>,
     #[serde(default)]
     pub user_launch_args: Vec<String>,
+    #[serde(default)]
+    pub bottle_id: Option<String>,
     pub installed_at: String,
     pub size_bytes: u64,
 }
@@ -169,6 +164,7 @@ fn sync_wine_prefix_app(apps: &mut Vec<SharpApp>, candidate: WinePrefixApp) -> b
         engine: "auto".to_string(),
         launch_args: Vec::new(),
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at: chrono_now(),
         size_bytes: dir_size(&candidate.install_dir),
     });
@@ -361,6 +357,7 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
         engine: "auto".to_string(),
         launch_args: shortcut.launch_args,
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at: chrono_now(),
         size_bytes: dir_size(&install_dir),
     });
@@ -465,6 +462,7 @@ pub fn install_exe(
         engine: "auto".to_string(),
         launch_args: Vec::new(),
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at,
         size_bytes,
     };
@@ -478,7 +476,8 @@ pub fn install_exe(
 
 fn should_run_as_wine_installer(src: &Path) -> bool {
     let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    name.contains("setup")
+    src.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false)
+        || name.contains("setup")
         || name.contains("install")
         || name.contains("installer")
         || name.contains("launcher")
@@ -487,51 +486,158 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
 }
 
 fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
-    let wine = ms_wine();
-    if !wine.exists() {
-        return Err(
-            "MetalSharp Wine runtime is not installed. Install Wine Steam once before installing launcher EXEs.".into(),
-        );
-    }
+    let classification = crate::bottles::classify_installer(src);
+    let pipeline = classification.pipeline;
+    let bottle = crate::bottles::ensure_installer_bottle(src, &classification)?;
+    let staged_exe = stage_installer_exe(src, &bottle)?;
+    let work_dir = staged_exe.parent().ok_or("installer staging folder not found")?.to_path_buf();
+    let launch_id = installer_launch_id(src, pipeline);
+    let log_path = crate::bottles::next_launch_log_path(&bottle.id);
+    let prefix_path = PathBuf::from(&bottle.prefix_path);
 
-    let prefix = steam_prefix();
-    fs::create_dir_all(&prefix)?;
-
-    let ms_root = metalsharp_wine_root();
-    let mut wineboot = Command::new(&wine);
-    wineboot
-        .arg("wineboot")
-        .arg("--init")
-        .env("WINEPREFIX", &prefix)
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    crate::platform::set_runtime_library_env(&mut wineboot, &ms_root);
-    let _ = wineboot.status();
-
-    let mut installer = Command::new(&wine);
-    installer
-        .arg("start")
-        .arg("/unix")
-        .arg(src)
-        .env("WINEPREFIX", &prefix)
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(parent) = src.parent() {
-        installer.current_dir(parent);
-    }
-    crate::platform::set_runtime_library_env(&mut installer, &ms_root);
-    let child = installer.spawn()?;
+    let pid = if classification.installer_kind == crate::bottles::InstallerKind::Msi {
+        launch_msi_installer(&staged_exe, &prefix_path, &log_path)?
+    } else {
+        let (pid, _, _) = crate::mtsp::launcher::launch_custom_with_options(
+            launch_id,
+            &work_dir,
+            &staged_exe,
+            pipeline,
+            &[],
+            crate::mtsp::launcher::CustomLaunchOptions {
+                prefix_path: Some(prefix_path),
+                log_path: Some(log_path.clone()),
+            },
+        )?;
+        pid
+    };
+    let _ = crate::bottles::set_launch_started(&bottle.id, pid, &log_path);
+    crate::bottles::watch_bottle_launch(bottle.id.clone(), pid);
 
     Ok(SharpInstallOutcome::InstallerStarted {
-        pid: child.id(),
-        message:
-            "Installer started in the MetalSharp Wine prefix. Finish setup in the installer window, then refresh Sharp Library."
-                .to_string(),
+        pid,
+        message: format!(
+            "Installer started with the {} pipeline in bottle {}. MetalSharp will watch for completion and refresh detected apps.",
+            pipeline_engine_id(pipeline),
+            bottle.id
+        ),
     })
+}
+
+fn launch_msi_installer(
+    staged_msi: &Path,
+    prefix_path: &Path,
+    log_path: &Path,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+    fs::create_dir_all(prefix_path)?;
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "installer_kind=msi")?;
+    writeln!(log, "prefix={}", prefix_path.display())?;
+    writeln!(log, "msi={}", staged_msi.display())?;
+    writeln!(log, "--- wine output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&wine);
+    cmd.arg("msiexec")
+        .arg("/i")
+        .arg(staged_msi)
+        .env("WINEPREFIX", prefix_path.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    if let Some(parent) = staged_msi.parent() {
+        cmd.current_dir(parent);
+    }
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
+fn installer_pipeline(src: &Path) -> crate::mtsp::engine::PipelineId {
+    crate::bottles::classify_installer(src).pipeline
+}
+
+fn stage_installer_exe(
+    src: &Path,
+    bottle: &crate::bottles::BottleManifest,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let file_name = src.file_name().ok_or("installer filename not found")?;
+    let dir = crate::bottles::installer_payload_dir(&bottle.id);
+    fs::create_dir_all(&dir)?;
+    let dest = dir.join(file_name);
+    fs::copy(src, &dest)?;
+    Ok(dest)
+}
+
+fn installer_launch_id(src: &Path, pipeline: crate::mtsp::engine::PipelineId) -> u32 {
+    let key = format!("installer:{}:{}", pipeline_engine_id(pipeline), src.to_string_lossy());
+    stable_launch_id(&key)
+}
+
+pub fn import_bottle_app(
+    bottle_id: &str,
+    exe_path: &str,
+    name: Option<&str>,
+) -> Result<SharpApp, Box<dyn std::error::Error>> {
+    let bottle = crate::bottles::load_bottle(bottle_id)?;
+    let exe = PathBuf::from(exe_path);
+    if !exe.exists() || exe.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) != Some(true) {
+        return Err("Bottle app executable not found".into());
+    }
+    let install_dir = exe.parent().ok_or("Bottle app install directory not found")?.to_path_buf();
+    let app_name = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| exe.file_stem().map(|stem| stem.to_string_lossy().to_string()))
+        .unwrap_or_else(|| bottle.name.clone());
+    let id = format!("bottle_app_{}", stable_shortcut_id(&format!("{}:{}", bottle_id, app_name), &exe));
+    let exe_path = relative_path_string(&install_dir, &exe)?;
+    let install_dir_string = install_dir.to_string_lossy().to_string();
+
+    let app = SharpApp {
+        id,
+        name: app_name,
+        exe_path,
+        install_dir: install_dir_string,
+        cover: None,
+        cover_position_x: default_cover_position(),
+        cover_position_y: default_cover_position(),
+        engine: "auto".to_string(),
+        launch_args: Vec::new(),
+        user_launch_args: Vec::new(),
+        bottle_id: Some(bottle.id),
+        installed_at: chrono_now(),
+        size_bytes: dir_size(&install_dir),
+    };
+
+    let mut library = load_library()?;
+    let absolute = app_absolute_exe_path(&app);
+    if let Some(existing) =
+        library.iter_mut().find(|existing| existing.id == app.id || app_absolute_exe_path(existing) == absolute)
+    {
+        existing.name = app.name.clone();
+        existing.exe_path = app.exe_path.clone();
+        existing.install_dir = app.install_dir.clone();
+        existing.bottle_id = app.bottle_id.clone();
+        existing.size_bytes = app.size_bytes;
+        let updated = existing.clone();
+        save_library(&library)?;
+        return Ok(updated);
+    }
+
+    library.push(app.clone());
+    save_library(&library)?;
+    Ok(app)
 }
 
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -590,13 +696,28 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
 
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
-    let (pid, game_type, recipe) = crate::mtsp::launcher::launch_custom_with_pipeline(
-        launch_id,
-        &work_dir,
-        &exe_path,
-        pipeline,
-        &combined_launch_args(&app),
-    )?;
+    let launch_args = combined_launch_args(&app);
+    let (pid, game_type, recipe) = if let Some(bottle_id) = app.bottle_id.as_deref() {
+        let bottle = crate::bottles::load_bottle(bottle_id)?;
+        let log_path = crate::bottles::next_launch_log_path(bottle_id);
+        crate::mtsp::launcher::launch_custom_with_options(
+            launch_id,
+            &work_dir,
+            &exe_path,
+            pipeline,
+            &launch_args,
+            crate::mtsp::launcher::CustomLaunchOptions {
+                prefix_path: Some(PathBuf::from(bottle.prefix_path)),
+                log_path: Some(log_path.clone()),
+            },
+        )
+        .inspect(|result| {
+            let _ = crate::bottles::set_launch_started(bottle_id, result.0, &log_path);
+            crate::bottles::watch_bottle_launch(bottle_id.to_string(), result.0);
+        })?
+    } else {
+        crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline, &launch_args)?
+    };
 
     Ok(SharpLaunchResult {
         pid,
@@ -925,6 +1046,42 @@ pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_import_bottle_app(body: &serde_json::Map<String, Value>) -> Value {
+    let bottle_id = body.get("bottleId").and_then(|v| v.as_str()).unwrap_or("");
+    let exe_path = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
+    let name = body.get("name").and_then(|v| v.as_str());
+    if bottle_id.is_empty() || exe_path.is_empty() {
+        return json!({"ok": false, "error": "bottleId and exePath required"});
+    }
+    match import_bottle_app(bottle_id, exe_path, name) {
+        Ok(app) => json!({"ok": true, "app": app}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn relaunch_bottle_installer(id: &str) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let bottle = crate::bottles::load_bottle(id)?;
+    if bottle.bottle_type != crate::bottles::BottleType::Installer {
+        return Err("Only installer bottles can relaunch their source installer".into());
+    }
+    let source = bottle.source_installer_path.ok_or("Bottle has no source installer path")?;
+    start_wine_installer(Path::new(&source))
+}
+
+pub fn handle_relaunch_bottle_installer(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match relaunch_bottle_installer(id) {
+        Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
+            json!({"ok": true, "installing": true, "pid": pid, "message": message})
+        },
+        Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": *app}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_uninstall(body: &serde_json::Map<String, Value>) -> Value {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
     if id.is_empty() {
@@ -1069,6 +1226,7 @@ mod tests {
             engine: "auto".into(),
             launch_args: vec!["-dx11".into()],
             user_launch_args: vec!["-user".into()],
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 0,
         }];
@@ -1105,6 +1263,7 @@ mod tests {
             engine: "m11".into(),
             launch_args: vec!["-dx11".into()],
             user_launch_args: vec!["-custom".into()],
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 123,
         }];
@@ -1183,6 +1342,7 @@ mod tests {
             engine: "auto".into(),
             launch_args: Vec::new(),
             user_launch_args: Vec::new(),
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 0,
         }];
@@ -1197,10 +1357,59 @@ mod tests {
     }
 
     #[test]
+    fn bottle_app_import_records_bottle_id() {
+        let dir = test_dir("bottle-app-import");
+        let exe = dir.join("Demo.exe");
+        fs::create_dir_all(&dir).expect("create app dir");
+        fs::write(&exe, b"not pe").expect("write exe");
+        let app = SharpApp {
+            id: "bottle_app_demo".into(),
+            name: "Demo".into(),
+            exe_path: relative_path_string(&dir, &exe).expect("relative exe"),
+            install_dir: dir.to_string_lossy().to_string(),
+            cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
+            bottle_id: Some("installer_demo".into()),
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        };
+
+        assert_eq!(app.bottle_id.as_deref(), Some("installer_demo"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn launcher_exes_run_as_wine_installers() {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/DemoSetup.msi")));
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
+    }
+
+    #[test]
+    fn pe32_installers_use_m9_pipeline() {
+        let dir = test_dir("installer-pe32");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("MinecraftInstaller.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pe64_installers_without_graphics_imports_use_plain_wine() {
+        let dir = test_dir("installer-pe64");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("Setup.exe");
+        write_test_pe(&exe, 0x8664, 0x20b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::WineBare);
+        let _ = fs::remove_dir_all(dir);
     }
 
     fn test_dir(name: &str) -> PathBuf {
@@ -1211,5 +1420,18 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    fn write_test_pe(path: &Path, machine: u16, optional_magic: u16) {
+        let mut data = vec![0_u8; 0x200];
+        data[0] = b'M';
+        data[1] = b'Z';
+        data[0x3c..0x40].copy_from_slice(&(0x80_u32).to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        data[0x86..0x88].copy_from_slice(&(0_u16).to_le_bytes());
+        data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
+        data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
+        fs::write(path, data).expect("write test PE");
     }
 }

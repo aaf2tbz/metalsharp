@@ -8,6 +8,7 @@ MetalSharp launches games through the Rust backend and the current MTSP pipeline
 Play clicked
   -> renderer calls backend
   -> backend resolves a pipeline
+  -> backend syncs/preflights the runtime bottle when one applies
   -> backend builds a LaunchRecipe
   -> backend preflights runtime assets
   -> backend prepares DLLs/env/cache beside the selected executable
@@ -17,6 +18,11 @@ Play clicked
 The launch recipe is the backend contract for click-to-play. It records the appid, selected pipeline, game directory,
 selected executable, launch arguments, environment, DLL placement, runtime asset status, anti-cheat markers, and warnings.
 Manual launch methods still work; they force the pipeline before the recipe is built.
+
+Runtime bottles add the user-facing readiness contract. Sharp Library installer/app bottles own their own prefixes under
+`~/.metalsharp/bottles/<id>/prefix`. Steam game bottles use ids like `steam_620` and are launch-authoritative preflight
+records over the shared Wine Steam prefix, so Steam remains the running launcher/session owner while MetalSharp checks
+runtime assets, redistributables, component state, and launch health before `steam://run`.
 
 ## Current Pipelines
 
@@ -28,7 +34,7 @@ Manual launch methods still work; they force the pipeline before the recipe is b
 | **M9** | DXMT launch family | Direct Wine launch with bundled `d3d9.dll` and DXMT-family cache/env |
 | **M32** | Wine32 | 32-bit Wine fallback |
 | **Native macOS** | Mono/FNA | Native FNA/XNA/Mono runtime |
-| **Steam** | Wine Steam | Launch through Windows Steam in the Wine prefix |
+| **Steam** | Wine Steam | Launch through Windows Steam after Steam bottle preflight |
 | **MacOS Steam** | Native Steam | Launch through native macOS Steam |
 | **Wine** | Wine | Plain Wine launch for custom library apps |
 
@@ -83,11 +89,21 @@ M9 no longer accepts the legacy `dxvk_metal32`, `m9_gl`, or `m32_vk` aliases. D3
 
 Native macOS does not use Wine. Steam and MacOS Steam are separate paths.
 
+## Bottles
+
+| Bottle type | Prefix behavior | Used for |
+|---|---|---|
+| Installer / Sharp Library | Dedicated bottle prefix | Windows installers, launchers, demos, imported apps |
+| Steam game | Shared `~/.metalsharp/prefix-steam` | Steam game preflight, runtime assets, component repair, launch health |
+
+Steam game bottles do not replace Steam. They prepare the runtime state Steam will use, then Wine Steam still owns the
+live process and Steam connection for the game.
+
 ## Process Lifecycle
 
 - Running games are tracked by the backend.
 - Stop/kill actions terminate the registered process and child processes.
 - Steam process management lives in `steam.rs`.
-- Launching a Steam game no longer restarts Wine Steam only to apply per-game launch environment. If Steam is already
-  running, it is kept alive and the game request carries the env.
+- Launching a Steam game keeps Wine Steam as the launcher/session owner. Route-specific environment can only be inherited
+  when Wine Steam is started for that route; if Wine Steam is already running, incompatible env handoff is rejected.
 - Shader cache paths are per appid under `~/.metalsharp/shader-cache/`.

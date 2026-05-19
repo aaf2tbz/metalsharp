@@ -436,7 +436,11 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 
-    Ok(json!({"ok": true, "appid": appid, "method": "steam_ui"}))
+    let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
+    let bottle = crate::bottles::ensure_steam_game_bottle(appid, &name, None, pipeline).ok();
+
+    Ok(json!({"ok": true, "appid": appid, "method": "steam_ui", "bottle_id": bottle.map(|b| b.id)}))
 }
 
 pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -597,7 +601,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
     None
 }
 
-fn get_game_name_from_manifest(appid: u32) -> Option<String> {
+pub fn get_game_name_from_manifest(appid: u32) -> Option<String> {
     let manifest_name = format!("appmanifest_{}.acf", appid);
 
     for steamapps in crate::scan::wine_steam_library_paths() {
@@ -831,6 +835,11 @@ pub fn library() -> Value {
             let can_uninstall = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
             let dual = crate::scan::resolve_dual_game_dir(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
+            let bottle = if is_installed {
+                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+            } else {
+                None
+            };
             let recommended = pipeline_id.to_legacy_method();
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
@@ -858,6 +867,9 @@ pub fn library() -> Value {
                 "has_native_build": dual.has_native_build,
                 "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
                 "wine_game_path": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
+                "bottle_id": bottle.as_ref().map(|b| b.id.clone()),
+                "bottle_health": bottle.as_ref().map(|b| json!(b.health)),
+                "bottle_runtime_assets": bottle.as_ref().map(|b| b.runtime_assets.len()).unwrap_or(0),
                 "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
                 "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
             })

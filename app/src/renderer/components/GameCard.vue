@@ -15,6 +15,9 @@ interface SteamGame {
   available_pipelines?: PipelineOption[];
   has_native_build?: boolean;
   can_uninstall?: boolean;
+  bottle_id?: string | null;
+  bottle_health?: string | null;
+  bottle_runtime_assets?: number;
 }
 
 interface PipelineOption {
@@ -45,6 +48,25 @@ interface LaunchDoctorReport {
   };
 }
 
+interface SteamRuntimeReport {
+  appid?: number | null;
+  bottle_id?: string | null;
+  pipeline: string;
+  runtime_profile: string;
+  prefix_path: string;
+  game_install_path?: string | null;
+  runtime_assets: { id: string; kind: string; source_path: string; present: boolean }[];
+  components: { id: string; state: string }[];
+  actions: { id: string; status: string; detail: string }[];
+}
+
+interface ComponentRepair {
+  id: string;
+  status: string;
+  detail: string;
+  pid?: number | null;
+}
+
 const props = defineProps<{
   game: SteamGame;
   running: boolean;
@@ -68,6 +90,9 @@ const pipelineOptions = ref<PipelineOption[]>([]);
 const doctorOpen = ref(false);
 const doctorLoading = ref(false);
 const doctorReport = ref<LaunchDoctorReport | null>(null);
+const runtimeOpen = ref(false);
+const runtimeLoading = ref(false);
+const runtimeReport = ref<SteamRuntimeReport | null>(null);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
 
 const launchModeOptions = computed(() => {
@@ -160,6 +185,42 @@ async function runDoctor() {
   }
 }
 
+async function runRuntimeDoctor() {
+  runtimeOpen.value = true;
+  runtimeLoading.value = true;
+  runtimeReport.value = null;
+  const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>("POST", "/steam/runtime-doctor", {
+    appid: props.game.appid,
+    pipeline: selectedLaunchMode.value === "auto" ? props.game.launch_method ?? "m12" : selectedLaunchMode.value,
+  });
+  runtimeLoading.value = false;
+
+  if (result?.ok && result.report) {
+    runtimeReport.value = result.report;
+  } else {
+    toast.show(result?.error ?? "Runtime Doctor failed", "error");
+  }
+}
+
+async function repairRuntimeComponent(component: string) {
+  if (!runtimeReport.value?.bottle_id) {
+    toast.show("No Steam bottle is attached to this install yet", "error");
+    return;
+  }
+  runtimeLoading.value = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
+    id: runtimeReport.value.bottle_id,
+    component,
+  });
+  runtimeLoading.value = false;
+  if (result?.ok && result.repair) {
+    toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
+    await runRuntimeDoctor();
+  } else {
+    toast.show(result?.error ?? "Runtime repair failed", "error");
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -169,7 +230,7 @@ function formatBytes(bytes: number): string {
 </script>
 
 <template>
-  <div class="game-card" :class="{ running }">
+  <div class="game-card" :class="{ running, installed: game.installed, uninstalled: !game.installed }">
     <div class="game-card-banner">
       <img
         v-if="game.header_url || game.cover_url"
@@ -180,6 +241,12 @@ function formatBytes(bytes: number): string {
         @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
       <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
+      <button v-if="running" class="running-close-button" title="Close game" @click="emit('stop')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
     </div>
     <div class="game-card-body">
       <div class="game-card-heading">
@@ -190,6 +257,8 @@ function formatBytes(bytes: number): string {
       </div>
       <div class="game-card-meta">
         <span v-if="game.installed" class="route-chip">{{ pipelineName }}</span>
+        <span v-if="game.bottle_id" class="route-chip bottle-chip">{{ game.bottle_id }}</span>
+        <span v-if="game.bottle_runtime_assets" class="game-card-size">{{ game.bottle_runtime_assets }} assets</span>
         <span v-if="game.size_bytes" class="game-card-size">{{ formatBytes(game.size_bytes) }}</span>
       </div>
       <div class="game-card-actions">
@@ -229,6 +298,29 @@ function formatBytes(bytes: number): string {
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 <path d="M9 12h6" />
                 <path d="M12 9v6" />
+              </svg>
+              <span v-else class="spinner"></span>
+            </button>
+            <button
+              class="icon-button doctor-button"
+              :disabled="runtimeLoading"
+              title="Run Runtime Doctor"
+              @click="runRuntimeDoctor"
+            >
+              <svg
+                v-if="!runtimeLoading"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <path d="M3.3 7 12 12l8.7-5" />
+                <path d="M12 22V12" />
               </svg>
               <span v-else class="spinner"></span>
             </button>
@@ -290,6 +382,35 @@ function formatBytes(bytes: number): string {
               </div>
             </template>
           </div>
+          <div v-if="runtimeOpen" class="doctor-panel">
+            <div v-if="runtimeLoading" class="doctor-loading">Checking bottle runtime...</div>
+            <template v-else-if="runtimeReport">
+              <div class="doctor-summary">
+                <span class="badge" :class="runtimeReport.actions.length ? 'badge-warn' : 'badge-ok'">
+                  {{ runtimeReport.actions.length ? "Repair" : "Ready" }}
+                </span>
+                <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeReport.runtime_profile }}</span>
+              </div>
+              <div class="doctor-checks">
+                <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check">
+                  <span class="doctor-check-state">{{ component.state === "missing" ? "!" : "OK" }}</span>
+                  <span class="doctor-check-label">{{ component.id }}</span>
+                  <span class="doctor-check-detail">{{ component.state }}</span>
+                </div>
+              </div>
+              <div v-if="runtimeReport.runtime_assets.length" class="doctor-notes">
+                {{ runtimeReport.runtime_assets.length }} runtime assets detected near this install.
+              </div>
+              <div v-if="runtimeReport.actions.length" class="doctor-notes blocked">
+                <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
+                  <span>{{ action.id }}: {{ action.detail }}</span>
+                  <button class="btn btn-secondary btn-sm" :disabled="runtimeLoading" @click="repairRuntimeComponent(action.id)">
+                    Repair
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
         </div>
         <div v-else-if="steamInstalled" class="game-card-actions-stack">
           <button class="btn btn-install wide-action" @click="emit('install')">Install</button>
@@ -310,18 +431,37 @@ function formatBytes(bytes: number): string {
     transform var(--transition),
     border-color var(--transition),
     box-shadow var(--transition);
-  box-shadow: 0 12px 34px var(--card-glow);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 16px 36px color-mix(in srgb, var(--bg-deep) 34%, transparent);
+}
+.game-card.installed {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent),
+    0 0 30px color-mix(in srgb, var(--success) 22%, transparent),
+    0 18px 40px color-mix(in srgb, var(--bg-deep) 36%, transparent);
+}
+.game-card.uninstalled {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 14px 34px color-mix(in srgb, var(--bg-deep) 30%, transparent);
 }
 .game-card:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 18px 42px var(--card-glow);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 0 36px color-mix(in srgb, var(--accent) 26%, transparent),
+    0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
   transform: translateY(-1px);
 }
 .game-card.running {
   border-color: var(--success);
   box-shadow:
-    0 0 0 1px var(--success-bg),
-    0 18px 42px var(--card-glow);
+    0 0 0 1px color-mix(in srgb, var(--success) 48%, transparent),
+    0 0 38px color-mix(in srgb, var(--success) 30%, transparent),
+    0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
 }
 
 .game-card-banner {
@@ -333,6 +473,7 @@ function formatBytes(bytes: number): string {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 .game-card-cover {
   width: 100%;
@@ -345,6 +486,26 @@ function formatBytes(bytes: number): string {
 .game-card:hover .game-card-cover {
   transform: scale(1.015);
   filter: saturate(1.04);
+}
+.running-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--error) 44%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+  color: var(--error);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 22px var(--card-glow);
+}
+.running-close-button:hover {
+  border-color: var(--error);
+  background: var(--error-bg);
 }
 .game-icon-placeholder {
   font-size: 36px;
@@ -395,6 +556,10 @@ function formatBytes(bytes: number): string {
   color: var(--success);
   font-size: 11px;
   font-weight: 700;
+}
+.bottle-chip {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 
 .game-card-actions {
@@ -565,6 +730,15 @@ function formatBytes(bytes: number): string {
   gap: 4px;
   font-size: 11px;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.runtime-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.runtime-action-row span {
   overflow-wrap: anywhere;
 }
 

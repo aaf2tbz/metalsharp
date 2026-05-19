@@ -521,9 +521,9 @@ function registerIpc() {
   ipcMain.handle("app:pick-exe-file", async () => {
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: "Select an EXE file",
+      title: "Select a Windows installer or executable",
       properties: ["openFile"],
-      filters: [{ name: "Windows Executable", extensions: ["exe"] }],
+      filters: [{ name: "Windows App", extensions: ["exe", "msi"] }],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];

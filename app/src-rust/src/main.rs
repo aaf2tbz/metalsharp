@@ -17,6 +17,7 @@
     unused_variables
 )]
 
+mod bottles;
 mod installer;
 mod launch;
 mod migrate;
@@ -323,25 +324,30 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/steam/launch-game") => {
             let body = read_body(req);
-            let appid = body.get("appid").and_then(|v| v.as_u64());
-            match appid {
-                Some(id) => {
+            match parse_request_appid(&body) {
+                Ok(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
                         Some(pipeline) => Some(pipeline),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
-                        None => Some(mtsp::rules::resolve_pipeline(id as u32)),
+                        None => Some(mtsp::rules::resolve_pipeline(id)),
                     };
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
-                            let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id as u32, pipeline) {
+                            let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
+                                Ok(bottle) => bottle,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            };
+                            let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id, pipeline) {
                                 Ok(prepared) => prepared,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            steam::launch_game_via_steam_with_env(id as u32, &env).map(|mut v| {
+                            steam::launch_game_via_steam_with_env(id, &env).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("bottle_id".into(), json!(bottle.id));
+                                    obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
                                     obj.insert("pipeline".into(), json!(pipeline));
                                     obj.insert("recipe".into(), json!(recipe));
                                     obj.insert(
@@ -352,14 +358,27 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 v
                             })
                         },
-                        None => steam::launch_game_via_steam(id as u32),
+                        None => {
+                            let pipeline = mtsp::rules::resolve_pipeline(id);
+                            let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
+                                Ok(bottle) => bottle,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            };
+                            steam::launch_game_via_steam(id).map(|mut v| {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("bottle_id".into(), json!(bottle.id));
+                                    obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
+                                }
+                                v
+                            })
+                        },
                     };
                     match launch_result {
                         Ok(v) => resp(200, v),
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 },
-                None => resp(400, json!({"ok": false, "error": "appid required"})),
+                Err(error) => resp(400, json!({"ok": false, "error": error})),
             }
         },
         (Method::Post, "/steam/view-game") => {
@@ -588,6 +607,51 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
+        (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
+        (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
+        (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
+        (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
+        (Method::Post, "/bottles/record-compatibility") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_record_compatibility_case(&body))
+        },
+        (Method::Post, "/bottles/sync-steam") => resp(200, bottles::handle_sync_steam_bottles()),
+        (Method::Post, "/bottles/get") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_get_bottle(&body))
+        },
+        (Method::Post, "/bottles/refresh") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_refresh_bottle(&body))
+        },
+        (Method::Post, "/bottles/doctor") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_diagnose_bottle(&body))
+        },
+        (Method::Post, "/bottles/prepare") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_prepare_bottle(&body))
+        },
+        (Method::Post, "/bottles/repair-component") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_repair_component(&body))
+        },
+        (Method::Post, "/bottles/set-runtime-profile") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_set_runtime_profile(&body))
+        },
+        (Method::Post, "/bottles/set-windows-version") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_set_windows_version(&body))
+        },
+        (Method::Post, "/bottles/relaunch-installer") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_relaunch_bottle_installer(&body))
+        },
+        (Method::Post, "/steam/runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_steam_runtime_doctor(&body))
+        },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str
@@ -630,6 +694,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
             resp(200, sharp_library::handle_install(&body))
+        },
+        (Method::Post, "/sharp-library/import-bottle-app") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] import bottle app: {}",
+                body.get("bottleId").and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_import_bottle_app(&body))
         },
         (Method::Post, "/sharp-library/uninstall") => {
             let body = read_body(req);
@@ -1133,6 +1205,20 @@ fn read_body(req: &mut tiny_http::Request) -> serde_json::Map<String, serde_json
     serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&buf).unwrap_or_default()
 }
 
+fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Result<u32, &'static str> {
+    let Some(value) = body.get("appid") else {
+        return Err("appid required");
+    };
+    let Some(raw) = value.as_u64() else {
+        return Err("appid must be a positive numeric Steam appid");
+    };
+    let appid = u32::try_from(raw).map_err(|_| "appid out of range")?;
+    if appid == 0 {
+        return Err("appid must be greater than zero");
+    }
+    Ok(appid)
+}
+
 fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1185,4 +1271,35 @@ fn persist_crash_log(source: &str, path: &std::path::Path, timestamp: &str, size
     ]
     .join("\n");
     let _ = std::fs::write(log_path, body);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_appid_rejects_missing_string_zero_and_oversized_values() {
+        let missing = serde_json::Map::new();
+        assert_eq!(parse_request_appid(&missing), Err("appid required"));
+
+        let mut string_appid = serde_json::Map::new();
+        string_appid.insert("appid".into(), json!("620"));
+        assert_eq!(parse_request_appid(&string_appid), Err("appid must be a positive numeric Steam appid"));
+
+        let mut zero_appid = serde_json::Map::new();
+        zero_appid.insert("appid".into(), json!(0));
+        assert_eq!(parse_request_appid(&zero_appid), Err("appid must be greater than zero"));
+
+        let mut oversized_appid = serde_json::Map::new();
+        oversized_appid.insert("appid".into(), json!(u64::from(u32::MAX) + 1));
+        assert_eq!(parse_request_appid(&oversized_appid), Err("appid out of range"));
+    }
+
+    #[test]
+    fn request_appid_accepts_u32_range_values() {
+        let mut body = serde_json::Map::new();
+        body.insert("appid".into(), json!(620));
+
+        assert_eq!(parse_request_appid(&body), Ok(620));
+    }
 }

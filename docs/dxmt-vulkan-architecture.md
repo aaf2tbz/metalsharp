@@ -47,12 +47,14 @@ Game
 DXMT uses per-game shader caches under:
 
 ```text
+~/.metalsharp/shader-cache/m9/<appid>/
 ~/.metalsharp/shader-cache/m10/<appid>/
 ~/.metalsharp/shader-cache/m11/<appid>/
 ~/.metalsharp/shader-cache/m12/<appid>/
-~/.metalsharp/shader-cache/dxmt-metal/<appid>/
-~/.metalsharp/shader-cache/dxmt-metal12/<appid>/
 ```
+
+Older `dxmt-metal` and `dxmt-metal12` cache family names may still exist on disk from previous builds, but current MTSP
+routes prefer the explicit M9/M10/M11/M12 cache namespaces.
 
 ## M9 D3D9
 

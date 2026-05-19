@@ -315,22 +315,42 @@ fn app_log(msg: &str) {
     let m = (secs / 60) % 60;
     let s = secs % 60;
     let line = format!("[{:02}:{:02}:{:02}] {}\n", h, m, s, msg);
-    let days = secs / 86400;
-    let y = 1970 + (days * 400).div_ceil(146097);
-    let mut remaining = days - (((y - 1) * 365) + ((y - 1) / 4) - ((y - 1) / 100) + ((y - 1) / 400));
-    let ml = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut mo = 1;
-    for (i, &md) in ml.iter().enumerate() {
-        if remaining < md {
-            mo = i + 1;
-            break;
-        }
-        remaining -= md;
-    }
-    let log_path = log_dir.join(format!("{:04}-{:02}-{:02}.log", y, mo, remaining + 1));
+    let (year, month, day) = unix_days_to_ymd(secs / 86400);
+    let log_path = log_dir.join(format!("{:04}-{:02}-{:02}.log", year, month, day));
     let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+fn unix_days_to_ymd(days_since_epoch: u64) -> (i64, u32, u32) {
+    let z = days_since_epoch as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month as u32, day as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_days_to_ymd_handles_epoch() {
+        assert_eq!(unix_days_to_ymd(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn unix_days_to_ymd_handles_current_dates_without_underflow() {
+        assert_eq!(unix_days_to_ymd(20_592), (2026, 5, 19));
+    }
 }

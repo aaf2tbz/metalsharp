@@ -16,6 +16,9 @@ interface SteamGame {
   available_pipelines?: { id: string; name: string; recommended?: boolean }[];
   has_native_build?: boolean;
   can_uninstall?: boolean;
+  bottle_id?: string | null;
+  bottle_health?: string | null;
+  bottle_runtime_assets?: number;
 }
 
 interface SteamLibrary {

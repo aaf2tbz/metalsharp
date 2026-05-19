@@ -39,14 +39,96 @@ interface CrashReport {
   size_bytes: number;
 }
 
+interface BottleAction {
+  id: string;
+  status: string;
+  detail: string;
+}
+
+interface RuntimeProfileDefinition {
+  id: string;
+  name: string;
+  components: string[];
+}
+
+interface BottleManifest {
+  id: string;
+  name: string;
+  bottle_type: string;
+  steam_app_id?: number | null;
+  arch: string;
+  runtime_profile: string;
+  health: string;
+  prefix_path: string;
+  source_installer_path?: string | null;
+  game_install_path?: string | null;
+  runtime_assets: { id: string; kind: string; source_path: string; present: boolean }[];
+  last_launch_log?: string | null;
+  last_launch_pid?: number | null;
+  last_launch_status?: string | null;
+  last_launch_finished_at?: string | null;
+  installed_components: { id: string; state: string }[];
+  installed_app_detections: { name: string; exe_path: string; source: string }[];
+}
+
+interface BottleDiagnostic {
+  id: string;
+  ready: boolean;
+  summary: string;
+  actions: BottleAction[];
+  checks: { id: string; ok: boolean; detail: string }[];
+  component_sources?: { id: string; source: string; available: boolean; detail: string; path?: string | null }[];
+}
+
+interface ComponentRepair {
+  id: string;
+  status: string;
+  detail: string;
+  asset_path?: string | null;
+  log_path?: string | null;
+  pid?: number | null;
+}
+
+interface CompatibilityCase {
+  id: string;
+  name: string;
+  case_type: string;
+  required_profile: string;
+  installer_opens: string;
+  final_app_detected: string;
+  final_app_launches: string;
+  known_missing_runtime: string;
+  bottle_id?: string | null;
+  notes?: string;
+  evidence_updated_at?: string | null;
+  per_game_prefix_recommendation?: string;
+}
+
+interface RedistSourceGuide {
+  id: string;
+  name: string;
+  source_url: string;
+  local_targets: string[];
+  policy: string;
+  notes: string;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
+const bottles = ref<BottleManifest[]>([]);
+const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
+const compatibilityCases = ref<CompatibilityCase[]>([]);
+const redistSources = ref<RedistSourceGuide[]>([]);
+const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
+const bottleLoading = ref<Record<string, boolean>>({});
+const bottleAdvancedOpen = ref<Record<string, boolean>>({});
 const doctorOpen = ref<Record<string, boolean>>({});
 const doctorLoading = ref<Record<string, boolean>>({});
 const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
 const diagnosticsOpen = ref<Record<string, boolean>>({});
 const diagnosticsLoading = ref<Record<string, boolean>>({});
 const launchErrors = ref<Record<string, string>>({});
+const runningSharpPids = ref<Record<string, number>>({});
 const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
@@ -61,7 +143,13 @@ const engineOptions = [
 ];
 
 async function load() {
-  const result = await api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
+  const [result, bottleResult, profileResult, matrixResult, redistResult] = await Promise.all([
+    api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
+    api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
+    api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
+    api<{ ok: boolean; cases: CompatibilityCase[] }>("GET", "/bottles/compatibility-matrix"),
+    api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
+  ]);
   if (result?.ok) {
     apps.value = result.apps;
     for (const app of result.apps) {
@@ -70,6 +158,12 @@ async function load() {
       }
     }
   }
+  if (bottleResult?.ok) {
+    bottles.value = bottleResult.bottles;
+  }
+  if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
+  if (matrixResult?.ok) compatibilityCases.value = matrixResult.cases;
+  if (redistResult?.ok) redistSources.value = redistResult.sources;
 }
 
 async function refreshSharpLibrary() {
@@ -97,6 +191,160 @@ async function installExe() {
   }
 }
 
+async function refreshBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; bottle?: BottleManifest; error?: string }>("POST", "/bottles/refresh", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.bottle) {
+    upsertBottle(result.bottle);
+    toast.show("Bottle scan refreshed", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to refresh bottle", "error");
+  }
+}
+
+async function doctorBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/doctor", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.report) {
+    bottleReports.value[id] = result.report;
+    await load();
+  } else {
+    toast.show(result?.error ?? "Bottle Doctor failed", "error");
+  }
+}
+
+async function prepareBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/prepare", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.report) {
+    bottleReports.value[id] = result.report;
+    toast.show(result.report.ready ? "Bottle prepared" : "Bottle needs runtime repair", result.report.ready ? "success" : "error");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to prepare bottle", "error");
+  }
+}
+
+async function repairBottleComponent(id: string, component: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
+    id,
+    component,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.repair) {
+    const repair = result.repair;
+    const missing = repair.status === "asset_missing";
+    toast.show(missing ? repair.detail : `${repair.id}: ${repair.status}`, missing ? "error" : "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to repair component", "error");
+  }
+}
+
+async function setBottleProfile(id: string, profile: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; bottle?: BottleManifest; error?: string }>("POST", "/bottles/set-runtime-profile", {
+    id,
+    profile,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.bottle) {
+    upsertBottle(result.bottle);
+    toast.show("Bottle profile updated", "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to update bottle profile", "error");
+  }
+}
+
+async function setBottleWindowsVersion(id: string, version: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/set-windows-version", {
+    id,
+    version,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.repair) {
+    toast.show(`Windows mode ${version} requested`, "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to set Windows mode", "error");
+  }
+}
+
+async function relaunchBottleInstaller(bottle: BottleManifest) {
+  bottleLoading.value[bottle.id] = true;
+  const result = await api<{ ok: boolean; installing?: boolean; message?: string; error?: string }>(
+    "POST",
+    "/bottles/relaunch-installer",
+    { id: bottle.id },
+  );
+  bottleLoading.value[bottle.id] = false;
+  if (result?.ok) {
+    toast.show(result.message ?? "Installer relaunched", "success");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to relaunch installer", "error");
+  }
+}
+
+async function recordCompatibility(item: CompatibilityCase, field: keyof CompatibilityCase, value: string) {
+  const updated = { ...item, [field]: value };
+  const result = await api<{ ok: boolean; cases?: CompatibilityCase[]; error?: string }>(
+    "POST",
+    "/bottles/record-compatibility",
+    {
+      id: item.id,
+      installerOpens: updated.installer_opens,
+      finalAppDetected: updated.final_app_detected,
+      finalAppLaunches: updated.final_app_launches,
+      knownMissingRuntime: updated.known_missing_runtime,
+      notes: updated.notes ?? "",
+    },
+  );
+  if (result?.ok && result.cases) {
+    compatibilityCases.value = result.cases;
+    toast.show("Compatibility evidence recorded", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to record compatibility evidence", "error");
+  }
+}
+
+async function openRedistSource(source: RedistSourceGuide) {
+  await getAPI().copyText(source.source_url);
+  toast.show(`${source.name} source URL copied`, "success");
+}
+
+async function addBottleApp(bottle: BottleManifest, app: { name: string; exe_path: string }) {
+  bottleLoading.value[bottle.id] = true;
+  const result = await api<{ ok: boolean; app?: SharpApp; error?: string }>("POST", "/sharp-library/import-bottle-app", {
+    bottleId: bottle.id,
+    exePath: app.exe_path,
+    name: app.name,
+  });
+  bottleLoading.value[bottle.id] = false;
+  if (result?.ok && result.app) {
+    toast.show(`Added ${result.app.name}`, "success");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to add bottle app", "error");
+  }
+}
+
+function upsertBottle(bottle: BottleManifest) {
+  const idx = bottles.value.findIndex((item) => item.id === bottle.id);
+  if (idx >= 0) bottles.value[idx] = bottle;
+  else bottles.value.push(bottle);
+}
+
+function bottleBadgeClass(health: string) {
+  return health === "ready" ? "badge-ok" : "badge-warn";
+}
+
 async function launchApp(id: string, engine: string) {
   const app = apps.value.find((a) => a.id === id);
   if (!app) return;
@@ -108,6 +356,7 @@ async function launchApp(id: string, engine: string) {
   );
   if (result?.ok && result.pid) {
     const warning = result.warnings?.[0];
+    runningSharpPids.value[id] = result.pid;
     launchErrors.value[id] = "";
     diagnosticsOpen.value[id] = false;
     toast.show(warning ? `Launched ${app.name}: ${warning}` : `Launched ${app.name}`, "success");
@@ -117,6 +366,14 @@ async function launchApp(id: string, engine: string) {
     toast.show(error, "error");
     await openDiagnostics(app);
   }
+}
+
+async function stopSharpApp(app: SharpApp) {
+  const pid = runningSharpPids.value[app.id];
+  if (!pid) return;
+  await api("POST", "/kill", { pid });
+  delete runningSharpPids.value[app.id];
+  toast.show(`Closed ${app.name}`);
 }
 
 async function updateEngine(id: string, engine: string) {
@@ -293,6 +550,18 @@ async function openLogFolder() {
   }
 }
 
+async function openBottleLog(bottle: BottleManifest) {
+  if (!bottle.last_launch_log) {
+    toast.show("No bottle launch log recorded yet", "warning");
+    return;
+  }
+  await getAPI().openInFinder(bottle.last_launch_log);
+}
+
+async function openBottleFolder(bottle: BottleManifest) {
+  await getAPI().openInFinder(bottle.prefix_path);
+}
+
 async function copyDiagnosticBundle(app: SharpApp) {
   const report = doctorReports.value[app.id];
   const payload = [
@@ -338,9 +607,231 @@ onMounted(load);
       </div>
       <div class="sharp-header-actions">
         <button class="btn btn-secondary" @click="refreshSharpLibrary">Refresh</button>
-        <button class="btn btn-primary" @click="installExe">Install an EXE</button>
+        <button class="btn btn-primary" @click="installExe">Install Windows Program</button>
       </div>
     </div>
+
+    <details v-if="bottles.length" class="support-drawer bottle-strip">
+      <summary class="support-drawer-summary">
+        <span>Runtime Bottles</span>
+        <small>{{ bottles.length }} runtime {{ bottles.length === 1 ? "prefix" : "prefixes" }} tracked</small>
+      </summary>
+      <div class="support-drawer-body bottle-list">
+        <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card">
+          <div class="bottle-card-main">
+            <div class="bottle-identity">
+              <div class="bottle-title">{{ bottle.name }}</div>
+              <div class="bottle-meta">
+                <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
+                <span v-if="bottle.last_launch_status">
+                  {{ bottle.last_launch_status }}
+                  <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
+                </span>
+              </div>
+            </div>
+            <div class="bottle-facts">
+              <span>
+                <strong>Kind</strong>
+                {{ bottle.bottle_type }}
+              </span>
+              <span>
+                <strong>Runtime</strong>
+                {{ bottle.runtime_profile }}
+              </span>
+              <span>
+                <strong>Arch</strong>
+                {{ bottle.arch }}
+              </span>
+              <span v-if="bottle.steam_app_id">
+                <strong>Steam</strong>
+                {{ bottle.steam_app_id }}
+              </span>
+            </div>
+            <div class="bottle-actions">
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
+                {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
+                Scan
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="bottleAdvancedOpen[bottle.id] = !bottleAdvancedOpen[bottle.id]">
+                {{ bottleAdvancedOpen[bottle.id] ? "Less" : "More" }}
+              </button>
+            </div>
+          </div>
+          <div v-if="bottleAdvancedOpen[bottle.id]" class="bottle-control-surface">
+            <div class="bottle-control-grid">
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
+                Prepare
+              </button>
+              <button
+                v-if="bottle.source_installer_path"
+                class="btn btn-secondary btn-sm"
+                :disabled="bottleLoading[bottle.id]"
+                @click="relaunchBottleInstaller(bottle)"
+              >
+                Relaunch
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
+              <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">
+                Logs
+              </button>
+              <select
+                class="control-input"
+                :value="bottle.runtime_profile"
+                :disabled="bottleLoading[bottle.id]"
+                @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="profile in runtimeProfiles" :key="profile.id" :value="profile.id">
+                  {{ profile.name }}
+                </option>
+              </select>
+              <div class="windows-version-controls">
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">
+                  Win7
+                </button>
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">
+                  Win10
+                </button>
+                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">
+                  Win11
+                </button>
+              </div>
+            </div>
+            <div class="bottle-components">
+              <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
+                {{ component.id }}: {{ component.state }}
+              </span>
+              <span v-if="bottle.runtime_assets?.length" class="component-pill">
+                runtime assets: {{ bottle.runtime_assets.length }}
+              </span>
+            </div>
+            <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
+              <button
+                v-for="candidate in bottle.installed_app_detections.slice(0, 3)"
+                :key="candidate.exe_path"
+                class="btn btn-secondary btn-sm"
+                :disabled="bottleLoading[bottle.id]"
+                @click="addBottleApp(bottle, candidate)"
+              >
+                Add {{ candidate.name }}
+              </button>
+            </div>
+          </div>
+          <div v-if="bottleReports[bottle.id]" class="bottle-report">
+            <div class="doctor-summary">
+              <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">
+                {{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}
+              </span>
+              <span>{{ bottleReports[bottle.id]?.summary }}</span>
+            </div>
+            <div v-if="bottleReports[bottle.id]?.actions.length" class="doctor-notes blocked">
+              <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
+                <span>{{ action.id }}: {{ action.detail }}</span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="bottleLoading[bottle.id]"
+                  @click="repairBottleComponent(bottle.id, action.id)"
+                >
+                  Repair
+                </button>
+              </div>
+            </div>
+            <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
+              <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id">
+                {{ source.id }}: {{ source.available ? source.source : "missing source" }}
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </details>
+
+    <details v-if="compatibilityCases.length" class="support-drawer compatibility-matrix">
+      <summary class="support-drawer-summary">
+        <span>Compatibility Matrix</span>
+        <small>{{ compatibilityCases.length }} installer and runtime cases tracked</small>
+      </summary>
+      <div class="support-drawer-body compatibility-table">
+        <div class="compatibility-row compatibility-header">
+          <span>Case</span>
+          <span>Profile</span>
+          <span>Installer</span>
+          <span>Detected</span>
+          <span>Launch</span>
+          <span>Runtime</span>
+          <span>Prefix</span>
+        </div>
+        <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
+          <span>
+            <strong>{{ item.name }}</strong>
+            <small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small>
+          </span>
+          <span>{{ item.required_profile }}</span>
+          <select
+            class="compatibility-select"
+            :value="item.installer_opens"
+            @change="recordCompatibility(item, 'installer_opens', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="untested">untested</option>
+            <option value="needs_real_trace">needs trace</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <select
+            class="compatibility-select"
+            :value="item.final_app_detected"
+            @change="recordCompatibility(item, 'final_app_detected', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="pending">pending</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <select
+            class="compatibility-select"
+            :value="item.final_app_launches"
+            @change="recordCompatibility(item, 'final_app_launches', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="pending">pending</option>
+            <option value="unknown">unknown</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+            <option value="not_applicable">n/a</option>
+          </select>
+          <input
+            class="compatibility-input"
+            :value="item.known_missing_runtime"
+            @change="recordCompatibility(item, 'known_missing_runtime', ($event.target as HTMLInputElement).value)"
+          />
+          <span>
+            {{ item.per_game_prefix_recommendation }}
+            <small v-if="item.evidence_updated_at">updated {{ item.evidence_updated_at }}</small>
+          </span>
+        </div>
+      </div>
+    </details>
+
+    <details v-if="redistSources.length" class="support-drawer redist-sources">
+      <summary class="support-drawer-summary">
+        <span>Redistributable Sources</span>
+        <small>Official source policy and local cache targets</small>
+      </summary>
+      <div class="support-drawer-body redist-source-list">
+        <article v-for="source in redistSources" :key="source.id" class="redist-source-card">
+          <div>
+            <strong>{{ source.name }}</strong>
+            <small>{{ source.policy }}</small>
+          </div>
+          <p>{{ source.notes }}</p>
+          <div class="redist-targets">
+            <span v-for="target in source.local_targets" :key="target">{{ target }}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
+        </article>
+      </div>
+    </details>
 
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
@@ -351,11 +842,11 @@ onMounted(load);
         </svg>
       </div>
       <h2>No applications installed</h2>
-      <p>Click "Install an EXE" to add a Windows application</p>
+      <p>Click "Install Windows Program" to add a Windows application</p>
     </div>
 
     <div v-else class="sharp-grid">
-      <div v-for="app in apps" :key="app.id" class="sharp-card">
+      <div v-for="app in apps" :key="app.id" class="sharp-card" :class="{ running: runningSharpPids[app.id] }">
         <div class="sharp-card-banner">
           <img
             v-if="app.cover"
@@ -364,6 +855,17 @@ onMounted(load);
             :style="{ objectPosition: coverPosition(app) }"
           />
           <span v-else class="sharp-icon-placeholder">{{ app.name.charAt(0) }}</span>
+          <button
+            v-if="runningSharpPids[app.id]"
+            class="running-close-button"
+            title="Close application"
+            @click="stopSharpApp(app)"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
         </div>
         <div class="sharp-card-body">
           <div class="sharp-card-title">{{ app.name }}</div>
@@ -373,7 +875,8 @@ onMounted(load);
           </div>
           <div class="sharp-card-actions">
             <div class="sharp-card-actions-row">
-              <button class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
+              <button v-if="runningSharpPids[app.id]" class="btn btn-stop" @click="stopSharpApp(app)">Stop</button>
+              <button v-else class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
               <select
                 class="control-input"
                 :value="app.engine"
@@ -384,56 +887,60 @@ onMounted(load);
                 </option>
               </select>
             </div>
-            <div class="sharp-card-actions-row subtle">
-              <button class="btn btn-secondary btn-sm" @click="setCover(app.id)">Set Cover</button>
-              <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
-                {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
-              </button>
-              <button
-                class="btn btn-secondary btn-sm"
-                :disabled="diagnosticsLoading[app.id]"
-                @click="openDiagnostics(app)"
-              >
-                {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
-              </button>
-            </div>
-            <div v-if="app.cover" class="cover-position-controls">
-              <label>
-                <span>X</span>
+            <details class="sharp-card-tools">
+              <summary class="drawer-summary">
+                <span>Tools</span>
+                <small>cover, launch args, diagnostics</small>
+              </summary>
+              <div class="sharp-tool-actions">
+                <button class="btn btn-secondary btn-sm" @click="setCover(app.id)">Set Cover</button>
+                <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
+                  {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
+                </button>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="diagnosticsLoading[app.id]"
+                  @click="openDiagnostics(app)"
+                >
+                  {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
+                </button>
+              </div>
+              <div v-if="app.cover" class="cover-position-controls">
+                <label>
+                  <span>X</span>
+                  <input
+                    v-model.number="app.cover_position_x"
+                    type="range"
+                    min="0"
+                    max="100"
+                    @change="updateCoverPosition(app)"
+                  />
+                </label>
+                <label>
+                  <span>Y</span>
+                  <input
+                    v-model.number="app.cover_position_y"
+                    type="range"
+                    min="0"
+                    max="100"
+                    @change="updateCoverPosition(app)"
+                  />
+                </label>
+              </div>
+              <div class="launch-options-row">
                 <input
-                  v-model.number="app.cover_position_x"
-                  type="range"
-                  min="0"
-                  max="100"
-                  @change="updateCoverPosition(app)"
+                  v-model="launchArgDrafts[app.id]"
+                  class="control-input launch-options-input"
+                  type="text"
+                  placeholder="Launch options..."
+                  @keydown.enter="saveLaunchArgs(app)"
                 />
-              </label>
-              <label>
-                <span>Y</span>
-                <input
-                  v-model.number="app.cover_position_y"
-                  type="range"
-                  min="0"
-                  max="100"
-                  @change="updateCoverPosition(app)"
-                />
-              </label>
-            </div>
-            <div class="launch-options-row">
-              <input
-                v-model="launchArgDrafts[app.id]"
-                class="control-input launch-options-input"
-                type="text"
-                placeholder="Launch options..."
-                @keydown.enter="saveLaunchArgs(app)"
-              />
-              <button class="btn btn-secondary btn-sm" @click="saveLaunchArgs(app)">Save</button>
-            </div>
-            <div class="sharp-card-danger-row">
+                <button class="btn btn-secondary btn-sm" @click="saveLaunchArgs(app)">Save</button>
+              </div>
               <button class="btn btn-danger btn-sm sharp-uninstall-button" @click="uninstallApp(app.id)">
                 Uninstall
               </button>
-            </div>
+            </details>
             <div v-if="launchErrors[app.id]" class="launch-failure">
               <span>Last launch failed</span>
               <strong>{{ launchErrors[app.id] }}</strong>
@@ -548,26 +1055,308 @@ onMounted(load);
   margin-top: 2px;
 }
 
-.sharp-grid {
+.support-drawer {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+  overflow: hidden;
+}
+.support-drawer-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 44px;
+  padding: 11px 14px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.support-drawer-summary::-webkit-details-marker {
+  display: none;
+}
+.support-drawer-summary::after {
+  content: "v";
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+.support-drawer:not([open]) > .support-drawer-summary::after {
+  transform: rotate(-90deg);
+}
+.support-drawer-summary small {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.support-drawer-body {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+}
+.bottle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bottle-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.bottle-card-main {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) minmax(300px, 1.8fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+.bottle-identity {
+  min-width: 0;
+}
+.bottle-title {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottle-meta,
+.bottle-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.bottle-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.bottle-facts span {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottle-facts strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bottle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.bottle-control-surface {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+}
+.bottle-control-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, max-content)) minmax(190px, 1fr) auto;
+  gap: 8px;
+  padding: 9px;
+}
+.bottle-control-grid .control-input {
+  min-width: 0;
+}
+.windows-version-controls {
+  display: flex;
+  gap: 6px;
+}
+.bottle-detections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.component-pill {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+.bottle-report {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.bottle-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.bottle-action-row span {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 980px) {
+  .bottle-card-main {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .bottle-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bottle-actions {
+    justify-content: flex-start;
+  }
+  .bottle-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.compatibility-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.compatibility-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.3fr) 100px 92px 92px 92px minmax(150px, 1fr) minmax(130px, 0.9fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compatibility-row:first-child {
+  border-top: 0;
+}
+.compatibility-header {
+  color: var(--text-dim);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.compatibility-row strong,
+.compatibility-row small {
+  display: block;
+}
+.compatibility-row small {
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+.compatibility-select,
+.compatibility-input {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compatibility-input {
+  padding: 4px 7px;
+}
+.redist-source-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 10px;
+}
+.redist-source-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.redist-source-card strong,
+.redist-source-card small {
+  display: block;
+}
+.redist-source-card small,
+.redist-source-card p {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.redist-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.redist-targets span {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.sharp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  align-items: start;
 }
 
 .sharp-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   overflow: hidden;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 26px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 16px 34px color-mix(in srgb, var(--bg-deep) 34%, transparent);
+  transition:
+    transform var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+.sharp-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
+    0 0 34px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
+}
+.sharp-card.running {
+  border-color: var(--success);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--success) 48%, transparent),
+    0 0 34px color-mix(in srgb, var(--success) 28%, transparent),
+    0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
 }
 .sharp-card-banner {
   width: 100%;
-  height: 140px;
+  aspect-ratio: 16 / 5.6;
+  height: auto;
   background: var(--bg-surface);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 .sharp-card-banner img {
   width: 100%;
@@ -575,18 +1364,38 @@ onMounted(load);
   object-fit: cover;
 }
 .sharp-icon-placeholder {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--text-dim);
-  opacity: 0.4;
+  opacity: 0.34;
+}
+.running-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--error) 44%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+  color: var(--error);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 22px var(--card-glow);
+}
+.running-close-button:hover {
+  border-color: var(--error);
+  background: var(--error-bg);
 }
 .sharp-card-body {
-  padding: 12px 14px 14px;
+  padding: 11px 12px 12px;
 }
 .sharp-card-title {
   font-size: 14px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -604,25 +1413,43 @@ onMounted(load);
 .sharp-card-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 .sharp-card-actions-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.sharp-card-actions-row.subtle {
-  opacity: 0.7;
-  flex-wrap: wrap;
+.sharp-card-actions-row .btn-play,
+.sharp-card-actions-row .btn-stop {
+  min-width: 58px;
+}
+.sharp-card-tools {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+.sharp-card-tools .drawer-summary {
+  padding: 8px;
+}
+.sharp-card-tools[open] {
+  padding-bottom: 8px;
+}
+.sharp-tool-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.sharp-tool-actions .btn {
+  min-width: 0;
+  padding-inline: 6px;
 }
 .cover-position-controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-surface) 76%, transparent);
+  gap: 7px;
+  padding: 0 8px 8px;
 }
 .cover-position-controls label {
   display: grid;
@@ -639,16 +1466,15 @@ onMounted(load);
 .launch-options-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
+  padding: 0 8px 8px;
 }
 .launch-options-input {
   width: 100%;
 }
-.sharp-card-danger-row {
-  display: flex;
-}
 .sharp-uninstall-button {
-  width: 100%;
+  margin: 0 8px;
+  width: calc(100% - 16px);
 }
 
 .launch-failure {

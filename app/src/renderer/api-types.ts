@@ -77,6 +77,7 @@ interface SharpApp {
   engine: string;
   launch_args: string[];
   user_launch_args: string[];
+  bottle_id?: string | null;
   installed_at: string;
   size_bytes: number;
 }

@@ -68,8 +68,18 @@ onUnmounted(() => {
         <button class="btn btn-secondary" @click="clearView">Clear View</button>
       </div>
     </div>
+    <details class="log-drawer live-log-drawer" open>
+      <summary>
+        Live log stream <span>{{ logs.length }} lines</span>
+      </summary>
+      <div class="log-content">
+        <div v-for="(line, i) in logs" :key="i" class="log-line" :class="logClass(line)">
+          {{ line }}
+        </div>
+      </div>
+    </details>
     <div class="log-drawers">
-      <details v-if="crashReports.length" class="log-drawer" open>
+      <details v-if="crashReports.length" class="log-drawer">
         <summary>
           Crash reports <span>{{ crashReports.length }}</span>
         </summary>
@@ -88,11 +98,6 @@ onUnmounted(() => {
           <pre>{{ entry.lines.slice(-40).join("\n") }}</pre>
         </div>
       </details>
-    </div>
-    <div class="log-content">
-      <div v-for="(line, i) in logs" :key="i" class="log-line" :class="logClass(line)">
-        {{ line }}
-      </div>
     </div>
   </div>
 </template>
@@ -157,7 +162,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-top: 12px;
 }
 .log-drawer {
   border: 1px solid var(--border);
@@ -181,6 +186,7 @@ export default {
 .log-drawer summary::after {
   content: "v";
   color: var(--text-dim);
+  transition: transform 120ms ease;
 }
 .log-drawer:not([open]) summary::after {
   transform: rotate(-90deg);
@@ -232,16 +238,28 @@ export default {
 
 .log-content {
   flex: 1;
-  overflow-y: auto;
+  max-height: min(54vh, 560px);
+  overflow: auto;
   background: var(--bg-deep);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-top: 1px solid var(--border);
   padding: 14px 16px;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.8;
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+.live-log-drawer {
+  min-height: 0;
+}
+.live-log-drawer[open] {
+  flex: 1;
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+}
+.live-log-drawer[open] .log-content {
+  max-height: none;
 }
 
 .log-line {
