@@ -37,9 +37,15 @@ pub struct SharpApp {
     pub exe_path: String,
     pub install_dir: String,
     pub cover: Option<String>,
+    #[serde(default = "default_cover_position")]
+    pub cover_position_x: u8,
+    #[serde(default = "default_cover_position")]
+    pub cover_position_y: u8,
     pub engine: String,
     #[serde(default)]
     pub launch_args: Vec<String>,
+    #[serde(default)]
+    pub user_launch_args: Vec<String>,
     pub installed_at: String,
     pub size_bytes: u64,
 }
@@ -64,6 +70,10 @@ fn ensure_base_dir() -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(&dir)?;
     }
     Ok(())
+}
+
+fn default_cover_position() -> u8 {
+    50
 }
 
 pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
@@ -154,8 +164,11 @@ fn sync_wine_prefix_app(apps: &mut Vec<SharpApp>, candidate: WinePrefixApp) -> b
         exe_path: exe_path_string,
         install_dir: install_dir_string,
         cover: None,
+        cover_position_x: default_cover_position(),
+        cover_position_y: default_cover_position(),
         engine: "auto".to_string(),
         launch_args: Vec::new(),
+        user_launch_args: Vec::new(),
         installed_at: chrono_now(),
         size_bytes: dir_size(&candidate.install_dir),
     });
@@ -343,8 +356,11 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
         exe_path: exe_path_string,
         install_dir: install_dir_string,
         cover: None,
+        cover_position_x: default_cover_position(),
+        cover_position_y: default_cover_position(),
         engine: "auto".to_string(),
         launch_args: shortcut.launch_args,
+        user_launch_args: Vec::new(),
         installed_at: chrono_now(),
         size_bytes: dir_size(&install_dir),
     });
@@ -444,8 +460,11 @@ pub fn install_exe(
         exe_path,
         install_dir,
         cover: None,
+        cover_position_x: default_cover_position(),
+        cover_position_y: default_cover_position(),
         engine: "auto".to_string(),
         launch_args: Vec::new(),
+        user_launch_args: Vec::new(),
         installed_at,
         size_bytes,
     };
@@ -493,6 +512,8 @@ fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::
 
     let mut installer = Command::new(&wine);
     installer
+        .arg("start")
+        .arg("/unix")
         .arg(src)
         .env("WINEPREFIX", &prefix)
         .env("WINEDEBUG", "-all")
@@ -508,7 +529,7 @@ fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::
     Ok(SharpInstallOutcome::InstallerStarted {
         pid: child.id(),
         message:
-            "Installer started in the MetalSharp Wine prefix. Finish its setup window, then refresh Sharp Library."
+            "Installer started in the MetalSharp Wine prefix. Finish setup in the installer window, then refresh Sharp Library."
                 .to_string(),
     })
 }
@@ -574,7 +595,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         &work_dir,
         &exe_path,
         pipeline,
-        &app.launch_args,
+        &combined_launch_args(&app),
     )?;
 
     Ok(SharpLaunchResult {
@@ -599,8 +620,12 @@ pub fn diagnose_app(
     let node = crate::mtsp::engine::get_pipeline(pipeline);
     let launch_id = stable_launch_id(&app.id);
     let mut recipe = crate::mtsp::recipe::build_custom_launch_recipe(launch_id, node, &work_dir, Some(&exe_path))?;
-    recipe.launch_args.extend(app.launch_args.iter().cloned());
+    recipe.launch_args.extend(combined_launch_args(&app));
     Ok(crate::mtsp::recipe::diagnose_recipe(recipe))
+}
+
+fn combined_launch_args(app: &SharpApp) -> Vec<String> {
+    app.launch_args.iter().chain(app.user_launch_args.iter()).cloned().collect()
 }
 
 pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -627,6 +652,30 @@ pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::E
     }
 
     Ok(())
+}
+
+pub fn set_cover_position(id: &str, x: u8, y: u8) -> Result<(), Box<dyn std::error::Error>> {
+    let mut library = load_library()?;
+    if let Some(app) = library.iter_mut().find(|a| a.id == id) {
+        app.cover_position_x = x.min(100);
+        app.cover_position_y = y.min(100);
+        save_library(&library)?;
+        Ok(())
+    } else {
+        Err("App not found".into())
+    }
+}
+
+pub fn set_launch_args(id: &str, args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut library = load_library()?;
+    if let Some(app) = library.iter_mut().find(|a| a.id == id) {
+        app.user_launch_args =
+            args.into_iter().map(|arg| arg.trim().to_string()).filter(|arg| !arg.is_empty()).collect();
+        save_library(&library)?;
+        Ok(())
+    } else {
+        Err("App not found".into())
+    }
 }
 
 pub fn set_engine(id: &str, engine: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -925,6 +974,35 @@ pub fn handle_set_cover(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_set_cover_position(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let x = body.get("x").and_then(|v| v.as_u64()).unwrap_or(50).min(100) as u8;
+    let y = body.get("y").and_then(|v| v.as_u64()).unwrap_or(50).min(100) as u8;
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match set_cover_position(id, x, y) {
+        Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_set_launch_args(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let args = body
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|values| values.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match set_launch_args(id, args) {
+        Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_set_engine(body: &serde_json::Map<String, Value>) -> Value {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("wine_bare");
@@ -986,8 +1064,11 @@ mod tests {
             exe_path: "Game.exe".into(),
             install_dir: root.to_string_lossy().to_string(),
             cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
             engine: "auto".into(),
             launch_args: vec!["-dx11".into()],
+            user_launch_args: vec!["-user".into()],
             installed_at: chrono_now(),
             size_bytes: 0,
         }];
@@ -1005,6 +1086,7 @@ mod tests {
         assert!(changed);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].launch_args, vec!["-d3d12", "-windowed"]);
+        assert_eq!(apps[0].user_launch_args, vec!["-user"]);
     }
 
     #[test]
@@ -1018,8 +1100,11 @@ mod tests {
             exe_path: "Old.exe".into(),
             install_dir: old_root.to_string_lossy().to_string(),
             cover: Some("cover.png".into()),
+            cover_position_x: 34,
+            cover_position_y: 67,
             engine: "m11".into(),
             launch_args: vec!["-dx11".into()],
+            user_launch_args: vec!["-custom".into()],
             installed_at: chrono_now(),
             size_bytes: 123,
         }];
@@ -1042,8 +1127,11 @@ mod tests {
         assert_eq!(apps[0].install_dir, new_root.to_string_lossy());
         assert_eq!(apps[0].exe_path, "Renamed.exe");
         assert_eq!(apps[0].cover.as_deref(), Some("cover.png"));
+        assert_eq!(apps[0].cover_position_x, 34);
+        assert_eq!(apps[0].cover_position_y, 67);
         assert_eq!(apps[0].engine, "m11");
         assert_eq!(apps[0].launch_args, vec!["-d3d12"]);
+        assert_eq!(apps[0].user_launch_args, vec!["-custom"]);
     }
 
     #[test]
@@ -1090,8 +1178,11 @@ mod tests {
             exe_path: "TJoC_SM.exe".into(),
             install_dir: app_dir.to_string_lossy().to_string(),
             cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
             engine: "auto".into(),
             launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
             installed_at: chrono_now(),
             size_bytes: 0,
         }];

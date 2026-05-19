@@ -49,6 +49,7 @@ const diagnosticsLoading = ref<Record<string, boolean>>({});
 const launchErrors = ref<Record<string, string>>({});
 const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
+const launchArgDrafts = ref<Record<string, string>>({});
 const engineOptions = [
   { id: "auto", name: "Auto" },
   { id: "wine_bare", name: "Wine" },
@@ -61,7 +62,19 @@ const engineOptions = [
 
 async function load() {
   const result = await api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
-  if (result?.ok) apps.value = result.apps;
+  if (result?.ok) {
+    apps.value = result.apps;
+    for (const app of result.apps) {
+      if (launchArgDrafts.value[app.id] === undefined) {
+        launchArgDrafts.value[app.id] = (app.user_launch_args ?? []).join(" ");
+      }
+    }
+  }
+}
+
+async function refreshSharpLibrary() {
+  await load();
+  toast.show("Sharp Library refreshed", "success");
 }
 
 async function installExe() {
@@ -138,6 +151,38 @@ async function setCover(id: string) {
     toast.show("Cover updated", "success");
     await load();
   } else toast.show(result?.error ?? "Failed to set cover", "error");
+}
+
+async function updateCoverPosition(app: SharpApp) {
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-cover-position", {
+    id: app.id,
+    x: app.cover_position_x,
+    y: app.cover_position_y,
+  });
+  if (!result?.ok) toast.show(result?.error ?? "Failed to save cover position", "error");
+}
+
+function coverPosition(app: SharpApp): string {
+  return `${app.cover_position_x ?? 50}% ${app.cover_position_y ?? 50}%`;
+}
+
+function splitLaunchArgs(value: string): string[] {
+  const matches = value.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  return matches.map((arg) => arg.replace(/^"|"$/g, "").trim()).filter(Boolean);
+}
+
+async function saveLaunchArgs(app: SharpApp) {
+  const args = splitLaunchArgs(launchArgDrafts.value[app.id] ?? "");
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-launch-args", {
+    id: app.id,
+    args,
+  });
+  if (result?.ok) {
+    app.user_launch_args = args;
+    toast.show("Launch options saved", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to save launch options", "error");
+  }
 }
 
 async function runDoctor(app: SharpApp) {
@@ -291,7 +336,10 @@ onMounted(load);
         <h1>Sharp Library</h1>
         <p class="subtitle">Windows applications running via MetalSharp Wine</p>
       </div>
-      <button class="btn btn-primary" @click="installExe">Install an EXE</button>
+      <div class="sharp-header-actions">
+        <button class="btn btn-secondary" @click="refreshSharpLibrary">Refresh</button>
+        <button class="btn btn-primary" @click="installExe">Install an EXE</button>
+      </div>
     </div>
 
     <div v-if="apps.length === 0" class="empty-state">
@@ -309,7 +357,12 @@ onMounted(load);
     <div v-else class="sharp-grid">
       <div v-for="app in apps" :key="app.id" class="sharp-card">
         <div class="sharp-card-banner">
-          <img v-if="app.cover" :src="`http://127.0.0.1:9274/sharp-library/cover?id=${app.id}`" :alt="app.name" />
+          <img
+            v-if="app.cover"
+            :src="`http://127.0.0.1:9274/sharp-library/cover?id=${app.id}`"
+            :alt="app.name"
+            :style="{ objectPosition: coverPosition(app) }"
+          />
           <span v-else class="sharp-icon-placeholder">{{ app.name.charAt(0) }}</span>
         </div>
         <div class="sharp-card-body">
@@ -343,7 +396,43 @@ onMounted(load);
               >
                 {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
               </button>
-              <button class="btn btn-danger btn-sm" @click="uninstallApp(app.id)">Uninstall</button>
+            </div>
+            <div v-if="app.cover" class="cover-position-controls">
+              <label>
+                <span>X</span>
+                <input
+                  v-model.number="app.cover_position_x"
+                  type="range"
+                  min="0"
+                  max="100"
+                  @change="updateCoverPosition(app)"
+                />
+              </label>
+              <label>
+                <span>Y</span>
+                <input
+                  v-model.number="app.cover_position_y"
+                  type="range"
+                  min="0"
+                  max="100"
+                  @change="updateCoverPosition(app)"
+                />
+              </label>
+            </div>
+            <div class="launch-options-row">
+              <input
+                v-model="launchArgDrafts[app.id]"
+                class="control-input launch-options-input"
+                type="text"
+                placeholder="Launch options..."
+                @keydown.enter="saveLaunchArgs(app)"
+              />
+              <button class="btn btn-secondary btn-sm" @click="saveLaunchArgs(app)">Save</button>
+            </div>
+            <div class="sharp-card-danger-row">
+              <button class="btn btn-danger btn-sm sharp-uninstall-button" @click="uninstallApp(app.id)">
+                Uninstall
+              </button>
             </div>
             <div v-if="launchErrors[app.id]" class="launch-failure">
               <span>Last launch failed</span>
@@ -436,10 +525,18 @@ onMounted(load);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 16px;
   margin: -24px -28px 20px;
   padding: 24px 28px 18px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
+}
+.sharp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .sharp-header h1 {
   font-size: 22px;
@@ -516,6 +613,42 @@ onMounted(load);
 }
 .sharp-card-actions-row.subtle {
   opacity: 0.7;
+  flex-wrap: wrap;
+}
+.cover-position-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 76%, transparent);
+}
+.cover-position-controls label {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+}
+.cover-position-controls input {
+  min-width: 0;
+}
+.launch-options-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.launch-options-input {
+  width: 100%;
+}
+.sharp-card-danger-row {
+  display: flex;
+}
+.sharp-uninstall-button {
+  width: 100%;
 }
 
 .launch-failure {

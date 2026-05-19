@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 
@@ -68,6 +68,7 @@ const pipelineOptions = ref<PipelineOption[]>([]);
 const doctorOpen = ref(false);
 const doctorLoading = ref(false);
 const doctorReport = ref<LaunchDoctorReport | null>(null);
+const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
 
 const launchModeOptions = computed(() => {
   const byId = new Map<string, PipelineOption>();
@@ -85,6 +86,9 @@ const launchModeOptions = computed(() => {
 });
 
 onMounted(async () => {
+  const savedLaunchMode = localStorage.getItem(launchModeStorageKey.value);
+  if (savedLaunchMode) selectedLaunchMode.value = savedLaunchMode;
+
   if (props.game.installed) {
     const gp = await api<{ ok: boolean; recommended: string; recommended_name: string; pipelines: PipelineOption[] }>(
       "GET",
@@ -107,6 +111,10 @@ onMounted(async () => {
     );
     if (es?.ok) eacActive.value = es.eac_toggle_active;
   }
+});
+
+watch(selectedLaunchMode, (mode) => {
+  localStorage.setItem(launchModeStorageKey.value, mode);
 });
 
 async function toggleGoldberg(enable: boolean) {
@@ -201,8 +209,23 @@ function formatBytes(bytes: number): string {
                 {{ option.name }}
               </option>
             </select>
-            <button class="icon-button doctor-button" :disabled="doctorLoading" title="Run Launch Doctor" @click="runDoctor">
-              <svg v-if="!doctorLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button
+              class="icon-button doctor-button"
+              :disabled="doctorLoading"
+              title="Run Launch Doctor"
+              @click="runDoctor"
+            >
+              <svg
+                v-if="!doctorLoading"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 <path d="M9 12h6" />
                 <path d="M12 9v6" />
@@ -212,19 +235,32 @@ function formatBytes(bytes: number): string {
           </div>
           <div class="secondary-action-grid">
             <label class="tool-chip toggle-label" title="Goldberg Steam emulator">
-              <input type="checkbox" :checked="goldbergActive" @change="toggleGoldberg(($event.target as HTMLInputElement).checked)" />
+              <input
+                type="checkbox"
+                :checked="goldbergActive"
+                @change="toggleGoldberg(($event.target as HTMLInputElement).checked)"
+              />
               <span class="toggle-switch"></span>
               <span class="toggle-text">Goldberg</span>
             </label>
             <label class="tool-chip toggle-label" title="EAC bypass (offline only)">
-              <input type="checkbox" :checked="eacActive" @change="toggleEac(($event.target as HTMLInputElement).checked)" />
+              <input
+                type="checkbox"
+                :checked="eacActive"
+                @change="toggleEac(($event.target as HTMLInputElement).checked)"
+              />
               <span class="toggle-switch"></span>
               <span class="toggle-text">No EAC</span>
             </label>
-            <button v-if="game.can_uninstall !== false" class="danger-link" title="Uninstall" @click="emit('uninstall')">
-              Uninstall
-            </button>
           </div>
+          <button
+            v-if="game.can_uninstall !== false"
+            class="danger-link danger-link-wide"
+            title="Uninstall"
+            @click="emit('uninstall')"
+          >
+            Uninstall
+          </button>
           <div v-if="doctorOpen" class="doctor-panel">
             <div v-if="doctorLoading" class="doctor-loading">Checking launch prerequisites...</div>
             <template v-else-if="doctorReport">
@@ -270,7 +306,10 @@ function formatBytes(bytes: number): string {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+  transition:
+    transform var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition);
   box-shadow: 0 12px 34px var(--card-glow);
 }
 .game-card:hover {
@@ -280,7 +319,9 @@ function formatBytes(bytes: number): string {
 }
 .game-card.running {
   border-color: var(--success);
-  box-shadow: 0 0 0 1px var(--success-bg), 0 18px 42px var(--card-glow);
+  box-shadow:
+    0 0 0 1px var(--success-bg),
+    0 18px 42px var(--card-glow);
 }
 
 .game-card-banner {
@@ -297,7 +338,9 @@ function formatBytes(bytes: number): string {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.3s ease, filter var(--transition);
+  transition:
+    transform 0.3s ease,
+    filter var(--transition);
 }
 .game-card:hover .game-card-cover {
   transform: scale(1.015);
@@ -376,7 +419,7 @@ function formatBytes(bytes: number): string {
 }
 .secondary-action-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -449,6 +492,11 @@ function formatBytes(bytes: number): string {
   cursor: pointer;
   transition: all var(--transition);
   white-space: nowrap;
+}
+.danger-link-wide {
+  width: 100%;
+  border-color: color-mix(in srgb, var(--error) 34%, var(--border));
+  background: color-mix(in srgb, var(--error-bg) 76%, transparent);
 }
 .danger-link:hover {
   border-color: var(--error);
