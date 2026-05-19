@@ -129,6 +129,34 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     }))
 }
 
+pub fn prepare_steam_pipeline_env(
+    appid: u32,
+    pipeline_id: PipelineId,
+) -> Result<(Vec<(String, String)>, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
+    let node = get_pipeline(pipeline_id);
+    match pipeline_id {
+        PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M32
+        | PipelineId::WineBare => {},
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+            return Err("Steam route handoff only supports Wine-backed MTSP pipelines".into());
+        },
+    }
+
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    validate_recipe_runtime(&recipe)?;
+    if !recipe.dlls.is_empty() {
+        deploy_recipe_dlls(&recipe)?;
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let env = steam_pipeline_env_pairs(&home, node, appid);
+    Ok((env, recipe))
+}
+
 pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
     validate_recipe_runtime(recipe)?;
 
@@ -472,6 +500,27 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
     })
+}
+
+fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let cache_paths = build_cache_paths(home, node, appid);
+    let mut env = Vec::new();
+
+    if !node.dyld_paths.is_empty() {
+        let runtime_lib_key =
+            crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
+        env.push((runtime_lib_key.to_string(), build_dyld(&ms_root, &node.dyld_paths)));
+    }
+    if let Some(overrides) = node.wine_overrides {
+        env.push(("WINEDLLOVERRIDES".to_string(), overrides.to_string()));
+    }
+    if node.backend == "dxmt" {
+        env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+    }
+    env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
+    env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
+    env
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -954,6 +1003,24 @@ mod tests {
     }
 
     #[test]
+    fn steam_pipeline_env_includes_route_overrides_and_cache_keys() {
+        let home = test_dir("steam-env");
+        let node = get_pipeline(PipelineId::M12);
+
+        let env = steam_pipeline_env_pairs(&home, node, 1583230);
+        let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+        assert!(keys.contains("WINEDLLOVERRIDES"));
+        assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
+        assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
+        assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
+        assert!(overrides.contains("d3d12"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn no_dll_recipes_do_not_require_game_dir_for_deploy() {
         let recipe = super::super::recipe::LaunchRecipe {
             appid: 1,
@@ -980,5 +1047,15 @@ mod tests {
         let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
 
         assert_eq!(launch_working_dir(&game_dir, &exe_path), exe_path.parent().unwrap());
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("metalsharp-launcher-{}-{}-{}", name, std::process::id(), unique_suffix()));
+        dir
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
     }
 }
