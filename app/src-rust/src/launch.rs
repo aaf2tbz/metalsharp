@@ -69,12 +69,13 @@ pub fn launch_via_steam_with_env(
     if !steam_running {
         crate::steam::launch_wine_steam_with_env(extra_env)?;
         let mut ready = false;
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_secs(2));
+        for _ in 0..12 {
             if crate::steam::is_wine_steam_running() {
+                std::thread::sleep(std::time::Duration::from_secs(2));
                 ready = true;
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
         if !ready {
             return Err("Wine Steam was started but did not become ready for game launch".into());
