@@ -879,56 +879,60 @@ onMounted(load);
                 </option>
               </select>
             </div>
-            <div class="sharp-card-actions-row subtle">
-              <button class="btn btn-secondary btn-sm" @click="setCover(app.id)">Set Cover</button>
-              <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
-                {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
-              </button>
-              <button
-                class="btn btn-secondary btn-sm"
-                :disabled="diagnosticsLoading[app.id]"
-                @click="openDiagnostics(app)"
-              >
-                {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
-              </button>
-            </div>
-            <div v-if="app.cover" class="cover-position-controls">
-              <label>
-                <span>X</span>
+            <details class="sharp-card-tools">
+              <summary class="drawer-summary">
+                <span>Tools</span>
+                <small>cover, launch args, diagnostics</small>
+              </summary>
+              <div class="sharp-tool-actions">
+                <button class="btn btn-secondary btn-sm" @click="setCover(app.id)">Set Cover</button>
+                <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
+                  {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
+                </button>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="diagnosticsLoading[app.id]"
+                  @click="openDiagnostics(app)"
+                >
+                  {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
+                </button>
+              </div>
+              <div v-if="app.cover" class="cover-position-controls">
+                <label>
+                  <span>X</span>
+                  <input
+                    v-model.number="app.cover_position_x"
+                    type="range"
+                    min="0"
+                    max="100"
+                    @change="updateCoverPosition(app)"
+                  />
+                </label>
+                <label>
+                  <span>Y</span>
+                  <input
+                    v-model.number="app.cover_position_y"
+                    type="range"
+                    min="0"
+                    max="100"
+                    @change="updateCoverPosition(app)"
+                  />
+                </label>
+              </div>
+              <div class="launch-options-row">
                 <input
-                  v-model.number="app.cover_position_x"
-                  type="range"
-                  min="0"
-                  max="100"
-                  @change="updateCoverPosition(app)"
+                  v-model="launchArgDrafts[app.id]"
+                  class="control-input launch-options-input"
+                  type="text"
+                  placeholder="Launch options..."
+                  @keydown.enter="saveLaunchArgs(app)"
                 />
-              </label>
-              <label>
-                <span>Y</span>
-                <input
-                  v-model.number="app.cover_position_y"
-                  type="range"
-                  min="0"
-                  max="100"
-                  @change="updateCoverPosition(app)"
-                />
-              </label>
-            </div>
-            <div class="launch-options-row">
-              <input
-                v-model="launchArgDrafts[app.id]"
-                class="control-input launch-options-input"
-                type="text"
-                placeholder="Launch options..."
-                @keydown.enter="saveLaunchArgs(app)"
-              />
-              <button class="btn btn-secondary btn-sm" @click="saveLaunchArgs(app)">Save</button>
-            </div>
-            <div class="sharp-card-danger-row">
+                <button class="btn btn-secondary btn-sm" @click="saveLaunchArgs(app)">Save</button>
+              </div>
               <button class="btn btn-danger btn-sm sharp-uninstall-button" @click="uninstallApp(app.id)">
                 Uninstall
               </button>
-            </div>
+            </details>
             <div v-if="launchErrors[app.id]" class="launch-failure">
               <span>Last launch failed</span>
               <strong>{{ launchErrors[app.id] }}</strong>
@@ -1237,18 +1241,17 @@ onMounted(load);
 
 .sharp-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  align-items: start;
 }
 
 .sharp-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
-    0 14px 34px color-mix(in srgb, var(--accent) 9%, var(--card-glow));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--bg-deep) 18%, transparent);
   transition:
     transform var(--transition),
     border-color var(--transition),
@@ -1257,19 +1260,15 @@ onMounted(load);
 .sharp-card:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
-    0 18px 42px color-mix(in srgb, var(--accent) 12%, var(--card-glow));
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--bg-deep) 24%, transparent);
 }
 .sharp-card.running {
   border-color: var(--success);
-  box-shadow:
-    0 0 0 1px var(--success-bg),
-    0 18px 42px color-mix(in srgb, var(--success) 12%, var(--card-glow));
+  box-shadow: 0 0 0 1px var(--success-bg);
 }
 .sharp-card-banner {
   width: 100%;
-  aspect-ratio: 16 / 6.25;
+  aspect-ratio: 16 / 5.6;
   height: auto;
   background: var(--bg-surface);
   display: flex;
@@ -1284,10 +1283,10 @@ onMounted(load);
   object-fit: cover;
 }
 .sharp-icon-placeholder {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--text-dim);
-  opacity: 0.4;
+  opacity: 0.34;
 }
 .running-close-button {
   position: absolute;
@@ -1310,12 +1309,12 @@ onMounted(load);
   background: var(--error-bg);
 }
 .sharp-card-body {
-  padding: 12px 14px 14px;
+  padding: 11px 12px 12px;
 }
 .sharp-card-title {
   font-size: 14px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1333,25 +1332,43 @@ onMounted(load);
 .sharp-card-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 .sharp-card-actions-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.sharp-card-actions-row.subtle {
-  opacity: 0.7;
-  flex-wrap: wrap;
+.sharp-card-actions-row .btn-play,
+.sharp-card-actions-row .btn-stop {
+  min-width: 58px;
+}
+.sharp-card-tools {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+.sharp-card-tools .drawer-summary {
+  padding: 8px;
+}
+.sharp-card-tools[open] {
+  padding-bottom: 8px;
+}
+.sharp-tool-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.sharp-tool-actions .btn {
+  min-width: 0;
+  padding-inline: 6px;
 }
 .cover-position-controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-surface) 76%, transparent);
+  gap: 7px;
+  padding: 0 8px 8px;
 }
 .cover-position-controls label {
   display: grid;
@@ -1368,16 +1385,15 @@ onMounted(load);
 .launch-options-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
+  padding: 0 8px 8px;
 }
 .launch-options-input {
   width: 100%;
 }
-.sharp-card-danger-row {
-  display: flex;
-}
 .sharp-uninstall-button {
-  width: 100%;
+  margin: 0 8px;
+  width: calc(100% - 16px);
 }
 
 .launch-failure {
