@@ -433,6 +433,13 @@ function registerIpc() {
     shell.openPath(fullPath);
   });
 
+  ipcMain.handle("app:open-logs-folder", async () => {
+    const logsPath = path.join(app.getPath("home"), ".metalsharp", "logs");
+    fs.mkdirSync(logsPath, { recursive: true });
+    await shell.openPath(logsPath);
+    return { ok: true, path: logsPath };
+  });
+
   ipcMain.handle("app:copy-text", async (_e, text: string) => {
     clipboard.writeText(text);
     return { ok: true };

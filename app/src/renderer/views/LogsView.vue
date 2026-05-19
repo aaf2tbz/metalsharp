@@ -41,7 +41,7 @@ function clearView() {
 }
 
 async function openLogFolder() {
-  await getAPI().openInFinder("~/.metalsharp/logs");
+  await getAPI().openLogsFolder();
 }
 
 onMounted(async () => {

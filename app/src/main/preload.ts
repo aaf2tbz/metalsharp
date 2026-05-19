@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("metalsharp", {
   installHomebrew: () => ipcRenderer.invoke("app:install-homebrew"),
   onSteamappsChanged: (callback: () => void) => ipcRenderer.on("steamapps:changed", callback),
   openInFinder: (path: string) => ipcRenderer.invoke("app:open-in-finder", path),
+  openLogsFolder: () => ipcRenderer.invoke("app:open-logs-folder"),
   copyText: (text: string) => ipcRenderer.invoke("app:copy-text", text),
   restartBackend: () => ipcRenderer.invoke("backend:restart"),
   isBackendAlive: () => ipcRenderer.invoke("backend:is-alive"),

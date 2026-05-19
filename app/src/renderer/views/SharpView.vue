@@ -242,7 +242,10 @@ async function clearShaderCache(app: SharpApp) {
 }
 
 async function openLogFolder() {
-  await getAPI().openInFinder("~/.metalsharp/logs");
+  const result = await getAPI().openLogsFolder();
+  if (result && result.ok === false) {
+    toast.show(result.error ?? "Failed to open logs", "error");
+  }
 }
 
 async function copyDiagnosticBundle(app: SharpApp) {
