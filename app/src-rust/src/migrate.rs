@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 1;
+const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
+    &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
+const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -273,13 +276,30 @@ fn wait_for_install_complete() -> Result<(), String> {
 }
 
 fn kill_steam_wine() {
-    let patterns = ["steam", "steam.exe", "steamwebhelper", "steamwebhelper.exe", "wine", "wine64", "wineserver"];
-
-    for pat in &patterns {
-        let _ = Command::new("pkill").arg("-x").arg(pat).output();
-        let _ = Command::new("pkill").arg("-f").arg(pat).output();
+    for pat in MIGRATION_EXACT_KILL_PATTERNS {
+        run_pkill(&["-x", pat]);
     }
-    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    for pat in MIGRATION_COMMAND_KILL_PATTERNS {
+        run_pkill(&["-f", pat]);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(750));
+}
+
+fn run_pkill(args: &[&str]) {
+    let Ok(mut child) = Command::new("pkill").args(args).spawn() else {
+        return;
+    };
+
+    for _ in 0..20 {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 struct PreservedData {
@@ -288,6 +308,7 @@ struct PreservedData {
     prefix_steam_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
+    bottles_tmp: PathBuf,
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
@@ -325,7 +346,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         copy_dir_recursive(&sharp_library, &sharp_library_tmp);
     }
 
-    PreservedData { setup_json, steam_config_json, prefix_steam_tmp, games_tmp, sharp_library_tmp }
+    write_migrate_progress("running", 2, 5, "Preserving user data (bottles)...", None);
+    let bottles_tmp = tmp.join("bottles");
+    let bottles = ms_dir.join("bottles");
+    if bottles.exists() {
+        let _ = fs::create_dir_all(&bottles_tmp);
+        copy_dir_recursive(&bottles, &bottles_tmp);
+    }
+
+    PreservedData { setup_json, steam_config_json, prefix_steam_tmp, games_tmp, sharp_library_tmp, bottles_tmp }
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
@@ -429,6 +458,14 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         copy_dir_recursive(&preserved.sharp_library_tmp, &dst);
     }
 
+    if preserved.bottles_tmp.exists() {
+        let dst = ms_dir.join("bottles");
+        if !dst.exists() {
+            let _ = fs::create_dir_all(&dst);
+        }
+        copy_dir_recursive(&preserved.bottles_tmp, &dst);
+    }
+
     if let Some(ref data) = preserved.setup_json {
         let _ = fs::write(ms_dir.join("setup.json"), data);
     }
@@ -474,24 +511,29 @@ fn log_to_file(msg: &str) {
     let m = (secs / 60) % 60;
     let s = secs % 60;
     let line = format!("[{:02}:{:02}:{:02}] {}\n", h, m, s, msg);
-    let days = secs / 86400;
-    let y = 1970 + (days * 400).div_ceil(146097);
-    let mut remaining = days - (((y - 1) * 365) + ((y - 1) / 4) - ((y - 1) / 100) + ((y - 1) / 400));
-    let ml = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut mo = 1;
-    for (i, &md) in ml.iter().enumerate() {
-        if remaining < md {
-            mo = i + 1;
-            break;
-        }
-        remaining -= md;
-    }
-    let log_path = log_dir.join(format!("{:04}-{:02}-{:02}.log", y, mo, remaining + 1));
+    let (year, month, day) = unix_days_to_ymd(secs / 86400);
+    let log_path = log_dir.join(format!("{:04}-{:02}-{:02}.log", year, month, day));
     let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+fn unix_days_to_ymd(days_since_epoch: u64) -> (i64, u32, u32) {
+    let z = days_since_epoch as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month as u32, day as u32)
 }
 
 #[cfg(test)]
@@ -525,6 +567,38 @@ mod tests {
         assert!(runtime_core_ready(&ms_dir));
         assert!(!runtime_needs_repair(&home, true));
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_preserves_bottles_across_runtime_cleanup() {
+        let home = test_dir("preserve-bottles");
+        let ms_dir = home.join(".metalsharp");
+        let bottle_manifest = ms_dir.join("bottles").join("steam_620").join("bottle.json");
+        fs::create_dir_all(bottle_manifest.parent().unwrap()).expect("create bottle dir");
+        fs::write(&bottle_manifest, br#"{"id":"steam_620"}"#).expect("write bottle manifest");
+
+        let preserved = preserve_user_data(&ms_dir);
+        fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
+            r#"{"id":"steam_620"}"#
+        );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_kill_patterns_avoid_broad_command_matches() {
+        assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
+        assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
+        assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"wine"));
+    }
+
+    #[test]
+    fn unix_days_to_ymd_handles_current_dates_without_underflow() {
+        assert_eq!(unix_days_to_ymd(20_592), (2026, 5, 19));
     }
 
     fn write_runtime_core(ms_dir: &Path) {
