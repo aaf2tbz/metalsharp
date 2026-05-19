@@ -337,12 +337,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
+                            let bottle = match bottles::prepare_steam_game_launch(id as u32, pipeline) {
+                                Ok(bottle) => bottle,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            };
                             let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id as u32, pipeline) {
                                 Ok(prepared) => prepared,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             steam::launch_game_via_steam_with_env(id as u32, &env).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("bottle_id".into(), json!(bottle.id));
+                                    obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
                                     obj.insert("pipeline".into(), json!(pipeline));
                                     obj.insert("recipe".into(), json!(recipe));
                                     obj.insert(
@@ -353,7 +359,20 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 v
                             })
                         },
-                        None => steam::launch_game_via_steam(id as u32),
+                        None => {
+                            let pipeline = mtsp::rules::resolve_pipeline(id as u32);
+                            let bottle = match bottles::prepare_steam_game_launch(id as u32, pipeline) {
+                                Ok(bottle) => bottle,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            };
+                            steam::launch_game_via_steam(id as u32).map(|mut v| {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("bottle_id".into(), json!(bottle.id));
+                                    obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
+                                }
+                                v
+                            })
+                        },
                     };
                     match launch_result {
                         Ok(v) => resp(200, v),

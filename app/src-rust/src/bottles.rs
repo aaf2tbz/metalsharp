@@ -247,6 +247,10 @@ pub fn bottles_root() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join(BOTTLES_DIR)
 }
 
+fn steam_launch_prefix() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
+}
+
 pub fn bottle_dir(id: &str) -> PathBuf {
     bottles_root().join(id)
 }
@@ -393,7 +397,7 @@ pub fn ensure_steam_game_bottle(
         name: name.to_string(),
         bottle_type: BottleType::Steam,
         steam_app_id: Some(appid),
-        prefix_path: bottle_dir(&id).join("prefix").to_string_lossy().to_string(),
+        prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         arch: BottleArch::Wow64,
         runtime_profile,
         installed_components: default_components_for(runtime_profile),
@@ -414,6 +418,7 @@ pub fn ensure_steam_game_bottle(
     manifest.name = name.to_string();
     manifest.bottle_type = BottleType::Steam;
     manifest.steam_app_id = Some(appid);
+    manifest.prefix_path = steam_launch_prefix().to_string_lossy().to_string();
     manifest.runtime_profile = runtime_profile;
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
@@ -423,6 +428,22 @@ pub fn ensure_steam_game_bottle(
     manifest.health =
         if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
     manifest.updated_at = now;
+    save_bottle(&manifest)?;
+    Ok(manifest)
+}
+
+pub fn prepare_steam_game_launch(
+    appid: u32,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    let mut manifest = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?;
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    fs::create_dir_all(&prefix)?;
+    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    refresh_manifest_runtime_views(&mut manifest);
+    manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
 }
@@ -551,7 +572,7 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
     let mut manifest = load_bottle(id)?;
     manifest.runtime_profile = profile;
     manifest.arch = runtime_profile_definition(profile).arch;
-    manifest.installed_components = merge_components(manifest.installed_components, default_components_for(profile));
+    manifest.installed_components = rebuild_components_for_profile(&manifest.installed_components, profile);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
@@ -608,7 +629,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     let component_sources = component_source_policies(&manifest.installed_components, manifest.arch);
     let ready = checks
         .iter()
-        .filter(|check| check.id != "app_detection" && check.id != "game_runtime_assets")
+        .filter(|check| check.id != "app_detection" && check.id != "game_runtime_assets" && check.id != "launch_log")
         .all(|check| check.ok);
     let summary = if ready {
         "Bottle runtime checks passed".to_string()
@@ -995,13 +1016,13 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
         .unwrap_or(crate::mtsp::engine::PipelineId::M12);
-    let prefix = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam");
     let profile = runtime_profile_for_pipeline(pipeline);
     let bottle = appid.and_then(|id| {
         let dual = crate::scan::resolve_dual_game_dir(id);
         let name = crate::steam::get_game_name_from_manifest(id).unwrap_or_else(|| format!("Game {}", id));
         ensure_steam_game_bottle(id, &name, dual.wine_dir.as_deref(), pipeline).ok()
     });
+    let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let report = SteamRuntimeDiagnostic {
@@ -1185,6 +1206,20 @@ fn merge_components(mut existing: Vec<RuntimeComponent>, required: Vec<RuntimeCo
     }
     existing.sort_by(|a, b| a.id.cmp(&b.id));
     existing
+}
+
+fn rebuild_components_for_profile(existing: &[RuntimeComponent], profile: RuntimeProfile) -> Vec<RuntimeComponent> {
+    let mut rebuilt = default_components_for(profile)
+        .into_iter()
+        .map(|mut required| {
+            if let Some(current) = existing.iter().find(|component| component.id == required.id) {
+                required.state = current.state;
+            }
+            required
+        })
+        .collect::<Vec<_>>();
+    rebuilt.sort_by(|a, b| a.id.cmp(&b.id));
+    rebuilt
 }
 
 fn mark_component_state(manifest: &mut BottleManifest, component_id: &str, state: ComponentState) {
@@ -2110,6 +2145,24 @@ mod tests {
     }
 
     #[test]
+    fn profile_rebuild_drops_stale_components_but_keeps_overlap_state() {
+        let existing = vec![
+            RuntimeComponent { id: "d3d12".into(), state: ComponentState::Missing },
+            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Installed },
+        ];
+
+        let rebuilt = rebuild_components_for_profile(&existing, RuntimeProfile::Plain);
+
+        assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
+        assert!(!rebuilt.iter().any(|component| component.id == "vcrun2019"));
+
+        let rebuilt = rebuild_components_for_profile(&existing, RuntimeProfile::M9);
+        let vcrun = rebuilt.iter().find(|component| component.id == "vcrun2019").expect("vcrun component");
+        assert_eq!(vcrun.state, ComponentState::Installed);
+        assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
+    }
+
+    #[test]
     fn missing_dotnet_components_produce_actions() {
         let components = default_components_for(RuntimeProfile::Win32Dotnet);
         let inspected = inspect_components(Path::new("/tmp/definitely-missing-metalsharp-prefix"), &components);
@@ -2152,6 +2205,34 @@ mod tests {
     fn steam_bottle_ids_are_appid_scoped() {
         assert_eq!(steam_game_bottle_id(620), "steam_620");
         assert_ne!(steam_game_bottle_id(620), steam_game_bottle_id(504230));
+    }
+
+    #[test]
+    fn steam_game_bottles_bind_to_shared_steam_launch_prefix() {
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(620),
+            name: "Game 620".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(620),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M9,
+            installed_components: default_components_for(RuntimeProfile::M9),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::New,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        assert_eq!(PathBuf::from(manifest.prefix_path), steam_launch_prefix());
     }
 
     #[test]
