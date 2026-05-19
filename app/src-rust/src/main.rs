@@ -324,28 +324,27 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/steam/launch-game") => {
             let body = read_body(req);
-            let appid = body.get("appid").and_then(|v| v.as_u64());
-            match appid {
-                Some(id) => {
+            match parse_request_appid(&body) {
+                Ok(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
                         Some(pipeline) => Some(pipeline),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
-                        None => Some(mtsp::rules::resolve_pipeline(id as u32)),
+                        None => Some(mtsp::rules::resolve_pipeline(id)),
                     };
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
-                            let bottle = match bottles::prepare_steam_game_launch(id as u32, pipeline) {
+                            let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id as u32, pipeline) {
+                            let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id, pipeline) {
                                 Ok(prepared) => prepared,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            steam::launch_game_via_steam_with_env(id as u32, &env).map(|mut v| {
+                            steam::launch_game_via_steam_with_env(id, &env).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
                                     obj.insert("bottle_id".into(), json!(bottle.id));
                                     obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
@@ -360,12 +359,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             })
                         },
                         None => {
-                            let pipeline = mtsp::rules::resolve_pipeline(id as u32);
-                            let bottle = match bottles::prepare_steam_game_launch(id as u32, pipeline) {
+                            let pipeline = mtsp::rules::resolve_pipeline(id);
+                            let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            steam::launch_game_via_steam(id as u32).map(|mut v| {
+                            steam::launch_game_via_steam(id).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
                                     obj.insert("bottle_id".into(), json!(bottle.id));
                                     obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
@@ -379,7 +378,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 },
-                None => resp(400, json!({"ok": false, "error": "appid required"})),
+                Err(error) => resp(400, json!({"ok": false, "error": error})),
             }
         },
         (Method::Post, "/steam/view-game") => {
@@ -1206,6 +1205,20 @@ fn read_body(req: &mut tiny_http::Request) -> serde_json::Map<String, serde_json
     serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&buf).unwrap_or_default()
 }
 
+fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Result<u32, &'static str> {
+    let Some(value) = body.get("appid") else {
+        return Err("appid required");
+    };
+    let Some(raw) = value.as_u64() else {
+        return Err("appid must be a positive numeric Steam appid");
+    };
+    let appid = u32::try_from(raw).map_err(|_| "appid out of range")?;
+    if appid == 0 {
+        return Err("appid must be greater than zero");
+    }
+    Ok(appid)
+}
+
 fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1258,4 +1271,35 @@ fn persist_crash_log(source: &str, path: &std::path::Path, timestamp: &str, size
     ]
     .join("\n");
     let _ = std::fs::write(log_path, body);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_appid_rejects_missing_string_zero_and_oversized_values() {
+        let missing = serde_json::Map::new();
+        assert_eq!(parse_request_appid(&missing), Err("appid required"));
+
+        let mut string_appid = serde_json::Map::new();
+        string_appid.insert("appid".into(), json!("620"));
+        assert_eq!(parse_request_appid(&string_appid), Err("appid must be a positive numeric Steam appid"));
+
+        let mut zero_appid = serde_json::Map::new();
+        zero_appid.insert("appid".into(), json!(0));
+        assert_eq!(parse_request_appid(&zero_appid), Err("appid must be greater than zero"));
+
+        let mut oversized_appid = serde_json::Map::new();
+        oversized_appid.insert("appid".into(), json!(u64::from(u32::MAX) + 1));
+        assert_eq!(parse_request_appid(&oversized_appid), Err("appid out of range"));
+    }
+
+    #[test]
+    fn request_appid_accepts_u32_range_values() {
+        let mut body = serde_json::Map::new();
+        body.insert("appid".into(), json!(620));
+
+        assert_eq!(parse_request_appid(&body), Ok(620));
+    }
 }
