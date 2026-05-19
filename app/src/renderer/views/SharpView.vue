@@ -121,6 +121,7 @@ const compatibilityCases = ref<CompatibilityCase[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const bottleLoading = ref<Record<string, boolean>>({});
+const bottleAdvancedOpen = ref<Record<string, boolean>>({});
 const doctorOpen = ref<Record<string, boolean>>({});
 const doctorLoading = ref<Record<string, boolean>>({});
 const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
@@ -618,19 +619,33 @@ onMounted(load);
       <div class="support-drawer-body bottle-list">
         <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card">
           <div class="bottle-card-main">
-            <div>
+            <div class="bottle-identity">
               <div class="bottle-title">{{ bottle.name }}</div>
               <div class="bottle-meta">
                 <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
-                <span>{{ bottle.bottle_type }}</span>
-                <span>{{ bottle.arch }}</span>
-                <span>{{ bottle.runtime_profile }}</span>
-                <span v-if="bottle.steam_app_id">appid {{ bottle.steam_app_id }}</span>
                 <span v-if="bottle.last_launch_status">
                   {{ bottle.last_launch_status }}
                   <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
                 </span>
               </div>
+            </div>
+            <div class="bottle-facts">
+              <span>
+                <strong>Kind</strong>
+                {{ bottle.bottle_type }}
+              </span>
+              <span>
+                <strong>Runtime</strong>
+                {{ bottle.runtime_profile }}
+              </span>
+              <span>
+                <strong>Arch</strong>
+                {{ bottle.arch }}
+              </span>
+              <span v-if="bottle.steam_app_id">
+                <strong>Steam</strong>
+                {{ bottle.steam_app_id }}
+              </span>
             </div>
             <div class="bottle-actions">
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
@@ -639,13 +654,12 @@ onMounted(load);
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
                 Scan
               </button>
+              <button class="btn btn-secondary btn-sm" @click="bottleAdvancedOpen[bottle.id] = !bottleAdvancedOpen[bottle.id]">
+                {{ bottleAdvancedOpen[bottle.id] ? "Less" : "More" }}
+              </button>
             </div>
           </div>
-          <details class="bottle-control-surface">
-            <summary class="drawer-summary">
-              <span>Bottle Controls</span>
-              <small>repair, profile, logs, Windows mode</small>
-            </summary>
+          <div v-if="bottleAdvancedOpen[bottle.id]" class="bottle-control-surface">
             <div class="bottle-control-grid">
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
                 Prepare
@@ -684,25 +698,25 @@ onMounted(load);
                 </button>
               </div>
             </div>
-          </details>
-          <div class="bottle-components">
-            <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
-              {{ component.id }}: {{ component.state }}
-            </span>
-            <span v-if="bottle.runtime_assets?.length" class="component-pill">
-              assets: {{ bottle.runtime_assets.length }}
-            </span>
-          </div>
-          <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
-            <button
-              v-for="candidate in bottle.installed_app_detections.slice(0, 3)"
-              :key="candidate.exe_path"
-              class="btn btn-secondary btn-sm"
-              :disabled="bottleLoading[bottle.id]"
-              @click="addBottleApp(bottle, candidate)"
-            >
-              Add {{ candidate.name }}
-            </button>
+            <div class="bottle-components">
+              <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
+                {{ component.id }}: {{ component.state }}
+              </span>
+              <span v-if="bottle.runtime_assets?.length" class="component-pill">
+                runtime assets: {{ bottle.runtime_assets.length }}
+              </span>
+            </div>
+            <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
+              <button
+                v-for="candidate in bottle.installed_app_detections.slice(0, 3)"
+                :key="candidate.exe_path"
+                class="btn btn-secondary btn-sm"
+                :disabled="bottleLoading[bottle.id]"
+                @click="addBottleApp(bottle, candidate)"
+              >
+                Add {{ candidate.name }}
+              </button>
+            </div>
           </div>
           <div v-if="bottleReports[bottle.id]" class="bottle-report">
             <div class="doctor-summary">
@@ -1088,24 +1102,27 @@ onMounted(load);
   padding: 12px;
 }
 .bottle-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .bottle-card {
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-card);
 }
 .bottle-card-main {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) minmax(300px, 1.8fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+.bottle-identity {
+  min-width: 0;
 }
 .bottle-title {
-  max-width: 220px;
+  max-width: 100%;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 13px;
@@ -1122,6 +1139,28 @@ onMounted(load);
   color: var(--text-dim);
   font-size: 10px;
 }
+.bottle-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.bottle-facts span {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottle-facts strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
 .bottle-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1129,19 +1168,19 @@ onMounted(load);
   gap: 6px;
 }
 .bottle-control-surface {
-  margin-top: 10px;
+  margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
 }
 .bottle-control-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, auto));
+  grid-template-columns: repeat(4, minmax(0, max-content)) minmax(190px, 1fr) auto;
   gap: 8px;
   padding: 9px;
 }
 .bottle-control-grid .control-input {
-  grid-column: span 2;
+  min-width: 0;
 }
 .windows-version-controls {
   display: flex;
@@ -1173,6 +1212,21 @@ onMounted(load);
 }
 .bottle-action-row span {
   overflow-wrap: anywhere;
+}
+@media (max-width: 980px) {
+  .bottle-card-main {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .bottle-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bottle-actions {
+    justify-content: flex-start;
+  }
+  .bottle-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .compatibility-table {
   border: 1px solid var(--border);
