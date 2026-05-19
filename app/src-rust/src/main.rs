@@ -348,22 +348,25 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Ok(started) => started,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            mtsp::launcher::launch_with_pipeline(id, pipeline).map(|(pid, game_type)| {
-                                json!({
-                                    "ok": true,
-                                    "pid": pid,
-                                    "appid": id,
-                                    "gameType": game_type,
-                                    "bottle_id": bottle.id,
-                                    "bottle_prefix": bottle.prefix_path,
-                                    "pipeline": pipeline,
-                                    "recipe": recipe,
-                                    "steam_started": steam_started,
-                                    "steam_runtime": "background",
-                                    "env_applied_to": "game_process",
-                                    "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-                                })
-                            })
+                            let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
+                            mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
+                                |(pid, game_type)| {
+                                    json!({
+                                        "ok": true,
+                                        "pid": pid,
+                                        "appid": id,
+                                        "gameType": game_type,
+                                        "bottle_id": bottle.id,
+                                        "bottle_prefix": bottle.prefix_path,
+                                        "pipeline": pipeline,
+                                        "recipe": recipe,
+                                        "steam_started": steam_started,
+                                        "steam_runtime": "background",
+                                        "env_applied_to": "game_process",
+                                        "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                                    })
+                                },
+                            )
                         },
                         None => {
                             let pipeline = mtsp::rules::resolve_pipeline(id);

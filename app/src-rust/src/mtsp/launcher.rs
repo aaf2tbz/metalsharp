@@ -2,7 +2,7 @@ use super::engine::{get_pipeline, PipelineId, PipelineNode};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -110,6 +110,27 @@ pub fn launch_with_pipeline(
         PipelineId::Steam => launch_steam(appid),
         PipelineId::MacSteam => launch_macos_steam(appid),
         PipelineId::WineBare => launch_wine_bare(appid, node),
+    }
+}
+
+pub fn launch_steam_bottle_with_pipeline(
+    appid: u32,
+    pipeline_id: PipelineId,
+    prefix_path: &Path,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let node = get_pipeline(pipeline_id);
+
+    match pipeline_id {
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env)
+        },
+        PipelineId::M32 | PipelineId::WineBare => {
+            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env)
+        },
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+            Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
+        },
     }
 }
 
@@ -343,6 +364,15 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
 }
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_dxmt_metal_with_context(appid, node, None, &[])
+}
+
+fn launch_dxmt_metal_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -355,7 +385,8 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix =
+        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -381,6 +412,9 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
@@ -389,6 +423,15 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_wine_bare_with_context(appid, node, None, &[])
+}
+
+fn launch_wine_bare_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -401,7 +444,8 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix =
+        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -420,6 +464,9 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
