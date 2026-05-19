@@ -307,13 +307,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
-                    let route_pipeline = if launch_method.eq_ignore_ascii_case("steam") {
-                        None
-                    } else {
-                        Some(
-                            mtsp::engine::PipelineId::from_str_flexible(launch_method)
-                                .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32)),
-                        )
+                    let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
+                        Some(mtsp::engine::PipelineId::Steam) => None,
+                        Some(pipeline) => Some(pipeline),
+                        None if launch_method.eq_ignore_ascii_case("steam") => None,
+                        None => Some(mtsp::rules::resolve_pipeline(id as u32)),
                     };
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {

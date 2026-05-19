@@ -75,51 +75,56 @@ fn save_library(apps: &[SharpApp]) -> Result<(), Box<dyn std::error::Error>> {
 fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
     let mut changed = false;
     for shortcut in crate::scan::scan_non_steam_shortcuts() {
-        let id = format!("steam_shortcut_{}", stable_shortcut_id(&shortcut.name, &shortcut.exe_path));
-        if apps.iter().any(|app| app.id == id || app_absolute_exe_path(app) == shortcut.exe_path) {
-            continue;
-        }
-
-        let install_dir = shortcut
-            .start_dir
-            .clone()
-            .filter(|dir| shortcut.exe_path.starts_with(dir))
-            .or_else(|| shortcut.exe_path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| shortcut.exe_path.clone());
-
-        let exe_path = relative_path_string(&install_dir, &shortcut.exe_path)
-            .unwrap_or_else(|_| shortcut.exe_path.to_string_lossy().to_string());
-
-        apps.push(SharpApp {
-            id,
-            name: shortcut.name,
-            exe_path,
-            install_dir: install_dir.to_string_lossy().to_string(),
-            cover: None,
-            engine: "auto".to_string(),
-            launch_args: shortcut.launch_args,
-            installed_at: chrono_now(),
-            size_bytes: dir_size(&install_dir),
-        });
-        changed = true;
+        changed |= sync_non_steam_shortcut(apps, shortcut);
     }
     changed
+}
+
+fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonSteamShortcut) -> bool {
+    let id = format!("steam_shortcut_{}", stable_shortcut_id(&shortcut.name, &shortcut.exe_path));
+    if let Some(app) = apps.iter_mut().find(|app| app.id == id || app_absolute_exe_path(app) == shortcut.exe_path) {
+        if app.launch_args != shortcut.launch_args {
+            app.launch_args = shortcut.launch_args;
+            return true;
+        }
+        return false;
+    }
+
+    let install_dir = shortcut
+        .start_dir
+        .clone()
+        .filter(|dir| shortcut.exe_path.starts_with(dir))
+        .or_else(|| shortcut.exe_path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| shortcut.exe_path.clone());
+
+    let exe_path = relative_path_string(&install_dir, &shortcut.exe_path)
+        .unwrap_or_else(|_| shortcut.exe_path.to_string_lossy().to_string());
+
+    apps.push(SharpApp {
+        id,
+        name: shortcut.name,
+        exe_path,
+        install_dir: install_dir.to_string_lossy().to_string(),
+        cover: None,
+        engine: "auto".to_string(),
+        launch_args: shortcut.launch_args,
+        installed_at: chrono_now(),
+        size_bytes: dir_size(&install_dir),
+    });
+    true
 }
 
 fn app_absolute_exe_path(app: &SharpApp) -> PathBuf {
     PathBuf::from(&app.install_dir).join(&app.exe_path)
 }
 
-fn stable_shortcut_id(name: &str, exe_path: &Path) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    exe_path.hash(&mut hasher);
-    let hash = hasher.finish() as u32;
-    if hash == 0 {
-        1
-    } else {
-        hash
+fn stable_shortcut_id(name: &str, exe_path: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in name.as_bytes().iter().chain(b"\0").chain(exe_path.to_string_lossy().as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
     }
+    format!("{:016x}", hash)
 }
 
 fn generate_id(name: &str) -> String {
@@ -635,6 +640,51 @@ mod tests {
         let exe = test_dir("unknown").join("Tool.exe");
 
         assert_eq!(resolve_sharp_pipeline("auto", &exe), crate::mtsp::engine::PipelineId::WineBare);
+    }
+
+    #[test]
+    fn non_steam_shortcut_sync_updates_existing_launch_args_by_path() {
+        let root = test_dir("shortcut-args");
+        let exe = root.join("Game.exe");
+        let mut apps = vec![SharpApp {
+            id: "steam_shortcut_old_runtime_hash".into(),
+            name: "Game".into(),
+            exe_path: "Game.exe".into(),
+            install_dir: root.to_string_lossy().to_string(),
+            cover: None,
+            engine: "auto".into(),
+            launch_args: vec!["-dx11".into()],
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        }];
+
+        let changed = sync_non_steam_shortcut(
+            &mut apps,
+            crate::scan::NonSteamShortcut {
+                name: "Game".into(),
+                exe_path: exe,
+                start_dir: Some(root),
+                launch_args: vec!["-d3d12".into(), "-windowed".into()],
+            },
+        );
+
+        assert!(changed);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].launch_args, vec!["-d3d12", "-windowed"]);
+    }
+
+    #[test]
+    fn non_steam_shortcut_ids_use_explicit_stable_hex_hashes() {
+        let path = PathBuf::from("/tmp/Game/Game.exe");
+
+        let first = stable_shortcut_id("Game", &path);
+        let second = stable_shortcut_id("Game", &path);
+        let changed = stable_shortcut_id("Game", Path::new("/tmp/Game/Other.exe"));
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, changed);
     }
 
     fn test_dir(name: &str) -> PathBuf {
