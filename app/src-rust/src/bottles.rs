@@ -1523,7 +1523,17 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
         .join("common")
         .join("Steamworks Shared")
         .join("_CommonRedist");
+    let local_redist = home.join(".metalsharp").join("runtime").join("redist");
 
+    resolve_component_installer_from_roots(component_id, arch, &redist_root, &local_redist)
+}
+
+fn resolve_component_installer_from_roots(
+    component_id: &str,
+    arch: BottleArch,
+    redist_root: &Path,
+    local_redist: &Path,
+) -> Option<ComponentInstaller> {
     let executable = match component_id {
         "vcrun2019" => {
             let filename = match arch {
@@ -1535,6 +1545,7 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
                 redist_root.join("vcredist").join("2019").join(filename),
                 redist_root.join("vcredist").join("2017").join(filename),
                 redist_root.join("vcredist").join("2015").join(filename),
+                local_redist.join(filename),
             ])
         },
         "dotnet48" => first_existing(&[
@@ -1543,23 +1554,19 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
             redist_root.join("DotNet").join("4.7.2").join("NDP472-KB4054530-x86-x64-AllOS-ENU.exe"),
             redist_root.join("DotNet").join("4.6").join("NDP462-KB3151800-x86-x64-AllOS-ENU.exe"),
             redist_root.join("DotNet").join("4.5.2").join("NDP452-KB2901907-x86-x64-AllOS-ENU.exe"),
+            local_redist.join("DotNet").join("4.8").join("ndp48-x86-x64-allos-enu.exe"),
+            local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe"),
         ]),
         "webview2" => first_existing(&[
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
-            home.join(".metalsharp")
-                .join("runtime")
-                .join("redist")
-                .join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
-            home.join(".metalsharp")
-                .join("runtime")
-                .join("redist")
-                .join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
+            local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
         ]),
         "directx_jun2010" => first_existing(&[
             redist_root.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
             redist_root.join("DirectX").join("Jun2010").join("dxsetup.exe"),
-            home.join(".metalsharp").join("runtime").join("redist").join("DirectX").join("Jun2010").join("DXSETUP.exe"),
+            local_redist.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
         ]),
         _ => None,
     }?;
@@ -2452,6 +2459,34 @@ mod tests {
         assert!(inspected.iter().all(|component| component.state == ComponentState::Missing));
         assert!(!components_ready(&inspected));
         let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn resolver_uses_advertised_local_dotnet_and_vc_redist_targets() {
+        let dir = test_dir("local-redist-targets");
+        let _ = fs::remove_dir_all(&dir);
+        let steam_redist = dir.join("steam-redist");
+        let local_redist = dir.join("runtime-redist");
+        let dotnet = local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe");
+        let vc = local_redist.join("VC_redist.x86.exe");
+        fs::create_dir_all(dotnet.parent().expect("dotnet parent")).expect("create dotnet dir");
+        fs::create_dir_all(vc.parent().expect("vc parent")).expect("create vc dir");
+        fs::write(&dotnet, b"dotnet").expect("write dotnet redist");
+        fs::write(&vc, b"vc").expect("write vc redist");
+
+        let dotnet_installer =
+            resolve_component_installer_from_roots("dotnet48", BottleArch::Wow64, &steam_redist, &local_redist)
+                .expect("resolve local dotnet");
+        let vc_installer =
+            resolve_component_installer_from_roots("vcrun2019", BottleArch::Win32, &steam_redist, &local_redist)
+                .expect("resolve local vc");
+
+        assert_eq!(
+            dotnet_installer.path.to_string_lossy().to_ascii_lowercase(),
+            dotnet.to_string_lossy().to_ascii_lowercase()
+        );
+        assert_eq!(vc_installer.path, vc);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
