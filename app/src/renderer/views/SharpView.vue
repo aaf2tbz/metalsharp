@@ -39,8 +39,51 @@ interface CrashReport {
   size_bytes: number;
 }
 
+interface BottleAction {
+  id: string;
+  status: string;
+  detail: string;
+}
+
+interface BottleManifest {
+  id: string;
+  name: string;
+  bottle_type: string;
+  steam_app_id?: number | null;
+  arch: string;
+  runtime_profile: string;
+  health: string;
+  prefix_path: string;
+  source_installer_path?: string | null;
+  game_install_path?: string | null;
+  runtime_assets: { id: string; kind: string; source_path: string; present: boolean }[];
+  last_launch_log?: string | null;
+  installed_components: { id: string; state: string }[];
+  installed_app_detections: { name: string; exe_path: string; source: string }[];
+}
+
+interface BottleDiagnostic {
+  id: string;
+  ready: boolean;
+  summary: string;
+  actions: BottleAction[];
+  checks: { id: string; ok: boolean; detail: string }[];
+}
+
+interface ComponentRepair {
+  id: string;
+  status: string;
+  detail: string;
+  asset_path?: string | null;
+  log_path?: string | null;
+  pid?: number | null;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
+const bottles = ref<BottleManifest[]>([]);
+const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
+const bottleLoading = ref<Record<string, boolean>>({});
 const doctorOpen = ref<Record<string, boolean>>({});
 const doctorLoading = ref<Record<string, boolean>>({});
 const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
@@ -61,7 +104,10 @@ const engineOptions = [
 ];
 
 async function load() {
-  const result = await api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library");
+  const [result, bottleResult] = await Promise.all([
+    api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
+    api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
+  ]);
   if (result?.ok) {
     apps.value = result.apps;
     for (const app of result.apps) {
@@ -69,6 +115,9 @@ async function load() {
         launchArgDrafts.value[app.id] = (app.user_launch_args ?? []).join(" ");
       }
     }
+  }
+  if (bottleResult?.ok) {
+    bottles.value = bottleResult.bottles;
   }
 }
 
@@ -95,6 +144,70 @@ async function installExe() {
   } else {
     toast.show(result?.error ?? "Failed to install", "error");
   }
+}
+
+async function refreshBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; bottle?: BottleManifest; error?: string }>("POST", "/bottles/refresh", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.bottle) {
+    upsertBottle(result.bottle);
+    toast.show("Bottle scan refreshed", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to refresh bottle", "error");
+  }
+}
+
+async function doctorBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/doctor", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.report) {
+    bottleReports.value[id] = result.report;
+    await load();
+  } else {
+    toast.show(result?.error ?? "Bottle Doctor failed", "error");
+  }
+}
+
+async function prepareBottle(id: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/prepare", { id });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.report) {
+    bottleReports.value[id] = result.report;
+    toast.show(result.report.ready ? "Bottle prepared" : "Bottle needs runtime repair", result.report.ready ? "success" : "error");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to prepare bottle", "error");
+  }
+}
+
+async function repairBottleComponent(id: string, component: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
+    id,
+    component,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.repair) {
+    const repair = result.repair;
+    const missing = repair.status === "asset_missing";
+    toast.show(missing ? repair.detail : `${repair.id}: ${repair.status}`, missing ? "error" : "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to repair component", "error");
+  }
+}
+
+function upsertBottle(bottle: BottleManifest) {
+  const idx = bottles.value.findIndex((item) => item.id === bottle.id);
+  if (idx >= 0) bottles.value[idx] = bottle;
+  else bottles.value.push(bottle);
+}
+
+function bottleBadgeClass(health: string) {
+  return health === "ready" ? "badge-ok" : "badge-warn";
 }
 
 async function launchApp(id: string, engine: string) {
@@ -342,6 +455,70 @@ onMounted(load);
       </div>
     </div>
 
+    <section v-if="bottles.length" class="bottle-strip">
+      <div class="bottle-strip-header">
+        <div>
+          <h2>Runtime Bottles</h2>
+          <p>{{ bottles.length }} runtime {{ bottles.length === 1 ? "prefix" : "prefixes" }} tracked</p>
+        </div>
+      </div>
+      <div class="bottle-list">
+        <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card">
+          <div class="bottle-card-main">
+            <div>
+              <div class="bottle-title">{{ bottle.name }}</div>
+              <div class="bottle-meta">
+                <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
+                <span>{{ bottle.bottle_type }}</span>
+                <span>{{ bottle.arch }}</span>
+                <span>{{ bottle.runtime_profile }}</span>
+                <span v-if="bottle.steam_app_id">appid {{ bottle.steam_app_id }}</span>
+              </div>
+            </div>
+            <div class="bottle-actions">
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
+                {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
+                Prepare
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
+                Scan
+              </button>
+            </div>
+          </div>
+          <div class="bottle-components">
+            <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
+              {{ component.id }}: {{ component.state }}
+            </span>
+            <span v-if="bottle.runtime_assets?.length" class="component-pill">
+              assets: {{ bottle.runtime_assets.length }}
+            </span>
+          </div>
+          <div v-if="bottleReports[bottle.id]" class="bottle-report">
+            <div class="doctor-summary">
+              <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">
+                {{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}
+              </span>
+              <span>{{ bottleReports[bottle.id]?.summary }}</span>
+            </div>
+            <div v-if="bottleReports[bottle.id]?.actions.length" class="doctor-notes blocked">
+              <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
+                <span>{{ action.id }}: {{ action.detail }}</span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="bottleLoading[bottle.id]"
+                  @click="repairBottleComponent(bottle.id, action.id)"
+                >
+                  Repair
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -546,6 +723,87 @@ onMounted(load);
   font-size: 12px;
   color: var(--text-dim);
   margin-top: 2px;
+}
+
+.bottle-strip {
+  margin-bottom: 18px;
+}
+.bottle-strip-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bottle-strip-header h2 {
+  font-size: 14px;
+  font-weight: 700;
+}
+.bottle-strip-header p {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.bottle-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+.bottle-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.bottle-card-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bottle-title {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottle-meta,
+.bottle-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.bottle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.component-pill {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+.bottle-report {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.bottle-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.bottle-action-row span {
+  overflow-wrap: anywhere;
 }
 
 .sharp-grid {

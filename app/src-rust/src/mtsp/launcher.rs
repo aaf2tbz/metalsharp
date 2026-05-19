@@ -1,8 +1,9 @@
 use super::engine::{get_pipeline, PipelineId, PipelineNode};
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 static BRIDGE_PORT: u16 = 18733;
@@ -10,6 +11,12 @@ static BRIDGE_PORT: u16 = 18733;
 struct CachePaths {
     shader: String,
     pipeline: String,
+}
+
+#[derive(Default)]
+pub struct CustomLaunchOptions {
+    pub prefix_path: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
 }
 
 pub fn bridge_is_running() -> bool {
@@ -215,6 +222,17 @@ pub fn launch_custom_with_pipeline(
     pipeline_id: PipelineId,
     launch_args: &[String],
 ) -> Result<(u32, &'static str, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
+    launch_custom_with_options(launch_id, game_dir, exe_path, pipeline_id, launch_args, CustomLaunchOptions::default())
+}
+
+pub fn launch_custom_with_options(
+    launch_id: u32,
+    game_dir: &std::path::Path,
+    exe_path: &std::path::Path,
+    pipeline_id: PipelineId,
+    launch_args: &[String],
+    options: CustomLaunchOptions,
+) -> Result<(u32, &'static str, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
         PipelineId::M9
@@ -243,7 +261,8 @@ pub fn launch_custom_with_pipeline(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
@@ -268,6 +287,21 @@ pub fn launch_custom_with_pipeline(
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
+    if let Some(log_path) = options.log_path {
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+        writeln!(log, "launch_id={}", launch_id)?;
+        writeln!(log, "pipeline={}", node.name)?;
+        writeln!(log, "prefix={}", prefix.display())?;
+        writeln!(log, "cwd={}", exe_dir.display())?;
+        writeln!(log, "exe={}", exe_name)?;
+        writeln!(log, "args={:?}", recipe.launch_args)?;
+        writeln!(log, "--- wine output ---")?;
+        let stdout = log.try_clone()?;
+        cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
+    }
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method(), recipe))
 }

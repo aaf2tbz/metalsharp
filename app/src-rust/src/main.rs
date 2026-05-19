@@ -17,6 +17,7 @@
     unused_variables
 )]
 
+mod bottles;
 mod installer;
 mod launch;
 mod migrate;
@@ -588,6 +589,32 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
+        (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
+        (Method::Post, "/bottles/sync-steam") => resp(200, bottles::handle_sync_steam_bottles()),
+        (Method::Post, "/bottles/get") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_get_bottle(&body))
+        },
+        (Method::Post, "/bottles/refresh") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_refresh_bottle(&body))
+        },
+        (Method::Post, "/bottles/doctor") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_diagnose_bottle(&body))
+        },
+        (Method::Post, "/bottles/prepare") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_prepare_bottle(&body))
+        },
+        (Method::Post, "/bottles/repair-component") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_repair_component(&body))
+        },
+        (Method::Post, "/steam/runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_steam_runtime_doctor(&body))
+        },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str

@@ -3,7 +3,6 @@ use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -16,14 +15,6 @@ fn base_dir() -> PathBuf {
 
 fn manifest_path() -> PathBuf {
     base_dir().join(MANIFEST_FILE)
-}
-
-fn metalsharp_wine_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine")
-}
-
-fn ms_wine() -> PathBuf {
-    crate::platform::runtime_wine_binary(&metalsharp_wine_root())
 }
 
 fn steam_prefix() -> PathBuf {
@@ -487,51 +478,54 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
 }
 
 fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
-    let wine = ms_wine();
-    if !wine.exists() {
-        return Err(
-            "MetalSharp Wine runtime is not installed. Install Wine Steam once before installing launcher EXEs.".into(),
-        );
-    }
+    let classification = crate::bottles::classify_installer(src);
+    let pipeline = classification.pipeline;
+    let bottle = crate::bottles::ensure_installer_bottle(src, &classification)?;
+    let staged_exe = stage_installer_exe(src, &bottle)?;
+    let work_dir = staged_exe.parent().ok_or("installer staging folder not found")?.to_path_buf();
+    let launch_id = installer_launch_id(src, pipeline);
+    let log_path = crate::bottles::next_launch_log_path(&bottle.id);
+    let prefix_path = PathBuf::from(&bottle.prefix_path);
 
-    let prefix = steam_prefix();
-    fs::create_dir_all(&prefix)?;
-
-    let ms_root = metalsharp_wine_root();
-    let mut wineboot = Command::new(&wine);
-    wineboot
-        .arg("wineboot")
-        .arg("--init")
-        .env("WINEPREFIX", &prefix)
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    crate::platform::set_runtime_library_env(&mut wineboot, &ms_root);
-    let _ = wineboot.status();
-
-    let mut installer = Command::new(&wine);
-    installer
-        .arg("start")
-        .arg("/unix")
-        .arg(src)
-        .env("WINEPREFIX", &prefix)
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(parent) = src.parent() {
-        installer.current_dir(parent);
-    }
-    crate::platform::set_runtime_library_env(&mut installer, &ms_root);
-    let child = installer.spawn()?;
+    let (pid, _, _) = crate::mtsp::launcher::launch_custom_with_options(
+        launch_id,
+        &work_dir,
+        &staged_exe,
+        pipeline,
+        &[],
+        crate::mtsp::launcher::CustomLaunchOptions { prefix_path: Some(prefix_path), log_path: Some(log_path.clone()) },
+    )?;
+    let _ = crate::bottles::set_last_launch_log(&bottle.id, &log_path);
 
     Ok(SharpInstallOutcome::InstallerStarted {
-        pid: child.id(),
-        message:
-            "Installer started in the MetalSharp Wine prefix. Finish setup in the installer window, then refresh Sharp Library."
-                .to_string(),
+        pid,
+        message: format!(
+            "Installer started with the {} pipeline in bottle {}. Finish setup in the installer window, then refresh Sharp Library.",
+            pipeline_engine_id(pipeline),
+            bottle.id
+        ),
     })
+}
+
+fn installer_pipeline(src: &Path) -> crate::mtsp::engine::PipelineId {
+    crate::bottles::classify_installer(src).pipeline
+}
+
+fn stage_installer_exe(
+    src: &Path,
+    bottle: &crate::bottles::BottleManifest,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let file_name = src.file_name().ok_or("installer filename not found")?;
+    let dir = crate::bottles::installer_payload_dir(&bottle.id);
+    fs::create_dir_all(&dir)?;
+    let dest = dir.join(file_name);
+    fs::copy(src, &dest)?;
+    Ok(dest)
+}
+
+fn installer_launch_id(src: &Path, pipeline: crate::mtsp::engine::PipelineId) -> u32 {
+    let key = format!("installer:{}:{}", pipeline_engine_id(pipeline), src.to_string_lossy());
+    stable_launch_id(&key)
 }
 
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1203,6 +1197,28 @@ mod tests {
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
     }
 
+    #[test]
+    fn pe32_installers_use_m9_pipeline() {
+        let dir = test_dir("installer-pe32");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("MinecraftInstaller.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pe64_installers_without_graphics_imports_use_plain_wine() {
+        let dir = test_dir("installer-pe64");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("Setup.exe");
+        write_test_pe(&exe, 0x8664, 0x20b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::WineBare);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     fn test_dir(name: &str) -> PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-sharp-library-{}-{}-{}", name, std::process::id(), unique_suffix()));
@@ -1211,5 +1227,18 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    fn write_test_pe(path: &Path, machine: u16, optional_magic: u16) {
+        let mut data = vec![0_u8; 0x200];
+        data[0] = b'M';
+        data[1] = b'Z';
+        data[0x3c..0x40].copy_from_slice(&(0x80_u32).to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        data[0x86..0x88].copy_from_slice(&(0_u16).to_le_bytes());
+        data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
+        data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
+        fs::write(path, data).expect("write test PE");
     }
 }
