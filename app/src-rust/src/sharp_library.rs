@@ -81,7 +81,10 @@ pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
         Vec::new()
     };
 
-    let mut changed = sync_non_steam_shortcuts(&mut apps);
+    let before_prune = apps.len();
+    apps.retain(|app| !is_unwanted_wine_prefix_app(app));
+    let mut changed = apps.len() != before_prune;
+    changed |= sync_non_steam_shortcuts(&mut apps);
     changed |= sync_wine_prefix_apps(&mut apps);
     if changed {
         save_library(&apps)?;
@@ -255,11 +258,17 @@ fn add_wine_prefix_candidate(
     let Some(exe) = preferred_exe.or_else(|| find_real_exe(&install_dir.to_path_buf())) else {
         return;
     };
+    if should_skip_wine_app_exe(&exe) {
+        return;
+    }
     if !seen_exes.insert(exe.clone()) {
         return;
     }
 
     let name = display_name_for_wine_app(install_dir, &exe);
+    if should_skip_wine_app_name(&name) {
+        return;
+    }
     let exe_path = relative_path_string(install_dir, &exe).unwrap_or_else(|_| {
         exe.file_name()
             .map(PathBuf::from)
@@ -295,6 +304,8 @@ fn should_skip_wine_app_dir(path: &Path) -> bool {
             lower.as_str(),
             "steam"
                 | "windows"
+                | "windows media player"
+                | "windows nt"
                 | "internet explorer"
                 | "common files"
                 | "microsoft"
@@ -304,6 +315,37 @@ fn should_skip_wine_app_dir(path: &Path) -> bool {
                 | "$recycle.bin"
         )
     })
+}
+
+fn is_unwanted_wine_prefix_app(app: &SharpApp) -> bool {
+    app.id.starts_with("wine_app_")
+        && (should_skip_wine_app_name(&app.name)
+            || should_skip_wine_app_dir(Path::new(&app.install_dir))
+            || should_skip_wine_app_exe(&PathBuf::from(&app.exe_path)))
+}
+
+fn should_skip_wine_app_name(name: &str) -> bool {
+    let lower = name.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "windows media player" | "windows nt" | "wine internet explorer" | "internet explorer" | "notepad" | "wordpad"
+    )
+}
+
+fn should_skip_wine_app_exe(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    matches!(
+        name.as_str(),
+        "wmplayer.exe"
+            | "mplayer2.exe"
+            | "iexplore.exe"
+            | "notepad.exe"
+            | "wordpad.exe"
+            | "write.exe"
+            | "regedit.exe"
+            | "winecfg.exe"
+            | "winver.exe"
+    )
 }
 
 fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonSteamShortcut) -> bool {
@@ -1321,6 +1363,61 @@ mod tests {
         assert_eq!(apps[0].exe_path, PathBuf::from("MinecraftLauncher.exe"));
         assert!(apps[0].id.starts_with("wine_app_"));
         let _ = fs::remove_dir_all(drive_c);
+    }
+
+    #[test]
+    fn wine_prefix_scan_ignores_builtin_windows_apps() {
+        let drive_c = test_dir("wine-prefix-builtins").join("drive_c");
+        let media_dir = drive_c.join("Program Files").join("Windows Media Player");
+        let nt_dir = drive_c.join("Program Files").join("Windows NT");
+        fs::create_dir_all(&media_dir).expect("create media dir");
+        fs::create_dir_all(&nt_dir).expect("create nt dir");
+        fs::write(media_dir.join("wmplayer.exe"), b"not pe").expect("write wmplayer");
+        fs::write(nt_dir.join("wordpad.exe"), b"not pe").expect("write wordpad");
+
+        let apps = scan_wine_prefix_apps_under(&drive_c);
+
+        assert!(apps.is_empty());
+        let _ = fs::remove_dir_all(drive_c);
+    }
+
+    #[test]
+    fn wine_prefix_prune_removes_persisted_builtin_apps_only() {
+        let media_dir = PathBuf::from("/tmp/prefix/drive_c/Program Files/Windows Media Player");
+        let game_dir = PathBuf::from("/tmp/prefix/drive_c/Program Files/Minecraft Launcher");
+        let media = SharpApp {
+            id: "wine_app_media".into(),
+            name: "Windows Media Player".into(),
+            exe_path: "wmplayer.exe".into(),
+            install_dir: media_dir.to_string_lossy().to_string(),
+            cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
+            bottle_id: None,
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        };
+        let game = SharpApp {
+            id: "wine_app_minecraft".into(),
+            name: "Minecraft Launcher".into(),
+            exe_path: "MinecraftLauncher.exe".into(),
+            install_dir: game_dir.to_string_lossy().to_string(),
+            cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
+            bottle_id: None,
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        };
+
+        assert!(is_unwanted_wine_prefix_app(&media));
+        assert!(!is_unwanted_wine_prefix_app(&game));
     }
 
     #[test]
