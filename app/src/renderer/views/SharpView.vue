@@ -425,6 +425,18 @@ async function openLogFolder() {
   }
 }
 
+async function openBottleLog(bottle: BottleManifest) {
+  if (!bottle.last_launch_log) {
+    toast.show("No bottle launch log recorded yet", "warning");
+    return;
+  }
+  await getAPI().openInFinder(bottle.last_launch_log);
+}
+
+async function openBottleFolder(bottle: BottleManifest) {
+  await getAPI().openInFinder(bottle.prefix_path);
+}
+
 async function copyDiagnosticBundle(app: SharpApp) {
   const report = doctorReports.value[app.id];
   const payload = [
@@ -507,6 +519,10 @@ onMounted(load);
               </button>
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
                 Scan
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
+              <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">
+                Logs
               </button>
             </div>
           </div>
