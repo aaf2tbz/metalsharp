@@ -4,8 +4,33 @@ import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
 
+interface LaunchDoctorCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface LaunchDoctorReport {
+  ready: boolean;
+  summary: string;
+  blockers: string[];
+  warnings: string[];
+  checks: LaunchDoctorCheck[];
+  recipe: {
+    pipeline: string;
+    pipeline_name: string;
+    backend: string;
+    exe_name?: string | null;
+    launch_args: string[];
+  };
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
+const doctorOpen = ref<Record<string, boolean>>({});
+const doctorLoading = ref<Record<string, boolean>>({});
+const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
 const engineOptions = [
   { id: "auto", name: "Auto" },
   { id: "wine_bare", name: "Wine" },
@@ -73,6 +98,23 @@ async function setCover(id: string) {
   else toast.show(result?.error ?? "Failed to set cover", "error");
 }
 
+async function runDoctor(app: SharpApp) {
+  doctorOpen.value[app.id] = true;
+  doctorLoading.value[app.id] = true;
+  doctorReports.value[app.id] = null;
+  const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/sharp-library/doctor", {
+    id: app.id,
+    engine: app.engine,
+  });
+  doctorLoading.value[app.id] = false;
+
+  if (result?.ok && result.report) {
+    doctorReports.value[app.id] = result.report;
+  } else {
+    toast.show(result?.error ?? "Launch Doctor failed", "error");
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -124,7 +166,42 @@ onMounted(load);
             </div>
             <div class="sharp-card-actions-row subtle">
               <button class="btn btn-secondary btn-sm" @click="setCover(app.id)">Set Cover</button>
+              <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
+                {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
+              </button>
               <button class="btn btn-danger btn-sm" @click="uninstallApp(app.id)">Uninstall</button>
+            </div>
+            <div v-if="doctorOpen[app.id]" class="doctor-panel">
+              <div v-if="doctorLoading[app.id]" class="doctor-loading">Checking launch prerequisites...</div>
+              <template v-else-if="doctorReports[app.id]">
+                <div class="doctor-summary">
+                  <span class="badge" :class="doctorReports[app.id]?.ready ? 'badge-ok' : 'badge-warn'">
+                    {{ doctorReports[app.id]?.ready ? "Ready" : "Blocked" }}
+                  </span>
+                  <span>{{ doctorReports[app.id]?.summary }}</span>
+                </div>
+                <div class="doctor-checks">
+                  <div
+                    v-for="check in doctorReports[app.id]?.checks ?? []"
+                    :key="check.id"
+                    class="doctor-check"
+                    :class="{ failed: !check.ok }"
+                  >
+                    <span class="doctor-check-state">{{ check.ok ? "OK" : "!" }}</span>
+                    <span class="doctor-check-label">{{ check.label }}</span>
+                    <span class="doctor-check-detail">{{ check.detail }}</span>
+                  </div>
+                </div>
+                <div v-if="doctorReports[app.id]?.recipe.launch_args.length" class="doctor-notes">
+                  <div>Args: {{ doctorReports[app.id]?.recipe.launch_args.join(" ") }}</div>
+                </div>
+                <div v-if="doctorReports[app.id]?.blockers.length" class="doctor-notes blocked">
+                  <div v-for="blocker in doctorReports[app.id]?.blockers" :key="blocker">{{ blocker }}</div>
+                </div>
+                <div v-if="doctorReports[app.id]?.warnings.length" class="doctor-notes">
+                  <div v-for="warning in doctorReports[app.id]?.warnings" :key="warning">{{ warning }}</div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -223,6 +300,58 @@ onMounted(load);
 }
 .sharp-card-actions-row.subtle {
   opacity: 0.7;
+}
+
+.doctor-panel {
+  margin-top: 2px;
+  padding: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 11px;
+}
+.doctor-loading {
+  color: var(--text-dim);
+}
+.doctor-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+.doctor-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.doctor-check {
+  display: grid;
+  grid-template-columns: 28px 74px 1fr;
+  gap: 6px;
+  align-items: start;
+  color: var(--text-dim);
+}
+.doctor-check.failed {
+  color: var(--text-primary);
+}
+.doctor-check-state {
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.doctor-check-label {
+  color: var(--text-secondary);
+}
+.doctor-check-detail {
+  overflow-wrap: anywhere;
+}
+.doctor-notes {
+  margin-top: 8px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.doctor-notes.blocked {
+  color: var(--danger);
 }
 
 .empty-state {

@@ -595,6 +595,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
             resp(200, result)
         },
+        (Method::Post, "/sharp-library/doctor") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_doctor(&body))
+        },
         (Method::Post, "/sharp-library/set-cover") => {
             let body = read_body(req);
             resp(200, sharp_library::handle_set_cover(&body))

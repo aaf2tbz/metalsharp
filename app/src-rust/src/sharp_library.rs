@@ -250,6 +250,23 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
     })
 }
 
+pub fn diagnose_app(
+    id: &str,
+    engine: &str,
+) -> Result<crate::mtsp::recipe::LaunchDoctorReport, Box<dyn std::error::Error>> {
+    let library = load_library()?;
+    let app = library.iter().find(|a| a.id == id).ok_or("App not found")?.clone();
+
+    let work_dir = PathBuf::from(&app.install_dir);
+    let exe_path = work_dir.join(&app.exe_path);
+    let pipeline = resolve_sharp_pipeline(engine, &exe_path);
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    let launch_id = stable_launch_id(&app.id);
+    let mut recipe = crate::mtsp::recipe::build_custom_launch_recipe(launch_id, node, &work_dir, Some(&exe_path))?;
+    recipe.launch_args.extend(app.launch_args.iter().cloned());
+    Ok(crate::mtsp::recipe::diagnose_recipe(recipe))
+}
+
 pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let src = PathBuf::from(cover_path);
     if !src.exists() {
@@ -541,6 +558,18 @@ pub fn handle_launch(body: &serde_json::Map<String, Value>) -> Value {
         Ok(result) => {
             json!({"ok": true, "pid": result.pid, "gameType": result.game_type, "pipeline": result.pipeline, "exePath": result.exe_path, "warnings": result.warnings})
         },
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_doctor(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("auto");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match diagnose_app(id, engine) {
+        Ok(report) => json!({"ok": true, "report": report}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
