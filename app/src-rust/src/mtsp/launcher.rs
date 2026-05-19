@@ -135,13 +135,8 @@ pub fn prepare_steam_pipeline_env(
 ) -> Result<(Vec<(String, String)>, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
-        PipelineId::M9
-        | PipelineId::M10
-        | PipelineId::M11
-        | PipelineId::M12
-        | PipelineId::M32
-        | PipelineId::WineBare => {},
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 => {},
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam | PipelineId::WineBare => {
             return Err("Steam route handoff only supports Wine-backed MTSP pipelines".into());
         },
     }
@@ -1018,6 +1013,13 @@ mod tests {
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn steam_pipeline_env_rejects_plain_wine_fallback() {
+        let error = prepare_steam_pipeline_env(1, PipelineId::WineBare).expect_err("wine_bare should not be handoff");
+
+        assert!(error.to_string().contains("Steam route handoff only supports Wine-backed MTSP pipelines"));
     }
 
     #[test]
