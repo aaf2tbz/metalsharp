@@ -612,6 +612,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, bottles::handle_repair_component(&body))
         },
+        (Method::Post, "/bottles/set-windows-version") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_set_windows_version(&body))
+        },
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))

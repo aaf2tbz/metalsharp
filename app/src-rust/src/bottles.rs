@@ -612,6 +612,34 @@ pub fn repair_component(
     })
 }
 
+pub fn set_windows_version(id: &str, version: &str) -> Result<ComponentRepairReport, Box<dyn std::error::Error>> {
+    let allowed = ["win7", "win10", "win11"];
+    if !allowed.contains(&version) {
+        return Err("windows version must be win7, win10, or win11".into());
+    }
+
+    let mut manifest = load_bottle(id)?;
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    fs::create_dir_all(&prefix)?;
+    fs::create_dir_all(bottle_logs_dir(id))?;
+    let log_path = bottle_logs_dir(id).join(format!("windows-version-{}-{}.log", version, timestamp_secs()));
+    let pid = run_wine_reg_set_windows_version(&prefix, version, &log_path)?;
+    mark_component_state(&mut manifest, &format!("windows_version_{}", version), ComponentState::NeedsRepair);
+    manifest.last_launch_log = Some(log_path.to_string_lossy().to_string());
+    manifest.health = BottleHealth::NeedsRepair;
+    manifest.updated_at = timestamp_secs();
+    save_bottle(&manifest)?;
+
+    Ok(ComponentRepairReport {
+        id: format!("windows_version_{}", version),
+        status: "started".to_string(),
+        detail: format!("Started Windows version mode update to {}", version),
+        asset_path: None,
+        log_path: Some(log_path.to_string_lossy().to_string()),
+        pid: Some(pid),
+    })
+}
+
 pub fn handle_list_bottles() -> Value {
     match list_bottles() {
         Ok(bottles) => json!({"ok": true, "bottles": bottles}),
@@ -693,6 +721,21 @@ pub fn handle_repair_component(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_set_windows_version(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let version = body.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    if version.is_empty() {
+        return json!({"ok": false, "error": "version required"});
+    }
+    match set_windows_version(id, version) {
+        Ok(report) => json!({"ok": true, "repair": report}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Value {
     let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
     let pipeline = body
@@ -757,12 +800,16 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "Game Installer",
             BottleArch::Wow64,
             true,
-            &["vcrun2019", "corefonts"][..],
+            &["vcrun2019", "directx_jun2010", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
-        RuntimeProfile::M9 => {
-            ("D3D9 Metal", BottleArch::Wow64, true, &["d3d9", "vcrun2019"][..], crate::mtsp::engine::PipelineId::M9)
-        },
+        RuntimeProfile::M9 => (
+            "D3D9 Metal",
+            BottleArch::Wow64,
+            true,
+            &["d3d9", "vcrun2019", "directx_jun2010"][..],
+            crate::mtsp::engine::PipelineId::M9,
+        ),
         RuntimeProfile::M11 => (
             "D3D11 Metal",
             BottleArch::Win64,
@@ -932,6 +979,17 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 fallback
             }
         },
+        "directx_jun2010" => {
+            if system32.join("d3dx9_43.dll").exists()
+                || syswow64.join("d3dx9_43.dll").exists()
+                || system32.join("xinput1_3.dll").exists()
+                || syswow64.join("xinput1_3.dll").exists()
+            {
+                ComponentState::Installed
+            } else {
+                fallback
+            }
+        },
         "d3d9" | "d3d11" | "d3d12" | "dxgi" => fallback,
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
@@ -991,6 +1049,11 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
                 .join("redist")
                 .join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
         ]),
+        "directx_jun2010" => first_existing(&[
+            redist_root.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
+            redist_root.join("DirectX").join("Jun2010").join("dxsetup.exe"),
+            home.join(".metalsharp").join("runtime").join("redist").join("DirectX").join("Jun2010").join("DXSETUP.exe"),
+        ]),
         _ => None,
     }?;
 
@@ -998,6 +1061,7 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
         "vcrun2019" => vec!["/quiet".to_string(), "/norestart".to_string()],
         "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
+        "directx_jun2010" => vec!["/silent".to_string()],
         _ => Vec::new(),
     };
     Some(ComponentInstaller { path: executable, args })
@@ -1043,6 +1107,44 @@ fn launch_component_installer(
     Ok(child.id())
 }
 
+fn run_wine_reg_set_windows_version(
+    prefix: &Path,
+    version: &str,
+    log_path: &Path,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "windows_version={}", version)?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    writeln!(log, "--- wine output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&wine);
+    cmd.arg("reg")
+        .arg("add")
+        .arg("HKCU\\Software\\Wine")
+        .arg("/v")
+        .arg("Version")
+        .arg("/d")
+        .arg(version)
+        .arg("/f")
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
 fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
     components
         .iter()
@@ -1063,6 +1165,7 @@ fn component_action_detail(id: &str) -> String {
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
+        "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
         _ => format!("Prepare component {}", id),
     }
 }
@@ -1290,6 +1393,12 @@ mod tests {
         let profiles = runtime_profile_definitions();
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+    }
+
+    #[test]
+    fn game_install_profile_tracks_directx_redist() {
+        let components = default_components_for(RuntimeProfile::GameInstall);
+        assert!(components.iter().any(|component| component.id == "directx_jun2010"));
     }
 
     #[test]
