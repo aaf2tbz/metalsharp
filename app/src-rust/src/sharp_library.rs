@@ -1,8 +1,10 @@
 use serde_json::{json, Value};
 use std::collections::{hash_map::DefaultHasher, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -469,7 +471,8 @@ pub fn install_exe(
 
 fn should_run_as_wine_installer(src: &Path) -> bool {
     let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    name.contains("setup")
+    src.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false)
+        || name.contains("setup")
         || name.contains("install")
         || name.contains("installer")
         || name.contains("launcher")
@@ -487,14 +490,22 @@ fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::
     let log_path = crate::bottles::next_launch_log_path(&bottle.id);
     let prefix_path = PathBuf::from(&bottle.prefix_path);
 
-    let (pid, _, _) = crate::mtsp::launcher::launch_custom_with_options(
-        launch_id,
-        &work_dir,
-        &staged_exe,
-        pipeline,
-        &[],
-        crate::mtsp::launcher::CustomLaunchOptions { prefix_path: Some(prefix_path), log_path: Some(log_path.clone()) },
-    )?;
+    let pid = if classification.installer_kind == crate::bottles::InstallerKind::Msi {
+        launch_msi_installer(&staged_exe, &prefix_path, &log_path)?
+    } else {
+        let (pid, _, _) = crate::mtsp::launcher::launch_custom_with_options(
+            launch_id,
+            &work_dir,
+            &staged_exe,
+            pipeline,
+            &[],
+            crate::mtsp::launcher::CustomLaunchOptions {
+                prefix_path: Some(prefix_path),
+                log_path: Some(log_path.clone()),
+            },
+        )?;
+        pid
+    };
     let _ = crate::bottles::set_last_launch_log(&bottle.id, &log_path);
 
     Ok(SharpInstallOutcome::InstallerStarted {
@@ -505,6 +516,44 @@ fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::
             bottle.id
         ),
     })
+}
+
+fn launch_msi_installer(
+    staged_msi: &Path,
+    prefix_path: &Path,
+    log_path: &Path,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+    fs::create_dir_all(prefix_path)?;
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "installer_kind=msi")?;
+    writeln!(log, "prefix={}", prefix_path.display())?;
+    writeln!(log, "msi={}", staged_msi.display())?;
+    writeln!(log, "--- wine output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&wine);
+    cmd.arg("msiexec")
+        .arg("/i")
+        .arg(staged_msi)
+        .env("WINEPREFIX", prefix_path.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    if let Some(parent) = staged_msi.parent() {
+        cmd.current_dir(parent);
+    }
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
 }
 
 fn installer_pipeline(src: &Path) -> crate::mtsp::engine::PipelineId {
@@ -1194,6 +1243,7 @@ mod tests {
     fn launcher_exes_run_as_wine_installers() {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/DemoSetup.msi")));
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
     }
 

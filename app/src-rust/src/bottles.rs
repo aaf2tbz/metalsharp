@@ -32,6 +32,8 @@ pub enum BottleArch {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeProfile {
     Plain,
+    Launcher,
+    GameInstall,
     M9,
     M11,
     M12,
@@ -80,6 +82,22 @@ pub enum BottleHealth {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallerKind {
+    Exe,
+    Msi,
+    Nsis,
+    Inno,
+    Wix,
+    Squirrel,
+    Electron,
+    Unity,
+    Webview,
+    Java,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BottleManifest {
     pub id: String,
@@ -92,6 +110,7 @@ pub struct BottleManifest {
     #[serde(default)]
     pub installed_components: Vec<RuntimeComponent>,
     pub source_installer_path: Option<String>,
+    pub installer_kind: Option<InstallerKind>,
     pub game_install_path: Option<String>,
     #[serde(default)]
     pub runtime_assets: Vec<BottleRuntimeAsset>,
@@ -106,6 +125,7 @@ pub struct BottleManifest {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct InstallerClassification {
     pub arch: BottleArch,
+    pub installer_kind: InstallerKind,
     pub runtime_profile: RuntimeProfile,
     pub pipeline: crate::mtsp::engine::PipelineId,
     #[serde(default)]
@@ -250,6 +270,7 @@ pub fn ensure_installer_bottle(
         runtime_profile: classification.runtime_profile,
         installed_components: default_components_for(classification.runtime_profile),
         source_installer_path: Some(source_installer.to_string_lossy().to_string()),
+        installer_kind: Some(classification.installer_kind),
         game_install_path: None,
         runtime_assets: Vec::new(),
         installed_app_detections: Vec::new(),
@@ -262,6 +283,7 @@ pub fn ensure_installer_bottle(
     manifest.arch = classification.arch;
     manifest.runtime_profile = classification.runtime_profile;
     manifest.source_installer_path = Some(source_installer.to_string_lossy().to_string());
+    manifest.installer_kind = Some(classification.installer_kind);
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(classification.runtime_profile));
     manifest.updated_at = now;
@@ -292,6 +314,7 @@ pub fn ensure_steam_game_bottle(
         runtime_profile,
         installed_components: default_components_for(runtime_profile),
         source_installer_path: None,
+        installer_kind: None,
         game_install_path: None,
         runtime_assets: Vec::new(),
         installed_app_detections: Vec::new(),
@@ -330,10 +353,12 @@ pub fn sync_steam_game_bottles() -> Result<Vec<BottleManifest>, Box<dyn std::err
 
 pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
     let pe = fs::read(source_installer).ok().and_then(|data| crate::mtsp::pe::parse_pe_imports(&data));
-    let strings = read_ascii_strings(source_installer, 64 * 1024);
+    let strings = read_ascii_strings(source_installer, 512 * 1024);
     let lower_strings = strings.iter().map(|s| s.to_ascii_lowercase()).collect::<Vec<_>>();
     let imports = pe.as_ref().map(|p| p.imports.as_slice()).unwrap_or(&[]);
     let is_64_bit = pe.as_ref().map(|p| p.is_64_bit).unwrap_or(false);
+    let is_msi =
+        source_installer.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false);
     let arch = match pe {
         Some(ref info) if info.is_64_bit => BottleArch::Win64,
         Some(_) => BottleArch::Win32,
@@ -350,7 +375,11 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
     });
     let strings_webview = lower_strings.iter().any(|s| s.contains("webview2") || s.contains("edgeupdate"));
     let strings_java = lower_strings.iter().any(|s| s.contains("java") || s.contains("jre") || s.contains("jdk"));
+    let installer_kind = classify_installer_kind(source_installer, &lower_strings, is_msi);
 
+    if is_msi {
+        hints.push("msi_package".to_string());
+    }
     if imports_mscoree || strings_dotnet {
         hints.push("dotnet_or_clr".to_string());
     }
@@ -360,8 +389,12 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
     if strings_java {
         hints.push("java_launcher".to_string());
     }
+    if installer_kind != InstallerKind::Exe && installer_kind != InstallerKind::Unknown {
+        hints.push(format!("installer_kind:{:?}", installer_kind).to_ascii_lowercase());
+    }
 
-    let pipeline = installer_pipeline_from_pe(pe.as_ref());
+    let pipeline =
+        if is_msi { crate::mtsp::engine::PipelineId::WineBare } else { installer_pipeline_from_pe(pe.as_ref()) };
     let runtime_profile = if imports_mscoree || strings_dotnet {
         if is_64_bit {
             RuntimeProfile::Dotnet
@@ -372,6 +405,13 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         RuntimeProfile::Webview
     } else if strings_java {
         RuntimeProfile::JavaLauncher
+    } else if matches!(installer_kind, InstallerKind::Squirrel | InstallerKind::Electron | InstallerKind::Webview) {
+        RuntimeProfile::Launcher
+    } else if matches!(
+        installer_kind,
+        InstallerKind::Msi | InstallerKind::Nsis | InstallerKind::Inno | InstallerKind::Wix
+    ) {
+        RuntimeProfile::GameInstall
     } else {
         match pipeline {
             crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
@@ -381,7 +421,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         }
     };
 
-    InstallerClassification { arch, runtime_profile, pipeline, hints }
+    InstallerClassification { arch, installer_kind, runtime_profile, pipeline, hints }
 }
 
 pub fn set_last_launch_log(id: &str, log_path: &Path) -> Result<BottleManifest, Box<dyn std::error::Error>> {
@@ -672,6 +712,8 @@ fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
             &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"]
         },
         RuntimeProfile::Webview => &["gecko", "webview2", "vcrun2019", "corefonts"],
+        RuntimeProfile::Launcher => &["gecko", "vcrun2019", "corefonts"],
+        RuntimeProfile::GameInstall => &["vcrun2019", "corefonts"],
         RuntimeProfile::M9 => &["d3d9", "vcrun2019"],
         RuntimeProfile::M11 => &["d3d11", "dxgi", "vcrun2019"],
         RuntimeProfile::M12 => &["d3d12", "d3d11", "dxgi", "vcrun2019"],
@@ -689,6 +731,34 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::JavaLauncher,
         _ => RuntimeProfile::Plain,
+    }
+}
+
+fn classify_installer_kind(source_installer: &Path, lower_strings: &[String], is_msi: bool) -> InstallerKind {
+    if is_msi {
+        return InstallerKind::Msi;
+    }
+    if lower_strings.iter().any(|s| s.contains("squirrel") || s.contains("update.exe") || s.contains("releasify")) {
+        InstallerKind::Squirrel
+    } else if lower_strings.iter().any(|s| s.contains("electron") || s.contains("app.asar")) {
+        InstallerKind::Electron
+    } else if lower_strings.iter().any(|s| s.contains("webview2") || s.contains("edgeupdate")) {
+        InstallerKind::Webview
+    } else if lower_strings.iter().any(|s| s.contains("unityplayer.dll") || s.contains("unitycrashhandler")) {
+        InstallerKind::Unity
+    } else if lower_strings.iter().any(|s| s.contains("inno setup") || s.contains("innosetup")) {
+        InstallerKind::Inno
+    } else if lower_strings.iter().any(|s| s.contains("nullsoft") || s.contains("nsis")) {
+        InstallerKind::Nsis
+    } else if lower_strings.iter().any(|s| s.contains("wixbundle") || s.contains("wix toolset") || s.contains("burn")) {
+        InstallerKind::Wix
+    } else if lower_strings.iter().any(|s| s.contains("java") || s.contains("jre") || s.contains("jdk")) {
+        InstallerKind::Java
+    } else if source_installer.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")).unwrap_or(false)
+    {
+        InstallerKind::Exe
+    } else {
+        InstallerKind::Unknown
     }
 }
 
@@ -1125,6 +1195,39 @@ mod tests {
         assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::M9);
         assert_eq!(classification.runtime_profile, RuntimeProfile::Win32Dotnet);
         assert!(classification.hints.contains(&"dotnet_or_clr".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn classifier_maps_msi_packages_to_game_install_profile() {
+        let dir = test_dir("classifier-msi");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let msi = dir.join("DemoSetup.msi");
+        fs::write(&msi, b"Windows Installer").expect("write msi");
+
+        let classification = classify_installer(&msi);
+
+        assert_eq!(classification.installer_kind, InstallerKind::Msi);
+        assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert_eq!(classification.runtime_profile, RuntimeProfile::GameInstall);
+        assert!(classification.hints.contains(&"msi_package".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn classifier_detects_squirrel_electron_launchers() {
+        let dir = test_dir("classifier-squirrel");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("LauncherSetup.exe");
+        let mut data = test_pe(0x8664, 0x20b);
+        data.extend_from_slice(b"Squirrel app.asar electron");
+        fs::write(&exe, data).expect("write test installer");
+
+        let classification = classify_installer(&exe);
+
+        assert_eq!(classification.installer_kind, InstallerKind::Squirrel);
+        assert_eq!(classification.runtime_profile, RuntimeProfile::Launcher);
+        assert!(classification.hints.iter().any(|hint| hint.starts_with("installer_kind:")));
         let _ = fs::remove_dir_all(dir);
     }
 
