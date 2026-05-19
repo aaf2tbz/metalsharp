@@ -203,7 +203,10 @@ textarea {
   padding: 6px 12px;
   font-size: 13px;
   outline: none;
-  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition),
+    background var(--transition);
 }
 .control-input:focus {
   border-color: var(--accent);
