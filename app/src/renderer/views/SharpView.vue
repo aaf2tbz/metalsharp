@@ -50,9 +50,12 @@ async function installExe() {
   const filePath = await getAPI().pickExeFile();
   if (!filePath) return;
   toast.show("Installing application...");
-  const result = await api<{ ok: boolean; app?: SharpApp; error?: string }>("POST", "/sharp-library/install", { srcPath: filePath });
+  const result = await api<{ ok: boolean; app?: SharpApp; installing?: boolean; message?: string; error?: string }>("POST", "/sharp-library/install", { srcPath: filePath });
   if (result?.ok && result.app) {
     toast.show(`Installed ${result.app.name}`, "success");
+    await load();
+  } else if (result?.ok && result.installing) {
+    toast.show(result.message ?? "Installer started. Finish setup, then refresh Sharp Library.", "success");
     await load();
   } else {
     toast.show(result?.error ?? "Failed to install", "error");
