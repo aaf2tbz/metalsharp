@@ -73,6 +73,7 @@ interface SharpApp {
   install_dir: string;
   cover: string | null;
   engine: string;
+  launch_args: string[];
   installed_at: string;
   size_bytes: number;
 }

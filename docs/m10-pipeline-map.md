@@ -37,7 +37,7 @@ M10 deliberately does not deploy `d3d12.dll`.
 |---|---|
 | Pipeline | `M10` |
 | Backend | `dxmt` |
-| Launch args | `-dx10` |
+| Launch args | none by default; `dx10`/`d3d10` select M10 as route aliases |
 | Wine overrides | `d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
 | Shader cache subdir | `m10` |
 | Preset fallback family | `m10`, then `dxmt-metal` |

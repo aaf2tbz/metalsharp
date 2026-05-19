@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -11,6 +12,14 @@ pub struct Game {
     pub steam_app_id: Option<u32>,
     pub size_bytes: Option<u64>,
     pub metalsharp_compatible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonSteamShortcut {
+    pub name: String,
+    pub exe_path: PathBuf,
+    pub start_dir: Option<PathBuf>,
+    pub launch_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +139,18 @@ pub fn scan_all() -> Result<Value, Box<dyn std::error::Error>> {
         games.extend(local_games);
     }
 
+    for shortcut in scan_non_steam_shortcuts() {
+        games.push(Game {
+            id: format!("non_steam_{}", shortcut_id(&shortcut.name, &shortcut.exe_path)),
+            name: shortcut.name,
+            exe_path: shortcut.exe_path.to_string_lossy().to_string(),
+            platform: "non_steam".into(),
+            steam_app_id: None,
+            size_bytes: shortcut.start_dir.as_ref().and_then(dir_size),
+            metalsharp_compatible: true,
+        });
+    }
+
     let steam_status = super::steam::status();
     Ok(json!({
         "ok": true,
@@ -243,6 +264,269 @@ pub fn wine_steam_library_paths() -> Vec<PathBuf> {
     let mut paths = vec![wine_steamapps.clone()];
     paths.extend(parse_library_folders(&wine_steamapps));
     paths
+}
+
+pub fn scan_non_steam_shortcuts() -> Vec<NonSteamShortcut> {
+    let mut shortcuts = Vec::new();
+    let mut seen = HashSet::new();
+
+    for path in shortcut_vdf_paths() {
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        for shortcut in parse_shortcuts_vdf(&data) {
+            let key = shortcut.exe_path.to_string_lossy().to_ascii_lowercase();
+            if shortcut.exe_path.exists() && seen.insert(key) {
+                shortcuts.push(shortcut);
+            }
+        }
+    }
+
+    shortcuts
+}
+
+fn shortcut_vdf_paths() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut roots = vec![
+        home.join("Library/Application Support/Steam/userdata"),
+        home.join(".steam/steam/userdata"),
+        home.join(".local/share/Steam/userdata"),
+        home.join(".metalsharp")
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("userdata"),
+    ];
+
+    roots.retain(|root| root.exists());
+
+    let mut paths = Vec::new();
+    for root in roots {
+        let Ok(users) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for user in users.flatten() {
+            let path = user.path().join("config").join("shortcuts.vdf");
+            if path.exists() {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn parse_shortcuts_vdf(data: &[u8]) -> Vec<NonSteamShortcut> {
+    let mut offset = 0usize;
+    let mut current_name: Option<String> = None;
+    let mut current_exe: Option<String> = None;
+    let mut current_start_dir: Option<String> = None;
+    let mut current_launch_options: Option<String> = None;
+    let mut shortcut_depth: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut shortcuts = Vec::new();
+
+    while offset < data.len() {
+        let field_type = data[offset];
+        offset += 1;
+
+        if field_type == 0x08 {
+            if shortcut_depth == Some(depth) {
+                if let Some(shortcut) = build_non_steam_shortcut(
+                    current_name.take(),
+                    current_exe.take(),
+                    current_start_dir.take(),
+                    current_launch_options.take(),
+                ) {
+                    shortcuts.push(shortcut);
+                }
+                shortcut_depth = None;
+            }
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+
+        let Some(key) = read_c_string(data, &mut offset) else {
+            break;
+        };
+
+        match field_type {
+            0x00 => {
+                depth += 1;
+                if depth == 2 && key.as_bytes().iter().all(u8::is_ascii_digit) {
+                    shortcut_depth = Some(depth);
+                    current_name = None;
+                    current_exe = None;
+                    current_start_dir = None;
+                    current_launch_options = None;
+                }
+            },
+            0x01 => {
+                let Some(value) = read_c_string(data, &mut offset) else {
+                    break;
+                };
+                if shortcut_depth == Some(depth) {
+                    match key.as_str() {
+                        "appname" => current_name = Some(value),
+                        "exe" => current_exe = Some(value),
+                        "StartDir" => current_start_dir = Some(value),
+                        "LaunchOptions" => current_launch_options = Some(value),
+                        _ => {},
+                    }
+                }
+            },
+            0x02 => {
+                offset = offset.saturating_add(4);
+            },
+            _ => break,
+        }
+    }
+
+    shortcuts
+}
+
+fn read_c_string(data: &[u8], offset: &mut usize) -> Option<String> {
+    let start = *offset;
+    while *offset < data.len() && data[*offset] != 0 {
+        *offset += 1;
+    }
+    if *offset >= data.len() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&data[start..*offset]).to_string();
+    *offset += 1;
+    Some(value)
+}
+
+fn build_non_steam_shortcut(
+    name: Option<String>,
+    exe: Option<String>,
+    start_dir: Option<String>,
+    launch_options: Option<String>,
+) -> Option<NonSteamShortcut> {
+    let name = name?.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+
+    let exe = exe?;
+    let exe_path = clean_shortcut_path(&exe)?;
+    if exe_path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) != Some(true) {
+        return None;
+    }
+
+    let start_dir = start_dir.and_then(|dir| clean_shortcut_path(&dir));
+    let mut launch_args = extract_shortcut_args(&exe);
+    if let Some(options) = launch_options {
+        launch_args.extend(split_shortcut_args(&options));
+    }
+    Some(NonSteamShortcut { name, exe_path, start_dir, launch_args })
+}
+
+fn clean_shortcut_path(path: &str) -> Option<PathBuf> {
+    let trimmed = extract_shortcut_path(path)?;
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    let home = dirs::home_dir().unwrap_or_default();
+
+    if normalized.len() > 2 && normalized.as_bytes().get(1) == Some(&b':') {
+        let drive = normalized.chars().next()?.to_ascii_lowercase();
+        let rest = normalized[2..].trim_start_matches('/');
+        return match drive {
+            'z' => Some(PathBuf::from("/").join(rest)),
+            'c' => Some(home.join(".metalsharp").join("prefix-steam").join("drive_c").join(rest)),
+            _ => Some(PathBuf::from("/").join(rest)),
+        };
+    }
+
+    Some(PathBuf::from(normalized))
+}
+
+fn extract_shortcut_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"').unwrap_or(rest.len());
+        return Some(rest[..end].trim().to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix('\'') {
+        let end = rest.find('\'').unwrap_or(rest.len());
+        return Some(rest[..end].trim().to_string());
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(idx) = lower.find(".exe") {
+        return Some(trimmed[..idx + 4].trim().to_string());
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn extract_shortcut_args(command: &str) -> Vec<String> {
+    let Some(rest) = shortcut_args_suffix(command) else {
+        return Vec::new();
+    };
+    split_shortcut_args(rest)
+}
+
+fn shortcut_args_suffix(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some(rest[end + 1..].trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix('\'') {
+        let end = rest.find('\'')?;
+        return Some(rest[end + 1..].trim());
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let idx = lower.find(".exe")?;
+    Some(trimmed[idx + 4..].trim())
+}
+
+fn split_shortcut_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in args.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, c) if c.is_whitespace() => {
+                if !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+            },
+            (_, c) => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+
+    out
+}
+
+fn shortcut_id(name: &str, exe_path: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in name.as_bytes().iter().chain(b"\0").chain(exe_path.to_string_lossy().as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", hash)
 }
 
 fn parse_acf(contents: &str) -> Option<(u32, String, String)> {
@@ -392,4 +676,137 @@ fn scan_local_exes() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     }
 
     Ok(games)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_binary_non_steam_shortcuts() {
+        let exe = if cfg!(windows) { "C:\\Games\\Joy\\Joy.exe" } else { "Z:\\tmp\\Joy\\Joy.exe" };
+        let data = test_shortcuts_vdf("Joy of Creation", exe, "Z:\\tmp\\Joy", None, false);
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].name, "Joy of Creation");
+        assert!(shortcuts[0].exe_path.ends_with("tmp/Joy/Joy.exe"));
+        assert!(shortcuts[0].launch_args.is_empty());
+    }
+
+    #[test]
+    fn ignores_shortcuts_without_exe_targets() {
+        let data = test_shortcuts_vdf("Native App", "/Applications/Foo.app", "/Applications", None, false);
+
+        assert!(parse_shortcuts_vdf(&data).is_empty());
+    }
+
+    #[test]
+    fn strips_shortcut_launch_args_from_quoted_exe_path() {
+        let data =
+            test_shortcuts_vdf("DX12 Game", "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12", "Z:\\tmp\\DxGame", None, false);
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert!(shortcuts[0].exe_path.ends_with("tmp/DxGame/Game.exe"));
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12"]);
+    }
+
+    #[test]
+    fn preserves_multiple_shortcut_launch_args() {
+        let data = test_shortcuts_vdf(
+            "DX12 Game",
+            "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12 -windowed \"-profile=high perf\"",
+            "Z:\\tmp\\DxGame",
+            None,
+            false,
+        );
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12", "-windowed", "-profile=high perf"]);
+    }
+
+    #[test]
+    fn preserves_launch_options_field() {
+        let data = test_shortcuts_vdf(
+            "Joy of Creation",
+            "\"Z:\\tmp\\Joy\\Joy.exe\"",
+            "Z:\\tmp\\Joy",
+            Some("-d3d12 -windowed"),
+            false,
+        );
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12", "-windowed"]);
+    }
+
+    #[test]
+    fn nested_tags_do_not_cancel_shortcut_parsing() {
+        let data = test_shortcuts_vdf("Tagged Game", "Z:\\tmp\\Tagged\\Game.exe", "Z:\\tmp\\Tagged", None, true);
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].name, "Tagged Game");
+        assert!(shortcuts[0].exe_path.ends_with("tmp/Tagged/Game.exe"));
+    }
+
+    #[test]
+    fn scan_shortcut_ids_use_explicit_stable_hex_hashes() {
+        let path = PathBuf::from("/tmp/Game/Game.exe");
+
+        let first = shortcut_id("Game", &path);
+        let second = shortcut_id("Game", &path);
+        let changed = shortcut_id("Game", Path::new("/tmp/Game/Other.exe"));
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, changed);
+    }
+
+    fn test_shortcuts_vdf(
+        name: &str,
+        exe: &str,
+        start_dir: &str,
+        launch_options: Option<&str>,
+        include_tags: bool,
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+        object(&mut data, "shortcuts");
+        object(&mut data, "0");
+        string_field(&mut data, "appname", name);
+        string_field(&mut data, "exe", exe);
+        string_field(&mut data, "StartDir", start_dir);
+        if let Some(options) = launch_options {
+            string_field(&mut data, "LaunchOptions", options);
+        }
+        if include_tags {
+            object(&mut data, "tags");
+            string_field(&mut data, "0", "favorite");
+            data.push(0x08);
+        }
+        data.push(0x08);
+        data.push(0x08);
+        data
+    }
+
+    fn object(data: &mut Vec<u8>, key: &str) {
+        data.push(0x00);
+        data.extend_from_slice(key.as_bytes());
+        data.push(0);
+    }
+
+    fn string_field(data: &mut Vec<u8>, key: &str, value: &str) {
+        data.push(0x01);
+        data.extend_from_slice(key.as_bytes());
+        data.push(0);
+        data.extend_from_slice(value.as_bytes());
+        data.push(0);
+    }
 }

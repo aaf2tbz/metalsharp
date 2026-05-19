@@ -48,6 +48,44 @@ function isMacSteamLaunch(launchMethod: string) {
   return launchMethod === "mac_steam" || launchMethod === "macos_steam" || launchMethod === "native_steam";
 }
 
+function isWineSteamRouteId(launchMethod: string) {
+  const method = launchMethod.toLowerCase();
+  return [
+    "steam",
+    "wine_steam",
+    "m9",
+    "m10",
+    "m11",
+    "m12",
+    "m32",
+    "dx9",
+    "dx10",
+    "dx11",
+    "dx12",
+    "d3d9",
+    "d3d10",
+    "d3d11",
+    "d3d12",
+    "d3d9_metal",
+    "dxmt_metal",
+    "dxmt_metal12",
+    "wined3d_32",
+  ].includes(method);
+}
+
+function recommendedLaunchMethod(game: SteamGame) {
+  return game.launch_method ?? game.available_pipelines?.find((pipeline) => pipeline.recommended)?.id;
+}
+
+function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
+  const method = launchMethod.toLowerCase();
+  if (method === "auto") {
+    const recommended = recommendedLaunchMethod(game);
+    return recommended ? isWineSteamRouteId(recommended) : false;
+  }
+  return isWineSteamRouteId(method);
+}
+
 function applyFilter() {
   if (!library.value) {
     filteredGames.value = [];
@@ -134,19 +172,25 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   }
 
   launchingAppId.value = game.appid;
+  const useWineSteamRoute = isWineSteamRouteLaunch(game, launchMethod);
+  const launchEndpoint = useWineSteamRoute ? "/steam/launch-game" : "/game/launch-auto";
   const launchResult = await api<{
     ok: boolean;
     pid?: number;
     error?: string;
     engine?: string;
     gameType?: string;
-  }>("POST", "/game/launch-auto", { appid: game.appid, launchMethod });
+  }>("POST", launchEndpoint, {
+    appid: game.appid,
+    launchMethod,
+  });
 
   launchingAppId.value = null;
 
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
     runningAppId.value = game.appid;
+    if (useWineSteamRoute) wineSteamRunning.value = true;
     if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {

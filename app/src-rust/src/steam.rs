@@ -440,12 +440,26 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
 }
 
 pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
+    launch_game_via_steam_with_env(appid, &[])
+}
+
+pub fn launch_game_via_steam_with_env(
+    appid: u32,
+    extra_env: &[(String, String)],
+) -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
-    if !is_wine_steam_running() {
-        launch_wine_steam()?;
+    let steam_running = is_wine_steam_running();
+    if steam_running && !extra_env.is_empty() {
+        return Err(
+            "Wine Steam is already running; route-specific environment cannot be inherited without restarting Steam"
+                .into(),
+        );
+    }
+    if !steam_running {
+        launch_wine_steam_with_env(extra_env)?;
         for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_secs(2));
             if is_wine_steam_running() {
@@ -456,7 +470,7 @@ pub fn launch_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Er
     }
 
     let url = format!("steam://run/{}", appid);
-    let pid = spawn_wine_steam(&[&url])?;
+    let pid = spawn_wine_steam_with_env(&[&url], extra_env)?;
 
     Ok(json!({"ok": true, "pid": pid, "appid": appid}))
 }

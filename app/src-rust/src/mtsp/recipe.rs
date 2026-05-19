@@ -333,6 +333,10 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
         push_check(&mut checks, "exe", "Executable", true, "Not required for this pipeline");
     }
 
+    if direct_wine_pipeline {
+        inspect_exe_route_compatibility(&recipe, &mut checks, &mut blockers, &mut warnings);
+    }
+
     let missing_assets: Vec<_> =
         recipe.runtime_assets.iter().filter(|asset| asset.required && !asset.present).collect();
     if missing_assets.is_empty() {
@@ -420,6 +424,101 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     };
 
     LaunchDoctorReport { ready, summary, blockers, warnings: dedupe_strings(warnings), checks, recipe }
+}
+
+fn inspect_exe_route_compatibility(
+    recipe: &LaunchRecipe,
+    checks: &mut Vec<LaunchDoctorCheck>,
+    blockers: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(exe_path) = recipe.exe_path.as_deref() else {
+        push_check(checks, "exe_route", "Route compatibility", false, "No executable to inspect");
+        return;
+    };
+    if !exe_path.is_file() {
+        push_check(
+            checks,
+            "exe_route",
+            "Route compatibility",
+            false,
+            "Selected executable is not available for route inspection",
+        );
+        return;
+    }
+
+    let Ok(data) = std::fs::read(exe_path) else {
+        push_check(checks, "exe_route", "Route compatibility", false, "Could not read selected executable");
+        warnings.push("Could not inspect selected executable headers".into());
+        return;
+    };
+    let Some(pe) = super::pe::parse_pe_imports(&data) else {
+        push_check(
+            checks,
+            "exe_route",
+            "Route compatibility",
+            true,
+            "Selected executable is not a readable PE file; route compatibility was not verified",
+        );
+        warnings.push("Selected executable headers could not be parsed; route compatibility was not verified".into());
+        return;
+    };
+
+    let arch = if pe.is_64_bit { "PE32+ x86_64" } else { "PE32 i386" };
+    let api = d3d_api_label(pe.detected_api);
+    let detail = format!("{} executable, imports {}", arch, api);
+
+    if !pe.is_64_bit && matches!(recipe.pipeline, PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
+        let message = format!(
+            "{} route requires a 64-bit Windows executable, but {} is 32-bit",
+            recipe.pipeline_name,
+            exe_path.display()
+        );
+        blockers.push(message.clone());
+        push_check(checks, "exe_route", "Route compatibility", false, format!("{}; {}", detail, message));
+        return;
+    }
+
+    if pe.is_64_bit && recipe.pipeline == PipelineId::M32 {
+        let message = format!("M32 is reserved for 32-bit Windows executables, but {} is 64-bit", exe_path.display());
+        blockers.push(message.clone());
+        push_check(checks, "exe_route", "Route compatibility", false, format!("{}; {}", detail, message));
+        return;
+    }
+
+    if route_api_mismatch(recipe.pipeline, pe.detected_api) {
+        warnings.push(format!(
+            "{} imports {}, which does not match the selected {} route",
+            exe_path.display(),
+            api,
+            recipe.pipeline_name
+        ));
+    }
+
+    push_check(checks, "exe_route", "Route compatibility", true, detail);
+}
+
+fn d3d_api_label(api: super::pe::D3dApi) -> &'static str {
+    match api {
+        super::pe::D3dApi::D3D9 => "D3D9",
+        super::pe::D3dApi::D3D10 => "D3D10",
+        super::pe::D3dApi::D3D11 => "D3D11",
+        super::pe::D3dApi::D3D12 => "D3D12",
+        super::pe::D3dApi::Unknown => "no Direct3D import",
+    }
+}
+
+fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
+    !matches!(
+        (pipeline, api),
+        (_, super::pe::D3dApi::Unknown)
+            | (PipelineId::WineBare, _)
+            | (PipelineId::M9, super::pe::D3dApi::D3D9)
+            | (PipelineId::M10, super::pe::D3dApi::D3D10)
+            | (PipelineId::M11, super::pe::D3dApi::D3D11)
+            | (PipelineId::M12, super::pe::D3dApi::D3D12)
+            | (PipelineId::M32, _)
+    )
 }
 
 fn push_check(
@@ -747,6 +846,64 @@ mod tests {
         assert!(report.blockers.is_empty());
         assert!(report.checks.iter().any(|check| check.id == "game_dir" && check.ok));
         assert!(report.checks.iter().any(|check| check.id == "exe" && check.ok));
+    }
+
+    #[test]
+    fn doctor_blocks_32_bit_exe_on_64_bit_dxmt_route() {
+        let game_dir = test_dir("doctor-32-on-m11");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        let exe = game_dir.join("LegacyGame.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        let report = diagnose_recipe(LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M11,
+            pipeline_name: "M11".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(exe),
+            exe_name: Some("LegacyGame.exe".into()),
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            warnings: vec![],
+        });
+
+        assert!(!report.ready);
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("requires a 64-bit Windows executable")));
+        assert!(report.checks.iter().any(|check| check.id == "exe_route" && !check.ok));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn doctor_blocks_64_bit_exe_on_m32_route() {
+        let game_dir = test_dir("doctor-64-on-m32");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        let exe = game_dir.join("ModernGame.exe");
+        write_test_pe(&exe, 0x8664, 0x20b);
+
+        let report = diagnose_recipe(LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M32,
+            pipeline_name: "M32".into(),
+            backend: "wine32".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(exe),
+            exe_name: Some("ModernGame.exe".into()),
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            warnings: vec![],
+        });
+
+        assert!(!report.ready);
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("reserved for 32-bit Windows executables")));
+        assert!(report.checks.iter().any(|check| check.id == "exe_route" && !check.ok));
+        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     #[test]
