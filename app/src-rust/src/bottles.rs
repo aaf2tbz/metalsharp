@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use walkdir::WalkDir;
@@ -17,6 +18,7 @@ const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
 const LAUNCH_WATCH_LOG_STABLE_POLLS: usize = 3;
 const WINDOWS_VERSION_COMPONENT_PREFIX: &str = "windows_version_";
+static BOTTLE_SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +44,7 @@ pub enum RuntimeProfile {
     Launcher,
     GameInstall,
     M9,
+    M10,
     M11,
     M12,
     Dotnet,
@@ -296,13 +299,22 @@ pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error
 
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
     validate_bottle_id(&manifest.id)?;
+    let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
     fs::create_dir_all(dir.join("installers"))?;
     fs::create_dir_all(dir.join("logs"))?;
     fs::create_dir_all(dir.join("assets"))?;
     let data = serde_json::to_string_pretty(manifest)?;
-    fs::write(bottle_manifest_path(&manifest.id), data)?;
+    let manifest_path = bottle_manifest_path(&manifest.id);
+    write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
+    Ok(())
+}
+
+fn write_bottle_manifest_atomic(manifest_path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_path = manifest_path.with_extension(format!("json.tmp-{}-{}", std::process::id(), timestamp_secs()));
+    fs::write(&tmp_path, data)?;
+    fs::rename(tmp_path, manifest_path)?;
     Ok(())
 }
 
@@ -525,6 +537,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
     } else {
         match pipeline {
             crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
+            crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
             _ => RuntimeProfile::Plain,
@@ -1169,6 +1182,7 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Launcher,
         RuntimeProfile::GameInstall,
         RuntimeProfile::M9,
+        RuntimeProfile::M10,
         RuntimeProfile::M11,
         RuntimeProfile::M12,
         RuntimeProfile::Dotnet,
@@ -1206,6 +1220,13 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             true,
             &["d3d9", "vcrun2019", "directx_jun2010"][..],
             crate::mtsp::engine::PipelineId::M9,
+        ),
+        RuntimeProfile::M10 => (
+            "D3D10 Metal",
+            BottleArch::Wow64,
+            true,
+            &["d3d10", "d3d10_1", "dxgi", "vcrun2019"][..],
+            crate::mtsp::engine::PipelineId::M10,
         ),
         RuntimeProfile::M11 => (
             "D3D11 Metal",
@@ -1271,6 +1292,7 @@ fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
 fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
     match pipeline {
         crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
+        crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::JavaLauncher,
@@ -1284,6 +1306,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "launcher" => Some(RuntimeProfile::Launcher),
         "game_install" | "gameinstall" => Some(RuntimeProfile::GameInstall),
         "m9" => Some(RuntimeProfile::M9),
+        "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
         "dotnet" => Some(RuntimeProfile::Dotnet),
@@ -1421,7 +1444,9 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
-        "d3d9" | "d3d11" | "d3d12" | "dxgi" => inspect_runtime_dll_component(id).unwrap_or(fallback),
+        "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" => {
+            inspect_runtime_dll_component(id).unwrap_or(fallback)
+        },
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
                 || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
@@ -1730,6 +1755,8 @@ fn component_action_detail(id: &str) -> String {
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
+        "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
+        "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
             format!("Apply Wine Windows version mode {}", id.trim_start_matches(WINDOWS_VERSION_COMPONENT_PREFIX))
         },
@@ -2265,7 +2292,39 @@ mod tests {
 
         let profiles = runtime_profile_definitions();
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::M10));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+    }
+
+    #[test]
+    fn m10_pipeline_maps_to_d3d10_runtime_profile() {
+        let profile = runtime_profile_definition(RuntimeProfile::M10);
+        let components = default_components_for(RuntimeProfile::M10);
+        let ids = components.iter().map(|component| component.id.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M10), RuntimeProfile::M10);
+        assert_eq!(profile.launch_pipeline, crate::mtsp::engine::PipelineId::M10);
+        assert!(ids.contains(&"d3d10"));
+        assert!(ids.contains(&"d3d10_1"));
+        assert!(ids.contains(&"dxgi"));
+    }
+
+    #[test]
+    fn bottle_manifest_atomic_write_replaces_complete_json() {
+        let dir = test_dir("atomic-manifest");
+        fs::create_dir_all(&dir).expect("create manifest dir");
+        let manifest = dir.join(MANIFEST_FILE);
+
+        write_bottle_manifest_atomic(&manifest, br#"{"id":"first"}"#).expect("write first manifest");
+        write_bottle_manifest_atomic(&manifest, br#"{"id":"second","health":"ready"}"#).expect("write second manifest");
+
+        assert_eq!(fs::read_to_string(&manifest).expect("read manifest"), r#"{"id":"second","health":"ready"}"#);
+        assert!(fs::read_dir(&dir).expect("read manifest dir").all(|entry| !entry
+            .expect("manifest entry")
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp-")));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
