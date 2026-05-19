@@ -1119,23 +1119,24 @@ pub fn handle_redist_sources() -> Value {
 }
 
 pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Value {
-    let appid = body.get("appid").and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok());
+    let appid = match parse_steam_runtime_doctor_appid(body) {
+        Ok(appid) => appid,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
     let pipeline = body
         .get("pipeline")
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
         .unwrap_or(crate::mtsp::engine::PipelineId::M12);
     let profile = runtime_profile_for_pipeline(pipeline);
-    let bottle = appid.and_then(|id| {
-        let dual = crate::scan::resolve_dual_game_dir(id);
-        let name = crate::steam::get_game_name_from_manifest(id).unwrap_or_else(|| format!("Game {}", id));
-        ensure_steam_game_bottle(id, &name, dual.wine_dir.as_deref(), pipeline).ok()
-    });
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    let bottle = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
     let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let report = SteamRuntimeDiagnostic {
-        appid,
+        appid: Some(appid),
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
         pipeline,
         runtime_profile: profile,
@@ -1146,6 +1147,20 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         actions,
     };
     json!({"ok": true, "report": report})
+}
+
+fn parse_steam_runtime_doctor_appid(body: &serde_json::Map<String, Value>) -> Result<u32, &'static str> {
+    let Some(value) = body.get("appid") else {
+        return Err("appid required");
+    };
+    let Some(raw) = value.as_u64() else {
+        return Err("appid must be a positive numeric Steam appid");
+    };
+    let appid = u32::try_from(raw).map_err(|_| "appid out of range")?;
+    if appid == 0 {
+        return Err("appid must be greater than zero");
+    }
+    Ok(appid)
 }
 
 fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
@@ -2422,6 +2437,24 @@ mod tests {
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M9), RuntimeProfile::M9);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M12), RuntimeProfile::M12);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::WineBare), RuntimeProfile::Plain);
+    }
+
+    #[test]
+    fn steam_runtime_doctor_rejects_missing_or_invalid_appids() {
+        let missing = serde_json::Map::new();
+        assert_eq!(handle_steam_runtime_doctor(&missing).get("ok").and_then(|v| v.as_bool()), Some(false));
+
+        let mut string_appid = serde_json::Map::new();
+        string_appid.insert("appid".into(), json!("620"));
+        assert_eq!(handle_steam_runtime_doctor(&string_appid).get("ok").and_then(|v| v.as_bool()), Some(false));
+
+        let mut zero_appid = serde_json::Map::new();
+        zero_appid.insert("appid".into(), json!(0));
+        assert_eq!(handle_steam_runtime_doctor(&zero_appid).get("ok").and_then(|v| v.as_bool()), Some(false));
+
+        let mut out_of_range = serde_json::Map::new();
+        out_of_range.insert("appid".into(), json!(u64::from(u32::MAX) + 1));
+        assert_eq!(handle_steam_runtime_doctor(&out_of_range).get("ok").and_then(|v| v.as_bool()), Some(false));
     }
 
     #[test]
