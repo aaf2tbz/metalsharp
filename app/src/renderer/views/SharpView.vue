@@ -346,7 +346,11 @@ onMounted(load);
               <span>Last launch failed</span>
               <strong>{{ launchErrors[app.id] }}</strong>
             </div>
-            <div v-if="doctorOpen[app.id]" class="doctor-panel">
+            <details v-if="doctorOpen[app.id]" class="doctor-panel" open>
+              <summary class="drawer-summary">
+                <span>Launch Doctor</span>
+                <small>{{ doctorReports[app.id]?.summary ?? "Checking launch prerequisites" }}</small>
+              </summary>
               <div v-if="doctorLoading[app.id]" class="doctor-loading">Checking launch prerequisites...</div>
               <template v-else-if="doctorReports[app.id]">
                 <div class="doctor-summary">
@@ -386,8 +390,15 @@ onMounted(load);
                   <div v-for="warning in doctorReports[app.id]?.warnings" :key="warning">{{ warning }}</div>
                 </div>
               </template>
-            </div>
-            <div v-if="diagnosticsOpen[app.id]" class="diagnostics-panel">
+            </details>
+            <details v-if="diagnosticsOpen[app.id]" class="diagnostics-panel" open>
+              <summary class="drawer-summary">
+                <span>Logs and crash reports</span>
+                <small
+                  >{{ recentCrashReports[app.id]?.length ?? 0 }} crash reports ·
+                  {{ recentLogLines[app.id]?.length ?? 0 }} log lines</small
+                >
+              </summary>
               <div class="diagnostics-toolbar">
                 <button class="btn btn-secondary btn-sm" @click="clearShaderCache(app)">Clear Shader Cache</button>
                 <button class="btn btn-secondary btn-sm" @click="openLogFolder">Open Logs</button>
@@ -404,7 +415,7 @@ onMounted(load);
                 <div class="diagnostics-title">Recent launch log</div>
                 <pre class="log-tail">{{ (recentLogLines[app.id] ?? ["No recent log lines loaded."]).join("\n") }}</pre>
               </div>
-            </div>
+            </details>
           </div>
         </div>
       </div>
@@ -532,6 +543,42 @@ onMounted(load);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: 11px;
+}
+.drawer-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  list-style: none;
+}
+.drawer-summary::-webkit-details-marker {
+  display: none;
+}
+.drawer-summary::after {
+  content: "v";
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+details:not([open]) > .drawer-summary::after {
+  transform: rotate(-90deg);
+}
+.drawer-summary small {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 500;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+details[open] > .drawer-summary {
+  margin-bottom: 10px;
 }
 .doctor-loading {
   color: var(--text-dim);
