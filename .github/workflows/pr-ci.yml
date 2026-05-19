@@ -129,3 +129,25 @@ jobs:
 
       - name: Runtime tests
         run: ctest --test-dir build-native --output-on-failure -E '^(metal_device|dxbc|format_translation|phase17)$'
+
+  docker-smoke:
+    name: Docker Package Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Linux package builder image
+        run: docker build --platform linux/amd64 -f tools/linux/Dockerfile.deb -t metalsharp-deb-builder:ci .
+
+      - name: Smoke Linux package scripts in Docker
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            -e HOME=/tmp \
+            -e METALSHARP_PACKAGE_OUT=/work/dist/packages \
+            -v "$PWD:/work" \
+            -w /work \
+            metalsharp-deb-builder:ci \
+            bash -lc 'source /usr/local/cargo/env && bash -n tools/linux/*.sh && tools/linux/create-release-tarballs.sh && test -s dist/packages/metalsharp_linux_runtime.tar.zst && test -s dist/packages/metalsharp_linux_runtime2.tar.zst && test -s dist/packages/metalsharp_linux_runtime.sha256'

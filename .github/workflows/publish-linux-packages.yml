@@ -6,11 +6,11 @@ on:
       version:
         description: Release version without leading v
         required: true
-        default: 0.33.11
+        default: 0.33.21
       release_tag:
-        description: GitHub release tag containing the deb assets
+        description: GitHub release tag containing the Linux package assets
         required: true
-        default: v0.33.11
+        default: v0.33.21
 
 permissions:
   contents: read
@@ -41,48 +41,23 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          mkdir -p dist/electron dist/packages
+          mkdir -p dist/release dist/electron dist/packages
           gh release download "${RELEASE_TAG}" \
             --pattern 'metalsharp_*_amd64.deb' \
             --pattern 'latest-linux.yml' \
-            --dir dist/electron
-          gh release download bundles \
             --pattern 'metalsharp_linux_runtime*' \
-            --dir dist/packages
+            --dir dist/release
+          mv dist/release/metalsharp_*_amd64.deb dist/electron/
+          mv dist/release/latest-linux.yml dist/electron/
+          mv dist/release/metalsharp_linux_runtime* dist/packages/
 
       - name: Publish OCI artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          REVISION: ${{ github.sha }}
+          METALSHARP_VERSION: ${{ inputs.version }}
+          METALSHARP_PACKAGE_TAGS: ${{ inputs.version }} ${{ inputs.release_tag }} latest
         run: |
-          set -euo pipefail
-          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
-          SOURCE="https://github.com/${GITHUB_REPOSITORY}"
-          RUNTIME_IMAGE="ghcr.io/${OWNER}/metalsharp-linux-runtime"
-          DEB_IMAGE="ghcr.io/${OWNER}/metalsharp-linux-deb"
-
-          echo "${GH_TOKEN}" | oras login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-
-          for tag in "${VERSION}" "${RELEASE_TAG}" latest; do
-            oras push "${RUNTIME_IMAGE}:${tag}" \
-              --artifact-type application/vnd.metalsharp.linux-runtime.v1 \
-              --annotation "org.opencontainers.image.source=${SOURCE}" \
-              --annotation "org.opencontainers.image.description=MetalSharp Linux runtime tarballs" \
-              --annotation "org.opencontainers.image.revision=${REVISION}" \
-              dist/packages/metalsharp_linux_runtime.tar.zst:application/vnd.metalsharp.runtime.tar+zstd \
-              dist/packages/metalsharp_linux_runtime2.tar.zst:application/vnd.metalsharp.runtime.tar+zstd \
-              dist/packages/metalsharp_linux_runtime.sha256:text/plain
-
-            oras push "${DEB_IMAGE}:${tag}" \
-              --artifact-type application/vnd.metalsharp.linux-deb.v1 \
-              --annotation "org.opencontainers.image.source=${SOURCE}" \
-              --annotation "org.opencontainers.image.description=MetalSharp Linux debian release installer" \
-              --annotation "org.opencontainers.image.revision=${REVISION}" \
-              dist/electron/metalsharp_"${VERSION}"_amd64.deb:application/vnd.debian.binary-package \
-              dist/electron/latest-linux.yml:application/x-yaml
-          done
+          tools/linux/publish-oci-packages.sh
 
       - name: Verify package tags
         env:
