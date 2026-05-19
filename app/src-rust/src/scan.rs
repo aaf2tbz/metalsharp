@@ -321,7 +321,9 @@ fn parse_shortcuts_vdf(data: &[u8]) -> Vec<NonSteamShortcut> {
     let mut current_name: Option<String> = None;
     let mut current_exe: Option<String> = None;
     let mut current_start_dir: Option<String> = None;
-    let mut in_shortcut = false;
+    let mut current_launch_options: Option<String> = None;
+    let mut shortcut_depth: Option<usize> = None;
+    let mut depth = 0usize;
     let mut shortcuts = Vec::new();
 
     while offset < data.len() {
@@ -329,14 +331,18 @@ fn parse_shortcuts_vdf(data: &[u8]) -> Vec<NonSteamShortcut> {
         offset += 1;
 
         if field_type == 0x08 {
-            if in_shortcut {
-                if let Some(shortcut) =
-                    build_non_steam_shortcut(current_name.take(), current_exe.take(), current_start_dir.take())
-                {
+            if shortcut_depth == Some(depth) {
+                if let Some(shortcut) = build_non_steam_shortcut(
+                    current_name.take(),
+                    current_exe.take(),
+                    current_start_dir.take(),
+                    current_launch_options.take(),
+                ) {
                     shortcuts.push(shortcut);
                 }
-                in_shortcut = false;
+                shortcut_depth = None;
             }
+            depth = depth.saturating_sub(1);
             continue;
         }
 
@@ -346,22 +352,25 @@ fn parse_shortcuts_vdf(data: &[u8]) -> Vec<NonSteamShortcut> {
 
         match field_type {
             0x00 => {
-                in_shortcut = key.as_bytes().iter().all(u8::is_ascii_digit);
-                if in_shortcut {
+                depth += 1;
+                if depth == 2 && key.as_bytes().iter().all(u8::is_ascii_digit) {
+                    shortcut_depth = Some(depth);
                     current_name = None;
                     current_exe = None;
                     current_start_dir = None;
+                    current_launch_options = None;
                 }
             },
             0x01 => {
                 let Some(value) = read_c_string(data, &mut offset) else {
                     break;
                 };
-                if in_shortcut {
+                if shortcut_depth == Some(depth) {
                     match key.as_str() {
                         "appname" => current_name = Some(value),
                         "exe" => current_exe = Some(value),
                         "StartDir" => current_start_dir = Some(value),
+                        "LaunchOptions" => current_launch_options = Some(value),
                         _ => {},
                     }
                 }
@@ -393,6 +402,7 @@ fn build_non_steam_shortcut(
     name: Option<String>,
     exe: Option<String>,
     start_dir: Option<String>,
+    launch_options: Option<String>,
 ) -> Option<NonSteamShortcut> {
     let name = name?.trim().to_string();
     if name.is_empty() {
@@ -406,7 +416,10 @@ fn build_non_steam_shortcut(
     }
 
     let start_dir = start_dir.and_then(|dir| clean_shortcut_path(&dir));
-    let launch_args = extract_shortcut_args(&exe);
+    let mut launch_args = extract_shortcut_args(&exe);
+    if let Some(options) = launch_options {
+        launch_args.extend(split_shortcut_args(&options));
+    }
     Some(NonSteamShortcut { name, exe_path, start_dir, launch_args })
 }
 
@@ -671,7 +684,7 @@ mod tests {
     #[test]
     fn parses_binary_non_steam_shortcuts() {
         let exe = if cfg!(windows) { "C:\\Games\\Joy\\Joy.exe" } else { "Z:\\tmp\\Joy\\Joy.exe" };
-        let data = test_shortcuts_vdf("Joy of Creation", exe, "Z:\\tmp\\Joy");
+        let data = test_shortcuts_vdf("Joy of Creation", exe, "Z:\\tmp\\Joy", None, false);
 
         let shortcuts = parse_shortcuts_vdf(&data);
 
@@ -683,14 +696,15 @@ mod tests {
 
     #[test]
     fn ignores_shortcuts_without_exe_targets() {
-        let data = test_shortcuts_vdf("Native App", "/Applications/Foo.app", "/Applications");
+        let data = test_shortcuts_vdf("Native App", "/Applications/Foo.app", "/Applications", None, false);
 
         assert!(parse_shortcuts_vdf(&data).is_empty());
     }
 
     #[test]
     fn strips_shortcut_launch_args_from_quoted_exe_path() {
-        let data = test_shortcuts_vdf("DX12 Game", "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12", "Z:\\tmp\\DxGame");
+        let data =
+            test_shortcuts_vdf("DX12 Game", "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12", "Z:\\tmp\\DxGame", None, false);
 
         let shortcuts = parse_shortcuts_vdf(&data);
 
@@ -705,6 +719,8 @@ mod tests {
             "DX12 Game",
             "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12 -windowed \"-profile=high perf\"",
             "Z:\\tmp\\DxGame",
+            None,
+            false,
         );
 
         let shortcuts = parse_shortcuts_vdf(&data);
@@ -712,13 +728,54 @@ mod tests {
         assert_eq!(shortcuts[0].launch_args, vec!["-d3d12", "-windowed", "-profile=high perf"]);
     }
 
-    fn test_shortcuts_vdf(name: &str, exe: &str, start_dir: &str) -> Vec<u8> {
+    #[test]
+    fn preserves_launch_options_field() {
+        let data = test_shortcuts_vdf(
+            "Joy of Creation",
+            "\"Z:\\tmp\\Joy\\Joy.exe\"",
+            "Z:\\tmp\\Joy",
+            Some("-d3d12 -windowed"),
+            false,
+        );
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12", "-windowed"]);
+    }
+
+    #[test]
+    fn nested_tags_do_not_cancel_shortcut_parsing() {
+        let data = test_shortcuts_vdf("Tagged Game", "Z:\\tmp\\Tagged\\Game.exe", "Z:\\tmp\\Tagged", None, true);
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].name, "Tagged Game");
+        assert!(shortcuts[0].exe_path.ends_with("tmp/Tagged/Game.exe"));
+    }
+
+    fn test_shortcuts_vdf(
+        name: &str,
+        exe: &str,
+        start_dir: &str,
+        launch_options: Option<&str>,
+        include_tags: bool,
+    ) -> Vec<u8> {
         let mut data = Vec::new();
         object(&mut data, "shortcuts");
         object(&mut data, "0");
         string_field(&mut data, "appname", name);
         string_field(&mut data, "exe", exe);
         string_field(&mut data, "StartDir", start_dir);
+        if let Some(options) = launch_options {
+            string_field(&mut data, "LaunchOptions", options);
+        }
+        if include_tags {
+            object(&mut data, "tags");
+            string_field(&mut data, "0", "favorite");
+            data.push(0x08);
+        }
         data.push(0x08);
         data.push(0x08);
         data
