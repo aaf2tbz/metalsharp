@@ -1427,7 +1427,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "corefonts" => {
-            if windows.join("Fonts").exists() {
+            if core_fonts_installed(&windows.join("Fonts")) {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -1458,6 +1458,29 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         _ => fallback,
     }
+}
+
+fn core_fonts_installed(fonts_dir: &Path) -> bool {
+    const CORE_FONT_FILES: &[&str] = &[
+        "andale.ttf",
+        "arial.ttf",
+        "arialbd.ttf",
+        "comic.ttf",
+        "cour.ttf",
+        "georgia.ttf",
+        "impact.ttf",
+        "times.ttf",
+        "trebuc.ttf",
+        "verdana.ttf",
+        "webdings.ttf",
+    ];
+
+    if !fonts_dir.is_dir() {
+        return false;
+    }
+
+    let installed = CORE_FONT_FILES.iter().filter(|name| fonts_dir.join(name).is_file()).count();
+    installed >= 4
 }
 
 fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
@@ -2458,6 +2481,22 @@ mod tests {
 
         assert!(inspected.iter().all(|component| component.state == ComponentState::Missing));
         assert!(!components_ready(&inspected));
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn corefonts_requires_installed_font_files_not_just_fonts_directory() {
+        let prefix = test_dir("corefonts-inspect");
+        let fonts = prefix.join("drive_c").join("windows").join("Fonts");
+        fs::create_dir_all(&fonts).expect("create fonts dir");
+
+        assert_eq!(inspect_component_state(&prefix, "corefonts", ComponentState::Unknown), ComponentState::Missing);
+
+        for name in ["arial.ttf", "times.ttf", "cour.ttf", "verdana.ttf"] {
+            fs::write(fonts.join(name), b"font").expect("write font marker");
+        }
+
+        assert_eq!(inspect_component_state(&prefix, "corefonts", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(prefix);
     }
 
