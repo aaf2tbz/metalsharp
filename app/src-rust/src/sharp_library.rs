@@ -39,6 +39,8 @@ pub struct SharpApp {
     pub launch_args: Vec<String>,
     #[serde(default)]
     pub user_launch_args: Vec<String>,
+    #[serde(default)]
+    pub bottle_id: Option<String>,
     pub installed_at: String,
     pub size_bytes: u64,
 }
@@ -162,6 +164,7 @@ fn sync_wine_prefix_app(apps: &mut Vec<SharpApp>, candidate: WinePrefixApp) -> b
         engine: "auto".to_string(),
         launch_args: Vec::new(),
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at: chrono_now(),
         size_bytes: dir_size(&candidate.install_dir),
     });
@@ -354,6 +357,7 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
         engine: "auto".to_string(),
         launch_args: shortcut.launch_args,
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at: chrono_now(),
         size_bytes: dir_size(&install_dir),
     });
@@ -458,6 +462,7 @@ pub fn install_exe(
         engine: "auto".to_string(),
         launch_args: Vec::new(),
         user_launch_args: Vec::new(),
+        bottle_id: None,
         installed_at,
         size_bytes,
     };
@@ -577,6 +582,63 @@ fn installer_launch_id(src: &Path, pipeline: crate::mtsp::engine::PipelineId) ->
     stable_launch_id(&key)
 }
 
+pub fn import_bottle_app(
+    bottle_id: &str,
+    exe_path: &str,
+    name: Option<&str>,
+) -> Result<SharpApp, Box<dyn std::error::Error>> {
+    let bottle = crate::bottles::load_bottle(bottle_id)?;
+    let exe = PathBuf::from(exe_path);
+    if !exe.exists() || exe.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) != Some(true) {
+        return Err("Bottle app executable not found".into());
+    }
+    let install_dir = exe.parent().ok_or("Bottle app install directory not found")?.to_path_buf();
+    let app_name = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| exe.file_stem().map(|stem| stem.to_string_lossy().to_string()))
+        .unwrap_or_else(|| bottle.name.clone());
+    let id = format!("bottle_app_{}", stable_shortcut_id(&format!("{}:{}", bottle_id, app_name), &exe));
+    let exe_path = relative_path_string(&install_dir, &exe)?;
+    let install_dir_string = install_dir.to_string_lossy().to_string();
+
+    let app = SharpApp {
+        id,
+        name: app_name,
+        exe_path,
+        install_dir: install_dir_string,
+        cover: None,
+        cover_position_x: default_cover_position(),
+        cover_position_y: default_cover_position(),
+        engine: "auto".to_string(),
+        launch_args: Vec::new(),
+        user_launch_args: Vec::new(),
+        bottle_id: Some(bottle.id),
+        installed_at: chrono_now(),
+        size_bytes: dir_size(&install_dir),
+    };
+
+    let mut library = load_library()?;
+    let absolute = app_absolute_exe_path(&app);
+    if let Some(existing) =
+        library.iter_mut().find(|existing| existing.id == app.id || app_absolute_exe_path(existing) == absolute)
+    {
+        existing.name = app.name.clone();
+        existing.exe_path = app.exe_path.clone();
+        existing.install_dir = app.install_dir.clone();
+        existing.bottle_id = app.bottle_id.clone();
+        existing.size_bytes = app.size_bytes;
+        let updated = existing.clone();
+        save_library(&library)?;
+        return Ok(updated);
+    }
+
+    library.push(app.clone());
+    save_library(&library)?;
+    Ok(app)
+}
+
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut library = load_library()?;
     let idx = library.iter().position(|a| a.id == id).ok_or("App not found")?;
@@ -633,13 +695,23 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
 
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
-    let (pid, game_type, recipe) = crate::mtsp::launcher::launch_custom_with_pipeline(
-        launch_id,
-        &work_dir,
-        &exe_path,
-        pipeline,
-        &combined_launch_args(&app),
-    )?;
+    let launch_args = combined_launch_args(&app);
+    let (pid, game_type, recipe) = if let Some(bottle_id) = app.bottle_id.as_deref() {
+        let bottle = crate::bottles::load_bottle(bottle_id)?;
+        crate::mtsp::launcher::launch_custom_with_options(
+            launch_id,
+            &work_dir,
+            &exe_path,
+            pipeline,
+            &launch_args,
+            crate::mtsp::launcher::CustomLaunchOptions {
+                prefix_path: Some(PathBuf::from(bottle.prefix_path)),
+                log_path: Some(crate::bottles::next_launch_log_path(bottle_id)),
+            },
+        )?
+    } else {
+        crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline, &launch_args)?
+    };
 
     Ok(SharpLaunchResult {
         pid,
@@ -968,6 +1040,19 @@ pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_import_bottle_app(body: &serde_json::Map<String, Value>) -> Value {
+    let bottle_id = body.get("bottleId").and_then(|v| v.as_str()).unwrap_or("");
+    let exe_path = body.get("exePath").and_then(|v| v.as_str()).unwrap_or("");
+    let name = body.get("name").and_then(|v| v.as_str());
+    if bottle_id.is_empty() || exe_path.is_empty() {
+        return json!({"ok": false, "error": "bottleId and exePath required"});
+    }
+    match import_bottle_app(bottle_id, exe_path, name) {
+        Ok(app) => json!({"ok": true, "app": app}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_uninstall(body: &serde_json::Map<String, Value>) -> Value {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
     if id.is_empty() {
@@ -1112,6 +1197,7 @@ mod tests {
             engine: "auto".into(),
             launch_args: vec!["-dx11".into()],
             user_launch_args: vec!["-user".into()],
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 0,
         }];
@@ -1148,6 +1234,7 @@ mod tests {
             engine: "m11".into(),
             launch_args: vec!["-dx11".into()],
             user_launch_args: vec!["-custom".into()],
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 123,
         }];
@@ -1226,6 +1313,7 @@ mod tests {
             engine: "auto".into(),
             launch_args: Vec::new(),
             user_launch_args: Vec::new(),
+            bottle_id: None,
             installed_at: chrono_now(),
             size_bytes: 0,
         }];
@@ -1237,6 +1325,32 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].id, "steam_shortcut_existing");
         let _ = fs::remove_dir_all(drive_c);
+    }
+
+    #[test]
+    fn bottle_app_import_records_bottle_id() {
+        let dir = test_dir("bottle-app-import");
+        let exe = dir.join("Demo.exe");
+        fs::create_dir_all(&dir).expect("create app dir");
+        fs::write(&exe, b"not pe").expect("write exe");
+        let app = SharpApp {
+            id: "bottle_app_demo".into(),
+            name: "Demo".into(),
+            exe_path: relative_path_string(&dir, &exe).expect("relative exe"),
+            install_dir: dir.to_string_lossy().to_string(),
+            cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
+            bottle_id: Some("installer_demo".into()),
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        };
+
+        assert_eq!(app.bottle_id.as_deref(), Some("installer_demo"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

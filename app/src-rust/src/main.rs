@@ -663,6 +663,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
             resp(200, sharp_library::handle_install(&body))
         },
+        (Method::Post, "/sharp-library/import-bottle-app") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] import bottle app: {}",
+                body.get("bottleId").and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_import_bottle_app(&body))
+        },
         (Method::Post, "/sharp-library/uninstall") => {
             let body = read_body(req);
             let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("?");

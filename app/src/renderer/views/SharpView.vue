@@ -200,6 +200,22 @@ async function repairBottleComponent(id: string, component: string) {
   }
 }
 
+async function addBottleApp(bottle: BottleManifest, app: { name: string; exe_path: string }) {
+  bottleLoading.value[bottle.id] = true;
+  const result = await api<{ ok: boolean; app?: SharpApp; error?: string }>("POST", "/sharp-library/import-bottle-app", {
+    bottleId: bottle.id,
+    exePath: app.exe_path,
+    name: app.name,
+  });
+  bottleLoading.value[bottle.id] = false;
+  if (result?.ok && result.app) {
+    toast.show(`Added ${result.app.name}`, "success");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to add bottle app", "error");
+  }
+}
+
 function upsertBottle(bottle: BottleManifest) {
   const idx = bottles.value.findIndex((item) => item.id === bottle.id);
   if (idx >= 0) bottles.value[idx] = bottle;
@@ -495,6 +511,17 @@ onMounted(load);
               assets: {{ bottle.runtime_assets.length }}
             </span>
           </div>
+          <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
+            <button
+              v-for="candidate in bottle.installed_app_detections.slice(0, 3)"
+              :key="candidate.exe_path"
+              class="btn btn-secondary btn-sm"
+              :disabled="bottleLoading[bottle.id]"
+              @click="addBottleApp(bottle, candidate)"
+            >
+              Add {{ candidate.name }}
+            </button>
+          </div>
           <div v-if="bottleReports[bottle.id]" class="bottle-report">
             <div class="doctor-summary">
               <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">
@@ -783,6 +810,12 @@ onMounted(load);
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+.bottle-detections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 }
 .component-pill {
   padding: 3px 6px;
