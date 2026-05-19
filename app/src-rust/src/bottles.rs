@@ -5,7 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use walkdir::WalkDir;
@@ -15,6 +15,7 @@ const MANIFEST_FILE: &str = "bottle.json";
 const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
+const LAUNCH_WATCH_LOG_STABLE_POLLS: usize = 3;
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -549,9 +550,53 @@ pub fn set_launch_started(id: &str, pid: u32, log_path: &Path) -> Result<BottleM
 
 pub fn watch_bottle_launch(id: String, pid: u32) {
     thread::spawn(move || {
+        let watch = BottleLaunchWatch::for_bottle(&id);
+        let mut prefix_wait = None;
+        let mut prefix_wait_started = false;
+        let mut stable_log_polls = 0usize;
+        let mut last_log_size = watch.as_ref().and_then(|watch| watch.log_size());
+
         for _ in 0..LAUNCH_WATCH_MAX_POLLS {
             thread::sleep(Duration::from_secs(LAUNCH_WATCH_INTERVAL_SECS));
-            if !is_process_tree_active(pid) {
+            if !prefix_wait_started {
+                prefix_wait = watch.as_ref().and_then(|watch| watch.spawn_prefix_wait());
+                prefix_wait_started = true;
+            }
+
+            let tree_active = is_process_tree_active(pid);
+            if let Some(waiter) = prefix_wait.as_mut() {
+                match waiter.try_wait() {
+                    Ok(Some(_)) if !tree_active => {
+                        let _ = complete_bottle_launch(&id, pid);
+                        return;
+                    },
+                    Ok(Some(_)) => {
+                        prefix_wait = None;
+                    },
+                    Ok(None) => {
+                        continue;
+                    },
+                    Err(_) => {
+                        prefix_wait = None;
+                    },
+                }
+            }
+
+            if tree_active {
+                stable_log_polls = 0;
+                last_log_size = watch.as_ref().and_then(|watch| watch.log_size());
+                continue;
+            }
+
+            let current_log_size = watch.as_ref().and_then(|watch| watch.log_size());
+            if current_log_size.is_some() && current_log_size == last_log_size {
+                stable_log_polls += 1;
+            } else {
+                stable_log_polls = 0;
+                last_log_size = current_log_size;
+            }
+
+            if stable_log_polls >= LAUNCH_WATCH_LOG_STABLE_POLLS || watch.is_none() {
                 let _ = complete_bottle_launch(&id, pid);
                 return;
             }
@@ -662,7 +707,8 @@ fn refresh_manifest_launch_state(manifest: &mut BottleManifest) -> bool {
         manifest.last_launch_finished_at = Some(timestamp_secs());
         return true;
     };
-    if is_process_tree_active(pid) {
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    if is_process_tree_active(pid) || should_wait_for_prefix_idle(manifest) && is_wine_prefix_busy(&prefix) {
         return false;
     }
     manifest.last_launch_status = Some("exited".to_string());
@@ -703,6 +749,68 @@ fn is_process_tree_active(pid: u32) -> bool {
         return true;
     }
     process_descendants(pid).into_iter().any(|child| crate::launch::is_process_active(child as i32))
+}
+
+struct BottleLaunchWatch {
+    prefix: PathBuf,
+    log_path: Option<PathBuf>,
+    wait_for_prefix_idle: bool,
+}
+
+impl BottleLaunchWatch {
+    fn for_bottle(id: &str) -> Option<Self> {
+        let manifest = load_bottle(id).ok()?;
+        Some(Self {
+            prefix: PathBuf::from(&manifest.prefix_path),
+            log_path: manifest.last_launch_log.as_deref().map(PathBuf::from),
+            wait_for_prefix_idle: should_wait_for_prefix_idle(&manifest),
+        })
+    }
+
+    fn spawn_prefix_wait(&self) -> Option<Child> {
+        if !self.wait_for_prefix_idle {
+            return None;
+        }
+        spawn_wineserver_wait(&self.prefix).ok()
+    }
+
+    fn log_size(&self) -> Option<u64> {
+        self.log_path.as_ref().and_then(|path| fs::metadata(path).ok()).map(|meta| meta.len())
+    }
+}
+
+fn should_wait_for_prefix_idle(manifest: &BottleManifest) -> bool {
+    let steam_prefix = steam_launch_prefix();
+    manifest.bottle_type != BottleType::Steam && Path::new(&manifest.prefix_path) != steam_prefix.as_path()
+}
+
+fn spawn_wineserver_wait(prefix: &Path) -> Result<Child, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wineserver = ms_root.join("bin").join("wineserver");
+    if !wineserver.exists() {
+        return Err("wineserver not found".into());
+    }
+    let mut cmd = Command::new(wineserver);
+    cmd.arg("-w").env("WINEPREFIX", prefix.to_string_lossy().to_string()).stdout(Stdio::null()).stderr(Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    Ok(cmd.spawn()?)
+}
+
+fn is_wine_prefix_busy(prefix: &Path) -> bool {
+    let Ok(mut child) = spawn_wineserver_wait(prefix) else {
+        return false;
+    };
+    thread::sleep(Duration::from_millis(200));
+    match child.try_wait() {
+        Ok(Some(_)) => false,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            true
+        },
+        Err(_) => false,
+    }
 }
 
 fn process_descendants(pid: u32) -> Vec<u32> {
@@ -2232,7 +2340,36 @@ mod tests {
             updated_at: timestamp_secs(),
         };
 
-        assert_eq!(PathBuf::from(manifest.prefix_path), steam_launch_prefix());
+        assert_eq!(PathBuf::from(&manifest.prefix_path), steam_launch_prefix());
+        assert!(!should_wait_for_prefix_idle(&manifest));
+    }
+
+    #[test]
+    fn installer_bottles_wait_for_prefix_idle_completion() {
+        let manifest = BottleManifest {
+            id: "installer_demo".into(),
+            name: "Demo Installer".into(),
+            bottle_type: BottleType::Installer,
+            steam_app_id: None,
+            prefix_path: bottle_dir("installer_demo").join("prefix").to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::GameInstall,
+            installed_components: default_components_for(RuntimeProfile::GameInstall),
+            source_installer_path: None,
+            installer_kind: Some(InstallerKind::Exe),
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::New,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        assert!(should_wait_for_prefix_idle(&manifest));
     }
 
     #[test]
