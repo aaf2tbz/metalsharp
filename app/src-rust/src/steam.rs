@@ -461,7 +461,7 @@ pub fn ensure_wine_steam_ready_for_game_launch() -> Result<bool, Box<dyn std::er
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    Ok(true)
+    Err("Wine Steam was started but did not become ready for game launch".into())
 }
 
 pub fn launch_game_via_steam_with_env(
@@ -481,12 +481,17 @@ pub fn launch_game_via_steam_with_env(
     }
     if !steam_running {
         launch_wine_steam_with_env(extra_env)?;
+        let mut ready = false;
         for _ in 0..12 {
             if is_wine_steam_running() {
                 std::thread::sleep(std::time::Duration::from_secs(2));
+                ready = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if !ready {
+            return Err("Wine Steam was started but did not become ready for game launch".into());
         }
     }
 
