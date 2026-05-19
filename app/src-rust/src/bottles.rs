@@ -16,6 +16,7 @@ const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
 const LAUNCH_WATCH_LOG_STABLE_POLLS: usize = 3;
+const WINDOWS_VERSION_COMPONENT_PREFIX: &str = "windows_version_";
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -965,14 +966,14 @@ pub fn set_windows_version(id: &str, version: &str) -> Result<ComponentRepairRep
     fs::create_dir_all(bottle_logs_dir(id))?;
     let log_path = bottle_logs_dir(id).join(format!("windows-version-{}-{}.log", version, timestamp_secs()));
     let pid = run_wine_reg_set_windows_version(&prefix, version, &log_path)?;
-    mark_component_state(&mut manifest, &format!("windows_version_{}", version), ComponentState::NeedsRepair);
+    mark_component_state(&mut manifest, &windows_version_component_id(version), ComponentState::NeedsRepair);
     mark_manifest_launch_started(&mut manifest, pid, &log_path);
     manifest.health = BottleHealth::NeedsRepair;
     save_bottle(&manifest)?;
     watch_bottle_launch(id.to_string(), pid);
 
     Ok(ComponentRepairReport {
-        id: format!("windows_version_{}", version),
+        id: windows_version_component_id(version),
         status: "started".to_string(),
         detail: format!("Started Windows version mode update to {}", version),
         asset_path: None,
@@ -1354,6 +1355,10 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
     let windows = drive_c.join("windows");
     let system32 = windows.join("system32");
     let syswow64 = windows.join("syswow64");
+    if let Some(version) = id.strip_prefix(WINDOWS_VERSION_COMPONENT_PREFIX) {
+        return inspect_windows_version_component(prefix, version).unwrap_or(fallback);
+    }
+
     match id {
         "wine-mono" => {
             if windows.join("mono").exists() {
@@ -1426,6 +1431,44 @@ fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
         runtime_wine.join("lib").join("dxvk").join("i386-windows").join(&filename),
     ];
     Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn windows_version_component_id(version: &str) -> String {
+    format!("{}{}", WINDOWS_VERSION_COMPONENT_PREFIX, version)
+}
+
+fn inspect_windows_version_component(prefix: &Path, expected_version: &str) -> Option<ComponentState> {
+    let current = read_wine_windows_version(prefix)?;
+    Some(if current == expected_version { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn read_wine_windows_version(prefix: &Path) -> Option<String> {
+    for registry in [prefix.join("user.reg"), prefix.join("system.reg")] {
+        let Ok(data) = fs::read_to_string(registry) else {
+            continue;
+        };
+        if let Some(version) = parse_wine_windows_version(&data) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn parse_wine_windows_version(data: &str) -> Option<String> {
+    let mut in_wine_section = false;
+    for line in data.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let section = trimmed.trim_start_matches('[').trim_end_matches(']');
+            in_wine_section = section == r"Software\\Wine" || section.ends_with(r"\\Software\\Wine");
+            continue;
+        }
+        if !in_wine_section || !trimmed.starts_with("\"Version\"=") {
+            continue;
+        }
+        return trimmed.split_once('=').map(|(_, value)| value.trim().trim_matches('"').replace(r#"\""#, "\""));
+    }
+    None
 }
 
 fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<ComponentInstaller> {
@@ -1672,6 +1715,9 @@ fn component_action_detail(id: &str) -> String {
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
+        id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
+            format!("Apply Wine Windows version mode {}", id.trim_start_matches(WINDOWS_VERSION_COMPONENT_PREFIX))
+        },
         _ => format!("Prepare component {}", id),
     }
 }
@@ -2330,6 +2376,43 @@ mod tests {
         let inspected = inspect_components(&prefix, &components);
 
         assert!(inspected.iter().all(|component| component.state == ComponentState::Missing));
+        assert!(!components_ready(&inspected));
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn windows_version_component_inspects_wine_registry() {
+        let prefix = test_dir("windows-version-registry");
+        fs::create_dir_all(&prefix).expect("create prefix");
+        fs::write(
+            prefix.join("user.reg"),
+            r#"
+[Software\\Wine]
+"Version"="win10"
+"#,
+        )
+        .expect("write registry");
+
+        assert_eq!(
+            inspect_component_state(&prefix, "windows_version_win10", ComponentState::NeedsRepair),
+            ComponentState::Installed
+        );
+        assert_eq!(
+            inspect_component_state(&prefix, "windows_version_win7", ComponentState::NeedsRepair),
+            ComponentState::Missing
+        );
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn windows_version_component_stays_unready_until_registry_matches() {
+        let prefix = test_dir("windows-version-missing");
+        let components =
+            vec![RuntimeComponent { id: windows_version_component_id("win11"), state: ComponentState::NeedsRepair }];
+
+        let inspected = inspect_components(&prefix, &components);
+
+        assert_eq!(inspected[0].state, ComponentState::NeedsRepair);
         assert!(!components_ready(&inspected));
         let _ = fs::remove_dir_all(prefix);
     }
