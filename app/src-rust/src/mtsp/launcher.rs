@@ -586,7 +586,8 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let cache_paths = build_cache_paths(home, node, appid);
-    let mut env = Vec::new();
+    let appid_string = appid.to_string();
+    let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
 
     if !node.dyld_paths.is_empty() {
         let runtime_lib_key =
@@ -1093,9 +1094,13 @@ mod tests {
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("SteamAppId"));
+        assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
         assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
+        assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
         let _ = std::fs::remove_dir_all(home);
@@ -1114,6 +1119,8 @@ mod tests {
                 .map(|(key, _)| key)
                 .unwrap_or("LD_LIBRARY_PATH");
         assert!(keys.contains(runtime_lib_key));
+        assert!(keys.contains("SteamAppId"));
+        assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         let _ = std::fs::remove_dir_all(home);
