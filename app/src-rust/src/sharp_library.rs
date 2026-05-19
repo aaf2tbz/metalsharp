@@ -60,7 +60,7 @@ pub struct SharpLaunchResult {
 }
 
 pub enum SharpInstallOutcome {
-    Imported(SharpApp),
+    Imported(Box<SharpApp>),
     InstallerStarted { pid: u32, message: String },
 }
 
@@ -473,7 +473,7 @@ pub fn install_exe(
     library.push(app.clone());
     save_library(&library)?;
 
-    Ok(SharpInstallOutcome::Imported(app))
+    Ok(SharpInstallOutcome::Imported(Box::new(app)))
 }
 
 fn should_run_as_wine_installer(src: &Path) -> bool {
@@ -917,7 +917,7 @@ pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
         return json!({"ok": false, "error": "srcPath required"});
     }
     match install_exe(src_path, custom_name) {
-        Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": app}),
+        Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": *app}),
         Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
             json!({"ok": true, "installing": true, "pid": pid, "message": message})
         },
