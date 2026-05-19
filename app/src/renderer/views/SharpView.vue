@@ -610,14 +610,12 @@ onMounted(load);
       </div>
     </div>
 
-    <section v-if="bottles.length" class="bottle-strip">
-      <div class="bottle-strip-header">
-        <div>
-          <h2>Runtime Bottles</h2>
-          <p>{{ bottles.length }} runtime {{ bottles.length === 1 ? "prefix" : "prefixes" }} tracked</p>
-        </div>
-      </div>
-      <div class="bottle-list">
+    <details v-if="bottles.length" class="support-drawer bottle-strip">
+      <summary class="support-drawer-summary">
+        <span>Runtime Bottles</span>
+        <small>{{ bottles.length }} runtime {{ bottles.length === 1 ? "prefix" : "prefixes" }} tracked</small>
+      </summary>
+      <div class="support-drawer-body bottle-list">
         <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card">
           <div class="bottle-card-main">
             <div>
@@ -733,16 +731,14 @@ onMounted(load);
           </div>
         </article>
       </div>
-    </section>
+    </details>
 
-    <section v-if="compatibilityCases.length" class="compatibility-matrix">
-      <div class="bottle-strip-header">
-        <div>
-          <h2>Compatibility Matrix</h2>
-          <p>{{ compatibilityCases.length }} installer and runtime cases tracked</p>
-        </div>
-      </div>
-      <div class="compatibility-table">
+    <details v-if="compatibilityCases.length" class="support-drawer compatibility-matrix">
+      <summary class="support-drawer-summary">
+        <span>Compatibility Matrix</span>
+        <small>{{ compatibilityCases.length }} installer and runtime cases tracked</small>
+      </summary>
+      <div class="support-drawer-body compatibility-table">
         <div class="compatibility-row compatibility-header">
           <span>Case</span>
           <span>Profile</span>
@@ -801,16 +797,14 @@ onMounted(load);
           </span>
         </div>
       </div>
-    </section>
+    </details>
 
-    <section v-if="redistSources.length" class="redist-sources">
-      <div class="bottle-strip-header">
-        <div>
-          <h2>Redistributable Sources</h2>
-          <p>Official source policy and local cache targets for offline bottle repair</p>
-        </div>
-      </div>
-      <div class="redist-source-list">
+    <details v-if="redistSources.length" class="support-drawer redist-sources">
+      <summary class="support-drawer-summary">
+        <span>Redistributable Sources</span>
+        <small>Official source policy and local cache targets</small>
+      </summary>
+      <div class="support-drawer-body redist-source-list">
         <article v-for="source in redistSources" :key="source.id" class="redist-source-card">
           <div>
             <strong>{{ source.name }}</strong>
@@ -823,7 +817,7 @@ onMounted(load);
           <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
         </article>
       </div>
-    </section>
+    </details>
 
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
@@ -1047,23 +1041,51 @@ onMounted(load);
   margin-top: 2px;
 }
 
-.bottle-strip {
-  margin-bottom: 18px;
+.support-drawer {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+  overflow: hidden;
 }
-.bottle-strip-header {
+.support-drawer-summary {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
-}
-.bottle-strip-header h2 {
+  gap: 14px;
+  min-height: 44px;
+  padding: 11px 14px;
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 700;
+  cursor: pointer;
+  list-style: none;
 }
-.bottle-strip-header p {
-  margin-top: 2px;
+.support-drawer-summary::-webkit-details-marker {
+  display: none;
+}
+.support-drawer-summary::after {
+  content: "v";
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+.support-drawer:not([open]) > .support-drawer-summary::after {
+  transform: rotate(-90deg);
+}
+.support-drawer-summary small {
+  min-width: 0;
+  flex: 1;
   color: var(--text-dim);
   font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.support-drawer-body {
+  border-top: 1px solid var(--border);
+  padding: 12px;
 }
 .bottle-list {
   display: grid;
@@ -1151,10 +1173,6 @@ onMounted(load);
 }
 .bottle-action-row span {
   overflow-wrap: anywhere;
-}
-.compatibility-matrix,
-.redist-sources {
-  margin-bottom: 18px;
 }
 .compatibility-table {
   border: 1px solid var(--border);
@@ -1251,7 +1269,10 @@ onMounted(load);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--bg-deep) 18%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 26px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 16px 34px color-mix(in srgb, var(--bg-deep) 34%, transparent);
   transition:
     transform var(--transition),
     border-color var(--transition),
@@ -1260,11 +1281,17 @@ onMounted(load);
 .sharp-card:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--bg-deep) 24%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
+    0 0 34px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
 }
 .sharp-card.running {
   border-color: var(--success);
-  box-shadow: 0 0 0 1px var(--success-bg);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--success) 48%, transparent),
+    0 0 34px color-mix(in srgb, var(--success) 28%, transparent),
+    0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
 }
 .sharp-card-banner {
   width: 100%;

@@ -431,28 +431,37 @@ function formatBytes(bytes: number): string {
     transform var(--transition),
     border-color var(--transition),
     box-shadow var(--transition);
-  box-shadow: 0 12px 34px var(--card-glow);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 16px 36px color-mix(in srgb, var(--bg-deep) 34%, transparent);
 }
 .game-card.installed {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--success) 10%, transparent),
-    0 16px 38px color-mix(in srgb, var(--success) 10%, var(--card-glow));
+    0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent),
+    0 0 30px color-mix(in srgb, var(--success) 22%, transparent),
+    0 18px 40px color-mix(in srgb, var(--bg-deep) 36%, transparent);
 }
 .game-card.uninstalled {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--text-dim) 8%, transparent),
-    0 12px 30px color-mix(in srgb, var(--text-dim) 8%, var(--card-glow));
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 14px 34px color-mix(in srgb, var(--bg-deep) 30%, transparent);
 }
 .game-card:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 18px 42px var(--card-glow);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 0 36px color-mix(in srgb, var(--accent) 26%, transparent),
+    0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
   transform: translateY(-1px);
 }
 .game-card.running {
   border-color: var(--success);
   box-shadow:
-    0 0 0 1px var(--success-bg),
-    0 18px 42px var(--card-glow);
+    0 0 0 1px color-mix(in srgb, var(--success) 48%, transparent),
+    0 0 38px color-mix(in srgb, var(--success) 30%, transparent),
+    0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
 }
 
 .game-card-banner {
