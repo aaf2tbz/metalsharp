@@ -71,7 +71,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                 ],
-                launch_args: vec!["-dx12"],
+                launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M11,
                     PipelineId::M10,
@@ -100,7 +100,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                 ],
-                launch_args: vec!["-dx11"],
+                launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M12,
                     PipelineId::M10,
@@ -134,7 +134,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                 ],
-                launch_args: vec!["-dx10"],
+                launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M11,
                     PipelineId::M9,
@@ -161,7 +161,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                 ],
-                launch_args: vec!["-dx9"],
+                launch_args: vec![],
                 alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::Steam, PipelineId::MacSteam],
                 shader_cache_subdir: Some("m9"),
             },
@@ -272,10 +272,10 @@ impl PipelineId {
             return Some(p);
         }
         match normalized.as_str() {
-            "m11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
-            "m12" => Some(PipelineId::M12),
-            "m10" => Some(PipelineId::M10),
-            "m9" => Some(PipelineId::M9),
+            "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
+            "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
+            "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
+            "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
             "fna_arm64" | "fna_x86" | "mono_generic" => Some(PipelineId::FnaArm64),
             "steam" | "wine_steam" => Some(PipelineId::Steam),
@@ -312,7 +312,7 @@ mod tests {
         let m12 = get_pipeline(PipelineId::M12);
         assert!(!m12.experimental);
         assert_eq!(m12.backend, "dxmt");
-        assert_eq!(m12.launch_args, vec!["-dx12"]);
+        assert!(m12.launch_args.is_empty());
         assert!(m12.deploy_dlls.iter().any(|dll| dll.filename == "d3d12.dll"));
         assert_eq!(m12.shader_cache_subdir, Some("m12"));
     }
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(m10.description, "D3D10 -> Metal via DXMT");
         assert_eq!(m10.backend, "dxmt");
         assert!(!m10.experimental);
-        assert_eq!(m10.launch_args, vec!["-dx10"]);
+        assert!(m10.launch_args.is_empty());
         assert_eq!(m10.shader_cache_subdir, Some("m10"));
     }
 
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(m9.description, "D3D9 -> Metal via DXMT launch family");
         assert_eq!(m9.backend, "dxmt");
         assert!(!m9.experimental);
-        assert_eq!(m9.launch_args, vec!["-dx9"]);
+        assert!(m9.launch_args.is_empty());
         assert_eq!(m9.shader_cache_subdir, Some("m9"));
         assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
 
@@ -425,6 +425,8 @@ mod tests {
     #[test]
     fn launch_method_parsing_is_case_and_separator_tolerant() {
         assert_eq!(PipelineId::from_str_flexible(" M12 "), Some(PipelineId::M12));
+        assert_eq!(PipelineId::from_str_flexible("d3d12"), Some(PipelineId::M12));
+        assert_eq!(PipelineId::from_str_flexible("dx10"), Some(PipelineId::M10));
         assert_eq!(PipelineId::from_str_flexible("wine-steam"), Some(PipelineId::Steam));
         assert_eq!(PipelineId::from_legacy_method("DXMT_METAL"), Some(PipelineId::M11));
     }

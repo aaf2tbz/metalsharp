@@ -21,7 +21,7 @@ The current DXMT source tree provides D3D10, D3D11, D3D12, DXGI, and winemetal t
 |---|---|
 | Pipeline | `M9` |
 | Backend | `dxmt` |
-| Launch args | `-dx9` |
+| Launch args | none by default; `dx9`/`d3d9` select M9 as route aliases |
 | Wine overrides | `d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
 | Shader cache subdir | `m9` |
 | Preset fallback family | `m9`, then `dxmt-metal` |

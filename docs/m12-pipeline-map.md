@@ -13,7 +13,7 @@ uses for Wine-launched games.
 | --- | --- | --- | --- |
 | Game detection | `app/src-rust/src/mtsp/pe.rs`, `rules.rs` | D3D12 imports select `PipelineId::M12` for 64-bit games. | Present in current project |
 | Pipeline definition | `app/src-rust/src/mtsp/engine.rs` | M12 is named `D3D12 -> Metal via DXMT`, is the first stable pipeline, deploys DXMT DLLs, and sets D3D12/DXGI/D3D11 overrides. | Present in current project |
-| Launcher handoff | `app/src-rust/src/mtsp/launcher.rs` | M12 routes through `launch_dxmt_metal`, copies DLLs into the game directory, sets Wine/DYLD/cache env, and adds `-dx12`. | Present in current project |
+| Launcher handoff | `app/src-rust/src/mtsp/launcher.rs` | M12 routes through `launch_dxmt_metal`, copies DLLs into the game directory, and sets Wine/DYLD/cache env. | Present in current project |
 | Shader/cache routing | `app/src-rust/src/mtsp/shader_cache.rs` | M12 uses `m12` and `dxmt-metal12` cache directories. | Present in current project |
 | DXMT D3D12 implementation | External DXMT source tree | Conformance branch contains the real DXMT D3D12/DXIL/winemetal work used by M12 runtime DLLs. | External source tree |
 | Native D3D12 target | `include/metalsharp/D3D12Device.h`, `src/d3d/d3d12/*` | Builds `build/d3d12.dylib` and exposes `D3D12CreateDevice`. | In-tree, smoke-tested |
@@ -29,7 +29,7 @@ uses for Wine-launched games.
 4. M12 sets `WINEDLLOVERRIDES` so Wine prefers the deployed native DXMT DLLs.
 5. M12 adds DXMT/Wine unix library paths to `DYLD_FALLBACK_LIBRARY_PATH`.
 6. M12 sets shader and pipeline cache paths under the MetalSharp cache root.
-7. Wine launches the executable with the M12 launch args, including `-dx12`.
+7. Wine launches the executable without a forced DirectX command-line flag. `dx12` and `d3d12` are route aliases for selecting M12, not universal game args.
 8. DXMT handles D3D12/DXGI calls, compiles DXIL/MSL work, sends commands through
    `winemetal`, and presents through the Wine/macOS surface.
 

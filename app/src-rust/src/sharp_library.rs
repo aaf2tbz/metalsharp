@@ -49,11 +49,17 @@ fn ensure_base_dir() -> Result<(), Box<dyn std::error::Error>> {
 pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
     ensure_base_dir()?;
     let path = manifest_path();
-    if !path.exists() {
-        return Ok(vec![]);
+    let mut apps: Vec<SharpApp> = if path.exists() {
+        let data = fs::read_to_string(&path)?;
+        serde_json::from_str(&data)?
+    } else {
+        Vec::new()
+    };
+
+    if sync_non_steam_shortcuts(&mut apps) {
+        save_library(&apps)?;
     }
-    let data = fs::read_to_string(&path)?;
-    let apps: Vec<SharpApp> = serde_json::from_str(&data)?;
+
     Ok(apps)
 }
 
@@ -62,6 +68,55 @@ fn save_library(apps: &[SharpApp]) -> Result<(), Box<dyn std::error::Error>> {
     let data = serde_json::to_string_pretty(apps)?;
     fs::write(manifest_path(), data)?;
     Ok(())
+}
+
+fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
+    let mut changed = false;
+    for shortcut in crate::scan::scan_non_steam_shortcuts() {
+        let id = format!("steam_shortcut_{}", stable_shortcut_id(&shortcut.name, &shortcut.exe_path));
+        if apps.iter().any(|app| app.id == id || app_absolute_exe_path(app) == shortcut.exe_path) {
+            continue;
+        }
+
+        let install_dir = shortcut
+            .start_dir
+            .clone()
+            .filter(|dir| shortcut.exe_path.starts_with(dir))
+            .or_else(|| shortcut.exe_path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| shortcut.exe_path.clone());
+
+        let exe_path = relative_path_string(&install_dir, &shortcut.exe_path)
+            .unwrap_or_else(|_| shortcut.exe_path.to_string_lossy().to_string());
+
+        apps.push(SharpApp {
+            id,
+            name: shortcut.name,
+            exe_path,
+            install_dir: install_dir.to_string_lossy().to_string(),
+            cover: None,
+            engine: "auto".to_string(),
+            installed_at: chrono_now(),
+            size_bytes: dir_size(&install_dir),
+        });
+        changed = true;
+    }
+    changed
+}
+
+fn app_absolute_exe_path(app: &SharpApp) -> PathBuf {
+    PathBuf::from(&app.install_dir).join(&app.exe_path)
+}
+
+fn stable_shortcut_id(name: &str, exe_path: &Path) -> u32 {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    exe_path.hash(&mut hasher);
+    let hash = hasher.finish() as u32;
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
 }
 
 fn generate_id(name: &str) -> String {
@@ -213,7 +268,7 @@ pub fn set_cover(id: &str, cover_path: &str) -> Result<(), Box<dyn std::error::E
 }
 
 pub fn set_engine(id: &str, engine: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let valid = ["auto", "wine_bare", "m64", "m9", "m10", "m11", "m12", "m32"];
+    let valid = ["auto", "wine_bare", "m64", "m9", "m10", "m11", "m12", "m32", "d3d9", "d3d10", "d3d11", "d3d12"];
     if engine != "auto" && crate::mtsp::engine::PipelineId::from_str_flexible(engine).is_none() {
         return Err(format!("Unknown engine: {}. Valid: {}", engine, valid.join(", ")).into());
     }
@@ -469,7 +524,7 @@ pub fn handle_uninstall(body: &serde_json::Map<String, Value>) -> Value {
 
 pub fn handle_launch(body: &serde_json::Map<String, Value>) -> Value {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("wine_bare");
+    let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("auto");
     if id.is_empty() {
         return json!({"ok": false, "error": "id required"});
     }
