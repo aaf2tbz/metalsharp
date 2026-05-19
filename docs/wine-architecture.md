@@ -34,10 +34,21 @@ Other runtime pieces live beside it:
 
 ```text
 ~/.metalsharp/runtime/
-├── goldberg/
-├── mono-arm64/
-├── shims/
+├── redist/
 └── wine/
+```
+
+User/runtime state lives beside the runtime root:
+
+```text
+~/.metalsharp/
+├── prefix-steam/
+├── bottles/
+├── sharp-library/
+├── games/
+├── shader-cache/
+├── cache/
+└── logs/
 ```
 
 ## Pipeline Use
@@ -49,7 +60,7 @@ Other runtime pieces live beside it:
 | M10 | Wine + DXMT D3D10/D3D11/DXGI |
 | M9 | Wine + D3D9 Metal under the DXMT launch family |
 | M32 | Wine 32-bit fallback |
-| Steam | Wine Steam prefix |
+| Steam | Wine Steam prefix, preflighted by `steam_<appid>` bottle records |
 | Wine | Plain Wine |
 
 ## DLL Deployment
@@ -93,11 +104,15 @@ The shared Steam prefix is:
 
 Steam is installed inside that prefix. External Steam libraries may be mounted into the prefix by drive letter.
 
-Some prepared games can also use app-specific prefixes:
+Sharp Library installer/app bottles use dedicated prefixes:
 
 ```text
-~/.metalsharp/prefix-<appid>/
+~/.metalsharp/bottles/<id>/prefix/
 ```
+
+Steam game bottles are different: they are launch-authoritative readiness records, but their `prefix_path` currently
+points at `~/.metalsharp/prefix-steam/` so Runtime Doctor and repair actions affect the prefix Wine Steam actually uses.
+Wine Steam remains the live process that owns `steam://run` and stays connected for Steam games.
 
 ## Important Environment
 

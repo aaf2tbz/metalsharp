@@ -16,7 +16,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | **M9** | D3D9 via DXMT launch family |
 | **M32** | 32-bit Wine fallback |
 | **Native macOS** | FNA/XNA/Mono ARM64 native runtime |
-| **Steam** | Wine Steam |
+| **Steam** | Wine Steam, preflighted by Steam game bottles |
 | **MacOS Steam** | Native macOS Steam |
 | **Wine** | Plain Wine custom-library fallback |
 
@@ -32,7 +32,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | Nidhogg 2 | M32 is best. | **M32**, High settings |
 | Ghostrunner | Only M12 works. | **M12**, FSR Balanced/Performance, Medium/High, V-Sync Off |
 | Garry's Mod | Launches on M9 and M32, but needs more work. M32 reports Steam connection issues. | Work in progress |
-| Portal 2 | Best with M9. Audio does not work once inside the game. Goldberg deploys. | **M9** |
+| Portal 2 | Best with M9. Audio does not work once inside the game. | **M9** |
 | Hollow Knight | Works with native Mono ARM launch. | **Native macOS**, High settings |
 | Hollow Knight: Silksong | Works with Native macOS and M12. | **Native macOS**, High settings |
 | Skate 2 | Not compatible because of kernel-level anti-cheat. | Unsupported |
@@ -51,5 +51,5 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 
 - Game cards can be tested through the pipeline dropdown.
 - Shader caches are per appid and can be cleared from Settings.
-- Portal 2 uses Goldberg Steam emulator deployment.
 - Steam and MacOS Steam are separate launch paths.
+- Installed Wine Steam games create `steam_<appid>` bottle records for runtime asset/component preflight before launch.
