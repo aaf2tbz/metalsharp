@@ -60,6 +60,13 @@ interface SteamRuntimeReport {
   actions: { id: string; status: string; detail: string }[];
 }
 
+interface ComponentRepair {
+  id: string;
+  status: string;
+  detail: string;
+  pid?: number | null;
+}
+
 const props = defineProps<{
   game: SteamGame;
   running: boolean;
@@ -192,6 +199,25 @@ async function runRuntimeDoctor() {
     runtimeReport.value = result.report;
   } else {
     toast.show(result?.error ?? "Runtime Doctor failed", "error");
+  }
+}
+
+async function repairRuntimeComponent(component: string) {
+  if (!runtimeReport.value?.bottle_id) {
+    toast.show("No Steam bottle is attached to this install yet", "error");
+    return;
+  }
+  runtimeLoading.value = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
+    id: runtimeReport.value.bottle_id,
+    component,
+  });
+  runtimeLoading.value = false;
+  if (result?.ok && result.repair) {
+    toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
+    await runRuntimeDoctor();
+  } else {
+    toast.show(result?.error ?? "Runtime repair failed", "error");
   }
 }
 
@@ -370,7 +396,12 @@ function formatBytes(bytes: number): string {
                 {{ runtimeReport.runtime_assets.length }} runtime assets detected near this install.
               </div>
               <div v-if="runtimeReport.actions.length" class="doctor-notes blocked">
-                <div v-for="action in runtimeReport.actions" :key="action.id">{{ action.id }}: {{ action.detail }}</div>
+                <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
+                  <span>{{ action.id }}: {{ action.detail }}</span>
+                  <button class="btn btn-secondary btn-sm" :disabled="runtimeLoading" @click="repairRuntimeComponent(action.id)">
+                    Repair
+                  </button>
+                </div>
               </div>
             </template>
           </div>
@@ -653,6 +684,15 @@ function formatBytes(bytes: number): string {
   gap: 4px;
   font-size: 11px;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.runtime-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.runtime-action-row span {
   overflow-wrap: anywhere;
 }
 

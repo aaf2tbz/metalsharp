@@ -149,6 +149,7 @@ pub struct BottleDiagnostic {
     pub summary: String,
     pub checks: Vec<BottleCheck>,
     pub actions: Vec<BottleAction>,
+    pub component_sources: Vec<ComponentSourcePolicy>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,6 +164,15 @@ pub struct BottleAction {
     pub id: String,
     pub status: String,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ComponentSourcePolicy {
+    pub id: String,
+    pub source: String,
+    pub available: bool,
+    pub detail: String,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +193,19 @@ pub struct ComponentRepairReport {
     pub asset_path: Option<String>,
     pub log_path: Option<String>,
     pub pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CompatibilityCase {
+    pub id: String,
+    pub name: String,
+    pub case_type: String,
+    pub required_profile: RuntimeProfile,
+    pub installer_opens: String,
+    pub final_app_detected: String,
+    pub final_app_launches: String,
+    pub known_missing_runtime: String,
+    pub bottle_id: Option<String>,
 }
 
 struct ComponentInstaller {
@@ -473,7 +496,7 @@ pub fn watch_bottle_launch(id: String, pid: u32) {
     thread::spawn(move || {
         for _ in 0..LAUNCH_WATCH_MAX_POLLS {
             thread::sleep(Duration::from_secs(LAUNCH_WATCH_INTERVAL_SECS));
-            if !crate::launch::is_process_active(pid as i32) {
+            if !is_process_tree_active(pid) {
                 let _ = complete_bottle_launch(&id, pid);
                 return;
             }
@@ -485,6 +508,16 @@ pub fn refresh_app_detections(id: &str) -> Result<BottleManifest, Box<dyn std::e
     let mut manifest = load_bottle(id)?;
     refresh_manifest_launch_state(&mut manifest);
     refresh_manifest_runtime_views(&mut manifest);
+    manifest.updated_at = timestamp_secs();
+    save_bottle(&manifest)?;
+    Ok(manifest)
+}
+
+pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let mut manifest = load_bottle(id)?;
+    manifest.runtime_profile = profile;
+    manifest.arch = runtime_profile_definition(profile).arch;
+    manifest.installed_components = merge_components(manifest.installed_components, default_components_for(profile));
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
@@ -538,6 +571,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     }
 
     let actions = component_actions(&manifest.installed_components);
+    let component_sources = component_source_policies(&manifest.installed_components, manifest.arch);
     let ready = checks
         .iter()
         .filter(|check| check.id != "app_detection" && check.id != "game_runtime_assets")
@@ -553,7 +587,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
 
-    Ok(BottleDiagnostic { id: id.to_string(), ready, summary, checks, actions })
+    Ok(BottleDiagnostic { id: id.to_string(), ready, summary, checks, actions, component_sources })
 }
 
 fn mark_manifest_launch_started(manifest: &mut BottleManifest, pid: u32, log_path: &Path) {
@@ -573,7 +607,7 @@ fn refresh_manifest_launch_state(manifest: &mut BottleManifest) -> bool {
         manifest.last_launch_finished_at = Some(timestamp_secs());
         return true;
     };
-    if crate::launch::is_process_active(pid as i32) {
+    if is_process_tree_active(pid) {
         return false;
     }
     manifest.last_launch_status = Some("exited".to_string());
@@ -601,10 +635,41 @@ fn complete_bottle_launch(id: &str, pid: u32) -> Result<BottleManifest, Box<dyn 
     }
     manifest.last_launch_status = Some("exited".to_string());
     manifest.last_launch_finished_at = Some(timestamp_secs());
+    manifest.installed_components =
+        inspect_components(&PathBuf::from(&manifest.prefix_path), &manifest.installed_components);
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
+}
+
+fn is_process_tree_active(pid: u32) -> bool {
+    if crate::launch::is_process_active(pid as i32) {
+        return true;
+    }
+    process_descendants(pid).into_iter().any(|child| crate::launch::is_process_active(child as i32))
+}
+
+fn process_descendants(pid: u32) -> Vec<u32> {
+    let mut descendants = Vec::new();
+    let mut stack = vec![pid];
+    while let Some(parent) = stack.pop() {
+        let Ok(output) = Command::new("pgrep").arg("-P").arg(parent.to_string()).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Ok(child) = line.trim().parse::<u32>() {
+                if !descendants.contains(&child) {
+                    descendants.push(child);
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    descendants
 }
 
 pub fn prepare_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::Error>> {
@@ -650,6 +715,34 @@ pub fn repair_component(
             asset_path: None,
             log_path: None,
             pid: None,
+        });
+    }
+
+    if matches!(component_id, "wine-mono" | "gecko" | "corefonts") {
+        let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
+        if dry_run {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: "builtin_available".to_string(),
+                detail: format!("{} can be repaired with MetalSharp Wine bootstrapping", component_id),
+                asset_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
+                pid: None,
+            });
+        }
+        let pid = launch_wineboot_repair(&prefix, component_id, &log_path)?;
+        mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
+        mark_manifest_launch_started(&mut manifest, pid, &log_path);
+        manifest.health = BottleHealth::NeedsRepair;
+        save_bottle(&manifest)?;
+        watch_bottle_launch(id.to_string(), pid);
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: "started".to_string(),
+            detail: format!("Started {} bootstrap repair in bottle {}", component_id, id),
+            asset_path: None,
+            log_path: Some(log_path.to_string_lossy().to_string()),
+            pid: Some(pid),
         });
     }
 
@@ -806,6 +899,21 @@ pub fn handle_repair_component(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_set_runtime_profile(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let profile = body.get("profile").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() || profile.is_empty() {
+        return json!({"ok": false, "error": "id and profile required"});
+    }
+    let Some(profile) = parse_runtime_profile(profile) else {
+        return json!({"ok": false, "error": "unknown runtime profile"});
+    };
+    match set_runtime_profile(id, profile) {
+        Ok(bottle) => json!({"ok": true, "bottle": bottle}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_set_windows_version(body: &serde_json::Map<String, Value>) -> Value {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let version = body.get("version").and_then(|v| v.as_str()).unwrap_or("");
@@ -819,6 +927,13 @@ pub fn handle_set_windows_version(body: &serde_json::Map<String, Value>) -> Valu
         Ok(report) => json!({"ok": true, "repair": report}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
+}
+
+pub fn handle_compatibility_matrix() -> Value {
+    json!({
+        "ok": true,
+        "cases": compatibility_matrix(),
+    })
 }
 
 pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Value {
@@ -963,6 +1078,22 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::JavaLauncher,
         _ => RuntimeProfile::Plain,
+    }
+}
+
+fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
+    match value.to_ascii_lowercase().replace('-', "_").as_str() {
+        "plain" => Some(RuntimeProfile::Plain),
+        "launcher" => Some(RuntimeProfile::Launcher),
+        "game_install" | "gameinstall" => Some(RuntimeProfile::GameInstall),
+        "m9" => Some(RuntimeProfile::M9),
+        "m11" => Some(RuntimeProfile::M11),
+        "m12" => Some(RuntimeProfile::M12),
+        "dotnet" => Some(RuntimeProfile::Dotnet),
+        "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
+        "webview" => Some(RuntimeProfile::Webview),
+        "java_launcher" | "javalauncher" => Some(RuntimeProfile::JavaLauncher),
+        _ => None,
     }
 }
 
@@ -1192,6 +1323,44 @@ fn launch_component_installer(
     Ok(child.id())
 }
 
+fn launch_wineboot_repair(
+    prefix: &Path,
+    component_id: &str,
+    log_path: &Path,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wineboot = ms_root.join("bin").join("wineboot");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let executable = if wineboot.exists() { wineboot } else { wine };
+    if !executable.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "builtin_component_repair={}", component_id)?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    writeln!(log, "--- wineboot output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&executable);
+    if executable.file_name().map(|name| name.to_string_lossy().contains("wine")).unwrap_or(false)
+        && !executable.file_name().map(|name| name == "wineboot").unwrap_or(false)
+    {
+        cmd.arg("wineboot");
+    }
+    cmd.arg("-u")
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "+loaddll")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
 fn run_wine_reg_set_windows_version(
     prefix: &Path,
     version: &str,
@@ -1240,6 +1409,42 @@ fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
             detail: component_action_detail(&component.id),
         })
         .collect()
+}
+
+fn component_source_policies(components: &[RuntimeComponent], arch: BottleArch) -> Vec<ComponentSourcePolicy> {
+    components.iter().map(|component| component_source_policy(&component.id, arch)).collect()
+}
+
+fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy {
+    if matches!(id, "wine-mono" | "gecko" | "corefonts") {
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: "metalsharp_wine_bootstrap".to_string(),
+            available: dirs::home_dir()
+                .map(|home| {
+                    crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
+                        .exists()
+                })
+                .unwrap_or(false),
+            detail: format!("{} is repaired by running wineboot -u in the bottle prefix", id),
+            path: None,
+        };
+    }
+    let installer = resolve_component_installer(id, arch);
+    ComponentSourcePolicy {
+        id: id.to_string(),
+        source: if installer.is_some() { "local_redist_asset" } else { "missing_local_asset" }.to_string(),
+        available: installer.is_some(),
+        detail: match id {
+            "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
+            "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
+            "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
+            _ => "No external installer source required or source is not yet mapped",
+        }
+        .to_string(),
+        path: installer.map(|installer| installer.path.to_string_lossy().to_string()),
+    }
 }
 
 fn component_action_detail(id: &str) -> String {
@@ -1313,6 +1518,176 @@ fn detect_apps_in_prefix(prefix: &Path) -> Vec<AppDetection> {
     }
     detections.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.exe_path.cmp(&b.exe_path)));
     detections
+}
+
+fn compatibility_matrix() -> Vec<CompatibilityCase> {
+    let bottles = list_bottles().unwrap_or_default();
+    let mut cases = vec![
+        compatibility_case(
+            "minecraft-installer",
+            "Minecraft Installer",
+            "32-bit .NET/WinRT bootstrapper",
+            RuntimeProfile::Win32Dotnet,
+            "needs_real_trace",
+            "pending",
+            "pending",
+            "Wine Mono/.NET 4.x compatibility",
+            find_bottle_for(&bottles, &["minecraft"]),
+        ),
+        compatibility_case(
+            "itch-windows-games",
+            "Itch.io Windows Games",
+            "indie installer/extracted demo",
+            RuntimeProfile::GameInstall,
+            "untested",
+            "pending",
+            "pending",
+            "VC runtime or DirectX June 2010 varies by game",
+            find_bottle_for(&bottles, &["itch"]),
+        ),
+        compatibility_case(
+            "unity-demos",
+            "Unity Demos",
+            "Unity player demo",
+            RuntimeProfile::M11,
+            "untested",
+            "pending",
+            "pending",
+            "VC runtime and Unity launcher handoff",
+            find_bottle_for(&bottles, &["unity", "demo"]),
+        ),
+        compatibility_case(
+            "unreal-demos",
+            "Unreal Demos",
+            "Unreal packaged demo",
+            RuntimeProfile::M12,
+            "untested",
+            "pending",
+            "pending",
+            "VC runtime, DirectX payloads, D3D12 route",
+            find_bottle_for(&bottles, &["unreal"]),
+        ),
+        compatibility_case(
+            "electron-launchers",
+            "Electron Launchers",
+            "Squirrel/Electron launcher",
+            RuntimeProfile::Launcher,
+            "untested",
+            "pending",
+            "pending",
+            "WebView/Gecko/browser runtime varies",
+            find_bottle_for(&bottles, &["electron", "squirrel", "launcher"]),
+        ),
+        compatibility_case(
+            "gog-offline-installers",
+            "GOG Offline Installers",
+            "offline game installer",
+            RuntimeProfile::GameInstall,
+            "untested",
+            "pending",
+            "pending",
+            "VC runtime and DirectX June 2010",
+            find_bottle_for(&bottles, &["gog"]),
+        ),
+        compatibility_case(
+            "webview-launchers",
+            "Epic/EA/Ubisoft Launchers",
+            "store-adjacent launcher",
+            RuntimeProfile::Webview,
+            "untested",
+            "pending",
+            "pending",
+            "WebView2 under Wine remains risky",
+            find_bottle_for(&bottles, &["epic", "ea", "ubisoft", "webview"]),
+        ),
+        compatibility_case(
+            "vc-redists",
+            "VC Runtime Redistributables",
+            "runtime installer",
+            RuntimeProfile::Plain,
+            "supported",
+            "not_applicable",
+            "not_applicable",
+            "local redistributable asset required",
+            None,
+        ),
+    ];
+
+    for bottle in bottles {
+        if !cases.iter().any(|case| case.bottle_id.as_deref() == Some(bottle.id.as_str())) {
+            cases.push(compatibility_case(
+                &bottle.id,
+                &bottle.name,
+                match bottle.bottle_type {
+                    BottleType::Steam => "steam game bottle",
+                    BottleType::Installer => "installer bottle",
+                    BottleType::SharpApp => "sharp app bottle",
+                    BottleType::Utility => "utility bottle",
+                },
+                bottle.runtime_profile,
+                bottle.last_launch_status.as_deref().unwrap_or("not_run"),
+                if bottle.installed_app_detections.is_empty() { "no" } else { "yes" },
+                "unknown",
+                &missing_components_summary(&bottle.installed_components),
+                Some(bottle.id.clone()),
+            ));
+        }
+    }
+    cases
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compatibility_case(
+    id: &str,
+    name: &str,
+    case_type: &str,
+    required_profile: RuntimeProfile,
+    installer_opens: &str,
+    final_app_detected: &str,
+    final_app_launches: &str,
+    known_missing_runtime: &str,
+    bottle_id: Option<String>,
+) -> CompatibilityCase {
+    CompatibilityCase {
+        id: id.to_string(),
+        name: name.to_string(),
+        case_type: case_type.to_string(),
+        required_profile,
+        installer_opens: installer_opens.to_string(),
+        final_app_detected: final_app_detected.to_string(),
+        final_app_launches: final_app_launches.to_string(),
+        known_missing_runtime: known_missing_runtime.to_string(),
+        bottle_id,
+    }
+}
+
+fn find_bottle_for(bottles: &[BottleManifest], needles: &[&str]) -> Option<String> {
+    bottles
+        .iter()
+        .find(|bottle| {
+            let haystack = format!(
+                "{} {} {}",
+                bottle.id,
+                bottle.name,
+                bottle.source_installer_path.as_deref().unwrap_or_default()
+            )
+            .to_ascii_lowercase();
+            needles.iter().any(|needle| haystack.contains(needle))
+        })
+        .map(|bottle| bottle.id.clone())
+}
+
+fn missing_components_summary(components: &[RuntimeComponent]) -> String {
+    let missing = components
+        .iter()
+        .filter(|component| matches!(component.state, ComponentState::Missing | ComponentState::NeedsRepair))
+        .map(|component| component.id.as_str())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        "none".to_string()
+    } else {
+        missing.join(", ")
+    }
 }
 
 fn detect_apps_in_game_dir(game_dir: &Path) -> Vec<AppDetection> {

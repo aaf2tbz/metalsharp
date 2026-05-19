@@ -591,6 +591,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
+        (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Post, "/bottles/sync-steam") => resp(200, bottles::handle_sync_steam_bottles()),
         (Method::Post, "/bottles/get") => {
             let body = read_body(req);
@@ -612,9 +613,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, bottles::handle_repair_component(&body))
         },
+        (Method::Post, "/bottles/set-runtime-profile") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_set_runtime_profile(&body))
+        },
         (Method::Post, "/bottles/set-windows-version") => {
             let body = read_body(req);
             resp(200, bottles::handle_set_windows_version(&body))
+        },
+        (Method::Post, "/bottles/relaunch-installer") => {
+            let body = read_body(req);
+            resp(200, sharp_library::handle_relaunch_bottle_installer(&body))
         },
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);

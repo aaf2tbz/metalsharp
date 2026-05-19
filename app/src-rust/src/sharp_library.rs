@@ -699,6 +699,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
     let launch_args = combined_launch_args(&app);
     let (pid, game_type, recipe) = if let Some(bottle_id) = app.bottle_id.as_deref() {
         let bottle = crate::bottles::load_bottle(bottle_id)?;
+        let log_path = crate::bottles::next_launch_log_path(bottle_id);
         crate::mtsp::launcher::launch_custom_with_options(
             launch_id,
             &work_dir,
@@ -707,9 +708,13 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
             &launch_args,
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(PathBuf::from(bottle.prefix_path)),
-                log_path: Some(crate::bottles::next_launch_log_path(bottle_id)),
+                log_path: Some(log_path.clone()),
             },
-        )?
+        )
+        .inspect(|result| {
+            let _ = crate::bottles::set_launch_started(bottle_id, result.0, &log_path);
+            crate::bottles::watch_bottle_launch(bottle_id.to_string(), result.0);
+        })?
     } else {
         crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline, &launch_args)?
     };
@@ -1050,6 +1055,29 @@ pub fn handle_import_bottle_app(body: &serde_json::Map<String, Value>) -> Value 
     }
     match import_bottle_app(bottle_id, exe_path, name) {
         Ok(app) => json!({"ok": true, "app": app}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn relaunch_bottle_installer(id: &str) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let bottle = crate::bottles::load_bottle(id)?;
+    if bottle.bottle_type != crate::bottles::BottleType::Installer {
+        return Err("Only installer bottles can relaunch their source installer".into());
+    }
+    let source = bottle.source_installer_path.ok_or("Bottle has no source installer path")?;
+    start_wine_installer(Path::new(&source))
+}
+
+pub fn handle_relaunch_bottle_installer(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    match relaunch_bottle_installer(id) {
+        Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
+            json!({"ok": true, "installing": true, "pid": pid, "message": message})
+        },
+        Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": *app}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }

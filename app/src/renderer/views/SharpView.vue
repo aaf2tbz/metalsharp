@@ -45,6 +45,12 @@ interface BottleAction {
   detail: string;
 }
 
+interface RuntimeProfileDefinition {
+  id: string;
+  name: string;
+  components: string[];
+}
+
 interface BottleManifest {
   id: string;
   name: string;
@@ -71,6 +77,7 @@ interface BottleDiagnostic {
   summary: string;
   actions: BottleAction[];
   checks: { id: string; ok: boolean; detail: string }[];
+  component_sources?: { id: string; source: string; available: boolean; detail: string; path?: string | null }[];
 }
 
 interface ComponentRepair {
@@ -82,9 +89,23 @@ interface ComponentRepair {
   pid?: number | null;
 }
 
+interface CompatibilityCase {
+  id: string;
+  name: string;
+  case_type: string;
+  required_profile: string;
+  installer_opens: string;
+  final_app_detected: string;
+  final_app_launches: string;
+  known_missing_runtime: string;
+  bottle_id?: string | null;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
 const bottles = ref<BottleManifest[]>([]);
+const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
+const compatibilityCases = ref<CompatibilityCase[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const bottleLoading = ref<Record<string, boolean>>({});
 const doctorOpen = ref<Record<string, boolean>>({});
@@ -107,9 +128,11 @@ const engineOptions = [
 ];
 
 async function load() {
-  const [result, bottleResult] = await Promise.all([
+  const [result, bottleResult, profileResult, matrixResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
+    api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
+    api<{ ok: boolean; cases: CompatibilityCase[] }>("GET", "/bottles/compatibility-matrix"),
   ]);
   if (result?.ok) {
     apps.value = result.apps;
@@ -122,6 +145,8 @@ async function load() {
   if (bottleResult?.ok) {
     bottles.value = bottleResult.bottles;
   }
+  if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
+  if (matrixResult?.ok) compatibilityCases.value = matrixResult.cases;
 }
 
 async function refreshSharpLibrary() {
@@ -200,6 +225,53 @@ async function repairBottleComponent(id: string, component: string) {
     await doctorBottle(id);
   } else {
     toast.show(result?.error ?? "Failed to repair component", "error");
+  }
+}
+
+async function setBottleProfile(id: string, profile: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; bottle?: BottleManifest; error?: string }>("POST", "/bottles/set-runtime-profile", {
+    id,
+    profile,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.bottle) {
+    upsertBottle(result.bottle);
+    toast.show("Bottle profile updated", "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to update bottle profile", "error");
+  }
+}
+
+async function setBottleWindowsVersion(id: string, version: string) {
+  bottleLoading.value[id] = true;
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/set-windows-version", {
+    id,
+    version,
+  });
+  bottleLoading.value[id] = false;
+  if (result?.ok && result.repair) {
+    toast.show(`Windows mode ${version} requested`, "success");
+    await doctorBottle(id);
+  } else {
+    toast.show(result?.error ?? "Failed to set Windows mode", "error");
+  }
+}
+
+async function relaunchBottleInstaller(bottle: BottleManifest) {
+  bottleLoading.value[bottle.id] = true;
+  const result = await api<{ ok: boolean; installing?: boolean; message?: string; error?: string }>(
+    "POST",
+    "/bottles/relaunch-installer",
+    { id: bottle.id },
+  );
+  bottleLoading.value[bottle.id] = false;
+  if (result?.ok) {
+    toast.show(result.message ?? "Installer relaunched", "success");
+    await load();
+  } else {
+    toast.show(result?.error ?? "Failed to relaunch installer", "error");
   }
 }
 
@@ -520,9 +592,40 @@ onMounted(load);
               <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
                 Scan
               </button>
+              <button
+                v-if="bottle.source_installer_path"
+                class="btn btn-secondary btn-sm"
+                :disabled="bottleLoading[bottle.id]"
+                @click="relaunchBottleInstaller(bottle)"
+              >
+                Relaunch
+              </button>
               <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
               <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">
                 Logs
+              </button>
+            </div>
+          </div>
+          <div class="bottle-controls">
+            <select
+              class="control-input"
+              :value="bottle.runtime_profile"
+              :disabled="bottleLoading[bottle.id]"
+              @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="profile in runtimeProfiles" :key="profile.id" :value="profile.id">
+                {{ profile.name }}
+              </option>
+            </select>
+            <div class="windows-version-controls">
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">
+                Win7
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">
+                Win10
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">
+                Win11
               </button>
             </div>
           </div>
@@ -564,8 +667,43 @@ onMounted(load);
                 </button>
               </div>
             </div>
+            <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
+              <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id">
+                {{ source.id }}: {{ source.available ? source.source : "missing source" }}
+              </div>
+            </div>
           </div>
         </article>
+      </div>
+    </section>
+
+    <section v-if="compatibilityCases.length" class="compatibility-matrix">
+      <div class="bottle-strip-header">
+        <div>
+          <h2>Compatibility Matrix</h2>
+          <p>{{ compatibilityCases.length }} installer and runtime cases tracked</p>
+        </div>
+      </div>
+      <div class="compatibility-table">
+        <div class="compatibility-row compatibility-header">
+          <span>Case</span>
+          <span>Profile</span>
+          <span>Installer</span>
+          <span>Detected</span>
+          <span>Launch</span>
+          <span>Runtime</span>
+        </div>
+        <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
+          <span>
+            <strong>{{ item.name }}</strong>
+            <small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small>
+          </span>
+          <span>{{ item.required_profile }}</span>
+          <span>{{ item.installer_opens }}</span>
+          <span>{{ item.final_app_detected }}</span>
+          <span>{{ item.final_app_launches }}</span>
+          <span>{{ item.known_missing_runtime }}</span>
+        </div>
       </div>
     </section>
 
@@ -834,6 +972,16 @@ onMounted(load);
   justify-content: flex-end;
   gap: 6px;
 }
+.bottle-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+.windows-version-controls {
+  display: flex;
+  gap: 6px;
+}
 .bottle-detections {
   display: flex;
   flex-wrap: wrap;
@@ -860,6 +1008,41 @@ onMounted(load);
 }
 .bottle-action-row span {
   overflow-wrap: anywhere;
+}
+.compatibility-matrix {
+  margin-bottom: 18px;
+}
+.compatibility-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.compatibility-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.4fr) 110px 90px 90px 90px minmax(170px, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compatibility-row:first-child {
+  border-top: 0;
+}
+.compatibility-header {
+  color: var(--text-dim);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.compatibility-row strong,
+.compatibility-row small {
+  display: block;
+}
+.compatibility-row small {
+  margin-top: 2px;
+  color: var(--text-dim);
 }
 
 .sharp-grid {
