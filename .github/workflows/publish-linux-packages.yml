@@ -4,13 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without leading v
-        required: true
-        default: 0.33.21
+        description: Release version without leading v. Defaults to the selected release tag.
+        required: false
       release_tag:
-        description: GitHub release tag containing the Linux package assets
-        required: true
-        default: v0.33.21
+        description: GitHub release tag containing the Linux package assets. Defaults to the latest release.
+        required: false
 
 permissions:
   contents: read
@@ -35,10 +33,29 @@ jobs:
           sudo install -m 0755 oras /usr/local/bin/oras
           oras version
 
+      - name: Resolve release inputs
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          release_tag="${INPUT_RELEASE_TAG}"
+          if [ -z "$release_tag" ]; then
+            release_tag="$(gh release view --json tagName --jq .tagName)"
+          fi
+          version="${INPUT_VERSION}"
+          if [ -z "$version" ]; then
+            version="${release_tag#v}"
+          fi
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           set -euo pipefail
           mkdir -p dist/release dist/electron dist/packages
@@ -54,17 +71,21 @@ jobs:
       - name: Publish OCI artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          METALSHARP_VERSION: ${{ inputs.version }}
-          METALSHARP_PACKAGE_TAGS: ${{ inputs.version }} ${{ inputs.release_tag }} latest
+          METALSHARP_VERSION: ${{ steps.release.outputs.version }}
+          METALSHARP_PACKAGE_TAGS: ${{ steps.release.outputs.version }} ${{ steps.release.outputs.release_tag }} latest
         run: |
           tools/linux/publish-oci-packages.sh
 
       - name: Verify package tags
         env:
-          VERSION: ${{ inputs.version }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           set -euo pipefail
-          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
-          oras repo tags "ghcr.io/${OWNER}/metalsharp-linux-runtime" | grep -E "^(${VERSION}|${RELEASE_TAG}|latest)$"
-          oras repo tags "ghcr.io/${OWNER}/metalsharp-linux-deb" | grep -E "^(${VERSION}|${RELEASE_TAG}|latest)$"
+          OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          for image in "metalsharp-linux-runtime" "metalsharp-linux-deb"; do
+            tags="$(oras repo tags "ghcr.io/${OWNER}/${image}")"
+            printf '%s\n' "$tags" | grep -Fx "$VERSION"
+            printf '%s\n' "$tags" | grep -Fx "$RELEASE_TAG"
+            printf '%s\n' "$tags" | grep -Fx latest
+          done
