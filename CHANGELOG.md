@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.33.23 - 2026-05-19
+
+Release packaging follow-up.
+
+### Fixed
+
+- **Linux runtime package tarballs after Docker DEB builds** - the Docker package builder can leave `dist/` owned by root on GitHub-hosted Ubuntu runners. `tools/linux/create-release-tarballs.sh` now repairs the output directory ownership when `sudo` is available before writing `dist/packages/metalsharp_linux_runtime*.tar.zst`.
+
+### Changed
+
+- **Release metadata** - bumped package, Rust, lockfile, and CMake versions together for the clean follow-up tag after the failed `v0.33.22` DEB package run.
+
+## v0.33.22 - 2026-05-19
+
+Beta 6 runtime bottles, installer profiles, Linux package automation, and documentation refresh.
+
+### Added
+
+- **Runtime bottles** - added bottle manifests under `~/.metalsharp/bottles/` for Steam games and installer/custom Windows programs, with per-bottle prefixes, runtime profiles, component state, runtime assets, launch logs, and app detection.
+- **Steam game bottle preflight** - Steam game launches now create/update `steam_<appid>` bottle state and run launch-authoritative runtime checks while keeping Wine Steam as the live session owner for `steam://run` launches.
+- **Installer bottle support** - Sharp Library **Install Windows Program** classifies `.exe`/MSI installers, chooses 32-bit/64-bit profiles, launches them in bottle-aware Wine prefixes, tracks completion, and scans for installed app candidates to import.
+- **Runtime Doctor surfaces** - added bottle profile, compatibility matrix, redistributable source, Steam runtime doctor, repair-component, Windows-version, relaunch-installer, and bottle import endpoints.
+- **Linux package automation** - main/tag CI now builds Debian packages, creates Linux runtime tarballs, and publishes Linux runtime/DEB assets to GHCR with OCI tags. PR CI includes Docker package smoke coverage.
+- **Docs** - refreshed README and added a practical "How to Use MetalSharp" guide for Steam games, Sharp Library installs, runtime bottles, logs, and support links.
+
+### Changed
+
+- **Sharp Library UI** - renamed "Install an EXE" to **Install Windows Program** and moved runtime bottles, compatibility matrix, redistributable sources, and logs into collapsible containers to keep the app drawer readable.
+- **Game cards** - added bottle-aware metadata and runtime doctor controls without requiring users to discover missing DLLs/assets manually.
+- **Migration wizard** - preserves Steam games, prefixes, settings, Sharp Library entries, and bottle state while installing the refreshed MetalSharp runtime cleanly.
+- **Runtime profile routing** - added explicit bottle profiles for M9/M10/M11/M12/M32/Steam/Wine/installer flows, including D3D10, D3D11, D3D12, VC runtime, DirectX, .NET, Gecko, Mono, WebView2, and core-font checks.
+
+### Fixed
+
+- **Installer launch completion** - bottle launches now wait for Wine prefix idleness and log quiescence so installers do not stay stuck as running after child-process handoff.
+- **Component readiness** - only installed components count as ready; unknown or repair-needed components produce repair actions.
+- **Steam appid validation** - `/steam/launch-game` and runtime doctor reject missing, zero, string, or oversized app IDs instead of truncating them.
+- **Core font detection** - runtime doctor now requires representative core font files instead of treating an empty Wine Fonts directory as installed.
+- **Manifest writes** - bottle manifests are serialized with a save lock and atomic replacement to avoid partial JSON/race corruption.
+- **Redistributable resolution** - local `~/.metalsharp/runtime/redist` assets are honored alongside Steam CommonRedist payloads.
+
 ## v0.24.0 — 2026-05-14
 
 Updater fix and Metal CI.

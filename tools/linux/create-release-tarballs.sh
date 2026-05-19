@@ -5,7 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="${METALSHARP_PACKAGE_OUT:-$PROJECT_ROOT/dist/packages}"
 
-mkdir -p "$OUT_DIR"
+ensure_writable_dir() {
+  local dir="$1"
+  local parent
+  parent="$(dirname "$dir")"
+
+  if mkdir -p "$dir" 2>/dev/null; then
+    return
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p "$dir"
+    sudo chown -R "$(id -u):$(id -g)" "$parent"
+    return
+  fi
+
+  mkdir -p "$dir"
+}
+
+ensure_writable_dir "$OUT_DIR"
 
 create_runtime_archive() {
   local dest="$1"

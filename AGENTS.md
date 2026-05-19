@@ -4,7 +4,7 @@ Guide for AI agents working on the MetalSharp repository.
 
 ## What This Project Is
 
-MetalSharp is a macOS app that runs Windows Steam games via Wine + Metal translation. It's an Electron app with a Rust HTTP backend, a C++ native D3D/Metal engine, and per-game engine routing that picks the right graphics pipeline automatically.
+MetalSharp is a macOS app that runs Windows Steam games and Windows programs via Wine + Metal translation. It's an Electron app with a Rust HTTP backend, a C++ native D3D/Metal engine, per-game engine routing, runtime bottles, installer profiles, and Linux `.deb` packaging.
 
 ## Repository Structure
 
@@ -13,11 +13,14 @@ app/
 ├── src-rust/                    Rust HTTP backend (tiny_http server on port 9274)
 │   └── src/
 │       ├── main.rs              HTTP router — all /launch, /steam/*, /setup/*, /config, /logs endpoints
+│       ├── bottles.rs           Runtime bottles, installer profiles, runtime doctor, redist/source checks
 │       ├── launch.rs            Engine detection + game launch — the core routing logic
 │       ├── steam.rs             Steam process management, library, install/uninstall, CEF wrapper
 │       ├── setup.rs             Per-game preparation (shim builds, DLL staging, FNA runtime)
 │       ├── installer.rs         Dependency installer (Wine bundle, Rosetta, Xcode CLI, GPTK, Mono)
+│       ├── migrate.rs           Runtime migration + preservation of Steam/prefix/game/bottle state
 │       ├── scan.rs              Game library scanner (Steam appmanifest parsing, wine path resolution)
+│       ├── sharp_library.rs     Sharp Library imports, installer launch, bottle app imports
 │       └── updater.rs           Self-update via GitHub releases DMG download
 ├── src/
 │   ├── main/                    Electron main process
@@ -46,7 +49,8 @@ include/                         C++ public headers
 tests/                           C++ test suite (20+ tests: D3D11, D3D12, DXBC, Metal, audio, input)
 tools/
 ├── launcher/                    Native launcher (metalsharp binary + Wine prefix management)
-└── dmg/                         DMG packaging scripts
+├── dmg/                         DMG packaging scripts
+└── linux/                       DEB/Docker/runtime tarball/GHCR package scripts
 scripts/                         Per-game setup scripts (setup-rainworld-deps.sh, etc.)
 configs/                         Mono DLL maps for FNA games
 docs/                            Architecture docs + game compatibility matrix
@@ -56,22 +60,21 @@ install.sh                       CLI build script (cmake + test runner)
 
 ## Key Concepts
 
-### Engine Routing (launch.rs)
+### MTSP Routing and Runtime Bottles
 
-10 engine types. Each game maps to one via hardcoded appid or directory scan fallback:
+Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get `steam_<appid>` bottles that are launch-authoritative for runtime checks, while Wine Steam remains the live launcher/session owner for `steam://run`.
 
-| Engine | Method | Example Games |
+| Pipeline | Method | Example Games |
 |--------|--------|--------------|
-| `DxmtMetal` | Direct exe, DXMT DLLs into game dir | Rain World, Schedule I, Subnautica BZ |
-| `DxmtMetal12` | Same + d3d12.dll | RE4 (setup), future D3D12 games |
-| `DxvkMetal32` | Direct exe, DXVK d3d9.dll + MoltenVK | Portal 2, Goat Simulator |
-| `Wined3d32` | Direct exe, Wine builtin OpenGL | Nidhogg 2 |
-| `MetalsharpWine` | Bare Wine, no overrides | Legacy D3D9 games |
-| `SteamD3DMetalPerf` | `steam://run/` + GPTK D3DMetal | Celeste, RE4, 70+ games |
-| `SteamMetalfx` | `steam://run/` + MetalFX env vars | Elden Ring, Sekiro |
-| `SteamBare` | `steam://run/`, no extras | Among Us, Valheim |
-| `FnaArm64` | Native Mono ARM64 | Terraria |
-| `FnaX86` | Rosetta Mono x86 | (reserved, no current mapping) |
+| `M9` | D3D9 / 32-bit capable DXMT-family route | Portal 2-class D3D9 titles, 32-bit installers |
+| `M10` | D3D10 to Metal | D3D10 apps/games |
+| `M11` | D3D11 to Metal | Rain World, Schedule I, Subnautica BZ |
+| `M12` | D3D12 to Metal | RE4-class D3D12 titles |
+| `M32` | 32-bit Wine fallback | legacy 32-bit apps |
+| `Steam` | Wine Steam `steam://run/` with bottle preflight | Steam games |
+| `MacOS Steam` | Native macOS Steam handoff | user-confirmed native Steam flow |
+| `Wine` | Plain Wine custom-app fallback | Sharp Library apps |
+| `Native macOS` | Native Mono/FNA/XNA path | Terraria/FNA-class apps |
 
 ### Key Paths at Runtime
 
@@ -81,6 +84,11 @@ install.sh                       CLI build script (cmake + test runner)
 - DXVK i386 DLLs: `~/.metalsharp/runtime/wine/lib/dxvk/i386-windows/`
 - MoltenVK ICD: `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
 - DXMT config: `~/.metalsharp/runtime/wine/etc/dxmt.conf`
+- Local redistributables: `~/.metalsharp/runtime/redist/`
+- Runtime bottles: `~/.metalsharp/bottles/<bottle_id>/`
+- Bottle prefix: `~/.metalsharp/bottles/<bottle_id>/prefix/`
+- Bottle manifest: `~/.metalsharp/bottles/<bottle_id>/bottle.json`
+- Bottle logs: `~/.metalsharp/bottles/<bottle_id>/logs/`
 - Shader cache: `~/.metalsharp/shader-cache/<engine>/<appid>/`
 - Game local copies: `~/.metalsharp/games/<appid>/`
 - Logs: `~/.metalsharp/logs/`
@@ -94,10 +102,27 @@ Backend listens on `127.0.0.1:9274` (override with `METALSHARP_PORT`). Key endpo
 - `GET /steam/library` — full game library (owned + installed)
 - `POST /steam/launch` — start Wine Steam
 - `POST /steam/stop` — kill Wine Steam + wineserver
+- `POST /steam/launch-game` — Steam game launch through Wine Steam with bottle preflight
+- `POST /steam/runtime-doctor` — inspect a Steam game's bottle/runtime readiness
+- `GET /sharp-library` — Sharp Library apps and imported Windows programs
+- `POST /sharp-library/install` — Install Windows Program flow for EXE/MSI/installer bottles
+- `POST /sharp-library/import-bottle-app` — import detected app candidates from a bottle
+- `GET /bottles` — list runtime bottles
+- `GET /bottles/profiles` — list supported bottle runtime profiles
+- `GET /bottles/compatibility-matrix` — bottle compatibility cases
+- `GET /bottles/redist-sources` — local redistributable source status
+- `POST /bottles/doctor` — diagnose bottle readiness
+- `POST /bottles/prepare` — prepare runtime assets/components for a bottle
+- `POST /bottles/repair-component` — repair missing runtime components
+- `POST /bottles/set-runtime-profile` — change a bottle profile
+- `POST /bottles/set-windows-version` — apply a Wine Windows-version mode
+- `POST /bottles/relaunch-installer` — relaunch an installer bottle's source installer
 - `GET /setup/dependencies` — check which deps are installed
 - `POST /setup/install-all` — run full dependency installer
 - `POST /kill` — kill game by pid or appid
 - `GET /logs` — recent log entries
+- `GET /logs/stream` — streaming logs
+- `GET /logs/crash-reports` — discovered crash report metadata
 
 ## Build Commands
 
@@ -131,25 +156,32 @@ ctest --output-on-failure
 cd app && npx electron-builder --mac dmg --arm64
 ```
 
+### Linux DEB and package assets
+```bash
+cd app && npm run deb
+cd app && npm run deb:docker
+tools/linux/create-release-tarballs.sh
+tools/linux/publish-oci-packages.sh
+```
+
 ## CI Workflows
 
-Four separate CI pipelines run on push/PR to main:
+Current CI is split between PR smoke coverage and tag/main release packaging:
 
 | Workflow | Triggers | What it does |
 |----------|----------|-------------|
-| `ci-rust.yml` | `app/src-rust/**` changes | `cargo fmt --check`, `cargo clippy`, `cargo build --release`, `cargo test`, `cargo audit` |
-| `ci-cpp.yml` | `src/**`, `include/**`, `tests/**`, `CMakeLists.txt` | clang-format check, cmake build, ctest, clang-tidy |
-| `ci-js.yml` | `app/src/**`, `app/package.json` | npm install, TypeScript build, biome lint |
-| `ci-python.yml` | `app/updater/**` | Python linting |
-| `ci.yml` | All pushes, tags `v*` | Full build + DMG packaging. On tag push: creates GitHub Release with DMG |
+| `pr-ci.yml` | PRs to `main` | Metal CI, Vue CI, Rust CI, Electron CI, C/C++/Obj-C CI, Docker Package Smoke |
+| `ci.yml` | pushes to `main`, tags `v*` | Full DMG build, Linux DEB build, Linux runtime tarballs, GHCR package publish, release artifact upload on tags |
+| `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
 
 ## Version Bumping
 
-Three files must be updated together for a version bump:
+Four files must be updated together for a version bump:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
+| `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
 | `app/src-rust/Cargo.toml` | `version = "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
 
@@ -166,7 +198,7 @@ git push origin v<X.Y.Z>
 # 4. CI builds the DMG and creates a GitHub Release automatically
 ```
 
-The `ci.yml` release job only triggers on tag pushes matching `v*`. It builds the full app, packages the DMG, and uploads it to a new GitHub Release with auto-generated release notes.
+The `ci.yml` release job only triggers on tag pushes matching `v*`. It builds the full app, packages the DMG and DEB, creates Linux runtime tarballs, publishes Linux OCI package assets, and uploads release artifacts with auto-generated release notes.
 
 The updater module (`updater.rs`) checks for new releases by hitting `https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest` and comparing the tag to `CARGO_PKG_VERSION`.
 
@@ -201,6 +233,8 @@ npx biome check src/           # lint (CI enforces)
 - `GET /steam/status` → verify returns valid JSON
 - `POST /game/launch-auto` with a known appid → verify correct engine selected (check logs)
 - `GET /steam/library` → verify games appear with correct launch_method
+- `POST /steam/runtime-doctor` with a numeric appid → verify bottle checks/components are returned
+- `GET /bottles` and `GET /bottles/redist-sources` → verify bottle metadata loads
 
 ## Common Pitfalls
 
@@ -211,5 +245,9 @@ npx biome check src/           # lint (CI enforces)
 - **Portal 2 (620) and Goat Simulator (265930) are DxvkMetal32**, not SteamD3DMetalPerf
 - **SteamD3DMetalPerf requires GPTK installed** at `/Applications/Game Porting Toolkit.app/` — it sets WINEDLLPATH to GPTK's d3d11.dll
 - **CMakeLists.txt version must match Cargo.toml and package.json** — all three are independently read
+- **app/package-lock.json version must match package.json** — npm package metadata and release automation both see it
+- **Steam game bottles are launch-authoritative, but Steam stays the launcher** — bottles preflight and bind runtime assets, but Wine Steam must remain alive for Steam-connected games
+- **Installer bottles use their own prefixes** — apps imported from installer bottles must keep `bottle_id` so Sharp Library launches them from that bottle
+- **Linux Docker DEB builds can leave `dist/` root-owned** — `tools/linux/create-release-tarballs.sh` repairs ownership before writing `dist/packages`
 - **`winemetal.so` has no i386-unix version** — it uses WoW64 thunks for 32-bit PE clients, always lives in x86_64-unix/
 - **Steam auto-updates overwrite the steamwebhelper wrapper** — `deploy_steamwebhelper_wrapper()` handles this but it's a known pain point
