@@ -30,10 +30,12 @@ mod updater;
 
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tiny_http::{Header, Method, Response, Server};
 
 static RUNNING_GAMES: OnceLock<Mutex<HashMap<u32, i32>>> = OnceLock::new();
+static ISSUE_LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn running_games() -> &'static Mutex<HashMap<u32, i32>> {
     RUNNING_GAMES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -929,7 +931,20 @@ fn app_log(msg: &str) {
 fn app_issue_log(kind: &str, subject: &str, summary: &str, details: &[String]) {
     let log_dir = logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
-    let file_name = format!("issue-{}-{}-{}.log", chrono_file_stamp(), slugify(kind), slugify(subject));
+    let sequence = ISSUE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    let file_name = format!(
+        "issue-{}-{}-{:09}-{}-{}-{}.log",
+        chrono_file_stamp(),
+        std::process::id(),
+        nanos,
+        sequence,
+        slugify(kind),
+        slugify(subject),
+    );
     let path = log_dir.join(file_name);
     let mut body = vec![
         format!("timestamp: {}", chrono_now()),

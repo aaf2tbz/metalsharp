@@ -235,7 +235,7 @@ async function clearShaderCache(app: SharpApp) {
     { type: "shader" },
   );
   if (result?.ok) {
-    toast.show(`Shader cache cleared for next ${app.name} launch`, "success");
+    toast.show(`All shader caches cleared before next ${app.name} launch`, "success");
   } else {
     toast.show(result?.error ?? "Failed to clear shader cache", "error");
   }
@@ -400,7 +400,7 @@ onMounted(load);
                 >
               </summary>
               <div class="diagnostics-toolbar">
-                <button class="btn btn-secondary btn-sm" @click="clearShaderCache(app)">Clear Shader Cache</button>
+                <button class="btn btn-secondary btn-sm" @click="clearShaderCache(app)">Clear All Shader Caches</button>
                 <button class="btn btn-secondary btn-sm" @click="openLogFolder">Open Logs</button>
                 <button class="btn btn-secondary btn-sm" @click="copyDiagnosticBundle(app)">Copy Bundle</button>
               </div>
