@@ -451,7 +451,7 @@ onMounted(load);
       </div>
       <div class="sharp-header-actions">
         <button class="btn btn-secondary" @click="refreshSharpLibrary">Refresh</button>
-        <button class="btn btn-primary" @click="installExe">Install Windows App</button>
+        <button class="btn btn-primary" @click="installExe">Install Windows Program</button>
       </div>
     </div>
 

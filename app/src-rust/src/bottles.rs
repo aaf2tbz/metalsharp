@@ -156,6 +156,16 @@ pub struct BottleAction {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RuntimeProfileDefinition {
+    pub id: RuntimeProfile,
+    pub name: &'static str,
+    pub arch: BottleArch,
+    pub wineboot: bool,
+    pub components: Vec<String>,
+    pub launch_pipeline: crate::mtsp::engine::PipelineId,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ComponentRepairReport {
     pub id: String,
     pub status: String,
@@ -609,6 +619,13 @@ pub fn handle_list_bottles() -> Value {
     }
 }
 
+pub fn handle_list_runtime_profiles() -> Value {
+    json!({
+        "ok": true,
+        "profiles": runtime_profile_definitions(),
+    })
+}
+
 pub fn handle_sync_steam_bottles() -> Value {
     match sync_steam_game_bottles() {
         Ok(bottles) => json!({"ok": true, "bottles": bottles, "count": bottles.len()}),
@@ -706,22 +723,105 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     json!({"ok": true, "report": report})
 }
 
-fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
-    let ids: &[&str] = match profile {
-        RuntimeProfile::Win32Dotnet | RuntimeProfile::Dotnet => {
-            &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"]
-        },
-        RuntimeProfile::Webview => &["gecko", "webview2", "vcrun2019", "corefonts"],
-        RuntimeProfile::Launcher => &["gecko", "vcrun2019", "corefonts"],
-        RuntimeProfile::GameInstall => &["vcrun2019", "corefonts"],
-        RuntimeProfile::M9 => &["d3d9", "vcrun2019"],
-        RuntimeProfile::M11 => &["d3d11", "dxgi", "vcrun2019"],
-        RuntimeProfile::M12 => &["d3d12", "d3d11", "dxgi", "vcrun2019"],
-        RuntimeProfile::JavaLauncher => &["vcrun2019", "corefonts"],
-        RuntimeProfile::Plain => &[],
-    };
+fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
+    [
+        RuntimeProfile::Plain,
+        RuntimeProfile::Launcher,
+        RuntimeProfile::GameInstall,
+        RuntimeProfile::M9,
+        RuntimeProfile::M11,
+        RuntimeProfile::M12,
+        RuntimeProfile::Dotnet,
+        RuntimeProfile::Win32Dotnet,
+        RuntimeProfile::Webview,
+        RuntimeProfile::JavaLauncher,
+    ]
+    .into_iter()
+    .map(runtime_profile_definition)
+    .collect()
+}
 
-    ids.iter().map(|id| RuntimeComponent { id: (*id).to_string(), state: ComponentState::Unknown }).collect()
+fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefinition {
+    let (name, arch, wineboot, components, launch_pipeline) = match profile {
+        RuntimeProfile::Plain => {
+            ("Plain Wine", BottleArch::Wow64, true, &[][..], crate::mtsp::engine::PipelineId::WineBare)
+        },
+        RuntimeProfile::Launcher => (
+            "Launcher",
+            BottleArch::Wow64,
+            true,
+            &["gecko", "vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
+        RuntimeProfile::GameInstall => (
+            "Game Installer",
+            BottleArch::Wow64,
+            true,
+            &["vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
+        RuntimeProfile::M9 => {
+            ("D3D9 Metal", BottleArch::Wow64, true, &["d3d9", "vcrun2019"][..], crate::mtsp::engine::PipelineId::M9)
+        },
+        RuntimeProfile::M11 => (
+            "D3D11 Metal",
+            BottleArch::Win64,
+            true,
+            &["d3d11", "dxgi", "vcrun2019"][..],
+            crate::mtsp::engine::PipelineId::M11,
+        ),
+        RuntimeProfile::M12 => (
+            "D3D12 Metal",
+            BottleArch::Win64,
+            true,
+            &["d3d12", "d3d11", "dxgi", "vcrun2019"][..],
+            crate::mtsp::engine::PipelineId::M12,
+        ),
+        RuntimeProfile::Dotnet => (
+            ".NET",
+            BottleArch::Win64,
+            true,
+            &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
+        RuntimeProfile::Win32Dotnet => (
+            "32-bit .NET",
+            BottleArch::Win32,
+            true,
+            &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::M9,
+        ),
+        RuntimeProfile::Webview => (
+            "WebView",
+            BottleArch::Wow64,
+            true,
+            &["gecko", "webview2", "vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
+        RuntimeProfile::JavaLauncher => (
+            "Java Launcher",
+            BottleArch::Wow64,
+            true,
+            &["vcrun2019", "corefonts"][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
+    };
+    RuntimeProfileDefinition {
+        id: profile,
+        name,
+        arch,
+        wineboot,
+        components: components.iter().map(|component| (*component).to_string()).collect(),
+        launch_pipeline,
+    }
+}
+
+fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
+    runtime_profile_definition(profile)
+        .components
+        .into_iter()
+        .map(|id| RuntimeComponent { id, state: ComponentState::Unknown })
+        .collect()
 }
 
 fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
@@ -1178,6 +1278,18 @@ mod tests {
         assert!(ids.contains(&"wine-mono"));
         assert!(ids.contains(&"dotnet48"));
         assert!(ids.contains(&"vcrun2019"));
+    }
+
+    #[test]
+    fn runtime_profile_definitions_are_declarative() {
+        let win32 = runtime_profile_definition(RuntimeProfile::Win32Dotnet);
+        assert_eq!(win32.arch, BottleArch::Win32);
+        assert_eq!(win32.launch_pipeline, crate::mtsp::engine::PipelineId::M9);
+        assert!(win32.components.contains(&"dotnet48".to_string()));
+
+        let profiles = runtime_profile_definitions();
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
     }
 
     #[test]

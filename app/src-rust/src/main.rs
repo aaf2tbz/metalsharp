@@ -590,6 +590,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
+        (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         (Method::Post, "/bottles/sync-steam") => resp(200, bottles::handle_sync_steam_bottles()),
         (Method::Post, "/bottles/get") => {
             let body = read_body(req);
