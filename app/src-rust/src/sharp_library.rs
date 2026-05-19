@@ -25,6 +25,8 @@ pub struct SharpApp {
     pub install_dir: String,
     pub cover: Option<String>,
     pub engine: String,
+    #[serde(default)]
+    pub launch_args: Vec<String>,
     pub installed_at: String,
     pub size_bytes: u64,
 }
@@ -95,6 +97,7 @@ fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
             install_dir: install_dir.to_string_lossy().to_string(),
             cover: None,
             engine: "auto".to_string(),
+            launch_args: shortcut.launch_args,
             installed_at: chrono_now(),
             size_bytes: dir_size(&install_dir),
         });
@@ -162,6 +165,7 @@ pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp
         install_dir,
         cover: None,
         engine: "auto".to_string(),
+        launch_args: Vec::new(),
         installed_at,
         size_bytes,
     };
@@ -229,8 +233,13 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
 
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
-    let (pid, game_type, recipe) =
-        crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline)?;
+    let (pid, game_type, recipe) = crate::mtsp::launcher::launch_custom_with_pipeline(
+        launch_id,
+        &work_dir,
+        &exe_path,
+        pipeline,
+        &app.launch_args,
+    )?;
 
     Ok(SharpLaunchResult {
         pid,

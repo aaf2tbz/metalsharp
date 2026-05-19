@@ -19,6 +19,7 @@ pub struct NonSteamShortcut {
     pub name: String,
     pub exe_path: PathBuf,
     pub start_dir: Option<PathBuf>,
+    pub launch_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -398,13 +399,15 @@ fn build_non_steam_shortcut(
         return None;
     }
 
-    let exe_path = clean_shortcut_path(&exe?)?;
+    let exe = exe?;
+    let exe_path = clean_shortcut_path(&exe)?;
     if exe_path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) != Some(true) {
         return None;
     }
 
     let start_dir = start_dir.and_then(|dir| clean_shortcut_path(&dir));
-    Some(NonSteamShortcut { name, exe_path, start_dir })
+    let launch_args = extract_shortcut_args(&exe);
+    Some(NonSteamShortcut { name, exe_path, start_dir, launch_args })
 }
 
 fn clean_shortcut_path(path: &str) -> Option<PathBuf> {
@@ -450,6 +453,58 @@ fn extract_shortcut_path(path: &str) -> Option<String> {
     }
 
     Some(trimmed.to_string())
+}
+
+fn extract_shortcut_args(command: &str) -> Vec<String> {
+    let Some(rest) = shortcut_args_suffix(command) else {
+        return Vec::new();
+    };
+    split_shortcut_args(rest)
+}
+
+fn shortcut_args_suffix(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some(rest[end + 1..].trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix('\'') {
+        let end = rest.find('\'')?;
+        return Some(rest[end + 1..].trim());
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let idx = lower.find(".exe")?;
+    Some(trimmed[idx + 4..].trim())
+}
+
+fn split_shortcut_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in args.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, c) if c.is_whitespace() => {
+                if !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+            },
+            (_, c) => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+
+    out
 }
 
 fn shortcut_id(name: &str, exe_path: &Path) -> u64 {
@@ -623,6 +678,7 @@ mod tests {
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].name, "Joy of Creation");
         assert!(shortcuts[0].exe_path.ends_with("tmp/Joy/Joy.exe"));
+        assert!(shortcuts[0].launch_args.is_empty());
     }
 
     #[test]
@@ -640,6 +696,20 @@ mod tests {
 
         assert_eq!(shortcuts.len(), 1);
         assert!(shortcuts[0].exe_path.ends_with("tmp/DxGame/Game.exe"));
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12"]);
+    }
+
+    #[test]
+    fn preserves_multiple_shortcut_launch_args() {
+        let data = test_shortcuts_vdf(
+            "DX12 Game",
+            "\"Z:\\tmp\\DxGame\\Game.exe\" -d3d12 -windowed \"-profile=high perf\"",
+            "Z:\\tmp\\DxGame",
+        );
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12", "-windowed", "-profile=high perf"]);
     }
 
     fn test_shortcuts_vdf(name: &str, exe: &str, start_dir: &str) -> Vec<u8> {

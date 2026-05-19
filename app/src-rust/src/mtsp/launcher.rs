@@ -190,6 +190,7 @@ pub fn launch_custom_with_pipeline(
     game_dir: &std::path::Path,
     exe_path: &std::path::Path,
     pipeline_id: PipelineId,
+    launch_args: &[String],
 ) -> Result<(u32, &'static str, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
@@ -211,7 +212,8 @@ pub fn launch_custom_with_pipeline(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
+    let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
+    recipe.launch_args.extend(launch_args.iter().cloned());
     if node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
@@ -242,7 +244,7 @@ pub fn launch_custom_with_pipeline(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method(), recipe))
 }
