@@ -5,9 +5,12 @@
 /// compiled Metal shaders and vertex descriptors. Includes pipeline state caching
 /// keyed on descriptor hash for amortized creation cost.
 
+#include <cstdlib>
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
+#include <metalsharp/Logger.h>
 #include <metalsharp/MetalBackend.h>
+#include <metalsharp/PipelineCache.h>
 #include <metalsharp/PipelineState.h>
 
 namespace metalsharp {
@@ -71,6 +74,84 @@ static MTLBlendOperation translateBlendOp(uint32_t d3dOp) {
     }
 }
 
+static NSString* binaryArchiveDirectory() {
+    const char* overrideDir = std::getenv("METALSHARP_BINARY_ARCHIVE_DIR");
+    if (overrideDir && overrideDir[0] != '\0')
+        return [NSString stringWithUTF8String:overrideDir];
+
+    NSString* home = NSHomeDirectory();
+    return [home stringByAppendingPathComponent:@".metalsharp/shader-cache/binary-archives"];
+}
+
+static uint32_t hashAttachmentState(const PipelineStateDesc& desc) {
+    uint64_t hash = 2166136261u;
+    for (uint32_t i = 0; i < MAX_RENDER_TARGETS; ++i) {
+        hash = PipelineCache::combineHash(hash, desc.blendEnabled[i] ? 1 : 0);
+        hash = PipelineCache::combineHash(hash, desc.srcBlend[i]);
+        hash = PipelineCache::combineHash(hash, desc.destBlend[i]);
+        hash = PipelineCache::combineHash(hash, desc.blendOp[i]);
+        hash = PipelineCache::combineHash(hash, desc.srcBlendAlpha[i]);
+        hash = PipelineCache::combineHash(hash, desc.destBlendAlpha[i]);
+        hash = PipelineCache::combineHash(hash, desc.blendOpAlpha[i]);
+        hash = PipelineCache::combineHash(hash, desc.renderTargetWriteMask[i]);
+    }
+    return static_cast<uint32_t>(hash);
+}
+
+static uint64_t pipelineArchiveHash(const PipelineStateDesc& desc) {
+    PipelineCacheKey key;
+    key.vertexShaderHash = reinterpret_cast<uint64_t>(desc.vertexFunction);
+    key.pixelShaderHash = reinterpret_cast<uint64_t>(desc.fragmentFunction);
+    key.vertexLayoutHash = desc.vertexStride;
+    key.depthStencilFormat = desc.depthPixelFormat ^ (desc.stencilPixelFormat << 16);
+    key.sampleCount = 1;
+    key.blendStateHash = hashAttachmentState(desc);
+    key.rasterStateHash = desc.cullMode ^ (desc.depthClipEnabled ? 0x80000000u : 0);
+    key.depthStateHash = (desc.depthEnabled ? 1u : 0u) | (desc.depthWriteEnabled ? 2u : 0u);
+    key.featureFlags = 0x1;
+    for (uint32_t i = 0; i < MAX_RENDER_TARGETS; ++i)
+        key.renderTargetFormats[i] = desc.colorPixelFormats[i];
+    return PipelineCache::computeKeyHash(key);
+}
+
+static id<MTLBinaryArchive> prepareBinaryArchive(id<MTLDevice> mtlDevice, MTLRenderPipelineDescriptor* pipelineDesc,
+                                                 uint64_t hash, NSURL** outURL) {
+    if (!mtlDevice)
+        return nil;
+    if (@available(macOS 11.0, *)) {
+        NSString* archiveDir = binaryArchiveDirectory();
+        [[NSFileManager defaultManager] createDirectoryAtPath:archiveDir
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
+        NSString* archiveName = [NSString stringWithFormat:@"%016llx.metallibarchive", hash];
+        NSString* archivePath = [archiveDir stringByAppendingPathComponent:archiveName];
+        NSURL* archiveURL = [NSURL fileURLWithPath:archivePath];
+        if (outURL)
+            *outURL = archiveURL;
+
+        MTLBinaryArchiveDescriptor* archiveDesc = [[MTLBinaryArchiveDescriptor alloc] init];
+        archiveDesc.url = archiveURL;
+
+        NSError* archiveError = nil;
+        id<MTLBinaryArchive> archive = [mtlDevice newBinaryArchiveWithDescriptor:archiveDesc error:&archiveError];
+        if (!archive) {
+            MS_WARN("Metal binary archive unavailable for hash=%llu error=%s", hash,
+                    archiveError ? [[archiveError localizedDescription] UTF8String] : "unknown");
+            return nil;
+        }
+
+        pipelineDesc.binaryArchives = @[ archive ];
+        NSError* addError = nil;
+        if (![archive addRenderPipelineFunctionsWithDescriptor:pipelineDesc error:&addError]) {
+            MS_WARN("Metal binary archive add failed hash=%llu error=%s", hash,
+                    addError ? [[addError localizedDescription] UTF8String] : "unknown");
+        }
+        return archive;
+    }
+    return nil;
+}
+
 bool PipelineState::init(MetalDevice& device, const PipelineStateDesc& desc) {
     id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device.nativeDevice();
 
@@ -121,13 +202,30 @@ bool PipelineState::init(MetalDevice& device, const PipelineStateDesc& desc) {
         pipelineDesc.vertexDescriptor = vertDesc;
     }
 
+    uint64_t archiveHash = pipelineArchiveHash(desc);
+    NSURL* archiveURL = nil;
+    id<MTLBinaryArchive> archive = prepareBinaryArchive(mtlDevice, pipelineDesc, archiveHash, &archiveURL);
+    PipelineCache::instance().recordMiss(archiveHash, archive ? "binary_archive_prepare" : "binary_archive_unavailable",
+                                         "render_pipeline");
+
     NSError* error = nil;
     m_impl->pipelineState = [mtlDevice newRenderPipelineStateWithDescriptor:pipelineDesc error:&error];
     if (!m_impl->pipelineState) {
         if (error) {
             NSLog(@"MetalSharp pipeline error: %@", [error localizedDescription]);
+            PipelineCache::instance().recordMiss(archiveHash, [[error localizedDescription] UTF8String],
+                                                 "render_pipeline_create_failed");
         }
         return false;
+    }
+    if (archive) {
+        if (@available(macOS 11.0, *)) {
+            NSError* serializeError = nil;
+            if (archiveURL && ![archive serializeToURL:archiveURL error:&serializeError]) {
+                MS_WARN("Metal binary archive serialize failed hash=%llu error=%s", archiveHash,
+                        serializeError ? [[serializeError localizedDescription] UTF8String] : "unknown");
+            }
+        }
     }
     return true;
 }

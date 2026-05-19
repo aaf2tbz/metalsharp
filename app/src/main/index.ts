@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
@@ -431,6 +431,18 @@ function registerIpc() {
       fs.mkdirSync(fullPath, { recursive: true });
     }
     shell.openPath(fullPath);
+  });
+
+  ipcMain.handle("app:open-logs-folder", async () => {
+    const logsPath = path.join(app.getPath("home"), ".metalsharp", "logs");
+    fs.mkdirSync(logsPath, { recursive: true });
+    await shell.openPath(logsPath);
+    return { ok: true, path: logsPath };
+  });
+
+  ipcMain.handle("app:copy-text", async (_e, text: string) => {
+    clipboard.writeText(text);
+    return { ok: true };
   });
 
   ipcMain.handle("backend:restart", async () => {

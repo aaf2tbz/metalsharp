@@ -20,11 +20,40 @@
 
 namespace metalsharp {
 
+struct PipelineCacheMetadata {
+    std::string engineVersion;
+    std::string metalDeviceFamily;
+    std::string osVersion;
+    std::string shaderConverterVersion;
+};
+
+struct PipelineCacheKey {
+    uint64_t vertexShaderHash = 0;
+    uint64_t pixelShaderHash = 0;
+    uint64_t computeShaderHash = 0;
+    uint64_t rootSignatureHash = 0;
+    uint64_t vertexLayoutHash = 0;
+    uint32_t renderTargetFormats[8] = {};
+    uint32_t depthStencilFormat = 0;
+    uint32_t sampleCount = 1;
+    uint32_t blendStateHash = 0;
+    uint32_t rasterStateHash = 0;
+    uint32_t depthStateHash = 0;
+    uint32_t featureFlags = 0;
+};
+
+struct PipelineMissTelemetry {
+    uint64_t hash = 0;
+    std::string reason;
+    std::string label;
+};
+
 struct PipelineCacheEntry {
     uint64_t hash;
     void* pipelineState;
     std::string label;
     std::vector<uint8_t> serializedDescriptor;
+    PipelineCacheMetadata metadata;
     std::chrono::steady_clock::time_point lastAccess;
 };
 
@@ -38,9 +67,18 @@ class PipelineCache {
     void* lookup(uint64_t hash);
     void store(uint64_t hash, void* pipelineState, const std::string& label = "");
     void storeDescriptor(uint64_t hash, const void* desc, size_t descSize, const std::string& label = "");
+    void storeDescriptor(uint64_t hash, const void* desc, size_t descSize, const std::string& label,
+                         const PipelineCacheMetadata& metadata);
     bool getDescriptor(uint64_t hash, std::vector<uint8_t>& outDesc, std::string& outLabel);
 
     static uint64_t computeDescriptorHash(const void* desc, size_t descSize);
+    static uint64_t computeKeyHash(const PipelineCacheKey& key);
+    static uint64_t combineHash(uint64_t seed, uint64_t value);
+
+    void setRuntimeMetadata(const PipelineCacheMetadata& metadata);
+    PipelineCacheMetadata runtimeMetadata() const;
+    void recordMiss(uint64_t hash, const std::string& reason, const std::string& label = "");
+    PipelineMissTelemetry lastMiss() const;
 
     uint64_t hitCount() const { return m_hits; }
     uint64_t missCount() const { return m_misses; }
@@ -61,10 +99,12 @@ class PipelineCache {
     std::deque<uint64_t> m_lruOrder;
     std::string m_cacheDir;
     bool m_initialized = false;
+    PipelineCacheMetadata m_runtimeMetadata;
+    PipelineMissTelemetry m_lastMiss;
     uint64_t m_hits = 0;
     uint64_t m_misses = 0;
     uint64_t m_maxEntries = 4096;
-    std::mutex m_mutex;
+    mutable std::mutex m_mutex;
 };
 
 } // namespace metalsharp

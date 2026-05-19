@@ -30,10 +30,12 @@ mod updater;
 
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tiny_http::{Header, Method, Response, Server};
 
 static RUNNING_GAMES: OnceLock<Mutex<HashMap<u32, i32>>> = OnceLock::new();
+static ISSUE_LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn running_games() -> &'static Mutex<HashMap<u32, i32>> {
     RUNNING_GAMES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -223,41 +225,59 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/steam/install") => match steam::install_steam() {
             Ok(p) => resp(200, json!({"ok": true, "path": p})),
-            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            Err(e) => {
+                app_issue_log("steam-install", "wine-steam", &e.to_string(), &[]);
+                resp(500, json!({"ok": false, "error": e.to_string()}))
+            },
         },
         (Method::Post, "/steam/launch") => {
             app_log("Launching Wine Steam...");
             match steam::launch_wine_steam() {
                 Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("steam-launch", "wine-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/stop") => {
             app_log("Stopping Wine Steam...");
             match steam::stop_wine_steam() {
                 Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("steam-stop", "wine-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/mac-launch") => {
             app_log("Launching macOS Steam...");
             match steam::launch_macos_steam() {
                 Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("steam-launch", "macos-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/mac-install") => {
             app_log("Opening macOS Steam installer...");
             match steam::install_macos_steam() {
                 Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("steam-install", "macos-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/mac-stop") => {
             app_log("Stopping macOS Steam...");
             match steam::stop_macos_steam() {
                 Ok(v) => resp(200, v),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("steam-stop", "macos-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/mac-launch-game") => {
@@ -360,19 +380,28 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let home = dirs::home_dir().unwrap_or_default();
             let log_path = home.join(".metalsharp").join("logs");
             let mut entries = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&log_path) {
-                let mut files: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
-                files.sort_by(|a, b| b.cmp(a));
-                for p in files.iter().take(3) {
-                    if p.extension().map(|e| e == "log").unwrap_or(false) {
-                        if let Ok(content) = std::fs::read_to_string(p) {
-                            let lines: Vec<&str> = content.lines().rev().take(500).collect();
-                            entries.push(json!({
-                                "name": p.file_name().unwrap_or_default().to_string_lossy(),
-                                "lines": lines.into_iter().rev().collect::<Vec<&str>>(),
-                            }));
-                        }
-                    }
+            let mut files: Vec<std::path::PathBuf> = if log_path.exists() {
+                walkdir::WalkDir::new(&log_path)
+                    .max_depth(2)
+                    .into_iter()
+                    .flatten()
+                    .filter(|entry| entry.path().extension().map(|e| e == "log").unwrap_or(false))
+                    .map(|entry| entry.path().to_path_buf())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            files.sort_by_key(|path| {
+                std::fs::metadata(path).and_then(|meta| meta.modified()).unwrap_or(std::time::UNIX_EPOCH)
+            });
+            files.reverse();
+            for p in files.iter().take(8) {
+                if let Ok(content) = std::fs::read_to_string(p) {
+                    let lines: Vec<&str> = content.lines().rev().take(500).collect();
+                    entries.push(json!({
+                        "name": p.strip_prefix(&log_path).unwrap_or(p).to_string_lossy(),
+                        "lines": lines.into_iter().rev().collect::<Vec<&str>>(),
+                    }));
                 }
             }
             if entries.is_empty() {
@@ -619,6 +648,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     "[SHARP-LIB] launched pid {}",
                     result.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)
                 ));
+            } else {
+                let error = result.get("error").and_then(|v| v.as_str()).unwrap_or("unknown launch error");
+                app_issue_log("sharp-launch", id, error, &[format!("engine={}", engine), format!("request_id={}", id)]);
             }
             resp(200, result)
         },
@@ -680,6 +712,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
                 Err(e) => {
                     app_log(&format!("Launch failed: {}", e));
+                    app_issue_log("launch", &resolved, &e.to_string(), &[format!("game_type={}", game_type)]);
                     resp(500, json!({"ok": false, "error": e.to_string()}))
                 },
             }
@@ -704,6 +737,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         Some(p) => p,
                         None => {
                             app_log(&format!("[LAUNCH FAILED] appid {} | no pipeline resolved", id));
+                            app_issue_log(
+                                "game-launch",
+                                &id.to_string(),
+                                "no pipeline resolved",
+                                &[format!("launch_method={}", launch_method)],
+                            );
                             return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
                         },
                     };
@@ -719,6 +758,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         },
                         Err(e) => {
                             app_log(&format!("[LAUNCH FAILED] appid {} | error: {}", id, e));
+                            app_issue_log(
+                                "game-launch",
+                                &id.to_string(),
+                                &e.to_string(),
+                                &[format!("engine={}", engine_desc), format!("launch_method={}", launch_method)],
+                            );
                             resp(500, json!({"ok": false, "error": e.to_string()}))
                         },
                     }
@@ -775,6 +820,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     },
                     Err(e) => {
                         app_log(&format!("[STOP FAILED] appid {} | error: {}", aid, e));
+                        app_issue_log(
+                            "stop",
+                            &aid.to_string(),
+                            &e.to_string(),
+                            &[format!("registered_pid={:?}", registered), format!("requested_pid={}", pid_param)],
+                        );
                         return resp(500, json!({"ok": false, "error": e.to_string()}));
                     },
                 }
@@ -791,7 +842,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     app_log(&format!("[STOPPED] pid {}", target_pid));
                     resp(200, json!({"ok": true, "pid": target_pid}))
                 },
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Err(e) => {
+                    app_issue_log("stop", &target_pid.to_string(), &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
             }
         },
         (Method::Post, "/steam/uninstall-game") => {
@@ -862,8 +916,7 @@ fn resp_raw(code: u16, data: Vec<u8>, mime: &str) -> RouteResponse {
 }
 
 fn app_log(msg: &str) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
     let now = chrono_now();
     let line = format!("[{}] {}\n", now, msg);
@@ -873,6 +926,40 @@ fn app_log(msg: &str) {
         .append(true)
         .open(&log_path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+fn app_issue_log(kind: &str, subject: &str, summary: &str, details: &[String]) {
+    let log_dir = logs_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let sequence = ISSUE_LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    let file_name = format!(
+        "issue-{}-{}-{:09}-{}-{}-{}.log",
+        chrono_file_stamp(),
+        std::process::id(),
+        nanos,
+        sequence,
+        slugify(kind),
+        slugify(subject),
+    );
+    let path = log_dir.join(file_name);
+    let mut body = vec![
+        format!("timestamp: {}", chrono_now()),
+        format!("kind: {}", kind),
+        format!("subject: {}", subject),
+        format!("summary: {}", summary),
+        String::new(),
+    ];
+    body.extend(details.iter().cloned());
+    let _ = std::fs::write(&path, body.join("\n"));
+    app_log(&format!("[ISSUE] {} | {} | {}", kind, subject, summary));
+}
+
+fn logs_dir() -> std::path::PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("logs")
 }
 
 fn chrono_now() -> String {
@@ -887,6 +974,24 @@ fn chrono_date() -> String {
         let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         format!("{}", d.as_secs() / 86400)
     })
+}
+
+fn chrono_file_stamp() -> String {
+    local_date(&["+%Y-%m-%d_%H-%M-%S"]).unwrap_or_else(|| {
+        let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        d.as_secs().to_string()
+    })
+}
+
+fn slugify(value: &str) -> String {
+    let slug: String =
+        value.chars().map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' }).collect();
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "unknown".into()
+    } else {
+        trimmed.chars().take(80).collect()
+    }
 }
 
 fn local_date(args: &[&str]) -> Option<String> {
@@ -1044,6 +1149,7 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde
                     "timestamp": timestamp,
                     "size_bytes": size,
                 }));
+                persist_crash_log(source, &path, &timestamp, size);
             }
             if path.is_dir() {
                 let sub_source = source.to_string();
@@ -1051,4 +1157,24 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde
             }
         }
     }
+}
+
+fn persist_crash_log(source: &str, path: &std::path::Path, timestamp: &str, size: u64) {
+    let log_dir = logs_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let file_name = format!("crash-{}-{}-{}.log", slugify(source), slugify(&name), slugify(timestamp));
+    let log_path = log_dir.join(file_name);
+    if log_path.exists() {
+        return;
+    }
+    let body = [
+        format!("timestamp: {}", chrono_now()),
+        format!("crash_timestamp: {}", timestamp),
+        format!("source: {}", source),
+        format!("file: {}", path.to_string_lossy()),
+        format!("size_bytes: {}", size),
+    ]
+    .join("\n");
+    let _ = std::fs::write(log_path, body);
 }

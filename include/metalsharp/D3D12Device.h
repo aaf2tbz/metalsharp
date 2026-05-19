@@ -50,6 +50,7 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -58,10 +59,13 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <metalsharp/D3D12ResourceStateTracker.h>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/MetalBackend.h>
+#include <metalsharp/MetalCapabilities.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
+#include <metalsharp/StubTelemetry.h>
 #include <metalsharp/SyncContext.h>
 #include <mutex>
 #include <string>
@@ -262,6 +266,7 @@ struct D3D12Descriptor {
     UINT shaderRegister = 0;
     UINT registerSpace = 0;
     UINT numDescriptors = 1;
+    uint64_t generation = 0;
 };
 
 class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
@@ -270,6 +275,9 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     D3D12_DESCRIPTOR_HEAP_DESC desc;
     std::vector<D3D12Descriptor> descriptors;
     void* metalArgumentBuffer = nullptr;
+    UINT dirtyStart = UINT_MAX;
+    UINT dirtyEnd = 0;
+    uint64_t generation = 0;
 
     D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {}
 
@@ -314,6 +322,23 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
         return &descriptors[index];
     }
 
+    void markDirty(UINT index, UINT count = 1) {
+        if (index >= desc.NumDescriptors || count == 0)
+            return;
+        UINT end = std::min(desc.NumDescriptors, index + count);
+        dirtyStart = std::min(dirtyStart, index);
+        dirtyEnd = std::max(dirtyEnd, end);
+        generation++;
+        for (UINT i = index; i < end; ++i)
+            descriptors[i].generation = generation;
+    }
+
+    bool hasDirtyRange() const { return dirtyStart != UINT_MAX && dirtyStart < dirtyEnd; }
+    void clearDirtyRange() {
+        dirtyStart = UINT_MAX;
+        dirtyEnd = 0;
+    }
+
     UINT handleToIndex(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
         if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
             return UINT_MAX;
@@ -339,6 +364,7 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
                 descriptors[dstIdx + i] = descriptors[srcIdx + i];
             }
         }
+        markDirty(dstIdx, numDescriptors);
     }
 };
 
@@ -593,16 +619,22 @@ class D3D12DeviceImpl final : public ID3D12Device {
             delete device;
             return E_FAIL;
         }
+        device->m_metalCapabilities = MetalCapabilityDetector::detect(device->m_metalDevice->nativeDevice());
+        MetalCapabilityDetector::log(device->m_metalCapabilities, "d3d12_device_create");
         device->m_shaderTranslator = std::make_unique<ShaderTranslator>();
         *ppDevice = device;
         return S_OK;
     }
 
     MetalDevice& metalDevice() { return *m_metalDevice; }
+    const MetalCapabilities& metalCapabilities() const { return m_metalCapabilities; }
+    D3D12ResourceStateTracker& resourceStateTracker() { return m_resourceStateTracker; }
 
     std::atomic<ULONG> m_refCount{1};
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
+    MetalCapabilities m_metalCapabilities;
+    D3D12ResourceStateTracker m_resourceStateTracker;
     size_t gpuAddressResourceCountForTesting() const {
         return m_gpuAddressResources ? m_gpuAddressResources->size() : 0;
     }
@@ -646,6 +678,146 @@ class D3D12DeviceImpl final : public ID3D12Device {
     HRESULT CreateCommandList(UINT nodeMask, UINT type, ID3D12CommandAllocator* pAllocator,
                               ID3D12PipelineState* pInitialState, REFIID riid, void** ppCommandList) override;
 
+    HRESULT CheckFeatureSupport(UINT feature, void* pFeatureSupportData, UINT featureSupportDataSize) override {
+        if (!pFeatureSupportData)
+            return E_INVALIDARG;
+
+        switch (feature) {
+        case D3D12_FEATURE_FEATURE_LEVELS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FEATURE_LEVELS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FEATURE_LEVELS*>(pFeatureSupportData);
+            UINT maxRequested = D3D_FEATURE_LEVEL_11_0;
+            for (UINT i = 0; i < data->NumFeatureLevels && data->pFeatureLevelsRequested; ++i) {
+                maxRequested = std::max(maxRequested, data->pFeatureLevelsRequested[i]);
+            }
+            data->MaxSupportedFeatureLevel = std::min(maxRequested, D3D_FEATURE_LEVEL_12_0);
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->OutputMergerLogicOp = TRUE;
+            data->TiledResourcesTier = D3D12_TILED_RESOURCES_TIER_2;
+            data->ResourceBindingTier = m_metalCapabilities.supportsArgumentBuffers ? D3D12_RESOURCE_BINDING_TIER_3
+                                                                                    : D3D12_RESOURCE_BINDING_TIER_2;
+            data->TypedUAVLoadAdditionalFormats = TRUE;
+            data->MaxGPUVirtualAddressBitsPerResource = 40;
+            data->StandardSwizzle64KBSupported = TRUE;
+            data->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ARCHITECTURE: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ARCHITECTURE))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ARCHITECTURE*>(pFeatureSupportData);
+            data->TileBasedRenderer = TRUE;
+            data->UMA = TRUE;
+            data->CacheCoherentUMA = TRUE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ARCHITECTURE1: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ARCHITECTURE1))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ARCHITECTURE1*>(pFeatureSupportData);
+            data->TileBasedRenderer = TRUE;
+            data->UMA = TRUE;
+            data->CacheCoherentUMA = TRUE;
+            data->IsolatedMMU = FALSE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_FORMAT_SUPPORT: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_SUPPORT))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
+            data->Support1 = D3D12_FORMAT_SUPPORT1_TEXTURE1D | D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                             D3D12_FORMAT_SUPPORT1_TEXTURECUBE | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
+            data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+            if (data->Format == ::DXGI_FORMAT_R16_UINT || data->Format == ::DXGI_FORMAT_R32_UINT)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_IA_INDEX_BUFFER;
+            if (data->Format == ::DXGI_FORMAT_B8G8R8A8_UNORM || data->Format == ::DXGI_FORMAT_R8G8B8A8_UNORM ||
+                data->Format == ::DXGI_FORMAT_R16G16B16A16_FLOAT || data->Format == ::DXGI_FORMAT_R10G10B10A2_UNORM)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_RENDER_TARGET;
+            if (data->Format == ::DXGI_FORMAT_D32_FLOAT || data->Format == ::DXGI_FORMAT_D24_UNORM_S8_UINT ||
+                data->Format == ::DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL;
+            if (data->Format != ::DXGI_FORMAT_UNKNOWN)
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            return S_OK;
+        }
+        case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(pFeatureSupportData);
+            data->NumQualityLevels =
+                (data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4) ? 1 : 0;
+            return S_OK;
+        }
+        case D3D12_FEATURE_FORMAT_INFO: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_INFO))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_INFO*>(pFeatureSupportData);
+            data->PlaneCount = 1;
+            return S_OK;
+        }
+        case D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT*>(pFeatureSupportData);
+            data->MaxGPUVirtualAddressBitsPerResource = 40;
+            data->MaxGPUVirtualAddressBitsPerProcess = 40;
+            return S_OK;
+        }
+        case D3D12_FEATURE_SHADER_MODEL: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_SHADER_MODEL))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_SHADER_MODEL*>(pFeatureSupportData);
+            if (data->HighestShaderModel == 0 || data->HighestShaderModel > D3D_SHADER_MODEL_6_0)
+                data->HighestShaderModel = D3D_SHADER_MODEL_6_0;
+            return S_OK;
+        }
+        case D3D12_FEATURE_ROOT_SIGNATURE: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_ROOT_SIGNATURE))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_ROOT_SIGNATURE*>(pFeatureSupportData);
+            if (data->HighestVersion == 0 || data->HighestVersion > D3D_ROOT_SIGNATURE_VERSION_1_1)
+                data->HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS1: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS1))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS1*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->ExpandedComputeResourceStates = TRUE;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS5: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS5))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS5*>(pFeatureSupportData);
+            std::memset(data, 0, sizeof(*data));
+            data->RaytracingTier = m_metalCapabilities.supportsRayTracing ? D3D12_RAYTRACING_TIER_1_1
+                                                                          : D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+            return S_OK;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS7: {
+            if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS7))
+                return E_INVALIDARG;
+            auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS7*>(pFeatureSupportData);
+            data->MeshShaderTier = m_metalCapabilities.supportsMeshShaders ? D3D12_MESH_SHADER_TIER_1
+                                                                           : D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
+            data->SamplerFeedbackTier = 0;
+            return S_OK;
+        }
+        default:
+            return E_INVALIDARG;
+        }
+    }
+
     HRESULT CreateCommittedResource(const D3D12_HEAP_PROPERTIES* pHeap, UINT HeapFlags,
                                     const D3D12_RESOURCE_DESC* pDesc, UINT InitialState, const void* pClearVal,
                                     REFIID riid, void** ppvResource) override {
@@ -654,6 +826,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
 
         auto* res = new D3D12ResourceImpl(*pDesc);
         res->m_resourceState = InitialState;
+        m_resourceStateTracker.setInitialState(res, InitialState);
 
         if (pDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
             res->metalBuffer =
@@ -860,6 +1033,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         struct CBVDesc {
             D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;
@@ -869,6 +1043,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         desc->gpuAddress = cbv->BufferLocation;
         desc->bufferSize = cbv->SizeInBytes;
         desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap->markDirty(index);
         return S_OK;
     }
 
@@ -887,6 +1062,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
         auto* samplerDesc = static_cast<const D3D12_STATIC_SAMPLER_DESC*>(pDesc);
@@ -894,6 +1070,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
             desc->shaderRegister = samplerDesc->ShaderRegister;
             desc->registerSpace = samplerDesc->RegisterSpace;
         }
+        heap->markDirty(index);
         return S_OK;
     }
 
@@ -904,6 +1081,8 @@ class D3D12DeviceImpl final : public ID3D12Device {
                          BOOL bSingleTile) override {
         if (!pTiledResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "ReserveTiles", StubBehavior::CompatibilityShim, "S_OK",
+                              "tile reservation is accepted; physical sparse tile commit is not implemented yet");
         return S_OK;
     }
 
@@ -1047,12 +1226,16 @@ class D3D12DeviceImpl final : public ID3D12Device {
                                  UINT FeedbackType) override {
         if (!pTargetResource || !pFeedbackResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "WriteSamplerFeedback", StubBehavior::CompatibilityShim, "S_OK",
+                              "sampler feedback writes are accepted but not materialized yet");
         return S_OK;
     }
 
     HRESULT ResolveSamplerFeedback(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) override {
         if (!pFeedbackResource || !pDestResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "ResolveSamplerFeedback", StubBehavior::CompatibilityShim, "S_OK",
+                              "sampler feedback resolves are accepted but not materialized yet");
         return S_OK;
     }
 
@@ -1146,6 +1329,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         desc->resource = pResource;
         desc->type = type;
@@ -1162,6 +1346,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 desc->bufferSize = resDesc.Width;
             }
         }
+        heap->markDirty(index);
         return S_OK;
     }
 

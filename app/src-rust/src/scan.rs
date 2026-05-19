@@ -366,11 +366,11 @@ fn parse_shortcuts_vdf(data: &[u8]) -> Vec<NonSteamShortcut> {
                     break;
                 };
                 if shortcut_depth == Some(depth) {
-                    match key.as_str() {
+                    match key.to_ascii_lowercase().as_str() {
                         "appname" => current_name = Some(value),
                         "exe" => current_exe = Some(value),
-                        "StartDir" => current_start_dir = Some(value),
-                        "LaunchOptions" => current_launch_options = Some(value),
+                        "startdir" => current_start_dir = Some(value),
+                        "launchoptions" => current_launch_options = Some(value),
                         _ => {},
                     }
                 }
@@ -746,6 +746,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_shortcuts_with_steam_key_casing() {
+        let data = test_shortcuts_vdf_with_keys(
+            [
+                ("AppName", "The Joy Of Creation"),
+                ("Exe", "\"C:\\users\\alexmondello\\Desktop\\The Joy of Creation Story Mode\\TJoC_SM.exe\""),
+                ("StartDir", "C:\\users\\alexmondello\\Desktop\\The Joy of Creation Story Mode\\"),
+                ("LaunchOptions", "-d3d12"),
+            ],
+            false,
+        );
+
+        let shortcuts = parse_shortcuts_vdf(&data);
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].name, "The Joy Of Creation");
+        assert!(shortcuts[0]
+            .exe_path
+            .ends_with("users/alexmondello/Desktop/The Joy of Creation Story Mode/TJoC_SM.exe"));
+        assert_eq!(shortcuts[0].launch_args, vec!["-d3d12"]);
+    }
+
+    #[test]
     fn nested_tags_do_not_cancel_shortcut_parsing() {
         let data = test_shortcuts_vdf("Tagged Game", "Z:\\tmp\\Tagged\\Game.exe", "Z:\\tmp\\Tagged", None, true);
 
@@ -777,14 +799,22 @@ mod tests {
         launch_options: Option<&str>,
         include_tags: bool,
     ) -> Vec<u8> {
+        let mut fields = vec![("appname", name), ("exe", exe), ("StartDir", start_dir)];
+        if let Some(options) = launch_options {
+            fields.push(("LaunchOptions", options));
+        }
+        test_shortcuts_vdf_with_keys(fields, include_tags)
+    }
+
+    fn test_shortcuts_vdf_with_keys<'a>(
+        fields: impl IntoIterator<Item = (&'a str, &'a str)>,
+        include_tags: bool,
+    ) -> Vec<u8> {
         let mut data = Vec::new();
         object(&mut data, "shortcuts");
         object(&mut data, "0");
-        string_field(&mut data, "appname", name);
-        string_field(&mut data, "exe", exe);
-        string_field(&mut data, "StartDir", start_dir);
-        if let Some(options) = launch_options {
-            string_field(&mut data, "LaunchOptions", options);
+        for (key, value) in fields {
+            string_field(&mut data, key, value);
         }
         if include_tags {
             object(&mut data, "tags");

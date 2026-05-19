@@ -245,26 +245,44 @@ watch([library, search, filter], applyFilter);
 <template>
   <div class="library-view">
     <div class="library-header">
-      <h1>Library</h1>
+      <div class="library-title-row">
+        <div>
+          <h1>Library</h1>
+          <p class="library-counts">
+            {{ library?.total ?? 0 }} games &middot; {{ library?.games.filter(g => g.installed).length ?? 0 }} installed
+          </p>
+        </div>
+        <div class="library-status-strip">
+          <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
+          <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
+          <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
+          <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
+          <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
+            {{ backendConnected ? `Backend${backendVersion ? ' v' + backendVersion : ''}` : 'Backend Offline' }}
+          </span>
+        </div>
+      </div>
       <div class="library-controls">
-        <button class="btn btn-secondary library-control-button" title="Wine Steam" @click="toggleSteam">
+        <div class="library-launch-actions">
+          <button class="btn btn-secondary library-control-button" title="Wine Steam" @click="toggleSteam">
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3" /><path d="M3 12h6" /><path d="M15 12h6" /><path d="M12 3v6" /><path d="M12 15v6" />
           </svg>
           <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
-        </button>
-        <button
-          class="btn btn-secondary library-control-button"
-          title="MacOS Steam"
-          @click="toggleMacSteam"
-        >
+          </button>
+          <button
+            class="btn btn-secondary library-control-button"
+            title="MacOS Steam"
+            @click="toggleMacSteam"
+          >
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2" /><path d="M9 18h6" />
           </svg>
           <span class="control-label">
             {{ !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}
           </span>
-        </button>
+          </button>
+        </div>
         <div class="library-controls-center">
           <input
             v-model="search"
@@ -285,16 +303,6 @@ watch([library, search, filter], applyFilter);
           <span class="control-label">Refresh</span>
         </button>
       </div>
-      <p class="library-stats">
-        {{ library?.total ?? 0 }} games &middot; {{ library?.games.filter(g => g.installed).length ?? 0 }} installed
-        <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
-        <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
-        <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
-        <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
-        <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
-          {{ backendConnected ? `Backend${backendVersion ? ' v' + backendVersion : ''}` : 'Backend Offline' }}
-        </span>
-      </p>
     </div>
 
     <div v-if="!library || library.games.length === 0" class="empty-state">
@@ -324,46 +332,68 @@ watch([library, search, filter], applyFilter);
 
 <style scoped>
 .library-view {
-  padding: 24px 28px;
+  padding: 24px 28px 32px;
   height: 100%;
   overflow-y: auto;
+  background: var(--bg-deep);
 }
 
 .library-header {
-  margin: -24px -28px 20px;
-  padding: 24px 28px 18px;
+  margin: -24px -28px 24px;
+  padding: 28px 28px 20px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
-  text-align: center;
+}
+.library-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
 }
 .library-header h1 {
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 12px;
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.1;
+}
+.library-counts {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.library-status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 220px;
 }
 
 .library-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, auto) minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.library-launch-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 10px;
-  flex-wrap: nowrap;
   min-width: 0;
 }
 .library-controls-center {
-  display: flex;
-  gap: 8px;
-  flex: 0 1 330px;
-  min-width: 230px;
-  max-width: 340px;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 148px;
+  gap: 10px;
+  min-width: 0;
 }
 .library-controls-center input {
-  flex: 1 1 160px;
-  min-width: 120px;
+  min-width: 0;
 }
 .library-controls-center select {
-  flex: 0 0 116px;
-  min-width: 98px;
+  min-width: 0;
 }
 .library-control-button {
   flex: 0 1 auto;
@@ -377,42 +407,59 @@ watch([library, search, filter], applyFilter);
   text-overflow: ellipsis;
 }
 
-.library-stats {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
+@media (max-width: 1040px) {
+  .library-controls {
+    grid-template-columns: 1fr;
+  }
+  .refresh-button {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 880px) {
+  .library-title-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .library-status-strip {
+    justify-content: flex-start;
+    min-width: 0;
+  }
   .library-controls {
     gap: 6px;
   }
   .library-control-button {
-    width: 34px;
-    height: 32px;
-    padding: 6px;
+    min-width: 34px;
   }
-  .library-control-button .control-label {
-    display: none;
+  .library-launch-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
   .library-controls-center {
-    flex-basis: 250px;
-    min-width: 190px;
+    grid-template-columns: 1fr;
   }
-  .library-controls-center select {
-    flex-basis: 88px;
+}
+
+@media (max-width: 620px) {
+  .library-view {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .library-header {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .library-launch-actions {
+    grid-template-columns: 1fr;
   }
 }
 
 .game-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
 }
 
 .empty-state {

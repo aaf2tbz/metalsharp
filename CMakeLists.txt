@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.33.18 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.33.20 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +61,7 @@ add_library(metalsharp_core STATIC
     src/runtime/CrashReporter.cpp
     src/runtime/UpdateChecker.cpp
     src/runtime/SettingsManager.cpp
+    src/runtime/StubTelemetry.cpp
     src/win32/kernel32/SyncContext.cpp
     src/perf/ShaderCache.cpp
     src/perf/ShaderCache.mm
@@ -69,6 +70,7 @@ add_library(metalsharp_core STATIC
     src/perf/FramePacer.cpp
     src/perf/GPUProfiler.mm
     src/perf/CommandBatcher.cpp
+    src/perf/MetalCapabilities.mm
     src/perf/MetalFXUpscaler.mm
     src/perf/RenderThreadPool.cpp
 )
@@ -117,6 +119,7 @@ add_library(metalsharp_d3d12 SHARED
     src/d3d/d3d12/D3D12Device.cpp
     src/d3d/d3d12/D3D12CommandQueue.cpp
     src/d3d/d3d12/D3D12CommandList.mm
+    src/d3d/d3d12/D3D12ResourceStateTracker.cpp
     src/d3d/d3d12/D3D12Resource.cpp
     src/d3d/d3d12/D3D12DescriptorHeap.cpp
     src/d3d/d3d12/D3D12RootSignature.cpp
@@ -193,6 +196,7 @@ add_library(metalsharp_loader STATIC
     src/d3d/d3d12/D3D12Device.cpp
     src/d3d/d3d12/D3D12CommandQueue.cpp
     src/d3d/d3d12/D3D12CommandList.mm
+    src/d3d/d3d12/D3D12ResourceStateTracker.cpp
     src/d3d/d3d12/D3D12Resource.cpp
     src/d3d/d3d12/D3D12DescriptorHeap.cpp
     src/d3d/d3d12/D3D12RootSignature.cpp

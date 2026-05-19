@@ -152,3 +152,10 @@ target_link_libraries(test_phase24 PRIVATE metalsharp_core)
 target_compile_options(test_phase24 PRIVATE -fobjc-arc)
 
 add_test(NAME phase24 COMMAND test_phase24)
+
+add_executable(test_roadmap
+    test_roadmap.cpp
+)
+target_link_libraries(test_roadmap PRIVATE metalsharp_d3d12 metalsharp_core)
+
+add_test(NAME roadmap COMMAND test_roadmap)

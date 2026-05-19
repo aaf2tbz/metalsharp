@@ -513,10 +513,13 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
 
         HRESULT ResourceBarrier(UINT numBarriers, const D3D12_RESOURCE_BARRIER* pBarriers) override {
+            auto tracked = device.resourceStateTracker().applyBarriers(numBarriers, pBarriers);
             for (UINT i = 0; i < numBarriers; ++i) {
                 m_barriers.push_back(pBarriers[i]);
-                if (pBarriers[i].pResource) {
-                    pBarriers[i].pResource->__setResourceState(pBarriers[i].StateAfter);
+                if (i < tracked.size() && tracked[i].stateMismatch) {
+                    MS_WARN("D3D12 ResourceBarrier state mismatch before=%s after=%s",
+                            D3D12ResourceStateTracker::describeState(tracked[i].stateBefore).c_str(),
+                            D3D12ResourceStateTracker::describeState(tracked[i].stateAfter).c_str());
                 }
             }
             return S_OK;
@@ -542,6 +545,8 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
         }
         HRESULT ExecuteIndirect(ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*,
                                 UINT64) override {
+            StubTelemetry::record("d3d12.dll", "ExecuteIndirect", StubBehavior::UnsupportedHardFailure, "E_NOTIMPL",
+                                  "full command signature lowering is not implemented; repeated direct draws use ICBs");
             return E_NOTIMPL;
         }
 
@@ -561,9 +566,16 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             return S_OK;
         }
 
-        HRESULT CopyRaytracingAccelerationStructure(UINT64, UINT64, UINT) override { return S_OK; }
+        HRESULT CopyRaytracingAccelerationStructure(UINT64, UINT64, UINT) override {
+            StubTelemetry::record("d3d12.dll", "CopyRaytracingAccelerationStructure", StubBehavior::CompatibilityShim,
+                                  "S_OK", "raytracing acceleration structure copies are recorded but not materialized");
+            return S_OK;
+        }
 
         HRESULT EmitRaytracingAccelerationStructurePostbuildInfo(const void*, UINT, const UINT64*) override {
+            StubTelemetry::record("d3d12.dll", "EmitRaytracingAccelerationStructurePostbuildInfo",
+                                  StubBehavior::CompatibilityShim, "S_OK",
+                                  "postbuild metadata is accepted but not emitted yet");
             return S_OK;
         }
 
@@ -572,6 +584,10 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
             m_meshGroupCount[0] = ThreadGroupCountX;
             m_meshGroupCount[1] = ThreadGroupCountY;
             m_meshGroupCount[2] = ThreadGroupCountZ;
+            if (!device.metalCapabilities().supportsMeshShaders) {
+                StubTelemetry::record("d3d12.dll", "DispatchMesh", StubBehavior::CompatibilityShim, "S_OK",
+                                      "Metal mesh shader support is unavailable on this device");
+            }
             return S_OK;
         }
 
@@ -815,28 +831,79 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                         break;
                     }
 
-                    for (auto& draw : m_drawCmds) {
-                        if (draw.indexed) {
-                            if (!m_indexBuffer.metalBuffer)
-                                continue;
-                            MTLIndexType indexType =
-                                m_indexBuffer.format == DXGI_FORMAT_R16_UINT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
-                            NSUInteger indexSize = indexType == MTLIndexTypeUInt16 ? 2 : 4;
-                            NSUInteger indexOffset = (NSUInteger)m_indexBuffer.offset + draw.startIndex * indexSize;
-                            [enc drawIndexedPrimitives:primType
-                                            indexCount:draw.vertexCount
-                                             indexType:indexType
-                                           indexBuffer:(__bridge id<MTLBuffer>)m_indexBuffer.metalBuffer
-                                     indexBufferOffset:indexOffset
-                                         instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
-                                            baseVertex:draw.baseVertex
-                                          baseInstance:draw.startInstance];
-                        } else {
-                            [enc drawPrimitives:primType
-                                    vertexStart:draw.startIndex
-                                    vertexCount:draw.vertexCount
-                                  instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
-                                   baseInstance:0];
+                    bool usedIndirectCommandBuffer = false;
+                    if (device.metalCapabilities().supportsIndirectCommandBuffers && m_drawCmds.size() > 1) {
+                        MTLIndirectCommandBufferDescriptor* icbDesc = [[MTLIndirectCommandBufferDescriptor alloc] init];
+                        icbDesc.commandTypes = MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed;
+                        icbDesc.inheritPipelineState = YES;
+                        icbDesc.inheritBuffers = YES;
+
+                        id<MTLDevice> mtlDev = (__bridge id<MTLDevice>)metalDev.nativeDevice();
+                        id<MTLIndirectCommandBuffer> icb =
+                            [mtlDev newIndirectCommandBufferWithDescriptor:icbDesc
+                                                           maxCommandCount:m_drawCmds.size()
+                                                                   options:0];
+                        if (icb) {
+                            for (NSUInteger commandIndex = 0; commandIndex < m_drawCmds.size(); ++commandIndex) {
+                                const DrawCmd& draw = m_drawCmds[commandIndex];
+                                id<MTLIndirectRenderCommand> cmd = [icb indirectRenderCommandAtIndex:commandIndex];
+                                if (draw.indexed) {
+                                    if (!m_indexBuffer.metalBuffer) {
+                                        [cmd reset];
+                                        continue;
+                                    }
+                                    MTLIndexType indexType = m_indexBuffer.format == DXGI_FORMAT_R16_UINT
+                                                                 ? MTLIndexTypeUInt16
+                                                                 : MTLIndexTypeUInt32;
+                                    NSUInteger indexSize = indexType == MTLIndexTypeUInt16 ? 2 : 4;
+                                    NSUInteger indexOffset =
+                                        (NSUInteger)m_indexBuffer.offset + draw.startIndex * indexSize;
+                                    [cmd drawIndexedPrimitives:primType
+                                                    indexCount:draw.vertexCount
+                                                     indexType:indexType
+                                                   indexBuffer:(__bridge id<MTLBuffer>)m_indexBuffer.metalBuffer
+                                             indexBufferOffset:indexOffset
+                                                 instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
+                                                    baseVertex:draw.baseVertex
+                                                  baseInstance:draw.startInstance];
+                                } else {
+                                    [cmd drawPrimitives:primType
+                                            vertexStart:draw.startIndex
+                                            vertexCount:draw.vertexCount
+                                          instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
+                                           baseInstance:draw.startInstance];
+                                }
+                            }
+                            [enc executeCommandsInBuffer:icb withRange:NSMakeRange(0, m_drawCmds.size())];
+                            usedIndirectCommandBuffer = true;
+                        }
+                    }
+
+                    if (!usedIndirectCommandBuffer) {
+                        for (auto& draw : m_drawCmds) {
+                            if (draw.indexed) {
+                                if (!m_indexBuffer.metalBuffer)
+                                    continue;
+                                MTLIndexType indexType = m_indexBuffer.format == DXGI_FORMAT_R16_UINT
+                                                             ? MTLIndexTypeUInt16
+                                                             : MTLIndexTypeUInt32;
+                                NSUInteger indexSize = indexType == MTLIndexTypeUInt16 ? 2 : 4;
+                                NSUInteger indexOffset = (NSUInteger)m_indexBuffer.offset + draw.startIndex * indexSize;
+                                [enc drawIndexedPrimitives:primType
+                                                indexCount:draw.vertexCount
+                                                 indexType:indexType
+                                               indexBuffer:(__bridge id<MTLBuffer>)m_indexBuffer.metalBuffer
+                                         indexBufferOffset:indexOffset
+                                             instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
+                                                baseVertex:draw.baseVertex
+                                              baseInstance:draw.startInstance];
+                            } else {
+                                [enc drawPrimitives:primType
+                                        vertexStart:draw.startIndex
+                                        vertexCount:draw.vertexCount
+                                      instanceCount:draw.instanceCount > 1 ? draw.instanceCount : 1
+                                       baseInstance:draw.startInstance];
+                            }
                         }
                     }
                     [enc endEncoding];

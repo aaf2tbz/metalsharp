@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -15,6 +16,18 @@ fn base_dir() -> PathBuf {
 
 fn manifest_path() -> PathBuf {
     base_dir().join(MANIFEST_FILE)
+}
+
+fn metalsharp_wine_root() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine")
+}
+
+fn ms_wine() -> PathBuf {
+    crate::platform::runtime_wine_binary(&metalsharp_wine_root())
+}
+
+fn steam_prefix() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -40,6 +53,11 @@ pub struct SharpLaunchResult {
     pub warnings: Vec<String>,
 }
 
+pub enum SharpInstallOutcome {
+    Imported(SharpApp),
+    InstallerStarted { pid: u32, message: String },
+}
+
 fn ensure_base_dir() -> Result<(), Box<dyn std::error::Error>> {
     let dir = base_dir();
     if !dir.exists() {
@@ -58,7 +76,9 @@ pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
         Vec::new()
     };
 
-    if sync_non_steam_shortcuts(&mut apps) {
+    let mut changed = sync_non_steam_shortcuts(&mut apps);
+    changed |= sync_wine_prefix_apps(&mut apps);
+    if changed {
         save_library(&apps)?;
     }
 
@@ -78,6 +98,203 @@ fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
         changed |= sync_non_steam_shortcut(apps, shortcut);
     }
     changed
+}
+
+#[derive(Clone)]
+struct WinePrefixApp {
+    id: String,
+    name: String,
+    exe_path: PathBuf,
+    install_dir: PathBuf,
+}
+
+fn sync_wine_prefix_apps(apps: &mut Vec<SharpApp>) -> bool {
+    let mut changed = false;
+    for candidate in scan_wine_prefix_apps() {
+        changed |= sync_wine_prefix_app(apps, candidate);
+    }
+    changed
+}
+
+fn sync_wine_prefix_app(apps: &mut Vec<SharpApp>, candidate: WinePrefixApp) -> bool {
+    let install_dir_string = candidate.install_dir.to_string_lossy().to_string();
+    let exe_path_string = candidate.exe_path.to_string_lossy().to_string();
+    let absolute_exe = candidate.install_dir.join(&candidate.exe_path);
+
+    if let Some(app) = apps.iter_mut().find(|app| app.id == candidate.id || app_absolute_exe_path(app) == absolute_exe)
+    {
+        if !app.id.starts_with("wine_app_") {
+            return false;
+        }
+
+        let size_bytes = dir_size(&candidate.install_dir);
+        let mut changed = false;
+        if app.name != candidate.name {
+            app.name = candidate.name.clone();
+            changed = true;
+        }
+        if app.install_dir != install_dir_string {
+            app.install_dir = install_dir_string.clone();
+            changed = true;
+        }
+        if app.exe_path != exe_path_string {
+            app.exe_path = exe_path_string.clone();
+            changed = true;
+        }
+        if app.size_bytes != size_bytes {
+            app.size_bytes = size_bytes;
+            changed = true;
+        }
+        return changed;
+    }
+
+    apps.push(SharpApp {
+        id: candidate.id,
+        name: candidate.name,
+        exe_path: exe_path_string,
+        install_dir: install_dir_string,
+        cover: None,
+        engine: "auto".to_string(),
+        launch_args: Vec::new(),
+        installed_at: chrono_now(),
+        size_bytes: dir_size(&candidate.install_dir),
+    });
+    true
+}
+
+fn scan_wine_prefix_apps() -> Vec<WinePrefixApp> {
+    let drive_c = steam_prefix().join("drive_c");
+    scan_wine_prefix_apps_under(&drive_c)
+}
+
+fn scan_wine_prefix_apps_under(drive_c: &Path) -> Vec<WinePrefixApp> {
+    let mut candidates = Vec::new();
+    let mut seen_exes = HashSet::new();
+
+    for root in wine_program_roots(drive_c) {
+        scan_program_root(&root, &mut seen_exes, &mut candidates);
+    }
+    for root in wine_desktop_roots(drive_c) {
+        scan_desktop_root(&root, &mut seen_exes, &mut candidates);
+    }
+
+    candidates
+}
+
+fn wine_program_roots(drive_c: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![drive_c.join("Program Files"), drive_c.join("Program Files (x86)")];
+    let users = drive_c.join("users");
+    if let Ok(entries) = fs::read_dir(users) {
+        for entry in entries.flatten() {
+            roots.push(entry.path().join("AppData").join("Local").join("Programs"));
+        }
+    }
+    roots
+}
+
+fn wine_desktop_roots(drive_c: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![drive_c.join("users").join("Public").join("Desktop")];
+    let users = drive_c.join("users");
+    if let Ok(entries) = fs::read_dir(users) {
+        for entry in entries.flatten() {
+            roots.push(entry.path().join("Desktop"));
+        }
+    }
+    roots
+}
+
+fn scan_program_root(root: &Path, seen_exes: &mut HashSet<PathBuf>, candidates: &mut Vec<WinePrefixApp>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let app_dir = entry.path();
+        if !app_dir.is_dir() || should_skip_wine_app_dir(&app_dir) {
+            continue;
+        }
+        add_wine_prefix_candidate(&app_dir, None, seen_exes, candidates);
+    }
+}
+
+fn scan_desktop_root(root: &Path, seen_exes: &mut HashSet<PathBuf>, candidates: &mut Vec<WinePrefixApp>) {
+    if !root.exists() {
+        return;
+    }
+
+    for entry in WalkDir::new(root).max_depth(4).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() || !is_valid_app_exe(&path.to_string_lossy()) || should_skip_wine_app_dir(path) {
+            continue;
+        }
+
+        let install_dir = import_root_for_exe(path);
+        add_wine_prefix_candidate(&install_dir, Some(path.to_path_buf()), seen_exes, candidates);
+    }
+}
+
+fn add_wine_prefix_candidate(
+    install_dir: &Path,
+    preferred_exe: Option<PathBuf>,
+    seen_exes: &mut HashSet<PathBuf>,
+    candidates: &mut Vec<WinePrefixApp>,
+) {
+    if should_skip_wine_app_dir(install_dir) {
+        return;
+    }
+
+    let Some(exe) = preferred_exe.or_else(|| find_real_exe(&install_dir.to_path_buf())) else {
+        return;
+    };
+    if !seen_exes.insert(exe.clone()) {
+        return;
+    }
+
+    let name = display_name_for_wine_app(install_dir, &exe);
+    let exe_path = relative_path_string(install_dir, &exe).unwrap_or_else(|_| {
+        exe.file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(exe.to_string_lossy().to_string()))
+            .to_string_lossy()
+            .to_string()
+    });
+
+    candidates.push(WinePrefixApp {
+        id: format!("wine_app_{}", stable_wine_app_id(&name, install_dir, &exe)),
+        name,
+        exe_path: PathBuf::from(exe_path),
+        install_dir: install_dir.to_path_buf(),
+    });
+}
+
+fn display_name_for_wine_app(install_dir: &Path, exe: &Path) -> String {
+    let dir_name = install_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let lower = dir_name.to_lowercase();
+    if dir_name.is_empty() || lower == "desktop" || lower == "programs" {
+        return exe.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Windows App".to_string());
+    }
+    dir_name
+}
+
+fn should_skip_wine_app_dir(path: &Path) -> bool {
+    path.components().any(|component| {
+        let Component::Normal(value) = component else {
+            return false;
+        };
+        let lower = value.to_string_lossy().to_lowercase();
+        matches!(
+            lower.as_str(),
+            "steam"
+                | "windows"
+                | "internet explorer"
+                | "common files"
+                | "microsoft"
+                | "microsoft shared"
+                | "wine mono"
+                | "wine gecko"
+                | "$recycle.bin"
+        )
+    })
 }
 
 fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonSteamShortcut) -> bool {
@@ -153,10 +370,27 @@ fn app_absolute_exe_path(app: &SharpApp) -> PathBuf {
 }
 
 fn stable_shortcut_id(name: &str, exe_path: &Path) -> String {
+    stable_hash_hex(name, Some(exe_path), None)
+}
+
+fn stable_wine_app_id(name: &str, install_dir: &Path, exe_path: &Path) -> String {
+    stable_hash_hex(name, Some(install_dir), Some(exe_path))
+}
+
+fn stable_hash_hex(name: &str, first_path: Option<&Path>, second_path: Option<&Path>) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in name.as_bytes().iter().chain(b"\0").chain(exe_path.to_string_lossy().as_bytes()) {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    for bytes in [
+        Some(name.as_bytes().to_vec()),
+        first_path.map(|path| path.to_string_lossy().as_bytes().to_vec()),
+        second_path.map(|path| path.to_string_lossy().as_bytes().to_vec()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for byte in bytes.iter().chain(b"\0") {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
     format!("{:016x}", hash)
 }
@@ -167,13 +401,20 @@ fn generate_id(name: &str) -> String {
     format!("{}_{}", clean.trim_matches('_'), timestamp)
 }
 
-pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp, Box<dyn std::error::Error>> {
+pub fn install_exe(
+    src_path: &str,
+    custom_name: Option<&str>,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let src = PathBuf::from(src_path);
     if !src.exists() {
         return Err("Source EXE not found".into());
     }
     if src.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("exe".to_string()) {
         return Err("Only .exe files are supported".into());
+    }
+
+    if should_run_as_wine_installer(&src) {
+        return start_wine_installer(&src);
     }
 
     let file_name = src.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -213,7 +454,63 @@ pub fn install_exe(src_path: &str, custom_name: Option<&str>) -> Result<SharpApp
     library.push(app.clone());
     save_library(&library)?;
 
-    Ok(app)
+    Ok(SharpInstallOutcome::Imported(app))
+}
+
+fn should_run_as_wine_installer(src: &Path) -> bool {
+    let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    name.contains("setup")
+        || name.contains("install")
+        || name.contains("installer")
+        || name.contains("launcher")
+        || name.contains("bootstrap")
+        || name.contains("update")
+}
+
+fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let wine = ms_wine();
+    if !wine.exists() {
+        return Err(
+            "MetalSharp Wine runtime is not installed. Install Wine Steam once before installing launcher EXEs.".into(),
+        );
+    }
+
+    let prefix = steam_prefix();
+    fs::create_dir_all(&prefix)?;
+
+    let ms_root = metalsharp_wine_root();
+    let mut wineboot = Command::new(&wine);
+    wineboot
+        .arg("wineboot")
+        .arg("--init")
+        .env("WINEPREFIX", &prefix)
+        .env("WINEDEBUG", "-all")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::platform::set_runtime_library_env(&mut wineboot, &ms_root);
+    let _ = wineboot.status();
+
+    let mut installer = Command::new(&wine);
+    installer
+        .arg(src)
+        .env("WINEPREFIX", &prefix)
+        .env("WINEDEBUG", "-all")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(parent) = src.parent() {
+        installer.current_dir(parent);
+    }
+    crate::platform::set_runtime_library_env(&mut installer, &ms_root);
+    let child = installer.spawn()?;
+
+    Ok(SharpInstallOutcome::InstallerStarted {
+        pid: child.id(),
+        message:
+            "Installer started in the MetalSharp Wine prefix. Finish its setup window, then refresh Sharp Library."
+                .to_string(),
+    })
 }
 
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -571,7 +868,10 @@ pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
         return json!({"ok": false, "error": "srcPath required"});
     }
     match install_exe(src_path, custom_name) {
-        Ok(app) => json!({"ok": true, "app": app}),
+        Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": app}),
+        Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
+            json!({"ok": true, "installing": true, "pid": pid, "message": message})
+        },
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -758,6 +1058,58 @@ mod tests {
         assert_eq!(first.len(), 16);
         assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn wine_prefix_scan_finds_program_files_launcher_apps() {
+        let drive_c = test_dir("wine-prefix").join("drive_c");
+        let app_dir = drive_c.join("Program Files").join("Minecraft Launcher");
+        fs::create_dir_all(&app_dir).expect("create app dir");
+        fs::write(app_dir.join("MinecraftLauncher.exe"), b"not pe").expect("write launcher");
+
+        let apps = scan_wine_prefix_apps_under(&drive_c);
+
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "Minecraft Launcher");
+        assert_eq!(apps[0].exe_path, PathBuf::from("MinecraftLauncher.exe"));
+        assert!(apps[0].id.starts_with("wine_app_"));
+        let _ = fs::remove_dir_all(drive_c);
+    }
+
+    #[test]
+    fn wine_prefix_sync_does_not_duplicate_existing_steam_shortcut_path() {
+        let drive_c = test_dir("wine-prefix-shortcut").join("drive_c");
+        let app_dir = drive_c.join("users").join("alex").join("Desktop").join("The Joy of Creation Story Mode");
+        fs::create_dir_all(&app_dir).expect("create app dir");
+        let exe = app_dir.join("TJoC_SM.exe");
+        fs::write(&exe, b"not pe").expect("write exe");
+
+        let mut apps = vec![SharpApp {
+            id: "steam_shortcut_existing".into(),
+            name: "The Joy Of Creation".into(),
+            exe_path: "TJoC_SM.exe".into(),
+            install_dir: app_dir.to_string_lossy().to_string(),
+            cover: None,
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        }];
+
+        let candidate = scan_wine_prefix_apps_under(&drive_c).pop().expect("find desktop game");
+        let changed = sync_wine_prefix_app(&mut apps, candidate);
+
+        assert!(!changed);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].id, "steam_shortcut_existing");
+        let _ = fs::remove_dir_all(drive_c);
+    }
+
+    #[test]
+    fn launcher_exes_run_as_wine_installers() {
+        assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
+        assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
     }
 
     fn test_dir(name: &str) -> PathBuf {
