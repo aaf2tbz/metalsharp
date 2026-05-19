@@ -51,6 +51,7 @@ function isMacSteamLaunch(launchMethod: string) {
 function isWineSteamRouteLaunch(launchMethod: string) {
   const method = launchMethod.toLowerCase();
   return [
+    "auto",
     "steam",
     "wine_steam",
     "m9",
