@@ -55,6 +55,7 @@ void* PipelineCache::lookup(uint64_t hash) {
     }
 
     m_misses++;
+    m_lastMiss = {hash, "not_found", ""};
     return nullptr;
 }
 
@@ -77,6 +78,11 @@ void PipelineCache::store(uint64_t hash, void* pipelineState, const std::string&
 }
 
 void PipelineCache::storeDescriptor(uint64_t hash, const void* desc, size_t descSize, const std::string& label) {
+    storeDescriptor(hash, desc, descSize, label, runtimeMetadata());
+}
+
+void PipelineCache::storeDescriptor(uint64_t hash, const void* desc, size_t descSize, const std::string& label,
+                                    const PipelineCacheMetadata& metadata) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_initialized)
         return;
@@ -84,6 +90,7 @@ void PipelineCache::storeDescriptor(uint64_t hash, const void* desc, size_t desc
     auto& entry = m_entries[hash];
     entry.hash = hash;
     entry.label = label;
+    entry.metadata = metadata;
     entry.lastAccess = std::chrono::steady_clock::now();
 
     if (desc && descSize > 0) {
@@ -122,6 +129,50 @@ uint64_t PipelineCache::computeDescriptorHash(const void* desc, size_t descSize)
     return hash;
 }
 
+uint64_t PipelineCache::combineHash(uint64_t seed, uint64_t value) {
+    seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+uint64_t PipelineCache::computeKeyHash(const PipelineCacheKey& key) {
+    uint64_t hash = 14695981039346656037ULL;
+    hash = combineHash(hash, key.vertexShaderHash);
+    hash = combineHash(hash, key.pixelShaderHash);
+    hash = combineHash(hash, key.computeShaderHash);
+    hash = combineHash(hash, key.rootSignatureHash);
+    hash = combineHash(hash, key.vertexLayoutHash);
+    for (uint32_t format : key.renderTargetFormats)
+        hash = combineHash(hash, format);
+    hash = combineHash(hash, key.depthStencilFormat);
+    hash = combineHash(hash, key.sampleCount);
+    hash = combineHash(hash, key.blendStateHash);
+    hash = combineHash(hash, key.rasterStateHash);
+    hash = combineHash(hash, key.depthStateHash);
+    hash = combineHash(hash, key.featureFlags);
+    return hash;
+}
+
+void PipelineCache::setRuntimeMetadata(const PipelineCacheMetadata& metadata) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_runtimeMetadata = metadata;
+}
+
+PipelineCacheMetadata PipelineCache::runtimeMetadata() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_runtimeMetadata;
+}
+
+void PipelineCache::recordMiss(uint64_t hash, const std::string& reason, const std::string& label) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lastMiss = {hash, reason, label};
+    MS_INFO("PipelineCache miss hash=%llu reason=%s label=%s", hash, reason.c_str(), label.c_str());
+}
+
+PipelineMissTelemetry PipelineCache::lastMiss() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastMiss;
+}
+
 void PipelineCache::touchEntry(uint64_t hash) {
     auto it = std::find(m_lruOrder.begin(), m_lruOrder.end(), hash);
     if (it != m_lruOrder.end()) {
@@ -150,7 +201,7 @@ bool PipelineCache::saveToDisk() {
     if (m_cacheDir.empty())
         return false;
 
-    std::string indexPath = m_cacheDir + "/pipeline_cache.bin";
+    std::string indexPath = m_cacheDir + "/pipeline_cache_v2.bin";
     std::ofstream idx(indexPath, std::ios::binary);
     if (!idx.is_open())
         return false;
@@ -169,6 +220,17 @@ bool PipelineCache::saveToDisk() {
         idx.write(reinterpret_cast<const char*>(&descSize), 4);
         if (descSize > 0)
             idx.write(reinterpret_cast<const char*>(entry.serializedDescriptor.data()), descSize);
+
+        auto writeString = [&](const std::string& value) {
+            uint32_t len = static_cast<uint32_t>(value.size());
+            idx.write(reinterpret_cast<const char*>(&len), 4);
+            if (len > 0)
+                idx.write(value.data(), len);
+        };
+        writeString(entry.metadata.engineVersion);
+        writeString(entry.metadata.metalDeviceFamily);
+        writeString(entry.metadata.osVersion);
+        writeString(entry.metadata.shaderConverterVersion);
     }
 
     MS_INFO("PipelineCache: saved %u entries to %s", count, indexPath.c_str());
@@ -179,7 +241,7 @@ bool PipelineCache::loadFromDisk() {
     if (m_cacheDir.empty())
         return false;
 
-    std::string indexPath = m_cacheDir + "/pipeline_cache.bin";
+    std::string indexPath = m_cacheDir + "/pipeline_cache_v2.bin";
     std::ifstream idx(indexPath, std::ios::binary);
     if (!idx.is_open())
         return false;
@@ -214,6 +276,20 @@ bool PipelineCache::loadFromDisk() {
         entry.pipelineState = nullptr;
         entry.label = label;
         entry.serializedDescriptor = std::move(desc);
+        auto readString = [&]() -> std::string {
+            uint32_t len = 0;
+            if (!idx.read(reinterpret_cast<char*>(&len), 4))
+                return {};
+            if (len == 0 || len >= 4096)
+                return {};
+            std::string value(len, '\0');
+            idx.read(&value[0], len);
+            return value;
+        };
+        entry.metadata.engineVersion = readString();
+        entry.metadata.metalDeviceFamily = readString();
+        entry.metadata.osVersion = readString();
+        entry.metadata.shaderConverterVersion = readString();
         entry.lastAccess = std::chrono::steady_clock::now();
         m_entries[hash] = entry;
         m_lruOrder.push_back(hash);

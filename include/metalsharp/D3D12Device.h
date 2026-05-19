@@ -50,6 +50,7 @@
 ///   ResourceBarrier            → Implicit (Metal tracks resource state)
 ///   D3D12_TEXTURE_LAYOUT_UNKNOWN → MTLStorageModeShared/Private
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -58,10 +59,13 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <metalsharp/D3D12ResourceStateTracker.h>
 #include <metalsharp/FormatTranslation.h>
 #include <metalsharp/MetalBackend.h>
+#include <metalsharp/MetalCapabilities.h>
 #include <metalsharp/PipelineState.h>
 #include <metalsharp/ShaderTranslator.h>
+#include <metalsharp/StubTelemetry.h>
 #include <metalsharp/SyncContext.h>
 #include <mutex>
 #include <string>
@@ -262,6 +266,7 @@ struct D3D12Descriptor {
     UINT shaderRegister = 0;
     UINT registerSpace = 0;
     UINT numDescriptors = 1;
+    uint64_t generation = 0;
 };
 
 class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
@@ -270,6 +275,9 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     D3D12_DESCRIPTOR_HEAP_DESC desc;
     std::vector<D3D12Descriptor> descriptors;
     void* metalArgumentBuffer = nullptr;
+    UINT dirtyStart = UINT_MAX;
+    UINT dirtyEnd = 0;
+    uint64_t generation = 0;
 
     D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {}
 
@@ -314,6 +322,23 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
         return &descriptors[index];
     }
 
+    void markDirty(UINT index, UINT count = 1) {
+        if (index >= desc.NumDescriptors || count == 0)
+            return;
+        UINT end = std::min(desc.NumDescriptors, index + count);
+        dirtyStart = std::min(dirtyStart, index);
+        dirtyEnd = std::max(dirtyEnd, end);
+        generation++;
+        for (UINT i = index; i < end; ++i)
+            descriptors[i].generation = generation;
+    }
+
+    bool hasDirtyRange() const { return dirtyStart != UINT_MAX && dirtyStart < dirtyEnd; }
+    void clearDirtyRange() {
+        dirtyStart = UINT_MAX;
+        dirtyEnd = 0;
+    }
+
     UINT handleToIndex(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
         if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
             return UINT_MAX;
@@ -339,6 +364,7 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
                 descriptors[dstIdx + i] = descriptors[srcIdx + i];
             }
         }
+        markDirty(dstIdx, numDescriptors);
     }
 };
 
@@ -593,16 +619,22 @@ class D3D12DeviceImpl final : public ID3D12Device {
             delete device;
             return E_FAIL;
         }
+        device->m_metalCapabilities = MetalCapabilityDetector::detect(device->m_metalDevice->nativeDevice());
+        MetalCapabilityDetector::log(device->m_metalCapabilities, "d3d12_device_create");
         device->m_shaderTranslator = std::make_unique<ShaderTranslator>();
         *ppDevice = device;
         return S_OK;
     }
 
     MetalDevice& metalDevice() { return *m_metalDevice; }
+    const MetalCapabilities& metalCapabilities() const { return m_metalCapabilities; }
+    D3D12ResourceStateTracker& resourceStateTracker() { return m_resourceStateTracker; }
 
     std::atomic<ULONG> m_refCount{1};
     std::unique_ptr<MetalDevice> m_metalDevice;
     std::unique_ptr<ShaderTranslator> m_shaderTranslator;
+    MetalCapabilities m_metalCapabilities;
+    D3D12ResourceStateTracker m_resourceStateTracker;
     size_t gpuAddressResourceCountForTesting() const {
         return m_gpuAddressResources ? m_gpuAddressResources->size() : 0;
     }
@@ -654,6 +686,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
 
         auto* res = new D3D12ResourceImpl(*pDesc);
         res->m_resourceState = InitialState;
+        m_resourceStateTracker.setInitialState(res, InitialState);
 
         if (pDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
             res->metalBuffer =
@@ -860,6 +893,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         struct CBVDesc {
             D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;
@@ -869,6 +903,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         desc->gpuAddress = cbv->BufferLocation;
         desc->bufferSize = cbv->SizeInBytes;
         desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap->markDirty(index);
         return S_OK;
     }
 
@@ -887,6 +922,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
         auto* samplerDesc = static_cast<const D3D12_STATIC_SAMPLER_DESC*>(pDesc);
@@ -894,6 +930,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
             desc->shaderRegister = samplerDesc->ShaderRegister;
             desc->registerSpace = samplerDesc->RegisterSpace;
         }
+        heap->markDirty(index);
         return S_OK;
     }
 
@@ -904,6 +941,8 @@ class D3D12DeviceImpl final : public ID3D12Device {
                          BOOL bSingleTile) override {
         if (!pTiledResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "ReserveTiles", StubBehavior::CompatibilityShim, "S_OK",
+                              "tile reservation is accepted; physical sparse tile commit is not implemented yet");
         return S_OK;
     }
 
@@ -1047,12 +1086,16 @@ class D3D12DeviceImpl final : public ID3D12Device {
                                  UINT FeedbackType) override {
         if (!pTargetResource || !pFeedbackResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "WriteSamplerFeedback", StubBehavior::CompatibilityShim, "S_OK",
+                              "sampler feedback writes are accepted but not materialized yet");
         return S_OK;
     }
 
     HRESULT ResolveSamplerFeedback(ID3D12Resource* pFeedbackResource, ID3D12Resource* pDestResource) override {
         if (!pFeedbackResource || !pDestResource)
             return E_INVALIDARG;
+        StubTelemetry::record("d3d12.dll", "ResolveSamplerFeedback", StubBehavior::CompatibilityShim, "S_OK",
+                              "sampler feedback resolves are accepted but not materialized yet");
         return S_OK;
     }
 
@@ -1146,6 +1189,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
         auto* desc = heap->getDescriptor(handle);
         if (!desc)
             return S_OK;
+        UINT index = heap->handleToIndex(handle);
 
         desc->resource = pResource;
         desc->type = type;
@@ -1162,6 +1206,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 desc->bufferSize = resDesc.Width;
             }
         }
+        heap->markDirty(index);
         return S_OK;
     }
 
