@@ -163,8 +163,13 @@ pub fn prepare_steam_pipeline_env(
 ) -> Result<(Vec<(String, String)>, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 => {},
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam | PipelineId::WineBare => {
+        PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M32
+        | PipelineId::WineBare => {},
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
             return Err("Steam route handoff only supports Wine-backed MTSP pipelines".into());
         },
     }
@@ -1097,8 +1102,26 @@ mod tests {
     }
 
     #[test]
-    fn steam_pipeline_env_rejects_plain_wine_fallback() {
-        let error = prepare_steam_pipeline_env(1, PipelineId::WineBare).expect_err("wine_bare should not be handoff");
+    fn steam_pipeline_env_allows_plain_wine_fallback_context() {
+        let home = test_dir("steam-wine-env");
+        let node = get_pipeline(PipelineId::WineBare);
+
+        let env = steam_pipeline_env_pairs(&home, node, 1);
+        let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+        let runtime_lib_key =
+            crate::platform::runtime_library_env(&home.join(".metalsharp").join("runtime").join("wine"))
+                .map(|(key, _)| key)
+                .unwrap_or("LD_LIBRARY_PATH");
+        assert!(keys.contains(runtime_lib_key));
+        assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
+        assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn steam_pipeline_env_rejects_client_only_routes() {
+        let error = prepare_steam_pipeline_env(1, PipelineId::Steam).expect_err("steam should not be handoff");
 
         assert!(error.to_string().contains("Steam route handoff only supports Wine-backed MTSP pipelines"));
     }
