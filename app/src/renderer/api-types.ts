@@ -123,6 +123,7 @@ type MetalsharpAPI = {
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;
   openInFinder: (path: string) => Promise<void>;
+  copyText: (text: string) => Promise<{ ok: boolean; error?: string }>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;
   updaterEnsureReady: () => Promise<boolean>;

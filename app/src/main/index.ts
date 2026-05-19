@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
@@ -431,6 +431,11 @@ function registerIpc() {
       fs.mkdirSync(fullPath, { recursive: true });
     }
     shell.openPath(fullPath);
+  });
+
+  ipcMain.handle("app:copy-text", async (_e, text: string) => {
+    clipboard.writeText(text);
+    return { ok: true };
   });
 
   ipcMain.handle("backend:restart", async () => {

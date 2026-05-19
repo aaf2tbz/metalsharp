@@ -26,11 +26,29 @@ interface LaunchDoctorReport {
   };
 }
 
+interface LogEntry {
+  name: string;
+  lines: string[];
+}
+
+interface CrashReport {
+  file: string;
+  name: string;
+  source: string;
+  timestamp: string;
+  size_bytes: number;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
 const doctorOpen = ref<Record<string, boolean>>({});
 const doctorLoading = ref<Record<string, boolean>>({});
 const doctorReports = ref<Record<string, LaunchDoctorReport | null>>({});
+const diagnosticsOpen = ref<Record<string, boolean>>({});
+const diagnosticsLoading = ref<Record<string, boolean>>({});
+const launchErrors = ref<Record<string, string>>({});
+const recentLogLines = ref<Record<string, string[]>>({});
+const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const engineOptions = [
   { id: "auto", name: "Auto" },
   { id: "wine_bare", name: "Wine" },
@@ -50,7 +68,11 @@ async function installExe() {
   const filePath = await getAPI().pickExeFile();
   if (!filePath) return;
   toast.show("Installing application...");
-  const result = await api<{ ok: boolean; app?: SharpApp; installing?: boolean; message?: string; error?: string }>("POST", "/sharp-library/install", { srcPath: filePath });
+  const result = await api<{ ok: boolean; app?: SharpApp; installing?: boolean; message?: string; error?: string }>(
+    "POST",
+    "/sharp-library/install",
+    { srcPath: filePath },
+  );
   if (result?.ok && result.app) {
     toast.show(`Installed ${result.app.name}`, "success");
     await load();
@@ -66,12 +88,22 @@ async function launchApp(id: string, engine: string) {
   const app = apps.value.find((a) => a.id === id);
   if (!app) return;
   toast.show(`Launching ${app.name}...`);
-  const result = await api<{ ok: boolean; pid?: number; pipeline?: string; warnings?: string[]; error?: string }>("POST", "/sharp-library/launch", { id, engine });
+  const result = await api<{ ok: boolean; pid?: number; pipeline?: string; warnings?: string[]; error?: string }>(
+    "POST",
+    "/sharp-library/launch",
+    { id, engine },
+  );
   if (result?.ok && result.pid) {
     const warning = result.warnings?.[0];
+    launchErrors.value[id] = "";
+    diagnosticsOpen.value[id] = false;
     toast.show(warning ? `Launched ${app.name}: ${warning}` : `Launched ${app.name}`, "success");
+  } else {
+    const error = result?.error ?? `Failed to launch ${app.name}`;
+    launchErrors.value[id] = error;
+    toast.show(error, "error");
+    await openDiagnostics(app);
   }
-  else toast.show(result?.error ?? `Failed to launch ${app.name}`, "error");
 }
 
 async function updateEngine(id: string, engine: string) {
@@ -89,26 +121,37 @@ async function uninstallApp(id: string) {
   if (!app) return;
   if (!confirm(`Uninstall ${app.name}?`)) return;
   const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/uninstall", { id });
-  if (result?.ok) { toast.show(`Uninstalled ${app.name}`, "success"); await load(); }
-  else toast.show(result?.error ?? "Failed to uninstall", "error");
+  if (result?.ok) {
+    toast.show(`Uninstalled ${app.name}`, "success");
+    await load();
+  } else toast.show(result?.error ?? "Failed to uninstall", "error");
 }
 
 async function setCover(id: string) {
   const filePath = await getAPI().pickImageFile();
   if (!filePath) return;
-  const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-cover", { id, coverPath: filePath });
-  if (result?.ok) { toast.show("Cover updated", "success"); await load(); }
-  else toast.show(result?.error ?? "Failed to set cover", "error");
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/sharp-library/set-cover", {
+    id,
+    coverPath: filePath,
+  });
+  if (result?.ok) {
+    toast.show("Cover updated", "success");
+    await load();
+  } else toast.show(result?.error ?? "Failed to set cover", "error");
 }
 
 async function runDoctor(app: SharpApp) {
   doctorOpen.value[app.id] = true;
   doctorLoading.value[app.id] = true;
   doctorReports.value[app.id] = null;
-  const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/sharp-library/doctor", {
-    id: app.id,
-    engine: app.engine,
-  });
+  const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>(
+    "POST",
+    "/sharp-library/doctor",
+    {
+      id: app.id,
+      engine: app.engine,
+    },
+  );
   doctorLoading.value[app.id] = false;
 
   if (result?.ok && result.report) {
@@ -116,6 +159,116 @@ async function runDoctor(app: SharpApp) {
   } else {
     toast.show(result?.error ?? "Launch Doctor failed", "error");
   }
+}
+
+async function openDiagnostics(app: SharpApp) {
+  diagnosticsOpen.value[app.id] = true;
+  await Promise.all([runDoctor(app), loadRecentDiagnostics(app)]);
+}
+
+async function loadRecentDiagnostics(app: SharpApp) {
+  diagnosticsLoading.value[app.id] = true;
+  const [logsResult, crashResult] = await Promise.all([
+    api<{ ok: boolean; logs: LogEntry[] }>("GET", "/logs"),
+    api<{ ok: boolean; reports: CrashReport[] }>("GET", "/logs/crash-reports"),
+  ]);
+  diagnosticsLoading.value[app.id] = false;
+
+  if (logsResult?.ok) {
+    const allLines = logsResult.logs.flatMap((entry) => entry.lines.map((line) => `[${entry.name}] ${line}`));
+    const appNeedles = [app.name, app.exe_path, app.install_dir].map((value) => value.toLowerCase());
+    const matching = allLines.filter((line) =>
+      appNeedles.some((needle) => needle && line.toLowerCase().includes(needle)),
+    );
+    recentLogLines.value[app.id] = (matching.length ? matching : allLines).slice(-40);
+  }
+
+  if (crashResult?.ok) {
+    const appNeedles = [app.name, app.exe_path, app.install_dir].map((value) => value.toLowerCase());
+    recentCrashReports.value[app.id] = crashResult.reports
+      .filter((report) => {
+        const haystack = `${report.name} ${report.file} ${report.source}`.toLowerCase();
+        return appNeedles.some((needle) => needle && haystack.includes(needle));
+      })
+      .slice(0, 5);
+  }
+}
+
+function doctorActionLabel(check: LaunchDoctorCheck, app: SharpApp): string {
+  if (check.id === "runtime_assets" || check.id === "dll_sources") return "Install runtime";
+  if (check.id === "exe_route") return app.engine === "auto" ? "Switch to Wine" : "Switch to Auto";
+  if (check.detail.toLowerCase().includes("steam")) return "Restart Steam";
+  if (check.id === "launcher_exe") return "Open logs";
+  return "Open logs";
+}
+
+async function runDoctorAction(app: SharpApp, check: LaunchDoctorCheck) {
+  const label = doctorActionLabel(check, app);
+  if (label === "Install runtime") {
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/setup/install-all");
+    toast.show(
+      result?.ok ? "Runtime install started" : (result?.error ?? "Failed to start runtime install"),
+      result?.ok ? "success" : "error",
+    );
+  } else if (label === "Restart Steam") {
+    await api("POST", "/steam/stop");
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/launch");
+    toast.show(
+      result?.ok ? "Steam restart requested" : (result?.error ?? "Failed to restart Steam"),
+      result?.ok ? "success" : "error",
+    );
+  } else if (label === "Switch to Auto") {
+    await updateEngine(app.id, "auto");
+    await runDoctor({ ...app, engine: "auto" });
+  } else if (label === "Switch to Wine") {
+    await updateEngine(app.id, "wine_bare");
+    await runDoctor({ ...app, engine: "wine_bare" });
+  } else {
+    await openLogFolder();
+  }
+}
+
+async function clearShaderCache(app: SharpApp) {
+  const result = await api<{ ok: boolean; bytes_freed?: number; files_removed?: number; error?: string }>(
+    "POST",
+    "/cache/clear",
+    { type: "shader" },
+  );
+  if (result?.ok) {
+    toast.show(`Shader cache cleared for next ${app.name} launch`, "success");
+  } else {
+    toast.show(result?.error ?? "Failed to clear shader cache", "error");
+  }
+}
+
+async function openLogFolder() {
+  await getAPI().openInFinder("~/.metalsharp/logs");
+}
+
+async function copyDiagnosticBundle(app: SharpApp) {
+  const report = doctorReports.value[app.id];
+  const payload = [
+    `MetalSharp Sharp Library Diagnostic Bundle`,
+    `App: ${app.name}`,
+    `ID: ${app.id}`,
+    `Engine: ${app.engine}`,
+    `EXE: ${app.install_dir}/${app.exe_path}`,
+    `Last launch error: ${launchErrors.value[app.id] || "none"}`,
+    "",
+    "Doctor:",
+    report ? JSON.stringify(report, null, 2) : "No doctor report loaded",
+    "",
+    "Recent crash reports:",
+    JSON.stringify(recentCrashReports.value[app.id] ?? [], null, 2),
+    "",
+    "Recent launch log:",
+    (recentLogLines.value[app.id] ?? []).join("\n"),
+  ].join("\n");
+  const result = await getAPI().copyText(payload);
+  toast.show(
+    result?.ok ? "Diagnostic bundle copied" : (result?.error ?? "Failed to copy diagnostics"),
+    result?.ok ? "success" : "error",
+  );
 }
 
 function formatBytes(bytes: number): string {
@@ -140,7 +293,11 @@ onMounted(load);
 
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <line x1="8" y1="21" x2="16" y2="21" />
+          <line x1="12" y1="17" x2="12" y2="21" />
+        </svg>
       </div>
       <h2>No applications installed</h2>
       <p>Click "Install an EXE" to add a Windows application</p>
@@ -161,7 +318,11 @@ onMounted(load);
           <div class="sharp-card-actions">
             <div class="sharp-card-actions-row">
               <button class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
-              <select class="control-input" :value="app.engine" @change="updateEngine(app.id, ($event.target as HTMLSelectElement).value)">
+              <select
+                class="control-input"
+                :value="app.engine"
+                @change="updateEngine(app.id, ($event.target as HTMLSelectElement).value)"
+              >
                 <option v-for="option in engineOptions" :key="option.id" :value="option.id">
                   {{ option.name }}
                 </option>
@@ -172,7 +333,18 @@ onMounted(load);
               <button class="btn btn-secondary btn-sm" :disabled="doctorLoading[app.id]" @click="runDoctor(app)">
                 {{ doctorLoading[app.id] ? "Checking" : "Doctor" }}
               </button>
+              <button
+                class="btn btn-secondary btn-sm"
+                :disabled="diagnosticsLoading[app.id]"
+                @click="openDiagnostics(app)"
+              >
+                {{ diagnosticsLoading[app.id] ? "Loading" : "Diagnostics" }}
+              </button>
               <button class="btn btn-danger btn-sm" @click="uninstallApp(app.id)">Uninstall</button>
+            </div>
+            <div v-if="launchErrors[app.id]" class="launch-failure">
+              <span>Last launch failed</span>
+              <strong>{{ launchErrors[app.id] }}</strong>
             </div>
             <div v-if="doctorOpen[app.id]" class="doctor-panel">
               <div v-if="doctorLoading[app.id]" class="doctor-loading">Checking launch prerequisites...</div>
@@ -192,7 +364,16 @@ onMounted(load);
                   >
                     <span class="doctor-check-state">{{ check.ok ? "OK" : "!" }}</span>
                     <span class="doctor-check-label">{{ check.label }}</span>
-                    <span class="doctor-check-detail">{{ check.detail }}</span>
+                    <span class="doctor-check-detail">
+                      {{ check.detail }}
+                      <button
+                        v-if="!check.ok || check.id === 'launcher_exe'"
+                        class="doctor-action"
+                        @click="runDoctorAction(app, check)"
+                      >
+                        {{ doctorActionLabel(check, app) }}
+                      </button>
+                    </span>
                   </div>
                 </div>
                 <div v-if="doctorReports[app.id]?.recipe.launch_args.length" class="doctor-notes">
@@ -205,6 +386,24 @@ onMounted(load);
                   <div v-for="warning in doctorReports[app.id]?.warnings" :key="warning">{{ warning }}</div>
                 </div>
               </template>
+            </div>
+            <div v-if="diagnosticsOpen[app.id]" class="diagnostics-panel">
+              <div class="diagnostics-toolbar">
+                <button class="btn btn-secondary btn-sm" @click="clearShaderCache(app)">Clear Shader Cache</button>
+                <button class="btn btn-secondary btn-sm" @click="openLogFolder">Open Logs</button>
+                <button class="btn btn-secondary btn-sm" @click="copyDiagnosticBundle(app)">Copy Bundle</button>
+              </div>
+              <div v-if="recentCrashReports[app.id]?.length" class="diagnostics-section">
+                <div class="diagnostics-title">Recent crash reports</div>
+                <div v-for="report in recentCrashReports[app.id]" :key="report.file" class="crash-row">
+                  <span>{{ report.name }}</span>
+                  <small>{{ report.timestamp }} · {{ report.source }}</small>
+                </div>
+              </div>
+              <div class="diagnostics-section">
+                <div class="diagnostics-title">Recent launch log</div>
+                <pre class="log-tail">{{ (recentLogLines[app.id] ?? ["No recent log lines loaded."]).join("\n") }}</pre>
+              </div>
             </div>
           </div>
         </div>
@@ -305,6 +504,27 @@ onMounted(load);
   opacity: 0.7;
 }
 
+.launch-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.launch-failure span {
+  color: var(--danger);
+  font-weight: 700;
+}
+.launch-failure strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .doctor-panel {
   margin-top: 2px;
   padding: 10px;
@@ -330,7 +550,7 @@ onMounted(load);
 }
 .doctor-check {
   display: grid;
-  grid-template-columns: 28px 74px 1fr;
+  grid-template-columns: 28px minmax(68px, 82px) 1fr;
   gap: 6px;
   align-items: start;
   color: var(--text-dim);
@@ -348,6 +568,24 @@ onMounted(load);
 .doctor-check-detail {
   overflow-wrap: anywhere;
 }
+.doctor-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin-top: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.doctor-action:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
 .doctor-notes {
   margin-top: 8px;
   color: var(--text-dim);
@@ -357,12 +595,70 @@ onMounted(load);
   color: var(--danger);
 }
 
+.diagnostics-panel {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.diagnostics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.diagnostics-section + .diagnostics-section {
+  margin-top: 10px;
+}
+.diagnostics-title {
+  margin-bottom: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.crash-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.crash-row small {
+  color: var(--text-dim);
+}
+.log-tail {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-deep);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .empty-state {
   text-align: center;
   padding: 80px 20px;
   color: var(--text-dim);
 }
-.empty-icon { margin-bottom: 16px; opacity: 0.4; }
-.empty-state h2 { font-size: 16px; margin-bottom: 8px; color: var(--text-secondary); }
-.empty-state p { font-size: 13px; }
+.empty-icon {
+  margin-bottom: 16px;
+  opacity: 0.4;
+}
+.empty-state h2 {
+  font-size: 16px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+.empty-state p {
+  font-size: 13px;
+}
 </style>
