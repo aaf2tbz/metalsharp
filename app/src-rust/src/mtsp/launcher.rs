@@ -2,7 +2,7 @@ use super::engine::{get_pipeline, PipelineId, PipelineNode};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -113,6 +113,27 @@ pub fn launch_with_pipeline(
     }
 }
 
+pub fn launch_steam_bottle_with_pipeline(
+    appid: u32,
+    pipeline_id: PipelineId,
+    prefix_path: &Path,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let node = get_pipeline(pipeline_id);
+
+    match pipeline_id {
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env)
+        },
+        PipelineId::M32 | PipelineId::WineBare => {
+            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env)
+        },
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+            Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
+        },
+    }
+}
+
 pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
     launch_with_pipeline(appid, pipeline_id)
@@ -142,8 +163,13 @@ pub fn prepare_steam_pipeline_env(
 ) -> Result<(Vec<(String, String)>, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 => {},
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam | PipelineId::WineBare => {
+        PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M32
+        | PipelineId::WineBare => {},
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
             return Err("Steam route handoff only supports Wine-backed MTSP pipelines".into());
         },
     }
@@ -343,6 +369,15 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
 }
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_dxmt_metal_with_context(appid, node, None, &[])
+}
+
+fn launch_dxmt_metal_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -355,7 +390,8 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix =
+        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -381,6 +417,9 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
@@ -389,6 +428,15 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_wine_bare_with_context(appid, node, None, &[])
+}
+
+fn launch_wine_bare_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -401,7 +449,8 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix =
+        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -420,6 +469,9 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
@@ -534,7 +586,8 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let cache_paths = build_cache_paths(home, node, appid);
-    let mut env = Vec::new();
+    let appid_string = appid.to_string();
+    let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
 
     if !node.dyld_paths.is_empty() {
         let runtime_lib_key =
@@ -1041,17 +1094,41 @@ mod tests {
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("SteamAppId"));
+        assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
         assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
+        assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
         let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
-    fn steam_pipeline_env_rejects_plain_wine_fallback() {
-        let error = prepare_steam_pipeline_env(1, PipelineId::WineBare).expect_err("wine_bare should not be handoff");
+    fn steam_pipeline_env_allows_plain_wine_fallback_context() {
+        let home = test_dir("steam-wine-env");
+        let node = get_pipeline(PipelineId::WineBare);
+
+        let env = steam_pipeline_env_pairs(&home, node, 1);
+        let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+        let runtime_lib_key =
+            crate::platform::runtime_library_env(&home.join(".metalsharp").join("runtime").join("wine"))
+                .map(|(key, _)| key)
+                .unwrap_or("LD_LIBRARY_PATH");
+        assert!(keys.contains(runtime_lib_key));
+        assert!(keys.contains("SteamAppId"));
+        assert!(keys.contains("SteamGameId"));
+        assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
+        assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn steam_pipeline_env_rejects_client_only_routes() {
+        let error = prepare_steam_pipeline_env(1, PipelineId::Steam).expect_err("steam should not be handoff");
 
         assert!(error.to_string().contains("Steam route handoff only supports Wine-backed MTSP pipelines"));
     }

@@ -23,7 +23,18 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
 
     if !crate::steam::is_wine_steam_running() {
         crate::steam::launch_wine_steam()?;
-        std::thread::sleep(std::time::Duration::from_secs(15));
+        let mut ready = false;
+        for _ in 0..12 {
+            if crate::steam::is_wine_steam_running() {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                ready = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if !ready {
+            return Err("Wine Steam was started but did not become ready for game launch".into());
+        }
     }
 
     let url = format!("steam://run/{}", appid);
@@ -57,13 +68,18 @@ pub fn launch_via_steam_with_env(
 
     if !steam_running {
         crate::steam::launch_wine_steam_with_env(extra_env)?;
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_secs(2));
+        let mut ready = false;
+        for _ in 0..12 {
             if crate::steam::is_wine_steam_running() {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                ready = true;
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        if !ready {
+            return Err("Wine Steam was started but did not become ready for game launch".into());
+        }
     }
 
     let url = format!("steam://run/{}", appid);

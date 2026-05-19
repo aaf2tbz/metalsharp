@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.33.26 - 2026-05-19
+
+Steam bottle launch follow-up.
+
+### Fixed
+
+- **Steam game bottle launches** - env-dependent Wine Steam routes now keep Wine Steam alive as the background client while launching the game process through the selected bottle-aware MTSP pipeline with the prepared prefix, runtime env, and Steam app identity.
+- **Steam launch readiness** - cold Wine Steam starts now fail clearly if Steam never becomes detectable, and readiness waits stay below the renderer backend timeout.
+- **Sharp Library filtering** - Wine built-ins such as Windows Media Player, Windows NT, Internet Explorer, Notepad, and WordPad are filtered from prefix scans and pruned from persisted `wine_app_*` entries on refresh.
+- **Wine fallback route contract** - explicit Wine fallback launches through `/steam/launch-game` now use the same Steam bottle launch context instead of failing during environment preparation.
+
 ## v0.33.25 - 2026-05-19
 
 Release packaging follow-up.
