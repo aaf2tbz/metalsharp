@@ -1,12 +1,13 @@
 # Changelog
 
-## v0.33.24 - 2026-05-19
+## v0.33.25 - 2026-05-19
 
 Release packaging follow-up.
 
 ### Fixed
 
 - **Linux runtime package tarballs after Docker DEB builds** - the Docker package builder can leave `dist/` owned by root on GitHub-hosted Ubuntu runners. `tools/linux/create-release-tarballs.sh` now repairs the output directory ownership when `sudo` is available before writing `dist/packages/metalsharp_linux_runtime*.tar.zst`.
+- **Linux OCI package publishing** - ORAS 1.3 rejects absolute local artifact paths by default. `tools/linux/publish-oci-packages.sh` now pushes relative artifact paths from the repository root.
 
 ### Changed
 

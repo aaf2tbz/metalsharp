@@ -22,9 +22,35 @@ for required in "$DEB_PATH" "$LATEST_LINUX_PATH" "$RUNTIME_TARBALL" "$RUNTIME_TA
   test -s "$required"
 done
 
+relpath() {
+  local path="$1"
+  case "$path" in
+    "$PROJECT_ROOT"/*) printf '%s\n' "${path#"$PROJECT_ROOT"/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
+DEB_REF="$(relpath "$DEB_PATH")"
+LATEST_LINUX_REF="$(relpath "$LATEST_LINUX_PATH")"
+RUNTIME_TARBALL_REF="$(relpath "$RUNTIME_TARBALL")"
+RUNTIME_TARBALL_2_REF="$(relpath "$RUNTIME_TARBALL_2")"
+RUNTIME_SHA_REF="$(relpath "$RUNTIME_SHA")"
+
+if [ "${METALSHARP_OCI_DRY_RUN:-0}" = "1" ]; then
+  printf '%s\n' \
+    "$DEB_REF" \
+    "$LATEST_LINUX_REF" \
+    "$RUNTIME_TARBALL_REF" \
+    "$RUNTIME_TARBALL_2_REF" \
+    "$RUNTIME_SHA_REF"
+  exit 0
+fi
+
 if [ -n "${GH_TOKEN:-}" ]; then
   echo "$GH_TOKEN" | oras login ghcr.io -u "${GITHUB_ACTOR:-metalsharp-ci}" --password-stdin
 fi
+
+cd "$PROJECT_ROOT"
 
 for tag in $TAGS; do
   oras push "${RUNTIME_IMAGE}:${tag}" \
@@ -32,15 +58,15 @@ for tag in $TAGS; do
     --annotation "org.opencontainers.image.source=${SOURCE}" \
     --annotation "org.opencontainers.image.description=MetalSharp Linux runtime tarballs" \
     --annotation "org.opencontainers.image.revision=${REVISION}" \
-    "$RUNTIME_TARBALL:application/vnd.metalsharp.runtime.tar+zstd" \
-    "$RUNTIME_TARBALL_2:application/vnd.metalsharp.runtime.tar+zstd" \
-    "$RUNTIME_SHA:text/plain"
+    "$RUNTIME_TARBALL_REF:application/vnd.metalsharp.runtime.tar+zstd" \
+    "$RUNTIME_TARBALL_2_REF:application/vnd.metalsharp.runtime.tar+zstd" \
+    "$RUNTIME_SHA_REF:text/plain"
 
   oras push "${DEB_IMAGE}:${tag}" \
     --artifact-type application/vnd.metalsharp.linux-deb.v1 \
     --annotation "org.opencontainers.image.source=${SOURCE}" \
     --annotation "org.opencontainers.image.description=MetalSharp Linux debian release installer" \
     --annotation "org.opencontainers.image.revision=${REVISION}" \
-    "$DEB_PATH:application/vnd.debian.binary-package" \
-    "$LATEST_LINUX_PATH:application/x-yaml"
+    "$DEB_REF:application/vnd.debian.binary-package" \
+    "$LATEST_LINUX_REF:application/x-yaml"
 done
