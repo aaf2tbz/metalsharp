@@ -255,6 +255,17 @@ pub fn bottle_manifest_path(id: &str) -> PathBuf {
     bottle_dir(id).join(MANIFEST_FILE)
 }
 
+fn validate_bottle_id(id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let valid = !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    if valid {
+        Ok(())
+    } else {
+        Err("invalid bottle id".into())
+    }
+}
+
 fn compatibility_matrix_path() -> PathBuf {
     bottles_root().join(COMPATIBILITY_MATRIX_FILE)
 }
@@ -272,11 +283,13 @@ pub fn next_launch_log_path(id: &str) -> PathBuf {
 }
 
 pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    validate_bottle_id(id)?;
     let data = fs::read_to_string(bottle_manifest_path(id))?;
     Ok(serde_json::from_str(&data)?)
 }
 
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
+    validate_bottle_id(&manifest.id)?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
     fs::create_dir_all(dir.join("installers"))?;
@@ -976,7 +989,7 @@ pub fn handle_redist_sources() -> Value {
 }
 
 pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Value {
-    let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let appid = body.get("appid").and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok());
     let pipeline = body
         .get("pipeline")
         .and_then(|v| v.as_str())
@@ -2139,6 +2152,15 @@ mod tests {
     fn steam_bottle_ids_are_appid_scoped() {
         assert_eq!(steam_game_bottle_id(620), "steam_620");
         assert_ne!(steam_game_bottle_id(620), steam_game_bottle_id(504230));
+    }
+
+    #[test]
+    fn bottle_ids_reject_path_like_values() {
+        assert!(validate_bottle_id("steam_620").is_ok());
+        assert!(validate_bottle_id("installer_abcdef1234567890").is_ok());
+        assert!(validate_bottle_id("../steam_620").is_err());
+        assert!(validate_bottle_id("steam/620").is_err());
+        assert!(validate_bottle_id("").is_err());
     }
 
     fn test_dir(name: &str) -> PathBuf {
