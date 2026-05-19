@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.33.23 - 2026-05-19
+## v0.33.24 - 2026-05-19
 
 Release packaging follow-up.
 
