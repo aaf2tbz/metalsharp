@@ -511,12 +511,13 @@ fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::
         )?;
         pid
     };
-    let _ = crate::bottles::set_last_launch_log(&bottle.id, &log_path);
+    let _ = crate::bottles::set_launch_started(&bottle.id, pid, &log_path);
+    crate::bottles::watch_bottle_launch(bottle.id.clone(), pid);
 
     Ok(SharpInstallOutcome::InstallerStarted {
         pid,
         message: format!(
-            "Installer started with the {} pipeline in bottle {}. Finish setup in the installer window, then refresh Sharp Library.",
+            "Installer started with the {} pipeline in bottle {}. MetalSharp will watch for completion and refresh detected apps.",
             pipeline_engine_id(pipeline),
             bottle.id
         ),

@@ -58,6 +58,9 @@ interface BottleManifest {
   game_install_path?: string | null;
   runtime_assets: { id: string; kind: string; source_path: string; present: boolean }[];
   last_launch_log?: string | null;
+  last_launch_pid?: number | null;
+  last_launch_status?: string | null;
+  last_launch_finished_at?: string | null;
   installed_components: { id: string; state: string }[];
   installed_app_detections: { name: string; exe_path: string; source: string }[];
 }
@@ -489,6 +492,10 @@ onMounted(load);
                 <span>{{ bottle.arch }}</span>
                 <span>{{ bottle.runtime_profile }}</span>
                 <span v-if="bottle.steam_app_id">appid {{ bottle.steam_app_id }}</span>
+                <span v-if="bottle.last_launch_status">
+                  {{ bottle.last_launch_status }}
+                  <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
+                </span>
               </div>
             </div>
             <div class="bottle-actions">
@@ -555,7 +562,7 @@ onMounted(load);
         </svg>
       </div>
       <h2>No applications installed</h2>
-      <p>Click "Install an EXE" to add a Windows application</p>
+      <p>Click "Install Windows Program" to add a Windows application</p>
     </div>
 
     <div v-else class="sharp-grid">

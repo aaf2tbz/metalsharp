@@ -6,10 +6,14 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 use walkdir::WalkDir;
 
 const BOTTLES_DIR: &str = "bottles";
 const MANIFEST_FILE: &str = "bottle.json";
+const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
+const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -118,6 +122,12 @@ pub struct BottleManifest {
     pub installed_app_detections: Vec<AppDetection>,
     pub health: BottleHealth,
     pub last_launch_log: Option<String>,
+    #[serde(default)]
+    pub last_launch_pid: Option<u32>,
+    #[serde(default)]
+    pub last_launch_status: Option<String>,
+    #[serde(default)]
+    pub last_launch_finished_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -249,7 +259,11 @@ pub fn list_bottles() -> Result<Vec<BottleManifest>, Box<dyn std::error::Error>>
             continue;
         }
         if let Ok(data) = fs::read_to_string(path) {
-            if let Ok(manifest) = serde_json::from_str::<BottleManifest>(&data) {
+            if let Ok(mut manifest) = serde_json::from_str::<BottleManifest>(&data) {
+                if refresh_manifest_launch_state(&mut manifest) {
+                    manifest.updated_at = timestamp_secs();
+                    let _ = save_bottle(&manifest);
+                }
                 bottles.push(manifest);
             }
         }
@@ -286,6 +300,9 @@ pub fn ensure_installer_bottle(
         installed_app_detections: Vec::new(),
         health: BottleHealth::New,
         last_launch_log: None,
+        last_launch_pid: None,
+        last_launch_status: None,
+        last_launch_finished_at: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -330,6 +347,9 @@ pub fn ensure_steam_game_bottle(
         installed_app_detections: Vec::new(),
         health: BottleHealth::New,
         last_launch_log: None,
+        last_launch_pid: None,
+        last_launch_status: None,
+        last_launch_finished_at: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -442,18 +462,29 @@ pub fn set_last_launch_log(id: &str, log_path: &Path) -> Result<BottleManifest, 
     Ok(manifest)
 }
 
+pub fn set_launch_started(id: &str, pid: u32, log_path: &Path) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let mut manifest = load_bottle(id)?;
+    mark_manifest_launch_started(&mut manifest, pid, log_path);
+    save_bottle(&manifest)?;
+    Ok(manifest)
+}
+
+pub fn watch_bottle_launch(id: String, pid: u32) {
+    thread::spawn(move || {
+        for _ in 0..LAUNCH_WATCH_MAX_POLLS {
+            thread::sleep(Duration::from_secs(LAUNCH_WATCH_INTERVAL_SECS));
+            if !crate::launch::is_process_active(pid as i32) {
+                let _ = complete_bottle_launch(&id, pid);
+                return;
+            }
+        }
+    });
+}
+
 pub fn refresh_app_detections(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let mut manifest = load_bottle(id)?;
-    let prefix = PathBuf::from(&manifest.prefix_path);
-    manifest.installed_app_detections = match manifest.game_install_path.as_deref() {
-        Some(path) if manifest.bottle_type == BottleType::Steam => detect_apps_in_game_dir(Path::new(path)),
-        _ => detect_apps_in_prefix(&prefix),
-    };
-    if let Some(path) = manifest.game_install_path.as_deref() {
-        manifest.runtime_assets = detect_game_runtime_assets(Path::new(path));
-    }
-    manifest.health =
-        if manifest.installed_app_detections.is_empty() { BottleHealth::NeedsRepair } else { BottleHealth::Ready };
+    refresh_manifest_launch_state(&mut manifest);
+    refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
@@ -461,18 +492,13 @@ pub fn refresh_app_detections(id: &str) -> Result<BottleManifest, Box<dyn std::e
 
 pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::Error>> {
     let mut manifest = load_bottle(id)?;
+    refresh_manifest_launch_state(&mut manifest);
     let prefix = PathBuf::from(&manifest.prefix_path);
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
     let log_ok = manifest.last_launch_log.as_ref().map(|p| Path::new(p).exists()).unwrap_or(false);
-    let detections = match manifest.game_install_path.as_deref() {
-        Some(path) if manifest.bottle_type == BottleType::Steam => detect_apps_in_game_dir(Path::new(path)),
-        _ => detect_apps_in_prefix(&prefix),
-    };
-    let runtime_assets = manifest
-        .game_install_path
-        .as_deref()
-        .map(|path| detect_game_runtime_assets(Path::new(path)))
-        .unwrap_or_else(|| manifest.runtime_assets.clone());
+    refresh_manifest_runtime_views(&mut manifest);
+    let detections = manifest.installed_app_detections.clone();
+    let runtime_assets = manifest.runtime_assets.clone();
 
     let mut checks = Vec::new();
     checks.push(BottleCheck {
@@ -490,6 +516,14 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
         ok: log_ok,
         detail: manifest.last_launch_log.clone().unwrap_or_else(|| "no launch log recorded".to_string()),
     });
+    if let Some(status) = manifest.last_launch_status.as_deref() {
+        let detail = match (manifest.last_launch_pid, manifest.last_launch_finished_at.as_deref()) {
+            (Some(pid), Some(finished_at)) => format!("pid {} {} at {}", pid, status, finished_at),
+            (Some(pid), None) => format!("pid {} {}", pid, status),
+            (None, _) => status.to_string(),
+        };
+        checks.push(BottleCheck { id: "launch_state".to_string(), ok: status != "failed", detail });
+    }
     checks.push(BottleCheck {
         id: "app_detection".to_string(),
         ok: !detections.is_empty(),
@@ -520,6 +554,57 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     save_bottle(&manifest)?;
 
     Ok(BottleDiagnostic { id: id.to_string(), ready, summary, checks, actions })
+}
+
+fn mark_manifest_launch_started(manifest: &mut BottleManifest, pid: u32, log_path: &Path) {
+    manifest.last_launch_log = Some(log_path.to_string_lossy().to_string());
+    manifest.last_launch_pid = Some(pid);
+    manifest.last_launch_status = Some("running".to_string());
+    manifest.last_launch_finished_at = None;
+    manifest.updated_at = timestamp_secs();
+}
+
+fn refresh_manifest_launch_state(manifest: &mut BottleManifest) -> bool {
+    if manifest.last_launch_status.as_deref() != Some("running") {
+        return false;
+    }
+    let Some(pid) = manifest.last_launch_pid else {
+        manifest.last_launch_status = Some("unknown".to_string());
+        manifest.last_launch_finished_at = Some(timestamp_secs());
+        return true;
+    };
+    if crate::launch::is_process_active(pid as i32) {
+        return false;
+    }
+    manifest.last_launch_status = Some("exited".to_string());
+    manifest.last_launch_finished_at = Some(timestamp_secs());
+    true
+}
+
+fn refresh_manifest_runtime_views(manifest: &mut BottleManifest) {
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    manifest.installed_app_detections = match manifest.game_install_path.as_deref() {
+        Some(path) if manifest.bottle_type == BottleType::Steam => detect_apps_in_game_dir(Path::new(path)),
+        _ => detect_apps_in_prefix(&prefix),
+    };
+    if let Some(path) = manifest.game_install_path.as_deref() {
+        manifest.runtime_assets = detect_game_runtime_assets(Path::new(path));
+    }
+    manifest.health =
+        if manifest.installed_app_detections.is_empty() { BottleHealth::NeedsRepair } else { BottleHealth::Ready };
+}
+
+fn complete_bottle_launch(id: &str, pid: u32) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let mut manifest = load_bottle(id)?;
+    if manifest.last_launch_pid != Some(pid) || manifest.last_launch_status.as_deref() != Some("running") {
+        return Ok(manifest);
+    }
+    manifest.last_launch_status = Some("exited".to_string());
+    manifest.last_launch_finished_at = Some(timestamp_secs());
+    refresh_manifest_runtime_views(&mut manifest);
+    manifest.updated_at = timestamp_secs();
+    save_bottle(&manifest)?;
+    Ok(manifest)
 }
 
 pub fn prepare_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::Error>> {
@@ -597,10 +682,10 @@ pub fn repair_component(
 
     let pid = launch_component_installer(&prefix, &installer, &log_path)?;
     mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
-    manifest.last_launch_log = Some(log_path.to_string_lossy().to_string());
+    mark_manifest_launch_started(&mut manifest, pid, &log_path);
     manifest.health = BottleHealth::NeedsRepair;
-    manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    watch_bottle_launch(id.to_string(), pid);
 
     Ok(ComponentRepairReport {
         id: component_id.to_string(),
@@ -625,10 +710,10 @@ pub fn set_windows_version(id: &str, version: &str) -> Result<ComponentRepairRep
     let log_path = bottle_logs_dir(id).join(format!("windows-version-{}-{}.log", version, timestamp_secs()));
     let pid = run_wine_reg_set_windows_version(&prefix, version, &log_path)?;
     mark_component_state(&mut manifest, &format!("windows_version_{}", version), ComponentState::NeedsRepair);
-    manifest.last_launch_log = Some(log_path.to_string_lossy().to_string());
+    mark_manifest_launch_started(&mut manifest, pid, &log_path);
     manifest.health = BottleHealth::NeedsRepair;
-    manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    watch_bottle_launch(id.to_string(), pid);
 
     Ok(ComponentRepairReport {
         id: format!("windows_version_{}", version),
