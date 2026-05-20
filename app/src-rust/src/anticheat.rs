@@ -211,6 +211,15 @@ pub fn handle_steam_mscompatdb_probe(body: &Map<String, Value>) -> Value {
     })
 }
 
+pub fn handle_steam_mscompatdb_prepare_dylib(body: &Map<String, Value>) -> Value {
+    let force = body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+    prepare_mscompatdb_dylib(&home, force)
+}
+
 pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     let appid =
         body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
@@ -577,12 +586,14 @@ fn runtime_probe_checks(home: &Path) -> Value {
 fn mscompatdb_probe(home: &Path) -> Value {
     let wine_root = home.join(".metalsharp").join("runtime").join("wine");
     let mscompatdb_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so");
+    let mscompatdb_dylib_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.dylib");
     let ntdll_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("ntdll.so");
     let rules_path = wine_root.join("etc").join("mscompatdb_rules.toml");
     let nested_rules_path = wine_root.join("etc").join("etc").join("mscompatdb_rules.toml");
     let mscompatdb_bytes = read_probe_bytes(&mscompatdb_path).unwrap_or_default();
     let ntdll_symbols = inspect_ntdll_symbols(&ntdll_path);
     let trace = mscompatdb_trace_signals(home);
+    let dyld_alias = dyld_alias_probe(&mscompatdb_path, &mscompatdb_dylib_path);
     let rules_present = rules_path.exists() || nested_rules_path.exists();
     let expects_ke_table = ascii_bytes_contains(&mscompatdb_bytes, b"KeServiceDescriptorTable");
     let expects_legacy_rule_api = ascii_bytes_contains(&mscompatdb_bytes, b"prepend")
@@ -616,6 +627,7 @@ fn mscompatdb_probe(home: &Path) -> Value {
             "expectsLegacyRuleApi": expects_legacy_rule_api,
             "hasTraceStrings": ascii_bytes_contains(&mscompatdb_bytes, b"mscompatdb:trace"),
         },
+        "dyldAlias": dyld_alias,
         "ntdll": {
             "path": ntdll_path.to_string_lossy(),
             "present": ntdll_path.exists(),
@@ -964,6 +976,190 @@ fn mscompatdb_status(
         return "present_but_rule_api_unresolved";
     }
     "hook_surface_ready"
+}
+
+fn dyld_alias_probe(so_path: &Path, dylib_path: &Path) -> Value {
+    let so_meta = fs::metadata(so_path).ok();
+    let dylib_meta = fs::metadata(dylib_path).ok();
+    let source_is_macho = read_binary_format(so_path) == "mach_o";
+    let dylib_is_macho = read_binary_format(dylib_path) == "mach_o";
+    let alias_current = so_meta.as_ref().map(|meta| meta.len()) == dylib_meta.as_ref().map(|meta| meta.len())
+        && so_meta
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .zip(dylib_meta.as_ref().and_then(|meta| meta.modified().ok()))
+            .map(|(source, alias)| alias >= source)
+            .unwrap_or(false);
+    let signature = code_signature_probe(dylib_path);
+    let signed = signature.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    json!({
+        "status": dylib_alias_status(so_path.exists(), source_is_macho, dylib_path.exists(), dylib_is_macho, signed),
+        "source": path_check(so_path),
+        "dylib": path_check(dylib_path),
+        "sourceFormat": read_binary_format(so_path),
+        "dylibFormat": read_binary_format(dylib_path),
+        "aliasCurrent": alias_current,
+        "signature": signature,
+    })
+}
+
+fn dylib_alias_status(
+    source_present: bool,
+    source_is_macho: bool,
+    dylib_present: bool,
+    dylib_is_macho: bool,
+    signed: bool,
+) -> &'static str {
+    if !source_present {
+        return "missing_source_so";
+    }
+    if !source_is_macho {
+        return "source_not_macho";
+    }
+    if !dylib_present {
+        return "missing_dylib_alias";
+    }
+    if !dylib_is_macho {
+        return "dylib_alias_not_macho";
+    }
+    if !signed {
+        return "dylib_alias_unsigned";
+    }
+    "dylib_alias_ready"
+}
+
+fn prepare_mscompatdb_dylib(home: &Path, force: bool) -> Value {
+    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let unix_dir = wine_root.join("lib").join("wine").join("x86_64-unix");
+    let so_path = unix_dir.join("mscompatdb.so");
+    let dylib_path = unix_dir.join("mscompatdb.dylib");
+    let mut steps = Vec::new();
+
+    if !so_path.exists() {
+        return json!({
+            "ok": false,
+            "status": "missing_source_so",
+            "source": so_path.to_string_lossy(),
+            "dylib": dylib_path.to_string_lossy(),
+            "steps": steps,
+        });
+    }
+    if read_binary_format(&so_path) != "mach_o" {
+        return json!({
+            "ok": false,
+            "status": "source_not_macho",
+            "source": so_path.to_string_lossy(),
+            "sourceFormat": read_binary_format(&so_path),
+            "steps": steps,
+        });
+    }
+
+    let should_copy = force || dylib_needs_refresh(&so_path, &dylib_path);
+    if should_copy {
+        match fs::copy(&so_path, &dylib_path) {
+            Ok(bytes) => steps.push(json!({"step": "copy_dylib_alias", "ok": true, "bytes": bytes})),
+            Err(err) => {
+                steps.push(json!({"step": "copy_dylib_alias", "ok": false, "error": err.to_string()}));
+                return json!({
+                    "ok": false,
+                    "status": "copy_failed",
+                    "source": so_path.to_string_lossy(),
+                    "dylib": dylib_path.to_string_lossy(),
+                    "steps": steps,
+                });
+            },
+        }
+    } else {
+        steps.push(json!({"step": "copy_dylib_alias", "ok": true, "skipped": true, "reason": "alias_current"}));
+    }
+
+    steps.push(command_result_json(
+        "clear_quarantine",
+        Command::new("xattr").arg("-d").arg("com.apple.quarantine").arg(&dylib_path),
+        true,
+    ));
+    steps.push(command_result_json(
+        "set_install_name",
+        Command::new("install_name_tool").arg("-id").arg("@rpath/mscompatdb.dylib").arg(&dylib_path),
+        true,
+    ));
+    steps.push(command_result_json(
+        "ad_hoc_codesign",
+        Command::new("codesign").arg("--force").arg("--sign").arg("-").arg(&dylib_path),
+        false,
+    ));
+    let verify = code_signature_probe(&dylib_path);
+    let signed = verify.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+    let status =
+        dylib_alias_status(true, true, dylib_path.exists(), read_binary_format(&dylib_path) == "mach_o", signed);
+
+    json!({
+        "ok": signed,
+        "status": status,
+        "source": so_path.to_string_lossy(),
+        "dylib": dylib_path.to_string_lossy(),
+        "steps": steps,
+        "dyldAlias": dyld_alias_probe(&so_path, &dylib_path),
+    })
+}
+
+fn dylib_needs_refresh(source: &Path, dylib: &Path) -> bool {
+    let Some(source_meta) = fs::metadata(source).ok() else {
+        return false;
+    };
+    let Some(dylib_meta) = fs::metadata(dylib).ok() else {
+        return true;
+    };
+    if source_meta.len() != dylib_meta.len() {
+        return true;
+    }
+    let source_modified = source_meta.modified().ok();
+    let dylib_modified = dylib_meta.modified().ok();
+    source_modified.zip(dylib_modified).map(|(source, dylib)| source > dylib).unwrap_or(false)
+}
+
+fn code_signature_probe(path: &Path) -> Value {
+    if !path.exists() {
+        return json!({"valid": false, "present": false});
+    }
+    let verify =
+        Command::new("codesign").arg("--verify").arg("--deep").arg("--strict").arg("--verbose=2").arg(path).output();
+    let details = Command::new("codesign").arg("-dv").arg("--verbose=4").arg(path).output();
+    let valid = verify.as_ref().map(|output| output.status.success()).unwrap_or(false);
+    json!({
+        "present": true,
+        "valid": valid,
+        "verify": command_output_json(verify),
+        "details": command_output_json(details),
+    })
+}
+
+fn command_result_json(step: &str, command: &mut Command, allow_failure: bool) -> Value {
+    let output = command.output();
+    let ok = output.as_ref().map(|output| output.status.success()).unwrap_or(false);
+    json!({
+        "step": step,
+        "ok": ok || allow_failure,
+        "allowedFailure": allow_failure,
+        "commandOk": ok,
+        "output": command_output_json(output),
+    })
+}
+
+fn command_output_json(output: std::io::Result<std::process::Output>) -> Value {
+    match output {
+        Ok(output) => json!({
+            "status": output.status.code(),
+            "success": output.status.success(),
+            "stdout": String::from_utf8_lossy(&output.stdout).trim(),
+            "stderr": String::from_utf8_lossy(&output.stderr).trim(),
+        }),
+        Err(err) => json!({
+            "success": false,
+            "error": err.to_string(),
+        }),
+    }
 }
 
 fn mscompatdb_probe_summary(status: &str) -> &'static str {
@@ -1812,6 +2008,16 @@ mod tests {
         assert_eq!(mscompatdb_status(true, true, true, false, false, false), "present_but_ke_table_unresolved");
         assert_eq!(mscompatdb_status(true, true, false, false, false, true), "present_but_rule_api_unresolved");
         assert_eq!(mscompatdb_status(true, true, false, false, false, false), "hook_surface_ready");
+    }
+
+    #[test]
+    fn dylib_alias_status_requires_macho_signed_alias() {
+        assert_eq!(dylib_alias_status(false, false, false, false, false), "missing_source_so");
+        assert_eq!(dylib_alias_status(true, false, false, false, false), "source_not_macho");
+        assert_eq!(dylib_alias_status(true, true, false, false, false), "missing_dylib_alias");
+        assert_eq!(dylib_alias_status(true, true, true, false, false), "dylib_alias_not_macho");
+        assert_eq!(dylib_alias_status(true, true, true, true, false), "dylib_alias_unsigned");
+        assert_eq!(dylib_alias_status(true, true, true, true, true), "dylib_alias_ready");
     }
 
     #[test]

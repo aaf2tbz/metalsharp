@@ -48,6 +48,7 @@ This probe does not load or tamper with anti-cheat modules. It classifies the ho
 Map MetalSharp Wine against Proton and upstream Wine behavior:
 
 - `ntdll` loader and syscall dispatch,
+- `mscompatdb` hook/load behavior on Darwin,
 - wineserver process and handle behavior,
 - `steamclient` and `lsteamclient` behavior,
 - mmap and memory protection behavior,
@@ -68,8 +69,29 @@ This report groups the local runtime into audit surfaces:
 - Linux runtime assumptions: pressure-vessel, seccomp, and Linux namespaces, which are comparison rows on macOS rather than direct requirements.
 - Graphics runtime adjacency: DXMT, DXVK, and MoltenVK assets that must stay intact while protected launch is debugged.
 - Anti-cheat module contract: whether EAC selected a Linux module, whether Darwin can directly load it, and whether a vendor macOS module is present.
+- MetalSharp `mscompatdb` bridge: whether the shim exists, whether a Darwin `.dylib` alias exists and is signed, and whether Wine `ntdll.so` exposes a usable hook point.
 
 For Rubicon, the expected status is `blocking_delta_found`: the ordinary Wine/DXMT runtime pieces exist, but the protected launcher selected `linux64`, no vendor Mach-O module was found, and macOS cannot directly load Linux ELF modules.
+
+### Phase 3a: Darwin `mscompatdb` parity
+
+MetalSharp currently carries a Mach-O `mscompatdb.so`, which is useful for Wine's Unix module naming, but macOS runtime loading still needs a dyld-shaped view of the same shim:
+
+- `mscompatdb.so` remains the Wine-facing Unix module name.
+- `mscompatdb.dylib` is the adjacent Darwin alias used for dyld-oriented inspection/loading.
+- The alias must be Mach-O, have an install name such as `@rpath/mscompatdb.dylib`, have quarantine removed when present, and be ad-hoc signed so macOS will load it consistently during local runtime tests.
+
+Initial backend surfaces:
+
+```http
+POST /steam/mscompatdb-probe
+{"appid":1245620}
+
+POST /steam/mscompatdb-prepare-dylib
+{"force":false}
+```
+
+The current local proof result is `present_but_ke_table_unresolved`: `mscompatdb.so` exists and contains the expected trace/rule strings, but Wine `ntdll.so` exposes `KeServiceDescriptorTable` as a local/private Mach-O symbol rather than an exported hook point. The `.dylib` alias solves Darwin loading/signing parity; it does not by itself solve the Wine syscall hook contract.
 
 ## Phase 4: macOS Runtime Substrate Decision
 
