@@ -1,17 +1,28 @@
 #include <windows.h>
 #include <tlhelp32.h>
+#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
 
 typedef BOOL(WINAPI *CreateProcessAType)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION);
 typedef BOOL(WINAPI *CreateProcessWType)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCWSTR, LPSTARTUPINFOW, LPPROCESS_INFORMATION);
+typedef FARPROC(WINAPI *GetProcAddressType)(HMODULE, LPCSTR);
+typedef BOOL(WINAPI *ShellExecuteExWType)(SHELLEXECUTEINFOW *);
+typedef HINSTANCE(WINAPI *ShellExecuteWType)(HWND, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, INT);
 
 static CreateProcessAType real_CreateProcessA = NULL;
 static CreateProcessWType real_CreateProcessW = NULL;
+static GetProcAddressType real_GetProcAddress = NULL;
+static ShellExecuteExWType real_ShellExecuteExW = NULL;
+static ShellExecuteWType real_ShellExecuteW = NULL;
 static volatile LONG patching = 0;
 static volatile LONG create_process_a_hooks = 0;
 static volatile LONG create_process_w_hooks = 0;
+static volatile LONG get_proc_address_hooks = 0;
+static volatile LONG shell_execute_ex_w_hooks = 0;
+static volatile LONG shell_execute_w_hooks = 0;
+static volatile LONG redirected_get_proc_address = 0;
 
 static void log_line(const char *msg) {
     char temp[MAX_PATH] = {0};
@@ -154,6 +165,59 @@ BOOL WINAPI hook_CreateProcessW(
     return real_CreateProcessW(app, cmd, proc_attrs, thread_attrs, inherit_handles, flags, env, cwd, startup, process_info);
 }
 
+FARPROC WINAPI hook_GetProcAddress(HMODULE module, LPCSTR name) {
+    if (name && ((ULONG_PTR)name >> 16) != 0) {
+        if (strcmp(name, "CreateProcessA") == 0) {
+            if (InterlockedIncrement(&redirected_get_proc_address) <= 8) {
+                log_line("redirected GetProcAddress CreateProcessA");
+            }
+            return (FARPROC)hook_CreateProcessA;
+        }
+        if (strcmp(name, "CreateProcessW") == 0) {
+            if (InterlockedIncrement(&redirected_get_proc_address) <= 8) {
+                log_line("redirected GetProcAddress CreateProcessW");
+            }
+            return (FARPROC)hook_CreateProcessW;
+        }
+    }
+    return real_GetProcAddress(module, name);
+}
+
+BOOL WINAPI hook_ShellExecuteExW(SHELLEXECUTEINFOW *info) {
+    if (info && info->lpParameters && should_patch_child_w(info->lpParameters)) {
+        wchar_t *patched = append_cef_flags_w(info->lpParameters);
+        if (patched) {
+            SHELLEXECUTEINFOW patched_info = *info;
+            patched_info.lpParameters = patched;
+            log_line("patched ShellExecuteExW CEF child");
+            BOOL ok = real_ShellExecuteExW(&patched_info);
+            HeapFree(GetProcessHeap(), 0, patched);
+            return ok;
+        }
+    }
+    return real_ShellExecuteExW(info);
+}
+
+HINSTANCE WINAPI hook_ShellExecuteW(
+    HWND hwnd,
+    LPCWSTR operation,
+    LPCWSTR file,
+    LPCWSTR parameters,
+    LPCWSTR directory,
+    INT show_cmd
+) {
+    if (parameters && should_patch_child_w(parameters)) {
+        wchar_t *patched = append_cef_flags_w(parameters);
+        if (patched) {
+            log_line("patched ShellExecuteW CEF child");
+            HINSTANCE result = real_ShellExecuteW(hwnd, operation, file, patched, directory, show_cmd);
+            HeapFree(GetProcessHeap(), 0, patched);
+            return result;
+        }
+    }
+    return real_ShellExecuteW(hwnd, operation, file, parameters, directory, show_cmd);
+}
+
 static void patch_imports(HMODULE module) {
     if (!module) {
         return;
@@ -188,6 +252,12 @@ static void patch_imports(HMODULE module) {
                 replacement = (FARPROC)hook_CreateProcessA;
             } else if (strcmp((char *)name->Name, "CreateProcessW") == 0) {
                 replacement = (FARPROC)hook_CreateProcessW;
+            } else if (strcmp((char *)name->Name, "GetProcAddress") == 0) {
+                replacement = (FARPROC)hook_GetProcAddress;
+            } else if (strcmp((char *)name->Name, "ShellExecuteExW") == 0) {
+                replacement = (FARPROC)hook_ShellExecuteExW;
+            } else if (strcmp((char *)name->Name, "ShellExecuteW") == 0) {
+                replacement = (FARPROC)hook_ShellExecuteW;
             }
             if (!replacement || (FARPROC)thunk->u1.Function == replacement) {
                 continue;
@@ -203,6 +273,18 @@ static void patch_imports(HMODULE module) {
                 } else if (replacement == (FARPROC)hook_CreateProcessW) {
                     if (InterlockedIncrement(&create_process_w_hooks) <= 8) {
                         log_line("hooked CreateProcessW import");
+                    }
+                } else if (replacement == (FARPROC)hook_GetProcAddress) {
+                    if (InterlockedIncrement(&get_proc_address_hooks) <= 8) {
+                        log_line("hooked GetProcAddress import");
+                    }
+                } else if (replacement == (FARPROC)hook_ShellExecuteExW) {
+                    if (InterlockedIncrement(&shell_execute_ex_w_hooks) <= 8) {
+                        log_line("hooked ShellExecuteExW import");
+                    }
+                } else if (replacement == (FARPROC)hook_ShellExecuteW) {
+                    if (InterlockedIncrement(&shell_execute_w_hooks) <= 8) {
+                        log_line("hooked ShellExecuteW import");
                     }
                 }
             }
@@ -244,6 +326,13 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved) {
         HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
         real_CreateProcessA = (CreateProcessAType)GetProcAddress(kernel32, "CreateProcessA");
         real_CreateProcessW = (CreateProcessWType)GetProcAddress(kernel32, "CreateProcessW");
+        real_GetProcAddress = (GetProcAddressType)GetProcAddress(kernel32, "GetProcAddress");
+        HMODULE shell32 = GetModuleHandleA("shell32.dll");
+        if (!shell32) {
+            shell32 = LoadLibraryA("shell32.dll");
+        }
+        real_ShellExecuteExW = shell32 ? (ShellExecuteExWType)GetProcAddress(shell32, "ShellExecuteExW") : NULL;
+        real_ShellExecuteW = shell32 ? (ShellExecuteWType)GetProcAddress(shell32, "ShellExecuteW") : NULL;
         log_line("metalsharp cef child hook loaded");
         HANDLE thread = CreateThread(NULL, 0, patch_thread, NULL, 0, NULL);
         if (thread) {
