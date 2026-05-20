@@ -98,9 +98,9 @@ Observed result:
 - CEF initialized successfully, but the initial launcher window rendered blank.
 - General CEF compatibility was then applied by preserving `MinecraftLauncher_real.exe` and replacing `MinecraftLauncher.exe` with an architecture-matched wrapper.
 - The wrapper launches the real executable with `--in-process-gpu --disable-gpu`, matching the working Steam CEF strategy.
-- The wrapper also deploys `metalsharp-cefchildhook.dll`; local hook logs show it loads and patches launcher/module `CreateProcessA/W` imports.
+- The wrapper also deploys `metalsharp-cefchildhook.dll`; local hook logs show it loads and patches launcher/module `CreateProcessA/W`, `GetProcAddress`, and `ShellExecute` imports.
 - The wrapped launcher still renders blank. After clearing Minecraft's `launch_attempts.json` retry guard, logs show CEF initialization, successful network calls, successful XAL token initialization, and the main window opening.
-- The remaining blocker is now lower than top-level wrapping: Minecraft logs renderer/GPU subprocess command lines from `MinecraftLauncher_real.exe`, but those launches are not yet passing through the hooked import path.
+- The remaining blocker is now lower than top-level wrapping: Minecraft logs renderer/GPU subprocess command lines from `MinecraftLauncher_real.exe`, but those launches are not yet passing through the hooked process creation or shell execution paths.
 - Minecraft's launcher binary exposes `disableGPU`, `disableGPUCommandLine`, `disableGPUForced`, and `additionalCEFOptions` strings. A bottle-local settings JSON attempt was accepted but did not appear in emitted CEF child command lines.
 
 Evidence:

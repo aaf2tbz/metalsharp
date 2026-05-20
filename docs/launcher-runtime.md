@@ -43,7 +43,7 @@ The first proof target is Minecraft Launcher:
 - the Microsoft Store `.exe` bootstrapper is a 32-bit .NET/WPF package and can fall into Wine Mono or native .NET setup failure before Minecraft exists
 - the official Mojang `MinecraftInstaller.msi` installs cleanly into a `java_launcher` bottle
 - `MinecraftLauncher.exe` now receives the generic CEF wrapper and child hook, but the current proof still renders a blank surface after CEF initializes
-- local hook logs prove imports are patched, but Minecraft's embedded CEF child creation is not yet passing through the hooked `CreateProcessA/W` path
+- local hook logs prove imports are patched, but Minecraft's embedded CEF child creation is not yet passing through the hooked `CreateProcessA/W`, `GetProcAddress`, or `ShellExecute` paths
 
 ## Remaining Work
 
