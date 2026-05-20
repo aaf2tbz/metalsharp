@@ -684,7 +684,7 @@ fn module_contract_checks(host_os: &str, eac: &EacSummary, module_assets: &[Valu
         "selectedLinuxModule": selected_linux_module,
         "hasLinuxElfAsset": has_elf_asset,
         "hasDarwinDylibAsset": has_macho_asset,
-        "directHostLoadPossible": !selected_linux_module && !(has_elf_asset && !can_dlopen_linux_elf_directly(host_os)),
+        "directHostLoadPossible": !selected_linux_module && (!has_elf_asset || can_dlopen_linux_elf_directly(host_os)),
         "needsLinuxUserSpaceSubstrate": (selected_linux_module || has_elf_asset) && !can_dlopen_linux_elf_directly(host_os),
         "needsVendorMacOSAsset": host_os == "macos" && selected_linux_module && !has_macho_asset,
     })
