@@ -18,6 +18,8 @@ The installer classifier recognizes these launcher families before generic .NET,
 
 Known launcher hints are stored in the classifier output as `known_launcher:<id>` and `launcher_name:<display name>`. These hints make installer bottles more predictable, especially when launcher bootstrapper binaries also contain generic .NET or WebView strings.
 
+Known launchers default to the bare Wine pipeline during install/bootstrap. That keeps store launchers from inheriting game-specific graphics routes such as M9 before the actual child game executable exists. Once a launcher installs or starts a game, that child executable still gets its own bottle/runtime route.
+
 ## Runtime Behavior
 
 `Install Windows Program` routes launcher-like EXEs and MSI packages into installer bottles. The bottle records:
@@ -30,7 +32,7 @@ Known launcher hints are stored in the classifier output as `known_launcher:<id>
 - launch pid/status
 - detected installed app candidates
 
-Minecraft gets a Java Launcher profile even when the bootstrapper includes CLR metadata. Storefront launchers get WebView or Launcher profiles so their bottle dependency set matches the login and embedded-browser surface they actually need.
+Minecraft gets a Java Launcher profile even when the bootstrapper includes CLR metadata. Storefront launchers get WebView or Launcher profiles so their bottle dependency set matches the login and embedded-browser surface they actually need. The WebView profile includes Gecko, WebView2, .NET 4.8, VC runtime, and core fonts because EA-style WiX/MSI launchers can execute .NET custom actions after the visible install bar completes.
 
 ## CEF Compatibility
 
@@ -44,6 +46,13 @@ The first proof target is Minecraft Launcher:
 - the official Mojang `MinecraftInstaller.msi` installs cleanly into a `java_launcher` bottle
 - `MinecraftLauncher.exe` now receives the generic CEF wrapper and child hook, but the current proof still renders a blank surface after CEF initializes
 - local hook logs prove imports are patched, but Minecraft's embedded CEF child creation is not yet passing through the hooked `CreateProcessA/W`, `GetProcAddress`, or `ShellExecute` paths
+
+EA App is the first Steam-adjacent storefront proof target:
+
+- the installer reaches the EA MSI apply step in bottle `installer_16c2e7d7a6e2d5e7`
+- the visible install bar completes, then the MSI fails with `0x80070643`, which EA reports as `INST-14-1603`
+- extracted MSI custom-action metadata requests `.NET v4.0`, so the WebView profile now provisions `dotnet48` before the launcher installer runs
+- known launchers now install through bare Wine first instead of falling back to M9 from the 32-bit bootstrapper PE header
 
 ## Remaining Work
 

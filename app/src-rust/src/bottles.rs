@@ -649,13 +649,13 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         hints.push(format!("installer_kind:{:?}", installer_kind).to_ascii_lowercase());
     }
 
-    let pipeline = known_launcher.and_then(|recipe| recipe.forced_pipeline).unwrap_or_else(|| {
-        if is_msi {
-            crate::mtsp::engine::PipelineId::WineBare
-        } else {
-            installer_pipeline_from_pe(pe.as_ref())
-        }
-    });
+    let pipeline = if let Some(recipe) = known_launcher {
+        recipe.forced_pipeline.unwrap_or(crate::mtsp::engine::PipelineId::WineBare)
+    } else if is_msi {
+        crate::mtsp::engine::PipelineId::WineBare
+    } else {
+        installer_pipeline_from_pe(pe.as_ref())
+    };
     let runtime_profile = if let Some(recipe) = known_launcher {
         recipe.runtime_profile
     } else if imports_mscoree || strings_dotnet {
@@ -1493,7 +1493,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "WebView",
             BottleArch::Wow64,
             true,
-            &["gecko", "webview2", "vcrun2019", "corefonts"][..],
+            &["gecko", "webview2", "dotnet48", "vcrun2019", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::JavaLauncher => (
@@ -2963,6 +2963,10 @@ mod tests {
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaArm64));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaX86));
+
+        let webview = runtime_profile_definition(RuntimeProfile::Webview);
+        assert_eq!(webview.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert!(webview.components.contains(&"dotnet48".to_string()));
     }
 
     #[test]
@@ -3044,7 +3048,7 @@ mod tests {
         let classification = classify_installer(&exe);
 
         assert_eq!(classification.arch, BottleArch::Win32);
-        assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::M9);
+        assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::WineBare);
         assert_eq!(classification.installer_kind, InstallerKind::Java);
         assert_eq!(classification.runtime_profile, RuntimeProfile::JavaLauncher);
         assert!(classification.hints.contains(&"known_launcher:minecraft".to_string()));
@@ -3072,6 +3076,7 @@ mod tests {
             let classification = classify_installer(&exe);
 
             assert_eq!(classification.runtime_profile, profile, "{}", name);
+            assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::WineBare, "{}", name);
             assert!(classification.hints.contains(&hint.to_string()), "{}", name);
         }
         let _ = fs::remove_dir_all(dir);

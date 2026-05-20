@@ -111,15 +111,15 @@
       "name": "EA App",
       "source": "local_windows_installer",
       "appid": null,
-      "installer_path": null,
-      "bottle_id": null,
+      "installer_path": "~/Downloads/EAappInstaller.exe",
+      "bottle_id": "installer_16c2e7d7a6e2d5e7",
       "compatdata_path": null,
       "runtime_profile": "webview",
-      "launch_pipeline": "needs_evidence",
-      "prefix_path": null,
+      "launch_pipeline": "wine_bare",
+      "prefix_path": "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix",
       "expected_route": "webview",
-      "install_result": "untested",
-      "launcher_open_result": "untested",
+      "install_result": "failed",
+      "launcher_open_result": "not_reached",
       "login_result": "untested",
       "child_game_process_result": "untested",
       "game_launch_result": "untested",
@@ -128,9 +128,18 @@
       "input_result": "needs_evidence",
       "online_session_result": "untested",
       "anti_cheat_status": "needs_evidence",
-      "failure_classification": [],
-      "failure_evidence": [],
-      "next_action": "Validate WebView2/Gecko failure mode in a launcher bottle."
+      "failure_classification": [
+        "ea_inst_14_1603",
+        "msi_custom_action_failure",
+        "launcher_bootstrapper_needs_bare_wine",
+        "webview_profile_needs_dotnet48"
+      ],
+      "failure_evidence": [
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233838.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233518.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi56c0.tmp-/CustomAction.config"
+      ],
+      "next_action": "Rerun EA in a WebView bottle after known launchers default to WineBare and the WebView profile pre-installs dotnet48 before the EA MSI custom actions run."
     },
     {
       "id": "portal-2",
@@ -185,6 +194,39 @@
       "failure_classification": [],
       "failure_evidence": [],
       "next_action": "Pick a real title with Unix EAC assets and capture Launch Doctor classification."
+    },
+    {
+      "id": "battleye-rcon-client",
+      "group": "anti_cheat",
+      "name": "BattlEye RCon Client",
+      "source": "local_windows_tool",
+      "appid": null,
+      "installer_path": "~/Downloads/BERCon.exe",
+      "bottle_id": null,
+      "compatdata_path": null,
+      "runtime_profile": "win32_console_tool",
+      "launch_pipeline": "wine_bare",
+      "prefix_path": null,
+      "expected_route": "not_a_service_installer",
+      "install_result": "not_applicable",
+      "launcher_open_result": "not_applicable",
+      "login_result": "not_applicable",
+      "child_game_process_result": "not_applicable",
+      "game_launch_result": "not_applicable",
+      "graphics_result": "not_applicable",
+      "audio_result": "not_applicable",
+      "input_result": "not_applicable",
+      "online_session_result": "needs_evidence",
+      "anti_cheat_status": "not_battleye_runtime",
+      "failure_classification": [
+        "artifact_mismatch"
+      ],
+      "failure_evidence": [
+        "~/Downloads/BERCon.exe: PE32 console app",
+        "strings: BattlEye RCon v0.94 beta",
+        "imports: KERNEL32.dll and WS2_32.dll only"
+      ],
+      "next_action": "Do not treat BERCon.exe as the BattlEye service installer; pick a real Steam title that ships BattlEye/BEService assets and capture its launch-time service/runtime behavior."
     }
   ]
 }

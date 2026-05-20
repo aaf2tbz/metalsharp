@@ -1697,13 +1697,24 @@ mod tests {
     }
 
     #[test]
-    fn pe32_installers_use_m9_pipeline() {
+    fn generic_pe32_installers_use_m9_pipeline() {
         let dir = test_dir("installer-pe32");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("DemoInstaller.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn known_launcher_installers_use_plain_wine_pipeline() {
+        let dir = test_dir("installer-known-launcher");
         fs::create_dir_all(&dir).expect("create test dir");
         let exe = dir.join("MinecraftInstaller.exe");
         write_test_pe(&exe, 0x014c, 0x10b);
 
-        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::WineBare);
         let _ = fs::remove_dir_all(dir);
     }
 

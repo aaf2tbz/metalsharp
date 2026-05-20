@@ -127,3 +127,66 @@ Mono follow-up:
 - See `docs/mono-runtime-lanes.md`.
 - Keep Minecraft in the Wine-bottle lane for now because it is a Windows launcher/bootstrapper, not a native FNA game.
 - Use the old Terraria/Celeste native Mono lanes as selective fallback profiles for known FNA/XNA games, not as a global replacement for Wine Mono.
+
+### 2026-05-19: EA App installer
+
+Route used:
+
+```text
+POST /sharp-library/install {"srcPath":"~/Downloads/EAappInstaller.exe","name":"EA App"}
+POST /bottles/repair-component {"id":"installer_16c2e7d7a6e2d5e7","component":"dotnet48"}
+POST /bottles/relaunch-installer {"id":"installer_16c2e7d7a6e2d5e7"}
+```
+
+Observed result:
+
+- MetalSharp created bottle `installer_16c2e7d7a6e2d5e7`.
+- The classifier mapped EA to `runtime_profile=webview`.
+- Before this fix, the 32-bit PE fallback still launched the known launcher through `pipeline=M9`.
+- The EA bootstrapper downloaded and verified `EAapp-13.700.0.6213-4218.msi`.
+- After the visible install bar completed, the MSI failed with `0x80070643`.
+- EA reports that MSI failure as `INST-14-1603`.
+- The extracted MSI payload includes `Microsoft.Deployment.WindowsInstaller.dll` and `CustomAction.config` with `<supportedRuntime version="v4.0" />`, so EA is running .NET v4 custom actions during install.
+- Installing `dotnet48` repaired the bottle component state, but the relaunch still reproduced `INST-14-1603`.
+
+Evidence:
+
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/bottle.json`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233518.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233838.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi56c0.tmp-/CustomAction.config`
+
+Failure classification:
+
+- `ea_inst_14_1603`
+- `msi_custom_action_failure`
+- `launcher_bootstrapper_needs_bare_wine`
+- `webview_profile_needs_dotnet48`
+
+Next action:
+
+Rerun EA from a fresh WebView bottle after the known-launcher bare-Wine routing and WebView `dotnet48` provisioning changes, then inspect the generated MSI log instead of only the outer WiX bootstrapper log.
+
+### 2026-05-19: BattlEye BERCon artifact
+
+Observed result:
+
+- `~/Downloads/BERCon.exe` is a PE32 console app, not a service installer.
+- Embedded strings identify it as `BattlEye RCon v0.94 beta`.
+- The binary exposes remote-console command-line help: `BERCon [-host IP ADDRESS / HOSTNAME] [-port PORT] [-pw PASSWORD]`.
+- PE imports are limited to console/process basics plus `WS2_32.dll`; there is no visible `BEService`, driver, service-install, or anti-cheat runtime payload in this artifact.
+
+Evidence:
+
+- `file ~/Downloads/BERCon.exe`
+- `shasum -a 256 ~/Downloads/BERCon.exe`
+- `strings -a ~/Downloads/BERCon.exe`
+- `i686-w64-mingw32-objdump -p ~/Downloads/BERCon.exe`
+
+Failure classification:
+
+- `artifact_mismatch`
+
+Next action:
+
+Do not use BERCon as proof that the BattlEye runtime is installed. Pick a real Steam title that ships BattlEye/BEService assets, then capture the launch-time service behavior from the game bottle and Launch Doctor.
