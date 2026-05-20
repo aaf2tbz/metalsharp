@@ -137,6 +137,128 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
     })
 }
 
+pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
+    let appid =
+        body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let game_dir = appid.and_then(crate::setup::resolve_game_dir);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let eac = summarize_eac(&artifacts);
+    let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let host_os = std::env::consts::OS;
+
+    let surfaces = vec![
+        delta_group(
+            "wine_loader",
+            "Wine loader/syscall baseline",
+            vec![
+                delta_path("wineserver", "required", &wine_root.join("bin").join("wineserver"), None),
+                delta_path("wine", "required", &wine_root.join("bin").join("wine"), None),
+                delta_path("ntdll_unix", "required", &wine_root.join("lib").join("wine").join("x86_64-unix").join("ntdll.so"), None),
+                delta_path("ntdll_win64", "required", &wine_root.join("lib").join("wine").join("x86_64-windows").join("ntdll.dll"), None),
+                delta_path("ntdll_win32", "wow64_required", &wine_root.join("lib").join("wine").join("i386-windows").join("ntdll.dll"), None),
+                delta_path(
+                    "wine_preloader",
+                    "proton_comparison",
+                    &wine_root.join("bin").join("wine-preloader"),
+                    Some("Absent is common in packaged macOS Wine; record it because Proton/Linux loader behavior often assumes Linux mapping semantics."),
+                ),
+            ],
+        ),
+        delta_group(
+            "steam_runtime_bridge",
+            "Steam client bridge and protected launch surface",
+            vec![
+                delta_path(
+                    "steamclient_dll",
+                    "required",
+                    &prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steamclient.dll"),
+                    None,
+                ),
+                delta_path(
+                    "steamclient64_dll",
+                    "required",
+                    &prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steamclient64.dll"),
+                    None,
+                ),
+                delta_path(
+                    "lsteamclient_bridge",
+                    "proton_comparison",
+                    &wine_root.join("lib").join("wine").join("x86_64-unix").join("lsteamclient.so"),
+                    Some("Proton relies on a Linux Steam client bridge layer; MetalSharp needs an explicit equivalent story if protected launch depends on it."),
+                ),
+            ],
+        ),
+        delta_group(
+            "container_linux_runtime",
+            "Pressure-vessel, seccomp, and Linux namespace assumptions",
+            vec![
+                delta_capability("host_is_linux", "proton_comparison", host_os == "linux", "Proton anti-cheat support targets Linux user space; macOS cannot provide seccomp/namespaces directly."),
+                delta_capability("pressure_vessel_available", "proton_comparison", false, "No pressure-vessel container is present in the MetalSharp macOS runtime."),
+                delta_capability("seccomp_available", "proton_comparison", host_os == "linux", "Darwin has different syscall filtering and process policy APIs."),
+            ],
+        ),
+        delta_group(
+            "graphics_runtime",
+            "Graphics translation assets adjacent to protected launch",
+            vec![
+                delta_path("dxmt_win64_d3d12", "route_asset", &wine_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"), None),
+                delta_path("dxmt_winemetal_unix", "route_asset", &wine_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"), None),
+                delta_path("dxvk_win32_d3d9", "route_asset", &wine_root.join("lib").join("dxvk").join("i386-windows").join("d3d9.dll"), None),
+                delta_path("moltenvk_unix", "route_asset", &wine_root.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib"), None),
+            ],
+        ),
+        delta_group(
+            "anticheat_module_contract",
+            "Protected module target and host substrate decision",
+            vec![
+                delta_capability(
+                    "selected_linux_module",
+                    "blocking_when_macos",
+                    eac.module_target.as_deref().unwrap_or("").starts_with("linux"),
+                    "EAC selected a Linux module target from the vendor CDN.",
+                ),
+                delta_capability(
+                    "darwin_can_load_linux_elf_directly",
+                    "blocking_when_false",
+                    can_dlopen_linux_elf_directly(host_os),
+                    "macOS dyld cannot directly load Linux ELF modules.",
+                ),
+                delta_capability(
+                    "darwin_vendor_asset_found",
+                    "possible_direct_path",
+                    module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("mach_o")),
+                    "A vendor-supported Mach-O/dylib anti-cheat module would be the direct macOS path.",
+                ),
+            ],
+        ),
+    ];
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "status": delta_audit_status(&surfaces),
+        "summary": delta_audit_summary(&eac, host_os),
+        "host": {
+            "os": host_os,
+            "arch": std::env::consts::ARCH,
+        },
+        "surfaces": surfaces,
+        "moduleAssets": module_assets,
+        "nextActions": vec![
+            "Use this report as the Phase 3 checklist before changing Wine loader behavior.",
+            "Compare blocking and proton_comparison rows against Proton's EAC-enabled Wine tree.",
+            "Promote any required missing runtime bridge into a specific implementation task instead of a generic anti-cheat claim.",
+        ],
+    })
+}
+
 fn collect_artifacts(prefix: &Path, game_dir: Option<&Path>) -> Vec<Value> {
     let mut candidates = Vec::new();
     let drive_c = prefix.join("drive_c");
@@ -527,6 +649,71 @@ fn path_check(path: &Path) -> Value {
     })
 }
 
+fn delta_group(id: &str, label: &str, checks: Vec<Value>) -> Value {
+    json!({
+        "id": id,
+        "label": label,
+        "status": delta_group_status(&checks),
+        "checks": checks,
+    })
+}
+
+fn delta_path(id: &str, importance: &str, path: &Path, note: Option<&str>) -> Value {
+    let metadata = fs::metadata(path).ok();
+    json!({
+        "id": id,
+        "importance": importance,
+        "present": metadata.is_some(),
+        "path": path.to_string_lossy(),
+        "note": note,
+    })
+}
+
+fn delta_capability(id: &str, importance: &str, present: bool, note: &str) -> Value {
+    json!({
+        "id": id,
+        "importance": importance,
+        "present": present,
+        "note": note,
+    })
+}
+
+fn delta_group_status(checks: &[Value]) -> &'static str {
+    if checks.iter().any(|check| {
+        let importance = check.get("importance").and_then(|v| v.as_str()).unwrap_or("");
+        let present = check.get("present").and_then(|v| v.as_bool()).unwrap_or(false);
+        matches!(importance, "required" | "blocking_when_false") && !present
+            || matches!(importance, "blocking_when_macos") && present && std::env::consts::OS == "macos"
+    }) {
+        "blocking"
+    } else if checks.iter().any(|check| check.get("present").and_then(|v| v.as_bool()) == Some(false)) {
+        "informational_gap"
+    } else {
+        "ready"
+    }
+}
+
+fn delta_audit_status(surfaces: &[Value]) -> &'static str {
+    if surfaces.iter().any(|surface| surface.get("status").and_then(|v| v.as_str()) == Some("blocking")) {
+        "blocking_delta_found"
+    } else if surfaces.iter().any(|surface| surface.get("status").and_then(|v| v.as_str()) == Some("informational_gap"))
+    {
+        "comparison_gaps_found"
+    } else {
+        "no_blocking_delta_found"
+    }
+}
+
+fn delta_audit_summary(eac: &EacSummary, host_os: &str) -> String {
+    if host_os == "macos" && eac.module_target.as_deref().unwrap_or("").starts_with("linux") {
+        return format!(
+            "MetalSharp has Wine/DXMT runtime pieces, but protected launch selected {} and needs a Linux-user-space or vendor macOS module answer.",
+            eac.module_target.as_deref().unwrap_or("linux")
+        );
+    }
+    "Delta audit completed; inspect blocking and proton_comparison rows for the next implementation target.".to_string()
+}
+
 fn classify_module_path(path: &Path) -> &'static str {
     let path_lc = path.to_string_lossy().to_ascii_lowercase();
     if path_lc.contains("battleye") || path_lc.contains("beclient") || path_lc.contains("beservice") {
@@ -690,5 +877,20 @@ mod tests {
         let checks = module_contract_checks("macos", &eac, &[]);
         assert_eq!(checks.get("needsLinuxUserSpaceSubstrate").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(checks.get("needsVendorMacOSAsset").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn delta_group_status_marks_missing_required_paths_blocking() {
+        let checks = vec![
+            json!({"id": "present_required", "importance": "required", "present": true}),
+            json!({"id": "missing_required", "importance": "required", "present": false}),
+        ];
+        assert_eq!(delta_group_status(&checks), "blocking");
+    }
+
+    #[test]
+    fn delta_audit_status_promotes_blocking_surface() {
+        let surfaces = vec![json!({"id": "anticheat_module_contract", "status": "blocking"})];
+        assert_eq!(delta_audit_status(&surfaces), "blocking_delta_found");
     }
 }

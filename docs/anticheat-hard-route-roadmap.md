@@ -54,6 +54,23 @@ Map MetalSharp Wine against Proton and upstream Wine behavior:
 - pressure-vessel/container assumptions,
 - anti-cheat runtime file layout and module target selection.
 
+Initial backend surface:
+
+```http
+POST /steam/anticheat-delta-audit
+{"appid":1888160}
+```
+
+This report groups the local runtime into audit surfaces:
+
+- Wine loader/syscall baseline: `wine`, `wineserver`, Unix `ntdll.so`, and Windows `ntdll.dll` lanes.
+- Steam runtime bridge: Windows `steamclient.dll`/`steamclient64.dll` and whether a Proton-style `lsteamclient` bridge exists.
+- Linux runtime assumptions: pressure-vessel, seccomp, and Linux namespaces, which are comparison rows on macOS rather than direct requirements.
+- Graphics runtime adjacency: DXMT, DXVK, and MoltenVK assets that must stay intact while protected launch is debugged.
+- Anti-cheat module contract: whether EAC selected a Linux module, whether Darwin can directly load it, and whether a vendor macOS module is present.
+
+For Rubicon, the expected status is `blocking_delta_found`: the ordinary Wine/DXMT runtime pieces exist, but the protected launcher selected `linux64`, no vendor Mach-O module was found, and macOS cannot directly load Linux ELF modules.
+
 ## Phase 4: macOS Runtime Substrate Decision
 
 Choose the truthful compatibility path:
