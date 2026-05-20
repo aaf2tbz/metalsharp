@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 2;
+const MIGRATE_SCHEMA_VERSION: u64 = 3;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
@@ -79,11 +79,7 @@ pub fn needs_migration() -> serde_json::Value {
     let current_version = legacy_migrated_version.unwrap_or("0.0.0");
     let setup_completed = setup.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    let needed = match current_schema {
-        Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
-        None if legacy_migrated_version.is_some() => false,
-        None => runtime_needs_repair(&home, setup_completed),
-    };
+    let needed = migration_needed_for_setup(&home, current_schema, legacy_migrated_version.is_some(), setup_completed);
 
     json!({
         "ok": true,
@@ -94,6 +90,19 @@ pub fn needs_migration() -> serde_json::Value {
         "target_schema": MIGRATE_SCHEMA_VERSION,
         "reason": if needed { "runtime_schema_or_repair_needed" } else { "up_to_date" },
     })
+}
+
+fn migration_needed_for_setup(
+    home: &Path,
+    current_schema: Option<u64>,
+    has_legacy_migrated_version: bool,
+    setup_completed: bool,
+) -> bool {
+    match current_schema {
+        Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
+        None if has_legacy_migrated_version => false,
+        None => runtime_needs_repair(home, setup_completed),
+    }
 }
 
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
@@ -612,6 +621,17 @@ mod tests {
 
         assert!(runtime_core_ready(&ms_dir));
         assert!(!runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn older_runtime_schema_requests_migration_even_when_runtime_looks_complete() {
+        let home = test_dir("older-schema");
+        let ms_dir = home.join(".metalsharp");
+        write_runtime_core(&ms_dir);
+
+        assert!(migration_needed_for_setup(&home, Some(MIGRATE_SCHEMA_VERSION.saturating_sub(1)), false, true));
+        assert!(!migration_needed_for_setup(&home, Some(MIGRATE_SCHEMA_VERSION), false, true));
         let _ = fs::remove_dir_all(home);
     }
 
