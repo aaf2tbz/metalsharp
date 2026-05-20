@@ -798,6 +798,8 @@ fn maybe_deploy_cef_compat_wrapper(app: &SharpApp, exe_path: &Path) -> Result<bo
     if wrapper_size == 0 || wrapper_size > 512 * 1024 {
         return Err("CEF compatibility wrapper asset is invalid".into());
     }
+    let hook = find_bundled_cef_child_hook(is_64_bit).ok_or("CEF child-process hook is missing")?;
+    deploy_cef_child_hook(exe_path, &hook)?;
 
     if real_path.exists() {
         redeploy_cef_compat_wrapper_if_needed(exe_path, &real_path, &wrapper)?;
@@ -832,6 +834,22 @@ fn redeploy_cef_compat_wrapper_if_needed(
         fs::copy(exe_path, real_path)?;
     }
     fs::copy(wrapper_path, exe_path)?;
+    Ok(())
+}
+
+fn deploy_cef_child_hook(exe_path: &Path, hook_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let hook_size = fs::metadata(hook_path).map(|metadata| metadata.len()).unwrap_or(0);
+    if hook_size == 0 || hook_size > 1024 * 1024 {
+        return Err("CEF child-process hook asset is invalid".into());
+    }
+    let dest = exe_path.with_file_name("metalsharp-cefchildhook.dll");
+    let needs_copy = match (fs::read(&dest), fs::read(hook_path)) {
+        (Ok(current), Ok(source)) => current != source,
+        _ => true,
+    };
+    if needs_copy {
+        fs::copy(hook_path, dest)?;
+    }
     Ok(())
 }
 
@@ -898,6 +916,15 @@ fn install_dir_contains_cef_markers(exe_path: &Path) -> bool {
 
 fn find_bundled_cef_compat_wrapper(is_64_bit: bool) -> Option<PathBuf> {
     let filename = if is_64_bit { "cefcompat-wrapper64.exe" } else { "cefcompat-wrapper32.exe" };
+    find_bundled_cef_asset(filename)
+}
+
+fn find_bundled_cef_child_hook(is_64_bit: bool) -> Option<PathBuf> {
+    let filename = if is_64_bit { "cefchildhook64.dll" } else { "cefchildhook32.dll" };
+    find_bundled_cef_asset(filename)
+}
+
+fn find_bundled_cef_asset(filename: &str) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let wrapper = resources.join("bundles").join(filename);
         if wrapper.exists() {

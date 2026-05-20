@@ -208,6 +208,18 @@
         "to": "bundles/cefcompat-wrapper.c"
       },
       {
+        "from": "bundles/cefchildhook32.dll",
+        "to": "bundles/cefchildhook32.dll"
+      },
+      {
+        "from": "bundles/cefchildhook64.dll",
+        "to": "bundles/cefchildhook64.dll"
+      },
+      {
+        "from": "bundles/cefchildhook.c",
+        "to": "bundles/cefchildhook.c"
+      },
+      {
         "from": "updater/update.sh",
         "to": "updater/update.sh"
       },
