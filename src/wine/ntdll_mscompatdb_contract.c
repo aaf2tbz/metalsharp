@@ -30,20 +30,18 @@ extern void NtCreateFile(void);
 static MetalSharpMscompatdbHookContract metalsharp_mscompatdb_hook_contract = {
     METALSHARP_MSCOMPATDB_HOOK_CONTRACT_VERSION,
     sizeof(MetalSharpMscompatdbHookContract),
-    (void *)KeServiceDescriptorTable,
-    (void *)&KeAddSystemServiceTable,
-    (void *)&__wine_syscall_dispatcher,
-    (void *)&NtCreateUserProcess,
-    (void *)&NtCreateFile,
+    (void*)KeServiceDescriptorTable,
+    (void*)&KeAddSystemServiceTable,
+    (void*)&__wine_syscall_dispatcher,
+    (void*)&NtCreateUserProcess,
+    (void*)&NtCreateFile,
 };
 
-MS_EXPORT uint32_t MetalSharpGetMscompatdbHookContractVersion(void)
-{
+MS_EXPORT uint32_t MetalSharpGetMscompatdbHookContractVersion(void) {
     return METALSHARP_MSCOMPATDB_HOOK_CONTRACT_VERSION;
 }
 
-MS_EXPORT const MetalSharpMscompatdbHookContract *MetalSharpGetMscompatdbHookContract(void)
-{
+MS_EXPORT const MetalSharpMscompatdbHookContract* MetalSharpGetMscompatdbHookContract(void) {
     return &metalsharp_mscompatdb_hook_contract;
 }
 

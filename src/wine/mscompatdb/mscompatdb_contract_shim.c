@@ -19,7 +19,7 @@
 #include <unistd.h>
 
 typedef int32_t NTSTATUS;
-typedef void *HANDLE;
+typedef void* HANDLE;
 typedef uint32_t ACCESS_MASK;
 typedef uint32_t ULONG;
 typedef uint64_t ULONG_PTR;
@@ -29,33 +29,30 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS RTL_USER_PROCESS_PARAMETERS;
 typedef struct _PS_CREATE_INFO PS_CREATE_INFO;
 typedef struct _PS_ATTRIBUTE_LIST PS_ATTRIBUTE_LIST;
 
-typedef NTSTATUS (*NtCreateUserProcessFn)(HANDLE *process_handle_ptr, HANDLE *thread_handle_ptr,
+typedef NTSTATUS (*NtCreateUserProcessFn)(HANDLE* process_handle_ptr, HANDLE* thread_handle_ptr,
                                           ACCESS_MASK process_access, ACCESS_MASK thread_access,
-                                          OBJECT_ATTRIBUTES *process_attr, OBJECT_ATTRIBUTES *thread_attr,
-                                          ULONG process_flags, ULONG thread_flags,
-                                          RTL_USER_PROCESS_PARAMETERS *params, PS_CREATE_INFO *info,
-                                          PS_ATTRIBUTE_LIST *ps_attr);
+                                          OBJECT_ATTRIBUTES* process_attr, OBJECT_ATTRIBUTES* thread_attr,
+                                          ULONG process_flags, ULONG thread_flags, RTL_USER_PROCESS_PARAMETERS* params,
+                                          PS_CREATE_INFO* info, PS_ATTRIBUTE_LIST* ps_attr);
 
-typedef NTSTATUS (*NtCreateFileFn)(HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr, void *io,
-                                   void *alloc_size, ULONG attributes, ULONG sharing, ULONG disposition,
-                                   ULONG options, void *ea_buffer, ULONG ea_length);
+typedef NTSTATUS (*NtCreateFileFn)(HANDLE* handle, ACCESS_MASK access, OBJECT_ATTRIBUTES* attr, void* io,
+                                   void* alloc_size, ULONG attributes, ULONG sharing, ULONG disposition, ULONG options,
+                                   void* ea_buffer, ULONG ea_length);
 
-typedef struct MetalSharpServiceTable
-{
-    ULONG_PTR *service_table;
-    ULONG_PTR *counter_table;
+typedef struct MetalSharpServiceTable {
+    ULONG_PTR* service_table;
+    ULONG_PTR* counter_table;
     ULONG service_limit;
-    unsigned char *argument_table;
+    unsigned char* argument_table;
 } MetalSharpServiceTable;
 
 static NtCreateUserProcessFn original_NtCreateUserProcess;
 static NtCreateFileFn original_NtCreateFile;
 static int patch_attempted;
 
-static void trace_line(const char *fmt, ...)
-{
-    FILE *files[2] = { NULL, NULL };
-    const char *home = getenv("HOME");
+static void trace_line(const char* fmt, ...) {
+    FILE* files[2] = {NULL, NULL};
+    const char* home = getenv("HOME");
     char home_path[4096];
     va_list ap;
 
@@ -63,9 +60,9 @@ static void trace_line(const char *fmt, ...)
     if (home && snprintf(home_path, sizeof(home_path), "%s/.metalsharp/mscompatdb_trace.log", home) > 0)
         files[1] = fopen(home_path, "a");
 
-    for (size_t i = 0; i < 2; i++)
-    {
-        if (!files[i]) continue;
+    for (size_t i = 0; i < 2; i++) {
+        if (!files[i])
+            continue;
         va_start(ap, fmt);
         fputs("mscompatdb:trace: ", files[i]);
         vfprintf(files[i], fmt, ap);
@@ -75,83 +72,79 @@ static void trace_line(const char *fmt, ...)
     }
 }
 
-static int make_slot_writable(void *slot)
-{
+static int make_slot_writable(void* slot) {
     long page_size = sysconf(_SC_PAGESIZE);
     uintptr_t page;
 
-    if (page_size <= 0) return 0;
+    if (page_size <= 0)
+        return 0;
     page = (uintptr_t)slot & ~((uintptr_t)page_size - 1);
-    if (mprotect((void *)page, (size_t)page_size, PROT_READ | PROT_WRITE) == 0) return 1;
+    if (mprotect((void*)page, (size_t)page_size, PROT_READ | PROT_WRITE) == 0)
+        return 1;
     trace_line("mprotect failed for service table slot %p", slot);
     return 0;
 }
 
-static long find_service_index(MetalSharpServiceTable *table, void *target)
-{
-    if (!table || !table->service_table || !target) return -1;
-    for (ULONG i = 0; i < table->service_limit; i++)
-    {
-        if ((void *)table->service_table[i] == target) return (long)i;
+static long find_service_index(MetalSharpServiceTable* table, void* target) {
+    if (!table || !table->service_table || !target)
+        return -1;
+    for (ULONG i = 0; i < table->service_limit; i++) {
+        if ((void*)table->service_table[i] == target)
+            return (long)i;
     }
     return -1;
 }
 
-static NTSTATUS hook_NtCreateUserProcess(HANDLE *process_handle_ptr, HANDLE *thread_handle_ptr,
+static NTSTATUS hook_NtCreateUserProcess(HANDLE* process_handle_ptr, HANDLE* thread_handle_ptr,
                                          ACCESS_MASK process_access, ACCESS_MASK thread_access,
-                                         OBJECT_ATTRIBUTES *process_attr, OBJECT_ATTRIBUTES *thread_attr,
-                                         ULONG process_flags, ULONG thread_flags,
-                                         RTL_USER_PROCESS_PARAMETERS *params, PS_CREATE_INFO *info,
-                                         PS_ATTRIBUTE_LIST *ps_attr)
-{
+                                         OBJECT_ATTRIBUTES* process_attr, OBJECT_ATTRIBUTES* thread_attr,
+                                         ULONG process_flags, ULONG thread_flags, RTL_USER_PROCESS_PARAMETERS* params,
+                                         PS_CREATE_INFO* info, PS_ATTRIBUTE_LIST* ps_attr) {
     trace_line("hook_NtCreateUserProcess called params=%p info=%p attrs=%p", params, info, ps_attr);
     return original_NtCreateUserProcess(process_handle_ptr, thread_handle_ptr, process_access, thread_access,
-                                        process_attr, thread_attr, process_flags, thread_flags, params, info,
-                                        ps_attr);
+                                        process_attr, thread_attr, process_flags, thread_flags, params, info, ps_attr);
 }
 
-static void patch_syscalls(void)
-{
+static void patch_syscalls(void) {
     MetalSharpGetMscompatdbHookContractFn get_contract;
-    const MetalSharpMscompatdbHookContract *contract;
-    MetalSharpServiceTable *tables;
+    const MetalSharpMscompatdbHookContract* contract;
+    MetalSharpServiceTable* tables;
     long create_process_index;
     long create_file_index;
 
-    if (patch_attempted) return;
+    if (patch_attempted)
+        return;
     patch_attempted = 1;
 
     trace_line("MetalSharp compatibility database v2.0");
     get_contract = (MetalSharpGetMscompatdbHookContractFn)dlsym(RTLD_DEFAULT, "MetalSharpGetMscompatdbHookContract");
-    if (!get_contract)
-    {
+    if (!get_contract) {
         trace_line("contract lookup failed: %s", dlerror());
         return;
     }
 
     contract = get_contract();
     if (!contract || contract->version != METALSHARP_MSCOMPATDB_HOOK_CONTRACT_VERSION ||
-        contract->size < sizeof(*contract))
-    {
+        contract->size < sizeof(*contract)) {
         trace_line("contract invalid version=%u size=%u", contract ? contract->version : 0,
                    contract ? contract->size : 0);
         return;
     }
 
-    tables = (MetalSharpServiceTable *)contract->ke_service_descriptor_table;
+    tables = (MetalSharpServiceTable*)contract->ke_service_descriptor_table;
     create_process_index = find_service_index(&tables[0], contract->nt_create_user_process);
     create_file_index = find_service_index(&tables[0], contract->nt_create_file);
     trace_line("contract ready process_index=%ld file_index=%ld limit=%u", create_process_index, create_file_index,
                tables ? tables[0].service_limit : 0);
 
-    if (create_process_index < 0)
-    {
+    if (create_process_index < 0) {
         trace_line("NtCreateUserProcess not in syscall table");
         return;
     }
 
     original_NtCreateUserProcess = (NtCreateUserProcessFn)tables[0].service_table[create_process_index];
-    if (!make_slot_writable(&tables[0].service_table[create_process_index])) return;
+    if (!make_slot_writable(&tables[0].service_table[create_process_index]))
+        return;
     tables[0].service_table[create_process_index] = (ULONG_PTR)hook_NtCreateUserProcess;
 
     if (create_file_index >= 0)
@@ -160,7 +153,6 @@ static void patch_syscalls(void)
     trace_line("patch_syscalls completed, hook installed");
 }
 
-__attribute__((constructor)) static void mscompatdb_init(void)
-{
+__attribute__((constructor)) static void mscompatdb_init(void) {
     patch_syscalls();
 }
