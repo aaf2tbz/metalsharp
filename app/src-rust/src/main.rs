@@ -376,36 +376,66 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let compatdata = bottles::load_steam_compatdata(id).ok();
-                            let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
-                                Ok(started) => started,
-                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
-                            };
-                            let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
-                            mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
-                                |(pid, game_type, log_path)| {
-                                    let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
-                                        .ok()
-                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
-                                        .or(compatdata);
-                                    bottles::watch_bottle_launch(bottle.id.clone(), pid);
-                                    json!({
-                                        "ok": true,
-                                        "pid": pid,
-                                        "appid": id,
-                                        "gameType": game_type,
-                                        "bottle_id": bottle.id,
-                                        "bottle_prefix": bottle.prefix_path,
-                                        "launch_log": log_path.to_string_lossy().to_string(),
-                                        "compatdata": compatdata,
-                                        "pipeline": pipeline,
-                                        "recipe": recipe,
-                                        "steam_started": steam_started,
-                                        "steam_runtime": "background",
-                                        "env_applied_to": "game_process",
-                                        "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                            let force_protected_handoff =
+                                body.get("protectedHandoff").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let protected_handoff = force_protected_handoff || !recipe.anti_cheat.is_empty();
+                            if protected_handoff {
+                                let log_path = bottles::steam_compatdata_launch_log_path(id);
+                                steam::launch_game_via_steam_with_protected_env(id, &env, Some(&log_path)).map(
+                                    |mut v| {
+                                        let pid = v.get("pid").and_then(|pid| pid.as_u64()).unwrap_or(0) as u32;
+                                        let compatdata = bottles::set_launch_delegated(&bottle.id, pid, &log_path)
+                                            .ok()
+                                            .and_then(|manifest| {
+                                                bottles::save_steam_compatdata(&manifest, pipeline).ok()
+                                            })
+                                            .or(compatdata);
+                                        if let Some(obj) = v.as_object_mut() {
+                                            obj.insert("bottle_id".into(), json!(bottle.id));
+                                            obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
+                                            obj.insert("compatdata".into(), json!(compatdata));
+                                            obj.insert("pipeline".into(), json!(pipeline));
+                                            obj.insert("recipe".into(), json!(recipe));
+                                            obj.insert("launch_handoff".into(), json!("protected_steam_url"));
+                                            obj.insert("protected_launch".into(), json!(true));
+                                            obj.insert("steam_runtime".into(), json!("background"));
+                                        }
+                                        v
+                                    },
+                                )
+                            } else {
+                                let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
+                                    Ok(started) => started,
+                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                                };
+                                let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
+                                mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env)
+                                    .map(|(pid, game_type, log_path)| {
+                                        let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
+                                            .ok()
+                                            .and_then(|manifest| {
+                                                bottles::save_steam_compatdata(&manifest, pipeline).ok()
+                                            })
+                                            .or(compatdata);
+                                        bottles::watch_bottle_launch(bottle.id.clone(), pid);
+                                        json!({
+                                            "ok": true,
+                                            "pid": pid,
+                                            "appid": id,
+                                            "gameType": game_type,
+                                            "bottle_id": bottle.id,
+                                            "bottle_prefix": bottle.prefix_path,
+                                            "launch_log": log_path.to_string_lossy().to_string(),
+                                            "compatdata": compatdata,
+                                            "pipeline": pipeline,
+                                            "recipe": recipe,
+                                            "steam_started": steam_started,
+                                            "steam_runtime": "background",
+                                            "env_applied_to": "game_process",
+                                            "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                                        })
                                     })
-                                },
-                            )
+                            }
                         },
                         None => {
                             let pipeline = mtsp::rules::resolve_pipeline(id);
@@ -722,6 +752,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Post, "/steam/wine-syscall-probe") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_wine_syscall_probe(&body))
         },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);

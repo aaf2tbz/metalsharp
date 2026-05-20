@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
@@ -148,6 +148,44 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
         "moduleAssets": module_assets,
         "contractChecks": module_contract_checks(host_os, &eac, &module_assets),
         "nextActions": probe_next_actions(&status),
+    })
+}
+
+pub fn handle_steam_wine_syscall_probe(body: &Map<String, Value>) -> Value {
+    let appid =
+        body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
+    let explicit_token = body.get("token").and_then(|v| v.as_str()).map(normalize_probe_token);
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+    let game_dir = appid.and_then(crate::setup::resolve_game_dir);
+    let mut tokens = explicit_token.into_iter().filter(|token| !token.is_empty()).collect::<Vec<_>>();
+    if let Some(appid) = appid {
+        tokens.push(appid.to_string());
+    }
+    if let Some(dir) = game_dir.as_deref() {
+        tokens.extend(path_probe_tokens(dir));
+    }
+    tokens.sort();
+    tokens.dedup();
+
+    let diagnostics_root = home.join(".metalsharp").join("diagnostics");
+    let dirs = collect_probe_diagnostic_dirs(&diagnostics_root, &tokens);
+    let reports = dirs.iter().map(|dir| summarize_wine_syscall_dir(dir)).collect::<Vec<_>>();
+    let aggregate = aggregate_wine_syscall_reports(&reports);
+    let status = wine_syscall_probe_status(&aggregate);
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "status": status,
+        "summary": wine_syscall_probe_summary(&status, &aggregate),
+        "diagnosticsRoot": diagnostics_root.to_string_lossy(),
+        "tokens": tokens,
+        "reports": reports,
+        "signals": aggregate,
+        "nextActions": wine_syscall_probe_next_actions(&status),
     })
 }
 
@@ -1004,6 +1042,238 @@ fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
     lines[start..].iter().map(|line| line.trim_end_matches('\r').to_string()).collect()
 }
 
+fn collect_probe_diagnostic_dirs(root: &Path, tokens: &[String]) -> Vec<PathBuf> {
+    let mut dirs = fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            if tokens.is_empty() {
+                return true;
+            }
+            let name = path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            tokens.iter().any(|token| name.contains(token))
+        })
+        .collect::<Vec<_>>();
+    dirs.sort_by_key(|path| fs::metadata(path).and_then(|meta| meta.modified()).unwrap_or(UNIX_EPOCH));
+    dirs.reverse();
+    dirs.truncate(6);
+    dirs
+}
+
+fn summarize_wine_syscall_dir(dir: &Path) -> Value {
+    let mut files = Vec::new();
+    let mut combined = String::new();
+    for path in probe_files(dir) {
+        let Some(text) = read_recent_text_limited(&path) else {
+            continue;
+        };
+        let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+        combined.push_str(&text);
+        combined.push('\n');
+        files.push(json!({
+            "name": name,
+            "path": path.to_string_lossy(),
+            "bytesRead": text.len(),
+            "tail": tail_lines(&text, 24),
+        }));
+    }
+
+    let modified = fs::metadata(dir)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let lower = combined.to_ascii_lowercase();
+    let create_swapchain = count_any(&lower, &["createswapchain", "create swapchain"]);
+    let present = count_any(&lower, &[" present(", "present1(", "::present"]);
+    let d3d12_device = count_any(&lower, &["d3d12createdevice success", "d3d12 device created"]);
+
+    json!({
+        "path": dir.to_string_lossy(),
+        "modifiedUnix": modified,
+        "files": files,
+        "signals": {
+            "coreLoggingThread": lower.contains("core.logging.backgroundstrategy"),
+            "cheatDetectionThread": lower.contains("cscheatdetectiontitlemodule"),
+            "wineSyscallDispatch": lower.contains("__wine_syscall_dispatcher"),
+            "ntWaitStacks": count_any(&lower, &["waitforsingleobject", "waitformultipleobjects"]),
+            "fileLoggingStack": count_any(&lower, &["_fsopen", "_wfsopen", "getfiletype"]),
+            "d3d12DeviceCreated": d3d12_device > 0,
+            "d3d12WaitStacks": lower.contains(" in d3d12 ") || lower.contains(" d3d12 (+"),
+            "createSwapchainCount": create_swapchain,
+            "presentCount": present,
+            "preSwapchain": d3d12_device > 0 && create_swapchain == 0 && present == 0,
+            "protectedLauncherTracked": lower.contains("start_protected_game.exe"),
+            "moduleMappingStarted": lower.contains("starting wine module mapping"),
+            "moduleMappingFailed": lower.contains("failed to map the anti-cheat module"),
+            "protectedLauncher206": lower.contains("launcher finished with: 206") || lower.contains("exit code 206"),
+        }
+    })
+}
+
+fn probe_files(dir: &Path) -> Vec<PathBuf> {
+    let wanted = ["winedbg.txt", "process.txt", "run.log", "sample.txt", "dxmt_d3d12_trace.log", "dxmt_dxgi_trace.log"];
+    let mut files = Vec::new();
+    for name in wanted {
+        let path = dir.join(name);
+        if path.exists() {
+            files.push(path);
+        }
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for path in entries.flatten().map(|entry| entry.path()) {
+            let Some(name) = path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()) else {
+                continue;
+            };
+            let looks_relevant = name.contains("winedbg")
+                || name.contains("sample")
+                || name.contains("dxmt")
+                || name.contains("eac")
+                || name.contains("anticheat");
+            if looks_relevant && !files.iter().any(|existing| existing == &path) {
+                files.push(path);
+            }
+        }
+    }
+    files.truncate(10);
+    files
+}
+
+fn aggregate_wine_syscall_reports(reports: &[Value]) -> Value {
+    let mut reports_with_core_logging = 0u64;
+    let mut reports_with_wine_syscall = 0u64;
+    let mut reports_with_file_logging = 0u64;
+    let mut reports_with_cheat_detection = 0u64;
+    let mut reports_with_preswapchain = 0u64;
+    let mut reports_with_module_mapping_failed = 0u64;
+    let mut create_swapchain_count = 0u64;
+    let mut present_count = 0u64;
+    for report in reports {
+        let signals = report.get("signals").and_then(|v| v.as_object());
+        if signal_bool(signals, "coreLoggingThread") {
+            reports_with_core_logging += 1;
+        }
+        if signal_bool(signals, "wineSyscallDispatch") || signal_u64(signals, "ntWaitStacks") > 0 {
+            reports_with_wine_syscall += 1;
+        }
+        if signal_u64(signals, "fileLoggingStack") > 0 {
+            reports_with_file_logging += 1;
+        }
+        if signal_bool(signals, "cheatDetectionThread") {
+            reports_with_cheat_detection += 1;
+        }
+        if signal_bool(signals, "preSwapchain") {
+            reports_with_preswapchain += 1;
+        }
+        if signal_bool(signals, "moduleMappingFailed") || signal_bool(signals, "protectedLauncher206") {
+            reports_with_module_mapping_failed += 1;
+        }
+        create_swapchain_count += signal_u64(signals, "createSwapchainCount");
+        present_count += signal_u64(signals, "presentCount");
+    }
+
+    json!({
+        "reportsScanned": reports.len(),
+        "reportsWithCoreLogging": reports_with_core_logging,
+        "reportsWithWineSyscallOrWait": reports_with_wine_syscall,
+        "reportsWithFileLoggingStack": reports_with_file_logging,
+        "reportsWithCheatDetectionThread": reports_with_cheat_detection,
+        "reportsWithPreSwapchainD3d12": reports_with_preswapchain,
+        "reportsWithModuleMappingFailed": reports_with_module_mapping_failed,
+        "createSwapchainCount": create_swapchain_count,
+        "presentCount": present_count,
+    })
+}
+
+fn wine_syscall_probe_status(aggregate: &Value) -> String {
+    if aggregate.get("reportsScanned").and_then(|v| v.as_u64()).unwrap_or_default() == 0 {
+        return "no_diagnostics_found".to_string();
+    }
+    if aggregate.get("reportsWithModuleMappingFailed").and_then(|v| v.as_u64()).unwrap_or_default() > 0 {
+        return "protected_module_mapping_failed".to_string();
+    }
+    if aggregate.get("reportsWithCoreLogging").and_then(|v| v.as_u64()).unwrap_or_default() > 0
+        && aggregate.get("reportsWithWineSyscallOrWait").and_then(|v| v.as_u64()).unwrap_or_default() > 0
+    {
+        return "wine_syscall_logging_stall".to_string();
+    }
+    if aggregate.get("reportsWithPreSwapchainD3d12").and_then(|v| v.as_u64()).unwrap_or_default() > 0 {
+        return "pre_swapchain_d3d12_stall".to_string();
+    }
+    "diagnostics_collected".to_string()
+}
+
+fn wine_syscall_probe_summary(status: &str, aggregate: &Value) -> String {
+    match status {
+        "protected_module_mapping_failed" => {
+            "Protected launch reached anti-cheat module mapping and failed; focus on the EAC/BattlEye loader boundary before direct-game rendering.".to_string()
+        },
+        "wine_syscall_logging_stall" => {
+            "Diagnostics show a game logging thread parked in Wine syscall/wait behavior before the game reaches a frame.".to_string()
+        },
+        "pre_swapchain_d3d12_stall" => {
+            "Diagnostics show D3D12 device creation without swapchain or Present calls, so the white screen is still before normal frame presentation.".to_string()
+        },
+        "no_diagnostics_found" => {
+            "No matching diagnostic folders were found. Launch the game once, then run this probe again.".to_string()
+        },
+        _ => format!(
+            "Scanned {} diagnostic folder(s); no single blocking signature dominated.",
+            aggregate.get("reportsScanned").and_then(|v| v.as_u64()).unwrap_or_default()
+        ),
+    }
+}
+
+fn wine_syscall_probe_next_actions(status: &str) -> Vec<&'static str> {
+    match status {
+        "protected_module_mapping_failed" => vec![
+            "Use the protected Steam handoff path so start_protected_game.exe is the authoritative launch evidence.",
+            "Compare the failed module target against Proton's EAC-enabled Wine loader path.",
+        ],
+        "wine_syscall_logging_stall" => vec![
+            "Capture a gated winedbg stack after DXGI tracing is disabled.",
+            "Inspect Wine file/logging syscalls around the hot logging thread before changing D3D12 again.",
+        ],
+        "pre_swapchain_d3d12_stall" => vec![
+            "Keep D3D12 tracing gated and inspect the last wait stack before swapchain creation.",
+            "Verify whether the same app advances when launched through protected Steam instead of direct exe.",
+        ],
+        _ => vec!["Run a protected Steam launch and refresh /steam/anticheat-evidence plus this syscall probe."],
+    }
+}
+
+fn signal_bool(signals: Option<&Map<String, Value>>, key: &str) -> bool {
+    signals.and_then(|signals| signals.get(key)).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+fn signal_u64(signals: Option<&Map<String, Value>>, key: &str) -> u64 {
+    signals.and_then(|signals| signals.get(key)).and_then(|v| v.as_u64()).unwrap_or_default()
+}
+
+fn count_any(text: &str, needles: &[&str]) -> u64 {
+    needles.iter().map(|needle| text.matches(needle).count() as u64).sum()
+}
+
+fn normalize_probe_token(token: &str) -> String {
+    token.chars().filter(|ch| ch.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+}
+
+fn path_probe_tokens(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy()),
+            _ => None,
+        })
+        .flat_map(|value| value.split(|ch: char| !ch.is_ascii_alphanumeric()).map(str::to_string).collect::<Vec<_>>())
+        .map(|token| normalize_probe_token(&token))
+        .filter(|token| token.len() >= 4)
+        .collect()
+}
+
 fn extract_loose_json_string(text: &str, key: &str) -> Option<String> {
     let quoted_key = format!("\"{}\"", key);
     let rest = text.split(&quoted_key).nth(1)?;
@@ -1072,6 +1342,30 @@ mod tests {
         assert_eq!(summary.module_mapping_status.as_deref(), Some("failed"));
         assert_eq!(summary.launcher_exit_code, Some(206));
         assert_eq!(summary.launcher_error.as_deref(), Some("Failed to load the anti-cheat module."));
+    }
+
+    #[test]
+    fn wine_syscall_probe_promotes_logging_stall_signature() {
+        let reports = vec![json!({
+            "signals": {
+                "coreLoggingThread": true,
+                "wineSyscallDispatch": true,
+                "ntWaitStacks": 1,
+                "fileLoggingStack": 1,
+                "cheatDetectionThread": true,
+                "preSwapchain": true,
+                "createSwapchainCount": 0,
+                "presentCount": 0,
+                "moduleMappingFailed": false,
+                "protectedLauncher206": false
+            }
+        })];
+
+        let aggregate = aggregate_wine_syscall_reports(&reports);
+
+        assert_eq!(aggregate.get("reportsWithCoreLogging").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(aggregate.get("reportsWithWineSyscallOrWait").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(wine_syscall_probe_status(&aggregate), "wine_syscall_logging_stall");
     }
 
     #[test]

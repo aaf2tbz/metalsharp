@@ -717,6 +717,14 @@ pub fn set_launch_started(id: &str, pid: u32, log_path: &Path) -> Result<BottleM
     Ok(manifest)
 }
 
+pub fn set_launch_delegated(id: &str, pid: u32, log_path: &Path) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let mut manifest = load_bottle(id)?;
+    mark_manifest_launch_started(&mut manifest, pid, log_path);
+    manifest.last_launch_status = Some("delegated_to_steam".to_string());
+    save_bottle(&manifest)?;
+    Ok(manifest)
+}
+
 pub fn watch_bottle_launch(id: String, pid: u32) {
     thread::spawn(move || {
         let watch = BottleLaunchWatch::for_bottle(&id);
