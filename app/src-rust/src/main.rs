@@ -17,6 +17,7 @@
     unused_variables
 )]
 
+mod anticheat;
 mod bottles;
 mod installer;
 mod launch;
@@ -703,6 +704,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))
+        },
+        (Method::Post, "/steam/anticheat-evidence") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_evidence(&body))
+        },
+        (Method::Post, "/steam/anticheat-probe") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_probe(&body))
         },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();

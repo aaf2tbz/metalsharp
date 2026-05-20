@@ -1,0 +1,66 @@
+# WTMKT Anti-Cheat Hard-Route Roadmap
+
+This roadmap covers the post-VM plan for MetalSharp anti-cheat/runtime support. The current local Linux VMs are ARM64, so they cannot serve as clean x86_64 Steam/Proton control machines. MetalSharp has to collect its own evidence and reduce the failure to concrete runtime contracts.
+
+## Phase 1: Anti-Cheat Evidence Collector
+
+Build a backend report that gathers the launch evidence for a Steam appid:
+
+- Easy Anti-Cheat service logs and launcher logs.
+- BattlEye launcher/service logs when present.
+- Steam `gameprocess_log.txt` and `runprocess_log.txt`.
+- EAC settings context: product id, sandbox id, deployment id, executable path, launcher title, downloaded module target, Wine version, exit code, and module mapping status.
+- Clear next-action hints for known failures such as `Failed to map the anti-cheat module`.
+
+The goal is not to declare success. The goal is to turn "anti-cheat failed" into a repeatable report we can diff after every Wine/runtime change.
+
+Initial backend surface:
+
+```http
+POST /steam/anticheat-evidence
+{"appid":1888160}
+```
+
+The report returns a normalized `status`, a human summary, EAC fields, Steam protected-launch fields, collected artifact paths, log tails, and next-action hints. For Rubicon, the expected current status is `module_mapping_failed`, with EAC setup exit `0`, module target `linux64`, Wine version `11.5`, launcher exit `206`, and Steam tracking `start_protected_game.exe`.
+
+## Phase 2: Wine Module-Mapping Probe
+
+Create a small probe that exercises the same class of module mapping that protected launchers expect from Wine:
+
+- host module mapping,
+- executable memory mapping,
+- syscall dispatch expectations,
+- loader transitions,
+- dyld/dylib boundary failures on macOS,
+- log output that can be attached to the appid evidence report.
+
+Initial safe backend surface:
+
+```http
+POST /steam/anticheat-probe
+{"appid":1888160}
+```
+
+This probe does not load or tamper with anti-cheat modules. It classifies the host/runtime boundary from inspectable evidence: host OS and architecture, Wine runtime paths, EAC module target, game-local anti-cheat module assets, binary magic (`ELF`, `PE`, or `Mach-O`), and whether the selected module implies a Linux-user-space substrate requirement on macOS. For Rubicon, the expected current status is `linux_module_on_darwin_boundary`.
+
+## Phase 3: Proton/Wine Delta Audit
+
+Map MetalSharp Wine against Proton and upstream Wine behavior:
+
+- `ntdll` loader and syscall dispatch,
+- wineserver process and handle behavior,
+- `steamclient` and `lsteamclient` behavior,
+- mmap and memory protection behavior,
+- pressure-vessel/container assumptions,
+- anti-cheat runtime file layout and module target selection.
+
+## Phase 4: macOS Runtime Substrate Decision
+
+Choose the truthful compatibility path:
+
+- vendor-supported macOS anti-cheat module path if available,
+- or a signed Linux-user-space compatibility substrate that can satisfy the protected module loader without spoofing, hiding, tamper evasion, or bypass behavior.
+
+## Current Proof Target
+
+Rubicon showed useful progress but not success: EAC EOS setup completed, protected launch downloaded the `linux64` module, Wine module mapping started under Wine 11.5, and then EAC failed with `Failed to map the anti-cheat module` / exit code 206. That is the first failure to reduce.
