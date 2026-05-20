@@ -50,6 +50,11 @@ static NtCreateUserProcessFn original_NtCreateUserProcess;
 static NtCreateFileFn original_NtCreateFile;
 static int patch_attempted;
 
+typedef struct WritablePage {
+    void* page;
+    size_t size;
+} WritablePage;
+
 static void trace_line(const char* fmt, ...) {
     FILE* files[2] = {NULL, NULL};
     const char* home = getenv("HOME");
@@ -72,17 +77,29 @@ static void trace_line(const char* fmt, ...) {
     }
 }
 
-static int make_slot_writable(void* slot) {
+static int make_slot_writable(void* slot, WritablePage* writable_page) {
     long page_size = sysconf(_SC_PAGESIZE);
     uintptr_t page;
 
     if (page_size <= 0)
         return 0;
     page = (uintptr_t)slot & ~((uintptr_t)page_size - 1);
-    if (mprotect((void*)page, (size_t)page_size, PROT_READ | PROT_WRITE) == 0)
+    if (mprotect((void*)page, (size_t)page_size, PROT_READ | PROT_WRITE) == 0) {
+        if (writable_page) {
+            writable_page->page = (void*)page;
+            writable_page->size = (size_t)page_size;
+        }
         return 1;
+    }
     trace_line("mprotect failed for service table slot %p", slot);
     return 0;
+}
+
+static void restore_slot_read_only(WritablePage* writable_page) {
+    if (!writable_page || !writable_page->page || writable_page->size == 0)
+        return;
+    if (mprotect(writable_page->page, writable_page->size, PROT_READ) != 0)
+        trace_line("mprotect restore failed for service table page %p", writable_page->page);
 }
 
 static long find_service_index(MetalSharpServiceTable* table, void* target) {
@@ -109,6 +126,7 @@ static void patch_syscalls(void) {
     MetalSharpGetMscompatdbHookContractFn get_contract;
     const MetalSharpMscompatdbHookContract* contract;
     MetalSharpServiceTable* tables;
+    WritablePage writable_page = {0};
     long create_process_index;
     long create_file_index;
 
@@ -143,9 +161,10 @@ static void patch_syscalls(void) {
     }
 
     original_NtCreateUserProcess = (NtCreateUserProcessFn)tables[0].service_table[create_process_index];
-    if (!make_slot_writable(&tables[0].service_table[create_process_index]))
+    if (!make_slot_writable(&tables[0].service_table[create_process_index], &writable_page))
         return;
     tables[0].service_table[create_process_index] = (ULONG_PTR)hook_NtCreateUserProcess;
+    restore_slot_read_only(&writable_page);
 
     if (create_file_index >= 0)
         original_NtCreateFile = (NtCreateFileFn)tables[0].service_table[create_file_index];
