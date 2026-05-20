@@ -757,6 +757,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_wine_syscall_probe(&body))
         },
+        (Method::Post, "/steam/mscompatdb-probe") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_mscompatdb_probe(&body))
+        },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))

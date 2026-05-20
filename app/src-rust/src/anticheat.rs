@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 const ARTIFACT_TAIL_LINES: usize = 80;
 const MAX_ARTIFACT_READ_BYTES: u64 = 1024 * 1024;
+const MAX_BINARY_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 const WALK_MAX_DEPTH: usize = 10;
 const MODULE_ASSET_MAX_DEPTH: usize = 8;
 
@@ -189,6 +191,26 @@ pub fn handle_steam_wine_syscall_probe(body: &Map<String, Value>) -> Value {
     })
 }
 
+pub fn handle_steam_mscompatdb_probe(body: &Map<String, Value>) -> Value {
+    let appid =
+        body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+    let probe = mscompatdb_probe(&home);
+    let status = probe.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "status": status,
+        "summary": mscompatdb_probe_summary(&status),
+        "probe": probe,
+        "nextActions": mscompatdb_probe_next_actions(&status),
+    })
+}
+
 pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     let appid =
         body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
@@ -203,6 +225,7 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
     let eac = summarize_eac(appid.unwrap_or_default(), &artifacts);
     let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let mscompatdb = mscompatdb_probe(&home);
     let host_os = std::env::consts::OS;
 
     let surfaces = vec![
@@ -220,6 +243,39 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
                     "proton_comparison",
                     &wine_root.join("bin").join("wine-preloader"),
                     Some("Absent is common in packaged macOS Wine; record it because Proton/Linux loader behavior often assumes Linux mapping semantics."),
+                ),
+            ],
+        ),
+        delta_group(
+            "mscompatdb_ntdll_bridge",
+            "MetalSharp mscompatdb and Wine ntdll hook surface",
+            vec![
+                delta_path(
+                    "mscompatdb_unix",
+                    "required",
+                    &wine_root.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
+                    Some("MetalSharp's current Crossover-style bridge shim."),
+                ),
+                delta_path(
+                    "mscompatdb_rules",
+                    "required",
+                    &wine_root.join("etc").join("mscompatdb_rules.toml"),
+                    Some("Rule file consumed by mscompatdb before protected launch."),
+                ),
+                delta_capability(
+                    "mscompatdb_hooked",
+                    "blocking_when_false",
+                    mscompatdb.get("hooked").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "The shim must resolve a Wine syscall hook point; present-but-unhooked cannot affect protected launch.",
+                ),
+                delta_capability(
+                    "ntdll_ke_table_exported",
+                    "blocking_when_false",
+                    mscompatdb
+                        .pointer("/ntdllSymbols/exportsKeServiceDescriptorTable")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    "The installed mscompatdb binary looks for KeServiceDescriptorTable, but Wine exposes it as a local/private symbol in current builds.",
                 ),
             ],
         ),
@@ -302,6 +358,7 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
             "arch": std::env::consts::ARCH,
         },
         "surfaces": surfaces,
+        "mscompatdb": mscompatdb,
         "moduleAssets": module_assets,
         "nextActions": vec![
             "Use this report as the Phase 3 checklist before changing Wine loader behavior.",
@@ -512,7 +569,65 @@ fn runtime_probe_checks(home: &Path) -> Value {
         "wine64Binary": path_check(&wine64_bin),
         "wineUnixLibDir": path_check(&wine_unix),
         "dxmtUnixLibDir": path_check(&dxmt_unix),
+        "mscompatdb": mscompatdb_probe(home),
         "expectedDyldBoundary": "macos_dylib",
+    })
+}
+
+fn mscompatdb_probe(home: &Path) -> Value {
+    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let mscompatdb_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so");
+    let ntdll_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("ntdll.so");
+    let rules_path = wine_root.join("etc").join("mscompatdb_rules.toml");
+    let nested_rules_path = wine_root.join("etc").join("etc").join("mscompatdb_rules.toml");
+    let mscompatdb_bytes = read_probe_bytes(&mscompatdb_path).unwrap_or_default();
+    let ntdll_symbols = inspect_ntdll_symbols(&ntdll_path);
+    let trace = mscompatdb_trace_signals(home);
+    let rules_present = rules_path.exists() || nested_rules_path.exists();
+    let expects_ke_table = ascii_bytes_contains(&mscompatdb_bytes, b"KeServiceDescriptorTable");
+    let expects_legacy_rule_api = ascii_bytes_contains(&mscompatdb_bytes, b"prepend")
+        || ascii_bytes_contains(&mscompatdb_bytes, b"load_rules OK");
+    let exports_ke_table =
+        ntdll_symbols.get("exportsKeServiceDescriptorTable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_unresolved_ke_error = trace.get("hasKeTableResolutionFailure").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_null_rule_api = trace.get("hasNullRuleApi").and_then(|v| v.as_bool()).unwrap_or(false);
+    let hooked = mscompatdb_path.exists()
+        && rules_present
+        && (!expects_ke_table || exports_ke_table)
+        && !has_unresolved_ke_error
+        && !has_null_rule_api;
+    let status = mscompatdb_status(
+        mscompatdb_path.exists(),
+        rules_present,
+        expects_ke_table,
+        exports_ke_table,
+        has_unresolved_ke_error,
+        has_null_rule_api,
+    );
+
+    json!({
+        "status": status,
+        "hooked": hooked,
+        "mscompatdb": {
+            "path": mscompatdb_path.to_string_lossy(),
+            "present": mscompatdb_path.exists(),
+            "format": read_binary_format(&mscompatdb_path),
+            "expectsKeServiceDescriptorTable": expects_ke_table,
+            "expectsLegacyRuleApi": expects_legacy_rule_api,
+            "hasTraceStrings": ascii_bytes_contains(&mscompatdb_bytes, b"mscompatdb:trace"),
+        },
+        "ntdll": {
+            "path": ntdll_path.to_string_lossy(),
+            "present": ntdll_path.exists(),
+            "format": read_binary_format(&ntdll_path),
+        },
+        "ntdllSymbols": ntdll_symbols,
+        "rules": {
+            "primary": path_check(&rules_path),
+            "nestedFallback": path_check(&nested_rules_path),
+            "present": rules_present,
+        },
+        "trace": trace,
     })
 }
 
@@ -828,6 +943,64 @@ fn path_check(path: &Path) -> Value {
     })
 }
 
+fn mscompatdb_status(
+    mscompatdb_present: bool,
+    rules_present: bool,
+    expects_ke_table: bool,
+    exports_ke_table: bool,
+    has_unresolved_ke_error: bool,
+    has_null_rule_api: bool,
+) -> &'static str {
+    if !mscompatdb_present {
+        return "missing_mscompatdb";
+    }
+    if !rules_present {
+        return "missing_rules";
+    }
+    if has_unresolved_ke_error || (expects_ke_table && !exports_ke_table) {
+        return "present_but_ke_table_unresolved";
+    }
+    if has_null_rule_api {
+        return "present_but_rule_api_unresolved";
+    }
+    "hook_surface_ready"
+}
+
+fn mscompatdb_probe_summary(status: &str) -> &'static str {
+    match status {
+        "missing_mscompatdb" => "mscompatdb.so is missing from the Wine runtime; protected launch cannot use the bridge shim.",
+        "missing_rules" => "mscompatdb is installed, but its rule file is missing.",
+        "present_but_ke_table_unresolved" => {
+            "mscompatdb is installed, but the current Wine ntdll exposes KeServiceDescriptorTable as a private/local symbol, so the shim cannot hook the syscall table."
+        },
+        "present_but_rule_api_unresolved" => {
+            "mscompatdb is installed, but trace logs show its legacy rule API pointers resolved to null."
+        },
+        "hook_surface_ready" => "mscompatdb, rules, and the Wine ntdll hook surface look ready for a protected-launch test.",
+        _ => "mscompatdb probe returned an unknown state.",
+    }
+}
+
+fn mscompatdb_probe_next_actions(status: &str) -> Vec<&'static str> {
+    match status {
+        "present_but_ke_table_unresolved" => vec![
+            "Patch the Wine ntdll build to expose an intentional MetalSharp hook/accessor instead of relying on private Mach-O symbols.",
+            "Rebuild mscompatdb from source against that explicit hook point.",
+            "Re-run protected Steam launch and confirm mscompatdb logs report a patched syscall hook before interpreting EAC/BattlEye errors.",
+        ],
+        "present_but_rule_api_unresolved" => vec![
+            "Recover or recreate the mscompatdb source so rule loading targets the current Wine runtime API.",
+            "Add an init-time failure code when rules cannot attach instead of silently continuing.",
+        ],
+        "missing_mscompatdb" | "missing_rules" => vec![
+            "Restore the missing runtime artifact from the MetalSharp bundle before testing protected launch.",
+        ],
+        _ => vec![
+            "Run a protected Steam launch, then refresh /steam/mscompatdb-probe and /steam/anticheat-evidence.",
+        ],
+    }
+}
+
 fn delta_group(id: &str, label: &str, checks: Vec<Value>) -> Value {
     json!({
         "id": id,
@@ -1034,6 +1207,118 @@ fn read_recent_text_limited(path: &Path) -> Option<String> {
     let mut bytes = Vec::new();
     file.take(MAX_ARTIFACT_READ_BYTES).read_to_end(&mut bytes).ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn read_probe_bytes(path: &Path) -> Option<Vec<u8>> {
+    let file = File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    let mut limited = file.take(MAX_BINARY_PROBE_BYTES);
+    limited.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+fn ascii_bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.windows(needle.len()).any(|window| window == needle)
+}
+
+fn inspect_ntdll_symbols(path: &Path) -> Value {
+    let output = Command::new("nm").arg("-a").arg(path).output().ok();
+    let text = output
+        .as_ref()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let parsed = parse_ntdll_nm_symbols(&text);
+    json!({
+        "nmAvailable": output.is_some(),
+        "hasKeServiceDescriptorTable": parsed.has_ke_service_descriptor_table,
+        "exportsKeServiceDescriptorTable": parsed.exports_ke_service_descriptor_table,
+        "keServiceDescriptorTableIsLocal": parsed.ke_service_descriptor_table_is_local,
+        "hasWineSyscallDispatcher": parsed.has_wine_syscall_dispatcher,
+        "hasKeAddSystemServiceTable": parsed.has_ke_add_system_service_table,
+    })
+}
+
+#[derive(Debug, Default)]
+struct NtdllSymbolProbe {
+    has_ke_service_descriptor_table: bool,
+    exports_ke_service_descriptor_table: bool,
+    ke_service_descriptor_table_is_local: bool,
+    has_wine_syscall_dispatcher: bool,
+    has_ke_add_system_service_table: bool,
+}
+
+fn parse_ntdll_nm_symbols(text: &str) -> NtdllSymbolProbe {
+    let mut probe = NtdllSymbolProbe::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let raw_symbol = line.split_whitespace().last().unwrap_or_default();
+        let symbol = raw_symbol.trim_start_matches('_');
+        let kind = nm_symbol_kind(line);
+        if symbol == "KeServiceDescriptorTable" {
+            probe.has_ke_service_descriptor_table = true;
+            if kind.map(|kind| kind.is_ascii_uppercase() && kind != 'U').unwrap_or(false) {
+                probe.exports_ke_service_descriptor_table = true;
+            }
+            if kind.map(|kind| kind.is_ascii_lowercase()).unwrap_or(false) {
+                probe.ke_service_descriptor_table_is_local = true;
+            }
+        } else if raw_symbol == "___wine_syscall_dispatcher" || symbol == "wine_syscall_dispatcher" {
+            probe.has_wine_syscall_dispatcher = true;
+        } else if symbol == "KeAddSystemServiceTable" {
+            probe.has_ke_add_system_service_table = true;
+        }
+    }
+    probe
+}
+
+fn nm_symbol_kind(line: &str) -> Option<char> {
+    line.split_whitespace().find_map(|part| {
+        let mut chars = part.chars();
+        let ch = chars.next()?;
+        if chars.next().is_none() && ch.is_ascii_alphabetic() {
+            Some(ch)
+        } else {
+            None
+        }
+    })
+}
+
+fn mscompatdb_trace_signals(home: &Path) -> Value {
+    let paths = vec![home.join(".metalsharp").join("mscompatdb_trace.log"), PathBuf::from("/tmp/mscompatdb_debug.log")];
+    let mut logs = Vec::new();
+    let mut combined = String::new();
+    for path in paths {
+        let Some(text) = read_recent_text_limited(&path) else {
+            logs.push(json!({
+                "path": path.to_string_lossy(),
+                "exists": path.exists(),
+            }));
+            continue;
+        };
+        combined.push_str(&text);
+        combined.push('\n');
+        logs.push(json!({
+            "path": path.to_string_lossy(),
+            "exists": true,
+            "tail": tail_lines(&text, 24),
+        }));
+    }
+    let lower = combined.to_ascii_lowercase();
+    json!({
+        "logs": logs,
+        "hasKeTableResolutionFailure": lower.contains("couldn't find keservicedescriptortable")
+            || lower.contains("could not find keservicedescriptortable"),
+        "hasNullRuleApi": lower.contains("p_add=0x0") || lower.contains("p_prepend=0x0"),
+        "hasPatchedNtCreateUserProcess": lower.contains("patched ntcreateuserprocess"),
+        "hasHookInvocation": lower.contains("hook_ntcreateuserprocess called"),
+    })
 }
 
 fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
@@ -1492,6 +1777,41 @@ mod tests {
     fn delta_audit_status_promotes_blocking_surface() {
         let surfaces = vec![json!({"id": "anticheat_module_contract", "status": "blocking"})];
         assert_eq!(delta_audit_status(&surfaces), "blocking_delta_found");
+    }
+
+    #[test]
+    fn parses_ntdll_local_ke_table_from_nm_output() {
+        let text = "\
+0000000000097710 d _KeServiceDescriptorTable
+0000000000040ac0 t ___wine_syscall_dispatcher
+000000000005d110 T _KeAddSystemServiceTable
+";
+
+        let probe = parse_ntdll_nm_symbols(text);
+
+        assert!(probe.has_ke_service_descriptor_table);
+        assert!(probe.ke_service_descriptor_table_is_local);
+        assert!(!probe.exports_ke_service_descriptor_table);
+        assert!(probe.has_wine_syscall_dispatcher);
+        assert!(probe.has_ke_add_system_service_table);
+    }
+
+    #[test]
+    fn parses_ntdll_exported_ke_table_from_nm_output() {
+        let text = "0000000000097710 D _KeServiceDescriptorTable";
+
+        let probe = parse_ntdll_nm_symbols(text);
+
+        assert!(probe.has_ke_service_descriptor_table);
+        assert!(probe.exports_ke_service_descriptor_table);
+        assert!(!probe.ke_service_descriptor_table_is_local);
+    }
+
+    #[test]
+    fn mscompatdb_status_flags_present_but_private_ke_table() {
+        assert_eq!(mscompatdb_status(true, true, true, false, false, false), "present_but_ke_table_unresolved");
+        assert_eq!(mscompatdb_status(true, true, false, false, false, true), "present_but_rule_api_unresolved");
+        assert_eq!(mscompatdb_status(true, true, false, false, false, false), "hook_surface_ready");
     }
 
     #[test]
