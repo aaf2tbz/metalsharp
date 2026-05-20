@@ -36,6 +36,12 @@ struct SteamSummary {
     redist_exit_codes: Vec<Value>,
 }
 
+#[derive(Debug, Default)]
+struct EacIdentity {
+    product_id: Option<String>,
+    deployment_id: Option<String>,
+}
+
 pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
     let appid = match body.get("appid").and_then(|v| v.as_u64()) {
         Some(id) if id > 0 && id <= u32::MAX as u64 => id as u32,
@@ -50,7 +56,7 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let game_dir = crate::setup::resolve_game_dir(appid);
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
-    let eac = summarize_eac(&artifacts);
+    let eac = summarize_eac(appid, &artifacts);
     let steam = summarize_steam(appid, &artifacts);
     let status = evidence_status(&eac, &steam, &artifacts);
 
@@ -102,7 +108,7 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let game_dir = crate::setup::resolve_game_dir(appid);
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
-    let eac = summarize_eac(&artifacts);
+    let eac = summarize_eac(appid, &artifacts);
     let steam = summarize_steam(appid, &artifacts);
     let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
     let runtime_checks = runtime_probe_checks(&home);
@@ -150,7 +156,7 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     let wine_root = home.join(".metalsharp").join("runtime").join("wine");
     let game_dir = appid.and_then(crate::setup::resolve_game_dir);
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
-    let eac = summarize_eac(&artifacts);
+    let eac = summarize_eac(appid.unwrap_or_default(), &artifacts);
     let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
     let host_os = std::env::consts::OS;
 
@@ -274,7 +280,7 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let game_dir = crate::setup::resolve_game_dir(appid);
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
-    let eac = summarize_eac(&artifacts);
+    let eac = summarize_eac(appid, &artifacts);
     let steam = summarize_steam(appid, &artifacts);
     let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
     let host_os = std::env::consts::OS;
@@ -317,6 +323,7 @@ fn collect_artifacts(prefix: &Path, game_dir: Option<&Path>) -> Vec<Value> {
     candidates.push(("steam_gameprocess", steam_logs.join("gameprocess_log.txt")));
     candidates.push(("steam_runprocess", steam_logs.join("runprocess_log.txt")));
 
+    let eac_identity = game_dir.and_then(eac_identity_for_game);
     let users_dir = drive_c.join("users");
     if users_dir.exists() {
         for entry in WalkDir::new(&users_dir).max_depth(WALK_MAX_DEPTH).into_iter().filter_map(Result::ok) {
@@ -328,6 +335,9 @@ fn collect_artifacts(prefix: &Path, game_dir: Option<&Path>) -> Vec<Value> {
             let path_lc = path.to_string_lossy().to_ascii_lowercase();
             if path_lc.contains("easyanticheat") && name.ends_with(".log") {
                 let id = if name == "service.log" { "eac_service" } else { "eac_launcher" };
+                if id == "eac_launcher" && !eac_log_matches_identity(path, eac_identity.as_ref()) {
+                    continue;
+                }
                 candidates.push((id, path.to_path_buf()));
             } else if path_lc.contains("battleye") && name.ends_with(".log") {
                 candidates.push(("battleye_user_log", path.to_path_buf()));
@@ -369,6 +379,42 @@ fn collect_named_logs(root: &Path, id: &'static str, candidates: &mut Vec<(&'sta
             candidates.push((id, path.to_path_buf()));
         }
     }
+}
+
+fn eac_identity_for_game(game_dir: &Path) -> Option<EacIdentity> {
+    for entry in WalkDir::new(game_dir).max_depth(MODULE_ASSET_MAX_DEPTH).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let path_lc = path.to_string_lossy().to_ascii_lowercase();
+        let name_lc = path.file_name().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
+        if !path_lc.contains("easyanticheat") || name_lc != "settings.json" {
+            continue;
+        }
+        let Some(text) = read_recent_text_limited(path) else {
+            continue;
+        };
+        let identity = EacIdentity {
+            product_id: extract_loose_json_string(&text, "productid"),
+            deployment_id: extract_loose_json_string(&text, "deploymentid"),
+        };
+        if identity.product_id.is_some() || identity.deployment_id.is_some() {
+            return Some(identity);
+        }
+    }
+    None
+}
+
+fn eac_log_matches_identity(path: &Path, identity: Option<&EacIdentity>) -> bool {
+    let Some(identity) = identity else {
+        return true;
+    };
+    let path_lc = path.to_string_lossy().to_ascii_lowercase();
+    let product_ok = identity.product_id.as_ref().map(|id| path_lc.contains(&id.to_ascii_lowercase())).unwrap_or(true);
+    let deployment_ok =
+        identity.deployment_id.as_ref().map(|id| path_lc.contains(&id.to_ascii_lowercase())).unwrap_or(true);
+    product_ok && deployment_ok
 }
 
 fn collect_module_assets(game_dir: &Path) -> Vec<Value> {
@@ -444,7 +490,7 @@ fn artifact_json(id: &str, path: &Path) -> Value {
     })
 }
 
-fn summarize_eac(artifacts: &[Value]) -> EacSummary {
+fn summarize_eac(appid: u32, artifacts: &[Value]) -> EacSummary {
     let mut summary = EacSummary::default();
     for artifact in artifacts {
         let id = artifact.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -454,7 +500,7 @@ fn summarize_eac(artifacts: &[Value]) -> EacSummary {
         for line in artifact_lines(artifact) {
             parse_eac_line(&line, &mut summary);
             if id == "steam_runprocess" {
-                parse_eac_setup_line(&line, &mut summary);
+                parse_eac_setup_line(appid, &line, &mut summary);
             }
         }
     }
@@ -512,7 +558,11 @@ fn parse_eac_line(line: &str, summary: &mut EacSummary) {
     }
 }
 
-fn parse_eac_setup_line(line: &str, summary: &mut EacSummary) {
+fn parse_eac_setup_line(appid: u32, line: &str, summary: &mut EacSummary) {
+    let marker = format!("[AppID {}]", appid);
+    if !line.contains(&marker) {
+        return;
+    }
     let lower = line.to_ascii_lowercase();
     if !lower.contains("easyanticheat") || !lower.contains("setup") {
         return;
@@ -914,6 +964,14 @@ fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
     lines[start..].iter().map(|line| line.trim_end_matches('\r').to_string()).collect()
 }
 
+fn extract_loose_json_string(text: &str, key: &str) -> Option<String> {
+    let quoted_key = format!("\"{}\"", key);
+    let rest = text.split(&quoted_key).nth(1)?;
+    let rest = rest.split(':').nth(1)?.trim_start();
+    let value = rest.strip_prefix('"')?.split('"').next()?;
+    Some(value.trim().to_string())
+}
+
 fn extract_between(text: &str, start: &str, end: &str) -> Option<String> {
     let rest = text.split(start).nth(1)?;
     let value = rest.split(end).next()?;
@@ -989,6 +1047,51 @@ mod tests {
         assert_eq!(summary.tracked_pid, Some(1316));
         assert_eq!(summary.tracked_exit_code, Some(206));
         assert!(summary.protected_launcher_path.as_deref().unwrap_or_default().contains("start_protected_game.exe"));
+    }
+
+    #[test]
+    fn eac_roaming_logs_are_filtered_by_game_identity() {
+        let identity = EacIdentity {
+            product_id: Some("773d3a68f76f4b2ebebc5b4127bbad3e".to_string()),
+            deployment_id: Some("d2842e93d53b4c0c98a8f963ebb4c222".to_string()),
+        };
+        let elden = Path::new(
+            "/prefix/drive_c/users/u/AppData/Roaming/EasyAntiCheat/773d3a68f76f4b2ebebc5b4127bbad3e/d2842e93d53b4c0c98a8f963ebb4c222/anticheatlauncher.log",
+        );
+        let rubicon = Path::new(
+            "/prefix/drive_c/users/u/AppData/Roaming/EasyAntiCheat/789399aada914e66bb3c3facebc5d709/b978a2afd2254108bbb39201d0a24a98/anticheatlauncher.log",
+        );
+
+        assert!(eac_log_matches_identity(elden, Some(&identity)));
+        assert!(!eac_log_matches_identity(rubicon, Some(&identity)));
+    }
+
+    #[test]
+    fn parses_eac_settings_with_trailing_comma() {
+        let text = r#"{
+            "productid" : "773d3a68f76f4b2ebebc5b4127bbad3e",
+            "deploymentid" : "d2842e93d53b4c0c98a8f963ebb4c222",
+        }"#;
+
+        assert_eq!(extract_loose_json_string(text, "productid").as_deref(), Some("773d3a68f76f4b2ebebc5b4127bbad3e"));
+        assert_eq!(
+            extract_loose_json_string(text, "deploymentid").as_deref(),
+            Some("d2842e93d53b4c0c98a8f963ebb4c222")
+        );
+    }
+
+    #[test]
+    fn eac_setup_summary_is_filtered_by_appid() {
+        let artifacts = vec![json!({
+            "id": "steam_runprocess",
+            "tail": [
+                "05/20/26 01:03:10 [AppID 1888160] Exit Code (7) : \"Z:\\\\Rubicon\\\\EasyAntiCheat_EOS_Setup.exe\" install rubicon GLE 0",
+                "05/20/26 10:56:58 [AppID 1245620] Exit Code (0) : \"Z:\\\\Elden\\\\EasyAntiCheat_EOS_Setup.exe\" install elden GLE 0"
+            ]
+        })];
+
+        assert_eq!(summarize_eac(1245620, &artifacts).setup_exit_code, Some(0));
+        assert_eq!(summarize_eac(1888160, &artifacts).setup_exit_code, Some(7));
     }
 
     #[test]

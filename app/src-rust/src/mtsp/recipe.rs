@@ -391,6 +391,8 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
         push_check(&mut checks, "dll_sources", "DLL sources", false, detail);
     }
 
+    inspect_pipeline_dll_exports(&recipe, &mut checks, &mut blockers, &mut warnings);
+
     let missing_target_dirs: Vec<_> =
         recipe.dlls.iter().filter_map(|dll| dll.dest_path.parent()).filter(|parent| !parent.is_dir()).collect();
     if missing_target_dirs.is_empty() {
@@ -527,6 +529,62 @@ fn inspect_exe_route_compatibility(
     }
 
     push_check(checks, "exe_route", "Route compatibility", true, detail);
+}
+
+fn inspect_pipeline_dll_exports(
+    recipe: &LaunchRecipe,
+    checks: &mut Vec<LaunchDoctorCheck>,
+    blockers: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    if recipe.pipeline != PipelineId::M12 {
+        push_check(checks, "d3d12_exports", "D3D12 exports", true, "Not required for this pipeline");
+        return;
+    }
+
+    let Some(d3d12) = recipe.dlls.iter().find(|dll| dll.filename.eq_ignore_ascii_case("d3d12.dll")) else {
+        return;
+    };
+    if !d3d12.source_present {
+        push_check(
+            checks,
+            "d3d12_exports",
+            "D3D12 exports",
+            false,
+            "D3D12 source DLL is missing; export table was not inspected",
+        );
+        return;
+    }
+
+    let Ok(data) = std::fs::read(&d3d12.source_path) else {
+        let detail = format!("Could not read {}", d3d12.source_path.display());
+        warnings.push(detail.clone());
+        push_check(checks, "d3d12_exports", "D3D12 exports", false, detail);
+        return;
+    };
+
+    match super::pe::pe_exports_ordinal(&data, 101, "D3D12CreateDevice") {
+        Some(true) => push_check(
+            checks,
+            "d3d12_exports",
+            "D3D12 exports",
+            true,
+            "D3D12CreateDevice is exported by name and ordinal 101",
+        ),
+        Some(false) => {
+            let detail = format!(
+                "{} does not export D3D12CreateDevice at ordinal 101; games importing d3d12.dll.101 will crash in Wine's unimplemented-function stub",
+                d3d12.source_path.display()
+            );
+            blockers.push(detail.clone());
+            push_check(checks, "d3d12_exports", "D3D12 exports", false, detail);
+        },
+        None => {
+            let detail = format!("Could not parse D3D12 export table from {}", d3d12.source_path.display());
+            warnings.push(detail.clone());
+            push_check(checks, "d3d12_exports", "D3D12 exports", false, detail);
+        },
+    }
 }
 
 fn d3d_api_label(api: super::pe::D3dApi) -> &'static str {
@@ -1010,6 +1068,44 @@ mod tests {
     }
 
     #[test]
+    fn doctor_blocks_m12_d3d12_without_create_device_ordinal_101() {
+        let game_dir = test_dir("doctor-d3d12-ordinal");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        let exe = game_dir.join("ModernGame.exe");
+        let dll = game_dir.join("d3d12.dll");
+        write_test_pe(&exe, 0x8664, 0x20b);
+        write_test_d3d12_export_dll(&dll, 1);
+
+        let report = diagnose_recipe(LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M12,
+            pipeline_name: "M12".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(exe),
+            exe_name: Some("ModernGame.exe".into()),
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![RecipeDll {
+                source_subpath: "lib/dxmt/x86_64-windows".into(),
+                filename: "d3d12.dll".into(),
+                source_path: dll,
+                dest_path: game_dir.join("d3d12.dll"),
+                source_present: true,
+            }],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            anti_cheat_status: vec![],
+            warnings: vec![],
+        });
+
+        assert!(!report.ready);
+        assert!(report.blockers.iter().any(|blocker| blocker.contains("ordinal 101")));
+        assert!(report.checks.iter().any(|check| check.id == "d3d12_exports" && !check.ok));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
     fn doctor_request_reports_recipe_build_failures_as_blockers() {
         let report = diagnose_launch_request(4_000_000_000, super::super::engine::get_pipeline(PipelineId::M11));
 
@@ -1071,5 +1167,40 @@ mod tests {
         data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
         data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
         std::fs::write(path, data).expect("write test PE");
+    }
+
+    fn write_test_d3d12_export_dll(path: &std::path::Path, ordinal_base: u32) {
+        let mut data = vec![0_u8; 0x500];
+        data[0] = b'M';
+        data[1] = b'Z';
+        data[0x3c..0x40].copy_from_slice(&(0x80_u32).to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&0x8664_u16.to_le_bytes());
+        data[0x86..0x88].copy_from_slice(&(1_u16).to_le_bytes());
+        data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
+        data[0x98..0x9a].copy_from_slice(&(0x20b_u16).to_le_bytes());
+        data[0x98 + 112..0x98 + 116].copy_from_slice(&(0x1000_u32).to_le_bytes());
+        data[0x98 + 116..0x98 + 120].copy_from_slice(&(40_u32).to_le_bytes());
+
+        let sec = 0x80 + 24 + 0xf0;
+        data[sec..sec + 8].copy_from_slice(b".edata\0\0");
+        data[sec + 8..sec + 12].copy_from_slice(&(0x300_u32).to_le_bytes());
+        data[sec + 12..sec + 16].copy_from_slice(&(0x1000_u32).to_le_bytes());
+        data[sec + 16..sec + 20].copy_from_slice(&(0x300_u32).to_le_bytes());
+        data[sec + 20..sec + 24].copy_from_slice(&(0x200_u32).to_le_bytes());
+
+        let export = 0x200;
+        data[export + 16..export + 20].copy_from_slice(&ordinal_base.to_le_bytes());
+        data[export + 20..export + 24].copy_from_slice(&(1_u32).to_le_bytes());
+        data[export + 24..export + 28].copy_from_slice(&(1_u32).to_le_bytes());
+        data[export + 28..export + 32].copy_from_slice(&(0x1040_u32).to_le_bytes());
+        data[export + 32..export + 36].copy_from_slice(&(0x1050_u32).to_le_bytes());
+        data[export + 36..export + 40].copy_from_slice(&(0x1060_u32).to_le_bytes());
+        data[0x240..0x244].copy_from_slice(&(1_u32).to_le_bytes());
+        data[0x250..0x254].copy_from_slice(&(0x1070_u32).to_le_bytes());
+        data[0x260..0x262].copy_from_slice(&(0_u16).to_le_bytes());
+        data[0x270..0x282].copy_from_slice(b"D3D12CreateDevice\0");
+
+        std::fs::write(path, data).expect("write test D3D12 export DLL");
     }
 }
