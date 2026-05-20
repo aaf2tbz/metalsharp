@@ -762,7 +762,22 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/steam/mscompatdb-prepare-dylib") => {
             let body = read_body(req);
-            resp(200, anticheat::handle_steam_mscompatdb_prepare_dylib(&body))
+            match runtime_mutation_trust_reason(installer::is_installing(), migrate::is_migrating()) {
+                Some(reason) => {
+                    let mut result = anticheat::handle_steam_mscompatdb_prepare_dylib(&body);
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("trusted_context".into(), json!(reason));
+                    }
+                    resp(200, result)
+                },
+                None => resp(
+                    403,
+                    json!({
+                        "ok": false,
+                        "error": "mscompatdb dylib preparation is only allowed while setup install or runtime migration is active",
+                    }),
+                ),
+            }
         },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
@@ -1335,6 +1350,16 @@ fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Res
     Ok(appid)
 }
 
+fn runtime_mutation_trust_reason(installing: bool, migrating: bool) -> Option<&'static str> {
+    if installing {
+        Some("setup_install")
+    } else if migrating {
+        Some("runtime_migration")
+    } else {
+        None
+    }
+}
+
 fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1417,5 +1442,12 @@ mod tests {
         body.insert("appid".into(), json!(620));
 
         assert_eq!(parse_request_appid(&body), Ok(620));
+    }
+
+    #[test]
+    fn runtime_mutation_guard_only_trusts_setup_or_migration() {
+        assert_eq!(runtime_mutation_trust_reason(false, false), None);
+        assert_eq!(runtime_mutation_trust_reason(true, false), Some("setup_install"));
+        assert_eq!(runtime_mutation_trust_reason(false, true), Some("runtime_migration"));
     }
 }

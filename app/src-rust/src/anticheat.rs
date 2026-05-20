@@ -1568,12 +1568,16 @@ fn parse_ntdll_nm_symbols(text: &str) -> NtdllSymbolProbe {
         } else if symbol == "KeAddSystemServiceTable" {
             probe.has_ke_add_system_service_table = true;
         } else if symbol == "MetalSharpGetMscompatdbHookContract" {
-            probe.has_metalsharp_hook_contract = true;
+            probe.has_metalsharp_hook_contract = kind.map(is_exported_nm_symbol).unwrap_or(false);
         } else if symbol == "MetalSharpGetMscompatdbHookContractVersion" {
-            probe.has_metalsharp_hook_contract_version = true;
+            probe.has_metalsharp_hook_contract_version = kind.map(is_exported_nm_symbol).unwrap_or(false);
         }
     }
     probe
+}
+
+fn is_exported_nm_symbol(kind: char) -> bool {
+    kind.is_ascii_uppercase() && kind != 'U'
 }
 
 fn nm_symbol_kind(line: &str) -> Option<char> {
@@ -2118,6 +2122,19 @@ mod tests {
 
         assert!(probe.has_metalsharp_hook_contract);
         assert!(probe.has_metalsharp_hook_contract_version);
+    }
+
+    #[test]
+    fn local_metalsharp_mscompatdb_hook_contract_is_not_runtime_ready() {
+        let text = "\
+0000000000061000 t _MetalSharpGetMscompatdbHookContract
+0000000000061010 t _MetalSharpGetMscompatdbHookContractVersion
+";
+
+        let probe = parse_ntdll_nm_symbols(text);
+
+        assert!(!probe.has_metalsharp_hook_contract);
+        assert!(!probe.has_metalsharp_hook_contract_version);
     }
 
     #[test]
