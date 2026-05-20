@@ -474,7 +474,21 @@ pub fn ensure_installer_bottle(
     source_installer: &Path,
     classification: &InstallerClassification,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    let id = installer_bottle_id(source_installer);
+    ensure_installer_bottle_with_id(source_installer, classification, installer_bottle_id(source_installer))
+}
+
+pub fn create_fresh_installer_bottle(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    ensure_installer_bottle_with_id(source_installer, classification, fresh_installer_bottle_id(source_installer))
+}
+
+fn ensure_installer_bottle_with_id(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+    id: String,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let now = timestamp_secs();
     let name = source_installer
         .file_stem()
@@ -2098,8 +2112,12 @@ fn resolve_component_installer_from_roots(
         "webview2" => first_existing(&[
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebview2Setup.exe"),
             local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("MicrosoftEdgeWebview2Setup.exe"),
         ]),
         "directx_jun2010" => first_existing(&[
             redist_root.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
@@ -2399,6 +2417,14 @@ fn installer_bottle_id(source_installer: &Path) -> String {
     format!("installer_{:016x}", hasher.finish())
 }
 
+fn fresh_installer_bottle_id(source_installer: &Path) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("{}_fresh_{}", installer_bottle_id(source_installer), millis)
+}
+
 fn installer_pipeline_from_pe(pe: Option<&crate::mtsp::pe::PeInfo>) -> crate::mtsp::engine::PipelineId {
     let Some(pe) = pe else {
         return crate::mtsp::engine::PipelineId::WineBare;
@@ -2435,7 +2461,7 @@ fn detect_apps_in_prefix(prefix: &Path) -> Vec<AppDetection> {
                 continue;
             }
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            if !is_probable_app_exe(&name) {
+            if !is_probable_app_exe_path(&name, path) {
                 continue;
             }
             let key = path.to_string_lossy().to_string();
@@ -2805,7 +2831,7 @@ fn detect_apps_in_game_dir(game_dir: &Path) -> Vec<AppDetection> {
             continue;
         }
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if !is_probable_app_exe(&name) {
+        if !is_probable_app_exe_path(&name, path) {
             continue;
         }
         let key = path.to_string_lossy().to_string();
@@ -2892,9 +2918,21 @@ fn is_probable_app_exe(name: &str) -> bool {
         "winebrowser.exe",
         "control.exe",
         "cmd.exe",
+        "cookie_exporter.exe",
+        "elevated_tracing_service.exe",
+        "elevation_service.exe",
+        "ie_to_edge_stub.exe",
+        "microsoftedgecomregistershellarm64.exe",
+        "mscopilot.exe",
+        "msedge.exe",
+        "msedge_proxy.exe",
+        "msedge_pwa_launcher.exe",
+        "msedgewebview2.exe",
+        "uc_connector.exe",
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
+        && !lower.starts_with("microsoftedgewebview_")
         && !lower.contains("setup")
         && !lower.contains("install")
         && !lower.contains("unins")
@@ -2902,6 +2940,16 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("crash")
         && !lower.contains("helper")
         && !lower.contains("update")
+}
+
+fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
+    if !is_probable_app_exe(name) {
+        return false;
+    }
+    let lower_path = path.to_string_lossy().to_ascii_lowercase();
+    !lower_path.contains("/microsoft/edgecore/")
+        && !lower_path.contains("/microsoft/edgeupdate/")
+        && !lower_path.contains("/microsoft/edgewebview/")
 }
 
 fn read_ascii_strings(path: &Path, max_bytes: usize) -> Vec<String> {
@@ -2939,6 +2987,16 @@ mod tests {
         let path = Path::new("/tmp/MinecraftInstaller.exe");
         assert_eq!(installer_bottle_id(path), installer_bottle_id(path));
         assert!(installer_bottle_id(path).starts_with("installer_"));
+    }
+
+    #[test]
+    fn fresh_installer_bottle_ids_keep_source_lineage() {
+        let path = Path::new("/tmp/MinecraftInstaller.exe");
+        let stable = installer_bottle_id(path);
+        let fresh = fresh_installer_bottle_id(path);
+
+        assert_ne!(fresh, stable);
+        assert!(fresh.starts_with(&format!("{}_fresh_", stable)));
     }
 
     #[test]
@@ -3310,6 +3368,8 @@ mod tests {
     fn app_detection_rejects_wine_builtins() {
         assert!(!is_probable_app_exe("iexplore.exe"));
         assert!(!is_probable_app_exe("wordpad.exe"));
+        assert!(!is_probable_app_exe("msedgewebview2.exe"));
+        assert!(!is_probable_app_exe("MicrosoftEdgeWebview_X64_148.0.3967.70.exe"));
         assert!(is_probable_app_exe("MinecraftLauncher.exe"));
     }
 

@@ -148,6 +148,11 @@ Observed result:
 - EA reports that MSI failure as `INST-14-1603`.
 - The extracted MSI payload includes `Microsoft.Deployment.WindowsInstaller.dll` and `CustomAction.config` with `<supportedRuntime version="v4.0" />`, so EA is running .NET v4 custom actions during install.
 - Installing `dotnet48` repaired the bottle component state, but the relaunch still reproduced `INST-14-1603`.
+- A fresh proof bottle, `installer_16c2e7d7a6e2d5e7_fresh_1779256322130`, confirmed the relaunch path now stays inside the selected proof bottle instead of falling back to the stable source-path bottle.
+- In the fresh proof bottle, `corefonts`, `dotnet48`, `gecko`, `vcrun2019`, and `webview2` are installed.
+- The local WebView2 resolver now honors `~/.metalsharp/runtime/redist/WebView2/`, matching the documented redist path.
+- Even with WebView2 present, the direct MSI log files are created but remain zero bytes, so Wine/MSI appears to fail before the MSI logger records the real custom-action body.
+- The outer WiX bootstrapper still maps the failure to `0x80070643 aka 'INST-14-1603'`.
 
 Evidence:
 
@@ -155,6 +160,12 @@ Evidence:
 - `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233518.log`
 - `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233838.log`
 - `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi56c0.tmp-/CustomAction.config`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/bottle.json`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519235554.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519235554_000_EAapp_13.700.0.6213_ae714772e_4bfd0163_4218.msi.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260520000339.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/logs/component-webview2-1779256915.log`
+- `~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi2e9e.tmp-/CustomAction.config`
 
 Failure classification:
 
@@ -162,10 +173,12 @@ Failure classification:
 - `msi_custom_action_failure`
 - `launcher_bootstrapper_needs_bare_wine`
 - `webview_profile_needs_dotnet48`
+- `msi_log_empty`
+- `webview2_installed_not_sufficient`
 
 Next action:
 
-Rerun EA from a fresh WebView bottle after the known-launcher bare-Wine routing and WebView `dotnet48` provisioning changes, then inspect the generated MSI log instead of only the outer WiX bootstrapper log.
+Inspect Wine MSI custom-action service/elevation behavior around per-machine package cache writes. WebView2 is now installed in the proof bottle, so the blocker is below the missing-runtime layer.
 
 ### 2026-05-19: BattlEye BERCon artifact
 

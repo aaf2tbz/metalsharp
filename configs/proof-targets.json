@@ -112,11 +112,11 @@
       "source": "local_windows_installer",
       "appid": null,
       "installer_path": "~/Downloads/EAappInstaller.exe",
-      "bottle_id": "installer_16c2e7d7a6e2d5e7",
+      "bottle_id": "installer_16c2e7d7a6e2d5e7_fresh_1779256322130",
       "compatdata_path": null,
       "runtime_profile": "webview",
       "launch_pipeline": "wine_bare",
-      "prefix_path": "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix",
+      "prefix_path": "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix",
       "expected_route": "webview",
       "install_result": "failed",
       "launcher_open_result": "not_reached",
@@ -132,14 +132,18 @@
         "ea_inst_14_1603",
         "msi_custom_action_failure",
         "launcher_bootstrapper_needs_bare_wine",
-        "webview_profile_needs_dotnet48"
+        "webview_profile_needs_dotnet48",
+        "msi_log_empty",
+        "webview2_installed_not_sufficient"
       ],
       "failure_evidence": [
-        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233838.log",
-        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519233518.log",
-        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi56c0.tmp-/CustomAction.config"
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519235554.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260519235554_000_EAapp_13.700.0.6213_ae714772e_4bfd0163_4218.msi.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/EA_app_20260520000339.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/logs/component-webview2-1779256915.log",
+        "~/.metalsharp/bottles/installer_16c2e7d7a6e2d5e7_fresh_1779256322130/prefix/drive_c/users/alexmondello/AppData/Local/Temp/msi2e9e.tmp-/CustomAction.config"
       ],
-      "next_action": "Rerun EA in a WebView bottle after known launchers default to WineBare and the WebView profile pre-installs dotnet48 before the EA MSI custom actions run."
+      "next_action": "Inspect Wine MSI custom-action service/elevation behavior around per-machine package cache writes; WebView2 is now installed in the proof bottle but EA still fails before the direct MSI log writes content."
     },
     {
       "id": "portal-2",

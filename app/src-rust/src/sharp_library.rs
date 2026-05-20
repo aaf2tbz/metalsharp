@@ -460,6 +460,14 @@ pub fn install_exe(
     src_path: &str,
     custom_name: Option<&str>,
 ) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    install_exe_with_options(src_path, custom_name, false)
+}
+
+fn install_exe_with_options(
+    src_path: &str,
+    custom_name: Option<&str>,
+    fresh_bottle: bool,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let src = PathBuf::from(src_path);
     if !src.exists() {
         return Err("Source EXE not found".into());
@@ -469,7 +477,7 @@ pub fn install_exe(
     }
 
     if should_run_as_wine_installer(&src) {
-        return start_wine_installer(&src);
+        return start_wine_installer(&src, fresh_bottle);
     }
 
     let file_name = src.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -536,11 +544,24 @@ fn is_supported_windows_program(src: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+fn start_wine_installer(src: &Path, fresh_bottle: bool) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let classification = crate::bottles::classify_installer(src);
     let pipeline = classification.pipeline;
-    let bottle = crate::bottles::ensure_installer_bottle(src, &classification)?;
-    let staged_exe = stage_installer_exe(src, &bottle)?;
+    let bottle = if fresh_bottle {
+        crate::bottles::create_fresh_installer_bottle(src, &classification)?
+    } else {
+        crate::bottles::ensure_installer_bottle(src, &classification)?
+    };
+    start_wine_installer_in_bottle(src, &classification, &bottle, pipeline)
+}
+
+fn start_wine_installer_in_bottle(
+    src: &Path,
+    classification: &crate::bottles::InstallerClassification,
+    bottle: &crate::bottles::BottleManifest,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let staged_exe = stage_installer_exe(src, bottle)?;
     let work_dir = staged_exe.parent().ok_or("installer staging folder not found")?.to_path_buf();
     let launch_id = installer_launch_id(src, pipeline);
     let log_path = crate::bottles::next_launch_log_path(&bottle.id);
@@ -1263,10 +1284,11 @@ pub fn handle_get_library() -> Value {
 pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     let src_path = body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("");
     let custom_name = body.get("name").and_then(|v| v.as_str());
+    let fresh_bottle = body.get("freshBottle").and_then(|v| v.as_bool()).unwrap_or(false);
     if src_path.is_empty() {
         return json!({"ok": false, "error": "srcPath required"});
     }
-    match install_exe(src_path, custom_name) {
+    match install_exe_with_options(src_path, custom_name, fresh_bottle) {
         Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": *app}),
         Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
             json!({"ok": true, "installing": true, "pid": pid, "message": message})
@@ -1293,8 +1315,10 @@ pub fn relaunch_bottle_installer(id: &str) -> Result<SharpInstallOutcome, Box<dy
     if bottle.bottle_type != crate::bottles::BottleType::Installer {
         return Err("Only installer bottles can relaunch their source installer".into());
     }
-    let source = bottle.source_installer_path.ok_or("Bottle has no source installer path")?;
-    start_wine_installer(Path::new(&source))
+    let source = bottle.source_installer_path.clone().ok_or("Bottle has no source installer path")?;
+    let source = Path::new(&source);
+    let classification = crate::bottles::classify_installer(source);
+    start_wine_installer_in_bottle(source, &classification, &bottle, classification.pipeline)
 }
 
 pub fn handle_relaunch_bottle_installer(body: &serde_json::Map<String, Value>) -> Value {
