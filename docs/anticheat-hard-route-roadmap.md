@@ -78,6 +78,29 @@ Choose the truthful compatibility path:
 - vendor-supported macOS anti-cheat module path if available,
 - or a signed Linux-user-space compatibility substrate that can satisfy the protected module loader without spoofing, hiding, tamper evasion, or bypass behavior.
 
+Initial backend surface:
+
+```http
+POST /steam/anticheat-substrate-decision
+{"appid":1888160}
+```
+
+The decision report synthesizes the evidence, probe, and delta audit into one explicit result. For Rubicon, the expected current decision is `requires_linux_user_space_substrate_or_vendor_macos_asset`.
+
+Allowed paths:
+
+- Build a signed Linux user-space compatibility substrate for ELF module hosting.
+- Obtain or document vendor-supported macOS anti-cheat module assets.
+- Work with publisher/vendor enablement instead of spoofing trust.
+
+Rejected paths:
+
+- spoof anti-cheat host identity,
+- hide MetalSharp or Wine from the protected launcher,
+- fake kernel driver support,
+- tamper with protected modules,
+- claim online anti-cheat support before the protected module maps and launches with vendor-supported assets.
+
 ## Current Proof Target
 
 Rubicon showed useful progress but not success: EAC EOS setup completed, protected launch downloaded the `linux64` module, Wine module mapping started under Wine 11.5, and then EAC failed with `Failed to map the anti-cheat module` / exit code 206. That is the first failure to reduce.

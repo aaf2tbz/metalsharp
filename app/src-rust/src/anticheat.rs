@@ -259,6 +259,56 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     })
 }
 
+pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> Value {
+    let appid = match body.get("appid").and_then(|v| v.as_u64()) {
+        Some(id) if id > 0 && id <= u32::MAX as u64 => id as u32,
+        _ => return json!({"ok": false, "error": "appid required"}),
+    };
+
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "appid": appid, "error": "no home dir"}),
+    };
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let game_dir = crate::setup::resolve_game_dir(appid);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let eac = summarize_eac(&artifacts);
+    let steam = summarize_steam(appid, &artifacts);
+    let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let host_os = std::env::consts::OS;
+    let decision = substrate_decision(host_os, &eac, &module_assets);
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "decision": decision,
+        "summary": substrate_decision_summary(&decision),
+        "host": {
+            "os": host_os,
+            "arch": std::env::consts::ARCH,
+        },
+        "evidenceStatus": evidence_status(&eac, &steam, &artifacts),
+        "facts": {
+            "moduleTarget": eac.module_target,
+            "moduleMappingStatus": eac.module_mapping_status,
+            "launcherExitCode": eac.launcher_exit_code,
+            "hasLinuxElfAsset": module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("elf")),
+            "hasDarwinDylibAsset": module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("mach_o")),
+            "canDlopenLinuxElfDirectly": can_dlopen_linux_elf_directly(host_os),
+        },
+        "allowedPaths": allowed_substrate_paths(&decision),
+        "rejectedPaths": vec![
+            "spoof anti-cheat host identity",
+            "hide MetalSharp or Wine from the protected launcher",
+            "fake kernel driver support",
+            "tamper with protected modules",
+            "claim online anti-cheat support before the protected module maps and launches with vendor-supported assets",
+        ],
+        "nextActions": substrate_next_actions(&decision),
+    })
+}
+
 fn collect_artifacts(prefix: &Path, game_dir: Option<&Path>) -> Vec<Value> {
     let mut candidates = Vec::new();
     let drive_c = prefix.join("drive_c");
@@ -714,6 +764,77 @@ fn delta_audit_summary(eac: &EacSummary, host_os: &str) -> String {
     "Delta audit completed; inspect blocking and proton_comparison rows for the next implementation target.".to_string()
 }
 
+fn substrate_decision(host_os: &str, eac: &EacSummary, module_assets: &[Value]) -> String {
+    let selected_linux = eac.module_target.as_deref().unwrap_or("").starts_with("linux");
+    let has_elf_asset = module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("elf"));
+    let has_macho_asset =
+        module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("mach_o"));
+    if host_os == "macos" && has_macho_asset {
+        "investigate_vendor_macos_module".to_string()
+    } else if host_os == "macos" && (selected_linux || has_elf_asset) {
+        "requires_linux_user_space_substrate_or_vendor_macos_asset".to_string()
+    } else if eac.module_mapping_status.as_deref() == Some("failed") {
+        "requires_loader_delta_audit".to_string()
+    } else {
+        "collect_protected_launch_evidence".to_string()
+    }
+}
+
+fn substrate_decision_summary(decision: &str) -> &'static str {
+    match decision {
+        "investigate_vendor_macos_module" => {
+            "A Darwin module asset appears present; verify vendor support, signature, and expected host API before attempting any load."
+        },
+        "requires_linux_user_space_substrate_or_vendor_macos_asset" => {
+            "The protected launch path selected Linux anti-cheat assets on macOS; MetalSharp needs a legitimate Linux user-space substrate or vendor-supported macOS assets."
+        },
+        "requires_loader_delta_audit" => {
+            "Module mapping failed, but the selected module target is unclear; complete the Proton/Wine loader delta audit first."
+        },
+        _ => "No protected-launch module decision can be made yet; collect EAC/BattlEye launch evidence first.",
+    }
+}
+
+fn allowed_substrate_paths(decision: &str) -> Vec<&'static str> {
+    match decision {
+        "investigate_vendor_macos_module" => vec![
+            "validate vendor-supported macOS module assets",
+            "document expected host API and signing requirements",
+            "build only transparent compatibility glue approved by the publisher or anti-cheat vendor",
+        ],
+        "requires_linux_user_space_substrate_or_vendor_macos_asset" => vec![
+            "build a signed Linux user-space compatibility substrate for ELF module hosting",
+            "obtain or document vendor-supported macOS anti-cheat module assets",
+            "work with publisher/vendor enablement instead of spoofing trust",
+        ],
+        "requires_loader_delta_audit" => vec![
+            "complete Proton/Wine loader and syscall delta audit",
+            "add precise probes for mmap, executable protections, and loader callbacks",
+        ],
+        _ => vec!["collect protected-launch logs and module target evidence"],
+    }
+}
+
+fn substrate_next_actions(decision: &str) -> Vec<&'static str> {
+    match decision {
+        "requires_linux_user_space_substrate_or_vendor_macos_asset" => vec![
+            "Prototype a harmless ELF loader capability probe outside the protected module path.",
+            "Map the minimum Linux user-space APIs a vendor EAC/BattlEye module expects under Proton.",
+            "Prepare a vendor-facing proof bundle showing the exact module target, host OS boundary, and non-evasion policy.",
+        ],
+        "investigate_vendor_macos_module" => vec![
+            "Verify the Mach-O asset is actually vendor anti-cheat code, not an unrelated helper.",
+            "Check code signature and load requirements without injecting it into a protected process.",
+        ],
+        "requires_loader_delta_audit" => vec![
+            "Run /steam/anticheat-delta-audit and compare the blocking rows with Proton behavior.",
+        ],
+        _ => vec![
+            "Run the protected Steam launch once and then refresh /steam/anticheat-evidence.",
+        ],
+    }
+}
+
 fn classify_module_path(path: &Path) -> &'static str {
     let path_lc = path.to_string_lossy().to_ascii_lowercase();
     if path_lc.contains("battleye") || path_lc.contains("beclient") || path_lc.contains("beservice") {
@@ -892,5 +1013,11 @@ mod tests {
     fn delta_audit_status_promotes_blocking_surface() {
         let surfaces = vec![json!({"id": "anticheat_module_contract", "status": "blocking"})];
         assert_eq!(delta_audit_status(&surfaces), "blocking_delta_found");
+    }
+
+    #[test]
+    fn substrate_decision_requires_linux_substrate_for_linux_module_on_macos() {
+        let eac = EacSummary { module_target: Some("linux64".to_string()), ..Default::default() };
+        assert_eq!(substrate_decision("macos", &eac, &[]), "requires_linux_user_space_substrate_or_vendor_macos_asset");
     }
 }

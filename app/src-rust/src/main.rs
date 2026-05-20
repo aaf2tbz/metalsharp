@@ -717,6 +717,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_delta_audit(&body))
         },
+        (Method::Post, "/steam/anticheat-substrate-decision") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str
