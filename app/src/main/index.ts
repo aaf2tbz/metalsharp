@@ -129,10 +129,10 @@ async function checkNeedsMigration(): Promise<boolean> {
 
 async function createWindow(migrating = false) {
   mainWindow = new BrowserWindow({
-    width: migrating ? 640 : 1200,
-    height: migrating ? 420 : 800,
-    minWidth: migrating ? 640 : 900,
-    minHeight: migrating ? 420 : 600,
+    width: migrating ? 520 : 1200,
+    height: migrating ? 340 : 800,
+    minWidth: migrating ? 520 : 900,
+    minHeight: migrating ? 340 : 600,
     resizable: !migrating,
     title: migrating ? "MetalSharp Migration" : "MetalSharp",
     backgroundColor: "#1b2838",
