@@ -1435,6 +1435,9 @@ fn inspect_ntdll_symbols(path: &Path) -> Value {
         "keServiceDescriptorTableIsLocal": parsed.ke_service_descriptor_table_is_local,
         "hasWineSyscallDispatcher": parsed.has_wine_syscall_dispatcher,
         "hasKeAddSystemServiceTable": parsed.has_ke_add_system_service_table,
+        "hasMetalSharpHookContract": parsed.has_metalsharp_hook_contract,
+        "hasMetalSharpHookContractVersion": parsed.has_metalsharp_hook_contract_version,
+        "hookContractReady": parsed.has_metalsharp_hook_contract && parsed.has_metalsharp_hook_contract_version,
     })
 }
 
@@ -1445,6 +1448,8 @@ struct NtdllSymbolProbe {
     ke_service_descriptor_table_is_local: bool,
     has_wine_syscall_dispatcher: bool,
     has_ke_add_system_service_table: bool,
+    has_metalsharp_hook_contract: bool,
+    has_metalsharp_hook_contract_version: bool,
 }
 
 fn parse_ntdll_nm_symbols(text: &str) -> NtdllSymbolProbe {
@@ -1469,6 +1474,10 @@ fn parse_ntdll_nm_symbols(text: &str) -> NtdllSymbolProbe {
             probe.has_wine_syscall_dispatcher = true;
         } else if symbol == "KeAddSystemServiceTable" {
             probe.has_ke_add_system_service_table = true;
+        } else if symbol == "MetalSharpGetMscompatdbHookContract" {
+            probe.has_metalsharp_hook_contract = true;
+        } else if symbol == "MetalSharpGetMscompatdbHookContractVersion" {
+            probe.has_metalsharp_hook_contract_version = true;
         }
     }
     probe
@@ -1990,6 +1999,7 @@ mod tests {
         assert!(!probe.exports_ke_service_descriptor_table);
         assert!(probe.has_wine_syscall_dispatcher);
         assert!(probe.has_ke_add_system_service_table);
+        assert!(!probe.has_metalsharp_hook_contract);
     }
 
     #[test]
@@ -2001,6 +2011,19 @@ mod tests {
         assert!(probe.has_ke_service_descriptor_table);
         assert!(probe.exports_ke_service_descriptor_table);
         assert!(!probe.ke_service_descriptor_table_is_local);
+    }
+
+    #[test]
+    fn parses_explicit_metalsharp_mscompatdb_hook_contract() {
+        let text = "\
+0000000000061000 T _MetalSharpGetMscompatdbHookContract
+0000000000061010 T _MetalSharpGetMscompatdbHookContractVersion
+";
+
+        let probe = parse_ntdll_nm_symbols(text);
+
+        assert!(probe.has_metalsharp_hook_contract);
+        assert!(probe.has_metalsharp_hook_contract_version);
     }
 
     #[test]

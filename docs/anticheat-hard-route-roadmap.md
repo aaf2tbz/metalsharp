@@ -93,6 +93,16 @@ POST /steam/mscompatdb-prepare-dylib
 
 The current local proof result is `present_but_ke_table_unresolved`: `mscompatdb.so` exists and contains the expected trace/rule strings, but Wine `ntdll.so` exposes `KeServiceDescriptorTable` as a local/private Mach-O symbol rather than an exported hook point. The `.dylib` alias solves Darwin loading/signing parity; it does not by itself solve the Wine syscall hook contract.
 
+### Phase 3b: explicit Wine hook contract
+
+The next runtime rebuild should stop asking `mscompatdb` to find private Wine internals through `dlsym`. MetalSharp now has a source-controlled ABI header at `include/metalsharp/MscompatdbHookContract.h` with the intended contract:
+
+- `MetalSharpGetMscompatdbHookContractVersion()`
+- `MetalSharpGetMscompatdbHookContract()`
+- a versioned `MetalSharpMscompatdbHookContract` struct containing the service table, syscall dispatcher, service-table registration function, and key NT entrypoint pointers.
+
+The backend probe already checks for those symbols in `ntdll.so` as `hookContractReady`. Current runtime expectation is `false`; a rebuilt Wine runtime should flip that field before protected-launch behavior is interpreted as an anti-cheat module problem.
+
 ## Phase 4: macOS Runtime Substrate Decision
 
 Choose the truthful compatibility path:
