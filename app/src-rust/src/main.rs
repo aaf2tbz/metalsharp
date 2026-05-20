@@ -387,6 +387,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         .ok()
                                         .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
                                         .or(compatdata);
+                                    bottles::watch_bottle_launch(bottle.id.clone(), pid);
                                     json!({
                                         "ok": true,
                                         "pid": pid,

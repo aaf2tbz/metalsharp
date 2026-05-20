@@ -1,4 +1,5 @@
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -31,9 +32,12 @@ struct EacSummary {
 #[derive(Debug, Default)]
 struct SteamSummary {
     protected_launcher_path: Option<String>,
+    direct_game_path: Option<String>,
     tracked_pid: Option<i64>,
     tracked_exit_code: Option<i64>,
+    direct_game_exit_code: Option<i64>,
     redist_exit_codes: Vec<Value>,
+    tracked_processes: HashMap<i64, String>,
 }
 
 #[derive(Debug, Default)]
@@ -85,8 +89,11 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
         },
         "steam": {
             "protectedLauncherPath": steam.protected_launcher_path,
+            "directGamePath": steam.direct_game_path,
             "trackedPid": steam.tracked_pid,
             "trackedExitCode": steam.tracked_exit_code,
+            "directGameExitCode": steam.direct_game_exit_code,
+            "directGameCrash": steam.direct_game_exit_code.map(describe_exit_code),
             "redistExitCodes": steam.redist_exit_codes,
         },
         "artifacts": artifacts,
@@ -578,14 +585,26 @@ fn parse_gameprocess_line(appid: u32, line: &str, summary: &mut SteamSummary) {
         return;
     }
     if line.contains("adding PID") {
-        summary.tracked_pid = line.split("adding PID ").nth(1).and_then(first_i64);
+        let pid = line.split("adding PID ").nth(1).and_then(first_i64);
+        summary.tracked_pid = pid;
         if let Some(path) = line.split("tracked process ").nth(1).map(normalize_steam_command) {
+            if let Some(pid) = pid {
+                summary.tracked_processes.insert(pid, path.clone());
+            }
             if path.to_ascii_lowercase().contains("start_protected_game") {
                 summary.protected_launcher_path = Some(path);
+            } else if path.to_ascii_lowercase().ends_with(".exe") || path.to_ascii_lowercase().contains(".exe\"") {
+                summary.direct_game_path = Some(path);
             }
         }
     } else if line.contains("no longer tracking PID") {
-        summary.tracked_exit_code = line.split("exit code ").nth(1).and_then(first_i64);
+        let pid = line.split("no longer tracking PID ").nth(1).and_then(first_i64);
+        let exit_code = line.split("exit code ").nth(1).and_then(first_i64);
+        summary.tracked_exit_code = exit_code;
+        let path = pid.and_then(|pid| summary.tracked_processes.get(&pid));
+        if path.map(|path| !path.to_ascii_lowercase().contains("start_protected_game")).unwrap_or(false) {
+            summary.direct_game_exit_code = exit_code;
+        }
     }
 }
 
@@ -602,6 +621,9 @@ fn parse_runprocess_line(appid: u32, line: &str, summary: &mut SteamSummary) {
 fn evidence_status(eac: &EacSummary, steam: &SteamSummary, artifacts: &[Value]) -> String {
     if eac.module_mapping_status.as_deref() == Some("failed") {
         return "module_mapping_failed".to_string();
+    }
+    if steam.direct_game_exit_code == Some(-1073741819) {
+        return "direct_game_access_violation".to_string();
     }
     if steam.tracked_exit_code == Some(206) || eac.launcher_exit_code == Some(206) {
         return "protected_launcher_failed".to_string();
@@ -647,6 +669,10 @@ fn summary_text(status: &str, eac: &EacSummary, steam: &SteamSummary) -> String 
             "Protected launcher exited with code {}.",
             eac.launcher_exit_code.or(steam.tracked_exit_code).unwrap_or_default()
         ),
+        "direct_game_access_violation" => format!(
+            "The direct game executable crashed with {}.",
+            steam.direct_game_exit_code.map(describe_exit_code).unwrap_or_else(|| "an unknown exit code".to_string())
+        ),
         "protected_module_downloaded" => {
             format!(
                 "EAC setup installed and downloaded the {} module.",
@@ -674,6 +700,10 @@ fn next_actions(status: &str) -> Vec<&'static str> {
             "Inspect Steam gameprocess and EAC launcher tails for the last protected-launch transition.",
             "Verify the protected launcher is running inside the correct Steam game bottle prefix.",
         ],
+        "direct_game_access_violation" => vec![
+            "Capture a focused M12 D3D12/DXMT crash log for the direct game executable.",
+            "Compare loaded d3d12/dxgi exports and MoltenVK initialization against the deployed game DLLs.",
+        ],
         "setup_installed" | "protected_module_downloaded" => vec![
             "Launch through the protected Steam route and refresh this evidence report.",
             "Verify Steam kept the route-specific bottle environment for the protected launcher.",
@@ -682,6 +712,16 @@ fn next_actions(status: &str) -> Vec<&'static str> {
             "Launch the game once through the protected Steam route, then refresh this report.",
             "If the game uses BattlEye, check the game directory and Common Files BattlEye logs.",
         ],
+    }
+}
+
+fn describe_exit_code(code: i64) -> String {
+    match code {
+        -1073741819 => "0xC0000005 access violation".to_string(),
+        -2147483392 => "0x80000100 Wine unimplemented stub".to_string(),
+        206 => "206 protected launcher failure".to_string(),
+        other if other < 0 => format!("0x{:08X}", other as i32 as u32),
+        other => other.to_string(),
     }
 }
 
@@ -1047,6 +1087,36 @@ mod tests {
         assert_eq!(summary.tracked_pid, Some(1316));
         assert_eq!(summary.tracked_exit_code, Some(206));
         assert!(summary.protected_launcher_path.as_deref().unwrap_or_default().contains("start_protected_game.exe"));
+    }
+
+    #[test]
+    fn parses_direct_game_access_violation_separately_from_protected_launcher() {
+        let mut summary = SteamSummary::default();
+        parse_gameprocess_line(
+            1245620,
+            "[2026-05-20 11:23:00] AppID 1245620 adding PID 1572 as a tracked process \"\"Z:\\Volumes\\AverySSD\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game\\eldenring.exe\"\"",
+            &mut summary,
+        );
+        parse_gameprocess_line(
+            1245620,
+            "[2026-05-20 11:23:16] AppID 1245620 no longer tracking PID 1572, exit code -1073741819",
+            &mut summary,
+        );
+        parse_gameprocess_line(
+            1245620,
+            "[2026-05-20 11:24:03] AppID 1245620 adding PID 1856 as a tracked process \"\"Z:\\Volumes\\AverySSD\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game\\start_protected_game.exe\"\"",
+            &mut summary,
+        );
+        parse_gameprocess_line(
+            1245620,
+            "[2026-05-20 11:24:08] AppID 1245620 no longer tracking PID 1856, exit code 206",
+            &mut summary,
+        );
+
+        assert!(summary.direct_game_path.as_deref().unwrap_or_default().contains("eldenring.exe"));
+        assert_eq!(summary.direct_game_exit_code, Some(-1073741819));
+        assert!(summary.protected_launcher_path.as_deref().unwrap_or_default().contains("start_protected_game.exe"));
+        assert_eq!(summary.tracked_exit_code, Some(206));
     }
 
     #[test]
