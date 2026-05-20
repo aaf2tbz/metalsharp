@@ -17,9 +17,11 @@
     unused_variables
 )]
 
+mod anticheat;
 mod bottles;
 mod installer;
 mod launch;
+mod launcher_evidence;
 mod migrate;
 mod mtsp;
 mod platform;
@@ -140,6 +142,35 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 }),
             )
         },
+        (Method::Get, "/runtime/host-abi") => resp(
+            200,
+            json!({
+                "ok": true,
+                "magic": "MSAB",
+                "version": {"major": 1, "minor": 0},
+                "services": [
+                    "process",
+                    "paths",
+                    "logging",
+                    "steam",
+                    "graphics",
+                    "audio",
+                    "input",
+                    "managed_runtime"
+                ],
+                "steam_bridge": {
+                    "default_port": 18733,
+                    "active_port": mtsp::launcher::bridge_port(),
+                    "env": "METALSHARP_STEAM_BRIDGE_PORT"
+                },
+                "managed_runtime_env": [
+                    "METALSHARP_MONO_LIB",
+                    "METALSHARP_MONO_ROOT",
+                    "METALSHARP_MONO_ASSEMBLY_DIR",
+                    "METALSHARP_MONO_CONFIG_DIR"
+                ]
+            }),
+        ),
         (Method::Get, "/update/check") => resp(200, updater::check_for_update()),
         (Method::Post, "/update/start") => match updater::start_update() {
             Ok(v) => resp(200, v),
@@ -298,10 +329,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/steam/is-running") => resp(200, json!({"ok": true, "running": steam::is_wine_steam_running()})),
         (Method::Get, "/steam/bridge-status") => {
             let running = mtsp::launcher::bridge_is_running();
-            resp(200, json!({"ok": true, "running": running, "port": 18733}))
+            resp(200, json!({"ok": true, "running": running, "port": mtsp::launcher::bridge_port()}))
         },
         (Method::Post, "/steam/bridge-start") => match mtsp::launcher::ensure_bridge_running() {
-            Ok(_) => resp(200, json!({"ok": true, "port": 18733})),
+            Ok(_) => resp(200, json!({"ok": true, "port": mtsp::launcher::bridge_port()})),
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
@@ -344,13 +375,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Ok(prepared) => prepared,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
+                            let compatdata = bottles::load_steam_compatdata(id).ok();
                             let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
                                 Ok(started) => started,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
                             mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
-                                |(pid, game_type)| {
+                                |(pid, game_type, log_path)| {
+                                    let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
+                                        .ok()
+                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
+                                        .or(compatdata);
                                     json!({
                                         "ok": true,
                                         "pid": pid,
@@ -358,6 +394,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "gameType": game_type,
                                         "bottle_id": bottle.id,
                                         "bottle_prefix": bottle.prefix_path,
+                                        "launch_log": log_path.to_string_lossy().to_string(),
+                                        "compatdata": compatdata,
                                         "pipeline": pipeline,
                                         "recipe": recipe,
                                         "steam_started": steam_started,
@@ -374,10 +412,12 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
+                            let compatdata = bottles::load_steam_compatdata(id).ok();
                             steam::launch_game_via_steam(id).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
                                     obj.insert("bottle_id".into(), json!(bottle.id));
                                     obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
+                                    obj.insert("compatdata".into(), json!(compatdata));
                                 }
                                 v
                             })
@@ -661,6 +701,30 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))
+        },
+        (Method::Post, "/steam/compatdata") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_steam_compatdata(&body))
+        },
+        (Method::Post, "/steam/anticheat-evidence") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_evidence(&body))
+        },
+        (Method::Post, "/steam/anticheat-probe") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_probe(&body))
+        },
+        (Method::Post, "/steam/anticheat-delta-audit") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_delta_audit(&body))
+        },
+        (Method::Post, "/steam/anticheat-substrate-decision") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Post, "/launcher/evidence") => {
+            let body = read_body(req);
+            resp(200, launcher_evidence::handle_launcher_evidence(&body))
         },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();

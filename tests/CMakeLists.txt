@@ -53,6 +53,17 @@ add_executable(test_runtime
 )
 target_link_libraries(test_runtime PRIVATE metalsharp_core)
 
+add_executable(test_host_runtime_abi
+    test_host_runtime_abi.cpp
+)
+target_include_directories(test_host_runtime_abi PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_host_runtime_abi PRIVATE metalsharp_host_runtime)
+
+add_executable(test_darwin_sync_map
+    test_darwin_sync_map.cpp
+)
+target_link_libraries(test_darwin_sync_map PRIVATE metalsharp_core)
+
 add_executable(test_audio
     test_audio.cpp
 )
@@ -84,6 +95,8 @@ add_test(NAME deferred_context COMMAND test_deferred_context)
 add_test(NAME d3d12 COMMAND test_d3d12)
 add_test(NAME d3d12_entrypoint COMMAND test_d3d12_entrypoint)
 add_test(NAME runtime COMMAND test_runtime)
+add_test(NAME host_runtime_abi COMMAND test_host_runtime_abi)
+add_test(NAME darwin_sync_map COMMAND test_darwin_sync_map)
 add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
 add_test(NAME phase5 COMMAND test_phase5)

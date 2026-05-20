@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.33.26 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.33.27 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,8 @@ add_library(metalsharp_core STATIC
     src/runtime/UpdateChecker.cpp
     src/runtime/SettingsManager.cpp
     src/runtime/StubTelemetry.cpp
+    src/runtime/host/DarwinSyncMap.cpp
+    src/runtime/host/HostRuntimeABI.cpp
     src/win32/kernel32/SyncContext.cpp
     src/perf/ShaderCache.cpp
     src/perf/ShaderCache.mm
@@ -91,6 +93,12 @@ target_link_libraries(metalsharp_core PUBLIC
     ${APPKIT_FRAMEWORK}
 )
 target_compile_options(metalsharp_core PRIVATE -fobjc-arc)
+
+add_library(metalsharp_host_runtime SHARED
+    src/runtime/host/HostRuntimeABI.cpp
+)
+target_include_directories(metalsharp_host_runtime PUBLIC include)
+set_target_properties(metalsharp_host_runtime PROPERTIES OUTPUT_NAME "metalsharp_host_runtime")
 
 add_library(metalsharp_d3d11 SHARED
     src/d3d/d3d11/D3D11Device.cpp

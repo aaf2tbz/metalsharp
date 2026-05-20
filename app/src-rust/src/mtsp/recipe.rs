@@ -17,6 +17,7 @@ pub struct LaunchRecipe {
     pub dlls: Vec<RecipeDll>,
     pub runtime_assets: Vec<RuntimeAsset>,
     pub anti_cheat: Vec<String>,
+    pub anti_cheat_status: Vec<AntiCheatCompatibility>,
     pub warnings: Vec<String>,
 }
 
@@ -41,6 +42,16 @@ pub struct RuntimeAsset {
     pub path: PathBuf,
     pub required: bool,
     pub present: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AntiCheatCompatibility {
+    pub name: String,
+    pub status: String,
+    pub reason: String,
+    pub evidence: Vec<String>,
+    pub allowed_actions: Vec<String>,
+    pub forbidden_actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -91,6 +102,8 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
     };
 
     let anti_cheat = game_dir.as_ref().map(detect_anti_cheat).unwrap_or_default();
+    let anti_cheat_status =
+        game_dir.as_ref().map(|dir| classify_anti_cheat_components(dir, &anti_cheat)).unwrap_or_default();
     let mut warnings = Vec::new();
     if !anti_cheat.is_empty() {
         warnings.push(format!(
@@ -122,6 +135,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         dlls,
         runtime_assets: runtime_assets_for_node(node, &ms_root),
         anti_cheat,
+        anti_cheat_status,
         warnings,
     })
 }
@@ -149,6 +163,7 @@ pub fn build_custom_launch_recipe(
     let game_dir = game_dir.to_path_buf();
     let dlls = selected_deploy_dlls_for_pipeline(&game_dir, exe_path.as_deref(), node, &ms_root);
     let anti_cheat = detect_anti_cheat(&game_dir);
+    let anti_cheat_status = classify_anti_cheat_components(&game_dir, &anti_cheat);
     let mut warnings = Vec::new();
 
     if !anti_cheat.is_empty() {
@@ -181,6 +196,7 @@ pub fn build_custom_launch_recipe(
         dlls,
         runtime_assets: runtime_assets_for_node(node, &ms_root),
         anti_cheat,
+        anti_cheat_status,
         warnings,
     })
 }
@@ -272,6 +288,7 @@ pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorR
                 dlls: Vec::new(),
                 runtime_assets: runtime_assets_for_node(node, &ms_root),
                 anti_cheat: Vec::new(),
+                anti_cheat_status: Vec::new(),
                 warnings: Vec::new(),
             };
             let mut report = diagnose_recipe(recipe);
@@ -393,13 +410,27 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     if recipe.anti_cheat.is_empty() {
         push_check(&mut checks, "anti_cheat", "Anti-cheat", true, "No common anti-cheat folders detected");
     } else {
-        push_check(
-            &mut checks,
-            "anti_cheat",
-            "Anti-cheat",
-            true,
-            format!("Detected {}; use publisher-supported modes only", recipe.anti_cheat.join(", ")),
-        );
+        let blocking = recipe
+            .anti_cheat_status
+            .iter()
+            .filter(|entry| {
+                matches!(entry.status.as_str(), "unsupported_kernel_driver" | "blocked_pending_vendor_support")
+            })
+            .collect::<Vec<_>>();
+        for entry in &blocking {
+            blockers.push(format!("{}: {}", entry.name, entry.reason));
+        }
+        let detail = if recipe.anti_cheat_status.is_empty() {
+            format!("Detected {}; use publisher-supported modes only", recipe.anti_cheat.join(", "))
+        } else {
+            recipe
+                .anti_cheat_status
+                .iter()
+                .map(|entry| format!("{}={}", entry.name, entry.status))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        push_check(&mut checks, "anti_cheat", "Anti-cheat", blocking.is_empty(), detail);
     }
 
     if recipe.exe_path.as_ref().map(|path| is_likely_launcher_exe(path)).unwrap_or(false) {
@@ -693,6 +724,74 @@ fn detect_anti_cheat(game_dir: &PathBuf) -> Vec<String> {
     found
 }
 
+fn classify_anti_cheat_components(game_dir: &Path, detected: &[String]) -> Vec<AntiCheatCompatibility> {
+    detected.iter().map(|name| classify_anti_cheat_component(game_dir, name)).collect()
+}
+
+fn classify_anti_cheat_component(game_dir: &Path, name: &str) -> AntiCheatCompatibility {
+    let evidence = anti_cheat_evidence(game_dir, name);
+    let has_proton_assets = evidence.iter().any(|item| item.ends_with(".so"));
+    let (status, reason) = match name {
+        "Easy Anti-Cheat" | "BattlEye" if has_proton_assets => (
+            "vendor_supported_on_proton_assets_present",
+            "Proton/Linux anti-cheat module assets are present; MetalSharp still needs publisher/vendor-supported macOS/Wine enablement.",
+        ),
+        "Easy Anti-Cheat" | "BattlEye" => (
+            "blocked_pending_vendor_support",
+            "Protected title requires publisher/vendor opt-in and compatible Unix module assets; MetalSharp should not bypass or spoof support.",
+        ),
+        "nProtect GameGuard" | "Anti-Cheat Expert" => (
+            "unsupported_kernel_driver",
+            "Detected anti-cheat family normally depends on Windows kernel-driver behavior that Wine/macOS cannot honestly provide.",
+        ),
+        "EQU8" => (
+            "unknown",
+            "Detected anti-cheat requires title-specific validation before MetalSharp can classify it safely.",
+        ),
+        _ => (
+            "user_mode_possible",
+            "Detected anti-cheat appears user-mode or legacy; launch may be possible only in publisher-supported configurations.",
+        ),
+    };
+    AntiCheatCompatibility {
+        name: name.to_string(),
+        status: status.to_string(),
+        reason: reason.to_string(),
+        evidence,
+        allowed_actions: vec![
+            "collect_logs".to_string(),
+            "try_offline_mode_if_supported".to_string(),
+            "request_publisher_vendor_support".to_string(),
+        ],
+        forbidden_actions: vec!["bypass".to_string(), "tamper".to_string(), "spoof_kernel_trust".to_string()],
+    }
+}
+
+fn anti_cheat_evidence(game_dir: &Path, name: &str) -> Vec<String> {
+    let mut evidence = Vec::new();
+    for entry in WalkDir::new(game_dir).max_depth(5).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let lower = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        let matches = match name {
+            "Easy Anti-Cheat" => {
+                lower.contains("easyanticheat") || lower == "eac.exe" || lower.contains("easyanticheat_eos")
+            },
+            "BattlEye" => lower.contains("battleye") || lower.contains("beclient"),
+            "nProtect GameGuard" => lower.contains("gameguard") || lower.contains("nprotect"),
+            "Anti-Cheat Expert" => lower.contains("anticheatexpert") || lower.contains("ace"),
+            "EQU8" => lower.contains("equ8"),
+            _ => false,
+        };
+        if matches {
+            evidence.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    evidence.sort();
+    evidence
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,6 +911,7 @@ mod tests {
                 present: false,
             }],
             anti_cheat: vec![],
+            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -839,6 +939,7 @@ mod tests {
             dlls: vec![],
             runtime_assets: vec![],
             anti_cheat: vec![],
+            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -868,6 +969,7 @@ mod tests {
             dlls: vec![],
             runtime_assets: vec![],
             anti_cheat: vec![],
+            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -897,6 +999,7 @@ mod tests {
             dlls: vec![],
             runtime_assets: vec![],
             anti_cheat: vec![],
+            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -914,6 +1017,37 @@ mod tests {
         assert!(report.summary.contains("Blocked"));
         assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
         assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
+    }
+
+    #[test]
+    fn anticheat_classifier_blocks_eac_without_vendor_assets() {
+        let game_dir = test_dir("eac-no-assets");
+        let eac_dir = game_dir.join("EasyAntiCheat");
+        std::fs::create_dir_all(&eac_dir).expect("create eac dir");
+        std::fs::write(eac_dir.join("EasyAntiCheat_EOS_Setup.exe"), b"eac").expect("write eac marker");
+        let detected = detect_anti_cheat(&game_dir);
+
+        let report = classify_anti_cheat_components(&game_dir, &detected);
+
+        assert_eq!(detected, vec!["Easy Anti-Cheat"]);
+        assert_eq!(report[0].status, "blocked_pending_vendor_support");
+        assert!(report[0].forbidden_actions.contains(&"bypass".to_string()));
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn anticheat_classifier_marks_proton_assets_as_vendor_supported_evidence() {
+        let game_dir = test_dir("eac-proton-assets");
+        let eac_dir = game_dir.join("EasyAntiCheat");
+        std::fs::create_dir_all(&eac_dir).expect("create eac dir");
+        std::fs::write(eac_dir.join("easyanticheat_x64.so"), b"eac").expect("write eac proton marker");
+        let detected = detect_anti_cheat(&game_dir);
+
+        let report = classify_anti_cheat_components(&game_dir, &detected);
+
+        assert_eq!(report[0].status, "vendor_supported_on_proton_assets_present");
+        assert!(report[0].evidence.iter().any(|path| path.ends_with(".so")));
+        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     fn test_dir(name: &str) -> PathBuf {

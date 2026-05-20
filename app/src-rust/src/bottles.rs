@@ -12,7 +12,9 @@ use std::time::Duration;
 use walkdir::WalkDir;
 
 const BOTTLES_DIR: &str = "bottles";
+const COMPATDATA_DIR: &str = "compatdata";
 const MANIFEST_FILE: &str = "bottle.json";
+const COMPATDATA_MANIFEST_FILE: &str = "metalsharp-compatdata.json";
 const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
@@ -51,6 +53,8 @@ pub enum RuntimeProfile {
     Win32Dotnet,
     Webview,
     JavaLauncher,
+    FnaArm64,
+    FnaX86,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
@@ -148,6 +152,15 @@ pub struct InstallerClassification {
     pub hints: Vec<String>,
 }
 
+struct KnownLauncherRecipe {
+    id: &'static str,
+    label: &'static str,
+    tokens: &'static [&'static str],
+    installer_kind: InstallerKind,
+    runtime_profile: RuntimeProfile,
+    forced_pipeline: Option<crate::mtsp::engine::PipelineId>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BottleDiagnostic {
     pub id: String,
@@ -189,6 +202,18 @@ pub struct RuntimeProfileDefinition {
     pub wineboot: bool,
     pub components: Vec<String>,
     pub launch_pipeline: crate::mtsp::engine::PipelineId,
+    pub mono_runtime: Option<MonoRuntimeDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MonoRuntimeDefinition {
+    pub id: &'static str,
+    pub binary_path: String,
+    pub expected_arch: &'static str,
+    pub known_version: &'static str,
+    pub config_path: Option<&'static str>,
+    pub launch_wrapper: &'static str,
+    pub notes: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -246,10 +271,43 @@ pub struct SteamRuntimeDiagnostic {
     pub runtime_assets: Vec<BottleRuntimeAsset>,
     pub components: Vec<RuntimeComponent>,
     pub actions: Vec<BottleAction>,
+    pub compatdata: Option<SteamCompatdataRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SteamCompatdataRecord {
+    pub appid: u32,
+    pub name: String,
+    pub bottle_id: String,
+    pub compatdata_path: String,
+    pub prefix_path: String,
+    pub steam_prefix_path: String,
+    pub game_install_path: Option<String>,
+    pub runtime_profile: RuntimeProfile,
+    pub launch_pipeline: String,
+    pub steam_identity_mode: String,
+    #[serde(default)]
+    pub compat_tool_name: String,
+    #[serde(default)]
+    pub launch_command_template: String,
+    pub log_dir: String,
+    #[serde(default)]
+    pub runtime_assets: Vec<BottleRuntimeAsset>,
+    #[serde(default)]
+    pub required_components: Vec<RuntimeComponent>,
+    pub last_launch_log: Option<String>,
+    pub last_launch_pid: Option<u32>,
+    pub last_launch_status: Option<String>,
+    pub last_launch_finished_at: Option<String>,
+    pub updated_at: String,
 }
 
 pub fn bottles_root() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join(BOTTLES_DIR)
+}
+
+pub fn compatdata_root() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join(COMPATDATA_DIR)
 }
 
 fn steam_launch_prefix() -> PathBuf {
@@ -262,6 +320,18 @@ pub fn bottle_dir(id: &str) -> PathBuf {
 
 pub fn bottle_manifest_path(id: &str) -> PathBuf {
     bottle_dir(id).join(MANIFEST_FILE)
+}
+
+pub fn steam_compatdata_dir(appid: u32) -> PathBuf {
+    compatdata_root().join(appid.to_string())
+}
+
+pub fn steam_compatdata_manifest_path(appid: u32) -> PathBuf {
+    steam_compatdata_dir(appid).join(COMPATDATA_MANIFEST_FILE)
+}
+
+pub fn steam_compatdata_launch_log_path(appid: u32) -> PathBuf {
+    steam_compatdata_dir(appid).join("logs").join(format!("launch-{}.log", timestamp_secs()))
 }
 
 fn validate_bottle_id(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -311,6 +381,59 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+pub fn load_steam_compatdata(appid: u32) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
+    let data = fs::read_to_string(steam_compatdata_manifest_path(appid))?;
+    Ok(serde_json::from_str(&data)?)
+}
+
+pub fn save_steam_compatdata(
+    manifest: &BottleManifest,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
+    let appid = manifest.steam_app_id.ok_or("steam compatdata requires steam appid")?;
+    let record = steam_compatdata_record(manifest, pipeline);
+    let dir = steam_compatdata_dir(appid);
+    fs::create_dir_all(dir.join("logs"))?;
+    fs::create_dir_all(dir.join("assets"))?;
+    let data = serde_json::to_string_pretty(&record)?;
+    let manifest_path = steam_compatdata_manifest_path(appid);
+    write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
+    Ok(record)
+}
+
+fn steam_compatdata_record(
+    manifest: &BottleManifest,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> SteamCompatdataRecord {
+    let appid = manifest.steam_app_id.unwrap_or_default();
+    SteamCompatdataRecord {
+        appid,
+        name: manifest.name.clone(),
+        bottle_id: manifest.id.clone(),
+        compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
+        prefix_path: manifest.prefix_path.clone(),
+        steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+        game_install_path: manifest.game_install_path.clone(),
+        runtime_profile: manifest.runtime_profile,
+        launch_pipeline: pipeline.to_legacy_method().to_string(),
+        steam_identity_mode: "wine_steam_background".to_string(),
+        compat_tool_name: "MetalSharp".to_string(),
+        launch_command_template: format!(
+            "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
+            appid,
+            pipeline.to_legacy_method()
+        ),
+        log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
+        runtime_assets: manifest.runtime_assets.clone(),
+        required_components: manifest.installed_components.clone(),
+        last_launch_log: manifest.last_launch_log.clone(),
+        last_launch_pid: manifest.last_launch_pid,
+        last_launch_status: manifest.last_launch_status.clone(),
+        last_launch_finished_at: manifest.last_launch_finished_at.clone(),
+        updated_at: timestamp_secs(),
+    }
+}
+
 fn write_bottle_manifest_atomic(manifest_path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_path = manifest_path.with_extension(format!("json.tmp-{}-{}", std::process::id(), timestamp_secs()));
     fs::write(&tmp_path, data)?;
@@ -351,7 +474,21 @@ pub fn ensure_installer_bottle(
     source_installer: &Path,
     classification: &InstallerClassification,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    let id = installer_bottle_id(source_installer);
+    ensure_installer_bottle_with_id(source_installer, classification, installer_bottle_id(source_installer))
+}
+
+pub fn create_fresh_installer_bottle(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    ensure_installer_bottle_with_id(source_installer, classification, fresh_installer_bottle_id(source_installer))
+}
+
+fn ensure_installer_bottle_with_id(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+    id: String,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let now = timestamp_secs();
     let name = source_installer
         .file_stem()
@@ -436,13 +573,16 @@ pub fn ensure_steam_game_bottle(
     manifest.runtime_profile = runtime_profile;
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
-    manifest.game_install_path = game_dir.map(|dir| dir.to_string_lossy().to_string());
+    manifest.game_install_path = game_dir.map(normalized_existing_path_string);
     manifest.runtime_assets = game_dir.map(detect_game_runtime_assets).unwrap_or_default();
+    manifest.installed_components =
+        merge_components(manifest.installed_components, infer_components_from_runtime_assets(&manifest.runtime_assets));
     manifest.installed_app_detections = game_dir.map(detect_apps_in_game_dir).unwrap_or_default();
     manifest.health =
         if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
     manifest.updated_at = now;
     save_bottle(&manifest)?;
+    let _ = save_steam_compatdata(&manifest, pipeline);
     Ok(manifest)
 }
 
@@ -459,6 +599,7 @@ pub fn prepare_steam_game_launch(
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    let _ = save_steam_compatdata(&manifest, pipeline);
     Ok(manifest)
 }
 
@@ -497,10 +638,17 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
     });
     let strings_webview = lower_strings.iter().any(|s| s.contains("webview2") || s.contains("edgeupdate"));
     let strings_java = lower_strings.iter().any(|s| s.contains("java") || s.contains("jre") || s.contains("jdk"));
-    let installer_kind = classify_installer_kind(source_installer, &lower_strings, is_msi);
+    let known_launcher = known_launcher_recipe(source_installer, &lower_strings);
+    let installer_kind = known_launcher
+        .map(|recipe| recipe.installer_kind)
+        .unwrap_or_else(|| classify_installer_kind(source_installer, &lower_strings, is_msi));
 
     if is_msi {
         hints.push("msi_package".to_string());
+    }
+    if let Some(recipe) = known_launcher {
+        hints.push(format!("known_launcher:{}", recipe.id));
+        hints.push(format!("launcher_name:{}", recipe.label));
     }
     if imports_mscoree || strings_dotnet {
         hints.push("dotnet_or_clr".to_string());
@@ -515,9 +663,16 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         hints.push(format!("installer_kind:{:?}", installer_kind).to_ascii_lowercase());
     }
 
-    let pipeline =
-        if is_msi { crate::mtsp::engine::PipelineId::WineBare } else { installer_pipeline_from_pe(pe.as_ref()) };
-    let runtime_profile = if imports_mscoree || strings_dotnet {
+    let pipeline = if let Some(recipe) = known_launcher {
+        recipe.forced_pipeline.unwrap_or(crate::mtsp::engine::PipelineId::WineBare)
+    } else if is_msi {
+        crate::mtsp::engine::PipelineId::WineBare
+    } else {
+        installer_pipeline_from_pe(pe.as_ref())
+    };
+    let runtime_profile = if let Some(recipe) = known_launcher {
+        recipe.runtime_profile
+    } else if imports_mscoree || strings_dotnet {
         if is_64_bit {
             RuntimeProfile::Dotnet
         } else {
@@ -646,6 +801,10 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     refresh_manifest_runtime_views(&mut manifest);
     let detections = manifest.installed_app_detections.clone();
     let runtime_assets = manifest.runtime_assets.clone();
+    if manifest.bottle_type == BottleType::Steam {
+        let pipeline = runtime_profile_definition(manifest.runtime_profile).launch_pipeline;
+        let _ = save_steam_compatdata(&manifest, pipeline);
+    }
 
     let mut checks = Vec::new();
     checks.push(BottleCheck {
@@ -682,10 +841,24 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
             ok: !runtime_assets.is_empty(),
             detail: format!("{} game runtime assets tracked", runtime_assets.len()),
         });
+        if let Some(appid) = manifest.steam_app_id {
+            let compatdata_manifest = steam_compatdata_manifest_path(appid);
+            let compatdata_logs = steam_compatdata_dir(appid).join("logs");
+            checks.push(BottleCheck {
+                id: "compatdata".to_string(),
+                ok: compatdata_manifest.exists(),
+                detail: compatdata_manifest.to_string_lossy().to_string(),
+            });
+            checks.push(BottleCheck {
+                id: "compatdata_logs".to_string(),
+                ok: compatdata_logs.exists(),
+                detail: compatdata_logs.to_string_lossy().to_string(),
+            });
+        }
     }
 
     let actions = component_actions(&manifest.installed_components);
-    let component_sources = component_source_policies(&manifest.installed_components, manifest.arch);
+    let component_sources = component_source_policies_for_manifest(&manifest);
     let ready = checks
         .iter()
         .filter(|check| check.id != "app_detection" && check.id != "game_runtime_assets" && check.id != "launch_log")
@@ -700,6 +873,10 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     manifest.runtime_assets = runtime_assets;
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    if manifest.bottle_type == BottleType::Steam {
+        let pipeline = runtime_profile_definition(manifest.runtime_profile).launch_pipeline;
+        let _ = save_steam_compatdata(&manifest, pipeline);
+    }
 
     Ok(BottleDiagnostic { id: id.to_string(), ready, summary, checks, actions, component_sources })
 }
@@ -875,6 +1052,7 @@ pub fn repair_component(
     let prefix = PathBuf::from(&manifest.prefix_path);
     fs::create_dir_all(&prefix)?;
     fs::create_dir_all(bottle_logs_dir(id))?;
+    refresh_manifest_runtime_views(&mut manifest);
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
 
     if manifest
@@ -895,7 +1073,7 @@ pub fn repair_component(
         });
     }
 
-    if matches!(component_id, "wine-mono" | "gecko" | "corefonts") {
+    if matches!(component_id, "wine-mono" | "gecko") {
         let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
         if dry_run {
             return Ok(ComponentRepairReport {
@@ -923,7 +1101,55 @@ pub fn repair_component(
         });
     }
 
-    let Some(installer) = resolve_component_installer(component_id, manifest.arch) else {
+    if component_id == "corefonts" {
+        let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
+        let sources = host_core_font_sources();
+        if dry_run {
+            let available = sources.len() >= 4;
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if available { "host_fonts_available" } else { "asset_missing" }.to_string(),
+                detail: if available {
+                    format!("{} host font files can be mapped into this bottle", sources.len())
+                } else {
+                    "No usable local host font set found for corefonts".to_string()
+                },
+                asset_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
+                pid: None,
+            });
+        }
+
+        let installed = install_host_core_fonts(&prefix, &log_path)?;
+        mark_component_state(
+            &mut manifest,
+            component_id,
+            if installed { ComponentState::Installed } else { ComponentState::Missing },
+        );
+        manifest.health = if installed && components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if installed { "installed" } else { "asset_missing" }.to_string(),
+            detail: if installed {
+                "Mapped host system fonts into the bottle font directory".to_string()
+            } else {
+                "No usable local host font set found for corefonts".to_string()
+            },
+            asset_path: None,
+            log_path: Some(log_path.to_string_lossy().to_string()),
+            pid: None,
+        });
+    }
+
+    let Some(installer) = resolve_component_installer(component_id, manifest.arch)
+        .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
+    else {
         mark_component_state(&mut manifest, component_id, ComponentState::Missing);
         manifest.health = BottleHealth::NeedsRepair;
         manifest.updated_at = timestamp_secs();
@@ -1148,6 +1374,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
+    let compatdata = load_steam_compatdata(appid).ok();
     let report = SteamRuntimeDiagnostic {
         appid: Some(appid),
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
@@ -1158,8 +1385,29 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         runtime_assets: bottle.as_ref().map(|b| b.runtime_assets.clone()).unwrap_or_default(),
         components,
         actions,
+        compatdata,
     };
     json!({"ok": true, "report": report})
+}
+
+pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
+    let appid = match parse_steam_runtime_doctor_appid(body) {
+        Ok(appid) => appid,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+    let pipeline = body
+        .get("pipeline")
+        .and_then(|v| v.as_str())
+        .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
+        .unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    match ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)
+        .and_then(|manifest| save_steam_compatdata(&manifest, pipeline))
+    {
+        Ok(record) => json!({"ok": true, "compatdata": record}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
 }
 
 fn parse_steam_runtime_doctor_appid(body: &serde_json::Map<String, Value>) -> Result<u32, &'static str> {
@@ -1189,6 +1437,8 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
         RuntimeProfile::JavaLauncher,
+        RuntimeProfile::FnaArm64,
+        RuntimeProfile::FnaX86,
     ]
     .into_iter()
     .map(runtime_profile_definition)
@@ -1260,7 +1510,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "WebView",
             BottleArch::Wow64,
             true,
-            &["gecko", "webview2", "vcrun2019", "corefonts"][..],
+            &["gecko", "webview2", "dotnet48", "vcrun2019", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::JavaLauncher => (
@@ -1270,6 +1520,20 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["vcrun2019", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
+        RuntimeProfile::FnaArm64 => (
+            "FNA / Mono ARM64",
+            BottleArch::Win64,
+            false,
+            &["mono-arm64", "fna", "xna"][..],
+            crate::mtsp::engine::PipelineId::FnaArm64,
+        ),
+        RuntimeProfile::FnaX86 => (
+            "FNA / Mono x86_64",
+            BottleArch::Win64,
+            false,
+            &["mono-x86", "fna", "xna"][..],
+            crate::mtsp::engine::PipelineId::FnaArm64,
+        ),
     };
     RuntimeProfileDefinition {
         id: profile,
@@ -1278,6 +1542,32 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
         wineboot,
         components: components.iter().map(|component| (*component).to_string()).collect(),
         launch_pipeline,
+        mono_runtime: mono_runtime_definition(profile),
+    }
+}
+
+fn mono_runtime_definition(profile: RuntimeProfile) -> Option<MonoRuntimeDefinition> {
+    let home = dirs::home_dir().unwrap_or_default();
+    match profile {
+        RuntimeProfile::FnaArm64 => Some(MonoRuntimeDefinition {
+            id: "mono-arm64",
+            binary_path: home.join(".metalsharp/runtime/mono-arm64/bin/mono").to_string_lossy().to_string(),
+            expected_arch: "arm64",
+            known_version: "6.14.1",
+            config_path: Some("configs/terraria-mono.config"),
+            launch_wrapper: "native_mono_fna",
+            notes: "Used by the Terraria-style FNA lane that worked through native macOS Mono plus dllmaps and shims.",
+        }),
+        RuntimeProfile::FnaX86 => Some(MonoRuntimeDefinition {
+            id: "mono-x86",
+            binary_path: home.join(".metalsharp/runtime/mono-x86/bin/mono").to_string_lossy().to_string(),
+            expected_arch: "x86_64",
+            known_version: "6.12.0.122",
+            config_path: Some("configs/celeste-x86-mono.config"),
+            launch_wrapper: "arch -x86_64 native_mono_fna",
+            notes: "Used by the Celeste-style legacy lane where x86_64 Mono 6.12 and dllmaps avoid newer ARM64-only assumptions.",
+        }),
+        _ => None,
     }
 }
 
@@ -1295,7 +1585,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
-        crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::JavaLauncher,
+        crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
 }
@@ -1313,8 +1603,88 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
         "java_launcher" | "javalauncher" => Some(RuntimeProfile::JavaLauncher),
+        "fna_arm64" | "xna_fna_arm64" | "native_mono_arm64" => Some(RuntimeProfile::FnaArm64),
+        "fna_x86" | "xna_fna_x86" | "native_mono_x86" | "mono_x86" => Some(RuntimeProfile::FnaX86),
         _ => None,
     }
+}
+
+fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
+    &[
+        KnownLauncherRecipe {
+            id: "minecraft",
+            label: "Minecraft Launcher",
+            tokens: &["minecraft", "minecraftlauncher", "minecraft installer"],
+            installer_kind: InstallerKind::Java,
+            runtime_profile: RuntimeProfile::JavaLauncher,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "ea_app",
+            label: "EA App",
+            tokens: &["ea app", "eaappinstaller", "eadesktop", "electronic arts", "originthinsetup", "origin setup"],
+            installer_kind: InstallerKind::Webview,
+            runtime_profile: RuntimeProfile::Webview,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "ubisoft_connect",
+            label: "Ubisoft Connect",
+            tokens: &["ubisoft connect", "ubisoftconnect", "uplay", "ubisoftgamelauncher"],
+            installer_kind: InstallerKind::Webview,
+            runtime_profile: RuntimeProfile::Webview,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "battle_net",
+            label: "Battle.net",
+            tokens: &["battle.net", "battlenet", "battle net", "blizzard app", "blizzard launcher"],
+            installer_kind: InstallerKind::Webview,
+            runtime_profile: RuntimeProfile::Webview,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "epic_games",
+            label: "Epic Games Launcher",
+            tokens: &["epic games launcher", "epicgameslauncher", "epic installer", "epic online services"],
+            installer_kind: InstallerKind::Webview,
+            runtime_profile: RuntimeProfile::Webview,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "rockstar",
+            label: "Rockstar Games Launcher",
+            tokens: &[
+                "rockstar games launcher",
+                "rockstar-games-launcher",
+                "rockstargameslauncher",
+                "social club",
+                "rockstar social club",
+            ],
+            installer_kind: InstallerKind::Webview,
+            runtime_profile: RuntimeProfile::Webview,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
+            id: "gog_galaxy",
+            label: "GOG Galaxy",
+            tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy"],
+            installer_kind: InstallerKind::Electron,
+            runtime_profile: RuntimeProfile::Launcher,
+            forced_pipeline: None,
+        },
+    ]
+}
+
+fn known_launcher_recipe(source_installer: &Path, lower_strings: &[String]) -> Option<&'static KnownLauncherRecipe> {
+    let lower_name =
+        source_installer.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    known_launcher_recipes().iter().find(|recipe| {
+        recipe
+            .tokens
+            .iter()
+            .any(|token| lower_name.contains(token) || lower_strings.iter().any(|string| string.contains(token)))
+    })
 }
 
 fn classify_installer_kind(source_installer: &Path, lower_strings: &[String], is_msi: bool) -> InstallerKind {
@@ -1353,6 +1723,73 @@ fn merge_components(mut existing: Vec<RuntimeComponent>, required: Vec<RuntimeCo
     }
     existing.sort_by(|a, b| a.id.cmp(&b.id));
     existing
+}
+
+fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<RuntimeComponent> {
+    let mut ids = HashSet::new();
+    for asset in assets {
+        match asset.kind.as_str() {
+            "vcredist" => {
+                ids.insert("vcrun2019".to_string());
+            },
+            "directx" => {
+                ids.insert("directx_jun2010".to_string());
+            },
+            "dotnet" => {
+                ids.insert("dotnet48".to_string());
+            },
+            "webview2" => {
+                ids.insert("webview2".to_string());
+            },
+            "openal" => {
+                ids.insert("openal".to_string());
+            },
+            "xna" => {
+                ids.insert("xna".to_string());
+            },
+            "physx" => {
+                ids.insert("physx".to_string());
+            },
+            "easyanticheat" | "easyanticheat_eos" => {
+                ids.insert("easyanticheat_eos".to_string());
+            },
+            "battleye" => {
+                ids.insert("battleye".to_string());
+            },
+            "installscript" => {
+                for id in components_from_installscript(Path::new(&asset.source_path)) {
+                    ids.insert(id);
+                }
+            },
+            _ => {},
+        }
+    }
+    let mut components =
+        ids.into_iter().map(|id| RuntimeComponent { id, state: ComponentState::Unknown }).collect::<Vec<_>>();
+    components.sort_by(|a, b| a.id.cmp(&b.id));
+    components
+}
+
+fn components_from_installscript(path: &Path) -> Vec<String> {
+    let Ok(data) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let lower = data.to_ascii_lowercase();
+    let mut ids = Vec::new();
+    let mut maybe_add = |id: &str, needles: &[&str]| {
+        if needles.iter().any(|needle| lower.contains(needle)) && !ids.iter().any(|existing| existing == id) {
+            ids.push(id.to_string());
+        }
+    };
+    maybe_add("vcrun2019", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
+    maybe_add("directx_jun2010", &["directx", "dxsetup", "d3dx9_43", "xinput1_3"]);
+    maybe_add("dotnet48", &["dotnet", ".net framework", "ndp48", "ndp472", "ndp462", "ndp452"]);
+    maybe_add("webview2", &["webview2", "edgewebview"]);
+    maybe_add("openal", &["openal", "oalinst"]);
+    maybe_add("xna", &["xnafx", "xna framework", "xnafx40"]);
+    maybe_add("physx", &["physx", "nvidia physx"]);
+    ids.sort();
+    ids
 }
 
 fn rebuild_components_for_profile(existing: &[RuntimeComponent], profile: RuntimeProfile) -> Vec<RuntimeComponent> {
@@ -1405,8 +1842,11 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
+        "mono-arm64" => inspect_host_mono_component("mono-arm64").unwrap_or(fallback),
+        "mono-x86" => inspect_host_mono_component("mono-x86").unwrap_or(fallback),
+        "fna" => inspect_fna_runtime_component().unwrap_or(fallback),
         "gecko" => {
-            if drive_c.join("windows").join("gecko").exists() {
+            if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -1456,8 +1896,69 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
+        "openal" => {
+            if system32.join("OpenAL32.dll").exists() || syswow64.join("OpenAL32.dll").exists() {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "xna" => {
+            if windows.join("Microsoft.NET").join("assembly").join("GAC_32").join("Microsoft.Xna.Framework").exists()
+                || drive_c.join("Program Files (x86)").join("Microsoft XNA").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "physx" => {
+            if system32.join("PhysXLoader.dll").exists()
+                || syswow64.join("PhysXLoader.dll").exists()
+                || drive_c.join("Program Files (x86)").join("NVIDIA Corporation").join("PhysX").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "easyanticheat_eos" => {
+            if drive_c.join("Program Files (x86)").join("EasyAntiCheat_EOS").exists()
+                || drive_c.join("Program Files").join("EasyAntiCheat_EOS").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "battleye" => {
+            if drive_c.join("Program Files (x86)").join("Common Files").join("BattlEye").exists()
+                || drive_c.join("Program Files").join("Common Files").join("BattlEye").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
         _ => fallback,
     }
+}
+
+fn inspect_host_mono_component(runtime_id: &str) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let mono = home.join(".metalsharp").join("runtime").join(runtime_id).join("bin").join("mono");
+    Some(if mono.exists() { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_fna_runtime_component() -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let runtime = home.join(".metalsharp").join("runtime");
+    let candidates = [
+        runtime.join("fna").join("FNA.dll"),
+        runtime.join("shims").join("libFNA3D.dylib"),
+        runtime.join("shims").join("libSDL3.dylib"),
+    ];
+    Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
@@ -1481,6 +1982,61 @@ fn core_fonts_installed(fonts_dir: &Path) -> bool {
 
     let installed = CORE_FONT_FILES.iter().filter(|name| fonts_dir.join(name).is_file()).count();
     installed >= 4
+}
+
+fn host_core_font_sources() -> Vec<(String, PathBuf)> {
+    let candidates = [
+        ("arial.ttf", "Arial.ttf"),
+        ("arialbd.ttf", "Arial Bold.ttf"),
+        ("cour.ttf", "Courier New.ttf"),
+        ("georgia.ttf", "Georgia.ttf"),
+        ("impact.ttf", "Impact.ttf"),
+        ("times.ttf", "Times New Roman.ttf"),
+        ("trebuc.ttf", "Trebuchet MS.ttf"),
+        ("verdana.ttf", "Verdana.ttf"),
+        ("webdings.ttf", "Webdings.ttf"),
+    ];
+    let search_roots = [
+        PathBuf::from("/System/Library/Fonts/Supplemental"),
+        PathBuf::from("/System/Library/Fonts"),
+        PathBuf::from("/Library/Fonts"),
+        dirs::home_dir().unwrap_or_default().join("Library").join("Fonts"),
+    ];
+
+    candidates
+        .iter()
+        .filter_map(|(target, source_name)| {
+            search_roots
+                .iter()
+                .map(|root| root.join(source_name))
+                .find(|path| path.is_file())
+                .map(|path| ((*target).to_string(), path))
+        })
+        .collect()
+}
+
+fn install_host_core_fonts(prefix: &Path, log_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let fonts_dir = prefix.join("drive_c").join("windows").join("Fonts");
+    fs::create_dir_all(&fonts_dir)?;
+    let sources = host_core_font_sources();
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "component=corefonts")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    writeln!(log, "fonts_dir={}", fonts_dir.display())?;
+    writeln!(log, "source_count={}", sources.len())?;
+    for (target, source) in sources {
+        let dest = fonts_dir.join(&target);
+        match fs::copy(&source, &dest) {
+            Ok(_) => writeln!(log, "copied {} -> {}", source.display(), dest.display())?,
+            Err(err) => writeln!(log, "copy_failed {} -> {}: {}", source.display(), dest.display(), err)?,
+        }
+    }
+    let installed = core_fonts_installed(&fonts_dir);
+    writeln!(log, "installed={}", installed)?;
+    Ok(installed)
 }
 
 fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
@@ -1583,13 +2139,35 @@ fn resolve_component_installer_from_roots(
         "webview2" => first_existing(&[
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("WebView2").join("MicrosoftEdgeWebview2Setup.exe"),
             local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             local_redist.join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
+            local_redist.join("MicrosoftEdgeWebview2Setup.exe"),
         ]),
         "directx_jun2010" => first_existing(&[
             redist_root.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
             redist_root.join("DirectX").join("Jun2010").join("dxsetup.exe"),
             local_redist.join("DirectX").join("Jun2010").join("DXSETUP.exe"),
+        ]),
+        "openal" => first_existing(&[
+            redist_root.join("OpenAL").join("2.0.7.0").join("oalinst.exe"),
+            redist_root.join("OpenAL").join("oalinst.exe"),
+            local_redist.join("OpenAL").join("oalinst.exe"),
+            local_redist.join("oalinst.exe"),
+        ]),
+        "xna" => first_existing(&[
+            redist_root.join("XNA").join("4.0").join("xnafx40_redist.msi"),
+            redist_root.join("XNA").join("4.0").join("xnafx40_redist.exe"),
+            local_redist.join("XNA").join("4.0").join("xnafx40_redist.msi"),
+            local_redist.join("XNA").join("4.0").join("xnafx40_redist.exe"),
+        ]),
+        "physx" => first_existing(&[
+            redist_root.join("PhysX").join("9.12.1031").join("PhysX-9.12.1031-SystemSoftware.msi"),
+            redist_root.join("PhysX").join("9.13.0604").join("PhysX-9.13.0604-SystemSoftware.msi"),
+            redist_root.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi"),
+            local_redist.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi"),
         ]),
         _ => None,
     }?;
@@ -1599,9 +2177,119 @@ fn resolve_component_installer_from_roots(
         "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
+        "openal" => vec!["/S".to_string()],
+        "xna" | "physx" => {
+            if executable.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false) {
+                vec!["/quiet".to_string(), "/norestart".to_string()]
+            } else {
+                vec!["/quiet".to_string()]
+            }
+        },
         _ => Vec::new(),
     };
     Some(ComponentInstaller { path: executable, args })
+}
+
+fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
+    if component_id == "easyanticheat_eos" {
+        let candidates = game_runtime_installer_candidates(manifest, component_id);
+        for asset in candidates.iter().filter(|asset| {
+            let lower = asset.source_path.to_ascii_lowercase();
+            lower.ends_with(".bat") || lower.ends_with(".cmd")
+        }) {
+            if let Some(installer) = easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)) {
+                return Some(installer);
+            }
+        }
+        return candidates
+            .iter()
+            .filter(|asset| asset.source_path.to_ascii_lowercase().ends_with(".exe"))
+            .find_map(|asset| easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)));
+    }
+    let candidates = game_runtime_installer_candidates(manifest, component_id);
+    let preferred = candidates
+        .iter()
+        .find(|asset| {
+            let lower = asset.source_path.to_ascii_lowercase();
+            lower.ends_with(".bat") || lower.ends_with(".cmd")
+        })
+        .or_else(|| candidates.first())?;
+    Some(ComponentInstaller { path: PathBuf::from(&preferred.source_path), args: Vec::new() })
+}
+
+fn game_runtime_installer_candidates<'a>(
+    manifest: &'a BottleManifest,
+    component_id: &str,
+) -> Vec<&'a BottleRuntimeAsset> {
+    manifest
+        .runtime_assets
+        .iter()
+        .filter(|asset| {
+            asset.present
+                && is_game_runtime_installer_candidate(asset, component_id)
+                && match component_id {
+                    "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
+                    "battleye" => asset.kind == "battleye",
+                    _ => false,
+                }
+        })
+        .collect()
+}
+
+fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id: &str) -> bool {
+    let path = Path::new(&asset.source_path);
+    let lower_name = path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let Some(extension) = path.extension().map(|ext| ext.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
+    if matches!(extension.as_str(), "bat" | "cmd" | "msi") {
+        return true;
+    }
+    if extension != "exe" {
+        return false;
+    }
+    match component_id {
+        "easyanticheat_eos" => lower_name.contains("setup") || lower_name.contains("install"),
+        "battleye" => {
+            lower_name.contains("setup")
+                || lower_name.contains("install")
+                || lower_name == "beservice.exe"
+                || lower_name == "beservice_x64.exe"
+        },
+        _ => false,
+    }
+}
+
+fn easyanticheat_eos_installer_from_asset(path: &Path) -> Option<ComponentInstaller> {
+    let lower = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if lower.ends_with(".exe") {
+        return Some(ComponentInstaller { path: path.to_path_buf(), args: Vec::new() });
+    }
+    if !(lower.ends_with(".bat") || lower.ends_with(".cmd")) {
+        return None;
+    }
+    let script = fs::read_to_string(path).ok()?;
+    for line in script.lines() {
+        let trimmed = line.trim();
+        let lower_line = trimmed.to_ascii_lowercase();
+        if !lower_line.contains("easyanticheat_eos_setup.exe") || !lower_line.contains(" install ") {
+            continue;
+        }
+        let product_id = trimmed.split_whitespace().last()?.trim_matches('"').to_string();
+        if let Some(setup) = find_case_insensitive_sibling(path.parent()?, "easyanticheat_eos_setup.exe") {
+            return Some(ComponentInstaller { path: setup, args: vec!["install".to_string(), product_id] });
+        }
+    }
+    None
+}
+
+fn find_case_insensitive_sibling(parent: &Path, file_name: &str) -> Option<PathBuf> {
+    let target = file_name.to_ascii_lowercase();
+    fs::read_dir(parent)
+        .ok()?
+        .flatten()
+        .find(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase() == target)
+        .map(|entry| entry.path())
 }
 
 fn first_existing(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -1630,8 +2318,22 @@ fn launch_component_installer(
     let stdout = log.try_clone()?;
 
     let mut cmd = Command::new(&wine);
-    cmd.arg(&installer.path)
-        .args(&installer.args)
+    if installer.path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false) {
+        cmd.arg("msiexec").arg("/i").arg(&installer.path);
+    } else if installer
+        .path
+        .extension()
+        .map(|ext| {
+            let ext = ext.to_string_lossy();
+            ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd")
+        })
+        .unwrap_or(false)
+    {
+        cmd.arg("cmd").arg("/c").arg(format!("call \"{}\"", wine_z_drive_path(&installer.path)));
+    } else {
+        cmd.arg(&installer.path);
+    }
+    cmd.args(&installer.args)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .stdout(Stdio::from(stdout))
@@ -1720,6 +2422,18 @@ fn run_wine_reg_set_windows_version(
     Ok(child.id())
 }
 
+fn wine_z_drive_path(path: &Path) -> String {
+    if path.is_absolute() {
+        format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
+    } else {
+        path.to_string_lossy().replace('/', "\\")
+    }
+}
+
+fn normalized_existing_path_string(path: &Path) -> String {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().to_string()
+}
+
 fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
     components
         .iter()
@@ -1740,12 +2454,36 @@ fn components_ready(components: &[RuntimeComponent]) -> bool {
     components.iter().all(component_ready)
 }
 
-fn component_source_policies(components: &[RuntimeComponent], arch: BottleArch) -> Vec<ComponentSourcePolicy> {
-    components.iter().map(|component| component_source_policy(&component.id, arch)).collect()
+fn component_source_policies_for_manifest(manifest: &BottleManifest) -> Vec<ComponentSourcePolicy> {
+    manifest
+        .installed_components
+        .iter()
+        .map(|component| {
+            if matches!(component.id.as_str(), "easyanticheat_eos" | "battleye") {
+                if let Some(installer) = resolve_game_runtime_asset_installer(manifest, &component.id) {
+                    return ComponentSourcePolicy {
+                        id: component.id.clone(),
+                        source: "game_runtime_asset".to_string(),
+                        available: true,
+                        detail: match component.id.as_str() {
+                            "easyanticheat_eos" => {
+                                "Uses the game-local Easy Anti-Cheat EOS setup asset shipped with this install"
+                            },
+                            "battleye" => "Uses the game-local BattlEye setup/service asset shipped with this install",
+                            _ => "Uses a game-local runtime installer asset",
+                        }
+                        .to_string(),
+                        path: Some(installer.path.to_string_lossy().to_string()),
+                    };
+                }
+            }
+            component_source_policy(&component.id, manifest.arch)
+        })
+        .collect()
 }
 
 fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy {
-    if matches!(id, "wine-mono" | "gecko" | "corefonts") {
+    if matches!(id, "wine-mono" | "gecko") {
         return ComponentSourcePolicy {
             id: id.to_string(),
             source: "metalsharp_wine_bootstrap".to_string(),
@@ -1759,6 +2497,49 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
+    if id == "corefonts" {
+        let available = host_core_font_sources().len() >= 4;
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: if available { "host_system_fonts" } else { "missing_local_asset" }.to_string(),
+            available,
+            detail: if available {
+                "Maps locally installed host fonts into the bottle Windows font directory"
+            } else {
+                "Requires a local core fonts payload or a mapped font installation strategy"
+            }
+            .to_string(),
+            path: None,
+        };
+    }
+    if matches!(id, "mono-arm64" | "mono-x86" | "fna") {
+        let state = match id {
+            "mono-arm64" => inspect_host_mono_component("mono-arm64"),
+            "mono-x86" => inspect_host_mono_component("mono-x86"),
+            "fna" => inspect_fna_runtime_component(),
+            _ => None,
+        }
+        .unwrap_or(ComponentState::Unknown);
+        let path = dirs::home_dir().map(|home| match id {
+            "mono-arm64" => home.join(".metalsharp/runtime/mono-arm64/bin/mono"),
+            "mono-x86" => home.join(".metalsharp/runtime/mono-x86/bin/mono"),
+            "fna" => home.join(".metalsharp/runtime/fna"),
+            _ => home.join(".metalsharp/runtime"),
+        });
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: "metalsharp_native_runtime".to_string(),
+            available: state == ComponentState::Installed,
+            detail: match id {
+                "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
+                "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
+                "fna" => "FNA/XNA compatibility assemblies and native shims staged in MetalSharp runtime",
+                _ => "MetalSharp native runtime component",
+            }
+            .to_string(),
+            path: path.map(|p| p.to_string_lossy().to_string()),
+        };
+    }
     let installer = resolve_component_installer(id, arch);
     ComponentSourcePolicy {
         id: id.to_string(),
@@ -1767,8 +2548,14 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
+            "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
+            "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
+            "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
+            "easyanticheat_eos" => "Uses game-local Easy Anti-Cheat EOS setup assets when present",
+            "battleye" => "Uses game-local BattlEye setup/service assets when present",
             _ => "No external installer source required or source is not yet mapped",
         }
         .to_string(),
@@ -1779,12 +2566,20 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
 fn component_action_detail(id: &str) -> String {
     match id {
         "wine-mono" => "Install or repair Wine Mono inside this bottle prefix".to_string(),
+        "mono-arm64" => "Install MetalSharp ARM64 Mono runtime".to_string(),
+        "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
+        "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
+        "openal" => "Install OpenAL audio runtime".to_string(),
+        "xna" => "Install XNA Framework 4.0 runtime".to_string(),
+        "physx" => "Install NVIDIA PhysX legacy runtime".to_string(),
+        "easyanticheat_eos" => "Run the game-local Easy Anti-Cheat EOS service installer".to_string(),
+        "battleye" => "Run the game-local BattlEye service installer".to_string(),
         "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
         "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
@@ -1799,6 +2594,14 @@ fn installer_bottle_id(source_installer: &Path) -> String {
     "installer".hash(&mut hasher);
     source_installer.to_string_lossy().hash(&mut hasher);
     format!("installer_{:016x}", hasher.finish())
+}
+
+fn fresh_installer_bottle_id(source_installer: &Path) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("{}_fresh_{}", installer_bottle_id(source_installer), millis)
 }
 
 fn installer_pipeline_from_pe(pe: Option<&crate::mtsp::pe::PeInfo>) -> crate::mtsp::engine::PipelineId {
@@ -1837,7 +2640,7 @@ fn detect_apps_in_prefix(prefix: &Path) -> Vec<AppDetection> {
                 continue;
             }
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            if !is_probable_app_exe(&name) {
+            if !is_probable_app_exe_path(&name, path) {
                 continue;
             }
             let key = path.to_string_lossy().to_string();
@@ -2128,6 +2931,39 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
             policy: "official_download_or_steam_commonredist".to_string(),
             notes: "Prefer Steam CommonRedist game payloads; local offline payload should contain DXSETUP.exe.".to_string(),
         },
+        RedistSourceGuide {
+            id: "openal".to_string(),
+            name: "OpenAL Runtime".to_string(),
+            source_url: "https://www.openal.org/downloads/".to_string(),
+            local_targets: vec![
+                redist.join("OpenAL").join("oalinst.exe").to_string_lossy().to_string(),
+                redist.join("oalinst.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Prefer Steam CommonRedist when available; older games often ship oalinst.exe beside installscript.vdf.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "xna".to_string(),
+            name: "Microsoft XNA Framework 4.0".to_string(),
+            source_url: "https://www.microsoft.com/download/details.aspx?id=20914".to_string(),
+            local_targets: vec![
+                redist.join("XNA").join("4.0").join("xnafx40_redist.msi").to_string_lossy().to_string(),
+                redist.join("XNA").join("4.0").join("xnafx40_redist.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Use local or Steam-provided XNA 4.0 redist assets; this stays receipt-driven per bottle.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "physx".to_string(),
+            name: "NVIDIA PhysX Legacy Runtime".to_string(),
+            source_url: "https://www.nvidia.com/en-us/drivers/physx/physx-9-13-0604-legacy-driver/".to_string(),
+            local_targets: vec![
+                redist.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi").to_string_lossy().to_string(),
+                redist.join("PhysX").join("PhysX-9.13.0604-SystemSoftware.msi").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Only install when a game's install script or bundled redist explicitly requires legacy PhysX.".to_string(),
+        },
     ]
 }
 
@@ -2174,7 +3010,7 @@ fn detect_apps_in_game_dir(game_dir: &Path) -> Vec<AppDetection> {
             continue;
         }
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if !is_probable_app_exe(&name) {
+        if !is_probable_app_exe_path(&name, path) {
             continue;
         }
         let key = path.to_string_lossy().to_string();
@@ -2204,17 +3040,19 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let lower_name = name.to_ascii_lowercase();
         let lower_path = path.to_string_lossy().to_ascii_lowercase();
-        let kind = if lower_path.contains("_commonredist") || lower_path.contains("commonredist") {
-            classify_redist_asset(&lower_name)
-        } else if lower_name == "installscript.vdf" {
-            Some("installscript".to_string())
-        } else {
-            None
-        };
+        let kind = classify_game_runtime_asset(&lower_name, &lower_path).or_else(|| {
+            if lower_path.contains("_commonredist") || lower_path.contains("commonredist") {
+                classify_redist_asset(&lower_name)
+            } else if lower_name == "installscript.vdf" {
+                Some("installscript".to_string())
+            } else {
+                None
+            }
+        });
         let Some(kind) = kind else {
             continue;
         };
-        let source_path = path.to_string_lossy().to_string();
+        let source_path = normalized_existing_path_string(path);
         if seen.insert(source_path.clone()) {
             assets.push(BottleRuntimeAsset {
                 id: format!("{}:{}", kind, name),
@@ -2228,6 +3066,25 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
     assets
 }
 
+fn classify_game_runtime_asset(lower_name: &str, lower_path: &str) -> Option<String> {
+    if lower_path.contains("easyanticheat") || lower_name.contains("easyanticheat") {
+        if lower_path.contains("easyanticheat_eos") || lower_name.contains("eos") {
+            Some("easyanticheat_eos".to_string())
+        } else {
+            Some("easyanticheat".to_string())
+        }
+    } else if lower_path.contains("battleye")
+        || lower_path.contains("battle-eye")
+        || lower_name.contains("beservice")
+        || lower_name.contains("beclient")
+        || lower_name.contains("bedaisy")
+    {
+        Some("battleye".to_string())
+    } else {
+        None
+    }
+}
+
 fn classify_redist_asset(lower_name: &str) -> Option<String> {
     if lower_name.ends_with(".vdf") {
         Some("installscript".to_string())
@@ -2239,6 +3096,12 @@ fn classify_redist_asset(lower_name: &str) -> Option<String> {
         Some("directx".to_string())
     } else if lower_name.contains("webview") {
         Some("webview2".to_string())
+    } else if lower_name.contains("openal") || lower_name == "oalinst.exe" {
+        Some("openal".to_string())
+    } else if lower_name.contains("xnafx") || lower_name.contains("xna") {
+        Some("xna".to_string())
+    } else if lower_name.contains("physx") {
+        Some("physx".to_string())
     } else {
         None
     }
@@ -2255,16 +3118,43 @@ fn is_probable_app_exe(name: &str) -> bool {
         "winebrowser.exe",
         "control.exe",
         "cmd.exe",
+        "cookie_exporter.exe",
+        "elevated_tracing_service.exe",
+        "elevation_service.exe",
+        "ie_to_edge_stub.exe",
+        "microsoftedgecomregistershellarm64.exe",
+        "mscopilot.exe",
+        "msedge.exe",
+        "msedge_proxy.exe",
+        "msedge_pwa_launcher.exe",
+        "msedgewebview2.exe",
+        "upc.exe",
+        "uc_connector.exe",
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
+        && !lower.starts_with("microsoftedgewebview_")
         && !lower.contains("setup")
         && !lower.contains("install")
         && !lower.contains("unins")
         && !lower.contains("vcredist")
         && !lower.contains("crash")
+        && !lower.contains("extension")
         && !lower.contains("helper")
+        && !lower.contains("service")
+        && !lower.contains("shareplay")
         && !lower.contains("update")
+        && !lower.contains("webcore")
+}
+
+fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
+    if !is_probable_app_exe(name) {
+        return false;
+    }
+    let lower_path = path.to_string_lossy().to_ascii_lowercase();
+    !lower_path.contains("/microsoft/edgecore/")
+        && !lower_path.contains("/microsoft/edgeupdate/")
+        && !lower_path.contains("/microsoft/edgewebview/")
 }
 
 fn read_ascii_strings(path: &Path, max_bytes: usize) -> Vec<String> {
@@ -2305,6 +3195,16 @@ mod tests {
     }
 
     #[test]
+    fn fresh_installer_bottle_ids_keep_source_lineage() {
+        let path = Path::new("/tmp/MinecraftInstaller.exe");
+        let stable = installer_bottle_id(path);
+        let fresh = fresh_installer_bottle_id(path);
+
+        assert_ne!(fresh, stable);
+        assert!(fresh.starts_with(&format!("{}_fresh_", stable)));
+    }
+
+    #[test]
     fn win32_dotnet_profile_tracks_expected_components() {
         let components = default_components_for(RuntimeProfile::Win32Dotnet);
         let ids = components.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
@@ -2324,6 +3224,24 @@ mod tests {
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::M10));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaArm64));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaX86));
+
+        let webview = runtime_profile_definition(RuntimeProfile::Webview);
+        assert_eq!(webview.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert!(webview.components.contains(&"dotnet48".to_string()));
+    }
+
+    #[test]
+    fn fna_profiles_pin_the_known_mono_lanes() {
+        let arm64 = runtime_profile_definition(RuntimeProfile::FnaArm64);
+        let x86 = runtime_profile_definition(RuntimeProfile::FnaX86);
+
+        assert!(!arm64.wineboot);
+        assert!(arm64.components.contains(&"mono-arm64".to_string()));
+        assert_eq!(arm64.mono_runtime.as_ref().expect("arm64 mono profile").known_version, "6.14.1");
+        assert!(x86.components.contains(&"mono-x86".to_string()));
+        assert_eq!(x86.mono_runtime.as_ref().expect("x86 mono profile").known_version, "6.12.0.122");
     }
 
     #[test]
@@ -2367,7 +3285,7 @@ mod tests {
     fn classifier_maps_32_bit_clr_installers_to_win32_dotnet() {
         let dir = test_dir("classifier-dotnet");
         fs::create_dir_all(&dir).expect("create test dir");
-        let exe = dir.join("MinecraftInstaller.exe");
+        let exe = dir.join("DotnetBootstrapper.exe");
         let mut data = test_pe(0x014c, 0x10b);
         data.extend_from_slice(b"System.Runtime.WindowsRuntime mscoree");
         fs::write(&exe, data).expect("write test installer");
@@ -2378,6 +3296,52 @@ mod tests {
         assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::M9);
         assert_eq!(classification.runtime_profile, RuntimeProfile::Win32Dotnet);
         assert!(classification.hints.contains(&"dotnet_or_clr".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn classifier_maps_minecraft_to_java_launcher_before_dotnet_fallback() {
+        let dir = test_dir("classifier-minecraft");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("MinecraftInstaller.exe");
+        let mut data = test_pe(0x014c, 0x10b);
+        data.extend_from_slice(b"System.Runtime.WindowsRuntime mscoree");
+        fs::write(&exe, data).expect("write test installer");
+
+        let classification = classify_installer(&exe);
+
+        assert_eq!(classification.arch, BottleArch::Win32);
+        assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert_eq!(classification.installer_kind, InstallerKind::Java);
+        assert_eq!(classification.runtime_profile, RuntimeProfile::JavaLauncher);
+        assert!(classification.hints.contains(&"known_launcher:minecraft".to_string()));
+        assert!(classification.hints.contains(&"dotnet_or_clr".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn classifier_maps_known_store_launchers_to_webview_or_launcher_profiles() {
+        let dir = test_dir("classifier-known-launchers");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let cases = [
+            ("EAappInstaller.exe", RuntimeProfile::Webview, "known_launcher:ea_app"),
+            ("UbisoftConnectInstaller.exe", RuntimeProfile::Webview, "known_launcher:ubisoft_connect"),
+            ("Battle.net-Setup.exe", RuntimeProfile::Webview, "known_launcher:battle_net"),
+            ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
+            ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
+            ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
+        ];
+
+        for (name, profile, hint) in cases {
+            let exe = dir.join(name);
+            fs::write(&exe, test_pe(0x8664, 0x20b)).expect("write test launcher");
+
+            let classification = classify_installer(&exe);
+
+            assert_eq!(classification.runtime_profile, profile, "{}", name);
+            assert_eq!(classification.pipeline, crate::mtsp::engine::PipelineId::WineBare, "{}", name);
+            assert!(classification.hints.contains(&hint.to_string()), "{}", name);
+        }
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -2501,17 +3465,23 @@ mod tests {
     }
 
     #[test]
-    fn resolver_uses_advertised_local_dotnet_and_vc_redist_targets() {
+    fn resolver_uses_advertised_local_redist_targets() {
         let dir = test_dir("local-redist-targets");
         let _ = fs::remove_dir_all(&dir);
         let steam_redist = dir.join("steam-redist");
         let local_redist = dir.join("runtime-redist");
         let dotnet = local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe");
         let vc = local_redist.join("VC_redist.x86.exe");
+        let xna = local_redist.join("XNA").join("4.0").join("xnafx40_redist.msi");
+        let physx = local_redist.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi");
         fs::create_dir_all(dotnet.parent().expect("dotnet parent")).expect("create dotnet dir");
         fs::create_dir_all(vc.parent().expect("vc parent")).expect("create vc dir");
+        fs::create_dir_all(xna.parent().expect("xna parent")).expect("create xna dir");
+        fs::create_dir_all(physx.parent().expect("physx parent")).expect("create physx dir");
         fs::write(&dotnet, b"dotnet").expect("write dotnet redist");
         fs::write(&vc, b"vc").expect("write vc redist");
+        fs::write(&xna, b"xna").expect("write xna redist");
+        fs::write(&physx, b"physx").expect("write physx redist");
 
         let dotnet_installer =
             resolve_component_installer_from_roots("dotnet48", BottleArch::Wow64, &steam_redist, &local_redist)
@@ -2519,12 +3489,20 @@ mod tests {
         let vc_installer =
             resolve_component_installer_from_roots("vcrun2019", BottleArch::Win32, &steam_redist, &local_redist)
                 .expect("resolve local vc");
+        let xna_installer =
+            resolve_component_installer_from_roots("xna", BottleArch::Wow64, &steam_redist, &local_redist)
+                .expect("resolve local xna");
+        let physx_installer =
+            resolve_component_installer_from_roots("physx", BottleArch::Wow64, &steam_redist, &local_redist)
+                .expect("resolve local physx");
 
         assert_eq!(
             dotnet_installer.path.to_string_lossy().to_ascii_lowercase(),
             dotnet.to_string_lossy().to_ascii_lowercase()
         );
         assert_eq!(vc_installer.path, vc);
+        assert_eq!(xna_installer.path, xna);
+        assert_eq!(physx_installer.path, physx);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -2569,6 +3547,7 @@ mod tests {
     fn steam_pipeline_maps_to_runtime_profile() {
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M9), RuntimeProfile::M9);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M12), RuntimeProfile::M12);
+        assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::FnaArm64), RuntimeProfile::FnaArm64);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::WineBare), RuntimeProfile::Plain);
     }
 
@@ -2594,22 +3573,200 @@ mod tests {
     fn app_detection_rejects_wine_builtins() {
         assert!(!is_probable_app_exe("iexplore.exe"));
         assert!(!is_probable_app_exe("wordpad.exe"));
+        assert!(!is_probable_app_exe("msedgewebview2.exe"));
+        assert!(!is_probable_app_exe("MicrosoftEdgeWebview_X64_148.0.3967.70.exe"));
+        assert!(!is_probable_app_exe("UplayService.exe"));
+        assert!(!is_probable_app_exe("UplayWebCore.exe"));
+        assert!(!is_probable_app_exe("UpcElevationService.exe"));
+        assert!(!is_probable_app_exe("UbisoftExtension.exe"));
+        assert!(!is_probable_app_exe("upc.exe"));
         assert!(is_probable_app_exe("MinecraftLauncher.exe"));
+        assert!(is_probable_app_exe("UbisoftConnect.exe"));
     }
 
     #[test]
     fn game_runtime_assets_detect_common_redist_payloads() {
         let dir = test_dir("game-redists");
         let redist = dir.join("_CommonRedist").join("vcredist").join("2019");
+        let openal = dir.join("_CommonRedist").join("OpenAL");
+        let eac = dir.join("Game").join("EasyAntiCheat");
+        let battleye = dir.join("BattlEye");
         fs::create_dir_all(&redist).expect("create redist dir");
+        fs::create_dir_all(&openal).expect("create openal dir");
+        fs::create_dir_all(&eac).expect("create eac dir");
+        fs::create_dir_all(&battleye).expect("create battleye dir");
         fs::write(redist.join("VC_redist.x86.exe"), b"redist").expect("write vcredist");
-        fs::write(redist.join("installscript.vdf"), b"script").expect("write installscript");
+        fs::write(openal.join("oalinst.exe"), b"openal").expect("write openal");
+        fs::write(eac.join("EasyAntiCheat_EOS_Setup.exe"), b"eac").expect("write eac setup");
+        fs::write(
+            eac.join("install_easyanticheat_eos_setup.bat"),
+            b"call EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e",
+        )
+        .expect("write eac installer script");
+        fs::write(battleye.join("Install_BattlEye.bat"), b"call BEService.exe").expect("write battleye script");
+        fs::write(battleye.join("BEService.exe"), b"battleye").expect("write battleye service");
+        fs::write(
+            redist.join("installscript.vdf"),
+            br#"
+"InstallScript"
+{
+  "Run Process"
+  {
+    "DXSETUP.exe" {}
+    "xnafx40_redist.msi" {}
+    "PhysX-9.12.1031-SystemSoftware.msi" {}
+  }
+}
+"#,
+        )
+        .expect("write installscript");
 
         let assets = detect_game_runtime_assets(&dir);
+        let inferred = infer_components_from_runtime_assets(&assets);
+        let ids = inferred.iter().map(|component| component.id.as_str()).collect::<Vec<_>>();
 
         assert!(assets.iter().any(|asset| asset.kind == "vcredist"));
+        assert!(assets.iter().any(|asset| asset.kind == "openal"));
         assert!(assets.iter().any(|asset| asset.kind == "installscript"));
+        assert!(assets.iter().any(|asset| asset.kind == "easyanticheat_eos"));
+        assert!(assets.iter().any(|asset| asset.kind == "battleye"));
+        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"openal"));
+        assert!(ids.contains(&"directx_jun2010"));
+        assert!(ids.contains(&"xna"));
+        assert!(ids.contains(&"physx"));
+        assert!(ids.contains(&"easyanticheat_eos"));
+        assert!(ids.contains(&"battleye"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn easyanticheat_eos_installer_uses_game_script_install_args() {
+        let dir = test_dir("eac-eos-installer");
+        fs::create_dir_all(&dir).expect("create eac dir");
+        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
+        let script = dir.join("install_easyanticheat_eos_setup.bat");
+        fs::write(&setup, b"eac").expect("write eac setup");
+        fs::write(
+            &script,
+            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e\r\npause\r\n",
+        )
+        .expect("write eac script");
+
+        let installer = easyanticheat_eos_installer_from_asset(&script).expect("resolve eac installer");
+
+        assert_eq!(installer.path, setup);
+        assert_eq!(installer.args, vec!["install".to_string(), "773d3a68f76f4b2ebebc5b4127bbad3e".to_string()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn easyanticheat_eos_installer_skips_checker_scripts() {
+        let dir = test_dir("eac-eos-multiple-scripts");
+        fs::create_dir_all(&dir).expect("create eac dir");
+        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
+        let checker = dir.join("eacchecker.bat");
+        let install = dir.join("install_easyanticheat_eos_setup.bat");
+        fs::write(&setup, b"eac").expect("write eac setup");
+        fs::write(&checker, b"reg query HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\EasyAntiCheat_EOS")
+            .expect("write checker");
+        fs::write(
+            &install,
+            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709\r\npause\r\n",
+        )
+        .expect("write install");
+        let manifest = BottleManifest {
+            id: "steam_1888160".into(),
+            name: "ARMORED CORE VI FIRES OF RUBICON".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(1888160),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            installed_components: vec![RuntimeComponent {
+                id: "easyanticheat_eos".into(),
+                state: ComponentState::Missing,
+            }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![
+                BottleRuntimeAsset {
+                    id: "easyanticheat:eacchecker.bat".into(),
+                    kind: "easyanticheat".into(),
+                    source_path: checker.to_string_lossy().to_string(),
+                    present: true,
+                },
+                BottleRuntimeAsset {
+                    id: "easyanticheat_eos:install_easyanticheat_eos_setup.bat".into(),
+                    kind: "easyanticheat_eos".into(),
+                    source_path: install.to_string_lossy().to_string(),
+                    present: true,
+                },
+                BottleRuntimeAsset {
+                    id: "easyanticheat_eos:easyanticheat_eos_setup.exe".into(),
+                    kind: "easyanticheat_eos".into(),
+                    source_path: setup.to_string_lossy().to_string(),
+                    present: true,
+                },
+            ],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let installer =
+            resolve_game_runtime_asset_installer(&manifest, "easyanticheat_eos").expect("resolve installer");
+
+        assert_eq!(installer.path, setup);
+        assert_eq!(installer.args, vec!["install".to_string(), "789399aada914e66bb3c3facebc5d709".to_string()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn game_runtime_asset_repair_ignores_non_installer_dlls() {
+        let manifest = BottleManifest {
+            id: "steam_123".into(),
+            name: "Game 123".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(123),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            installed_components: vec![RuntimeComponent { id: "battleye".into(), state: ComponentState::Missing }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![BottleRuntimeAsset {
+                id: "battleye:BEClient_x64.dll".into(),
+                kind: "battleye".into(),
+                source_path: "/tmp/BattlEye/BEClient_x64.dll".into(),
+                present: true,
+            }],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        assert!(resolve_game_runtime_asset_installer(&manifest, "battleye").is_none());
+    }
+
+    #[test]
+    fn wine_z_drive_path_quotes_unix_script_paths_for_cmd() {
+        assert_eq!(
+            wine_z_drive_path(Path::new("/Volumes/AverySSD/Game/BattlEye/Install_BattlEye.bat")),
+            "Z:\\Volumes\\AverySSD\\Game\\BattlEye\\Install_BattlEye.bat"
+        );
     }
 
     #[test]
@@ -2648,6 +3805,52 @@ mod tests {
     }
 
     #[test]
+    fn steam_compatdata_record_is_appid_scoped_and_launch_authoritative() {
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(620),
+            name: "Portal 2".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(620),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M9,
+            installed_components: default_components_for(RuntimeProfile::M9),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some("/games/Portal 2".into()),
+            runtime_assets: vec![BottleRuntimeAsset {
+                id: "installscript".into(),
+                kind: "installscript".into(),
+                source_path: "/games/Portal 2/installscript.vdf".into(),
+                present: true,
+            }],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: Some("/tmp/steam_620.log".into()),
+            last_launch_pid: Some(1234),
+            last_launch_status: Some("running".into()),
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::M9);
+
+        assert_eq!(record.appid, 620);
+        assert_eq!(record.bottle_id, "steam_620");
+        assert!(record.compatdata_path.ends_with("/compatdata/620"));
+        assert_eq!(record.launch_pipeline, "d3d9_metal");
+        assert_eq!(record.steam_identity_mode, "wine_steam_background");
+        assert_eq!(record.compat_tool_name, "MetalSharp");
+        assert!(record.launch_command_template.contains("/steam/launch-game"));
+        assert!(record.launch_command_template.contains("620"));
+        assert_eq!(record.runtime_assets.len(), 1);
+        assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
+        assert_eq!(record.last_launch_pid, Some(1234));
+        assert_eq!(record.last_launch_status.as_deref(), Some("running"));
+    }
+
+    #[test]
     fn installer_bottles_wait_for_prefix_idle_completion() {
         let manifest = BottleManifest {
             id: "installer_demo".into(),
@@ -2682,6 +3885,24 @@ mod tests {
         assert!(validate_bottle_id("../steam_620").is_err());
         assert!(validate_bottle_id("steam/620").is_err());
         assert!(validate_bottle_id("").is_err());
+    }
+
+    #[test]
+    fn gecko_inspection_accepts_wine_system_gecko_dirs() {
+        let prefix = test_dir("gecko-system-dirs");
+        let system32_gecko = prefix.join("drive_c").join("windows").join("system32").join("gecko");
+        fs::create_dir_all(&system32_gecko).expect("create gecko dir");
+
+        assert_eq!(inspect_component_state(&prefix, "gecko", ComponentState::Missing), ComponentState::Installed);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn corefonts_are_not_reported_as_wineboot_repairable() {
+        let policy = component_source_policy("corefonts", BottleArch::Wow64);
+
+        assert_ne!(policy.source, "metalsharp_wine_bootstrap");
+        assert!(!policy.detail.contains("wineboot"));
     }
 
     fn test_dir(name: &str) -> PathBuf {

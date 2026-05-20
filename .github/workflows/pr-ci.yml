@@ -130,6 +130,13 @@ jobs:
       - name: Runtime tests
         run: ctest --test-dir build-native --output-on-failure -E '^(metal_device|dxbc|format_translation|phase17)$'
 
+      - name: Host ABI package smoke
+        run: |
+          METALSHARP_BUILD_DIR="$PWD/build-native" tools/package/create-host-runtime.sh
+          test -s app/native/host/HostRuntimeABI.h
+          test -s app/native/host/manifest.json
+          test -s app/native/host/libmetalsharp_host_runtime.dylib
+
   docker-smoke:
     name: Docker Package Smoke
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.26",
+  "version": "0.33.27",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -172,6 +172,10 @@
         "to": "xinput1_4.so"
       },
       {
+        "from": "native/host",
+        "to": "runtime/host"
+      },
+      {
         "from": "bundles/metalsharp_bundle.tar.zst",
         "to": "bundles/metalsharp_bundle.tar.zst"
       },
@@ -190,6 +194,30 @@
       {
         "from": "bundles/steamwebhelper-wrapper.c",
         "to": "bundles/steamwebhelper-wrapper.c"
+      },
+      {
+        "from": "bundles/cefcompat-wrapper32.exe",
+        "to": "bundles/cefcompat-wrapper32.exe"
+      },
+      {
+        "from": "bundles/cefcompat-wrapper64.exe",
+        "to": "bundles/cefcompat-wrapper64.exe"
+      },
+      {
+        "from": "bundles/cefcompat-wrapper.c",
+        "to": "bundles/cefcompat-wrapper.c"
+      },
+      {
+        "from": "bundles/cefchildhook32.dll",
+        "to": "bundles/cefchildhook32.dll"
+      },
+      {
+        "from": "bundles/cefchildhook64.dll",
+        "to": "bundles/cefchildhook64.dll"
+      },
+      {
+        "from": "bundles/cefchildhook.c",
+        "to": "bundles/cefchildhook.c"
       },
       {
         "from": "updater/update.sh",

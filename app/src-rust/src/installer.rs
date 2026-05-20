@@ -77,6 +77,7 @@ fn run_install_all() {
         if crate::platform::current() == crate::platform::HostPlatform::Linux {
             vec![
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+                ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXVK Runtime", Box::new(install_dxvk_fallback)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
                 ("EAC Bypass", Box::new(install_eac_toggle)),
@@ -88,6 +89,7 @@ fn run_install_all() {
                 ("Rosetta 2", Box::new(|_| install_rosetta())),
                 ("System Tools", Box::new(|_| install_xcode_cli())),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+                ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
                 ("EAC Bypass", Box::new(install_eac_toggle)),
@@ -295,6 +297,60 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 
 fn metalsharp_wine_binary(home: &Path) -> PathBuf {
     crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
+}
+
+fn install_host_runtime(home: &PathBuf) -> Result<bool, String> {
+    let dest = home.join(".metalsharp").join("runtime").join("host");
+    if host_runtime_ready(&dest) {
+        return Ok(false);
+    }
+
+    let source = find_packaged_host_runtime()
+        .ok_or_else(|| "MetalSharp host runtime not found — packaged runtime/host assets are missing".to_string())?;
+    let _ = fs::remove_dir_all(&dest);
+    fs::create_dir_all(&dest).map_err(|e| format!("create host runtime dir: {}", e))?;
+    copy_dir_recursive(&source, &dest);
+
+    if host_runtime_ready(&dest) {
+        Ok(true)
+    } else {
+        Err("MetalSharp host runtime copied but required ABI files are missing".into())
+    }
+}
+
+fn host_runtime_ready(dir: &Path) -> bool {
+    file_nonempty(&dir.join("manifest.json"))
+        && file_nonempty(&dir.join("HostRuntimeABI.h"))
+        && (file_nonempty(&dir.join("libmetalsharp_host_runtime.dylib"))
+            || file_nonempty(&dir.join("libmetalsharp_host_runtime.so"))
+            || file_nonempty(&dir.join("metalsharp_host_runtime.dll")))
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
+}
+
+fn find_packaged_host_runtime() -> Option<PathBuf> {
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        let dir = resources.join("runtime").join("host");
+        if host_runtime_ready(&dir) {
+            return Some(dir);
+        }
+    }
+
+    let dev = PathBuf::from("app/native/host");
+    if host_runtime_ready(&dev) {
+        return Some(dev);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        let dev = exe.parent()?.parent()?.parent()?.parent()?.join("native").join("host");
+        if host_runtime_ready(&dev) {
+            return Some(dev);
+        }
+    }
+
+    None
 }
 
 fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {

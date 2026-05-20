@@ -460,16 +460,24 @@ pub fn install_exe(
     src_path: &str,
     custom_name: Option<&str>,
 ) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    install_exe_with_options(src_path, custom_name, false)
+}
+
+fn install_exe_with_options(
+    src_path: &str,
+    custom_name: Option<&str>,
+    fresh_bottle: bool,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let src = PathBuf::from(src_path);
     if !src.exists() {
         return Err("Source EXE not found".into());
     }
-    if src.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("exe".to_string()) {
-        return Err("Only .exe files are supported".into());
+    if !is_supported_windows_program(&src) {
+        return Err("Only .exe and .msi Windows program installers are supported".into());
     }
 
     if should_run_as_wine_installer(&src) {
-        return start_wine_installer(&src);
+        return start_wine_installer(&src, fresh_bottle);
     }
 
     let file_name = src.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -527,11 +535,33 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
         || name.contains("update")
 }
 
-fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+fn is_supported_windows_program(src: &Path) -> bool {
+    src.extension()
+        .map(|ext| {
+            let ext = ext.to_string_lossy();
+            ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("msi")
+        })
+        .unwrap_or(false)
+}
+
+fn start_wine_installer(src: &Path, fresh_bottle: bool) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let classification = crate::bottles::classify_installer(src);
     let pipeline = classification.pipeline;
-    let bottle = crate::bottles::ensure_installer_bottle(src, &classification)?;
-    let staged_exe = stage_installer_exe(src, &bottle)?;
+    let bottle = if fresh_bottle {
+        crate::bottles::create_fresh_installer_bottle(src, &classification)?
+    } else {
+        crate::bottles::ensure_installer_bottle(src, &classification)?
+    };
+    start_wine_installer_in_bottle(src, &classification, &bottle, pipeline)
+}
+
+fn start_wine_installer_in_bottle(
+    src: &Path,
+    classification: &crate::bottles::InstallerClassification,
+    bottle: &crate::bottles::BottleManifest,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let staged_exe = stage_installer_exe(src, bottle)?;
     let work_dir = staged_exe.parent().ok_or("installer staging folder not found")?.to_path_buf();
     let launch_id = installer_launch_id(src, pipeline);
     let log_path = crate::bottles::next_launch_log_path(&bottle.id);
@@ -736,6 +766,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         return Err(format!("EXE not found: {}", exe_path.display()).into());
     }
 
+    let cef_compat_deployed = maybe_deploy_cef_compat_wrapper(&app, &exe_path)?;
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
     let launch_args = combined_launch_args(&app);
@@ -761,13 +792,178 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline, &launch_args)?
     };
 
-    Ok(SharpLaunchResult {
-        pid,
-        game_type,
-        pipeline,
-        exe_path: exe_path.to_string_lossy().to_string(),
-        warnings: recipe.warnings,
+    let mut warnings = recipe.warnings;
+    if cef_compat_deployed {
+        warnings.push("CEF compatibility wrapper active for this launcher.".to_string());
+    }
+
+    Ok(SharpLaunchResult { pid, game_type, pipeline, exe_path: exe_path.to_string_lossy().to_string(), warnings })
+}
+
+fn maybe_deploy_cef_compat_wrapper(app: &SharpApp, exe_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if !should_apply_cef_compat(app, exe_path) {
+        return Ok(false);
+    }
+
+    let stem = exe_path.file_stem().and_then(|stem| stem.to_str()).ok_or("CEF app executable has no stem")?;
+    if stem.ends_with("_real") {
+        return Ok(false);
+    }
+    let real_path = exe_path.with_file_name(format!("{}_real.exe", stem));
+    let marker = exe_path.with_file_name(format!(".ms_cef_compat_{}", stem));
+
+    let original_data = fs::read(exe_path).or_else(|_| fs::read(&real_path))?;
+    let is_64_bit = crate::mtsp::pe::parse_pe_imports(&original_data).map(|info| info.is_64_bit).unwrap_or(false);
+    let wrapper = find_bundled_cef_compat_wrapper(is_64_bit).ok_or("CEF compatibility wrapper is missing")?;
+    let wrapper_size = fs::metadata(&wrapper).map(|metadata| metadata.len()).unwrap_or(0);
+    if wrapper_size == 0 || wrapper_size > 512 * 1024 {
+        return Err("CEF compatibility wrapper asset is invalid".into());
+    }
+    let hook = find_bundled_cef_child_hook(is_64_bit).ok_or("CEF child-process hook is missing")?;
+    deploy_cef_child_hook(exe_path, &hook)?;
+
+    if real_path.exists() {
+        redeploy_cef_compat_wrapper_if_needed(exe_path, &real_path, &wrapper)?;
+        fs::write(&marker, "deployed")?;
+        return Ok(true);
+    }
+
+    fs::rename(exe_path, &real_path)?;
+    if let Err(error) = fs::copy(&wrapper, exe_path) {
+        let _ = fs::rename(&real_path, exe_path);
+        return Err(error.into());
+    }
+    fs::write(&marker, "deployed")?;
+    Ok(true)
+}
+
+fn redeploy_cef_compat_wrapper_if_needed(
+    exe_path: &Path,
+    real_path: &Path,
+    wrapper_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Ok(current_exe) = fs::read(exe_path) else {
+        fs::copy(wrapper_path, exe_path)?;
+        return Ok(());
+    };
+    let wrapper_data = fs::read(wrapper_path)?;
+    if current_exe == wrapper_data {
+        return Ok(());
+    }
+
+    if current_exe.len() > 512 * 1024 {
+        fs::copy(exe_path, real_path)?;
+    }
+    fs::copy(wrapper_path, exe_path)?;
+    Ok(())
+}
+
+fn deploy_cef_child_hook(exe_path: &Path, hook_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let hook_size = fs::metadata(hook_path).map(|metadata| metadata.len()).unwrap_or(0);
+    if hook_size == 0 || hook_size > 1024 * 1024 {
+        return Err("CEF child-process hook asset is invalid".into());
+    }
+    let dest = exe_path.with_file_name("metalsharp-cefchildhook.dll");
+    let needs_copy = match (fs::read(&dest), fs::read(hook_path)) {
+        (Ok(current), Ok(source)) => current != source,
+        _ => true,
+    };
+    if needs_copy {
+        fs::copy(hook_path, dest)?;
+    }
+    Ok(())
+}
+
+fn should_apply_cef_compat(app: &SharpApp, exe_path: &Path) -> bool {
+    if app.bottle_id.is_none() {
+        return false;
+    }
+    let name = app.name.to_ascii_lowercase();
+    let exe_name = exe_path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    if exe_name.ends_with("_real.exe") || exe_name.contains("unins") || exe_name.contains("setup") {
+        return false;
+    }
+    let likely_launcher = crate::mtsp::recipe::is_likely_launcher_exe(exe_path)
+        || name.contains("launcher")
+        || name.contains("ea app")
+        || name.contains("ubisoft")
+        || name.contains("battle.net")
+        || name.contains("epic games")
+        || name.contains("rockstar");
+    likely_launcher && (executable_contains_cef_markers(exe_path) || install_dir_contains_cef_markers(exe_path))
+}
+
+fn executable_contains_cef_markers(exe_path: &Path) -> bool {
+    let Ok(data) = fs::read(exe_path) else {
+        return false;
+    };
+    let haystack = String::from_utf8_lossy(&data).to_ascii_lowercase();
+    [
+        "cef initialized",
+        "cef version",
+        "chromium",
+        "chrome-runtime",
+        "launcherappbrowser",
+        "cefclient",
+        "libcef",
+        "electron",
+        "app.asar",
+        "webview2",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
+}
+
+fn install_dir_contains_cef_markers(exe_path: &Path) -> bool {
+    let Some(dir) = exe_path.parent() else {
+        return false;
+    };
+    WalkDir::new(dir).max_depth(3).into_iter().filter_map(Result::ok).any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            name.as_str(),
+            "libcef.dll"
+                | "chrome_elf.dll"
+                | "chrome_100_percent.pak"
+                | "chrome_200_percent.pak"
+                | "vk_swiftshader.dll"
+                | "v8_context_snapshot.bin"
+                | "resources.pak"
+                | "app.asar"
+                | "msedgewebview2.exe"
+        )
     })
+}
+
+fn find_bundled_cef_compat_wrapper(is_64_bit: bool) -> Option<PathBuf> {
+    let filename = if is_64_bit { "cefcompat-wrapper64.exe" } else { "cefcompat-wrapper32.exe" };
+    find_bundled_cef_asset(filename)
+}
+
+fn find_bundled_cef_child_hook(is_64_bit: bool) -> Option<PathBuf> {
+    let filename = if is_64_bit { "cefchildhook64.dll" } else { "cefchildhook32.dll" };
+    find_bundled_cef_asset(filename)
+}
+
+fn find_bundled_cef_asset(filename: &str) -> Option<PathBuf> {
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        let wrapper = resources.join("bundles").join(filename);
+        if wrapper.exists() {
+            return Some(wrapper);
+        }
+    }
+
+    let dev = PathBuf::from("app").join("bundles").join(filename);
+    if dev.exists() {
+        return Some(dev);
+    }
+
+    let src_rust_dev = PathBuf::from("..").join("bundles").join(filename);
+    if src_rust_dev.exists() {
+        return Some(src_rust_dev);
+    }
+
+    None
 }
 
 pub fn diagnose_app(
@@ -1027,13 +1223,14 @@ fn is_valid_app_exe(name: &str) -> bool {
         && !lower.contains("dotnet")
         && !lower.contains("installer")
         && !lower.contains("uninstall")
+        && !lower.contains("update")
         && !lower.contains("vcredist")
         && !lower.contains("crashhandler")
         && !lower.contains("server")
 }
 
 fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
-    let mut best: Option<PathBuf> = None;
+    let mut best: Option<(i32, PathBuf)> = None;
     for entry in WalkDir::new(dir).max_depth(4).into_iter().flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -1047,11 +1244,22 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
         if lower == "game.exe" || lower.contains("shipping") {
             return Some(path.to_path_buf());
         }
-        if best.is_none() {
-            best = Some(path.to_path_buf());
+        let depth = path.strip_prefix(dir).map(|relative| relative.components().count()).unwrap_or(4) as i32;
+        let mut score = 100 - depth;
+        if lower.contains("launcher") {
+            score += 50;
+        }
+        if lower.ends_with("_real.exe") {
+            score += 30;
+        }
+        if lower.contains("helper") || lower.contains("crash") || lower.contains("service") {
+            score -= 50;
+        }
+        if best.as_ref().map(|(best_score, _)| score > *best_score).unwrap_or(true) {
+            best = Some((score, path.to_path_buf()));
         }
     }
-    best
+    best.map(|(_, path)| path)
 }
 
 fn dir_size(dir: &PathBuf) -> u64 {
@@ -1076,10 +1284,11 @@ pub fn handle_get_library() -> Value {
 pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     let src_path = body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("");
     let custom_name = body.get("name").and_then(|v| v.as_str());
+    let fresh_bottle = body.get("freshBottle").and_then(|v| v.as_bool()).unwrap_or(false);
     if src_path.is_empty() {
         return json!({"ok": false, "error": "srcPath required"});
     }
-    match install_exe(src_path, custom_name) {
+    match install_exe_with_options(src_path, custom_name, fresh_bottle) {
         Ok(SharpInstallOutcome::Imported(app)) => json!({"ok": true, "app": *app}),
         Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
             json!({"ok": true, "installing": true, "pid": pid, "message": message})
@@ -1106,8 +1315,10 @@ pub fn relaunch_bottle_installer(id: &str) -> Result<SharpInstallOutcome, Box<dy
     if bottle.bottle_type != crate::bottles::BottleType::Installer {
         return Err("Only installer bottles can relaunch their source installer".into());
     }
-    let source = bottle.source_installer_path.ok_or("Bottle has no source installer path")?;
-    start_wine_installer(Path::new(&source))
+    let source = bottle.source_installer_path.clone().ok_or("Bottle has no source installer path")?;
+    let source = Path::new(&source);
+    let classification = crate::bottles::classify_installer(source);
+    start_wine_installer_in_bottle(source, &classification, &bottle, classification.pipeline)
 }
 
 pub fn handle_relaunch_bottle_installer(body: &serde_json::Map<String, Value>) -> Value {
@@ -1480,6 +1691,19 @@ mod tests {
     }
 
     #[test]
+    fn refresh_setup_reference_prefers_launcher_over_updater_tools() {
+        let dir = test_dir("launcher-refresh");
+        fs::create_dir_all(dir.join("tools")).expect("create tools dir");
+        fs::write(dir.join("MinecraftLauncher_real.exe"), b"not pe").expect("write launcher");
+        fs::write(dir.join("tools").join("NativeUpdater.exe"), b"not pe").expect("write updater");
+
+        let found = find_real_exe(&dir).expect("find launcher exe");
+
+        assert_eq!(found, dir.join("MinecraftLauncher_real.exe"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn launcher_exes_run_as_wine_installers() {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
@@ -1488,13 +1712,33 @@ mod tests {
     }
 
     #[test]
-    fn pe32_installers_use_m9_pipeline() {
+    fn install_windows_program_accepts_exe_and_msi_only() {
+        assert!(is_supported_windows_program(Path::new("/tmp/MinecraftInstaller.exe")));
+        assert!(is_supported_windows_program(Path::new("/tmp/DemoSetup.msi")));
+        assert!(is_supported_windows_program(Path::new("/tmp/DEMOSETUP.MSI")));
+        assert!(!is_supported_windows_program(Path::new("/tmp/readme.txt")));
+        assert!(!is_supported_windows_program(Path::new("/tmp/installer")));
+    }
+
+    #[test]
+    fn generic_pe32_installers_use_m9_pipeline() {
         let dir = test_dir("installer-pe32");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let exe = dir.join("DemoInstaller.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn known_launcher_installers_use_plain_wine_pipeline() {
+        let dir = test_dir("installer-known-launcher");
         fs::create_dir_all(&dir).expect("create test dir");
         let exe = dir.join("MinecraftInstaller.exe");
         write_test_pe(&exe, 0x014c, 0x10b);
 
-        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::M9);
+        assert_eq!(installer_pipeline(&exe), crate::mtsp::engine::PipelineId::WineBare);
         let _ = fs::remove_dir_all(dir);
     }
 

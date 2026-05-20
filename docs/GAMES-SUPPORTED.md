@@ -53,3 +53,4 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 - Shader caches are per appid and can be cleared from Settings.
 - Steam and MacOS Steam are separate launch paths.
 - Installed Wine Steam games create `steam_<appid>` bottle records for runtime asset/component preflight before launch.
+- Env-dependent Steam game routes keep Wine Steam alive as the background client, then launch the game executable directly with the selected MTSP pipeline, bottle prefix, route env, and Steam identity variables.

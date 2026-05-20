@@ -1,5 +1,5 @@
 use serde_json::{json, Map, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn state() -> Value {
@@ -97,7 +97,8 @@ pub fn dependencies() -> Value {
             check_path(&home.join(".steam/steam/steamapps")) || check_path(&home.join(".local/share/Steam/steamapps"));
         let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
             || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
-        let all_ok = tar && curl && (metalsharp_wine || wine);
+        let host_runtime = host_runtime_installed(&home);
+        let all_ok = tar && curl && host_runtime && (metalsharp_wine || wine);
 
         return json!({
             "ok": true,
@@ -137,6 +138,14 @@ pub fn dependencies() -> Value {
                     "installCmd": "metalsharp-setup-wine",
                 },
                 {
+                    "id": "metalsharp_host_runtime",
+                    "name": "MetalSharp Host Runtime ABI",
+                    "desc": "Bottle-aware native host service ABI used by Wine shims and launch routes.",
+                    "installed": host_runtime,
+                    "required": true,
+                    "installCmd": "metalsharp-setup-host-runtime",
+                },
+                {
                     "id": "mono",
                     "name": "Mono Runtime",
                     "desc": "Optional runtime for XNA/FNA games.",
@@ -165,8 +174,9 @@ pub fn dependencies() -> Value {
     let moltenvk = check_path(&PathBuf::from("/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json"));
     let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
         || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
+    let host_runtime = host_runtime_installed(&home);
 
-    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine;
+    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine && host_runtime;
 
     json!({
         "ok": true,
@@ -206,6 +216,14 @@ pub fn dependencies() -> Value {
                 "installCmd": "metalsharp-setup-wine",
             },
             {
+                "id": "metalsharp_host_runtime",
+                "name": "MetalSharp Host Runtime ABI",
+                "desc": "Bottle-aware native host service ABI used by Wine shims and launch routes.",
+                "installed": host_runtime,
+                "required": true,
+                "installCmd": "metalsharp-setup-host-runtime",
+            },
+            {
                 "id": "mono",
                 "name": "Mono Runtime (arm64)",
                 "desc": "Required for Terraria and other arm64 FNA/XNA games",
@@ -231,6 +249,19 @@ pub fn dependencies() -> Value {
             },
         ],
     })
+}
+
+fn host_runtime_installed(home: &Path) -> bool {
+    let host = home.join(".metalsharp").join("runtime").join("host");
+    file_nonempty(&host.join("manifest.json"))
+        && file_nonempty(&host.join("HostRuntimeABI.h"))
+        && (file_nonempty(&host.join("libmetalsharp_host_runtime.dylib"))
+            || file_nonempty(&host.join("libmetalsharp_host_runtime.so"))
+            || file_nonempty(&host.join("metalsharp_host_runtime.dll")))
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
 pub fn install_dependencies(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error::Error>> {

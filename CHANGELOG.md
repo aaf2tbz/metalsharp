@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.33.27 - 2026-05-20
+
+WTMKT Phase 1 anti-cheat translation evidence.
+
+### Added
+
+- **Anti-cheat evidence surfaces** - added Steam anti-cheat evidence, module probe, delta audit, and substrate contract endpoints for tracing protected launcher handoff, EAC/BattlEye artifacts, Linux module selection, and macOS host-boundary gaps.
+- **Launcher installer evidence** - added EA and Ubisoft installer evidence reports so MSI/WebView/service/elevation failures can be diagnosed from the bottle logs instead of guessed from screenshots.
+
+### Changed
+
+- **WTMKT roadmap state** - records Phase 1 as the inspection-first translation layer foundation, with spoofing/tampering paths explicitly rejected until a truthful supported host substrate exists.
+
+### Fixed
+
+- **Evidence log safety** - caps anti-cheat and launcher artifact reads to the recent 1 MiB tail so long-running Wine/Steam logs cannot overwhelm the backend while still preserving failure-tail diagnostics.
+
 ## v0.33.26 - 2026-05-19
 
 Steam bottle launch follow-up.
