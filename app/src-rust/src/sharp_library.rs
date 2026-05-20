@@ -464,8 +464,8 @@ pub fn install_exe(
     if !src.exists() {
         return Err("Source EXE not found".into());
     }
-    if src.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("exe".to_string()) {
-        return Err("Only .exe files are supported".into());
+    if !is_supported_windows_program(&src) {
+        return Err("Only .exe and .msi Windows program installers are supported".into());
     }
 
     if should_run_as_wine_installer(&src) {
@@ -525,6 +525,15 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
         || name.contains("launcher")
         || name.contains("bootstrap")
         || name.contains("update")
+}
+
+fn is_supported_windows_program(src: &Path) -> bool {
+    src.extension()
+        .map(|ext| {
+            let ext = ext.to_string_lossy();
+            ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("msi")
+        })
+        .unwrap_or(false)
 }
 
 fn start_wine_installer(src: &Path) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
@@ -1485,6 +1494,15 @@ mod tests {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/DemoSetup.msi")));
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
+    }
+
+    #[test]
+    fn install_windows_program_accepts_exe_and_msi_only() {
+        assert!(is_supported_windows_program(Path::new("/tmp/MinecraftInstaller.exe")));
+        assert!(is_supported_windows_program(Path::new("/tmp/DemoSetup.msi")));
+        assert!(is_supported_windows_program(Path::new("/tmp/DEMOSETUP.MSI")));
+        assert!(!is_supported_windows_program(Path::new("/tmp/readme.txt")));
+        assert!(!is_supported_windows_program(Path::new("/tmp/installer")));
     }
 
     #[test]

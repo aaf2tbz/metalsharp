@@ -1044,7 +1044,7 @@ pub fn repair_component(
         });
     }
 
-    if matches!(component_id, "wine-mono" | "gecko" | "corefonts") {
+    if matches!(component_id, "wine-mono" | "gecko") {
         let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
         if dry_run {
             return Ok(ComponentRepairReport {
@@ -1069,6 +1069,52 @@ pub fn repair_component(
             asset_path: None,
             log_path: Some(log_path.to_string_lossy().to_string()),
             pid: Some(pid),
+        });
+    }
+
+    if component_id == "corefonts" {
+        let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
+        let sources = host_core_font_sources();
+        if dry_run {
+            let available = sources.len() >= 4;
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if available { "host_fonts_available" } else { "asset_missing" }.to_string(),
+                detail: if available {
+                    format!("{} host font files can be mapped into this bottle", sources.len())
+                } else {
+                    "No usable local host font set found for corefonts".to_string()
+                },
+                asset_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
+                pid: None,
+            });
+        }
+
+        let installed = install_host_core_fonts(&prefix, &log_path)?;
+        mark_component_state(
+            &mut manifest,
+            component_id,
+            if installed { ComponentState::Installed } else { ComponentState::Missing },
+        );
+        manifest.health = if installed && components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if installed { "installed" } else { "asset_missing" }.to_string(),
+            detail: if installed {
+                "Mapped host system fonts into the bottle font directory".to_string()
+            } else {
+                "No usable local host font set found for corefonts".to_string()
+            },
+            asset_path: None,
+            log_path: Some(log_path.to_string_lossy().to_string()),
+            pid: None,
         });
     }
 
@@ -1716,7 +1762,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "gecko" => {
-            if drive_c.join("windows").join("gecko").exists() {
+            if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -1817,6 +1863,61 @@ fn core_fonts_installed(fonts_dir: &Path) -> bool {
 
     let installed = CORE_FONT_FILES.iter().filter(|name| fonts_dir.join(name).is_file()).count();
     installed >= 4
+}
+
+fn host_core_font_sources() -> Vec<(String, PathBuf)> {
+    let candidates = [
+        ("arial.ttf", "Arial.ttf"),
+        ("arialbd.ttf", "Arial Bold.ttf"),
+        ("cour.ttf", "Courier New.ttf"),
+        ("georgia.ttf", "Georgia.ttf"),
+        ("impact.ttf", "Impact.ttf"),
+        ("times.ttf", "Times New Roman.ttf"),
+        ("trebuc.ttf", "Trebuchet MS.ttf"),
+        ("verdana.ttf", "Verdana.ttf"),
+        ("webdings.ttf", "Webdings.ttf"),
+    ];
+    let search_roots = [
+        PathBuf::from("/System/Library/Fonts/Supplemental"),
+        PathBuf::from("/System/Library/Fonts"),
+        PathBuf::from("/Library/Fonts"),
+        dirs::home_dir().unwrap_or_default().join("Library").join("Fonts"),
+    ];
+
+    candidates
+        .iter()
+        .filter_map(|(target, source_name)| {
+            search_roots
+                .iter()
+                .map(|root| root.join(source_name))
+                .find(|path| path.is_file())
+                .map(|path| ((*target).to_string(), path))
+        })
+        .collect()
+}
+
+fn install_host_core_fonts(prefix: &Path, log_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let fonts_dir = prefix.join("drive_c").join("windows").join("Fonts");
+    fs::create_dir_all(&fonts_dir)?;
+    let sources = host_core_font_sources();
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "component=corefonts")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    writeln!(log, "fonts_dir={}", fonts_dir.display())?;
+    writeln!(log, "source_count={}", sources.len())?;
+    for (target, source) in sources {
+        let dest = fonts_dir.join(&target);
+        match fs::copy(&source, &dest) {
+            Ok(_) => writeln!(log, "copied {} -> {}", source.display(), dest.display())?,
+            Err(err) => writeln!(log, "copy_failed {} -> {}: {}", source.display(), dest.display(), err)?,
+        }
+    }
+    let installed = core_fonts_installed(&fonts_dir);
+    writeln!(log, "installed={}", installed)?;
+    Ok(installed)
 }
 
 fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
@@ -2111,7 +2212,7 @@ fn component_source_policies(components: &[RuntimeComponent], arch: BottleArch) 
 }
 
 fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy {
-    if matches!(id, "wine-mono" | "gecko" | "corefonts") {
+    if matches!(id, "wine-mono" | "gecko") {
         return ComponentSourcePolicy {
             id: id.to_string(),
             source: "metalsharp_wine_bootstrap".to_string(),
@@ -2125,6 +2226,21 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
+    if id == "corefonts" {
+        let available = host_core_font_sources().len() >= 4;
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: if available { "host_system_fonts" } else { "missing_local_asset" }.to_string(),
+            available,
+            detail: if available {
+                "Maps locally installed host fonts into the bottle Windows font directory"
+            } else {
+                "Requires a local core fonts payload or a mapped font installation strategy"
+            }
+            .to_string(),
+            path: None,
+        };
+    }
     let installer = resolve_component_installer(id, arch);
     ComponentSourcePolicy {
         id: id.to_string(),
@@ -2133,6 +2249,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
@@ -3223,6 +3340,24 @@ mod tests {
         assert!(validate_bottle_id("../steam_620").is_err());
         assert!(validate_bottle_id("steam/620").is_err());
         assert!(validate_bottle_id("").is_err());
+    }
+
+    #[test]
+    fn gecko_inspection_accepts_wine_system_gecko_dirs() {
+        let prefix = test_dir("gecko-system-dirs");
+        let system32_gecko = prefix.join("drive_c").join("windows").join("system32").join("gecko");
+        fs::create_dir_all(&system32_gecko).expect("create gecko dir");
+
+        assert_eq!(inspect_component_state(&prefix, "gecko", ComponentState::Missing), ComponentState::Installed);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn corefonts_are_not_reported_as_wineboot_repairable() {
+        let policy = component_source_policy("corefonts", BottleArch::Wow64);
+
+        assert_ne!(policy.source, "metalsharp_wine_bootstrap");
+        assert!(!policy.detail.contains("wineboot"));
     }
 
     fn test_dir(name: &str) -> PathBuf {
