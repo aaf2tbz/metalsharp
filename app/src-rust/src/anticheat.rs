@@ -1,11 +1,12 @@
 use serde_json::{json, Map, Value};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 const ARTIFACT_TAIL_LINES: usize = 80;
+const MAX_ARTIFACT_READ_BYTES: u64 = 1024 * 1024;
 const WALK_MAX_DEPTH: usize = 10;
 const MODULE_ASSET_MAX_DEPTH: usize = 8;
 
@@ -431,7 +432,7 @@ fn artifact_json(id: &str, path: &Path) -> Value {
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
-    let tail = fs::read_to_string(path).ok().map(|text| tail_lines(&text, ARTIFACT_TAIL_LINES)).unwrap_or_default();
+    let tail = read_recent_text_limited(path).map(|text| tail_lines(&text, ARTIFACT_TAIL_LINES)).unwrap_or_default();
 
     json!({
         "id": id,
@@ -891,9 +892,20 @@ fn artifact_lines(artifact: &Value) -> Vec<String> {
     artifact
         .get("path")
         .and_then(|v| v.as_str())
-        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|path| read_recent_text_limited(Path::new(path)))
         .map(|text| text.lines().map(|line| line.trim_end_matches('\r').to_string()).collect())
         .unwrap_or_else(|| artifact_tail(artifact).into_iter().map(|line| line.to_string()).collect())
+}
+
+fn read_recent_text_limited(path: &Path) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > MAX_ARTIFACT_READ_BYTES {
+        file.seek(SeekFrom::Start(len - MAX_ARTIFACT_READ_BYTES)).ok()?;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ARTIFACT_READ_BYTES).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {

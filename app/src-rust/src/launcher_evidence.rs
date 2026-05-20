@@ -1,11 +1,13 @@
 use crate::bottles::{self, AppDetection, BottleManifest};
 use serde_json::{json, Map, Value};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 const TAIL_LINES: usize = 80;
+const MAX_ARTIFACT_READ_BYTES: u64 = 1024 * 1024;
 const MAX_LOG_DEPTH: usize = 10;
 
 #[derive(Debug, Default)]
@@ -411,7 +413,7 @@ fn artifact_json(id: &str, path: &Path) -> Value {
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
-    let tail = fs::read_to_string(path).ok().map(|text| tail_lines(&text, TAIL_LINES)).unwrap_or_default();
+    let tail = read_recent_text_limited(path).map(|text| tail_lines(&text, TAIL_LINES)).unwrap_or_default();
     json!({
         "id": id,
         "path": path.to_string_lossy(),
@@ -423,13 +425,28 @@ fn artifact_json(id: &str, path: &Path) -> Value {
 }
 
 fn artifact_full_text(artifact: &Value) -> String {
-    artifact.get("path").and_then(|v| v.as_str()).and_then(|path| fs::read_to_string(path).ok()).unwrap_or_else(|| {
-        artifact
-            .get("tail")
-            .and_then(|v| v.as_array())
-            .map(|lines| lines.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("\n"))
-            .unwrap_or_default()
-    })
+    artifact
+        .get("path")
+        .and_then(|v| v.as_str())
+        .and_then(|path| read_recent_text_limited(Path::new(path)))
+        .unwrap_or_else(|| {
+            artifact
+                .get("tail")
+                .and_then(|v| v.as_array())
+                .map(|lines| lines.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default()
+        })
+}
+
+fn read_recent_text_limited(path: &Path) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > MAX_ARTIFACT_READ_BYTES {
+        file.seek(SeekFrom::Start(len - MAX_ARTIFACT_READ_BYTES)).ok()?;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ARTIFACT_READ_BYTES).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
