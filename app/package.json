@@ -196,6 +196,18 @@
         "to": "bundles/steamwebhelper-wrapper.c"
       },
       {
+        "from": "bundles/cefcompat-wrapper32.exe",
+        "to": "bundles/cefcompat-wrapper32.exe"
+      },
+      {
+        "from": "bundles/cefcompat-wrapper64.exe",
+        "to": "bundles/cefcompat-wrapper64.exe"
+      },
+      {
+        "from": "bundles/cefcompat-wrapper.c",
+        "to": "bundles/cefcompat-wrapper.c"
+      },
+      {
         "from": "updater/update.sh",
         "to": "updater/update.sh"
       },

@@ -745,6 +745,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         return Err(format!("EXE not found: {}", exe_path.display()).into());
     }
 
+    let cef_compat_deployed = maybe_deploy_cef_compat_wrapper(&app, &exe_path)?;
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
     let launch_args = combined_launch_args(&app);
@@ -770,13 +771,151 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         crate::mtsp::launcher::launch_custom_with_pipeline(launch_id, &work_dir, &exe_path, pipeline, &launch_args)?
     };
 
-    Ok(SharpLaunchResult {
-        pid,
-        game_type,
-        pipeline,
-        exe_path: exe_path.to_string_lossy().to_string(),
-        warnings: recipe.warnings,
+    let mut warnings = recipe.warnings;
+    if cef_compat_deployed {
+        warnings.push("CEF compatibility wrapper active for this launcher.".to_string());
+    }
+
+    Ok(SharpLaunchResult { pid, game_type, pipeline, exe_path: exe_path.to_string_lossy().to_string(), warnings })
+}
+
+fn maybe_deploy_cef_compat_wrapper(app: &SharpApp, exe_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    if !should_apply_cef_compat(app, exe_path) {
+        return Ok(false);
+    }
+
+    let stem = exe_path.file_stem().and_then(|stem| stem.to_str()).ok_or("CEF app executable has no stem")?;
+    if stem.ends_with("_real") {
+        return Ok(false);
+    }
+    let real_path = exe_path.with_file_name(format!("{}_real.exe", stem));
+    let marker = exe_path.with_file_name(format!(".ms_cef_compat_{}", stem));
+
+    let original_data = fs::read(exe_path).or_else(|_| fs::read(&real_path))?;
+    let is_64_bit = crate::mtsp::pe::parse_pe_imports(&original_data).map(|info| info.is_64_bit).unwrap_or(false);
+    let wrapper = find_bundled_cef_compat_wrapper(is_64_bit).ok_or("CEF compatibility wrapper is missing")?;
+    let wrapper_size = fs::metadata(&wrapper).map(|metadata| metadata.len()).unwrap_or(0);
+    if wrapper_size == 0 || wrapper_size > 512 * 1024 {
+        return Err("CEF compatibility wrapper asset is invalid".into());
+    }
+
+    if real_path.exists() {
+        redeploy_cef_compat_wrapper_if_needed(exe_path, &real_path, &wrapper)?;
+        fs::write(&marker, "deployed")?;
+        return Ok(true);
+    }
+
+    fs::rename(exe_path, &real_path)?;
+    if let Err(error) = fs::copy(&wrapper, exe_path) {
+        let _ = fs::rename(&real_path, exe_path);
+        return Err(error.into());
+    }
+    fs::write(&marker, "deployed")?;
+    Ok(true)
+}
+
+fn redeploy_cef_compat_wrapper_if_needed(
+    exe_path: &Path,
+    real_path: &Path,
+    wrapper_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Ok(current_exe) = fs::read(exe_path) else {
+        fs::copy(wrapper_path, exe_path)?;
+        return Ok(());
+    };
+    let wrapper_data = fs::read(wrapper_path)?;
+    if current_exe == wrapper_data {
+        return Ok(());
+    }
+
+    if current_exe.len() > 512 * 1024 {
+        fs::copy(exe_path, real_path)?;
+    }
+    fs::copy(wrapper_path, exe_path)?;
+    Ok(())
+}
+
+fn should_apply_cef_compat(app: &SharpApp, exe_path: &Path) -> bool {
+    if app.bottle_id.is_none() {
+        return false;
+    }
+    let name = app.name.to_ascii_lowercase();
+    let exe_name = exe_path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    if exe_name.ends_with("_real.exe") || exe_name.contains("unins") || exe_name.contains("setup") {
+        return false;
+    }
+    let likely_launcher = crate::mtsp::recipe::is_likely_launcher_exe(exe_path)
+        || name.contains("launcher")
+        || name.contains("ea app")
+        || name.contains("ubisoft")
+        || name.contains("battle.net")
+        || name.contains("epic games")
+        || name.contains("rockstar");
+    likely_launcher && (executable_contains_cef_markers(exe_path) || install_dir_contains_cef_markers(exe_path))
+}
+
+fn executable_contains_cef_markers(exe_path: &Path) -> bool {
+    let Ok(data) = fs::read(exe_path) else {
+        return false;
+    };
+    let haystack = String::from_utf8_lossy(&data).to_ascii_lowercase();
+    [
+        "cef initialized",
+        "cef version",
+        "chromium",
+        "chrome-runtime",
+        "launcherappbrowser",
+        "cefclient",
+        "libcef",
+        "electron",
+        "app.asar",
+        "webview2",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
+}
+
+fn install_dir_contains_cef_markers(exe_path: &Path) -> bool {
+    let Some(dir) = exe_path.parent() else {
+        return false;
+    };
+    WalkDir::new(dir).max_depth(3).into_iter().filter_map(Result::ok).any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            name.as_str(),
+            "libcef.dll"
+                | "chrome_elf.dll"
+                | "chrome_100_percent.pak"
+                | "chrome_200_percent.pak"
+                | "vk_swiftshader.dll"
+                | "v8_context_snapshot.bin"
+                | "resources.pak"
+                | "app.asar"
+                | "msedgewebview2.exe"
+        )
     })
+}
+
+fn find_bundled_cef_compat_wrapper(is_64_bit: bool) -> Option<PathBuf> {
+    let filename = if is_64_bit { "cefcompat-wrapper64.exe" } else { "cefcompat-wrapper32.exe" };
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        let wrapper = resources.join("bundles").join(filename);
+        if wrapper.exists() {
+            return Some(wrapper);
+        }
+    }
+
+    let dev = PathBuf::from("app").join("bundles").join(filename);
+    if dev.exists() {
+        return Some(dev);
+    }
+
+    let src_rust_dev = PathBuf::from("..").join("bundles").join(filename);
+    if src_rust_dev.exists() {
+        return Some(src_rust_dev);
+    }
+
+    None
 }
 
 pub fn diagnose_app(
