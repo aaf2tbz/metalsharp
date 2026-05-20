@@ -103,6 +103,12 @@ The next runtime rebuild should stop asking `mscompatdb` to find private Wine in
 
 The backend probe already checks for those symbols in `ntdll.so` as `hookContractReady`. Current runtime expectation is `false`; a rebuilt Wine runtime should flip that field before protected-launch behavior is interpreted as an anti-cheat module problem.
 
+Implementation seed:
+
+- `src/wine/ntdll_mscompatdb_contract.c` is the C source template to compile into the patched Wine `ntdll.so`.
+- The Wine build must add `include/` to the compiler include path so `metalsharp/MscompatdbHookContract.h` resolves.
+- The exported functions must be visible from Mach-O `nm -gU` or the backend probe will keep reporting `hookContractReady=false`.
+
 ## Phase 4: macOS Runtime Substrate Decision
 
 Choose the truthful compatibility path:
