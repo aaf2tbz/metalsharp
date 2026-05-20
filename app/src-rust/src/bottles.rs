@@ -858,7 +858,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     }
 
     let actions = component_actions(&manifest.installed_components);
-    let component_sources = component_source_policies(&manifest.installed_components, manifest.arch);
+    let component_sources = component_source_policies_for_manifest(&manifest);
     let ready = checks
         .iter()
         .filter(|check| check.id != "app_detection" && check.id != "game_runtime_assets" && check.id != "launch_log")
@@ -1052,6 +1052,7 @@ pub fn repair_component(
     let prefix = PathBuf::from(&manifest.prefix_path);
     fs::create_dir_all(&prefix)?;
     fs::create_dir_all(bottle_logs_dir(id))?;
+    refresh_manifest_runtime_views(&mut manifest);
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
 
     if manifest
@@ -1146,7 +1147,9 @@ pub fn repair_component(
         });
     }
 
-    let Some(installer) = resolve_component_installer(component_id, manifest.arch) else {
+    let Some(installer) = resolve_component_installer(component_id, manifest.arch)
+        .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
+    else {
         mark_component_state(&mut manifest, component_id, ComponentState::Missing);
         manifest.health = BottleHealth::NeedsRepair;
         manifest.updated_at = timestamp_secs();
@@ -1747,6 +1750,12 @@ fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<Ru
             "physx" => {
                 ids.insert("physx".to_string());
             },
+            "easyanticheat" | "easyanticheat_eos" => {
+                ids.insert("easyanticheat_eos".to_string());
+            },
+            "battleye" => {
+                ids.insert("battleye".to_string());
+            },
             "installscript" => {
                 for id in components_from_installscript(Path::new(&asset.source_path)) {
                     ids.insert(id);
@@ -1907,6 +1916,24 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             if system32.join("PhysXLoader.dll").exists()
                 || syswow64.join("PhysXLoader.dll").exists()
                 || drive_c.join("Program Files (x86)").join("NVIDIA Corporation").join("PhysX").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "easyanticheat_eos" => {
+            if drive_c.join("Program Files (x86)").join("EasyAntiCheat_EOS").exists()
+                || drive_c.join("Program Files").join("EasyAntiCheat_EOS").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "battleye" => {
+            if drive_c.join("Program Files (x86)").join("Common Files").join("BattlEye").exists()
+                || drive_c.join("Program Files").join("Common Files").join("BattlEye").exists()
             {
                 ComponentState::Installed
             } else {
@@ -2163,6 +2190,93 @@ fn resolve_component_installer_from_roots(
     Some(ComponentInstaller { path: executable, args })
 }
 
+fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
+    let mut candidates = manifest.runtime_assets.iter().filter(|asset| {
+        asset.present
+            && is_game_runtime_installer_candidate(asset, component_id)
+            && match component_id {
+                "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
+                "battleye" => asset.kind == "battleye",
+                _ => false,
+            }
+    });
+    let preferred =
+        candidates.find(|asset| asset.source_path.to_ascii_lowercase().ends_with(".bat")).or_else(|| {
+            manifest.runtime_assets.iter().find(|asset| {
+                asset.present
+                    && is_game_runtime_installer_candidate(asset, component_id)
+                    && match component_id {
+                        "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
+                        "battleye" => asset.kind == "battleye",
+                        _ => false,
+                    }
+            })
+        })?;
+    let path = PathBuf::from(&preferred.source_path);
+    if component_id == "easyanticheat_eos" {
+        if let Some(installer) = easyanticheat_eos_installer_from_asset(&path) {
+            return Some(installer);
+        }
+    }
+    Some(ComponentInstaller { path, args: Vec::new() })
+}
+
+fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id: &str) -> bool {
+    let path = Path::new(&asset.source_path);
+    let lower_name = path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let Some(extension) = path.extension().map(|ext| ext.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
+    if matches!(extension.as_str(), "bat" | "cmd" | "msi") {
+        return true;
+    }
+    if extension != "exe" {
+        return false;
+    }
+    match component_id {
+        "easyanticheat_eos" => lower_name.contains("setup") || lower_name.contains("install"),
+        "battleye" => {
+            lower_name.contains("setup")
+                || lower_name.contains("install")
+                || lower_name == "beservice.exe"
+                || lower_name == "beservice_x64.exe"
+        },
+        _ => false,
+    }
+}
+
+fn easyanticheat_eos_installer_from_asset(path: &Path) -> Option<ComponentInstaller> {
+    let lower = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if lower.ends_with(".exe") {
+        return Some(ComponentInstaller { path: path.to_path_buf(), args: Vec::new() });
+    }
+    if !(lower.ends_with(".bat") || lower.ends_with(".cmd")) {
+        return None;
+    }
+    let script = fs::read_to_string(path).ok()?;
+    for line in script.lines() {
+        let trimmed = line.trim();
+        let lower_line = trimmed.to_ascii_lowercase();
+        if !lower_line.contains("easyanticheat_eos_setup.exe") || !lower_line.contains(" install ") {
+            continue;
+        }
+        let product_id = trimmed.split_whitespace().last()?.trim_matches('"').to_string();
+        if let Some(setup) = find_case_insensitive_sibling(path.parent()?, "easyanticheat_eos_setup.exe") {
+            return Some(ComponentInstaller { path: setup, args: vec!["install".to_string(), product_id] });
+        }
+    }
+    None
+}
+
+fn find_case_insensitive_sibling(parent: &Path, file_name: &str) -> Option<PathBuf> {
+    let target = file_name.to_ascii_lowercase();
+    fs::read_dir(parent)
+        .ok()?
+        .flatten()
+        .find(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase() == target)
+        .map(|entry| entry.path())
+}
+
 fn first_existing(paths: &[PathBuf]) -> Option<PathBuf> {
     paths.iter().find(|path| path.exists()).cloned()
 }
@@ -2191,6 +2305,16 @@ fn launch_component_installer(
     let mut cmd = Command::new(&wine);
     if installer.path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("msi")).unwrap_or(false) {
         cmd.arg("msiexec").arg("/i").arg(&installer.path);
+    } else if installer
+        .path
+        .extension()
+        .map(|ext| {
+            let ext = ext.to_string_lossy();
+            ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd")
+        })
+        .unwrap_or(false)
+    {
+        cmd.arg("cmd").arg("/c").arg(format!("call \"{}\"", wine_z_drive_path(&installer.path)));
     } else {
         cmd.arg(&installer.path);
     }
@@ -2283,6 +2407,14 @@ fn run_wine_reg_set_windows_version(
     Ok(child.id())
 }
 
+fn wine_z_drive_path(path: &Path) -> String {
+    if path.is_absolute() {
+        format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
+    } else {
+        path.to_string_lossy().replace('/', "\\")
+    }
+}
+
 fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
     components
         .iter()
@@ -2303,8 +2435,32 @@ fn components_ready(components: &[RuntimeComponent]) -> bool {
     components.iter().all(component_ready)
 }
 
-fn component_source_policies(components: &[RuntimeComponent], arch: BottleArch) -> Vec<ComponentSourcePolicy> {
-    components.iter().map(|component| component_source_policy(&component.id, arch)).collect()
+fn component_source_policies_for_manifest(manifest: &BottleManifest) -> Vec<ComponentSourcePolicy> {
+    manifest
+        .installed_components
+        .iter()
+        .map(|component| {
+            if matches!(component.id.as_str(), "easyanticheat_eos" | "battleye") {
+                if let Some(installer) = resolve_game_runtime_asset_installer(manifest, &component.id) {
+                    return ComponentSourcePolicy {
+                        id: component.id.clone(),
+                        source: "game_runtime_asset".to_string(),
+                        available: true,
+                        detail: match component.id.as_str() {
+                            "easyanticheat_eos" => {
+                                "Uses the game-local Easy Anti-Cheat EOS setup asset shipped with this install"
+                            },
+                            "battleye" => "Uses the game-local BattlEye setup/service asset shipped with this install",
+                            _ => "Uses a game-local runtime installer asset",
+                        }
+                        .to_string(),
+                        path: Some(installer.path.to_string_lossy().to_string()),
+                    };
+                }
+            }
+            component_source_policy(&component.id, manifest.arch)
+        })
+        .collect()
 }
 
 fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy {
@@ -2379,6 +2535,8 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
             "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
+            "easyanticheat_eos" => "Uses game-local Easy Anti-Cheat EOS setup assets when present",
+            "battleye" => "Uses game-local BattlEye setup/service assets when present",
             _ => "No external installer source required or source is not yet mapped",
         }
         .to_string(),
@@ -2401,6 +2559,8 @@ fn component_action_detail(id: &str) -> String {
         "openal" => "Install OpenAL audio runtime".to_string(),
         "xna" => "Install XNA Framework 4.0 runtime".to_string(),
         "physx" => "Install NVIDIA PhysX legacy runtime".to_string(),
+        "easyanticheat_eos" => "Run the game-local Easy Anti-Cheat EOS service installer".to_string(),
+        "battleye" => "Run the game-local BattlEye service installer".to_string(),
         "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
         "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
@@ -2861,13 +3021,15 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let lower_name = name.to_ascii_lowercase();
         let lower_path = path.to_string_lossy().to_ascii_lowercase();
-        let kind = if lower_path.contains("_commonredist") || lower_path.contains("commonredist") {
-            classify_redist_asset(&lower_name)
-        } else if lower_name == "installscript.vdf" {
-            Some("installscript".to_string())
-        } else {
-            None
-        };
+        let kind = classify_game_runtime_asset(&lower_name, &lower_path).or_else(|| {
+            if lower_path.contains("_commonredist") || lower_path.contains("commonredist") {
+                classify_redist_asset(&lower_name)
+            } else if lower_name == "installscript.vdf" {
+                Some("installscript".to_string())
+            } else {
+                None
+            }
+        });
         let Some(kind) = kind else {
             continue;
         };
@@ -2883,6 +3045,25 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
     }
     assets.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.source_path.cmp(&b.source_path)));
     assets
+}
+
+fn classify_game_runtime_asset(lower_name: &str, lower_path: &str) -> Option<String> {
+    if lower_path.contains("easyanticheat") || lower_name.contains("easyanticheat") {
+        if lower_path.contains("easyanticheat_eos") || lower_name.contains("eos") {
+            Some("easyanticheat_eos".to_string())
+        } else {
+            Some("easyanticheat".to_string())
+        }
+    } else if lower_path.contains("battleye")
+        || lower_path.contains("battle-eye")
+        || lower_name.contains("beservice")
+        || lower_name.contains("beclient")
+        || lower_name.contains("bedaisy")
+    {
+        Some("battleye".to_string())
+    } else {
+        None
+    }
 }
 
 fn classify_redist_asset(lower_name: &str) -> Option<String> {
@@ -2928,6 +3109,7 @@ fn is_probable_app_exe(name: &str) -> bool {
         "msedge_proxy.exe",
         "msedge_pwa_launcher.exe",
         "msedgewebview2.exe",
+        "upc.exe",
         "uc_connector.exe",
     ];
     lower.ends_with(".exe")
@@ -2938,8 +3120,12 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("unins")
         && !lower.contains("vcredist")
         && !lower.contains("crash")
+        && !lower.contains("extension")
         && !lower.contains("helper")
+        && !lower.contains("service")
+        && !lower.contains("shareplay")
         && !lower.contains("update")
+        && !lower.contains("webcore")
 }
 
 fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
@@ -3370,7 +3556,13 @@ mod tests {
         assert!(!is_probable_app_exe("wordpad.exe"));
         assert!(!is_probable_app_exe("msedgewebview2.exe"));
         assert!(!is_probable_app_exe("MicrosoftEdgeWebview_X64_148.0.3967.70.exe"));
+        assert!(!is_probable_app_exe("UplayService.exe"));
+        assert!(!is_probable_app_exe("UplayWebCore.exe"));
+        assert!(!is_probable_app_exe("UpcElevationService.exe"));
+        assert!(!is_probable_app_exe("UbisoftExtension.exe"));
+        assert!(!is_probable_app_exe("upc.exe"));
         assert!(is_probable_app_exe("MinecraftLauncher.exe"));
+        assert!(is_probable_app_exe("UbisoftConnect.exe"));
     }
 
     #[test]
@@ -3378,10 +3570,22 @@ mod tests {
         let dir = test_dir("game-redists");
         let redist = dir.join("_CommonRedist").join("vcredist").join("2019");
         let openal = dir.join("_CommonRedist").join("OpenAL");
+        let eac = dir.join("Game").join("EasyAntiCheat");
+        let battleye = dir.join("BattlEye");
         fs::create_dir_all(&redist).expect("create redist dir");
         fs::create_dir_all(&openal).expect("create openal dir");
+        fs::create_dir_all(&eac).expect("create eac dir");
+        fs::create_dir_all(&battleye).expect("create battleye dir");
         fs::write(redist.join("VC_redist.x86.exe"), b"redist").expect("write vcredist");
         fs::write(openal.join("oalinst.exe"), b"openal").expect("write openal");
+        fs::write(eac.join("EasyAntiCheat_EOS_Setup.exe"), b"eac").expect("write eac setup");
+        fs::write(
+            eac.join("install_easyanticheat_eos_setup.bat"),
+            b"call EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e",
+        )
+        .expect("write eac installer script");
+        fs::write(battleye.join("Install_BattlEye.bat"), b"call BEService.exe").expect("write battleye script");
+        fs::write(battleye.join("BEService.exe"), b"battleye").expect("write battleye service");
         fs::write(
             redist.join("installscript.vdf"),
             br#"
@@ -3405,12 +3609,77 @@ mod tests {
         assert!(assets.iter().any(|asset| asset.kind == "vcredist"));
         assert!(assets.iter().any(|asset| asset.kind == "openal"));
         assert!(assets.iter().any(|asset| asset.kind == "installscript"));
+        assert!(assets.iter().any(|asset| asset.kind == "easyanticheat_eos"));
+        assert!(assets.iter().any(|asset| asset.kind == "battleye"));
         assert!(ids.contains(&"vcrun2019"));
         assert!(ids.contains(&"openal"));
         assert!(ids.contains(&"directx_jun2010"));
         assert!(ids.contains(&"xna"));
         assert!(ids.contains(&"physx"));
+        assert!(ids.contains(&"easyanticheat_eos"));
+        assert!(ids.contains(&"battleye"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn easyanticheat_eos_installer_uses_game_script_install_args() {
+        let dir = test_dir("eac-eos-installer");
+        fs::create_dir_all(&dir).expect("create eac dir");
+        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
+        let script = dir.join("install_easyanticheat_eos_setup.bat");
+        fs::write(&setup, b"eac").expect("write eac setup");
+        fs::write(
+            &script,
+            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e\r\npause\r\n",
+        )
+        .expect("write eac script");
+
+        let installer = easyanticheat_eos_installer_from_asset(&script).expect("resolve eac installer");
+
+        assert_eq!(installer.path, setup);
+        assert_eq!(installer.args, vec!["install".to_string(), "773d3a68f76f4b2ebebc5b4127bbad3e".to_string()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn game_runtime_asset_repair_ignores_non_installer_dlls() {
+        let manifest = BottleManifest {
+            id: "steam_123".into(),
+            name: "Game 123".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(123),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            installed_components: vec![RuntimeComponent { id: "battleye".into(), state: ComponentState::Missing }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![BottleRuntimeAsset {
+                id: "battleye:BEClient_x64.dll".into(),
+                kind: "battleye".into(),
+                source_path: "/tmp/BattlEye/BEClient_x64.dll".into(),
+                present: true,
+            }],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        assert!(resolve_game_runtime_asset_installer(&manifest, "battleye").is_none());
+    }
+
+    #[test]
+    fn wine_z_drive_path_quotes_unix_script_paths_for_cmd() {
+        assert_eq!(
+            wine_z_drive_path(Path::new("/Volumes/AverySSD/Game/BattlEye/Install_BattlEye.bat")),
+            "Z:\\Volumes\\AverySSD\\Game\\BattlEye\\Install_BattlEye.bat"
+        );
     }
 
     #[test]

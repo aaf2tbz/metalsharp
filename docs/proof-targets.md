@@ -203,3 +203,58 @@ Failure classification:
 Next action:
 
 Do not use BERCon as proof that the BattlEye runtime is installed. Pick a real Steam title that ships BattlEye/BEService assets, then capture the launch-time service behavior from the game bottle and Launch Doctor.
+
+### 2026-05-20: Ubisoft Connect installer artifact
+
+Observed result:
+
+- `~/Downloads/UbisoftConnectInstaller.exe` is a PE32 GUI installer.
+- `file` identifies it as a Nullsoft Installer self-extracting archive.
+- SHA-256: `7a6942ef2c96ed516b4e06256b03ac0bb994de22702e944f4ebf2c2507f31a24`
+- Fresh proof bottle: `~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613`
+- Install completed enough to stage `UbisoftConnect.exe` under `Program Files (x86)/Ubisoft/Ubisoft Game Launcher/`.
+- The launcher auto-started as `upc.exe uplay://open`, then `UplayCrashReporter.exe` appeared.
+- Bottle Doctor still reports missing `corefonts` and `webview2`.
+- App detection initially surfaced launcher plumbing (`UplayService`, `UplayWebCore`, `UpcElevationService`, `upc.exe`), so the filter now excludes those helpers and preserves `UbisoftConnect.exe`.
+
+Failure classification:
+
+- `nsis_bootstrapper`
+- `launcher_started_then_crash_reporter`
+- `webview2_missing_after_install`
+- `app_detection_helper_filter`
+
+Evidence:
+
+- `~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/logs/launch-1779258414.log`
+- `~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/prefix/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/logs/launcher_log.txt`
+- `~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/prefix/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/logs/client_crash_reporter.txt`
+
+Next action:
+
+Repair `corefonts` and `webview2` in the fresh proof bottle, relaunch `UbisoftConnect.exe` directly, then compare the crash path against EA's `INST-14-1603`. The useful signal is whether Ubisoft fails at WebView/CEF rendering, service/elevation, or post-install launcher launch.
+
+### 2026-05-20: Game-local anti-cheat installer scan
+
+Observed local Steam installs:
+
+- `/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/easyanticheat_eos_setup.exe`
+- `/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat`
+
+The Elden Ring install script runs:
+
+```text
+EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e
+```
+
+No real BattlEye service/runtime payload was found in the current AverySSD Steam library scan. `BERCon.exe` remains excluded because it is an RCon client, not a service installer.
+
+Implementation result:
+
+- Steam game bottle runtime asset detection now sees EAC/BattlEye assets outside `_CommonRedist`.
+- Bottle Doctor can report those assets as `game_runtime_asset` component sources.
+- Component repair can resolve game-local EAC/BattlEye installers instead of looking only in global redistributable folders.
+
+Next action:
+
+Use dry-run repair against `steam_1245620` first, then attempt an actual EAC EOS install only after the Doctor resolves the expected local asset path.

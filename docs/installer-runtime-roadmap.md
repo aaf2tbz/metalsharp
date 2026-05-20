@@ -1,6 +1,6 @@
 # MetalSharp Assorted Installer Runtime Roadmap
 
-Status: Phase 1 active
+Status: Phase 9 active
 
 This roadmap tracks the work needed to make `Install Windows Program` reliable for assorted Windows installers by treating installers as bottle-managed programs with installer-specific runtime prep, logs, repair actions, and post-install app discovery.
 
@@ -144,17 +144,27 @@ For EA, the immediate next repair path is: fresh WebView bottle, bare Wine boots
 
 Do not use random downloads as proof unless they are actual runtime/service assets.
 
+Implementation checkpoint:
+
+- Steam game bottles now scan ordinary game folders, not just `_CommonRedist`, for Easy Anti-Cheat and BattlEye setup/service assets.
+- Runtime assets infer bottle components for `easyanticheat_eos` and `battleye`.
+- Bottle Doctor source policies can now report a game-local installer asset path for those components.
+- Component repair resolves game-local EAC/BattlEye assets before reporting an asset as missing.
+- EAC EOS `.bat` installers are parsed into direct `EasyAntiCheat_EOS_Setup.exe install <product-id>` calls so the repair path avoids script pauses.
+
 For BattlEye:
 
 - `BERCon.exe` is only an RCon client
 - real proof needs a Steam title that ships BattlEye
 - inspect game folder for `BEService.exe`, `BEClient*.dll`, launcher bootstrap, and service install commands
 - test what fails: service creation, driver expectation, network auth, Unix runtime absence, or vendor block
+- current AverySSD Steam scan has not found a real BattlEye service/runtime payload yet
 
 For EAC:
 
-- pick a Proton-supported title first
-- verify whether the Unix EAC assets exist
+- Elden Ring is the first local game proof target because it ships `EasyAntiCheat/easyanticheat_eos_setup.exe`
+- dry-run component repair before attempting an actual service install
+- verify whether Unix EAC assets exist before treating online anti-cheat as supportable
 - compare what Proton expects versus what macOS/Wine can provide
 
 ## Phase 10: UI Productization
@@ -182,10 +192,14 @@ Likely runtime: .NET custom action or MSI service behavior.
 
 1. Fresh EA bottle with the bare-Wine/WebView/`dotnet48` route.
 2. Inspect whether the direct MSI log now has content.
-3. Run Ubisoft Connect next because it is Steam-relevant and likely WebView/MSI-adjacent.
-4. Run Battle.net or Epic after that.
-5. Save BattlEye for a real Steam title, because `BERCon.exe` is not the runtime installer.
+3. Ubisoft Connect fresh proof installed launcher files, detected `UbisoftConnect.exe`, then hit the crash-reporter path with `corefonts` and `webview2` still pending.
+4. Elden Ring EAC EOS dry-run repair resolves the game-local setup executable through `steam_1245620`.
+5. Repair Ubisoft `corefonts` and `webview2`, relaunch `UbisoftConnect.exe`, and capture whether the next failure is rendering, service/elevation, or auth.
+6. Run Battle.net or Epic after that.
+7. Save BattlEye for a real Steam title, because `BERCon.exe` is not the runtime installer.
 
 ## Implementation Notes
 
 - `POST /sharp-library/install` accepts `freshBottle: true` for proof runs that must avoid stale prefix state from a previous run of the same installer path.
+- Steam game runtime asset detection now covers `_CommonRedist`, `installscript.vdf`, `EasyAntiCheat`, `EasyAntiCheat_EOS`, `BEService`, `BEClient`, and `BEDaisy` markers.
+- Anti-cheat proof should begin with Doctor/dry-run evidence, because running service installers can leave stale Wine service state behind.

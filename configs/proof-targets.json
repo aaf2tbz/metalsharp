@@ -146,6 +146,45 @@
       "next_action": "Inspect Wine MSI custom-action service/elevation behavior around per-machine package cache writes; WebView2 is now installed in the proof bottle but EA still fails before the direct MSI log writes content."
     },
     {
+      "id": "ubisoft-connect",
+      "group": "launcher",
+      "name": "Ubisoft Connect",
+      "source": "local_windows_installer",
+      "appid": null,
+      "installer_path": "~/Downloads/UbisoftConnectInstaller.exe",
+      "bottle_id": "installer_61e534a6d260c814_fresh_1779258414613",
+      "compatdata_path": null,
+      "runtime_profile": "webview",
+      "launch_pipeline": "wine_bare",
+      "prefix_path": "~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/prefix",
+      "expected_route": "webview",
+      "install_result": "yes",
+      "launcher_open_result": "partial",
+      "login_result": "untested",
+      "child_game_process_result": "untested",
+      "game_launch_result": "untested",
+      "graphics_result": "needs_evidence",
+      "audio_result": "needs_evidence",
+      "input_result": "needs_evidence",
+      "online_session_result": "untested",
+      "anti_cheat_status": "needs_evidence",
+      "failure_classification": [
+        "launcher_started_then_crash_reporter",
+        "webview2_missing_after_install",
+        "app_detection_helper_filter"
+      ],
+      "failure_evidence": [
+        "~/Downloads/UbisoftConnectInstaller.exe: PE32 GUI Intel 80386, Nullsoft Installer self-extracting archive",
+        "sha256: 7a6942ef2c96ed516b4e06256b03ac0bb994de22702e944f4ebf2c2507f31a24",
+        "~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/logs/launch-1779258414.log",
+        "~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/prefix/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/logs/launcher_log.txt",
+        "~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613/prefix/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/logs/client_crash_reporter.txt",
+        "detected app: UbisoftConnect.exe",
+        "runtime actions still needed: corefonts, webview2"
+      ],
+      "next_action": "Repair corefonts and WebView2 in this fresh bottle, relaunch UbisoftConnect.exe directly, and verify whether the crash reporter path is caused by the missing WebView runtime or by a launcher service/elevation expectation."
+    },
+    {
       "id": "portal-2",
       "group": "steam_runtime",
       "name": "Portal 2",
@@ -171,6 +210,37 @@
       "failure_classification": [],
       "failure_evidence": [],
       "next_action": "Launch through Steam game bottle and confirm compatdata log/route."
+    },
+    {
+      "id": "elden-ring-eac-eos",
+      "group": "anti_cheat",
+      "name": "Elden Ring Easy Anti-Cheat EOS",
+      "source": "wine_steam_install",
+      "appid": 1245620,
+      "installer_path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
+      "bottle_id": "steam_1245620",
+      "compatdata_path": "~/.metalsharp/compatdata/1245620/metalsharp-compatdata.json",
+      "runtime_profile": "m11",
+      "launch_pipeline": "m11",
+      "prefix_path": "~/.metalsharp/prefix-steam",
+      "expected_route": "game_runtime_asset",
+      "install_result": "needs_evidence",
+      "launcher_open_result": "not_applicable",
+      "login_result": "not_applicable",
+      "child_game_process_result": "untested",
+      "game_launch_result": "needs_evidence",
+      "graphics_result": "m11",
+      "audio_result": "needs_evidence",
+      "input_result": "needs_evidence",
+      "online_session_result": "blocked",
+      "anti_cheat_status": "game_local_eac_eos_assets_detected",
+      "failure_classification": [],
+      "failure_evidence": [
+        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/easyanticheat_eos_setup.exe",
+        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
+        "install script command: EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e"
+      ],
+      "next_action": "Use Launch Doctor and dry-run component repair to verify the Steam game bottle resolves the game-local EAC setup asset before attempting an actual service install."
     },
     {
       "id": "eac-proton-supported-title",
