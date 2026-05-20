@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 3;
+pub const MIGRATE_SCHEMA_VERSION: u64 = 3;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
@@ -25,7 +25,11 @@ fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str
         "error": error,
         "version": MIGRATE_VERSION,
     });
-    let _ = fs::write(migrate_progress_path(), serde_json::to_string(&data).unwrap_or_default());
+    let path = migrate_progress_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, serde_json::to_string(&data).unwrap_or_default());
 }
 
 pub fn is_migrating() -> bool {
@@ -169,7 +173,17 @@ pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>
     }
 
     std::thread::spawn(|| {
-        run_migration();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run_migration));
+        if result.is_err() {
+            write_migrate_progress(
+                "error",
+                0,
+                0,
+                "Migration crashed before completion. Restart MetalSharp and run setup repair.",
+                Some("migration_panic"),
+            );
+            log_to_file("Migration crashed before completion");
+        }
         MIGRATING.store(false, Ordering::SeqCst);
     });
 
@@ -468,12 +482,8 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
 }
 
 fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
-    if preserved.prefix_steam_tmp.exists() {
+    if restore_preserved_dir(ms_dir, "prefix-steam", &preserved.prefix_steam_tmp) {
         let dst = ms_dir.join("prefix-steam");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
         if !dosdevices.exists() {
@@ -489,37 +499,10 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         }
     }
 
-    if preserved.games_tmp.exists() {
-        let dst = ms_dir.join("games");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.games_tmp, &dst);
-    }
-
-    if preserved.sharp_library_tmp.exists() {
-        let dst = ms_dir.join("sharp-library");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.sharp_library_tmp, &dst);
-    }
-
-    if preserved.bottles_tmp.exists() {
-        let dst = ms_dir.join("bottles");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.bottles_tmp, &dst);
-    }
-
-    if preserved.compatdata_tmp.exists() {
-        let dst = ms_dir.join("compatdata");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.compatdata_tmp, &dst);
-    }
+    restore_preserved_dir(ms_dir, "games", &preserved.games_tmp);
+    restore_preserved_dir(ms_dir, "sharp-library", &preserved.sharp_library_tmp);
+    restore_preserved_dir(ms_dir, "bottles", &preserved.bottles_tmp);
+    restore_preserved_dir(ms_dir, "compatdata", &preserved.compatdata_tmp);
 
     if let Some(ref data) = preserved.setup_json {
         let _ = fs::write(ms_dir.join("setup.json"), data);
@@ -530,6 +513,36 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         let _ = fs::create_dir_all(&cache_dir);
         let _ = fs::write(cache_dir.join("steam_config.json"), data);
     }
+}
+
+fn restore_preserved_dir(ms_dir: &PathBuf, name: &str, preserved_path: &PathBuf) -> bool {
+    if !preserved_path.exists() {
+        return false;
+    }
+
+    let dst = ms_dir.join(name);
+    if dir_has_entries(&dst) {
+        log_to_file(&format!("Migration restore skipped {} because live data is already present", name));
+        return true;
+    }
+
+    if dst.exists() {
+        let _ = fs::remove_dir_all(&dst);
+    }
+
+    if fs::rename(preserved_path, &dst).is_ok() {
+        log_to_file(&format!("Migration restored {} by moving preserved data", name));
+        return true;
+    }
+
+    let _ = fs::create_dir_all(&dst);
+    copy_dir_recursive(preserved_path, &dst);
+    log_to_file(&format!("Migration restored {} by copying preserved data", name));
+    true
+}
+
+fn dir_has_entries(path: &Path) -> bool {
+    fs::read_dir(path).map(|mut entries| entries.next().is_some()).unwrap_or(false)
 }
 
 fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
