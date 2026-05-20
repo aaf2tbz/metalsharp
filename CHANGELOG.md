@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.33.29 - 2026-05-20
+
+Post-install Steam handoff and migration restore follow-up.
+
+### Changed
+
+- **Protected Steam handoff** - existing Wine Steam sessions now stay alive for protected `steam://run` launches instead of being restarted solely to inherit per-game environment.
+- **Setup metadata** - completed fresh setup now records the current runtime migration schema and version so future migrations have an explicit baseline.
+
+### Fixed
+
+- **Migration restore stall** - preserved prefixes, games, bottles, compatdata, and Sharp Library state are moved back when missing and skipped when live data already exists, avoiding long recursive copy loops over active data.
+- **Migration crash recovery** - migration progress now records an error if the background migration thread panics, preventing the UI from polling forever.
+- **Migration UI polling** - repeated backend failures or stale progress now surface as visible errors instead of silent indefinite polling.
+
 ## v0.33.28 - 2026-05-20
 
 WTMKT Phase 1 runtime hook and Wine 11.9 readiness follow-up.
