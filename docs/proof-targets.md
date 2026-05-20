@@ -258,3 +258,49 @@ Implementation result:
 Next action:
 
 Use dry-run repair against `steam_1245620` first, then attempt an actual EAC EOS install only after the Doctor resolves the expected local asset path.
+
+### 2026-05-20: Rubicon EAC EOS proof
+
+Observed local Steam install:
+
+- Appid: `1888160`
+- Game: `ARMORED CORE VI FIRES OF RUBICON`
+- Install path: `/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON`
+
+Important correction:
+
+- Rubicon ships Easy Anti-Cheat EOS, not BattlEye.
+- No `BEService`, `BEClient`, `BEDaisy`, or BattlEye install script was found in the Rubicon game folder.
+
+Detected EAC assets:
+
+- `/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/easyanticheat_eos_setup.exe`
+- `/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat`
+- `/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/eacchecker.bat`
+
+The install script runs:
+
+```text
+EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709
+```
+
+Implementation result:
+
+- The first dry-run exposed a resolver bug: it picked `eacchecker.bat` before the real install script.
+- Resolver now parses EAC scripts and only accepts a script when it contains a real `EasyAntiCheat_EOS_Setup.exe install <product-id>` command.
+- Runtime asset paths are canonicalized before storage, because Wine rejected `//Volumes//...` installer paths with `ShellExecuteEx failed: File not found`.
+- After normalization, `steam_1888160` dry-run repair resolved the canonical EAC setup executable.
+- Actual repair started `easyanticheat_eos_setup.exe install 789399aada914e66bb3c3facebc5d709` in `~/.metalsharp/prefix-steam`.
+- EAC service log reports an elevation relaunch and `Operation 1 completed successfully`.
+- `~/.metalsharp/prefix-steam/drive_c/Program Files (x86)/EasyAntiCheat_EOS/EasyAntiCheat_EOS.exe` now exists.
+- Bottle Doctor for `steam_1888160` reports `Bottle runtime checks passed`.
+
+Evidence:
+
+- `~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259468.log`
+- `~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259573.log`
+- `~/.metalsharp/prefix-steam/drive_c/users/alexmondello/AppData/Roaming/EasyAntiCheat/service.log`
+
+Next action:
+
+Launch Rubicon through the Steam game bottle and capture whether the game reaches EAC bootstrap, offline mode, or an online/vendor block.

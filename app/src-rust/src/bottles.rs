@@ -573,7 +573,7 @@ pub fn ensure_steam_game_bottle(
     manifest.runtime_profile = runtime_profile;
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
-    manifest.game_install_path = game_dir.map(|dir| dir.to_string_lossy().to_string());
+    manifest.game_install_path = game_dir.map(normalized_existing_path_string);
     manifest.runtime_assets = game_dir.map(detect_game_runtime_assets).unwrap_or_default();
     manifest.installed_components =
         merge_components(manifest.installed_components, infer_components_from_runtime_assets(&manifest.runtime_assets));
@@ -2191,34 +2191,49 @@ fn resolve_component_installer_from_roots(
 }
 
 fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
-    let mut candidates = manifest.runtime_assets.iter().filter(|asset| {
-        asset.present
-            && is_game_runtime_installer_candidate(asset, component_id)
-            && match component_id {
-                "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
-                "battleye" => asset.kind == "battleye",
-                _ => false,
-            }
-    });
-    let preferred =
-        candidates.find(|asset| asset.source_path.to_ascii_lowercase().ends_with(".bat")).or_else(|| {
-            manifest.runtime_assets.iter().find(|asset| {
-                asset.present
-                    && is_game_runtime_installer_candidate(asset, component_id)
-                    && match component_id {
-                        "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
-                        "battleye" => asset.kind == "battleye",
-                        _ => false,
-                    }
-            })
-        })?;
-    let path = PathBuf::from(&preferred.source_path);
     if component_id == "easyanticheat_eos" {
-        if let Some(installer) = easyanticheat_eos_installer_from_asset(&path) {
-            return Some(installer);
+        let candidates = game_runtime_installer_candidates(manifest, component_id);
+        for asset in candidates.iter().filter(|asset| {
+            let lower = asset.source_path.to_ascii_lowercase();
+            lower.ends_with(".bat") || lower.ends_with(".cmd")
+        }) {
+            if let Some(installer) = easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)) {
+                return Some(installer);
+            }
         }
+        return candidates
+            .iter()
+            .filter(|asset| asset.source_path.to_ascii_lowercase().ends_with(".exe"))
+            .find_map(|asset| easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)));
     }
-    Some(ComponentInstaller { path, args: Vec::new() })
+    let candidates = game_runtime_installer_candidates(manifest, component_id);
+    let preferred = candidates
+        .iter()
+        .find(|asset| {
+            let lower = asset.source_path.to_ascii_lowercase();
+            lower.ends_with(".bat") || lower.ends_with(".cmd")
+        })
+        .or_else(|| candidates.first())?;
+    Some(ComponentInstaller { path: PathBuf::from(&preferred.source_path), args: Vec::new() })
+}
+
+fn game_runtime_installer_candidates<'a>(
+    manifest: &'a BottleManifest,
+    component_id: &str,
+) -> Vec<&'a BottleRuntimeAsset> {
+    manifest
+        .runtime_assets
+        .iter()
+        .filter(|asset| {
+            asset.present
+                && is_game_runtime_installer_candidate(asset, component_id)
+                && match component_id {
+                    "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
+                    "battleye" => asset.kind == "battleye",
+                    _ => false,
+                }
+        })
+        .collect()
 }
 
 fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id: &str) -> bool {
@@ -2413,6 +2428,10 @@ fn wine_z_drive_path(path: &Path) -> String {
     } else {
         path.to_string_lossy().replace('/', "\\")
     }
+}
+
+fn normalized_existing_path_string(path: &Path) -> String {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().to_string()
 }
 
 fn component_actions(components: &[RuntimeComponent]) -> Vec<BottleAction> {
@@ -3033,7 +3052,7 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
         let Some(kind) = kind else {
             continue;
         };
-        let source_path = path.to_string_lossy().to_string();
+        let source_path = normalized_existing_path_string(path);
         if seen.insert(source_path.clone()) {
             assets.push(BottleRuntimeAsset {
                 id: format!("{}:{}", kind, name),
@@ -3638,6 +3657,74 @@ mod tests {
 
         assert_eq!(installer.path, setup);
         assert_eq!(installer.args, vec!["install".to_string(), "773d3a68f76f4b2ebebc5b4127bbad3e".to_string()]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn easyanticheat_eos_installer_skips_checker_scripts() {
+        let dir = test_dir("eac-eos-multiple-scripts");
+        fs::create_dir_all(&dir).expect("create eac dir");
+        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
+        let checker = dir.join("eacchecker.bat");
+        let install = dir.join("install_easyanticheat_eos_setup.bat");
+        fs::write(&setup, b"eac").expect("write eac setup");
+        fs::write(&checker, b"reg query HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\EasyAntiCheat_EOS")
+            .expect("write checker");
+        fs::write(
+            &install,
+            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709\r\npause\r\n",
+        )
+        .expect("write install");
+        let manifest = BottleManifest {
+            id: "steam_1888160".into(),
+            name: "ARMORED CORE VI FIRES OF RUBICON".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(1888160),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            installed_components: vec![RuntimeComponent {
+                id: "easyanticheat_eos".into(),
+                state: ComponentState::Missing,
+            }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![
+                BottleRuntimeAsset {
+                    id: "easyanticheat:eacchecker.bat".into(),
+                    kind: "easyanticheat".into(),
+                    source_path: checker.to_string_lossy().to_string(),
+                    present: true,
+                },
+                BottleRuntimeAsset {
+                    id: "easyanticheat_eos:install_easyanticheat_eos_setup.bat".into(),
+                    kind: "easyanticheat_eos".into(),
+                    source_path: install.to_string_lossy().to_string(),
+                    present: true,
+                },
+                BottleRuntimeAsset {
+                    id: "easyanticheat_eos:easyanticheat_eos_setup.exe".into(),
+                    kind: "easyanticheat_eos".into(),
+                    source_path: setup.to_string_lossy().to_string(),
+                    present: true,
+                },
+            ],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let installer =
+            resolve_game_runtime_asset_installer(&manifest, "easyanticheat_eos").expect("resolve installer");
+
+        assert_eq!(installer.path, setup);
+        assert_eq!(installer.args, vec!["install".to_string(), "789399aada914e66bb3c3facebc5d709".to_string()]);
         let _ = fs::remove_dir_all(dir);
     }
 

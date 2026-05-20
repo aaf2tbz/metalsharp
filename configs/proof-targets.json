@@ -243,6 +243,46 @@
       "next_action": "Use Launch Doctor and dry-run component repair to verify the Steam game bottle resolves the game-local EAC setup asset before attempting an actual service install."
     },
     {
+      "id": "armored-core-vi-eac-eos",
+      "group": "anti_cheat",
+      "name": "ARMORED CORE VI FIRES OF RUBICON Easy Anti-Cheat EOS",
+      "source": "wine_steam_install",
+      "appid": 1888160,
+      "installer_path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
+      "bottle_id": "steam_1888160",
+      "compatdata_path": "~/.metalsharp/compatdata/1888160/metalsharp-compatdata.json",
+      "runtime_profile": "m11",
+      "launch_pipeline": "m11",
+      "prefix_path": "~/.metalsharp/prefix-steam",
+      "expected_route": "game_runtime_asset",
+      "install_result": "yes",
+      "launcher_open_result": "not_applicable",
+      "login_result": "not_applicable",
+      "child_game_process_result": "untested",
+      "game_launch_result": "needs_evidence",
+      "graphics_result": "m11",
+      "audio_result": "needs_evidence",
+      "input_result": "needs_evidence",
+      "online_session_result": "blocked",
+      "anti_cheat_status": "eac_eos_installed_in_steam_prefix",
+      "failure_classification": [
+        "not_battleye",
+        "path_normalization_required"
+      ],
+      "failure_evidence": [
+        "Rubicon ships Easy Anti-Cheat EOS assets, not BattlEye/BEService assets",
+        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/easyanticheat_eos_setup.exe",
+        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
+        "install script command: EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709",
+        "~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259468.log: Wine failed when runtime asset path was stored as //Volumes//...",
+        "~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259573.log",
+        "~/.metalsharp/prefix-steam/drive_c/users/alexmondello/AppData/Roaming/EasyAntiCheat/service.log: Operation 1 completed successfully",
+        "~/.metalsharp/prefix-steam/drive_c/Program Files (x86)/EasyAntiCheat_EOS/EasyAntiCheat_EOS.exe",
+        "Bottle Doctor after install: Bottle runtime checks passed"
+      ],
+      "next_action": "Launch Rubicon through the Steam game bottle and capture whether the game reaches the EAC bootstrap, offline mode, or an online/vendor block."
+    },
+    {
       "id": "eac-proton-supported-title",
       "group": "anti_cheat",
       "name": "EAC Proton-Supported Title",

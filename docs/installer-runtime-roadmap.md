@@ -151,6 +151,7 @@ Implementation checkpoint:
 - Bottle Doctor source policies can now report a game-local installer asset path for those components.
 - Component repair resolves game-local EAC/BattlEye assets before reporting an asset as missing.
 - EAC EOS `.bat` installers are parsed into direct `EasyAntiCheat_EOS_Setup.exe install <product-id>` calls so the repair path avoids script pauses.
+- Runtime asset paths are canonicalized before repair because Wine rejects doubled `//Volumes//...` paths for executable launch.
 
 For BattlEye:
 
@@ -163,6 +164,7 @@ For BattlEye:
 For EAC:
 
 - Elden Ring is the first local game proof target because it ships `EasyAntiCheat/easyanticheat_eos_setup.exe`
+- Rubicon is the first completed EAC EOS install proof: it ships EAC EOS, not BattlEye, and `EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709` completed successfully in `~/.metalsharp/prefix-steam`
 - dry-run component repair before attempting an actual service install
 - verify whether Unix EAC assets exist before treating online anti-cheat as supportable
 - compare what Proton expects versus what macOS/Wine can provide
@@ -194,9 +196,10 @@ Likely runtime: .NET custom action or MSI service behavior.
 2. Inspect whether the direct MSI log now has content.
 3. Ubisoft Connect fresh proof installed launcher files, detected `UbisoftConnect.exe`, then hit the crash-reporter path with `corefonts` and `webview2` still pending.
 4. Elden Ring EAC EOS dry-run repair resolves the game-local setup executable through `steam_1245620`.
-5. Repair Ubisoft `corefonts` and `webview2`, relaunch `UbisoftConnect.exe`, and capture whether the next failure is rendering, service/elevation, or auth.
-6. Run Battle.net or Epic after that.
-7. Save BattlEye for a real Steam title, because `BERCon.exe` is not the runtime installer.
+5. Rubicon EAC EOS actual repair completed successfully in `steam_1888160`; launch Rubicon next and capture whether failure moves to EAC bootstrap, offline mode, or online/vendor block.
+6. Repair Ubisoft `corefonts` and `webview2`, relaunch `UbisoftConnect.exe`, and capture whether the next failure is rendering, service/elevation, or auth.
+7. Run Battle.net or Epic after that.
+8. Save BattlEye for a real Steam title, because Rubicon and Elden Ring are EAC EOS targets and `BERCon.exe` is not the runtime installer.
 
 ## Implementation Notes
 
