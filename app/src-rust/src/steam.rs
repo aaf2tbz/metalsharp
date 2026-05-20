@@ -468,16 +468,49 @@ pub fn launch_game_via_steam_with_env(
     appid: u32,
     extra_env: &[(String, String)],
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    launch_game_via_steam_with_env_options(appid, extra_env, false, None)
+}
+
+pub fn launch_game_via_steam_with_protected_env(
+    appid: u32,
+    extra_env: &[(String, String)],
+    handoff_log_path: Option<&Path>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    launch_game_via_steam_with_env_options(appid, extra_env, true, handoff_log_path)
+}
+
+fn launch_game_via_steam_with_env_options(
+    appid: u32,
+    extra_env: &[(String, String)],
+    restart_for_env: bool,
+    handoff_log_path: Option<&Path>,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let wine = ms_wine();
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
-    let steam_running = is_wine_steam_running();
+    let mut steam_running = is_wine_steam_running();
+    let mut restarted_for_env = false;
     if steam_running && !extra_env.is_empty() {
-        return Err(
-            "Wine Steam is already running; route-specific environment cannot be inherited without restarting Steam"
-                .into(),
-        );
+        if restart_for_env {
+            stop_wine_steam()?;
+            for _ in 0..20 {
+                if !is_wine_steam_running() {
+                    steam_running = false;
+                    restarted_for_env = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if steam_running {
+                return Err("Wine Steam did not stop cleanly before protected route handoff".into());
+            }
+        } else {
+            return Err(
+                "Wine Steam is already running; route-specific environment cannot be inherited without restarting Steam"
+                    .into(),
+            );
+        }
     }
     if !steam_running {
         launch_wine_steam_with_env(extra_env)?;
@@ -496,9 +529,21 @@ pub fn launch_game_via_steam_with_env(
     }
 
     let url = format!("steam://run/{}", appid);
+    let env_applied_to = if extra_env.is_empty() { "steam_url_process" } else { "wine_steam_process" };
     let pid = spawn_wine_steam_with_env(&[&url], extra_env)?;
+    if let Some(path) = handoff_log_path {
+        write_steam_handoff_log(path, appid, pid, extra_env, restarted_for_env, env_applied_to)?;
+    }
 
-    Ok(json!({"ok": true, "pid": pid, "appid": appid}))
+    Ok(json!({
+        "ok": true,
+        "pid": pid,
+        "appid": appid,
+        "steam_restarted_for_env": restarted_for_env,
+        "env_applied_to": env_applied_to,
+        "env_handoff": extra_env.iter().map(|(key, _)| key).collect::<Vec<_>>(),
+        "handoff_log": handoff_log_path.map(|path| path.to_string_lossy().to_string()),
+    }))
 }
 
 pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
@@ -514,6 +559,30 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
     let _ = spawn_wine_steam(&[&url])?;
 
     Ok(json!({"ok": true, "appid": appid}))
+}
+
+fn write_steam_handoff_log(
+    path: &Path,
+    appid: u32,
+    pid: u32,
+    extra_env: &[(String, String)],
+    restarted_for_env: bool,
+    env_applied_to: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("appid={}", appid));
+    lines.push("launch_handoff=protected_steam_url".to_string());
+    lines.push(format!("steam_url=steam://run/{}", appid));
+    lines.push(format!("steam_url_pid={}", pid));
+    lines.push(format!("steam_restarted_for_env={}", restarted_for_env));
+    lines.push(format!("env_applied_to={}", env_applied_to));
+    lines.push(format!("env_handoff={}", extra_env.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>().join(",")));
+    lines.push("note=Protected games must be launched through Steam so start_protected_game.exe and vendor anti-cheat logs are observable.".to_string());
+    std::fs::write(path, format!("{}\n", lines.join("\n")))?;
+    Ok(())
 }
 
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
@@ -1301,5 +1370,40 @@ mod tests {
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
         ));
+    }
+
+    #[test]
+    fn protected_handoff_log_records_env_keys_without_values() {
+        let dir = std::env::temp_dir().join(format!("metalsharp-handoff-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("launch.log");
+        let env = vec![
+            ("WINEDLLOVERRIDES".to_string(), "secret-ish-value".to_string()),
+            ("DXMT_CONFIG_FILE".to_string(), "/tmp/dxmt.conf".to_string()),
+        ];
+
+        write_steam_handoff_log(&path, 1245620, 42, &env, true, "wine_steam_process").expect("write handoff log");
+        let text = std::fs::read_to_string(&path).expect("read handoff log");
+
+        assert!(text.contains("launch_handoff=protected_steam_url"));
+        assert!(text.contains("steam_restarted_for_env=true"));
+        assert!(text.contains("env_applied_to=wine_steam_process"));
+        assert!(text.contains("env_handoff=WINEDLLOVERRIDES,DXMT_CONFIG_FILE"));
+        assert!(!text.contains("secret-ish-value"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn protected_handoff_log_records_url_process_when_no_env_is_applied_to_steam() {
+        let dir = std::env::temp_dir().join(format!("metalsharp-handoff-log-url-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("launch.log");
+
+        write_steam_handoff_log(&path, 1245620, 42, &[], false, "steam_url_process").expect("write handoff log");
+        let text = std::fs::read_to_string(&path).expect("read handoff log");
+
+        assert!(text.contains("steam_restarted_for_env=false"));
+        assert!(text.contains("env_applied_to=steam_url_process"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -6,7 +6,10 @@ MetalSharp ships a self-contained Wine runtime at:
 ~/.metalsharp/runtime/wine/
 ```
 
-It is used by M11, M12, M10, M9, M32, Steam, and Wine. Native macOS and MacOS Steam do not use this Wine runtime.
+The current primary macOS runtime is a from-source Wine 11.9 build with x86_64 host binaries, i386 and x86_64 Windows
+lanes, MoltenVK, DXMT/DXVK payloads, gnutls/freetype host dependencies, and the MetalSharp `mscompatdb` hook contract
+exported from Unix `ntdll.so`. It is used by M11, M12, M10, M9, M32, Steam, installer bottles, protected-launch probes,
+and plain Wine. Native macOS and macOS Steam do not use this Wine runtime.
 
 ## Layout
 
@@ -34,9 +37,67 @@ Other runtime pieces live beside it:
 
 ```text
 ~/.metalsharp/runtime/
+├── redists/
 ├── redist/
+├── mono-arm64/
+├── mono-x86/
+├── shims/
+├── host/
 └── wine/
 ```
+
+## Current Primary Runtime
+
+The Wine 11.9 runtime was promoted as the primary local direction for the WTMKT/protected-launch work. The live runtime
+must satisfy these basic checks before installer or anti-cheat behavior is interpreted:
+
+```bash
+DYLD_LIBRARY_PATH="$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix" \
+  "$HOME/.metalsharp/runtime/wine/bin/wine" --version
+
+nm -gU "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix/ntdll.so" \
+  | rg 'MetalSharpGetMscompatdbHookContract|NtCreateUserProcess|NtCreateFile'
+
+curl -sS -X POST http://127.0.0.1:9274/steam/mscompatdb-probe \
+  -H 'Content-Type: application/json' \
+  -d '{}' | jq '{status, hooked:.probe.hooked, hookContractReady:.probe.ntdllSymbols.hookContractReady}'
+```
+
+Expected baseline:
+
+- `wine-11.9` from `wine --version`.
+- `wine` and `wineserver` are Mach-O x86_64 host executables.
+- `ntdll.dll` exists in both `x86_64-windows/` and `i386-windows/`.
+- Unix `ntdll.so` exports `MetalSharpGetMscompatdbHookContract` and `MetalSharpGetMscompatdbHookContractVersion`.
+- `mscompatdb.so` autoloads from Unix `ntdll.so`, uses the explicit hook contract, and reports `hook_surface_ready`.
+- `mscompatdb.so` and `mscompatdb.dylib` are both Mach-O x86_64 and ad-hoc signed.
+- Host dependency install names use bundled or `@rpath` paths, not temporary build paths.
+
+## mscompatdb Contract Shim
+
+The current Darwin shim is source-controlled at:
+
+```text
+include/metalsharp/MscompatdbHookContract.h
+src/wine/ntdll_mscompatdb_contract.c
+src/wine/ntdll_mscompatdb_loader.c
+src/wine/mscompatdb/mscompatdb_contract_shim.c
+tools/wine/build-mscompatdb-shim.sh
+```
+
+The Wine-side contract export is compiled into Unix `ntdll.so`. The loader template restores the runtime `mscompatdb.so`
+autoload step and uses `RTLD_GLOBAL` so the shim can resolve `MetalSharpGetMscompatdbHookContract`. The shim no longer
+scrapes the private/local `KeServiceDescriptorTable` symbol; it asks `ntdll.so` for the service table and key NT entrypoint
+pointers through the explicit contract, then patches `NtCreateUserProcess` through the table.
+
+Build the shim payload with:
+
+```bash
+tools/wine/build-mscompatdb-shim.sh /tmp/metalsharp-mscompatdb
+```
+
+For runtime packaging, copy `/tmp/metalsharp-mscompatdb/mscompatdb.so` and
+`/tmp/metalsharp-mscompatdb/mscompatdb.dylib` into `wine/lib/wine/x86_64-unix/` after relinking the patched `ntdll.so`.
 
 User/runtime state lives beside the runtime root:
 
