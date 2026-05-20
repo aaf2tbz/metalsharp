@@ -36,17 +36,18 @@ Minecraft gets a Java Launcher profile even when the bootstrapper includes CLR m
 
 Steam already uses a wrapped `steamwebhelper.exe` to force CEF onto a Wine-safe software GPU path. Sharp Library bottles now generalize that behavior for launcher apps that carry CEF or Chromium payloads.
 
-When a bottle app looks like a launcher and its install directory contains CEF assets such as `libcef.dll`, `chrome_*.pak`, `vk_swiftshader.dll`, or `app.asar`, MetalSharp preserves the original executable as `<name>_real.exe` and replaces `<name>.exe` with a small architecture-matched wrapper. The wrapper relaunches the real executable with `--in-process-gpu --disable-gpu`, while Chromium child process command lines are left otherwise intact.
+When a bottle app looks like a launcher and its install directory contains CEF assets such as `libcef.dll`, `chrome_*.pak`, `vk_swiftshader.dll`, or `app.asar`, MetalSharp preserves the original executable as `<name>_real.exe` and replaces `<name>.exe` with a small architecture-matched wrapper. The wrapper relaunches the real executable with `--in-process-gpu --disable-gpu` and deploys a sibling `metalsharp-cefchildhook.dll` for launchers that spawn renderer, utility, or GPU children from the preserved executable.
 
 The first proof target is Minecraft Launcher:
 
 - the Microsoft Store `.exe` bootstrapper is a 32-bit .NET/WPF package and can fall into Wine Mono or native .NET setup failure before Minecraft exists
 - the official Mojang `MinecraftInstaller.msi` installs cleanly into a `java_launcher` bottle
-- `MinecraftLauncher.exe` now receives the generic CEF wrapper, but the current proof still renders a blank surface after CEF initializes
+- `MinecraftLauncher.exe` now receives the generic CEF wrapper and child hook, but the current proof still renders a blank surface after CEF initializes
+- local hook logs prove imports are patched, but Minecraft's embedded CEF child creation is not yet passing through the hooked `CreateProcessA/W` path
 
 ## Remaining Work
 
-- Add a CEF child-process command-line hook for launchers that spawn renderer/GPU subprocesses from the preserved `_real.exe`.
+- Finish the Minecraft CEF child-process path by either reaching the lower-level process creation call or mapping Minecraft's native CEF preference surface correctly.
 - Persist child game processes spawned by launchers as bottle app records.
 - Track launcher-owned game install folders separately from the launcher EXE.
 - Add launcher-specific repair controls for WebView, Gecko, VC runtime, and session data.

@@ -97,9 +97,11 @@ Observed result:
 - The launcher created bottle-local state under `C:\users\alexmondello\AppData\Roaming\.minecraft`.
 - CEF initialized successfully, but the initial launcher window rendered blank.
 - General CEF compatibility was then applied by preserving `MinecraftLauncher_real.exe` and replacing `MinecraftLauncher.exe` with an architecture-matched wrapper.
-- The wrapper launches the real executable with `--in-process-gpu --disable-gpu`, matching the working Steam CEF strategy while leaving Chromium child command lines intact.
+- The wrapper launches the real executable with `--in-process-gpu --disable-gpu`, matching the working Steam CEF strategy.
+- The wrapper also deploys `metalsharp-cefchildhook.dll`; local hook logs show it loads and patches launcher/module `CreateProcessA/W` imports.
 - The wrapped launcher still renders blank. After clearing Minecraft's `launch_attempts.json` retry guard, logs show CEF initialization, successful network calls, successful XAL token initialization, and the main window opening.
-- The remaining blocker is now the embedded Chromium subprocess path: Minecraft spawns renderer/GPU subprocesses from `MinecraftLauncher_real.exe`, so the wrapper's top-level flags do not automatically reach the renderer command lines.
+- The remaining blocker is now lower than top-level wrapping: Minecraft logs renderer/GPU subprocess command lines from `MinecraftLauncher_real.exe`, but those launches are not yet passing through the hooked import path.
+- Minecraft's launcher binary exposes `disableGPU`, `disableGPUCommandLine`, `disableGPUForced`, and `additionalCEFOptions` strings. A bottle-local settings JSON attempt was accepted but did not appear in emitted CEF child command lines.
 
 Evidence:
 
@@ -108,16 +110,17 @@ Evidence:
 - `~/.metalsharp/bottles/installer_6a0a76294c1d1364/logs/launch-1779252174.log`
 - `~/.metalsharp/bottles/installer_6a0a76294c1d1364/prefix/drive_c/users/alexmondello/AppData/Roaming/.minecraft/launcher_cef_log.txt`
 - `~/.metalsharp/bottles/installer_6a0a76294c1d1364/prefix/drive_c/Program Files (x86)/Minecraft Launcher/.ms_cef_compat_MinecraftLauncher`
+- `~/.metalsharp/bottles/installer_6a0a76294c1d1364/prefix/drive_c/users/alexmondello/AppData/Local/Temp/metalsharp-cefchildhook.log`
 
 Failure classification:
 
 - `store_bootstrapper_mismatch` for the Microsoft Store `.exe` route
 - `cef_rendering_path` for the blank launcher window after MSI install
-- `cef_child_process_flags` for the post-install blank UI state
+- `cef_child_creation_path` for the post-install blank UI state
 
 Next action:
 
-Add a CEF child-process command-line hook or launcher-specific shim so renderer and GPU subprocesses receive the Wine-safe compositor flags, then use the working MSI/bottle install to continue toward starting Minecraft Java from the same bottle.
+Finish the Minecraft CEF child-process path by either reaching the lower-level process creation call or mapping Minecraft's native CEF preference surface correctly, then use the working MSI/bottle install to continue toward starting Minecraft Java from the same bottle.
 
 Mono follow-up:
 
