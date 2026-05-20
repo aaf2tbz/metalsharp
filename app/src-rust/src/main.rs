@@ -21,6 +21,7 @@ mod anticheat;
 mod bottles;
 mod installer;
 mod launch;
+mod launcher_evidence;
 mod migrate;
 mod mtsp;
 mod platform;
@@ -720,6 +721,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Post, "/launcher/evidence") => {
+            let body = read_body(req);
+            resp(200, launcher_evidence::handle_launcher_evidence(&body))
         },
         (Method::Get, "/eac-toggle/status") => {
             let url_str = req.url().to_string();

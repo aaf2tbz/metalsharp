@@ -213,6 +213,9 @@ Observed result:
 - SHA-256: `7a6942ef2c96ed516b4e06256b03ac0bb994de22702e944f4ebf2c2507f31a24`
 - Fresh proof bottle: `~/.metalsharp/bottles/installer_61e534a6d260c814_fresh_1779258414613`
 - Install completed enough to stage `UbisoftConnect.exe` under `Program Files (x86)/Ubisoft/Ubisoft Game Launcher/`.
+- `POST /launcher/evidence {"family":"ubisoft"}` reports `ubisoft_auto_started_then_crash_reporter`.
+- The installer auto-started Ubisoft Game Launcher `171.0.13174`.
+- There is not yet a recorded direct post-install launch of `UbisoftConnect.exe`; the next proof pass should launch that detected executable directly after runtime repair.
 - The launcher auto-started as `upc.exe uplay://open`, then `UplayCrashReporter.exe` appeared.
 - Bottle Doctor still reports missing `corefonts` and `webview2`.
 - App detection initially surfaced launcher plumbing (`UplayService`, `UplayWebCore`, `UpcElevationService`, `upc.exe`), so the filter now excludes those helpers and preserves `UbisoftConnect.exe`.
@@ -233,6 +236,33 @@ Evidence:
 Next action:
 
 Repair `corefonts` and `webview2` in the fresh proof bottle, relaunch `UbisoftConnect.exe` directly, then compare the crash path against EA's `INST-14-1603`. The useful signal is whether Ubisoft fails at WebView/CEF rendering, service/elevation, or post-install launcher launch.
+
+### 2026-05-20: EA and Ubisoft launcher evidence endpoint
+
+MetalSharp now has a launcher evidence report:
+
+```http
+POST /launcher/evidence
+{"family":"ea"}
+
+POST /launcher/evidence
+{"family":"ubisoft"}
+```
+
+Current EA status:
+
+- `ea_msi_1603`
+- EA reaches MSI apply and fails with `0x80070643 / INST-14-1603`.
+- The failing package is `EAapp_13.700.0.6213_ae714772e_4bfd0163_4218.msi`.
+- Direct EA launcher launch is not expected yet because no launcher executable was installed.
+
+Current Ubisoft status:
+
+- `ubisoft_auto_started_then_crash_reporter`
+- `UbisoftConnect.exe` exists under the proof bottle.
+- The installer auto-started Ubisoft Game Launcher `171.0.13174`.
+- Crash reporter evidence is present.
+- No direct post-install launch of `UbisoftConnect.exe` has been recorded yet.
 
 ### 2026-05-20: Game-local anti-cheat installer scan
 

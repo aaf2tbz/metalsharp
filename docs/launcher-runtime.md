@@ -58,6 +58,20 @@ EA App is the first Steam-adjacent storefront proof target:
 - the direct MSI log files are still created as zero bytes, so the next EA pass needs deeper Wine MSI/service/elevation inspection around per-machine package cache writes
 - WebView2/Edge helper executables are runtime components, not apps; prefix app detection filters them so a runtime repair does not pollute the Sharp Library
 
+Launcher evidence reports:
+
+```http
+POST /launcher/evidence
+{"family":"ea"}
+
+POST /launcher/evidence
+{"family":"ubisoft"}
+```
+
+EA currently reports `ea_msi_1603`: the bootstrapper reaches MSI apply and fails with `0x80070643 / INST-14-1603`.
+
+Ubisoft currently reports `ubisoft_auto_started_then_crash_reporter`: the installer staged `UbisoftConnect.exe`, auto-started Ubisoft Game Launcher `171.0.13174`, then entered the crash-reporter path. A clean direct launch of `UbisoftConnect.exe` still needs to be captured after runtime repair.
+
 ## Remaining Work
 
 - Finish the Minecraft CEF child-process path by either reaching the lower-level process creation call or mapping Minecraft's native CEF preference surface correctly.
