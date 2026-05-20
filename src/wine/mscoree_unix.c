@@ -23,10 +23,17 @@ __attribute__((used)) unixlib_call_t __wine_unix_call_funcs[2] = {mscoree_unix_d
 __attribute__((visibility("default")))
 __attribute__((used)) unixlib_call_t __wine_unix_call_wow64_funcs[2] = {mscoree_unix_dispatch, mscoree_unix_dispatch};
 
-#define WINE_MONO_LIB "@loader_path/libmonosgen-2.0.dylib"
+#define DEFAULT_WINE_MONO_LIB        "@loader_path/libmonosgen-2.0.dylib"
+#define METALSHARP_MONO_LIB_ENV      "METALSHARP_MONO_LIB"
+#define METALSHARP_MONO_ROOT_ENV     "METALSHARP_MONO_ROOT"
+#define METALSHARP_MONO_ASSEMBLY_ENV "METALSHARP_MONO_ASSEMBLY_DIR"
+#define METALSHARP_MONO_CONFIG_ENV   "METALSHARP_MONO_CONFIG_DIR"
+#define METALSHARP_HOME_ENV          "METALSHARP_HOME"
 
 static void* g_mono_handle = NULL;
 static int g_mono_initialized = 0;
+static char g_mono_assembly_dir[1024];
+static char g_mono_config_dir[1024];
 
 typedef struct _MonoDomain MonoDomain;
 typedef struct _MonoAssembly MonoAssembly;
@@ -59,12 +66,77 @@ static void (*p_mono_thread_manage)(void);
         return -1;                                                                                                     \
     }
 
+static const char* non_empty_env(const char* key) {
+    const char* value = getenv(key);
+    return value && value[0] ? value : NULL;
+}
+
+static int join_path(char* out, size_t out_size, const char* a, const char* b, const char* c) {
+    if (!out || !out_size || !a || !a[0])
+        return 0;
+
+    int written = snprintf(out, out_size, "%s/%s%s%s", a, b ? b : "", c && c[0] ? "/" : "", c ? c : "");
+    return written > 0 && (size_t)written < out_size;
+}
+
+static int join_home_path(char* out, size_t out_size, const char* suffix) {
+    const char* ms_home = non_empty_env(METALSHARP_HOME_ENV);
+    if (ms_home)
+        return join_path(out, out_size, ms_home, suffix, NULL);
+
+    const char* home = non_empty_env("HOME");
+    if (!home)
+        return 0;
+
+    char root[1024];
+    if (!join_path(root, sizeof(root), home, ".metalsharp", NULL))
+        return 0;
+
+    return join_path(out, out_size, root, suffix, NULL);
+}
+
+static const char* mono_lib_path(void) {
+    const char* configured = non_empty_env(METALSHARP_MONO_LIB_ENV);
+    return configured ? configured : DEFAULT_WINE_MONO_LIB;
+}
+
+static const char* mono_assembly_dir(void) {
+    const char* configured = non_empty_env(METALSHARP_MONO_ASSEMBLY_ENV);
+    if (configured)
+        return configured;
+
+    const char* mono_root = non_empty_env(METALSHARP_MONO_ROOT_ENV);
+    if (mono_root && join_path(g_mono_assembly_dir, sizeof(g_mono_assembly_dir), mono_root, "lib", "mono"))
+        return g_mono_assembly_dir;
+
+    if (join_home_path(g_mono_assembly_dir, sizeof(g_mono_assembly_dir), "wine-dlls/mono-x86_64-lib/mono"))
+        return g_mono_assembly_dir;
+
+    return NULL;
+}
+
+static const char* mono_config_dir(void) {
+    const char* configured = non_empty_env(METALSHARP_MONO_CONFIG_ENV);
+    if (configured)
+        return configured;
+
+    const char* mono_root = non_empty_env(METALSHARP_MONO_ROOT_ENV);
+    if (mono_root && join_path(g_mono_config_dir, sizeof(g_mono_config_dir), mono_root, "etc", "mono"))
+        return g_mono_config_dir;
+
+    if (join_home_path(g_mono_config_dir, sizeof(g_mono_config_dir), "wine-dlls/mono-x86_64-etc/mono"))
+        return g_mono_config_dir;
+
+    return NULL;
+}
+
 static int load_mono(void) {
     if (g_mono_handle)
         return 0;
 
-    fprintf(stderr, "[mscoree-unix] Loading mono from %s\n", WINE_MONO_LIB);
-    g_mono_handle = dlopen(WINE_MONO_LIB, RTLD_NOW | RTLD_GLOBAL);
+    const char* lib_path = mono_lib_path();
+    fprintf(stderr, "[mscoree-unix] Loading mono from %s\n", lib_path);
+    g_mono_handle = dlopen(lib_path, RTLD_NOW | RTLD_GLOBAL);
     if (!g_mono_handle) {
         fprintf(stderr, "[mscoree-unix] FAILED to load mono: %s\n", dlerror());
         return -1;
@@ -95,8 +167,14 @@ static int do_init(void* args) {
     if (load_mono() < 0)
         return -1;
 
-    p_mono_set_dirs("/Users/alexmondello/.metalsharp/wine-dlls/mono-x86_64-lib/mono",
-                    "/Users/alexmondello/.metalsharp/wine-dlls/mono-x86_64-etc/mono");
+    const char* assembly_dir = mono_assembly_dir();
+    const char* config_dir = mono_config_dir();
+    if (assembly_dir && config_dir) {
+        p_mono_set_dirs(assembly_dir, config_dir);
+        fprintf(stderr, "[mscoree-unix] mono dirs: assembly=%s config=%s\n", assembly_dir, config_dir);
+    } else {
+        fprintf(stderr, "[mscoree-unix] mono dirs not configured; using Mono defaults\n");
+    }
     p_mono_config_parse(NULL);
 
     fprintf(stderr, "[mscoree-unix] mono dirs configured\n");

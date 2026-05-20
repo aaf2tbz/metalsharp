@@ -12,7 +12,11 @@
 
 After a game is installed, MetalSharp detects the Wine Steam library and creates a Steam game bottle such as `steam_620`.
 
-The bottle is the launch-authoritative runtime record. It checks the selected profile, runtime assets, redistributables, DLL expectations, and logs before launch. Wine Steam still remains the live launcher process, so Steam-connected games can keep using Steam normally.
+The bottle is the launch-authoritative runtime record. It checks the selected profile, runtime assets, redistributables, DLL expectations, and logs before launch.
+
+For env-dependent routes such as M9, M10, M11, M12, M32, and Wine fallback, MetalSharp keeps Wine Steam alive in the background, then launches the game executable directly through the selected bottle-aware MTSP pipeline. The game process receives the prepared prefix, route environment, cache paths, and Steam identity variables (`SteamAppId` and `SteamGameId`) so Steamworks can bind back to the running Wine Steam client.
+
+Plain **Steam** mode still uses Wine Steam itself. If Wine Steam is not detectable after startup, MetalSharp now fails the launch clearly instead of hanging behind the renderer timeout.
 
 Click **Play** from the Library page. Use the launch mode dropdown when you want to force a route:
 
@@ -34,7 +38,7 @@ Use **Runtime Doctor** on a game card when a game needs VC runtime, DirectX, .NE
 
 Sharp Library is for Windows apps, demos, launchers, installers, and non-Steam programs.
 
-Use **Install Windows Program** to select an `.exe` or `.msi`. MetalSharp may import it directly, or create an installer bottle, classify the installer, launch it with the right profile, then scan for installed app candidates.
+Use **Install Windows Program** to select an `.exe` or `.msi`. MetalSharp may import it directly, or create an installer bottle, classify the installer, apply a known launcher recipe when one matches, launch it with the right profile, then scan for installed app candidates.
 
 Apps imported from a bottle keep their `bottle_id`, launch through that bottle, and write per-bottle logs.
 
@@ -48,5 +52,12 @@ Use **Settings** to manage Steam API sync, backend restart, cache cleanup, and r
 
 - [Current MetalSharp README](../README.md)
 - [Launch Architecture](launch-architecture.md)
+- [Compatdata Architecture](compatdata-architecture.md)
+- [Launcher Runtime](launcher-runtime.md)
+- [Redistributable Runtime](redistributable-runtime.md)
+- [Darwin Sync Map](darwin-sync-map.md)
+- [Steam Compatibility Tool Surface](steam-compatibility-tool-surface.md)
+- [Vendor Trust Kit](vendor-trust-kit.md)
+- [Proof Targets](proof-targets.md)
 - [Supported Games](GAMES-SUPPORTED.md)
 - [Wine Architecture](wine-architecture.md)

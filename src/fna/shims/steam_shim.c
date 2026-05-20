@@ -9,7 +9,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define BRIDGE_PORT 18733
+#define DEFAULT_BRIDGE_PORT 18733
+#define BRIDGE_PORT_ENV     "METALSHARP_STEAM_BRIDGE_PORT"
 
 #define MSG_INIT             1
 #define MSG_SHUTDOWN         2
@@ -37,6 +38,26 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_initialized = 0;
 static HSteamPipe g_pipe = 0;
 static HSteamUser g_user = 0;
+static int g_bridge_port = 0;
+
+static int bridge_port(void) {
+    if (g_bridge_port > 0)
+        return g_bridge_port;
+
+    const char* configured = getenv(BRIDGE_PORT_ENV);
+    if (configured && configured[0]) {
+        char* end = NULL;
+        long parsed = strtol(configured, &end, 10);
+        if (end && *end == '\0' && parsed > 0 && parsed <= 65535) {
+            g_bridge_port = (int)parsed;
+            return g_bridge_port;
+        }
+        fprintf(stderr, "[steam_shim] Ignoring invalid %s=%s\n", BRIDGE_PORT_ENV, configured);
+    }
+
+    g_bridge_port = DEFAULT_BRIDGE_PORT;
+    return g_bridge_port;
+}
 
 static int send_all(int s, const void* buf, int len) {
     const char* p = (const char*)buf;
@@ -71,14 +92,15 @@ static int bridge_connect(void) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(BRIDGE_PORT);
+    int port = bridge_port();
+    addr.sin_port = htons((uint16_t)port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (connect(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(s);
         return 0;
     }
     g_sock = s;
-    fprintf(stderr, "[steam_shim] Connected to bridge on port %d\n", BRIDGE_PORT);
+    fprintf(stderr, "[steam_shim] Connected to bridge on port %d\n", port);
     return 1;
 }
 

@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 1;
+const MIGRATE_SCHEMA_VERSION: u64 = 2;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
@@ -107,8 +107,13 @@ fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
 
 fn runtime_core_ready(ms_dir: &Path) -> bool {
     let runtime_wine = ms_dir.join("runtime").join("wine");
+    let runtime_host = ms_dir.join("runtime").join("host");
     let wine = crate::platform::runtime_wine_binary(&runtime_wine);
     if !wine.exists() {
+        return false;
+    }
+
+    if !host_runtime_ready(&runtime_host) {
         return false;
     }
 
@@ -131,6 +136,18 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
     ]
     .iter()
     .all(|path| path.exists())
+}
+
+fn host_runtime_ready(dir: &Path) -> bool {
+    file_nonempty(&dir.join("manifest.json"))
+        && file_nonempty(&dir.join("HostRuntimeABI.h"))
+        && (file_nonempty(&dir.join("libmetalsharp_host_runtime.dylib"))
+            || file_nonempty(&dir.join("libmetalsharp_host_runtime.so"))
+            || file_nonempty(&dir.join("metalsharp_host_runtime.dll")))
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
 pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -309,6 +326,7 @@ struct PreservedData {
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
+    compatdata_tmp: PathBuf,
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
@@ -354,7 +372,23 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         copy_dir_recursive(&bottles, &bottles_tmp);
     }
 
-    PreservedData { setup_json, steam_config_json, prefix_steam_tmp, games_tmp, sharp_library_tmp, bottles_tmp }
+    write_migrate_progress("running", 2, 5, "Preserving user data (compatdata)...", None);
+    let compatdata_tmp = tmp.join("compatdata");
+    let compatdata = ms_dir.join("compatdata");
+    if compatdata.exists() {
+        let _ = fs::create_dir_all(&compatdata_tmp);
+        copy_dir_recursive(&compatdata, &compatdata_tmp);
+    }
+
+    PreservedData {
+        setup_json,
+        steam_config_json,
+        prefix_steam_tmp,
+        games_tmp,
+        sharp_library_tmp,
+        bottles_tmp,
+        compatdata_tmp,
+    }
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
@@ -464,6 +498,14 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         copy_dir_recursive(&preserved.bottles_tmp, &dst);
+    }
+
+    if preserved.compatdata_tmp.exists() {
+        let dst = ms_dir.join("compatdata");
+        if !dst.exists() {
+            let _ = fs::create_dir_all(&dst);
+        }
+        copy_dir_recursive(&preserved.compatdata_tmp, &dst);
     }
 
     if let Some(ref data) = preserved.setup_json {
@@ -590,6 +632,26 @@ mod tests {
     }
 
     #[test]
+    fn migration_preserves_compatdata_across_runtime_cleanup() {
+        let home = test_dir("preserve-compatdata");
+        let ms_dir = home.join(".metalsharp");
+        let compat_manifest = ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json");
+        fs::create_dir_all(compat_manifest.parent().unwrap()).expect("create compatdata dir");
+        fs::write(&compat_manifest, br#"{"appid":620}"#).expect("write compatdata manifest");
+
+        let preserved = preserve_user_data(&ms_dir);
+        fs::remove_dir_all(ms_dir.join("compatdata")).expect("remove live compatdata");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
+            r#"{"appid":620}"#
+        );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_kill_patterns_avoid_broad_command_matches() {
         assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
         assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
@@ -606,6 +668,7 @@ mod tests {
         let wine = runtime_wine.join("bin").join("metalsharp-wine");
         fs::create_dir_all(wine.parent().unwrap()).expect("create wine bin");
         fs::write(&wine, b"#!/bin/sh\n").expect("write wine");
+        write_host_runtime(ms_dir);
 
         if crate::platform::current() == crate::platform::HostPlatform::Linux {
             return;
@@ -627,6 +690,14 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
         }
+    }
+
+    fn write_host_runtime(ms_dir: &Path) {
+        let host = ms_dir.join("runtime").join("host");
+        fs::create_dir_all(&host).expect("create host runtime");
+        fs::write(host.join("manifest.json"), br#"{"abi":"metalsharp-host-runtime"}"#).expect("write manifest");
+        fs::write(host.join("HostRuntimeABI.h"), b"header").expect("write header");
+        fs::write(host.join("libmetalsharp_host_runtime.dylib"), b"dylib").expect("write dylib");
     }
 
     fn test_dir(name: &str) -> PathBuf {

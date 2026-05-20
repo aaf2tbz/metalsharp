@@ -112,7 +112,9 @@ Sharp Library installer/app bottles use dedicated prefixes:
 
 Steam game bottles are different: they are launch-authoritative readiness records, but their `prefix_path` currently
 points at `~/.metalsharp/prefix-steam/` so Runtime Doctor and repair actions affect the prefix Wine Steam actually uses.
-Wine Steam remains the live process that owns `steam://run` and stays connected for Steam games.
+Wine Steam remains the live background client that stays connected for Steam games. Env-dependent Steam game launches
+run the game executable directly through the selected MTSP pipeline with this prefix, route env, cache paths, and
+`SteamAppId`/`SteamGameId`; plain **Steam** launches still route through Wine Steam.
 
 ## Important Environment
 
@@ -124,6 +126,7 @@ Wine Steam remains the live process that owns `steam://run` and stays connected 
 | `WINEDLLOVERRIDES` | Selects injected/native DLL behavior |
 | `DXMT_SHADER_CACHE_PATH` | DXMT shader cache |
 | `DXMT_CONFIG_FILE` | DXMT config file |
+| `SteamAppId` / `SteamGameId` | Steam identity for direct Steam-bottle game launches |
 
 ## Steam Wrapper
 

@@ -172,6 +172,10 @@
         "to": "xinput1_4.so"
       },
       {
+        "from": "native/host",
+        "to": "runtime/host"
+      },
+      {
         "from": "bundles/metalsharp_bundle.tar.zst",
         "to": "bundles/metalsharp_bundle.tar.zst"
       },

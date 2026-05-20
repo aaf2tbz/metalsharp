@@ -6,11 +6,33 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-static BRIDGE_PORT: u16 = 18733;
+const DEFAULT_BRIDGE_PORT: u16 = 18733;
+
+pub fn bridge_port() -> u16 {
+    parse_bridge_port(std::env::var("METALSHARP_STEAM_BRIDGE_PORT").ok().as_deref()).unwrap_or(DEFAULT_BRIDGE_PORT)
+}
+
+fn parse_bridge_port(value: Option<&str>) -> Option<u16> {
+    let parsed = value?.parse::<u16>().ok()?;
+    if parsed == 0 {
+        None
+    } else {
+        Some(parsed)
+    }
+}
 
 struct CachePaths {
     shader: String,
     pipeline: String,
+}
+
+struct LaunchLogContext<'a> {
+    appid: u32,
+    node: &'a PipelineNode,
+    prefix: &'a Path,
+    cwd: &'a Path,
+    exe_name: &'a str,
+    args: &'a [&'a str],
 }
 
 #[derive(Default)]
@@ -20,8 +42,9 @@ pub struct CustomLaunchOptions {
 }
 
 pub fn bridge_is_running() -> bool {
+    let port = bridge_port();
     if let Ok(mut stream) =
-        TcpStream::connect_timeout(&format!("127.0.0.1:{}", BRIDGE_PORT).parse().unwrap(), Duration::from_millis(500))
+        TcpStream::connect_timeout(&format!("127.0.0.1:{}", port).parse().unwrap(), Duration::from_millis(500))
     {
         let ping: [u8; 4] = 0xFFu32.to_ne_bytes();
         let _ = stream.write_all(&ping);
@@ -40,6 +63,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let port = bridge_port();
     let bridge_exe = home.join(".metalsharp").join("runtime").join("steam-bridge").join("steambridge.exe");
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -65,6 +89,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg(&bridge_exe)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("METALSHARP_STEAM_BRIDGE_PORT", port.to_string())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
@@ -118,20 +143,23 @@ pub fn launch_steam_bottle_with_pipeline(
     pipeline_id: PipelineId,
     prefix_path: &Path,
     extra_env: &[(String, String)],
-) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
+    let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
-    match pipeline_id {
+    let result = match pipeline_id {
         PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env)
+            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
-            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env)
+            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
             Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
         },
-    }
+    }?;
+
+    Ok((result.0, result.1, log_path))
 }
 
 pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -321,6 +349,7 @@ pub fn launch_custom_with_options(
         writeln!(log, "launch_id={}", launch_id)?;
         writeln!(log, "pipeline={}", node.name)?;
         writeln!(log, "prefix={}", prefix.display())?;
+        write_runtime_identity(&mut log, &prefix, None)?;
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
@@ -369,7 +398,7 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
 }
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_dxmt_metal_with_context(appid, node, None, &[])
+    launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
 
 fn launch_dxmt_metal_with_context(
@@ -377,6 +406,7 @@ fn launch_dxmt_metal_with_context(
     node: &PipelineNode,
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
+    log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
@@ -423,12 +453,17 @@ fn launch_dxmt_metal_with_context(
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
+    attach_launch_log(
+        &mut cmd,
+        log_path,
+        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+    )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_wine_bare_with_context(appid, node, None, &[])
+    launch_wine_bare_with_context(appid, node, None, &[], None)
 }
 
 fn launch_wine_bare_with_context(
@@ -436,6 +471,7 @@ fn launch_wine_bare_with_context(
     node: &PipelineNode,
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
+    log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
@@ -475,8 +511,57 @@ fn launch_wine_bare_with_context(
 
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
+    attach_launch_log(
+        &mut cmd,
+        log_path,
+        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+    )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
+}
+
+fn attach_launch_log(
+    cmd: &mut Command,
+    log_path: Option<&Path>,
+    context: LaunchLogContext<'_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(log_path) = log_path else {
+        return Ok(());
+    };
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "appid={}", context.appid)?;
+    writeln!(log, "pipeline={}", context.node.name)?;
+    writeln!(log, "prefix={}", context.prefix.display())?;
+    write_runtime_identity(&mut log, context.prefix, Some(context.appid))?;
+    writeln!(log, "cwd={}", context.cwd.display())?;
+    writeln!(log, "exe={}", context.exe_name)?;
+    writeln!(log, "args={:?}", context.args)?;
+    writeln!(log, "--- wine output ---")?;
+    let stdout = log.try_clone()?;
+    cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
+    Ok(())
+}
+
+fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>) -> std::io::Result<()> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let metalsharp_home = home.join(".metalsharp");
+    writeln!(log, "metalsharp_home={}", metalsharp_home.display())?;
+    writeln!(log, "host_abi=1.0")?;
+    writeln!(log, "host_runtime={}", metalsharp_home.join("runtime").join("host").display())?;
+    writeln!(log, "wine_runtime={}", metalsharp_home.join("runtime").join("wine").display())?;
+    writeln!(log, "steam_bridge_port={}", bridge_port())?;
+    if let Some(appid) = appid {
+        let compatdata_dir = crate::bottles::steam_compatdata_dir(appid);
+        writeln!(log, "compatdata={}", compatdata_dir.display())?;
+        writeln!(log, "compatdata_manifest={}", crate::bottles::steam_compatdata_manifest_path(appid).display())?;
+    }
+    if prefix == metalsharp_home.join("prefix-steam") {
+        writeln!(log, "steam_identity_mode=wine_steam_background")?;
+    }
+    Ok(())
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -1134,6 +1219,15 @@ mod tests {
     }
 
     #[test]
+    fn bridge_port_parser_rejects_invalid_values() {
+        assert_eq!(parse_bridge_port(Some("19001")), Some(19001));
+        assert_eq!(parse_bridge_port(Some("0")), None);
+        assert_eq!(parse_bridge_port(Some("65536")), None);
+        assert_eq!(parse_bridge_port(Some("abc")), None);
+        assert_eq!(parse_bridge_port(None), None);
+    }
+
+    #[test]
     fn no_dll_recipes_do_not_require_game_dir_for_deploy() {
         let recipe = super::super::recipe::LaunchRecipe {
             appid: 1,
@@ -1148,6 +1242,7 @@ mod tests {
             dlls: vec![],
             runtime_assets: vec![],
             anti_cheat: vec![],
+            anti_cheat_status: vec![],
             warnings: vec![],
         };
 
@@ -1160,6 +1255,21 @@ mod tests {
         let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
 
         assert_eq!(launch_working_dir(&game_dir, &exe_path), exe_path.parent().unwrap());
+    }
+
+    #[test]
+    fn launch_log_identity_records_host_runtime_and_compatdata_paths() {
+        let mut log = Vec::new();
+        let prefix = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam");
+
+        write_runtime_identity(&mut log, &prefix, Some(620)).expect("write runtime identity");
+
+        let text = String::from_utf8(log).expect("utf8 log");
+        assert!(text.contains("host_abi=1.0"));
+        assert!(text.contains("host_runtime="));
+        assert!(text.contains("steam_bridge_port="));
+        assert!(text.contains("compatdata_manifest="));
+        assert!(text.contains("steam_identity_mode=wine_steam_background"));
     }
 
     fn test_dir(name: &str) -> PathBuf {

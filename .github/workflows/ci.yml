@@ -36,6 +36,8 @@ jobs:
           mkdir -p ../app/native
           cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib ../app/native/ 2>/dev/null || true
           cp metalsharp metalsharp_launcher MetalSharpMigrator ../app/native/ 2>/dev/null || true
+          cd ..
+          METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
 
       - name: Install Electron deps
         run: cd app && npm install
@@ -75,6 +77,7 @@ jobs:
           for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
             codesign --force --sign - "$f" 2>/dev/null || true
           done
+          find app/native/host -type f \( -name '*.dylib' -o -name '*.so' \) -print0 | xargs -0 -I{} codesign --force --sign - "{}" 2>/dev/null || true
 
       - name: Package DMG
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never

@@ -36,13 +36,13 @@ MetalSharp keeps state under `~/.metalsharp/`:
 └── crashes/        Preserved crash reports
 ```
 
-`prefix-steam` remains the shared Wine Steam prefix. Steam stays alive as the launcher/session owner for Steam games.
+`prefix-steam` remains the shared Wine Steam prefix. Wine Steam stays alive as the background client/session owner for Steam games.
 
-`bottles` is the runtime authority layer. Installer and Sharp Library bottles use their own prefixes. Steam game bottles use ids like `steam_620` and preflight the actual shared Steam prefix before `steam://run`.
+`bottles` is the runtime authority layer. Installer and Sharp Library bottles use their own prefixes. Steam game bottles use ids like `steam_620` and preflight the actual shared Steam prefix. Env-dependent Steam routes launch the selected game executable directly through the chosen MTSP pipeline with the bottle prefix, route env, and `SteamAppId`/`SteamGameId`, while Wine Steam remains alive for Steamworks connectivity.
 
 ## Launching
 
-When Play is clicked, MetalSharp resolves a pipeline, syncs the bottle/runtime record, checks required components/assets, prepares DLLs/cache/env/logs, then launches through Wine, Wine Steam, native macOS Steam, or native Mono/FNA.
+When Play is clicked, MetalSharp resolves a pipeline, syncs the bottle/runtime record, checks required components/assets, prepares DLLs/cache/env/logs, ensures Wine Steam is ready when needed, then launches through direct Wine/MTSP, Wine Steam, native macOS Steam, or native Mono/FNA.
 
 | Mode | Purpose |
 |---|---|
@@ -58,15 +58,15 @@ When Play is clicked, MetalSharp resolves a pipeline, syncs the bottle/runtime r
 
 ## Sharp Library
 
-Sharp Library manages Windows apps, demos, launchers, and installers. Use **Install Windows Program** for standalone `.exe` files, MSI packages, launcher bootstrapper apps, .NET installers, WebView apps, and game installers.
+Sharp Library manages Windows apps, demos, launchers, and installers. Use **Install Windows Program** for standalone `.exe` files, MSI packages, launcher bootstrapper apps, .NET installers, WebView apps, Java launchers, and game installers.
 
-Installer bottles classify the program, launch it with the right profile, keep per-bottle logs, scan for installed app candidates, and import detected apps back into Sharp Library with their `bottle_id`.
+Installer bottles classify the program, apply known launcher recipes where possible, launch it with the right profile, keep per-bottle logs, scan for installed app candidates, and import detected apps back into Sharp Library with their `bottle_id`.
 
 ## Diagnostics and Migration
 
 Use Logs and Runtime Doctor when something fails. Doctor checks common blockers like Wine Mono, Gecko, .NET, VC runtime, DirectX June 2010, WebView2, core fonts, runtime profile, app detection, launch state, and redistributable assets.
 
-Upgrades preserve `setup.json`, Steam settings/cache, `prefix-steam`, `games`, `sharp-library`, and `bottles`.
+Upgrades preserve `setup.json`, Steam settings/cache, `prefix-steam`, `games`, `sharp-library`, `bottles`, and Steam game compatdata.
 
 ## Download
 

@@ -62,7 +62,7 @@ install.sh                       CLI build script (cmake + test runner)
 
 ### MTSP Routing and Runtime Bottles
 
-Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get `steam_<appid>` bottles that are launch-authoritative for runtime checks, while Wine Steam remains the live launcher/session owner for `steam://run`.
+Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get `steam_<appid>` bottles that are launch-authoritative for runtime checks. Wine Steam remains the live background Steam client; env-dependent Steam routes launch the game executable directly with the bottle prefix, route env, and Steam identity variables instead of trying to make an already-running Steam process inherit new env.
 
 | Pipeline | Method | Example Games |
 |--------|--------|--------------|
@@ -71,7 +71,7 @@ Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get 
 | `M11` | D3D11 to Metal | Rain World, Schedule I, Subnautica BZ |
 | `M12` | D3D12 to Metal | RE4-class D3D12 titles |
 | `M32` | 32-bit Wine fallback | legacy 32-bit apps |
-| `Steam` | Wine Steam `steam://run/` with bottle preflight | Steam games |
+| `Steam` | Wine Steam client route with bottle preflight | Steam client-only launches |
 | `MacOS Steam` | Native macOS Steam handoff | user-confirmed native Steam flow |
 | `Wine` | Plain Wine custom-app fallback | Sharp Library apps |
 | `Native macOS` | Native Mono/FNA/XNA path | Terraria/FNA-class apps |
@@ -102,7 +102,7 @@ Backend listens on `127.0.0.1:9274` (override with `METALSHARP_PORT`). Key endpo
 - `GET /steam/library` — full game library (owned + installed)
 - `POST /steam/launch` — start Wine Steam
 - `POST /steam/stop` — kill Wine Steam + wineserver
-- `POST /steam/launch-game` — Steam game launch through Wine Steam with bottle preflight
+- `POST /steam/launch-game` — Steam game launch with bottle preflight; env-dependent routes keep Wine Steam alive and spawn the game through the selected MTSP pipeline
 - `POST /steam/runtime-doctor` — inspect a Steam game's bottle/runtime readiness
 - `GET /sharp-library` — Sharp Library apps and imported Windows programs
 - `POST /sharp-library/install` — Install Windows Program flow for EXE/MSI/installer bottles
@@ -246,7 +246,7 @@ npx biome check src/           # lint (CI enforces)
 - **SteamD3DMetalPerf requires GPTK installed** at `/Applications/Game Porting Toolkit.app/` — it sets WINEDLLPATH to GPTK's d3d11.dll
 - **CMakeLists.txt version must match Cargo.toml and package.json** — all three are independently read
 - **app/package-lock.json version must match package.json** — npm package metadata and release automation both see it
-- **Steam game bottles are launch-authoritative, but Steam stays the launcher** — bottles preflight and bind runtime assets, but Wine Steam must remain alive for Steam-connected games
+- **Steam game bottles are launch-authoritative, but Steam stays alive as the client** — bottles preflight and bind runtime assets; env-dependent routes spawn the game process with `SteamAppId`/`SteamGameId` while Wine Steam remains connected
 - **Installer bottles use their own prefixes** — apps imported from installer bottles must keep `bottle_id` so Sharp Library launches them from that bottle
 - **Linux Docker DEB builds can leave `dist/` root-owned** — `tools/linux/create-release-tarballs.sh` repairs ownership before writing `dist/packages`
 - **`winemetal.so` has no i386-unix version** — it uses WoW64 thunks for 32-bit PE clients, always lives in x86_64-unix/
