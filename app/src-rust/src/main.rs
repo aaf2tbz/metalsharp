@@ -383,8 +383,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 let log_path = bottles::steam_compatdata_launch_log_path(id);
                                 steam::launch_game_via_steam_with_protected_env(id, &env, Some(&log_path)).map(
                                     |mut v| {
-                                        let pid = v.get("pid").and_then(|pid| pid.as_u64()).unwrap_or(0) as u32;
-                                        let compatdata = bottles::set_launch_delegated(&bottle.id, pid, &log_path)
+                                        let compatdata = bottles::set_launch_delegated(&bottle.id, &log_path)
                                             .ok()
                                             .and_then(|manifest| {
                                                 bottles::save_steam_compatdata(&manifest, pipeline).ok()

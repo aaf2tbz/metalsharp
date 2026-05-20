@@ -717,10 +717,13 @@ pub fn set_launch_started(id: &str, pid: u32, log_path: &Path) -> Result<BottleM
     Ok(manifest)
 }
 
-pub fn set_launch_delegated(id: &str, pid: u32, log_path: &Path) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+pub fn set_launch_delegated(id: &str, log_path: &Path) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let mut manifest = load_bottle(id)?;
-    mark_manifest_launch_started(&mut manifest, pid, log_path);
+    manifest.last_launch_log = Some(log_path.to_string_lossy().to_string());
+    manifest.last_launch_pid = None;
     manifest.last_launch_status = Some("delegated_to_steam".to_string());
+    manifest.last_launch_finished_at = None;
+    manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
     Ok(manifest)
 }
@@ -3856,6 +3859,38 @@ mod tests {
         assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
         assert_eq!(record.last_launch_pid, Some(1234));
         assert_eq!(record.last_launch_status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn delegated_steam_launch_record_does_not_claim_handoff_pid_as_game_pid() {
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(620),
+            name: "Portal 2".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(620),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M9,
+            installed_components: default_components_for(RuntimeProfile::M9),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some("/games/Portal 2".into()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: Some("/tmp/steam_620.log".into()),
+            last_launch_pid: None,
+            last_launch_status: Some("delegated_to_steam".into()),
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::M9);
+
+        assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
+        assert_eq!(record.last_launch_pid, None);
+        assert_eq!(record.last_launch_status.as_deref(), Some("delegated_to_steam"));
     }
 
     #[test]
