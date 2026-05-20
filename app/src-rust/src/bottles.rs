@@ -53,6 +53,8 @@ pub enum RuntimeProfile {
     Win32Dotnet,
     Webview,
     JavaLauncher,
+    FnaArm64,
+    FnaX86,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
@@ -200,6 +202,18 @@ pub struct RuntimeProfileDefinition {
     pub wineboot: bool,
     pub components: Vec<String>,
     pub launch_pipeline: crate::mtsp::engine::PipelineId,
+    pub mono_runtime: Option<MonoRuntimeDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MonoRuntimeDefinition {
+    pub id: &'static str,
+    pub binary_path: String,
+    pub expected_arch: &'static str,
+    pub known_version: &'static str,
+    pub config_path: Option<&'static str>,
+    pub launch_wrapper: &'static str,
+    pub notes: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1406,6 +1420,8 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
         RuntimeProfile::JavaLauncher,
+        RuntimeProfile::FnaArm64,
+        RuntimeProfile::FnaX86,
     ]
     .into_iter()
     .map(runtime_profile_definition)
@@ -1487,6 +1503,20 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["vcrun2019", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
+        RuntimeProfile::FnaArm64 => (
+            "FNA / Mono ARM64",
+            BottleArch::Win64,
+            false,
+            &["mono-arm64", "fna", "xna"][..],
+            crate::mtsp::engine::PipelineId::FnaArm64,
+        ),
+        RuntimeProfile::FnaX86 => (
+            "FNA / Mono x86_64",
+            BottleArch::Win64,
+            false,
+            &["mono-x86", "fna", "xna"][..],
+            crate::mtsp::engine::PipelineId::FnaArm64,
+        ),
     };
     RuntimeProfileDefinition {
         id: profile,
@@ -1495,6 +1525,32 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
         wineboot,
         components: components.iter().map(|component| (*component).to_string()).collect(),
         launch_pipeline,
+        mono_runtime: mono_runtime_definition(profile),
+    }
+}
+
+fn mono_runtime_definition(profile: RuntimeProfile) -> Option<MonoRuntimeDefinition> {
+    let home = dirs::home_dir().unwrap_or_default();
+    match profile {
+        RuntimeProfile::FnaArm64 => Some(MonoRuntimeDefinition {
+            id: "mono-arm64",
+            binary_path: home.join(".metalsharp/runtime/mono-arm64/bin/mono").to_string_lossy().to_string(),
+            expected_arch: "arm64",
+            known_version: "6.14.1",
+            config_path: Some("configs/terraria-mono.config"),
+            launch_wrapper: "native_mono_fna",
+            notes: "Used by the Terraria-style FNA lane that worked through native macOS Mono plus dllmaps and shims.",
+        }),
+        RuntimeProfile::FnaX86 => Some(MonoRuntimeDefinition {
+            id: "mono-x86",
+            binary_path: home.join(".metalsharp/runtime/mono-x86/bin/mono").to_string_lossy().to_string(),
+            expected_arch: "x86_64",
+            known_version: "6.12.0.122",
+            config_path: Some("configs/celeste-x86-mono.config"),
+            launch_wrapper: "arch -x86_64 native_mono_fna",
+            notes: "Used by the Celeste-style legacy lane where x86_64 Mono 6.12 and dllmaps avoid newer ARM64-only assumptions.",
+        }),
+        _ => None,
     }
 }
 
@@ -1512,7 +1568,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
-        crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::JavaLauncher,
+        crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
 }
@@ -1530,6 +1586,8 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
         "java_launcher" | "javalauncher" => Some(RuntimeProfile::JavaLauncher),
+        "fna_arm64" | "xna_fna_arm64" | "native_mono_arm64" => Some(RuntimeProfile::FnaArm64),
+        "fna_x86" | "xna_fna_x86" | "native_mono_x86" | "mono_x86" => Some(RuntimeProfile::FnaX86),
         _ => None,
     }
 }
@@ -1761,6 +1819,9 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
+        "mono-arm64" => inspect_host_mono_component("mono-arm64").unwrap_or(fallback),
+        "mono-x86" => inspect_host_mono_component("mono-x86").unwrap_or(fallback),
+        "fna" => inspect_fna_runtime_component().unwrap_or(fallback),
         "gecko" => {
             if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
                 ComponentState::Installed
@@ -1840,6 +1901,23 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         _ => fallback,
     }
+}
+
+fn inspect_host_mono_component(runtime_id: &str) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let mono = home.join(".metalsharp").join("runtime").join(runtime_id).join("bin").join("mono");
+    Some(if mono.exists() { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_fna_runtime_component() -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let runtime = home.join(".metalsharp").join("runtime");
+    let candidates = [
+        runtime.join("fna").join("FNA.dll"),
+        runtime.join("shims").join("libFNA3D.dylib"),
+        runtime.join("shims").join("libSDL3.dylib"),
+    ];
+    Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
@@ -2241,6 +2319,34 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
+    if matches!(id, "mono-arm64" | "mono-x86" | "fna") {
+        let state = match id {
+            "mono-arm64" => inspect_host_mono_component("mono-arm64"),
+            "mono-x86" => inspect_host_mono_component("mono-x86"),
+            "fna" => inspect_fna_runtime_component(),
+            _ => None,
+        }
+        .unwrap_or(ComponentState::Unknown);
+        let path = dirs::home_dir().map(|home| match id {
+            "mono-arm64" => home.join(".metalsharp/runtime/mono-arm64/bin/mono"),
+            "mono-x86" => home.join(".metalsharp/runtime/mono-x86/bin/mono"),
+            "fna" => home.join(".metalsharp/runtime/fna"),
+            _ => home.join(".metalsharp/runtime"),
+        });
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: "metalsharp_native_runtime".to_string(),
+            available: state == ComponentState::Installed,
+            detail: match id {
+                "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
+                "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
+                "fna" => "FNA/XNA compatibility assemblies and native shims staged in MetalSharp runtime",
+                _ => "MetalSharp native runtime component",
+            }
+            .to_string(),
+            path: path.map(|p| p.to_string_lossy().to_string()),
+        };
+    }
     let installer = resolve_component_installer(id, arch);
     ComponentSourcePolicy {
         id: id.to_string(),
@@ -2265,6 +2371,9 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
 fn component_action_detail(id: &str) -> String {
     match id {
         "wine-mono" => "Install or repair Wine Mono inside this bottle prefix".to_string(),
+        "mono-arm64" => "Install MetalSharp ARM64 Mono runtime".to_string(),
+        "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
+        "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
@@ -2852,6 +2961,20 @@ mod tests {
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::M10));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaArm64));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaX86));
+    }
+
+    #[test]
+    fn fna_profiles_pin_the_known_mono_lanes() {
+        let arm64 = runtime_profile_definition(RuntimeProfile::FnaArm64);
+        let x86 = runtime_profile_definition(RuntimeProfile::FnaX86);
+
+        assert!(!arm64.wineboot);
+        assert!(arm64.components.contains(&"mono-arm64".to_string()));
+        assert_eq!(arm64.mono_runtime.as_ref().expect("arm64 mono profile").known_version, "6.14.1");
+        assert!(x86.components.contains(&"mono-x86".to_string()));
+        assert_eq!(x86.mono_runtime.as_ref().expect("x86 mono profile").known_version, "6.12.0.122");
     }
 
     #[test]
@@ -3156,6 +3279,7 @@ mod tests {
     fn steam_pipeline_maps_to_runtime_profile() {
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M9), RuntimeProfile::M9);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M12), RuntimeProfile::M12);
+        assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::FnaArm64), RuntimeProfile::FnaArm64);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::WineBare), RuntimeProfile::Plain);
     }
 

@@ -66,7 +66,7 @@
         "POST /sharp-library/install {\"srcPath\":\"~/Downloads/MinecraftInstaller.exe\",\"name\":\"Minecraft Launcher Phase 11\"}",
         "POST /bottles/doctor {\"id\":\"installer_057475b8830b64bc\"}"
       ],
-      "next_action": "Fix the native Mono/mscompatdb crash and map WebView2 assets, then rerun the installer through the same bottle."
+      "next_action": "Fix the Wine Mono/mscompatdb crash, map WebView2 assets, and keep old native Mono ARM64/x86 lanes available only as bottle-scoped FNA/XNA fallback profiles."
     },
     {
       "id": "gog-offline-installer",

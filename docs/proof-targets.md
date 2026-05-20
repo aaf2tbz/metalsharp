@@ -78,4 +78,10 @@ Failure classification:
 
 Next action:
 
-Fix the native Mono/mscompatdb crash and map WebView2 assets, then rerun the installer through the same bottle. This is now a concrete Phase 11 blocker rather than a generic "installer.exe does not launch" report.
+Fix the Wine Mono/mscompatdb crash and map WebView2 assets, then rerun the installer through the same bottle. This is now a concrete Phase 11 blocker rather than a generic "installer.exe does not launch" report.
+
+Mono follow-up:
+
+- See `docs/mono-runtime-lanes.md`.
+- Keep Minecraft in the Wine-bottle lane for now because it is a Windows launcher/bootstrapper, not a native FNA game.
+- Use the old Terraria/Celeste native Mono lanes as selective fallback profiles for known FNA/XNA games, not as a global replacement for Wine Mono.
