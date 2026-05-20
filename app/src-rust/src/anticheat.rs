@@ -282,13 +282,22 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
                     "The shim must resolve a Wine syscall hook point; present-but-unhooked cannot affect protected launch.",
                 ),
                 delta_capability(
-                    "ntdll_ke_table_exported",
+                    "ntdll_hook_contract_ready",
                     "blocking_when_false",
                     mscompatdb
-                        .pointer("/ntdllSymbols/exportsKeServiceDescriptorTable")
+                        .pointer("/ntdllSymbols/hookContractReady")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false),
-                    "The installed mscompatdb binary looks for KeServiceDescriptorTable, but Wine exposes it as a local/private symbol in current builds.",
+                    "Wine 11.9 readiness depends on the explicit MetalSharpGetMscompatdbHookContract ABI, not the legacy private KeServiceDescriptorTable scrape.",
+                ),
+                delta_capability(
+                    "mscompatdb_patch_trace_seen",
+                    "blocking_when_false",
+                    mscompatdb
+                        .pointer("/trace/hasPatchedNtCreateUserProcess")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    "The shim must log that it patched NtCreateUserProcess before protected-launch failures are treated as anti-cheat/module failures.",
                 ),
             ],
         ),
@@ -626,21 +635,31 @@ fn mscompatdb_probe(home: &Path) -> Value {
         || ascii_bytes_contains(&mscompatdb_bytes, b"load_rules OK");
     let exports_ke_table =
         ntdll_symbols.get("exportsKeServiceDescriptorTable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let hook_contract_ready = ntdll_symbols.get("hookContractReady").and_then(|v| v.as_bool()).unwrap_or(false);
     let has_unresolved_ke_error = trace.get("hasKeTableResolutionFailure").and_then(|v| v.as_bool()).unwrap_or(false);
     let has_null_rule_api = trace.get("hasNullRuleApi").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_patched_nt_create_user_process =
+        trace.get("hasPatchedNtCreateUserProcess").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_hook_invocation = trace.get("hasHookInvocation").and_then(|v| v.as_bool()).unwrap_or(false);
     let hooked = mscompatdb_path.exists()
         && rules_present
         && (!expects_ke_table || exports_ke_table)
+        && hook_contract_ready
+        && has_patched_nt_create_user_process
+        && has_hook_invocation
         && !has_unresolved_ke_error
         && !has_null_rule_api;
-    let status = mscompatdb_status(
-        mscompatdb_path.exists(),
+    let status = mscompatdb_status(MscompatdbStatusSignals {
+        mscompatdb_present: mscompatdb_path.exists(),
         rules_present,
         expects_ke_table,
         exports_ke_table,
+        hook_contract_ready,
+        has_patched_nt_create_user_process,
+        has_hook_invocation,
         has_unresolved_ke_error,
         has_null_rule_api,
-    );
+    });
 
     json!({
         "status": status,
@@ -995,25 +1014,40 @@ fn path_check(path: &Path) -> Value {
     })
 }
 
-fn mscompatdb_status(
+#[derive(Debug, Clone, Copy, Default)]
+struct MscompatdbStatusSignals {
     mscompatdb_present: bool,
     rules_present: bool,
     expects_ke_table: bool,
     exports_ke_table: bool,
+    hook_contract_ready: bool,
+    has_patched_nt_create_user_process: bool,
+    has_hook_invocation: bool,
     has_unresolved_ke_error: bool,
     has_null_rule_api: bool,
-) -> &'static str {
-    if !mscompatdb_present {
+}
+
+fn mscompatdb_status(signals: MscompatdbStatusSignals) -> &'static str {
+    if !signals.mscompatdb_present {
         return "missing_mscompatdb";
     }
-    if !rules_present {
+    if !signals.rules_present {
         return "missing_rules";
     }
-    if has_unresolved_ke_error || (expects_ke_table && !exports_ke_table) {
+    if signals.has_unresolved_ke_error || (signals.expects_ke_table && !signals.exports_ke_table) {
         return "present_but_ke_table_unresolved";
     }
-    if has_null_rule_api {
+    if signals.has_null_rule_api {
         return "present_but_rule_api_unresolved";
+    }
+    if !signals.hook_contract_ready {
+        return "present_but_hook_contract_missing";
+    }
+    if !signals.has_patched_nt_create_user_process {
+        return "present_but_hook_patch_missing";
+    }
+    if !signals.has_hook_invocation {
+        return "present_but_hook_invocation_unconfirmed";
     }
     "hook_surface_ready"
 }
@@ -1212,6 +1246,15 @@ fn mscompatdb_probe_summary(status: &str) -> &'static str {
         "present_but_rule_api_unresolved" => {
             "mscompatdb is installed, but trace logs show its legacy rule API pointers resolved to null."
         },
+        "present_but_hook_contract_missing" => {
+            "mscompatdb is installed, but Wine ntdll does not expose the explicit MetalSharp hook contract."
+        },
+        "present_but_hook_patch_missing" => {
+            "mscompatdb is installed and the hook contract is present, but trace logs do not show the NtCreateUserProcess patch."
+        },
+        "present_but_hook_invocation_unconfirmed" => {
+            "mscompatdb patched the hook surface, but no NtCreateUserProcess invocation has been observed yet."
+        },
         "hook_surface_ready" => "mscompatdb, rules, and the Wine ntdll hook surface look ready for a protected-launch test.",
         _ => "mscompatdb probe returned an unknown state.",
     }
@@ -1227,6 +1270,16 @@ fn mscompatdb_probe_next_actions(status: &str) -> Vec<&'static str> {
         "present_but_rule_api_unresolved" => vec![
             "Recover or recreate the mscompatdb source so rule loading targets the current Wine runtime API.",
             "Add an init-time failure code when rules cannot attach instead of silently continuing.",
+        ],
+        "present_but_hook_contract_missing" => vec![
+            "Install a Wine runtime whose Unix ntdll exports MetalSharpGetMscompatdbHookContract and MetalSharpGetMscompatdbHookContractVersion.",
+            "Re-run the mscompatdb probe before interpreting EAC/BattlEye launch failures.",
+        ],
+        "present_but_hook_patch_missing" => vec![
+            "Run a disposable Wine smoke such as wineboot, then confirm mscompatdb trace logs report the NtCreateUserProcess patch.",
+        ],
+        "present_but_hook_invocation_unconfirmed" => vec![
+            "Run a protected Steam launch or disposable Wine process, then refresh the probe and confirm hook_NtCreateUserProcess appears in the trace.",
         ],
         "missing_mscompatdb" | "missing_rules" => vec![
             "Restore the missing runtime artifact from the MetalSharp bundle before testing protected launch.",
@@ -2069,9 +2122,62 @@ mod tests {
 
     #[test]
     fn mscompatdb_status_flags_present_but_private_ke_table() {
-        assert_eq!(mscompatdb_status(true, true, true, false, false, false), "present_but_ke_table_unresolved");
-        assert_eq!(mscompatdb_status(true, true, false, false, false, true), "present_but_rule_api_unresolved");
-        assert_eq!(mscompatdb_status(true, true, false, false, false, false), "hook_surface_ready");
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                expects_ke_table: true,
+                ..Default::default()
+            }),
+            "present_but_ke_table_unresolved"
+        );
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                has_null_rule_api: true,
+                ..Default::default()
+            }),
+            "present_but_rule_api_unresolved"
+        );
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                ..Default::default()
+            }),
+            "present_but_hook_contract_missing"
+        );
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                hook_contract_ready: true,
+                ..Default::default()
+            }),
+            "present_but_hook_patch_missing"
+        );
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                hook_contract_ready: true,
+                has_patched_nt_create_user_process: true,
+                ..Default::default()
+            }),
+            "present_but_hook_invocation_unconfirmed"
+        );
+        assert_eq!(
+            mscompatdb_status(MscompatdbStatusSignals {
+                mscompatdb_present: true,
+                rules_present: true,
+                hook_contract_ready: true,
+                has_patched_nt_create_user_process: true,
+                has_hook_invocation: true,
+                ..Default::default()
+            }),
+            "hook_surface_ready"
+        );
     }
 
     #[test]
