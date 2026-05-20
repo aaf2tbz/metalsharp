@@ -1202,13 +1202,14 @@ fn is_valid_app_exe(name: &str) -> bool {
         && !lower.contains("dotnet")
         && !lower.contains("installer")
         && !lower.contains("uninstall")
+        && !lower.contains("update")
         && !lower.contains("vcredist")
         && !lower.contains("crashhandler")
         && !lower.contains("server")
 }
 
 fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
-    let mut best: Option<PathBuf> = None;
+    let mut best: Option<(i32, PathBuf)> = None;
     for entry in WalkDir::new(dir).max_depth(4).into_iter().flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -1222,11 +1223,22 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
         if lower == "game.exe" || lower.contains("shipping") {
             return Some(path.to_path_buf());
         }
-        if best.is_none() {
-            best = Some(path.to_path_buf());
+        let depth = path.strip_prefix(dir).map(|relative| relative.components().count()).unwrap_or(4) as i32;
+        let mut score = 100 - depth;
+        if lower.contains("launcher") {
+            score += 50;
+        }
+        if lower.ends_with("_real.exe") {
+            score += 30;
+        }
+        if lower.contains("helper") || lower.contains("crash") || lower.contains("service") {
+            score -= 50;
+        }
+        if best.as_ref().map(|(best_score, _)| score > *best_score).unwrap_or(true) {
+            best = Some((score, path.to_path_buf()));
         }
     }
-    best
+    best.map(|(_, path)| path)
 }
 
 fn dir_size(dir: &PathBuf) -> u64 {
@@ -1651,6 +1663,19 @@ mod tests {
         };
 
         assert_eq!(app.bottle_id.as_deref(), Some("installer_demo"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn refresh_setup_reference_prefers_launcher_over_updater_tools() {
+        let dir = test_dir("launcher-refresh");
+        fs::create_dir_all(dir.join("tools")).expect("create tools dir");
+        fs::write(dir.join("MinecraftLauncher_real.exe"), b"not pe").expect("write launcher");
+        fs::write(dir.join("tools").join("NativeUpdater.exe"), b"not pe").expect("write updater");
+
+        let found = find_real_exe(&dir).expect("find launcher exe");
+
+        assert_eq!(found, dir.join("MinecraftLauncher_real.exe"));
         let _ = fs::remove_dir_all(dir);
     }
 

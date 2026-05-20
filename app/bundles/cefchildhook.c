@@ -10,6 +10,8 @@ typedef BOOL(WINAPI *CreateProcessWType)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
 static CreateProcessAType real_CreateProcessA = NULL;
 static CreateProcessWType real_CreateProcessW = NULL;
 static volatile LONG patching = 0;
+static volatile LONG create_process_a_hooks = 0;
+static volatile LONG create_process_w_hooks = 0;
 
 static void log_line(const char *msg) {
     char temp[MAX_PATH] = {0};
@@ -194,6 +196,15 @@ static void patch_imports(HMODULE module) {
             if (VirtualProtect(&thunk->u1.Function, sizeof(void *), PAGE_READWRITE, &old_protect)) {
                 thunk->u1.Function = (ULONG_PTR)replacement;
                 VirtualProtect(&thunk->u1.Function, sizeof(void *), old_protect, &old_protect);
+                if (replacement == (FARPROC)hook_CreateProcessA) {
+                    if (InterlockedIncrement(&create_process_a_hooks) <= 8) {
+                        log_line("hooked CreateProcessA import");
+                    }
+                } else if (replacement == (FARPROC)hook_CreateProcessW) {
+                    if (InterlockedIncrement(&create_process_w_hooks) <= 8) {
+                        log_line("hooked CreateProcessW import");
+                    }
+                }
             }
         }
     }
