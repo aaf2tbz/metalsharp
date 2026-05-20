@@ -64,13 +64,15 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
     let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
     let eac = summarize_eac(appid, &artifacts);
     let steam = summarize_steam(appid, &artifacts);
+    let runtime_wine_version = current_runtime_wine_version(&home);
     let status = evidence_status(&eac, &steam, &artifacts);
 
     json!({
         "ok": true,
         "appid": appid,
         "status": status,
-        "summary": summary_text(&status, &eac, &steam),
+        "summary": summary_text(&status, &eac, &steam, runtime_wine_version.as_deref()),
+        "runtimeWineVersion": runtime_wine_version,
         "prefix": prefix.to_string_lossy(),
         "gameDir": game_dir.map(|p| p.to_string_lossy().to_string()),
         "easyAntiCheat": {
@@ -121,6 +123,7 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
     let steam = summarize_steam(appid, &artifacts);
     let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
     let runtime_checks = runtime_probe_checks(&home);
+    let runtime_wine_version = current_runtime_wine_version(&home);
     let status = probe_status(&eac, &module_assets);
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
@@ -129,7 +132,8 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
         "ok": true,
         "appid": appid,
         "status": status,
-        "summary": probe_summary(&status, &eac),
+        "summary": probe_summary(&status, &eac, runtime_wine_version.as_deref()),
+        "runtimeWineVersion": runtime_wine_version,
         "host": {
             "os": host_os,
             "arch": host_arch,
@@ -583,6 +587,28 @@ fn runtime_probe_checks(home: &Path) -> Value {
     })
 }
 
+fn current_runtime_wine_version(home: &Path) -> Option<String> {
+    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine_bin = wine_root.join("bin").join("wine");
+    let output = Command::new(&wine_bin)
+        .arg("--version")
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            format!(
+                "{}:{}",
+                wine_root.join("lib").to_string_lossy(),
+                wine_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+            ),
+        )
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
 fn mscompatdb_probe(home: &Path) -> Value {
     let wine_root = home.join(".metalsharp").join("runtime").join("wine");
     let mscompatdb_path = wine_root.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so");
@@ -823,13 +849,23 @@ fn probe_status(eac: &EacSummary, module_assets: &[Value]) -> String {
     "no_module_probe_target".to_string()
 }
 
-fn summary_text(status: &str, eac: &EacSummary, steam: &SteamSummary) -> String {
+fn summary_text(status: &str, eac: &EacSummary, steam: &SteamSummary, runtime_wine_version: Option<&str>) -> String {
     match status {
-        "module_mapping_failed" => format!(
-            "Protected launcher reached Wine module mapping under Wine {} and failed to map the anti-cheat module{}.",
-            eac.wine_version.as_deref().unwrap_or("unknown"),
-            eac.module_target.as_ref().map(|t| format!(" after downloading {}", t)).unwrap_or_default()
-        ),
+        "module_mapping_failed" => {
+            let logged = eac.wine_version.as_deref().unwrap_or("unknown");
+            let runtime_note = runtime_wine_version
+                .filter(|runtime| *runtime != logged)
+                .map(|runtime| {
+                    format!(" The current runtime is {}, so launch again to refresh this historical log.", runtime)
+                })
+                .unwrap_or_default();
+            format!(
+                "Protected launcher reached Wine module mapping under logged Wine {} and failed to map the anti-cheat module{}.{}",
+                logged,
+                eac.module_target.as_ref().map(|t| format!(" after downloading {}", t)).unwrap_or_default(),
+                runtime_note
+            )
+        },
         "protected_launcher_failed" => format!(
             "Protected launcher exited with code {}.",
             eac.launcher_exit_code.or(steam.tracked_exit_code).unwrap_or_default()
@@ -890,12 +926,16 @@ fn describe_exit_code(code: i64) -> String {
     }
 }
 
-fn probe_summary(status: &str, eac: &EacSummary) -> String {
+fn probe_summary(status: &str, eac: &EacSummary, runtime_wine_version: Option<&str>) -> String {
     match status {
-        "linux_module_on_darwin_boundary" => format!(
-            "EAC selected a {} module and Wine reached module mapping on macOS; Darwin cannot directly load that Linux module as a dylib.",
-            eac.module_target.as_deref().unwrap_or("linux")
-        ),
+        "linux_module_on_darwin_boundary" => {
+            let runtime_note = runtime_wine_version.map(|version| format!(" Current runtime: {}.", version)).unwrap_or_default();
+            format!(
+                "EAC selected a {} module and Wine reached module mapping on macOS; Darwin cannot directly load that Linux module as a dylib.{}",
+                eac.module_target.as_deref().unwrap_or("linux"),
+                runtime_note
+            )
+        },
         "module_mapping_failed" => {
             "The protected launcher reached module mapping, but the module target could not be classified from the logs.".to_string()
         },
@@ -1521,7 +1561,8 @@ fn mscompatdb_trace_signals(home: &Path) -> Value {
         "hasKeTableResolutionFailure": lower.contains("couldn't find keservicedescriptortable")
             || lower.contains("could not find keservicedescriptortable"),
         "hasNullRuleApi": lower.contains("p_add=0x0") || lower.contains("p_prepend=0x0"),
-        "hasPatchedNtCreateUserProcess": lower.contains("patched ntcreateuserprocess"),
+        "hasPatchedNtCreateUserProcess": lower.contains("patched ntcreateuserprocess")
+            || lower.contains("patch_syscalls completed, hook installed"),
         "hasHookInvocation": lower.contains("hook_ntcreateuserprocess called"),
     })
 }

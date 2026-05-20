@@ -330,7 +330,11 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp = std::env::temp_dir().join("metalsharp-migration-preserve");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let tmp = std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{}", std::process::id(), nonce));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
