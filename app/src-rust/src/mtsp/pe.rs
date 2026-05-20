@@ -31,25 +31,7 @@ pub fn parse_pe_imports(data: &[u8]) -> Option<PeInfo> {
     let machine = headers.machine;
     let is_64_bit = machine == MACHINE_AMD64;
 
-    let (import_dir_rva, import_dir_size) = if headers.optional_magic == 0x20b {
-        if headers.optional_offset + 112 + 8 > data.len() {
-            return Some(PeInfo { machine_type: machine, is_64_bit, imports: vec![], detected_api: D3dApi::Unknown });
-        }
-        let rva =
-            u32::from_le_bytes(data[headers.optional_offset + 112..headers.optional_offset + 116].try_into().ok()?);
-        let size =
-            u32::from_le_bytes(data[headers.optional_offset + 116..headers.optional_offset + 120].try_into().ok()?);
-        (rva, size)
-    } else if headers.optional_magic == 0x10b {
-        if headers.optional_offset + 96 + 8 > data.len() {
-            return Some(PeInfo { machine_type: machine, is_64_bit, imports: vec![], detected_api: D3dApi::Unknown });
-        }
-        let rva =
-            u32::from_le_bytes(data[headers.optional_offset + 96..headers.optional_offset + 100].try_into().ok()?);
-        let size =
-            u32::from_le_bytes(data[headers.optional_offset + 100..headers.optional_offset + 104].try_into().ok()?);
-        (rva, size)
-    } else {
+    let Some((import_dir_rva, import_dir_size)) = pe_data_directory(data, &headers, 1) else {
         return Some(PeInfo { machine_type: machine, is_64_bit, imports: vec![], detected_api: D3dApi::Unknown });
     };
 
@@ -92,25 +74,7 @@ pub fn parse_pe_imports(data: &[u8]) -> Option<PeInfo> {
 
 pub fn parse_pe_exports(data: &[u8]) -> Option<Vec<PeExport>> {
     let headers = parse_headers(data)?;
-    let (export_dir_rva, export_dir_size) = if headers.optional_magic == 0x20b {
-        if headers.optional_offset + 112 + 8 > data.len() {
-            return Some(Vec::new());
-        }
-        let rva =
-            u32::from_le_bytes(data[headers.optional_offset + 112..headers.optional_offset + 116].try_into().ok()?);
-        let size =
-            u32::from_le_bytes(data[headers.optional_offset + 116..headers.optional_offset + 120].try_into().ok()?);
-        (rva, size)
-    } else if headers.optional_magic == 0x10b {
-        if headers.optional_offset + 96 + 8 > data.len() {
-            return Some(Vec::new());
-        }
-        let rva =
-            u32::from_le_bytes(data[headers.optional_offset + 96..headers.optional_offset + 100].try_into().ok()?);
-        let size =
-            u32::from_le_bytes(data[headers.optional_offset + 100..headers.optional_offset + 104].try_into().ok()?);
-        (rva, size)
-    } else {
+    let Some((export_dir_rva, export_dir_size)) = pe_data_directory(data, &headers, 0) else {
         return Some(Vec::new());
     };
     if export_dir_rva == 0 || export_dir_size == 0 {
@@ -207,6 +171,21 @@ impl PeHeaders {
     fn rva_to_offset(&self, rva: u32) -> Option<usize> {
         self.sections.iter().find(|section| section.contains(rva)).map(|section| section.offset_for(rva))
     }
+}
+
+fn pe_data_directory(data: &[u8], headers: &PeHeaders, index: usize) -> Option<(u32, u32)> {
+    let directory_base = match headers.optional_magic {
+        0x20b => 112,
+        0x10b => 96,
+        _ => return None,
+    };
+    let offset = headers.optional_offset.checked_add(directory_base)?.checked_add(index.checked_mul(8)?)?;
+    if offset + 8 > data.len() {
+        return None;
+    }
+    let rva = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
+    let size = u32::from_le_bytes(data[offset + 4..offset + 8].try_into().ok()?);
+    Some((rva, size))
 }
 
 fn parse_headers(data: &[u8]) -> Option<PeHeaders> {
@@ -316,7 +295,17 @@ mod tests {
 
     #[test]
     fn detects_named_export_at_expected_ordinal() {
-        let mut data = vec![0u8; 0x500];
+        let data = test_pe_with_distinct_export_and_import_directories();
+
+        assert_eq!(pe_exports_ordinal(&data, 101, "D3D12CreateDevice"), Some(true));
+        assert_eq!(pe_exports_ordinal(&data, 102, "D3D12CreateDevice"), Some(false));
+        let imports = parse_pe_imports(&data).expect("parse imports");
+        assert_eq!(imports.imports, vec!["d3d11.dll".to_string()]);
+        assert_eq!(imports.detected_api, D3dApi::D3D11);
+    }
+
+    fn test_pe_with_distinct_export_and_import_directories() -> Vec<u8> {
+        let mut data = vec![0u8; 0x700];
         data[0] = b'M';
         data[1] = b'Z';
         data[0x3c..0x40].copy_from_slice(&(0x80u32).to_le_bytes());
@@ -327,12 +316,14 @@ mod tests {
         data[0x98..0x9a].copy_from_slice(&(0x20bu16).to_le_bytes());
         data[0x98 + 112..0x98 + 116].copy_from_slice(&(0x1000u32).to_le_bytes());
         data[0x98 + 116..0x98 + 120].copy_from_slice(&(40u32).to_le_bytes());
+        data[0x98 + 120..0x98 + 124].copy_from_slice(&(0x1100u32).to_le_bytes());
+        data[0x98 + 124..0x98 + 128].copy_from_slice(&(40u32).to_le_bytes());
 
         let sec = 0x80 + 24 + 0xf0;
-        data[sec..sec + 8].copy_from_slice(b".edata\0\0");
-        data[sec + 8..sec + 12].copy_from_slice(&(0x300u32).to_le_bytes());
+        data[sec..sec + 8].copy_from_slice(b".rdata\0\0");
+        data[sec + 8..sec + 12].copy_from_slice(&(0x500u32).to_le_bytes());
         data[sec + 12..sec + 16].copy_from_slice(&(0x1000u32).to_le_bytes());
-        data[sec + 16..sec + 20].copy_from_slice(&(0x300u32).to_le_bytes());
+        data[sec + 16..sec + 20].copy_from_slice(&(0x500u32).to_le_bytes());
         data[sec + 20..sec + 24].copy_from_slice(&(0x200u32).to_le_bytes());
 
         let export = 0x200;
@@ -347,7 +338,14 @@ mod tests {
         data[0x260..0x262].copy_from_slice(&(0u16).to_le_bytes());
         data[0x270..0x282].copy_from_slice(b"D3D12CreateDevice\0");
 
-        assert_eq!(pe_exports_ordinal(&data, 101, "D3D12CreateDevice"), Some(true));
-        assert_eq!(pe_exports_ordinal(&data, 102, "D3D12CreateDevice"), Some(false));
+        let import = 0x300;
+        data[import..import + 4].copy_from_slice(&(0x1130u32).to_le_bytes());
+        data[import + 12..import + 16].copy_from_slice(&(0x1140u32).to_le_bytes());
+        data[import + 20..import + 40].fill(0);
+        data[0x330..0x338].copy_from_slice(&0x8000_0000_0000_0001u64.to_le_bytes());
+        data[0x338..0x340].copy_from_slice(&0u64.to_le_bytes());
+        data[0x340..0x34a].copy_from_slice(b"d3d11.dll\0");
+
+        data
     }
 }
