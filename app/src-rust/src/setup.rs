@@ -46,6 +46,10 @@ pub fn save_step(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error:
     }
     if let Some(completed) = body.get("completed").and_then(|v| v.as_bool()) {
         cfg.insert("completed".into(), json!(completed));
+        if completed {
+            cfg.insert("last_migrated_version".into(), json!(env!("CARGO_PKG_VERSION")));
+            cfg.insert("runtime_migration_schema".into(), json!(crate::migrate::MIGRATE_SCHEMA_VERSION));
+        }
     }
     if let Some(name) = body.get("deviceName").and_then(|v| v.as_str()) {
         cfg.insert("deviceName".into(), json!(name));
