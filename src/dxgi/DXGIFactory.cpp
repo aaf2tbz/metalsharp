@@ -1,7 +1,7 @@
 /// @file DXGIFactory.cpp
 /// @brief DXGI factory COM implementation — adapter enumeration and swap chain creation.
 ///
-/// Implements IDXGIFactory (and IDXGIFactory1/2) COM interfaces. Enumerates display
+/// Implements IDXGIFactory (and IDXGIFactory1/2/3/4) COM interfaces. Enumerates display
 /// adapters and provides the entry point for swap chain creation against a D3D device.
 
 #include <cstring>

@@ -117,11 +117,25 @@ int main() {
             hr = factory2->RegisterStereoStatusWindow(nullptr, 0, &cookie);
             CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterStereoStatusWindow stub");
             factory2->UnregisterStereoStatus(cookie);
+            hr = factory2->RegisterStereoStatusEvent(nullptr, &cookie);
+            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterStereoStatusEvent stub");
+            factory2->UnregisterStereoStatus(cookie);
             hr = factory2->RegisterOcclusionStatusWindow(nullptr, 0, &cookie);
             CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterOcclusionStatusWindow stub");
             factory2->UnregisterOcclusionStatus(cookie);
+            hr = factory2->RegisterOcclusionStatusEvent(nullptr, &cookie);
+            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterOcclusionStatusEvent stub");
+            factory2->UnregisterOcclusionStatus(cookie);
+            LUID sharedLuid = {};
+            hr = factory2->GetSharedResourceAdapterLuid(nullptr, &sharedLuid);
+            CHECK(SUCCEEDED(hr) && sharedLuid.LowPart == 0x106b, "IDXGIFactory2::GetSharedResourceAdapterLuid stub");
             hr = factory2->CreateSwapChainForHwnd(cmdQueue, nullptr, &desc1, nullptr, nullptr, &hwndSwapChain);
             CHECK(SUCCEEDED(hr) && hwndSwapChain, "CreateSwapChainForHwnd accepts ID3D12CommandQueue");
+            IDXGISwapChain1* coreWindowSwapChain = nullptr;
+            hr = factory2->CreateSwapChainForCoreWindow(cmdQueue, nullptr, &desc1, nullptr, &coreWindowSwapChain);
+            CHECK(SUCCEEDED(hr) && coreWindowSwapChain, "CreateSwapChainForCoreWindow accepts ID3D12CommandQueue");
+            if (coreWindowSwapChain)
+                coreWindowSwapChain->Release();
             hr = factory2->CreateSwapChainForComposition(cmdQueue, &desc1, nullptr, &compositionSwapChain);
             CHECK(SUCCEEDED(hr) && compositionSwapChain, "CreateSwapChainForComposition accepts ID3D12CommandQueue");
             if (hwndSwapChain) {
