@@ -44,6 +44,7 @@ struct LaunchLogContext<'a> {
     wine_overrides: Option<&'static str>,
     runtime_lib_key: &'a str,
     runtime_lib_path: &'a str,
+    wine_dll_path: Option<&'a str>,
     dlls: &'a [super::recipe::RecipeDll],
     runtime_bindings: &'a [DxmtRuntimeBinding],
 }
@@ -445,7 +446,15 @@ pub fn launch_custom_with_options(
 
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -472,6 +481,9 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
+        if let Some(path) = wine_dll_path.as_ref() {
+            writeln!(log, "WINEDLLPATH={}", path)?;
+        }
         if !runtime_bindings.is_empty() {
             writeln!(log, "runtime_bindings=")?;
             for binding in &runtime_bindings {
@@ -568,7 +580,15 @@ fn launch_dxmt_metal_with_context(
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -599,6 +619,7 @@ fn launch_dxmt_metal_with_context(
             wine_overrides: node.wine_overrides,
             runtime_lib_key,
             runtime_lib_path: &dyld_path,
+            wine_dll_path: wine_dll_path.as_deref(),
             dlls: &recipe.dlls,
             runtime_bindings: &runtime_bindings,
         },
@@ -642,7 +663,15 @@ fn launch_wine_bare_with_context(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -669,6 +698,7 @@ fn launch_wine_bare_with_context(
             wine_overrides: node.wine_overrides,
             runtime_lib_key,
             runtime_lib_path: &dyld_path,
+            wine_dll_path: wine_dll_path.as_deref(),
             dlls: &recipe.dlls,
             runtime_bindings: &[],
         },
@@ -700,6 +730,9 @@ fn attach_launch_log(
         writeln!(log, "winedlloverrides={}", overrides)?;
     }
     writeln!(log, "{}={}", context.runtime_lib_key, context.runtime_lib_path)?;
+    if let Some(path) = context.wine_dll_path {
+        writeln!(log, "WINEDLLPATH={}", path)?;
+    }
     if !context.dlls.is_empty() {
         writeln!(log, "dll_bindings=")?;
         for dll in context.dlls {
@@ -842,6 +875,28 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
+fn wine_debug_value() -> String {
+    std::env::var("METALSHARP_WINEDEBUG").unwrap_or_else(|_| "-all".to_string())
+}
+
+fn dxmt_wine_dll_path(ms_root: &Path, exe_dir: &Path, node: &PipelineNode) -> Option<String> {
+    if node.backend != "dxmt" {
+        return None;
+    }
+
+    Some(
+        [
+            exe_dir.to_path_buf(),
+            ms_root.join("lib").join("dxmt").join("x86_64-windows"),
+            ms_root.join("lib").join("wine").join("x86_64-windows"),
+        ]
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(":"),
+    )
+}
+
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
     let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
@@ -870,6 +925,17 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push(("WINEDLLOVERRIDES".to_string(), overrides.to_string()));
     }
     if node.backend == "dxmt" {
+        env.push((
+            "WINEDLLPATH".to_string(),
+            [
+                ms_root.join("lib").join("dxmt").join("x86_64-windows"),
+                ms_root.join("lib").join("wine").join("x86_64-windows"),
+            ]
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(":"),
+        ));
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
@@ -1365,6 +1431,7 @@ mod tests {
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
+        assert!(keys.contains("WINEDLLPATH"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
@@ -1375,7 +1442,29 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
+        let dll_path = env.iter().find(|(key, _)| key == "WINEDLLPATH").map(|(_, value)| value).unwrap();
+        assert!(dll_path.contains("lib/dxmt/x86_64-windows"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_wine_dll_path_prefers_game_and_runtime_dll_dirs() {
+        let node = get_pipeline(PipelineId::M11);
+        let ms_root = PathBuf::from("/tmp/metalsharp-runtime/wine");
+        let exe_dir = PathBuf::from("/tmp/game/Binaries/Win64");
+
+        let dll_path = dxmt_wine_dll_path(&ms_root, &exe_dir, node).expect("dxmt dll path");
+
+        assert!(dll_path.starts_with("/tmp/game/Binaries/Win64:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/dxmt/x86_64-windows"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/wine/x86_64-windows"));
+    }
+
+    #[test]
+    fn non_dxmt_routes_do_not_force_winedllpath() {
+        let node = get_pipeline(PipelineId::WineBare);
+
+        assert!(dxmt_wine_dll_path(&PathBuf::from("/tmp/runtime"), &PathBuf::from("/tmp/game"), node).is_none());
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d12,dxgi,d3d11,d3d10core=n;winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
@@ -89,7 +89,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some(
+                    "dxgi,d3d11,d3d10core=n;winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
@@ -119,7 +121,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "d3d10,d3d10_1,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d10,d3d10_1,dxgi,d3d11,d3d10core=n;winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 deploy_dlls: vec![
@@ -338,7 +340,7 @@ mod tests {
 
         assert_eq!(
             m12.wine_overrides,
-            Some("d3d12,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("d3d12,dxgi,d3d11,d3d10core=n;winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
@@ -363,7 +365,7 @@ mod tests {
         assert_eq!(m10.dyld_paths, m11.dyld_paths);
         assert_eq!(
             m10.wine_overrides,
-            Some("d3d10,d3d10_1,dxgi,d3d11,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("d3d10,d3d10_1,dxgi,d3d11,d3d10core=n;winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
 
         let m10_dlls: std::collections::HashSet<_> = m10.deploy_dlls.iter().map(|dll| dll.filename).collect();
@@ -380,6 +382,22 @@ mod tests {
         assert!(m10.alternatives.contains(&PipelineId::M11));
         assert!(m10.alternatives.contains(&PipelineId::M9));
         assert!(m10.alternatives.contains(&PipelineId::WineBare));
+    }
+
+    #[test]
+    fn dxmt_direct3d_overrides_are_native_only() {
+        for pipeline in [PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let overrides = get_pipeline(pipeline).wine_overrides.expect("dxmt overrides");
+            let direct3d_group = overrides.split(';').next().unwrap_or_default();
+
+            assert!(
+                direct3d_group.ends_with("=n"),
+                "{:?} must not fall back to WineD3D for DXMT-owned DLLs: {}",
+                pipeline,
+                overrides
+            );
+            assert!(overrides.contains("winemetal=n,b"));
+        }
     }
 
     #[test]
