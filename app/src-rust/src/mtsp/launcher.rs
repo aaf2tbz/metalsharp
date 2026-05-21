@@ -64,6 +64,7 @@ struct LaunchLogContext<'a> {
 pub struct CustomLaunchOptions {
     pub prefix_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
+    pub extra_env: Vec<(String, String)>,
 }
 
 pub fn bridge_is_running() -> bool {
@@ -487,6 +488,9 @@ pub fn launch_custom_with_options(
     apply_dxmt_config_env(&mut cmd, node, dxmt_config_file.as_deref());
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
+    }
+    for (key, value) in &options.extra_env {
+        cmd.env(key, value);
     }
 
     cmd.arg(&exe_name);
