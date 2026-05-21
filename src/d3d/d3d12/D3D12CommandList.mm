@@ -960,16 +960,23 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
             if (!m_computeDispatches.empty()) {
                 id<MTLComputePipelineState> computePipeline = nil;
+                void* computePtr = nullptr;
+                void* fallbackRenderPtr = nullptr;
                 if (m_pso) {
-                    void* ptr = m_pso->__metalComputePipelineState();
-                    if (ptr)
-                        computePipeline = (__bridge id<MTLComputePipelineState>)ptr;
-                    if (!ptr) {
-                        ptr = m_pso->__metalRenderPipelineState();
+                    computePtr = m_pso->__metalComputePipelineState();
+                    if (computePtr)
+                        computePipeline = (__bridge id<MTLComputePipelineState>)computePtr;
+                    if (!computePtr) {
+                        fallbackRenderPtr = m_pso->__metalRenderPipelineState();
                     }
                 }
 
                 if (computePipeline) {
+                    const ComputeDispatch& firstDispatch = m_computeDispatches.front();
+                    MS_INFO("d3d12_compute_dispatch_execute count=%zu first=%u,%u,%u argument_buffer_bytes=%zu",
+                            m_computeDispatches.size(), firstDispatch.x, firstDispatch.y, firstDispatch.z,
+                            m_computeRootSignature ? (size_t)m_computeRootSignature->argumentBufferSize : 0);
+
                     id<MTLComputeCommandEncoder> enc = [cmdBuffer computeCommandEncoder];
                     [enc setComputePipelineState:computePipeline];
 
@@ -990,6 +997,13 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                         [enc dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerGroup];
                     }
                     [enc endEncoding];
+                } else {
+                    const ComputeDispatch& firstDispatch = m_computeDispatches.front();
+                    MS_WARN("d3d12_compute_dispatch_no_pipeline count=%zu first=%u,%u,%u has_pso=%s compute_ptr=%s "
+                            "render_fallback_ptr=%s",
+                            m_computeDispatches.size(), firstDispatch.x, firstDispatch.y, firstDispatch.z,
+                            m_pso ? "true" : "false", computePtr ? "true" : "false",
+                            fallbackRenderPtr ? "true" : "false");
                 }
             }
 
