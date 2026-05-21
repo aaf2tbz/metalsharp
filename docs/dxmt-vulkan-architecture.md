@@ -38,6 +38,8 @@ MetalSharp's DXMT runtime patch set includes:
 
 - `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`
 - `tools/wine/patches/dxmt-d3d12-infoqueue-compat.patch`
+- `tools/wine/patches/dxmt-d3d12-shader-model-default.patch`
+- `tools/wine/patches/dxmt-d3d12-typed-uav-feature.patch`
 
 The DXGI patch exports Wine's private `DXGID3D10CreateDevice` and
 `DXGID3D10RegisterLayers` handoff from DXMT `dxgi.dll`, forwarding device
@@ -49,6 +51,16 @@ The D3D12 InfoQueue patch adds a no-op `ID3D12InfoQueue` compatibility surface.
 Unity HDRP D3D12 startup queries that D3D12 SDK-layers interface; returning
 `E_NOINTERFACE` can collapse startup into Unity's generic DirectX 11
 initialization error even after DXMT has already created a D3D12 device.
+
+The D3D12 shader-model patch makes default/zero shader-model probes return the
+runtime cap of SM 6.0 instead of leaving the caller with a zero value. This
+matches MetalSharp's native D3D12 contract and prevents Unity from observing a
+D3D12 device while classifying shader support below the intended route.
+
+The typed-UAV feature patch makes the D3D12 options contract match the runtime's
+format-support path. DXMT already reports typed UAV load/store support per
+format, and Unity HDRP compute paths inspect `TypedUAVLoadAdditionalFormats`
+before selecting depth/downsample kernels.
 
 Basic flow:
 

@@ -218,6 +218,7 @@ fn launch_args_for_recipe<'a>(
 ) -> Vec<String> {
     let mut args: Vec<String> = base_args.into_iter().map(str::to_string).collect();
     if is_unity_game_dir(game_dir) {
+        ensure_unity_screen_defaults(&mut args);
         match node.id {
             PipelineId::M12 if configured_pipeline == Some(PipelineId::M12) => push_arg_once(&mut args, "-force-d3d12"),
             PipelineId::M11 | PipelineId::M10 => push_arg_once(&mut args, "-force-d3d11"),
@@ -242,6 +243,22 @@ fn is_unity_game_dir(game_dir: Option<&Path>) -> bool {
 fn push_arg_once(args: &mut Vec<String>, arg: &str) {
     if !args.iter().any(|existing| existing.eq_ignore_ascii_case(arg)) {
         args.push(arg.to_string());
+    }
+}
+
+fn ensure_unity_screen_defaults(args: &mut Vec<String>) {
+    push_arg_value_once(args, "-screen-width", "1920");
+    push_arg_value_once(args, "-screen-height", "1080");
+    push_arg_value_once(args, "-screen-fullscreen", "0");
+}
+
+fn push_arg_value_once(args: &mut Vec<String>, name: &str, value: &str) {
+    if !args.iter().any(|existing| {
+        existing.eq_ignore_ascii_case(name)
+            || existing.strip_prefix(name).is_some_and(|suffix| suffix.starts_with('=') || suffix.starts_with(':'))
+    }) {
+        args.push(name.to_string());
+        args.push(value.to_string());
     }
 }
 
@@ -960,7 +977,10 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert_eq!(args, vec!["-force-d3d12"]);
+        assert_eq!(
+            args,
+            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
+        );
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
@@ -977,7 +997,7 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert!(args.is_empty());
+        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
@@ -994,7 +1014,7 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert!(args.is_empty());
+        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
@@ -1011,7 +1031,30 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert_eq!(args, vec!["-force-d3d11"]);
+        assert_eq!(
+            args,
+            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d11"]
+        );
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn unity_screen_defaults_preserve_user_screen_args() {
+        let game_dir = test_dir("unity-user-screen-args");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
+
+        let args = launch_args_for_recipe(
+            super::super::engine::get_pipeline(PipelineId::M11),
+            Some(&game_dir),
+            Some(PipelineId::M11),
+            ["-screen-width", "2560", "-screen-height=1440", "-screen-fullscreen", "1"],
+        );
+
+        assert_eq!(
+            args,
+            vec!["-screen-width", "2560", "-screen-height=1440", "-screen-fullscreen", "1", "-force-d3d11"]
+        );
         let _ = std::fs::remove_dir_all(game_dir);
     }
 

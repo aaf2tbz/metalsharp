@@ -86,16 +86,43 @@ After the InfoQueue shim, the live trace showed:
 
 - `D3D12CreateDevice` succeeds at feature level 12.1.
 - `D3D11On12CreateDevice` succeeds for Unity compatibility.
+- `D3D12_OPTIONS` initially reported `TypedUAVLoadAdditionalFormats = FALSE`
+  even though the runtime format-support path reports typed UAV load/store
+  capability for supported formats.
+- Unity reports `GraphicsShaderLevel : 50` on the forced M12 path, while the
+  staged DXMT source left zero shader-model probes unchanged instead of
+  returning the SM 6.0 runtime cap.
+- Direct Unity probes can start in a 1 x 1 fullscreen state under Wine. HDRP
+  then emits `Thread group size must be above zero` during the render loop,
+  matching the colored flicker seen after the shader-kernel blocker moved.
 - The M12 swapchain presents frames through a CAMetalLayer at 1920 x 1080.
-- The next observed blocker is HDRP shader content:
-  `Kernel 'KDepthDownsample8DualUav' not found`.
+- The next observed blocker is Unity HDRP compute-kernel lookup:
+  `Kernel 'KDepthDownsample8DualUav' not found`. The kernel string exists in
+  `SonsOfTheForest_Data/globalgamemanagers.assets`, so this is tracked as a
+  D3D12 capability/variant selection issue rather than absent game content.
 
 Sons is still intentionally mapped to M11 in `configs/mtsp-rules.toml`. The
 M12 diagnostic run proved the loader/device path, but forcing Unity into D3D12
-on an M11-mapped title can select a D3D12/HDRP shader path that the shipped game
-content does not satisfy. MetalSharp now only auto-adds `-force-d3d12` for Unity
-games whose configured route is M12; M12 probes of M11 titles keep user launch
-arguments authoritative instead of injecting the D3D12 flag.
+on an M11-mapped title can select a D3D12/HDRP shader path that depends on
+capability and shader-model reporting being internally consistent. MetalSharp
+now only auto-adds `-force-d3d12` for Unity games whose configured route is M12;
+M12 probes of M11 titles keep user launch arguments authoritative instead of
+injecting the D3D12 flag.
+
+The D3D12 patch set now also advertises typed UAV additional-format support so
+HDRP compute-kernel selection sees the same capability contract that per-format
+`CheckFeatureSupport` already exposes.
+
+The shader-model default patch makes a zero/default
+`D3D12_FEATURE_SHADER_MODEL` request return SM 6.0. That matches the in-tree
+MetalSharp D3D12 implementation and keeps Unity's D3D12 shader variant
+selection from seeing an accidental zero cap.
+
+Unity MTSP recipes also inject a default 1920 x 1080 windowed launch size unless
+the user already supplied `-screen-width`, `-screen-height`, or
+`-screen-fullscreen`. This prevents Wine's initial 1 x 1 fullscreen report from
+feeding zero-sized HDRP compute dispatches while keeping user launch arguments
+authoritative.
 
 ## Completion State
 

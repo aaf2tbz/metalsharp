@@ -1,0 +1,13 @@
+diff --git a/src/d3d12/d3d12_device.cpp b/src/d3d12/d3d12_device.cpp
+index a8fddac..bda05fb 100644
+--- a/src/d3d12/d3d12_device.cpp
++++ b/src/d3d12/d3d12_device.cpp
+@@ -1319,7 +1319,7 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
+     opts->TiledResourcesTier = D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
+     opts->ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_2;
+     opts->PSSpecifiedStencilRefSupported = TRUE;
+-    opts->TypedUAVLoadAdditionalFormats = FALSE;
++    opts->TypedUAVLoadAdditionalFormats = TRUE;
+     opts->ROVsSupported = FALSE;
+     opts->ConservativeRasterizationTier =
+         D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED;
