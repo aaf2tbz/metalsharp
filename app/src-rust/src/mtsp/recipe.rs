@@ -213,14 +213,16 @@ pub fn build_custom_launch_recipe(
 fn launch_args_for_recipe<'a>(
     node: &PipelineNode,
     game_dir: Option<&Path>,
-    _configured_pipeline: Option<PipelineId>,
+    configured_pipeline: Option<PipelineId>,
     base_args: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = base_args.into_iter().map(str::to_string).collect();
     if is_unity_game_dir(game_dir) {
         ensure_unity_screen_defaults(&mut args);
         match node.id {
-            PipelineId::M12 => push_unity_renderer_arg_once(&mut args, "-force-d3d12"),
+            PipelineId::M12 if !matches!(configured_pipeline, Some(PipelineId::M10 | PipelineId::M11)) => {
+                push_unity_renderer_arg_once(&mut args, "-force-d3d12")
+            },
             PipelineId::M11 | PipelineId::M10 => push_unity_renderer_arg_once(&mut args, "-force-d3d11"),
             _ => {},
         }
@@ -1002,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_unity_m12_recipe_forces_d3d12_even_for_m11_titles() {
+    fn explicit_unity_m12_recipe_keeps_m11_titles_renderer_authoritative() {
         let game_dir = test_dir("unity-m12-m11-rule-args");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
         std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
@@ -1014,10 +1016,7 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert_eq!(
-            args,
-            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
-        );
+        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
