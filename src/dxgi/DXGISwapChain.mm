@@ -44,13 +44,20 @@ static bool isHDRFormat(DXGI_FORMAT format) {
     return format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM;
 }
 
+static const GUID IID_ID3D12ResourceLocal = {
+    0x696442be, 0xa72e, 0x4056, {0xbc, 0x83, 0x34, 0x96, 0x4d, 0x34, 0xe2, 0xf3}};
+
 namespace metalsharp {
+
+HRESULT createD3D12SwapChainBackBuffer(void* nativeTexture, uint32_t width, uint32_t height, uint32_t format,
+                                       void** ppResource);
 
 struct MetalSwapChain::Impl {
     id<MTLDevice> device = nil;
     id<MTLCommandQueue> commandQueue = nil;
     CAMetalLayer* layer = nil;
     id<CAMetalDrawable> currentDrawable = nil;
+    id<MTLTexture> offscreenTexture = nil;
     uint32_t bufferCount = 2;
     uint32_t width = 0;
     uint32_t height = 0;
@@ -116,6 +123,17 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
         }
     }
 
+    if (!m_impl->layer) {
+        MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:metalFormat
+                                                                                        width:width
+                                                                                       height:height
+                                                                                    mipmapped:NO];
+        desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
+                     MTLTextureUsagePixelFormatView;
+        desc.storageMode = MTLStorageModePrivate;
+        m_impl->offscreenTexture = [m_impl->device newTextureWithDescriptor:desc];
+    }
+
     return true;
 }
 
@@ -158,6 +176,8 @@ void* MetalSwapChain::getCurrentDrawable() {
 }
 
 void* MetalSwapChain::getCurrentTexture() {
+    if (!m_impl->layer && m_impl->offscreenTexture)
+        return (__bridge void*)m_impl->offscreenTexture;
     id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)getCurrentDrawable();
     if (!drawable)
         return nullptr;
@@ -170,6 +190,16 @@ void MetalSwapChain::resize(uint32_t width, uint32_t height) {
     if (m_impl->layer) {
         CGSize size = CGSizeMake(width, height);
         m_impl->layer.drawableSize = size;
+    } else if (m_impl->offscreenTexture) {
+        MTLPixelFormat metalFormat = dxgiFormatToSwapchainMetal(m_impl->dxgiFormat);
+        MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:metalFormat
+                                                                                        width:width
+                                                                                       height:height
+                                                                                    mipmapped:NO];
+        desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
+                     MTLTextureUsagePixelFormatView;
+        desc.storageMode = MTLStorageModePrivate;
+        m_impl->offscreenTexture = [m_impl->device newTextureWithDescriptor:desc];
     }
     m_impl->currentDrawable = nil;
 }
@@ -225,9 +255,12 @@ struct DXGISwapChainBackBuffer : public ID3D11Texture2D {
 };
 
 DXGISwapChainImpl::~DXGISwapChainImpl() {
-    if (m_backBufferTexture) {
-        auto* tex = static_cast<DXGISwapChainBackBuffer*>(m_backBufferTexture);
+    if (m_d3d11BackBufferTexture) {
+        auto* tex = static_cast<DXGISwapChainBackBuffer*>(m_d3d11BackBufferTexture);
         tex->Release();
+    }
+    if (m_d3d12BackBufferTexture) {
+        reinterpret_cast<IUnknown*>(m_d3d12BackBufferTexture)->Release();
     }
 }
 
@@ -293,7 +326,14 @@ HRESULT DXGISwapChainImpl::GetParent(const GUID& riid, void** ppParent) {
 HRESULT DXGISwapChainImpl::Present(UINT SyncInterval, UINT Flags) {
     if (m_metalSwapChain) {
         m_metalSwapChain->present(SyncInterval);
-        m_backBufferTexture = nullptr;
+        if (m_d3d11BackBufferTexture) {
+            static_cast<DXGISwapChainBackBuffer*>(m_d3d11BackBufferTexture)->Release();
+            m_d3d11BackBufferTexture = nullptr;
+        }
+        if (m_d3d12BackBufferTexture) {
+            reinterpret_cast<IUnknown*>(m_d3d12BackBufferTexture)->Release();
+            m_d3d12BackBufferTexture = nullptr;
+        }
     }
     return S_OK;
 }
@@ -303,10 +343,25 @@ HRESULT DXGISwapChainImpl::GetBuffer(UINT Buffer, const GUID& riid, void** ppSur
         return E_POINTER;
     if (!m_metalSwapChain)
         return E_FAIL;
+    *ppSurface = nullptr;
 
     void* texPtr = m_metalSwapChain->getCurrentTexture();
     if (!texPtr)
         return E_FAIL;
+
+    if (riid == IID_ID3D12ResourceLocal) {
+        void* backBuffer = nullptr;
+        HRESULT hr = createD3D12SwapChainBackBuffer(texPtr, m_width, m_height, (uint32_t)m_format, &backBuffer);
+        if (FAILED(hr))
+            return hr;
+        if (m_d3d12BackBufferTexture) {
+            reinterpret_cast<IUnknown*>(m_d3d12BackBufferTexture)->Release();
+        }
+        m_d3d12BackBufferTexture = backBuffer;
+        reinterpret_cast<IUnknown*>(backBuffer)->AddRef();
+        *ppSurface = backBuffer;
+        return S_OK;
+    }
 
     auto* backBuffer = new DXGISwapChainBackBuffer();
     backBuffer->metalTexture = texPtr;
@@ -314,10 +369,10 @@ HRESULT DXGISwapChainImpl::GetBuffer(UINT Buffer, const GUID& riid, void** ppSur
     backBuffer->height = m_height;
     backBuffer->format = m_format;
 
-    if (m_backBufferTexture) {
-        static_cast<DXGISwapChainBackBuffer*>(m_backBufferTexture)->Release();
+    if (m_d3d11BackBufferTexture) {
+        static_cast<DXGISwapChainBackBuffer*>(m_d3d11BackBufferTexture)->Release();
     }
-    m_backBufferTexture = backBuffer;
+    m_d3d11BackBufferTexture = backBuffer;
     backBuffer->AddRef();
 
     *ppSurface = backBuffer;
@@ -379,9 +434,13 @@ HRESULT DXGISwapChainImpl::ResizeBuffers(UINT BufferCount, UINT Width, UINT Heig
         m_height = newH;
     }
 
-    if (m_backBufferTexture) {
-        static_cast<DXGISwapChainBackBuffer*>(m_backBufferTexture)->Release();
-        m_backBufferTexture = nullptr;
+    if (m_d3d11BackBufferTexture) {
+        static_cast<DXGISwapChainBackBuffer*>(m_d3d11BackBufferTexture)->Release();
+        m_d3d11BackBufferTexture = nullptr;
+    }
+    if (m_d3d12BackBufferTexture) {
+        reinterpret_cast<IUnknown*>(m_d3d12BackBufferTexture)->Release();
+        m_d3d12BackBufferTexture = nullptr;
     }
 
     return S_OK;

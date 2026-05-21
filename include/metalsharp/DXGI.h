@@ -76,7 +76,8 @@ class DXGISwapChainImpl : public IDXGISwapChain1 {
     uint32_t m_height = 0;
     DXGI_FORMAT m_format = 0;
     uint32_t m_bufferCount = 2;
-    void* m_backBufferTexture = nullptr;
+    void* m_d3d11BackBufferTexture = nullptr;
+    void* m_d3d12BackBufferTexture = nullptr;
 };
 
 class DXGIFactory : public IDXGIFactory4 {

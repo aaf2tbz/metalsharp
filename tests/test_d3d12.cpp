@@ -70,6 +70,7 @@ int main() {
     IDXGISwapChain* swapChain = nullptr;
     IDXGIFactory2* factory2 = nullptr;
     IDXGISwapChain1* hwndSwapChain = nullptr;
+    ID3D12Resource* swapChainBackBuffer = nullptr;
     if (cmdQueue) {
         GUID anyFactory = {};
         hr = CreateDXGIFactory1(anyFactory, (void**)&factory);
@@ -107,6 +108,9 @@ int main() {
             hr = factory2->CreateSwapChainForHwnd(cmdQueue, nullptr, &desc1, nullptr, nullptr, &hwndSwapChain);
             CHECK(SUCCEEDED(hr) && hwndSwapChain, "CreateSwapChainForHwnd accepts ID3D12CommandQueue");
             if (hwndSwapChain) {
+                hr = hwndSwapChain->GetBuffer(0, IID_ID3D12Resource, (void**)&swapChainBackBuffer);
+                CHECK(SUCCEEDED(hr) && swapChainBackBuffer && swapChainBackBuffer->__metalTexturePtr() != nullptr,
+                      "IDXGISwapChain1::GetBuffer returns ID3D12Resource");
                 hr = hwndSwapChain->Present1(0, 0, nullptr);
                 CHECK(SUCCEEDED(hr), "IDXGISwapChain1::Present1");
             }
@@ -749,6 +753,38 @@ int main() {
         }
     }
 
+    printf("\n--- Swapchain D3D12 Render Target View ---\n");
+    if (device && swapChainBackBuffer && rtvHeap) {
+        D3D12_CPU_DESCRIPTOR_HANDLE swapchainRtv = rtvHeap->__getCPUDescriptorHandleForHeapStart();
+        swapchainRtv.ptr += 1;
+        hr = device->CreateRenderTargetView(swapChainBackBuffer, nullptr, swapchainRtv);
+        CHECK(SUCCEEDED(hr), "CreateRenderTargetView accepts swapchain ID3D12Resource");
+
+        ID3D12GraphicsCommandList* presentList = nullptr;
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr,
+                                       IID_ID3D12GraphicsCommandList, (void**)&presentList);
+        CHECK(SUCCEEDED(hr) && presentList, "Create command list for swapchain present barriers");
+        if (presentList) {
+            D3D12_RESOURCE_BARRIER toRenderTarget = {};
+            toRenderTarget.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+            toRenderTarget.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            toRenderTarget.pResource = swapChainBackBuffer;
+            hr = presentList->ResourceBarrier(1, &toRenderTarget);
+            CHECK(SUCCEEDED(hr) && swapChainBackBuffer->__getResourceState() == D3D12_RESOURCE_STATE_RENDER_TARGET,
+                  "Swapchain backbuffer transitions PRESENT to RENDER_TARGET");
+
+            D3D12_RESOURCE_BARRIER toPresent = {};
+            toPresent.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            toPresent.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+            toPresent.pResource = swapChainBackBuffer;
+            hr = presentList->ResourceBarrier(1, &toPresent);
+            CHECK(SUCCEEDED(hr) && swapChainBackBuffer->__getResourceState() == D3D12_RESOURCE_STATE_PRESENT,
+                  "Swapchain backbuffer transitions RENDER_TARGET to PRESENT");
+            presentList->Close();
+            presentList->Release();
+        }
+    }
+
     printf("\n--- Descriptor handle increment ---\n");
     if (device) {
         UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -890,6 +926,8 @@ int main() {
         pso->Release();
     if (computePso)
         computePso->Release();
+    if (swapChainBackBuffer)
+        swapChainBackBuffer->Release();
     if (hwndSwapChain)
         hwndSwapChain->Release();
     if (factory2)
