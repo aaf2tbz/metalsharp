@@ -245,10 +245,7 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 delete this;
             return c;
         }
-        STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-        STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-        STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-        STDMETHOD(SetName)(const char*) override { return S_OK; }
+        METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
         HRESULT Close() override {
             m_closed = true;

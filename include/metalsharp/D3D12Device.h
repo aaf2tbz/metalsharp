@@ -81,6 +81,129 @@ static HRESULT E_NOT_IMPL = E_NOTIMPL;
 class D3D12ResourceImpl;
 using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 
+struct GUIDHasher {
+    size_t operator()(const GUID& guid) const {
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&guid);
+        size_t value = 1469598103934665603ull;
+        for (size_t i = 0; i < sizeof(GUID); ++i) {
+            value ^= bytes[i];
+            value *= 1099511628211ull;
+        }
+        return value;
+    }
+};
+
+class D3D12PrivateDataStore {
+  public:
+    ~D3D12PrivateDataStore() { clearInterfaces(); }
+
+    HRESULT GetPrivateData(const GUID& guid, UINT* pDataSize, void* pData) {
+        if (!pDataSize)
+            return E_POINTER;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        auto iface = m_interfaces.find(guid);
+        if (iface != m_interfaces.end()) {
+            const UINT requiredSize = sizeof(IUnknown*);
+            if (!pData || *pDataSize < requiredSize) {
+                *pDataSize = requiredSize;
+                return pData ? DXGI_ERROR_MORE_DATA : S_OK;
+            }
+            auto** out = static_cast<IUnknown**>(pData);
+            *out = iface->second;
+            if (*out)
+                (*out)->AddRef();
+            *pDataSize = requiredSize;
+            return S_OK;
+        }
+
+        auto blob = m_blobs.find(guid);
+        if (blob == m_blobs.end())
+            return DXGI_ERROR_NOT_FOUND;
+
+        const UINT requiredSize = static_cast<UINT>(blob->second.size());
+        if (!pData || *pDataSize < requiredSize) {
+            *pDataSize = requiredSize;
+            return pData ? DXGI_ERROR_MORE_DATA : S_OK;
+        }
+        if (requiredSize > 0)
+            memcpy(pData, blob->second.data(), requiredSize);
+        *pDataSize = requiredSize;
+        return S_OK;
+    }
+
+    HRESULT SetPrivateData(const GUID& guid, UINT dataSize, const void* pData) {
+        if (dataSize > 0 && !pData)
+            return E_INVALIDARG;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        eraseInterface(guid);
+        if (dataSize == 0) {
+            m_blobs.erase(guid);
+            return S_OK;
+        }
+        const auto* bytes = static_cast<const uint8_t*>(pData);
+        m_blobs[guid] = std::vector<uint8_t>(bytes, bytes + dataSize);
+        return S_OK;
+    }
+
+    HRESULT SetPrivateDataInterface(const GUID& guid, const IUnknown* pData) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_blobs.erase(guid);
+        eraseInterface(guid);
+        if (!pData)
+            return S_OK;
+        auto* iface = const_cast<IUnknown*>(pData);
+        iface->AddRef();
+        m_interfaces[guid] = iface;
+        return S_OK;
+    }
+
+    HRESULT SetName(const char* name) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_name = name ? name : "";
+        return S_OK;
+    }
+
+  private:
+    void eraseInterface(const GUID& guid) {
+        auto it = m_interfaces.find(guid);
+        if (it == m_interfaces.end())
+            return;
+        if (it->second)
+            it->second->Release();
+        m_interfaces.erase(it);
+    }
+
+    void clearInterfaces() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& entry : m_interfaces) {
+            if (entry.second)
+                entry.second->Release();
+        }
+        m_interfaces.clear();
+    }
+
+    std::mutex m_mutex;
+    std::unordered_map<GUID, std::vector<uint8_t>, GUIDHasher> m_blobs;
+    std::unordered_map<GUID, IUnknown*, GUIDHasher> m_interfaces;
+    std::string m_name;
+};
+
+#define METALSHARP_D3D12_PRIVATE_DATA_METHODS()                                                                        \
+    D3D12PrivateDataStore m_privateData;                                                                               \
+    STDMETHOD(GetPrivateData)(const GUID& guid, UINT* pDataSize, void* pData) override {                               \
+        return m_privateData.GetPrivateData(guid, pDataSize, pData);                                                   \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateData)(const GUID& guid, UINT dataSize, const void* pData) override {                           \
+        return m_privateData.SetPrivateData(guid, dataSize, pData);                                                    \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateDataInterface)(const GUID& guid, const IUnknown* pData) override {                             \
+        return m_privateData.SetPrivateDataInterface(guid, pData);                                                     \
+    }                                                                                                                  \
+    STDMETHOD(SetName)(const char* name) override {                                                                    \
+        return m_privateData.SetName(name);                                                                            \
+    }
+
 static bool d3d12FormatHasMetalBacking(UINT format) {
     if (format == ::DXGI_FORMAT_UNKNOWN)
         return false;
@@ -193,10 +316,7 @@ class D3D12FenceImpl final : public ID3D12Fence {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT GetCompletedValue(UINT64* pValue) override {
         if (!pValue)
@@ -273,10 +393,7 @@ class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     HRESULT Reset() override { return S_OK; }
 };
 
@@ -320,10 +437,7 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) override;
     HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override;
@@ -364,8 +478,13 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     UINT dirtyStart = UINT_MAX;
     UINT dirtyEnd = 0;
     uint64_t generation = 0;
+    UINT64 cpuHandleBase = 0;
+    UINT64 gpuHandleBase = 0;
 
-    D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {}
+    D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {
+        cpuHandleBase = reinterpret_cast<UINT64>(this) + 0x1000;
+        gpuHandleBase = reinterpret_cast<UINT64>(this) + 0x2000;
+    }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -384,22 +503,20 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
-    D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() override { return {1}; }
-    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override {
-        return {reinterpret_cast<UINT64>(this) + 1};
-    }
+    D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() override { return {cpuHandleBase}; }
+    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override { return {gpuHandleBase}; }
     UINT __getDescriptorCount() const override { return desc.NumDescriptors; }
     UINT __getHeapType() const override { return desc.Type; }
 
     D3D12Descriptor* getDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
-        if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
+        if (handle.ptr < cpuHandleBase)
             return nullptr;
-        return &descriptors[handle.ptr - 1];
+        UINT64 offset = handle.ptr - cpuHandleBase;
+        if (offset >= desc.NumDescriptors)
+            return nullptr;
+        return &descriptors[offset];
     }
 
     D3D12Descriptor* getDescriptorByIndex(UINT index) {
@@ -426,16 +543,18 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     }
 
     UINT handleToIndex(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
-        if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
+        if (handle.ptr < cpuHandleBase)
             return UINT_MAX;
-        return static_cast<UINT>(handle.ptr - 1);
+        UINT64 offset = handle.ptr - cpuHandleBase;
+        if (offset >= desc.NumDescriptors)
+            return UINT_MAX;
+        return static_cast<UINT>(offset);
     }
 
     UINT gpuHandleToIndex(D3D12_GPU_DESCRIPTOR_HANDLE handle) const {
-        UINT64 base = reinterpret_cast<UINT64>(this) + 1;
-        if (handle.ptr < base)
+        if (handle.ptr < gpuHandleBase)
             return UINT_MAX;
-        UINT64 offset = handle.ptr - base;
+        UINT64 offset = handle.ptr - gpuHandleBase;
         if (offset >= desc.NumDescriptors)
             return UINT_MAX;
         return static_cast<UINT>(offset);
@@ -445,6 +564,8 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
                          D3D12_CPU_DESCRIPTOR_HANDLE srcStart) {
         UINT dstIdx = handleToIndex(dstStart);
         UINT srcIdx = handleToIndex(srcStart);
+        if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
+            return;
         for (UINT i = 0; i < numDescriptors; ++i) {
             if (dstIdx + i < desc.NumDescriptors && srcIdx + i < desc.NumDescriptors) {
                 descriptors[dstIdx + i] = descriptors[srcIdx + i];
@@ -489,10 +610,7 @@ class D3D12RootSignatureImpl final : public ID3D12RootSignature {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     void computeLayout() {
         parameterLayouts.clear();
@@ -557,10 +675,7 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     void* __metalRenderPipelineState() const override { return m_renderPipeline; }
     void* __metalComputePipelineState() const override { return m_computePipeline; }
 };
@@ -585,10 +700,7 @@ class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 };
 
 class D3D12StateObjectImpl final : public ID3D12StateObject {
@@ -614,10 +726,7 @@ class D3D12StateObjectImpl final : public ID3D12StateObject {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     void* __metalRTPipeline() const override { return m_rtPipeline; }
 };
 
@@ -660,10 +769,7 @@ class D3D12ResourceImpl final : public ID3D12Resource {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT Map(UINT, const D3D12_RANGE*, void** ppData) override {
         if (!ppData)
@@ -742,10 +848,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT CreateCommandQueue(const void* pDesc, REFIID riid, void** ppCommandQueue) override {
         if (!ppCommandQueue)
@@ -1172,6 +1275,86 @@ class D3D12DeviceImpl final : public ID3D12Device {
     }
 
     UINT GetDescriptorHandleIncrementSize(UINT) override { return 1; }
+
+    void CopyDescriptors(UINT numDestDescriptorRanges, const D3D12_CPU_DESCRIPTOR_HANDLE* pDestDescriptorRangeStarts,
+                         const UINT* pDestDescriptorRangeSizes, UINT numSrcDescriptorRanges,
+                         const D3D12_CPU_DESCRIPTOR_HANDLE* pSrcDescriptorRangeStarts,
+                         const UINT* pSrcDescriptorRangeSizes, UINT) override {
+        if (!pDestDescriptorRangeStarts || !pSrcDescriptorRangeStarts || numDestDescriptorRanges == 0 ||
+            numSrcDescriptorRanges == 0)
+            return;
+
+        UINT dstRange = 0;
+        UINT srcRange = 0;
+        UINT dstOffset = 0;
+        UINT srcOffset = 0;
+        UINT totalDescriptors = 0;
+        if (pDestDescriptorRangeSizes) {
+            for (UINT i = 0; i < numDestDescriptorRanges; ++i)
+                totalDescriptors += pDestDescriptorRangeSizes[i];
+        } else if (pSrcDescriptorRangeSizes) {
+            for (UINT i = 0; i < numSrcDescriptorRanges; ++i)
+                totalDescriptors += pSrcDescriptorRangeSizes[i];
+        } else {
+            totalDescriptors = 1;
+        }
+
+        while (dstRange < numDestDescriptorRanges && srcRange < numSrcDescriptorRanges) {
+            UINT dstRangeSize = pDestDescriptorRangeSizes ? pDestDescriptorRangeSizes[dstRange] : totalDescriptors;
+            UINT srcRangeSize = pSrcDescriptorRangeSizes ? pSrcDescriptorRangeSizes[srcRange] : totalDescriptors;
+            if (dstRangeSize == 0) {
+                ++dstRange;
+                dstOffset = 0;
+                continue;
+            }
+            if (srcRangeSize == 0) {
+                ++srcRange;
+                srcOffset = 0;
+                continue;
+            }
+
+            UINT copyCount = std::min(dstRangeSize - dstOffset, srcRangeSize - srcOffset);
+
+            D3D12_CPU_DESCRIPTOR_HANDLE dst = {pDestDescriptorRangeStarts[dstRange].ptr + dstOffset};
+            D3D12_CPU_DESCRIPTOR_HANDLE src = {pSrcDescriptorRangeStarts[srcRange].ptr + srcOffset};
+            CopyDescriptorsSimple(copyCount, dst, src, 0);
+
+            dstOffset += copyCount;
+            srcOffset += copyCount;
+            if (dstOffset >= dstRangeSize) {
+                ++dstRange;
+                dstOffset = 0;
+            }
+            if (srcOffset >= srcRangeSize) {
+                ++srcRange;
+                srcOffset = 0;
+            }
+        }
+    }
+
+    void CopyDescriptorsSimple(UINT numDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE destDescriptorRangeStart,
+                               D3D12_CPU_DESCRIPTOR_HANDLE srcDescriptorRangeStart, UINT) override {
+        if (numDescriptors == 0)
+            return;
+        D3D12DescriptorHeapImpl* dstHeap = findHeapForHandle(destDescriptorRangeStart);
+        D3D12DescriptorHeapImpl* srcHeap = findHeapForHandle(srcDescriptorRangeStart);
+        if (!dstHeap || !srcHeap)
+            return;
+
+        UINT dstIdx = dstHeap->handleToIndex(destDescriptorRangeStart);
+        UINT srcIdx = srcHeap->handleToIndex(srcDescriptorRangeStart);
+        if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
+            return;
+
+        for (UINT i = 0; i < numDescriptors; ++i) {
+            auto* dst = dstHeap->getDescriptorByIndex(dstIdx + i);
+            auto* src = srcHeap->getDescriptorByIndex(srcIdx + i);
+            if (!dst || !src)
+                break;
+            *dst = *src;
+        }
+        dstHeap->markDirty(dstIdx, numDescriptors);
+    }
 
     HRESULT ReserveTiles(ID3D12Resource* pTiledResource, UINT NumTileRegions,
                          const D3D12_TILED_RESOURCE_COORDINATE* pCoords, const D3D12_TILE_REGION_SIZE* pSizes,

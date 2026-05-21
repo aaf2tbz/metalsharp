@@ -961,6 +961,14 @@ class ID3D12Device : public ID3D12Object {
                                       REFIID riid, void** ppCommandSignature) PURE;
     STDMETHOD(CreateSampler)(const void* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) PURE;
     STDMETHOD_(UINT, GetDescriptorHandleIncrementSize)(UINT DescriptorHeapType) PURE;
+    STDMETHOD_(void, CopyDescriptors)(UINT NumDestDescriptorRanges,
+                                      const D3D12_CPU_DESCRIPTOR_HANDLE* pDestDescriptorRangeStarts,
+                                      const UINT* pDestDescriptorRangeSizes, UINT NumSrcDescriptorRanges,
+                                      const D3D12_CPU_DESCRIPTOR_HANDLE* pSrcDescriptorRangeStarts,
+                                      const UINT* pSrcDescriptorRangeSizes, UINT DescriptorHeapsType) PURE;
+    STDMETHOD_(void, CopyDescriptorsSimple)(UINT NumDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptorRangeStart,
+                                            D3D12_CPU_DESCRIPTOR_HANDLE SrcDescriptorRangeStart,
+                                            UINT DescriptorHeapsType) PURE;
 
     STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions,
                             const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates,

@@ -309,6 +309,7 @@ int main() {
 
     printf("\n--- Descriptor Heap ---\n");
     ID3D12DescriptorHeap* rtvHeap = nullptr;
+    ID3D12DescriptorHeap* copiedRtvHeap = nullptr;
     if (device) {
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
         heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -322,6 +323,14 @@ int main() {
             CHECK(rtvHeap->__getDescriptorCount() == 4, "Descriptor count is 4");
             CHECK(rtvHeap->__getHeapType() == D3D12_DESCRIPTOR_HEAP_TYPE_RTV, "Heap type is RTV");
         }
+
+        hr = device->CreateDescriptorHeap(&heapDesc, IID_ID3D12DescriptorHeap, (void**)&copiedRtvHeap);
+        CHECK(SUCCEEDED(hr) && copiedRtvHeap, "CreateDescriptorHeap (copy target)");
+        if (rtvHeap && copiedRtvHeap) {
+            CHECK(rtvHeap->__getCPUDescriptorHandleForHeapStart().ptr !=
+                      copiedRtvHeap->__getCPUDescriptorHandleForHeapStart().ptr,
+                  "Descriptor heaps have distinct CPU handle ranges");
+        }
     }
 
     printf("\n--- Render Target View ---\n");
@@ -329,6 +338,16 @@ int main() {
         D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->__getCPUDescriptorHandleForHeapStart();
         hr = device->CreateRenderTargetView(rtTexture, nullptr, rtvHandle);
         CHECK(SUCCEEDED(hr), "CreateRenderTargetView");
+
+        if (copiedRtvHeap) {
+            D3D12_CPU_DESCRIPTOR_HANDLE copyHandle = copiedRtvHeap->__getCPUDescriptorHandleForHeapStart();
+            device->CopyDescriptorsSimple(1, copyHandle, rtvHandle, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            auto* copiedHeapImpl = static_cast<metalsharp::D3D12DescriptorHeapImpl*>(copiedRtvHeap);
+            auto* copiedDescriptor = copiedHeapImpl->getDescriptor(copyHandle);
+            CHECK(copiedDescriptor && copiedDescriptor->resource == rtTexture &&
+                      copiedDescriptor->type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+                  "CopyDescriptorsSimple copies RTV descriptor across heaps");
+        }
 
         FLOAT clearColor[4] = {0.2f, 0.3f, 0.4f, 1.0f};
         ID3D12GraphicsCommandList* clearList = nullptr;
@@ -340,6 +359,26 @@ int main() {
             clearList->Close();
             clearList->Release();
         }
+    }
+
+    printf("\n--- Private Data ---\n");
+    if (device && rtTexture) {
+        static const GUID privateGuid = {0x9bd8ecdb, 0x2b7b, 0x4da3, {0xb5, 0x3b, 0x01, 0x8a, 0xf7, 0x1b, 0xf8, 0x90}};
+        const char tag[] = "sons-d3d12-resource";
+        hr = rtTexture->SetPrivateData(privateGuid, sizeof(tag), tag);
+        CHECK(SUCCEEDED(hr), "SetPrivateData on D3D12 resource");
+
+        UINT privateSize = 0;
+        hr = rtTexture->GetPrivateData(privateGuid, &privateSize, nullptr);
+        CHECK(SUCCEEDED(hr) && privateSize == sizeof(tag), "GetPrivateData reports required size");
+
+        char privateBuffer[sizeof(tag)] = {};
+        privateSize = sizeof(privateBuffer);
+        hr = rtTexture->GetPrivateData(privateGuid, &privateSize, privateBuffer);
+        CHECK(SUCCEEDED(hr) && strcmp(privateBuffer, tag) == 0, "GetPrivateData round-trips resource blob");
+
+        hr = rtTexture->SetName("MetalSharp D3D12 test resource");
+        CHECK(SUCCEEDED(hr), "SetName on D3D12 resource");
     }
 
     printf("\n--- Root Signature ---\n");
@@ -810,6 +849,8 @@ int main() {
         fence->Release();
     if (rootSig)
         rootSig->Release();
+    if (copiedRtvHeap)
+        copiedRtvHeap->Release();
     if (rtvHeap)
         rtvHeap->Release();
     if (rtTexture)
