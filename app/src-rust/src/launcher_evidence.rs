@@ -364,7 +364,7 @@ fn summarize_launcher(
             if lower.contains("easyanticheat_eos") || lower.contains("eos") {
                 facts.eac_eos_setup_detected = true;
             }
-            if lower.ends_with(".so") {
+            if is_eac_proton_asset(&lower) {
                 facts.eac_proton_asset_present = true;
             }
             if let Some(product_id) = parse_eac_product_id(&lower) {
@@ -384,6 +384,19 @@ fn summarize_launcher(
             .unwrap_or(false);
     }
     facts
+}
+
+fn is_eac_proton_asset(lower_path: &str) -> bool {
+    let normalized = lower_path.replace('\\', "/");
+    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    if !file_name.ends_with(".so") {
+        return false;
+    }
+
+    file_name == "easyanticheat.so"
+        || file_name.starts_with("easyanticheat_")
+        || file_name.starts_with("easyanticheat-eos")
+        || file_name.starts_with("easyanticheat_eos")
 }
 
 fn parse_launcher_line(family: &str, line: &str, facts: &mut LauncherFacts) {
@@ -635,5 +648,14 @@ mod tests {
 
         assert!(tokens.contains(&"easyanticheat".to_string()));
         assert!(tokens.contains(&"eac".to_string()));
+    }
+
+    #[test]
+    fn eac_proton_asset_detection_requires_eac_specific_so() {
+        assert!(is_eac_proton_asset("/game/EasyAntiCheat/easyanticheat_x64.so"));
+        assert!(is_eac_proton_asset(r"C:\Game\EasyAntiCheat\easyanticheat_eos_x64.so"));
+        assert!(!is_eac_proton_asset("/game/EasyAntiCheat/unix_bridge.so"));
+        assert!(!is_eac_proton_asset("/game/redistributables/helper.so"));
+        assert!(!is_eac_proton_asset("/game/EasyAntiCheat/EasyAntiCheat_EOS_Setup.exe"));
     }
 }
