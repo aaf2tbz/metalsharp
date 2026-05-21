@@ -1089,15 +1089,17 @@ class D3D12DeviceImpl final : public ID3D12Device {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(pFeatureSupportData);
-            data->NumQualityLevels =
-                (data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4) ? 1 : 0;
+            DXGITranslation dxgiFormat = static_cast<DXGITranslation>(data->Format);
+            bool sampleCountSupported = data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4;
+            bool formatSupported = d3d12FormatHasMetalBacking(data->Format) && !dxgiFormatIsCompressed(dxgiFormat);
+            data->NumQualityLevels = (sampleCountSupported && formatSupported) ? 1 : 0;
             return S_OK;
         }
         case D3D12_FEATURE_FORMAT_INFO: {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_INFO))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_INFO*>(pFeatureSupportData);
-            data->PlaneCount = 1;
+            data->PlaneCount = d3d12FormatHasMetalBacking(data->Format) ? 1 : 0;
             return S_OK;
         }
         case D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT: {
@@ -1137,16 +1139,15 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS5*>(pFeatureSupportData);
             std::memset(data, 0, sizeof(*data));
-            data->RaytracingTier = m_metalCapabilities.supportsRayTracing ? D3D12_RAYTRACING_TIER_1_1
-                                                                          : D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+            data->RaytracingTier = D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
             return S_OK;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS7))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS7*>(pFeatureSupportData);
-            data->MeshShaderTier = m_metalCapabilities.supportsMeshShaders ? D3D12_MESH_SHADER_TIER_1
-                                                                           : D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
+            std::memset(data, 0, sizeof(*data));
+            data->MeshShaderTier = D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
             data->SamplerFeedbackTier = 0;
             return S_OK;
         }

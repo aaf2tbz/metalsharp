@@ -187,9 +187,34 @@ int main() {
         CHECK(SUCCEEDED(hr) && unknownSupport.Support1 == 0 && unknownSupport.Support2 == 0,
               "CheckFeatureSupport: unknown format has no support");
 
+        D3D12_FEATURE_DATA_FORMAT_INFO formatInfo = {DXGI_FORMAT_B8G8R8A8_UNORM, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_INFO, &formatInfo, sizeof(formatInfo));
+        CHECK(SUCCEEDED(hr) && formatInfo.PlaneCount == 1, "CheckFeatureSupport: supported format plane count");
+
+        D3D12_FEATURE_DATA_FORMAT_INFO unknownFormatInfo = {0xffffu, 7};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_INFO, &unknownFormatInfo, sizeof(unknownFormatInfo));
+        CHECK(SUCCEEDED(hr) && unknownFormatInfo.PlaneCount == 0,
+              "CheckFeatureSupport: unknown format has no planes");
+
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS msaa = {DXGI_FORMAT_B8G8R8A8_UNORM, 4, 0, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &msaa, sizeof(msaa));
+        CHECK(SUCCEEDED(hr) && msaa.NumQualityLevels == 1, "CheckFeatureSupport: supported MSAA count");
+
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS unsupportedMsaa = {DXGI_FORMAT_BC7_UNORM, 4, 0, 99};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &unsupportedMsaa,
+                                         sizeof(unsupportedMsaa));
+        CHECK(SUCCEEDED(hr) && unsupportedMsaa.NumQualityLevels == 0,
+              "CheckFeatureSupport: compressed format has no MSAA quality");
+
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5 = {};
         hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5));
-        CHECK(SUCCEEDED(hr), "CheckFeatureSupport: options5");
+        CHECK(SUCCEEDED(hr) && options5.RaytracingTier == D3D12_RAYTRACING_TIER_NOT_SUPPORTED,
+              "CheckFeatureSupport: raytracing tier not advertised");
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7));
+        CHECK(SUCCEEDED(hr) && options7.MeshShaderTier == D3D12_MESH_SHADER_TIER_NOT_SUPPORTED,
+              "CheckFeatureSupport: mesh shader tier not advertised");
 
         hr = device->CheckFeatureSupport(0xffffffffu, &options, sizeof(options));
         CHECK(hr == E_INVALIDARG, "CheckFeatureSupport rejects unknown feature");
