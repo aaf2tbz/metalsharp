@@ -101,10 +101,21 @@ DXMT uses per-game shader caches under:
 ~/.metalsharp/shader-cache/m10/<appid>/
 ~/.metalsharp/shader-cache/m11/<appid>/
 ~/.metalsharp/shader-cache/m12/<appid>/
+~/.metalsharp/pipeline-cache/m9/<appid>/
+~/.metalsharp/pipeline-cache/m10/<appid>/
+~/.metalsharp/pipeline-cache/m11/<appid>/
+~/.metalsharp/pipeline-cache/m12/<appid>/
 ```
 
 Older `dxmt-metal` and `dxmt-metal12` cache family names may still exist on disk from previous builds, but current MTSP
 routes prefer the explicit M9/M10/M11/M12 cache namespaces.
+
+M9, M10, M11, and M12 all create those cache directories before launch and
+export the same Metal/DXMT cache contract: `METALSHARP_SHADER_CACHE_PATH`,
+`METALSHARP_PIPELINE_CACHE_PATH`, `MTL_SHADER_CACHE_DIR`,
+`DXMT_SHADER_CACHE_PATH`, and `DXMT_PIPELINE_CACHE_PATH`. M11 and M12 also
+force DXMT's MetalFX swapchain path to a 70 percent internal render target by
+writing and exporting `d3d11.metalSpatialUpscaleFactor = 1.43`.
 
 ## M9 D3D9
 

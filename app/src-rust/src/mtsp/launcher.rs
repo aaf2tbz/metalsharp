@@ -7,6 +7,13 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
+const DXMT_TARGET_RENDER_SCALE: &str = "0.70";
+const DXMT_SPATIAL_UPSCALE_FACTOR: &str = "1.43";
+const DXMT_CONFIG_CONTENT: &str = "d3d11.metalSpatialUpscaleFactor = 1.43\n\
+d3d11.preferredMaxFrameRate = 60\n\
+d3d11.maxFeatureLevel = 12_1\n";
+const DXMT_CONFIG_ENV: &str =
+    "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60;d3d11.maxFeatureLevel=12_1;";
 
 pub fn bridge_port() -> u16 {
     parse_bridge_port(std::env::var("METALSHARP_STEAM_BRIDGE_PORT").ok().as_deref()).unwrap_or(DEFAULT_BRIDGE_PORT)
@@ -459,6 +466,8 @@ pub fn launch_custom_with_options(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, launch_id);
+    let dxmt_config_file = ensure_dxmt_config(node, &ms_root)?;
+    let dxmt_config_file_string = dxmt_config_file.as_ref().map(|path| path.to_string_lossy().to_string());
     let mut cmd = Command::new(&wine);
     let wine_debug = wine_debug_value();
     let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
@@ -475,9 +484,7 @@ pub fn launch_custom_with_options(
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    if node.backend == "dxmt" {
-        cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
-    }
+    apply_dxmt_config_env(&mut cmd, node, dxmt_config_file.as_deref());
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
@@ -496,9 +503,27 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
-        if let Some(path) = wine_dll_path.as_ref() {
-            writeln!(log, "WINEDLLPATH={}", path)?;
-        }
+        write_dxmt_launch_contract(
+            &mut log,
+            &LaunchLogContext {
+                appid: launch_id,
+                node,
+                prefix: &prefix,
+                cwd: exe_dir,
+                exe_name: &exe_name,
+                args: &recipe.launch_args,
+                wine_overrides: node.wine_overrides,
+                runtime_lib_key,
+                runtime_lib_path: &dyld_path,
+                wine_dll_path: wine_dll_path.as_deref(),
+                dxmt_config_file: dxmt_config_file_string.as_deref(),
+                dxmt_trace_file: None,
+                dxmt_trace_file_wine: None,
+                cache_paths: cache_paths.as_ref(),
+                dlls: &recipe.dlls,
+                runtime_bindings: &runtime_bindings,
+            },
+        )?;
         if !runtime_bindings.is_empty() {
             writeln!(log, "runtime_bindings=")?;
             for binding in &runtime_bindings {
@@ -599,7 +624,8 @@ fn launch_dxmt_metal_with_context(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, appid);
-    let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+    let dxmt_config_file = ensure_dxmt_config(node, &ms_root)?;
+    let dxmt_config_file_string = dxmt_config_file.as_ref().map(|path| path.to_string_lossy().to_string());
     let dxmt_trace_file = log_path.map(|path| dxmt_trace_log_path_for_launch(appid, path));
     let dxmt_trace_file_wine = dxmt_trace_file.as_ref().map(|path| host_path_to_wine_z_path(path));
 
@@ -621,7 +647,7 @@ fn launch_dxmt_metal_with_context(
     }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+    apply_dxmt_config_env(&mut cmd, node, dxmt_config_file.as_deref());
     if let Some(trace_file) = dxmt_trace_file_wine.as_ref() {
         cmd.env("DXMT_D3D12_TRACE_FILE", trace_file);
     }
@@ -649,7 +675,7 @@ fn launch_dxmt_metal_with_context(
             runtime_lib_key,
             runtime_lib_path: &dyld_path,
             wine_dll_path: wine_dll_path.as_deref(),
-            dxmt_config_file: Some(&dxmt_config_file),
+            dxmt_config_file: dxmt_config_file_string.as_deref(),
             dxmt_trace_file: dxmt_trace_file.as_deref(),
             dxmt_trace_file_wine: dxmt_trace_file_wine.as_deref(),
             cache_paths: cache_paths.as_ref(),
@@ -834,6 +860,9 @@ fn write_dxmt_launch_contract(log: &mut dyn Write, context: &LaunchLogContext<'_
     if let Some(config) = context.dxmt_config_file {
         writeln!(log, "  DXMT_CONFIG_FILE={}", config)?;
     }
+    writeln!(log, "  DXMT_CONFIG={}", DXMT_CONFIG_ENV)?;
+    writeln!(log, "  metalfx_target_render_scale={}", DXMT_TARGET_RENDER_SCALE)?;
+    writeln!(log, "  metalfx_spatial_upscale_factor={}", DXMT_SPATIAL_UPSCALE_FACTOR)?;
     if let Some(trace_file) = context.dxmt_trace_file_wine {
         writeln!(log, "  DXMT_D3D12_TRACE_FILE={}", trace_file)?;
     }
@@ -1010,13 +1039,51 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
     let subdir = node.shader_cache_subdir?;
     let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
     let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
-    let _ = std::fs::create_dir_all(&shader_base);
-    let _ = std::fs::create_dir_all(&pipeline_base);
+    ensure_cache_dir(&shader_base, "shader");
+    ensure_cache_dir(&pipeline_base, "pipeline");
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
     Some(CachePaths {
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
     })
+}
+
+fn ensure_cache_dir(path: &Path, label: &str) {
+    if let Err(err) = std::fs::create_dir_all(path) {
+        eprintln!("metalsharp: failed to create {} cache dir {}: {}", label, path.display(), err);
+    }
+}
+
+fn ensure_dxmt_config(node: &PipelineNode, ms_root: &Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if node.backend != "dxmt" {
+        return Ok(None);
+    }
+
+    let config_path = ms_root.join("etc").join("dxmt.conf");
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let current = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !dxmt_config_matches_contract(&current) {
+        std::fs::write(&config_path, DXMT_CONFIG_CONTENT)?;
+    }
+    Ok(Some(config_path))
+}
+
+fn dxmt_config_matches_contract(config: &str) -> bool {
+    config.lines().any(|line| normalized_config_line(line) == "d3d11.metalspatialupscalefactor=1.43")
+        && config.lines().any(|line| normalized_config_line(line) == "d3d11.preferredmaxframerate=60")
+        && config.lines().any(|line| normalized_config_line(line) == "d3d11.maxfeaturelevel=12_1")
+}
+
+fn normalized_config_line(line: &str) -> String {
+    line.split('#')
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
@@ -1048,7 +1115,10 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
             .join(":"),
         ));
         env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
-        env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+        let config_path =
+            ensure_dxmt_config(node, &ms_root).ok().flatten().unwrap_or_else(|| ms_root.join("etc").join("dxmt.conf"));
+        env.push(("DXMT_CONFIG_FILE".to_string(), config_path.to_string_lossy().to_string()));
+        env.push(("DXMT_CONFIG".to_string(), DXMT_CONFIG_ENV.to_string()));
         let trace_path = home.join(".metalsharp").join("logs").join(format!("dxmt-d3d12-steam-{}.log", appid));
         env.push(("DXMT_D3D12_TRACE_FILE".to_string(), host_path_to_wine_z_path(&trace_path)));
     }
@@ -1061,6 +1131,16 @@ fn apply_dxmt_winemetal_env(cmd: &mut Command, node: &PipelineNode) {
     if node.backend == "dxmt" {
         cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
+}
+
+fn apply_dxmt_config_env(cmd: &mut Command, node: &PipelineNode, config_path: Option<&Path>) {
+    if node.backend != "dxmt" {
+        return;
+    }
+    if let Some(config_path) = config_path {
+        cmd.env("DXMT_CONFIG_FILE", config_path);
+    }
+    cmd.env("DXMT_CONFIG", DXMT_CONFIG_ENV);
 }
 
 fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
@@ -1548,6 +1628,39 @@ mod tests {
     }
 
     #[test]
+    fn dxmt_routes_share_cache_and_upscale_contract() {
+        let cache = CachePaths { shader: "/tmp/shaders".into(), pipeline: "/tmp/pipelines".into() };
+
+        for pipeline in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let node = get_pipeline(pipeline);
+            let env = cache_env_pairs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"));
+            let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+            let node_env: std::collections::HashMap<_, _> =
+                node.env_vars.iter().map(|env| (env.key, env.value)).collect();
+
+            assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"), "{:?} missing MetalSharp shader cache", pipeline);
+            assert!(
+                keys.contains("METALSHARP_PIPELINE_CACHE_PATH"),
+                "{:?} missing MetalSharp pipeline cache",
+                pipeline
+            );
+            assert!(keys.contains("MTL_SHADER_CACHE_DIR"), "{:?} missing Metal shader cache", pipeline);
+            assert!(keys.contains("DXMT_SHADER_CACHE_PATH"), "{:?} missing DXMT shader cache", pipeline);
+            assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"), "{:?} missing DXMT pipeline cache", pipeline);
+            assert_eq!(node_env.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some(&"1"), "{:?} missing MetalFX", pipeline);
+            assert_eq!(node_env.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"), "{:?} missing async PSO", pipeline);
+        }
+    }
+
+    #[test]
+    fn dxmt_config_contract_sets_seventy_percent_render_scale() {
+        assert!(dxmt_config_matches_contract(DXMT_CONFIG_CONTENT));
+        assert!(DXMT_CONFIG_ENV.contains("d3d11.metalSpatialUpscaleFactor=1.43"));
+        assert_eq!(DXMT_TARGET_RENDER_SCALE, "0.70");
+        assert_eq!(DXMT_SPATIAL_UPSCALE_FACTOR, "1.43");
+    }
+
+    #[test]
     fn steam_pipeline_env_includes_route_overrides_and_cache_keys() {
         let home = test_dir("steam-env");
         let node = get_pipeline(PipelineId::M12);
@@ -1559,6 +1672,7 @@ mod tests {
         assert!(keys.contains("WINEDLLPATH"));
         assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("DXMT_CONFIG"));
         assert!(keys.contains("DXMT_D3D12_TRACE_FILE"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
@@ -1576,6 +1690,10 @@ mod tests {
         assert_eq!(
             env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()),
             Some("winemetal.so")
+        );
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_CONFIG").map(|(_, value)| value.as_str()),
+            Some(DXMT_CONFIG_ENV)
         );
         let trace_file = env.iter().find(|(key, _)| key == "DXMT_D3D12_TRACE_FILE").map(|(_, value)| value).unwrap();
         assert!(trace_file.starts_with("Z:\\"));

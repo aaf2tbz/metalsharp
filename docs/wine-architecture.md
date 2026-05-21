@@ -198,7 +198,9 @@ run the game executable directly through the selected MTSP pipeline with this pr
 | `DYLD_FALLBACK_LIBRARY_PATH` | Unix library lookup for Wine and DXMT |
 | `WINEDLLOVERRIDES` | Selects injected/native DLL behavior |
 | `DXMT_SHADER_CACHE_PATH` | DXMT shader cache |
+| `DXMT_PIPELINE_CACHE_PATH` | DXMT pipeline cache |
 | `DXMT_CONFIG_FILE` | DXMT config file |
+| `DXMT_CONFIG` | Per-launch DXMT overrides; M11/M12 set `d3d11.metalSpatialUpscaleFactor=1.43` for roughly 70 percent render scale before MetalFX upscaling |
 | `SteamAppId` / `SteamGameId` | Steam identity for direct Steam-bottle game launches |
 
 ## Steam Wrapper
