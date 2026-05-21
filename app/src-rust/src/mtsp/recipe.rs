@@ -837,11 +837,17 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
             path: unix,
             required: true,
         });
-        let conf = ms_root.join("etc").join("dxmt.conf");
-        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: true });
+        if dxmt_config_asset_applies(node) {
+            let conf = ms_root.join("etc").join("dxmt.conf");
+            assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: true });
+        }
     }
 
     assets
+}
+
+fn dxmt_config_asset_applies(node: &PipelineNode) -> bool {
+    matches!(node.id, PipelineId::M11 | PipelineId::M12)
 }
 
 fn detect_anti_cheat(game_dir: &PathBuf) -> Vec<String> {
@@ -1375,6 +1381,29 @@ mod tests {
             assert!(names.contains(required), "missing runtime asset {}", required);
         }
         assert!(assets.iter().all(|asset| asset.required), "all M12 runtime assets should be required");
+        let _ = std::fs::remove_dir_all(ms_root);
+    }
+
+    #[test]
+    fn m9_m10_runtime_assets_do_not_require_dxmt_config() {
+        let ms_root = test_dir("legacy-dxmt-runtime-assets");
+
+        for pipeline in [PipelineId::M9, PipelineId::M10] {
+            let node = super::super::engine::get_pipeline(pipeline);
+            let assets = runtime_assets_for_node(node, &ms_root);
+
+            assert!(
+                assets.iter().all(|asset| asset.name != "dxmt.conf"),
+                "{:?} should not require dxmt.conf",
+                pipeline
+            );
+            assert!(
+                assets.iter().any(|asset| asset.name == "dxmt/winemetal.so" && asset.required),
+                "{:?} should still require winemetal runtime binding",
+                pipeline
+            );
+        }
+
         let _ = std::fs::remove_dir_all(ms_root);
     }
 
