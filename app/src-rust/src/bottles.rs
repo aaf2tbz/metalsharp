@@ -1663,6 +1663,14 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
             forced_pipeline: None,
         },
         KnownLauncherRecipe {
+            id: "eac_eos",
+            label: "Easy Anti-Cheat EOS Setup",
+            tokens: &["easyanticheat_eos_setup", "easy anti-cheat eos", "easyanticheat eos"],
+            installer_kind: InstallerKind::Exe,
+            runtime_profile: RuntimeProfile::Plain,
+            forced_pipeline: None,
+        },
+        KnownLauncherRecipe {
             id: "rockstar",
             label: "Rockstar Games Launcher",
             tokens: &[
@@ -3341,6 +3349,7 @@ mod tests {
             ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
             ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
+            ("EasyAntiCheat_EOS_Setup.exe", RuntimeProfile::Plain, "known_launcher:eac_eos"),
         ];
 
         for (name, profile, hint) in cases {

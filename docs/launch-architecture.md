@@ -81,7 +81,7 @@ M11/M10 copy:
 - `d3d11.dll`
 - `dxgi.dll`
 - `d3d10core.dll`
-- `winemetal.dll`
+- `winemetal.dll` in the active Wine prefix `C:\windows\system32`
 
 M10 is selected by 64-bit `d3d10.dll`, `d3d10_1.dll`, or `d3d10core.dll` imports. It deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints plus DXMT's `d3d10core.dll`, so public D3D10 imports and the DXMT core handoff are both owned by the x86_64 M10 runtime contract.
 
@@ -117,7 +117,10 @@ Steam identity env; client-only **Steam** launches still route through Wine Stea
   environment to the spawned game process rather than trying to make an already-running Steam client inherit it.
 - Wine Steam readiness checks fail clearly if Steam never becomes detectable, keeping launch requests below the renderer
   backend timeout instead of silently proceeding without a Steam client.
-- Shader cache paths are per appid under `~/.metalsharp/shader-cache/`.
+- Shader and pipeline cache paths are per appid under `~/.metalsharp/shader-cache/<route>/<appid>/` and
+  `~/.metalsharp/pipeline-cache/<route>/<appid>/`.
+- M9, M10, M11, and M12 share the same DXMT-family cache environment; M11 and M12 also export the DXMT config contract
+  that enables MetalFX swapchain upscaling from a 70 percent render target.
 - Wine-backed launch logs include the host ABI version, host runtime path, Wine runtime path, Steam bridge port, and
   compatdata manifest path when the launch is tied to a Steam appid.
 - Launch recipes classify detected anti-cheat markers into statuses such as `blocked_pending_vendor_support`,

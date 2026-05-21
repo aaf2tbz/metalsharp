@@ -56,6 +56,40 @@ static bool looksLikeMSL(const uint8_t* data, size_t size) {
            source.find("using namespace metal") != std::string::npos || source.find("kernel ") != std::string::npos;
 }
 
+static const char* d3d12ShaderSourceKind(const uint8_t* data, size_t size) {
+    if (!data || size == 0)
+        return "empty";
+    if (looksLikeMSL(data, size))
+        return "msl";
+
+    auto& bridge = IRConverterBridge::instance();
+    if (bridge.isDXIL(data, size))
+        return "dxil";
+
+    std::vector<uint8_t> dxil;
+    if (bridge.extractDXILFromDXBC(data, size, dxil))
+        return "dxbc_dxil";
+
+    return "dxbc_or_unknown";
+}
+
+static const char* d3d12PrimitiveTopologyName(UINT topology) {
+    switch (topology) {
+    case D3D12_PRIMITIVE_TOPOLOGY_POINTLIST:
+        return "pointlist";
+    case D3D12_PRIMITIVE_TOPOLOGY_LINELIST:
+        return "linelist";
+    case D3D12_PRIMITIVE_TOPOLOGY_LINESTRIP:
+        return "linestrip";
+    case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLELIST:
+        return "trianglelist";
+    case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+        return "trianglestrip";
+    default:
+        return "unknown";
+    }
+}
+
 static uint32_t d3d12FormatSize(UINT format) {
     switch (format) {
     case DXGI_FORMAT_R32G32B32A32_FLOAT:
@@ -245,10 +279,7 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 delete this;
             return c;
         }
-        STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-        STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-        STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-        STDMETHOD(SetName)(const char*) override { return S_OK; }
+        METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
         HRESULT Close() override {
             m_closed = true;
@@ -735,8 +766,15 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 [enc endEncoding];
             }
 
-            if (!m_drawCmds.empty() && m_pso) {
-                void* pipelinePtr = m_pso->__metalRenderPipelineState();
+            if (!m_drawCmds.empty()) {
+                UINT boundRenderTargets = 0;
+                for (UINT i = 0; i < m_numRenderTargets && i < 8; ++i) {
+                    if (m_renderTargets[i])
+                        ++boundRenderTargets;
+                }
+
+                const DrawCmd& firstDraw = m_drawCmds.front();
+                void* pipelinePtr = m_pso ? m_pso->__metalRenderPipelineState() : nullptr;
                 if (pipelinePtr) {
                     id<MTLRenderPipelineState> pipeline = (__bridge id<MTLRenderPipelineState>)pipelinePtr;
 
@@ -906,7 +944,28 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                             }
                         }
                     }
+                    MS_INFO("d3d12_draw_execute count=%zu first_indexed=%s first_vertices=%u first_instances=%u "
+                            "topology=%s rt_count=%u has_depth=%s argument_buffer_bytes=%zu vb0_bound=%s "
+                            "ib_bound=%s icb=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false",
+                            m_rootSignature ? (size_t)m_rootSignature->argumentBufferSize : 0,
+                            m_vertexBuffers[0].metalBuffer ? "true" : "false",
+                            m_indexBuffer.metalBuffer ? "true" : "false", usedIndirectCommandBuffer ? "true" : "false");
                     [enc endEncoding];
+                } else if (!m_pso) {
+                    MS_WARN("d3d12_draw_no_pipeline_state count=%zu first_indexed=%s first_vertices=%u "
+                            "first_instances=%u topology=%s rt_count=%u has_depth=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false");
+                } else {
+                    MS_WARN("d3d12_draw_no_render_pipeline count=%zu first_indexed=%s first_vertices=%u "
+                            "first_instances=%u topology=%s rt_count=%u has_depth=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false");
                 }
             }
 
@@ -946,16 +1005,23 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
 
             if (!m_computeDispatches.empty()) {
                 id<MTLComputePipelineState> computePipeline = nil;
+                void* computePtr = nullptr;
+                void* fallbackRenderPtr = nullptr;
                 if (m_pso) {
-                    void* ptr = m_pso->__metalComputePipelineState();
-                    if (ptr)
-                        computePipeline = (__bridge id<MTLComputePipelineState>)ptr;
-                    if (!ptr) {
-                        ptr = m_pso->__metalRenderPipelineState();
+                    computePtr = m_pso->__metalComputePipelineState();
+                    if (computePtr)
+                        computePipeline = (__bridge id<MTLComputePipelineState>)computePtr;
+                    if (!computePtr) {
+                        fallbackRenderPtr = m_pso->__metalRenderPipelineState();
                     }
                 }
 
                 if (computePipeline) {
+                    const ComputeDispatch& firstDispatch = m_computeDispatches.front();
+                    MS_INFO("d3d12_compute_dispatch_execute count=%zu first=%u,%u,%u argument_buffer_bytes=%zu",
+                            m_computeDispatches.size(), firstDispatch.x, firstDispatch.y, firstDispatch.z,
+                            m_computeRootSignature ? (size_t)m_computeRootSignature->argumentBufferSize : 0);
+
                     id<MTLComputeCommandEncoder> enc = [cmdBuffer computeCommandEncoder];
                     [enc setComputePipelineState:computePipeline];
 
@@ -976,6 +1042,13 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                         [enc dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerGroup];
                     }
                     [enc endEncoding];
+                } else {
+                    const ComputeDispatch& firstDispatch = m_computeDispatches.front();
+                    MS_WARN("d3d12_compute_dispatch_no_pipeline count=%zu first=%u,%u,%u has_pso=%s compute_ptr=%s "
+                            "render_fallback_ptr=%s",
+                            m_computeDispatches.size(), firstDispatch.x, firstDispatch.y, firstDispatch.z,
+                            m_pso ? "true" : "false", computePtr ? "true" : "false",
+                            fallbackRenderPtr ? "true" : "false");
                 }
             }
 
@@ -1112,12 +1185,14 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     const uint8_t* shaderData = static_cast<const uint8_t*>(desc->CS.pShaderBytecode);
     size_t shaderSize = desc->CS.BytecodeLength;
     if (!shaderData || shaderSize == 0) {
+        MS_WARN("d3d12_compute_pso_empty_shader bytecode_size=%zu", shaderSize);
         *ppPSO = pso;
         return S_OK;
     }
 
     CompiledShader compiled;
     D3D12RootSignatureImpl* rootSig = static_cast<D3D12RootSignatureImpl*>(desc->pRootSignature);
+    const char* sourceKind = d3d12ShaderSourceKind(shaderData, shaderSize);
     bool ok = false;
     if (rootSig && !rootSig->rawBytecode.empty()) {
         ok = m_shaderTranslator->translateDXBCWithRootSignature(shaderData, shaderSize, ShaderStage::Compute,
@@ -1127,10 +1202,18 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     if (!ok) {
         ok = m_shaderTranslator->translateDXBC(shaderData, shaderSize, ShaderStage::Compute, compiled);
     }
+    if (!ok && !looksLikeMSL(shaderData, shaderSize)) {
+        MS_WARN("d3d12_compute_pso_translate_failed source=%s bytecode_size=%zu root_signature_bytes=%zu", sourceKind,
+                shaderSize, rootSig ? rootSig->rawBytecode.size() : 0);
+    }
 
     id<MTLFunction> function = nil;
     if (ok && compiled.computeFunction) {
         function = (__bridge id<MTLFunction>)compiled.computeFunction;
+        MS_INFO("d3d12_compute_pso_shader source=%s bytecode_size=%zu entry=%s tg=%u,%u,%u resources=%zu", sourceKind,
+                shaderSize, compiled.entryPointName.empty() ? "unknown" : compiled.entryPointName.c_str(),
+                compiled.reflection.threadgroupSize[0], compiled.reflection.threadgroupSize[1],
+                compiled.reflection.threadgroupSize[2], compiled.reflection.resources.size());
     } else if (looksLikeMSL(shaderData, shaderSize)) {
         id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)m_metalDevice->nativeDevice();
         NSString* source = [[NSString alloc] initWithBytes:shaderData length:shaderSize encoding:NSUTF8StringEncoding];
@@ -1142,12 +1225,17 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
                 function = [library newFunctionWithName:@"main0"];
             if (!function && library.functionNames.count > 0)
                 function = [library newFunctionWithName:library.functionNames.firstObject];
+            MS_INFO("d3d12_compute_pso_shader source=msl bytecode_size=%zu functions=%lu selected=%s", shaderSize,
+                    (unsigned long)library.functionNames.count, function ? [[function name] UTF8String] : "none");
         } else if (libraryError) {
-            NSLog(@"MetalSharp D3D12 compute shader compile error: %@", [libraryError localizedDescription]);
+            const char* errorMessage = [[libraryError localizedDescription] UTF8String];
+            MS_WARN("d3d12_compute_pso_msl_compile_failed bytecode_size=%zu error=%s", shaderSize,
+                    errorMessage ? errorMessage : "unknown");
         }
     }
 
     if (!function) {
+        MS_WARN("d3d12_compute_pso_no_function source=%s bytecode_size=%zu", sourceKind, shaderSize);
         pso->Release();
         return E_FAIL;
     }
@@ -1156,12 +1244,16 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     NSError* error = nil;
     id<MTLComputePipelineState> pipeline = [mtlDevice newComputePipelineStateWithFunction:function error:&error];
     if (!pipeline) {
-        if (error)
-            NSLog(@"MetalSharp D3D12 compute pipeline error: %@", [error localizedDescription]);
+        const char* errorMessage = error ? [[error localizedDescription] UTF8String] : "unknown";
+        MS_WARN("d3d12_compute_pso_pipeline_failed source=%s bytecode_size=%zu function=%s error=%s", sourceKind,
+                shaderSize, [[function name] UTF8String] ? [[function name] UTF8String] : "unknown",
+                errorMessage ? errorMessage : "unknown");
         pso->Release();
         return E_FAIL;
     }
 
+    MS_INFO("d3d12_compute_pso_ready source=%s bytecode_size=%zu function=%s", sourceKind, shaderSize,
+            [[function name] UTF8String] ? [[function name] UTF8String] : "unknown");
     pso->m_computePipeline = (__bridge_retained void*)pipeline;
     pso->m_ownedComputePipeline = pso->m_computePipeline;
     *ppPSO = pso;

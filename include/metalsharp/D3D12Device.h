@@ -61,6 +61,7 @@
 #include <memory>
 #include <metalsharp/D3D12ResourceStateTracker.h>
 #include <metalsharp/FormatTranslation.h>
+#include <metalsharp/Logger.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/MetalCapabilities.h>
 #include <metalsharp/PipelineState.h>
@@ -80,6 +81,355 @@ static HRESULT E_NOT_IMPL = E_NOTIMPL;
 
 class D3D12ResourceImpl;
 using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
+
+struct GUIDHasher {
+    size_t operator()(const GUID& guid) const {
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&guid);
+        size_t value = 1469598103934665603ull;
+        for (size_t i = 0; i < sizeof(GUID); ++i) {
+            value ^= bytes[i];
+            value *= 1099511628211ull;
+        }
+        return value;
+    }
+};
+
+class D3D12PrivateDataStore {
+  public:
+    ~D3D12PrivateDataStore() { clearInterfaces(); }
+
+    HRESULT GetPrivateData(const GUID& guid, UINT* pDataSize, void* pData) {
+        if (!pDataSize)
+            return E_POINTER;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        auto iface = m_interfaces.find(guid);
+        if (iface != m_interfaces.end()) {
+            const UINT requiredSize = sizeof(IUnknown*);
+            if (!pData || *pDataSize < requiredSize) {
+                *pDataSize = requiredSize;
+                return pData ? DXGI_ERROR_MORE_DATA : S_OK;
+            }
+            auto** out = static_cast<IUnknown**>(pData);
+            *out = iface->second;
+            if (*out)
+                (*out)->AddRef();
+            *pDataSize = requiredSize;
+            return S_OK;
+        }
+
+        auto blob = m_blobs.find(guid);
+        if (blob == m_blobs.end())
+            return DXGI_ERROR_NOT_FOUND;
+
+        const UINT requiredSize = static_cast<UINT>(blob->second.size());
+        if (!pData || *pDataSize < requiredSize) {
+            *pDataSize = requiredSize;
+            return pData ? DXGI_ERROR_MORE_DATA : S_OK;
+        }
+        if (requiredSize > 0)
+            memcpy(pData, blob->second.data(), requiredSize);
+        *pDataSize = requiredSize;
+        return S_OK;
+    }
+
+    HRESULT SetPrivateData(const GUID& guid, UINT dataSize, const void* pData) {
+        if (dataSize > 0 && !pData)
+            return E_INVALIDARG;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        eraseInterface(guid);
+        if (dataSize == 0) {
+            m_blobs.erase(guid);
+            return S_OK;
+        }
+        const auto* bytes = static_cast<const uint8_t*>(pData);
+        m_blobs[guid] = std::vector<uint8_t>(bytes, bytes + dataSize);
+        return S_OK;
+    }
+
+    HRESULT SetPrivateDataInterface(const GUID& guid, const IUnknown* pData) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_blobs.erase(guid);
+        eraseInterface(guid);
+        if (!pData)
+            return S_OK;
+        auto* iface = const_cast<IUnknown*>(pData);
+        iface->AddRef();
+        m_interfaces[guid] = iface;
+        return S_OK;
+    }
+
+    HRESULT SetName(const char* name) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_name = name ? name : "";
+        return S_OK;
+    }
+
+  private:
+    void eraseInterface(const GUID& guid) {
+        auto it = m_interfaces.find(guid);
+        if (it == m_interfaces.end())
+            return;
+        if (it->second)
+            it->second->Release();
+        m_interfaces.erase(it);
+    }
+
+    void clearInterfaces() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& entry : m_interfaces) {
+            if (entry.second)
+                entry.second->Release();
+        }
+        m_interfaces.clear();
+    }
+
+    std::mutex m_mutex;
+    std::unordered_map<GUID, std::vector<uint8_t>, GUIDHasher> m_blobs;
+    std::unordered_map<GUID, IUnknown*, GUIDHasher> m_interfaces;
+    std::string m_name;
+};
+
+#define METALSHARP_D3D12_PRIVATE_DATA_METHODS()                                                                        \
+    D3D12PrivateDataStore m_privateData;                                                                               \
+    STDMETHOD(GetPrivateData)(const GUID& guid, UINT* pDataSize, void* pData) override {                               \
+        return m_privateData.GetPrivateData(guid, pDataSize, pData);                                                   \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateData)(const GUID& guid, UINT dataSize, const void* pData) override {                           \
+        return m_privateData.SetPrivateData(guid, dataSize, pData);                                                    \
+    }                                                                                                                  \
+    STDMETHOD(SetPrivateDataInterface)(const GUID& guid, const IUnknown* pData) override {                             \
+        return m_privateData.SetPrivateDataInterface(guid, pData);                                                     \
+    }                                                                                                                  \
+    STDMETHOD(SetName)(const char* name) override {                                                                    \
+        return m_privateData.SetName(name);                                                                            \
+    }
+
+static bool d3d12FormatHasMetalBacking(UINT format) {
+    if (format == ::DXGI_FORMAT_UNKNOWN)
+        return false;
+    DXGITranslation dxgiFormat = static_cast<DXGITranslation>(format);
+    return dxgiFormatToMetal(dxgiFormat) != 0 || dxgiDepthFormatToMetal(dxgiFormat) != 0;
+}
+
+static bool d3d12FormatIsRenderTargetCompatible(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+    case ::DXGI_FORMAT_R10G10B10A2_UNORM:
+    case ::DXGI_FORMAT_R10G10B10A2_UINT:
+    case ::DXGI_FORMAT_R11G11B10_FLOAT:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16G16_FLOAT:
+    case ::DXGI_FORMAT_R16G16_UNORM:
+    case ::DXGI_FORMAT_R16G16_UINT:
+    case ::DXGI_FORMAT_R16G16_SNORM:
+    case ::DXGI_FORMAT_R16G16_SINT:
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_R16_UNORM:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SNORM:
+    case ::DXGI_FORMAT_R16_SINT:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SNORM:
+    case ::DXGI_FORMAT_R8_SINT:
+    case ::DXGI_FORMAT_A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool d3d12FormatSupportsTypedUAV(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SINT:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SINT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static UINT64 d3d12AlignUp(UINT64 value, UINT64 alignment) {
+    if (alignment == 0)
+        return value;
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+static UINT d3d12FormatBitsPerBlock(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32G32B32A32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+        return 128;
+    case ::DXGI_FORMAT_R32G32B32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32B32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32_UINT:
+    case ::DXGI_FORMAT_R32G32B32_SINT:
+        return 96;
+    case ::DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R32G32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+        return 64;
+    case ::DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case ::DXGI_FORMAT_R10G10B10A2_UNORM:
+    case ::DXGI_FORMAT_R10G10B10A2_UINT:
+    case ::DXGI_FORMAT_R11G11B10_FLOAT:
+    case ::DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16G16_TYPELESS:
+    case ::DXGI_FORMAT_R16G16_FLOAT:
+    case ::DXGI_FORMAT_R16G16_UNORM:
+    case ::DXGI_FORMAT_R16G16_UINT:
+    case ::DXGI_FORMAT_R16G16_SNORM:
+    case ::DXGI_FORMAT_R16G16_SINT:
+    case ::DXGI_FORMAT_R32_TYPELESS:
+    case ::DXGI_FORMAT_D32_FLOAT:
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+        return 32;
+    case ::DXGI_FORMAT_R8G8_TYPELESS:
+    case ::DXGI_FORMAT_R8G8_UNORM:
+    case ::DXGI_FORMAT_R8G8_UINT:
+    case ::DXGI_FORMAT_R8G8_SNORM:
+    case ::DXGI_FORMAT_R8G8_SINT:
+    case ::DXGI_FORMAT_R16_TYPELESS:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_D16_UNORM:
+    case ::DXGI_FORMAT_R16_UNORM:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SNORM:
+    case ::DXGI_FORMAT_R16_SINT:
+        return 16;
+    case ::DXGI_FORMAT_R8_TYPELESS:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SNORM:
+    case ::DXGI_FORMAT_R8_SINT:
+    case ::DXGI_FORMAT_A8_UNORM:
+        return 8;
+    case ::DXGI_FORMAT_BC1_UNORM:
+    case ::DXGI_FORMAT_BC1_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC4_UNORM:
+    case ::DXGI_FORMAT_BC4_SNORM:
+        return 64;
+    case ::DXGI_FORMAT_BC2_UNORM:
+    case ::DXGI_FORMAT_BC2_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC3_UNORM:
+    case ::DXGI_FORMAT_BC3_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC5_UNORM:
+    case ::DXGI_FORMAT_BC5_SNORM:
+    case ::DXGI_FORMAT_BC6H_UF16:
+    case ::DXGI_FORMAT_BC6H_SF16:
+    case ::DXGI_FORMAT_BC7_UNORM:
+    case ::DXGI_FORMAT_BC7_UNORM_SRGB:
+        return 128;
+    default:
+        return 32;
+    }
+}
+
+static bool d3d12FormatIsBlockCompressed(UINT format) {
+    return (format >= ::DXGI_FORMAT_BC1_UNORM && format <= ::DXGI_FORMAT_BC5_SNORM) ||
+           format == ::DXGI_FORMAT_BC6H_UF16 || format == ::DXGI_FORMAT_BC6H_SF16 ||
+           format == ::DXGI_FORMAT_BC7_UNORM || format == ::DXGI_FORMAT_BC7_UNORM_SRGB;
+}
+
+static bool d3d12ShouldLogFeatureQuery() {
+    static std::atomic<uint64_t> queryCount{0};
+    uint64_t count = ++queryCount;
+    return count <= 32 || (count % 256) == 0;
+}
+
+static UINT64 d3d12EstimateSubresourceSize(UINT64 width, UINT height, UINT depth, UINT format) {
+    UINT blockWidth = d3d12FormatIsBlockCompressed(format) ? 4 : 1;
+    UINT blockHeight = d3d12FormatIsBlockCompressed(format) ? 4 : 1;
+    UINT64 blocksWide = std::max<UINT64>(1, (width + blockWidth - 1) / blockWidth);
+    UINT64 blocksHigh = std::max<UINT64>(1, (static_cast<UINT64>(height) + blockHeight - 1) / blockHeight);
+    UINT64 bitsPerBlock = d3d12FormatBitsPerBlock(format);
+    return d3d12AlignUp(blocksWide * blocksHigh * std::max<UINT>(1, depth) * bitsPerBlock, 8) / 8;
+}
+
+static UINT64 d3d12EstimateResourceSize(const D3D12_RESOURCE_DESC& desc) {
+    if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        return d3d12AlignUp(desc.Width, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+
+    UINT mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
+    UINT arrayOrDepth = std::max<UINT>(1, desc.DepthOrArraySize);
+    UINT64 totalSize = 0;
+    for (UINT mip = 0; mip < mipLevels; ++mip) {
+        UINT64 width = std::max<UINT64>(1, desc.Width >> mip);
+        UINT height = std::max<UINT>(1, desc.Height >> mip);
+        UINT depth = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? std::max<UINT>(1, arrayOrDepth >> mip)
+                                                                          : arrayOrDepth;
+        totalSize += d3d12EstimateSubresourceSize(width, height, depth, desc.Format);
+    }
+    UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
+    totalSize *= sampleCount;
+    UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
+                                           : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                                                              : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+    return d3d12AlignUp(totalSize, alignment);
+}
 
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
@@ -107,10 +457,7 @@ class D3D12FenceImpl final : public ID3D12Fence {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT GetCompletedValue(UINT64* pValue) override {
         if (!pValue)
@@ -187,10 +534,7 @@ class D3D12CommandAllocatorImpl final : public ID3D12CommandAllocator {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     HRESULT Reset() override { return S_OK; }
 };
 
@@ -234,10 +578,7 @@ class D3D12CommandQueueImpl final : public ID3D12CommandQueue {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) override;
     HRESULT Signal(ID3D12Fence* pFence, UINT64 Value) override;
@@ -278,8 +619,13 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     UINT dirtyStart = UINT_MAX;
     UINT dirtyEnd = 0;
     uint64_t generation = 0;
+    UINT64 cpuHandleBase = 0;
+    UINT64 gpuHandleBase = 0;
 
-    D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {}
+    D3D12DescriptorHeapImpl(const D3D12_DESCRIPTOR_HEAP_DESC* d) : desc(*d), descriptors(d->NumDescriptors) {
+        cpuHandleBase = reinterpret_cast<UINT64>(this) + 0x1000;
+        gpuHandleBase = reinterpret_cast<UINT64>(this) + 0x2000;
+    }
 
     HRESULT QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv)
@@ -298,22 +644,20 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
-    D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() override { return {1}; }
-    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override {
-        return {reinterpret_cast<UINT64>(this) + 1};
-    }
+    D3D12_CPU_DESCRIPTOR_HANDLE __getCPUDescriptorHandleForHeapStart() override { return {cpuHandleBase}; }
+    D3D12_GPU_DESCRIPTOR_HANDLE __getGPUDescriptorHandleForHeapStart() override { return {gpuHandleBase}; }
     UINT __getDescriptorCount() const override { return desc.NumDescriptors; }
     UINT __getHeapType() const override { return desc.Type; }
 
     D3D12Descriptor* getDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
-        if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
+        if (handle.ptr < cpuHandleBase)
             return nullptr;
-        return &descriptors[handle.ptr - 1];
+        UINT64 offset = handle.ptr - cpuHandleBase;
+        if (offset >= desc.NumDescriptors)
+            return nullptr;
+        return &descriptors[offset];
     }
 
     D3D12Descriptor* getDescriptorByIndex(UINT index) {
@@ -340,16 +684,18 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
     }
 
     UINT handleToIndex(D3D12_CPU_DESCRIPTOR_HANDLE handle) const {
-        if (handle.ptr == 0 || handle.ptr > desc.NumDescriptors)
+        if (handle.ptr < cpuHandleBase)
             return UINT_MAX;
-        return static_cast<UINT>(handle.ptr - 1);
+        UINT64 offset = handle.ptr - cpuHandleBase;
+        if (offset >= desc.NumDescriptors)
+            return UINT_MAX;
+        return static_cast<UINT>(offset);
     }
 
     UINT gpuHandleToIndex(D3D12_GPU_DESCRIPTOR_HANDLE handle) const {
-        UINT64 base = reinterpret_cast<UINT64>(this) + 1;
-        if (handle.ptr < base)
+        if (handle.ptr < gpuHandleBase)
             return UINT_MAX;
-        UINT64 offset = handle.ptr - base;
+        UINT64 offset = handle.ptr - gpuHandleBase;
         if (offset >= desc.NumDescriptors)
             return UINT_MAX;
         return static_cast<UINT>(offset);
@@ -359,12 +705,21 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
                          D3D12_CPU_DESCRIPTOR_HANDLE srcStart) {
         UINT dstIdx = handleToIndex(dstStart);
         UINT srcIdx = handleToIndex(srcStart);
-        for (UINT i = 0; i < numDescriptors; ++i) {
-            if (dstIdx + i < desc.NumDescriptors && srcIdx + i < desc.NumDescriptors) {
-                descriptors[dstIdx + i] = descriptors[srcIdx + i];
-            }
-        }
-        markDirty(dstIdx, numDescriptors);
+        if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
+            return;
+        UINT copyCount = std::min(numDescriptors, desc.NumDescriptors - dstIdx);
+        copyCount = std::min(copyCount, desc.NumDescriptors - srcIdx);
+        if (copyCount == 0)
+            return;
+
+        std::vector<D3D12Descriptor> snapshot;
+        snapshot.reserve(copyCount);
+        for (UINT i = 0; i < copyCount; ++i)
+            snapshot.push_back(descriptors[srcIdx + i]);
+
+        for (UINT i = 0; i < copyCount; ++i)
+            descriptors[dstIdx + i] = snapshot[i];
+        markDirty(dstIdx, copyCount);
     }
 };
 
@@ -403,10 +758,7 @@ class D3D12RootSignatureImpl final : public ID3D12RootSignature {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     void computeLayout() {
         parameterLayouts.clear();
@@ -471,10 +823,7 @@ class D3D12PipelineStateImpl final : public ID3D12PipelineState {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     void* __metalRenderPipelineState() const override { return m_renderPipeline; }
     void* __metalComputePipelineState() const override { return m_computePipeline; }
 };
@@ -499,10 +848,7 @@ class D3D12CommandSignatureImpl final : public ID3D12CommandSignature {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 };
 
 class D3D12StateObjectImpl final : public ID3D12StateObject {
@@ -528,10 +874,7 @@ class D3D12StateObjectImpl final : public ID3D12StateObject {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
     void* __metalRTPipeline() const override { return m_rtPipeline; }
 };
 
@@ -574,10 +917,7 @@ class D3D12ResourceImpl final : public ID3D12Resource {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT Map(UINT, const D3D12_RANGE*, void** ppData) override {
         if (!ppData)
@@ -656,10 +996,7 @@ class D3D12DeviceImpl final : public ID3D12Device {
             delete this;
         return c;
     }
-    STDMETHOD(GetPrivateData)(const GUID&, UINT*, void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateData)(const GUID&, UINT, const void*) override { return E_NOTIMPL; }
-    STDMETHOD(SetPrivateDataInterface)(const GUID&, const IUnknown*) override { return E_NOTIMPL; }
-    STDMETHOD(SetName)(const char*) override { return S_OK; }
+    METALSHARP_D3D12_PRIVATE_DATA_METHODS()
 
     HRESULT CreateCommandQueue(const void* pDesc, REFIID riid, void** ppCommandQueue) override {
         if (!ppCommandQueue)
@@ -692,6 +1029,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 maxRequested = std::max(maxRequested, data->pFeatureLevelsRequested[i]);
             }
             data->MaxSupportedFeatureLevel = std::min(maxRequested, D3D_FEATURE_LEVEL_12_0);
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_levels requested=%u max_requested=0x%x selected=0x%x", data->NumFeatureLevels,
+                        maxRequested, data->MaxSupportedFeatureLevel);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_D3D12_OPTIONS: {
@@ -707,6 +1048,13 @@ class D3D12DeviceImpl final : public ID3D12Device {
             data->MaxGPUVirtualAddressBitsPerResource = 40;
             data->StandardSwizzle64KBSupported = TRUE;
             data->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_options binding_tier=%u typed_uav_additional=%s tiled_resources=%u "
+                        "heap_tier=%u argument_buffers=%s",
+                        data->ResourceBindingTier, data->TypedUAVLoadAdditionalFormats ? "true" : "false",
+                        data->TiledResourcesTier, data->ResourceHeapTier,
+                        m_metalCapabilities.supportsArgumentBuffers ? "true" : "false");
+            }
             return S_OK;
         }
         case D3D12_FEATURE_ARCHITECTURE: {
@@ -732,35 +1080,61 @@ class D3D12DeviceImpl final : public ID3D12Device {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_SUPPORT))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
+            data->Support1 = 0;
+            data->Support2 = 0;
+            DXGITranslation dxgiFormat = static_cast<DXGITranslation>(data->Format);
+            if (!d3d12FormatHasMetalBacking(data->Format)) {
+                if (d3d12ShouldLogFeatureQuery()) {
+                    MS_INFO("d3d12_feature_format_support format=0x%x metal_backed=false support1=0 support2=0",
+                            data->Format);
+                }
+                return S_OK;
+            }
+
             data->Support1 = D3D12_FORMAT_SUPPORT1_TEXTURE1D | D3D12_FORMAT_SUPPORT1_TEXTURE2D |
                              D3D12_FORMAT_SUPPORT1_TEXTURECUBE | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
-                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
-            data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE;
+            if (!dxgiFormatIsDepth(dxgiFormat) && !dxgiFormatIsCompressed(dxgiFormat))
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            if (!dxgiFormatIsDepth(dxgiFormat))
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
             if (data->Format == ::DXGI_FORMAT_R16_UINT || data->Format == ::DXGI_FORMAT_R32_UINT)
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_IA_INDEX_BUFFER;
-            if (data->Format == ::DXGI_FORMAT_B8G8R8A8_UNORM || data->Format == ::DXGI_FORMAT_R8G8B8A8_UNORM ||
-                data->Format == ::DXGI_FORMAT_R16G16B16A16_FLOAT || data->Format == ::DXGI_FORMAT_R10G10B10A2_UNORM)
+            if (d3d12FormatIsRenderTargetCompatible(data->Format))
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_RENDER_TARGET;
-            if (data->Format == ::DXGI_FORMAT_D32_FLOAT || data->Format == ::DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                data->Format == ::DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+            if (dxgiFormatIsDepth(dxgiFormat))
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL;
-            if (data->Format != ::DXGI_FORMAT_UNKNOWN)
-                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            if (d3d12FormatSupportsTypedUAV(data->Format))
+                data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_format_support format=0x%x metal_backed=true render_target=%s depth=%s "
+                        "compressed=%s typed_uav=%s support1=0x%x support2=0x%x",
+                        data->Format, (data->Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET) ? "true" : "false",
+                        (data->Support1 & D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL) ? "true" : "false",
+                        dxgiFormatIsCompressed(dxgiFormat) ? "true" : "false", data->Support2 ? "true" : "false",
+                        data->Support1, data->Support2);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(pFeatureSupportData);
-            data->NumQualityLevels =
-                (data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4) ? 1 : 0;
+            DXGITranslation dxgiFormat = static_cast<DXGITranslation>(data->Format);
+            bool sampleCountSupported = data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4;
+            bool formatSupported = d3d12FormatHasMetalBacking(data->Format) && !dxgiFormatIsCompressed(dxgiFormat);
+            data->NumQualityLevels = (sampleCountSupported && formatSupported) ? 1 : 0;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_msaa format=0x%x sample_count=%u supported=%s quality_levels=%u", data->Format,
+                        data->SampleCount, data->NumQualityLevels > 0 ? "true" : "false", data->NumQualityLevels);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_FORMAT_INFO: {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_INFO))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_INFO*>(pFeatureSupportData);
-            data->PlaneCount = 1;
+            data->PlaneCount = d3d12FormatHasMetalBacking(data->Format) ? 1 : 0;
             return S_OK;
         }
         case D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT: {
@@ -775,8 +1149,13 @@ class D3D12DeviceImpl final : public ID3D12Device {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_SHADER_MODEL))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_SHADER_MODEL*>(pFeatureSupportData);
+            UINT requestedShaderModel = data->HighestShaderModel;
             if (data->HighestShaderModel == 0 || data->HighestShaderModel > D3D_SHADER_MODEL_6_0)
                 data->HighestShaderModel = D3D_SHADER_MODEL_6_0;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_shader_model requested=0x%x selected=0x%x", requestedShaderModel,
+                        data->HighestShaderModel);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_ROOT_SIGNATURE: {
@@ -800,16 +1179,15 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS5*>(pFeatureSupportData);
             std::memset(data, 0, sizeof(*data));
-            data->RaytracingTier = m_metalCapabilities.supportsRayTracing ? D3D12_RAYTRACING_TIER_1_1
-                                                                          : D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+            data->RaytracingTier = D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
             return S_OK;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS7))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_D3D12_OPTIONS7*>(pFeatureSupportData);
-            data->MeshShaderTier = m_metalCapabilities.supportsMeshShaders ? D3D12_MESH_SHADER_TIER_1
-                                                                           : D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
+            std::memset(data, 0, sizeof(*data));
+            data->MeshShaderTier = D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
             data->SamplerFeedbackTier = 0;
             return S_OK;
         }
@@ -841,6 +1219,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
             bool isDepthStencil =
                 (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) && dxgiFormatIsDepth(dxgiFormat);
             uint32_t fmt = isDepthStencil ? dxgiDepthFormatToMetal(dxgiFormat) : dxgiFormatToMetal(dxgiFormat);
+            if (fmt == 0) {
+                delete res;
+                return E_INVALIDARG;
+            }
             uint32_t usage = 0;
             if (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
                 usage |= 0x1;
@@ -1075,6 +1457,116 @@ class D3D12DeviceImpl final : public ID3D12Device {
     }
 
     UINT GetDescriptorHandleIncrementSize(UINT) override { return 1; }
+
+    void CopyDescriptors(UINT numDestDescriptorRanges, const D3D12_CPU_DESCRIPTOR_HANDLE* pDestDescriptorRangeStarts,
+                         const UINT* pDestDescriptorRangeSizes, UINT numSrcDescriptorRanges,
+                         const D3D12_CPU_DESCRIPTOR_HANDLE* pSrcDescriptorRangeStarts,
+                         const UINT* pSrcDescriptorRangeSizes, UINT) override {
+        if (!pDestDescriptorRangeStarts || !pSrcDescriptorRangeStarts || numDestDescriptorRanges == 0 ||
+            numSrcDescriptorRanges == 0)
+            return;
+
+        UINT dstRange = 0;
+        UINT srcRange = 0;
+        UINT dstOffset = 0;
+        UINT srcOffset = 0;
+        UINT totalDescriptors = 0;
+        if (pDestDescriptorRangeSizes) {
+            for (UINT i = 0; i < numDestDescriptorRanges; ++i)
+                totalDescriptors += pDestDescriptorRangeSizes[i];
+        } else if (pSrcDescriptorRangeSizes) {
+            for (UINT i = 0; i < numSrcDescriptorRanges; ++i)
+                totalDescriptors += pSrcDescriptorRangeSizes[i];
+        } else {
+            totalDescriptors = 1;
+        }
+
+        while (dstRange < numDestDescriptorRanges && srcRange < numSrcDescriptorRanges) {
+            UINT dstRangeSize = pDestDescriptorRangeSizes ? pDestDescriptorRangeSizes[dstRange] : totalDescriptors;
+            UINT srcRangeSize = pSrcDescriptorRangeSizes ? pSrcDescriptorRangeSizes[srcRange] : totalDescriptors;
+            if (dstRangeSize == 0) {
+                ++dstRange;
+                dstOffset = 0;
+                continue;
+            }
+            if (srcRangeSize == 0) {
+                ++srcRange;
+                srcOffset = 0;
+                continue;
+            }
+
+            UINT copyCount = std::min(dstRangeSize - dstOffset, srcRangeSize - srcOffset);
+
+            D3D12_CPU_DESCRIPTOR_HANDLE dst = {pDestDescriptorRangeStarts[dstRange].ptr + dstOffset};
+            D3D12_CPU_DESCRIPTOR_HANDLE src = {pSrcDescriptorRangeStarts[srcRange].ptr + srcOffset};
+            CopyDescriptorsSimple(copyCount, dst, src, 0);
+
+            dstOffset += copyCount;
+            srcOffset += copyCount;
+            if (dstOffset >= dstRangeSize) {
+                ++dstRange;
+                dstOffset = 0;
+            }
+            if (srcOffset >= srcRangeSize) {
+                ++srcRange;
+                srcOffset = 0;
+            }
+        }
+    }
+
+    void CopyDescriptorsSimple(UINT numDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE destDescriptorRangeStart,
+                               D3D12_CPU_DESCRIPTOR_HANDLE srcDescriptorRangeStart, UINT) override {
+        if (numDescriptors == 0)
+            return;
+        D3D12DescriptorHeapImpl* dstHeap = findHeapForHandle(destDescriptorRangeStart);
+        D3D12DescriptorHeapImpl* srcHeap = findHeapForHandle(srcDescriptorRangeStart);
+        if (!dstHeap || !srcHeap)
+            return;
+
+        UINT dstIdx = dstHeap->handleToIndex(destDescriptorRangeStart);
+        UINT srcIdx = srcHeap->handleToIndex(srcDescriptorRangeStart);
+        if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
+            return;
+
+        UINT copyCount = std::min(numDescriptors, dstHeap->desc.NumDescriptors - dstIdx);
+        copyCount = std::min(copyCount, srcHeap->desc.NumDescriptors - srcIdx);
+        if (copyCount == 0)
+            return;
+
+        std::vector<D3D12Descriptor> snapshot;
+        snapshot.reserve(copyCount);
+        for (UINT i = 0; i < copyCount; ++i)
+            snapshot.push_back(*srcHeap->getDescriptorByIndex(srcIdx + i));
+
+        for (UINT i = 0; i < copyCount; ++i)
+            *dstHeap->getDescriptorByIndex(dstIdx + i) = snapshot[i];
+        dstHeap->markDirty(dstIdx, copyCount);
+    }
+
+    D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo(UINT, UINT numResourceDescs,
+                                                             const D3D12_RESOURCE_DESC* pResourceDescs) override {
+        D3D12_RESOURCE_ALLOCATION_INFO info = {};
+        if (numResourceDescs == 0 || !pResourceDescs)
+            return info;
+
+        UINT64 maxAlignment = 0;
+        UINT64 offset = 0;
+        for (UINT i = 0; i < numResourceDescs; ++i) {
+            const D3D12_RESOURCE_DESC& desc = pResourceDescs[i];
+            UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
+            UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
+                                                   : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                                                                      : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+            UINT64 resourceSize = d3d12EstimateResourceSize(desc);
+            offset = d3d12AlignUp(offset, alignment);
+            offset += resourceSize;
+            maxAlignment = std::max(maxAlignment, alignment);
+        }
+
+        info.Alignment = maxAlignment;
+        info.SizeInBytes = d3d12AlignUp(offset, maxAlignment);
+        return info;
+    }
 
     HRESULT ReserveTiles(ID3D12Resource* pTiledResource, UINT NumTileRegions,
                          const D3D12_TILED_RESOURCE_COORDINATE* pCoords, const D3D12_TILE_REGION_SIZE* pSizes,

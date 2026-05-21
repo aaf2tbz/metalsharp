@@ -42,6 +42,7 @@ add_executable(test_d3d12
     test_d3d12.cpp
 )
 target_link_libraries(test_d3d12 PRIVATE metalsharp_d3d12 metalsharp_core)
+target_link_libraries(test_d3d12 PRIVATE metalsharp_dxgi)
 
 add_executable(test_d3d12_entrypoint
     test_d3d12_entrypoint.cpp

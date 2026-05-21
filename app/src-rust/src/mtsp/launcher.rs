@@ -7,6 +7,18 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
+const DXMT_TARGET_RENDER_SCALE: &str = "0.70";
+const DXMT_SPATIAL_UPSCALE_FACTOR: &str = "1.43";
+const DXMT_CONFIG_CONTENT: &str = "d3d11.metalSpatialUpscaleFactor = 1.43\n\
+d3d11.preferredMaxFrameRate = 60\n\
+d3d11.maxFeatureLevel = 12_1\n";
+const DXMT_CONFIG_REQUIRED_LINES: [(&str, &str); 3] = [
+    ("d3d11.metalspatialupscalefactor", "d3d11.metalSpatialUpscaleFactor = 1.43"),
+    ("d3d11.preferredmaxframerate", "d3d11.preferredMaxFrameRate = 60"),
+    ("d3d11.maxfeaturelevel", "d3d11.maxFeatureLevel = 12_1"),
+];
+const DXMT_CONFIG_ENV: &str =
+    "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60;d3d11.maxFeatureLevel=12_1;";
 
 pub fn bridge_port() -> u16 {
     parse_bridge_port(std::env::var("METALSHARP_STEAM_BRIDGE_PORT").ok().as_deref()).unwrap_or(DEFAULT_BRIDGE_PORT)
@@ -26,19 +38,38 @@ struct CachePaths {
     pipeline: String,
 }
 
+#[derive(Debug, Clone)]
+struct DxmtRuntimeBinding {
+    name: String,
+    source_path: PathBuf,
+    dest_path: PathBuf,
+    present: bool,
+}
+
 struct LaunchLogContext<'a> {
     appid: u32,
     node: &'a PipelineNode,
     prefix: &'a Path,
     cwd: &'a Path,
     exe_name: &'a str,
-    args: &'a [&'a str],
+    args: &'a [String],
+    wine_overrides: Option<&'static str>,
+    runtime_lib_key: &'a str,
+    runtime_lib_path: &'a str,
+    wine_dll_path: Option<&'a str>,
+    dxmt_config_file: Option<&'a str>,
+    dxmt_trace_file: Option<&'a Path>,
+    dxmt_trace_file_wine: Option<&'a str>,
+    cache_paths: Option<&'a CachePaths>,
+    dlls: &'a [super::recipe::RecipeDll],
+    runtime_bindings: &'a [DxmtRuntimeBinding],
 }
 
 #[derive(Default)]
 pub struct CustomLaunchOptions {
     pub prefix_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
+    pub extra_env: Vec<(String, String)>,
 }
 
 pub fn bridge_is_running() -> bool {
@@ -126,15 +157,25 @@ pub fn launch_with_pipeline(
     appid: u32,
     pipeline_id: PipelineId,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_with_pipeline_and_args(appid, pipeline_id, &[])
+}
+
+pub fn launch_with_pipeline_and_args(
+    appid: u32,
+    pipeline_id: PipelineId,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
-        PipelineId::M32 => launch_wine_bare(appid, node),
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal_with_args(appid, node, launch_args)
+        },
+        PipelineId::M32 => launch_wine_bare_with_args(appid, node, launch_args),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam => launch_steam(appid),
         PipelineId::MacSteam => launch_macos_steam(appid),
-        PipelineId::WineBare => launch_wine_bare(appid, node),
+        PipelineId::WineBare => launch_wine_bare_with_args(appid, node, launch_args),
     }
 }
 
@@ -149,10 +190,10 @@ pub fn launch_steam_bottle_with_pipeline(
 
     let result = match pipeline_id {
         PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            launch_dxmt_metal_with_context(appid, node, &[], Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
-            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            launch_wine_bare_with_context(appid, node, &[], Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
             Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
@@ -173,6 +214,10 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
     deploy_recipe_dlls(&recipe)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
     Ok(serde_json::json!({
         "ok": true,
@@ -182,6 +227,14 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "runtime_bindings": runtime_bindings.iter().map(|binding| {
+            serde_json::json!({
+                "name": binding.name,
+                "source_path": binding.source_path,
+                "dest_path": binding.dest_path,
+                "present": binding.present,
+            })
+        }).collect::<Vec<_>>(),
     }))
 }
 
@@ -209,6 +262,9 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
@@ -269,6 +325,96 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
     Ok(())
 }
 
+fn ensure_dxmt_winemetal_runtime(
+    recipe: &super::recipe::LaunchRecipe,
+    node: &PipelineNode,
+    prefix: &Path,
+    ms_root: &Path,
+) -> Result<Vec<DxmtRuntimeBinding>, Box<dyn std::error::Error>> {
+    if node.backend != "dxmt" {
+        return Ok(Vec::new());
+    }
+
+    let pe_source = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll");
+    let unix_source = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+    if !pe_source.exists() {
+        return Err(format!("required DXMT runtime PE missing at {}", pe_source.display()).into());
+    }
+    if !unix_source.exists() {
+        return Err(format!("required DXMT unix bridge missing at {}", unix_source.display()).into());
+    }
+
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let unix_dir = ms_root.join("lib").join("wine").join("x86_64-unix");
+    std::fs::create_dir_all(&system32)?;
+    std::fs::create_dir_all(&unix_dir)?;
+
+    let pe_dest = system32.join("winemetal.dll");
+    let unix_dest = unix_dir.join("winemetal.so");
+    std::fs::copy(&pe_source, &pe_dest)?;
+    replace_runtime_file(&unix_source, &unix_dest)?;
+    remove_game_local_winemetal(recipe, &pe_source, &unix_source)?;
+
+    Ok(vec![
+        DxmtRuntimeBinding {
+            name: "winemetal.dll".into(),
+            source_path: pe_source,
+            present: pe_dest.exists(),
+            dest_path: pe_dest,
+        },
+        DxmtRuntimeBinding {
+            name: "winemetal.so".into(),
+            source_path: unix_source,
+            present: unix_dest.exists(),
+            dest_path: unix_dest,
+        },
+    ])
+}
+
+fn replace_runtime_file(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if dest.exists() || std::fs::symlink_metadata(dest).is_ok() {
+        std::fs::remove_file(dest)?;
+    }
+    std::fs::copy(source, dest)?;
+    Ok(())
+}
+
+fn remove_game_local_winemetal(
+    recipe: &super::recipe::LaunchRecipe,
+    pe_source: &Path,
+    unix_source: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(game_dir) = recipe.game_dir.as_ref() else {
+        return Ok(());
+    };
+    let Some(exe_path) = recipe.exe_path.as_ref() else {
+        return Ok(());
+    };
+
+    let target_dir = exe_path.parent().unwrap_or(game_dir);
+    let injection_dir = game_dir.join(".metalsharp");
+    let originals_dir = injection_dir.join("originals");
+    std::fs::create_dir_all(&originals_dir)?;
+
+    for (filename, source) in [("winemetal.dll", pe_source), ("winemetal.so", unix_source)] {
+        let dest = target_dir.join(filename);
+        if !dest.exists() && std::fs::symlink_metadata(&dest).is_err() {
+            continue;
+        }
+
+        let backup_path = originals_dir.join(format!("{}.removed", backup_name_for(game_dir, &dest)));
+        if !files_match(source, &dest) && !backup_path.exists() {
+            std::fs::copy(&dest, &backup_path)?;
+        }
+        std::fs::remove_file(dest)?;
+    }
+
+    Ok(())
+}
+
 pub fn launch_custom_with_pipeline(
     launch_id: u32,
     game_dir: &std::path::Path,
@@ -309,14 +455,15 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
+    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    std::fs::create_dir_all(&prefix)?;
     if node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
     }
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
-    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
-    std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
@@ -325,18 +472,30 @@ pub fn launch_custom_with_options(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, launch_id);
+    let dxmt_config_file = ensure_dxmt_config(node, &ms_root)?;
+    let dxmt_config_file_string = dxmt_config_file.as_ref().map(|path| path.to_string_lossy().to_string());
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    if node.backend == "dxmt" {
-        cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
-    }
+    apply_dxmt_config_env(&mut cmd, node, dxmt_config_file.as_deref());
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
+    }
+    for (key, value) in &options.extra_env {
+        cmd.env(key, value);
     }
 
     cmd.arg(&exe_name);
@@ -353,6 +512,40 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
+        write_dxmt_launch_contract(
+            &mut log,
+            &LaunchLogContext {
+                appid: launch_id,
+                node,
+                prefix: &prefix,
+                cwd: exe_dir,
+                exe_name: &exe_name,
+                args: &recipe.launch_args,
+                wine_overrides: node.wine_overrides,
+                runtime_lib_key,
+                runtime_lib_path: &dyld_path,
+                wine_dll_path: wine_dll_path.as_deref(),
+                dxmt_config_file: dxmt_config_file_string.as_deref(),
+                dxmt_trace_file: None,
+                dxmt_trace_file_wine: None,
+                cache_paths: cache_paths.as_ref(),
+                dlls: &recipe.dlls,
+                runtime_bindings: &runtime_bindings,
+            },
+        )?;
+        if !runtime_bindings.is_empty() {
+            writeln!(log, "runtime_bindings=")?;
+            for binding in &runtime_bindings {
+                writeln!(
+                    log,
+                    "  {} -> {} present={} source={}",
+                    binding.name,
+                    binding.dest_path.display(),
+                    binding.present,
+                    binding.source_path.display()
+                )?;
+            }
+        }
         writeln!(log, "--- wine output ---")?;
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -397,13 +590,19 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
     }
 }
 
-fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_dxmt_metal_with_context(appid, node, None, &[], None)
+fn launch_dxmt_metal_with_args(
+    appid: u32,
+    node: &PipelineNode,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let log_path = default_mtsp_launch_log_path(appid);
+    launch_dxmt_metal_with_context(appid, node, launch_args, None, &[], Some(&log_path))
 }
 
 fn launch_dxmt_metal_with_context(
     appid: u32,
     node: &PipelineNode,
+    extra_launch_args: &[String],
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
@@ -416,7 +615,8 @@ fn launch_dxmt_metal_with_context(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let mut recipe = super::recipe::build_launch_recipe(appid, node)?;
+    recipe.launch_args.extend(extra_launch_args.iter().cloned());
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -426,23 +626,40 @@ fn launch_dxmt_metal_with_context(
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
     deploy_recipe_dlls(&recipe)?;
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, appid);
-    let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+    let dxmt_config_file = ensure_dxmt_config(node, &ms_root)?;
+    let dxmt_config_file_string = dxmt_config_file.as_ref().map(|path| path.to_string_lossy().to_string());
+    let dxmt_trace_file = log_path.map(|path| dxmt_trace_log_path_for_launch(appid, path));
+    let dxmt_trace_file_wine = dxmt_trace_file.as_ref().map(|path| host_path_to_wine_z_path(path));
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    apply_steam_identity_env(&mut cmd, appid);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+    apply_dxmt_config_env(&mut cmd, node, dxmt_config_file.as_deref());
+    if let Some(trace_file) = dxmt_trace_file_wine.as_ref() {
+        cmd.env("DXMT_D3D12_TRACE_FILE", trace_file);
+    }
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -452,23 +669,46 @@ fn launch_dxmt_metal_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key,
+            runtime_lib_path: &dyld_path,
+            wine_dll_path: wine_dll_path.as_deref(),
+            dxmt_config_file: dxmt_config_file_string.as_deref(),
+            dxmt_trace_file: dxmt_trace_file.as_deref(),
+            dxmt_trace_file_wine: dxmt_trace_file_wine.as_deref(),
+            cache_paths: cache_paths.as_ref(),
+            dlls: &recipe.dlls,
+            runtime_bindings: &runtime_bindings,
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
-fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_wine_bare_with_context(appid, node, None, &[], None)
+fn launch_wine_bare_with_args(
+    appid: u32,
+    node: &PipelineNode,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let log_path = default_mtsp_launch_log_path(appid);
+    launch_wine_bare_with_context(appid, node, launch_args, None, &[], Some(&log_path))
 }
 
 fn launch_wine_bare_with_context(
     appid: u32,
     node: &PipelineNode,
+    extra_launch_args: &[String],
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
@@ -481,7 +721,8 @@ fn launch_wine_bare_with_context(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let mut recipe = super::recipe::build_launch_recipe(appid, node)?;
+    recipe.launch_args.extend(extra_launch_args.iter().cloned());
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -497,7 +738,17 @@ fn launch_wine_bare_with_context(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    let wine_debug = wine_debug_value();
+    let wine_dll_path = dxmt_wine_dll_path(&ms_root, exe_dir, node);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", &wine_debug)
+        .env(runtime_lib_key, &dyld_path);
+    apply_steam_identity_env(&mut cmd, appid);
+    if let Some(path) = wine_dll_path.as_ref() {
+        cmd.env("WINEDLLPATH", path);
+    }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -510,11 +761,28 @@ fn launch_wine_bare_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key,
+            runtime_lib_path: &dyld_path,
+            wine_dll_path: wine_dll_path.as_deref(),
+            dxmt_config_file: None,
+            dxmt_trace_file: None,
+            dxmt_trace_file_wine: None,
+            cache_paths: cache_paths.as_ref(),
+            dlls: &recipe.dlls,
+            runtime_bindings: &[],
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -539,9 +807,80 @@ fn attach_launch_log(
     writeln!(log, "cwd={}", context.cwd.display())?;
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
+    write_dxmt_launch_contract(&mut log, &context)?;
+    if let Some(overrides) = context.wine_overrides {
+        writeln!(log, "winedlloverrides={}", overrides)?;
+    }
+    writeln!(log, "{}={}", context.runtime_lib_key, context.runtime_lib_path)?;
+    if let Some(path) = context.wine_dll_path {
+        writeln!(log, "WINEDLLPATH={}", path)?;
+    }
+    if context.node.backend == "dxmt" {
+        writeln!(log, "DXMT_WINEMETAL_UNIXLIB=winemetal.so")?;
+    }
+    if let Some(path) = context.dxmt_trace_file {
+        writeln!(log, "DXMT_D3D12_TRACE_FILE_HOST={}", path.display())?;
+    }
+    if !context.dlls.is_empty() {
+        writeln!(log, "dll_bindings=")?;
+        for dll in context.dlls {
+            writeln!(
+                log,
+                "  {} -> {} present={} source={}",
+                dll.filename,
+                dll.dest_path.display(),
+                dll.dest_path.exists(),
+                dll.source_path.display()
+            )?;
+        }
+    }
+    if !context.runtime_bindings.is_empty() {
+        writeln!(log, "runtime_bindings=")?;
+        for binding in context.runtime_bindings {
+            writeln!(
+                log,
+                "  {} -> {} present={} source={}",
+                binding.name,
+                binding.dest_path.display(),
+                binding.present,
+                binding.source_path.display()
+            )?;
+        }
+    }
     writeln!(log, "--- wine output ---")?;
     let stdout = log.try_clone()?;
     cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
+    Ok(())
+}
+
+fn write_dxmt_launch_contract(log: &mut dyn Write, context: &LaunchLogContext<'_>) -> std::io::Result<()> {
+    if context.node.backend != "dxmt" {
+        return Ok(());
+    }
+
+    writeln!(log, "dxmt_runtime_contract=")?;
+    writeln!(log, "  pipeline={}", context.node.name)?;
+    if let Some(overrides) = context.wine_overrides {
+        writeln!(log, "  WINEDLLOVERRIDES={}", overrides)?;
+    }
+    if let Some(path) = context.wine_dll_path {
+        writeln!(log, "  WINEDLLPATH={}", path)?;
+    }
+    writeln!(log, "  DXMT_WINEMETAL_UNIXLIB=winemetal.so")?;
+    if let Some(config) = context.dxmt_config_file {
+        writeln!(log, "  DXMT_CONFIG_FILE={}", config)?;
+    }
+    writeln!(log, "  DXMT_CONFIG={}", DXMT_CONFIG_ENV)?;
+    writeln!(log, "  metalfx_target_render_scale={}", DXMT_TARGET_RENDER_SCALE)?;
+    writeln!(log, "  metalfx_spatial_upscale_factor={}", DXMT_SPATIAL_UPSCALE_FACTOR)?;
+    if let Some(trace_file) = context.dxmt_trace_file_wine {
+        writeln!(log, "  DXMT_D3D12_TRACE_FILE={}", trace_file)?;
+    }
+    if let Some(cache) = context.cache_paths {
+        writeln!(log, "  DXMT_SHADER_CACHE_PATH={}/", cache.shader)?;
+        writeln!(log, "  DXMT_PIPELINE_CACHE_PATH={}/", cache.pipeline)?;
+    }
+    writeln!(log, "  expected_load_order=game_dir,dxmt_runtime,wine_runtime")?;
     Ok(())
 }
 
@@ -562,6 +901,33 @@ fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>
         writeln!(log, "steam_identity_mode=wine_steam_background")?;
     }
     Ok(())
+}
+
+fn default_mtsp_launch_log_path(appid: u32) -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_default();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    home.join(".metalsharp").join("logs").join(format!("mtsp-launch-{}-{}.log", appid, timestamp))
+}
+
+fn dxmt_trace_log_path_for_launch(appid: u32, launch_log_path: &Path) -> PathBuf {
+    let parent = launch_log_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".metalsharp").join("logs"));
+    let file_name = launch_log_path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    if let Some(rest) = file_name.strip_prefix("mtsp-launch-") {
+        parent.join(format!("dxmt-d3d12-{}", rest))
+    } else {
+        parent.join(format!("dxmt-d3d12-{}.log", appid))
+    }
+}
+
+fn host_path_to_wine_z_path(path: &Path) -> String {
+    let unix = path.to_string_lossy();
+    format!("Z:{}", unix.replace('/', "\\"))
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -655,17 +1021,124 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
+fn wine_debug_value() -> String {
+    std::env::var("METALSHARP_WINEDEBUG").unwrap_or_else(|_| "-all".to_string())
+}
+
+fn dxmt_wine_dll_path(ms_root: &Path, exe_dir: &Path, node: &PipelineNode) -> Option<String> {
+    if node.backend != "dxmt" {
+        return None;
+    }
+
+    Some(
+        [
+            exe_dir.to_path_buf(),
+            ms_root.join("lib").join("dxmt"),
+            ms_root.join("lib").join("wine"),
+            ms_root.join("lib").join("dxmt").join("x86_64-windows"),
+            ms_root.join("lib").join("wine").join("x86_64-windows"),
+        ]
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(":"),
+    )
+}
+
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
     let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
     let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
-    let _ = std::fs::create_dir_all(&shader_base);
-    let _ = std::fs::create_dir_all(&pipeline_base);
+    ensure_cache_dir(&shader_base, "shader");
+    ensure_cache_dir(&pipeline_base, "pipeline");
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
     Some(CachePaths {
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
     })
+}
+
+fn ensure_cache_dir(path: &Path, label: &str) {
+    if let Err(err) = std::fs::create_dir_all(path) {
+        eprintln!("metalsharp: failed to create {} cache dir {}: {}", label, path.display(), err);
+    }
+}
+
+fn ensure_dxmt_config(node: &PipelineNode, ms_root: &Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if !dxmt_config_applies(node) {
+        return Ok(None);
+    }
+
+    let config_path = ms_root.join("etc").join("dxmt.conf");
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let current = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !dxmt_config_matches_contract(&current) {
+        std::fs::write(&config_path, merge_dxmt_config_contract(&current))?;
+    }
+    Ok(Some(config_path))
+}
+
+fn dxmt_config_applies(node: &PipelineNode) -> bool {
+    matches!(node.id, PipelineId::M11 | PipelineId::M12)
+}
+
+fn dxmt_config_matches_contract(config: &str) -> bool {
+    DXMT_CONFIG_REQUIRED_LINES.iter().all(|(key, value)| {
+        config.lines().any(|line| {
+            normalized_config_line(line) == normalized_config_line(value)
+                && config_line_key(line).as_deref() == Some(*key)
+        })
+    })
+}
+
+fn merge_dxmt_config_contract(config: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut lines = Vec::new();
+
+    for line in config.lines() {
+        if let Some(key) = config_line_key(line) {
+            if let Some((required_key, required_line)) =
+                DXMT_CONFIG_REQUIRED_LINES.iter().find(|(required_key, _)| *required_key == key)
+            {
+                if seen.insert(*required_key) {
+                    lines.push((*required_line).to_string());
+                }
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+
+    for (required_key, required_line) in DXMT_CONFIG_REQUIRED_LINES {
+        if seen.insert(required_key) {
+            lines.push(required_line.to_string());
+        }
+    }
+
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
+}
+
+fn config_line_key(line: &str) -> Option<String> {
+    line.split('#')
+        .next()
+        .and_then(|line| line.split_once('='))
+        .map(|(key, _)| key.chars().filter(|ch| !ch.is_whitespace()).collect::<String>().to_ascii_lowercase())
+}
+
+fn normalized_config_line(line: &str) -> String {
+    line.split('#')
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
@@ -683,11 +1156,53 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push(("WINEDLLOVERRIDES".to_string(), overrides.to_string()));
     }
     if node.backend == "dxmt" {
-        env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+        env.push((
+            "WINEDLLPATH".to_string(),
+            [
+                ms_root.join("lib").join("dxmt"),
+                ms_root.join("lib").join("wine"),
+                ms_root.join("lib").join("dxmt").join("x86_64-windows"),
+                ms_root.join("lib").join("wine").join("x86_64-windows"),
+            ]
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(":"),
+        ));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
+        let trace_path = home.join(".metalsharp").join("logs").join(format!("dxmt-d3d12-steam-{}.log", appid));
+        env.push(("DXMT_D3D12_TRACE_FILE".to_string(), host_path_to_wine_z_path(&trace_path)));
+    }
+    if dxmt_config_applies(node) {
+        let config_path =
+            ensure_dxmt_config(node, &ms_root).ok().flatten().unwrap_or_else(|| ms_root.join("etc").join("dxmt.conf"));
+        env.push(("DXMT_CONFIG_FILE".to_string(), config_path.to_string_lossy().to_string()));
+        env.push(("DXMT_CONFIG".to_string(), DXMT_CONFIG_ENV.to_string()));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env
+}
+
+fn apply_dxmt_winemetal_env(cmd: &mut Command, node: &PipelineNode) {
+    if node.backend == "dxmt" {
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
+    }
+}
+
+fn apply_dxmt_config_env(cmd: &mut Command, node: &PipelineNode, config_path: Option<&Path>) {
+    if !dxmt_config_applies(node) {
+        return;
+    }
+    if let Some(config_path) = config_path {
+        cmd.env("DXMT_CONFIG_FILE", config_path);
+    }
+    cmd.env("DXMT_CONFIG", DXMT_CONFIG_ENV);
+}
+
+fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
+    let appid = appid.to_string();
+    cmd.env("SteamAppId", &appid).env("SteamGameId", appid);
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -1170,6 +1685,104 @@ mod tests {
     }
 
     #[test]
+    fn dxmt_routes_share_cache_and_runtime_contract() {
+        let cache = CachePaths { shader: "/tmp/shaders".into(), pipeline: "/tmp/pipelines".into() };
+
+        for pipeline in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let node = get_pipeline(pipeline);
+            let env = cache_env_pairs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"));
+            let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+            let node_env: std::collections::HashMap<_, _> =
+                node.env_vars.iter().map(|env| (env.key, env.value)).collect();
+
+            assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"), "{:?} missing MetalSharp shader cache", pipeline);
+            assert!(
+                keys.contains("METALSHARP_PIPELINE_CACHE_PATH"),
+                "{:?} missing MetalSharp pipeline cache",
+                pipeline
+            );
+            assert!(keys.contains("MTL_SHADER_CACHE_DIR"), "{:?} missing Metal shader cache", pipeline);
+            assert!(keys.contains("DXMT_SHADER_CACHE_PATH"), "{:?} missing DXMT shader cache", pipeline);
+            assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"), "{:?} missing DXMT pipeline cache", pipeline);
+            assert_eq!(node_env.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"), "{:?} missing async PSO", pipeline);
+            if matches!(pipeline, PipelineId::M11 | PipelineId::M12) {
+                assert_eq!(
+                    node_env.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"),
+                    Some(&"1"),
+                    "{:?} missing MetalFX",
+                    pipeline
+                );
+            } else {
+                assert!(
+                    !node_env.contains_key("DXMT_METALFX_SPATIAL_SWAPCHAIN"),
+                    "{:?} should not force MetalFX",
+                    pipeline
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dxmt_config_contract_is_m11_m12_only() {
+        for pipeline in [PipelineId::M9, PipelineId::M10] {
+            let node = get_pipeline(pipeline);
+            assert!(!dxmt_config_applies(node), "{:?} should not use shared DXMT_CONFIG contract", pipeline);
+        }
+        for pipeline in [PipelineId::M11, PipelineId::M12] {
+            let node = get_pipeline(pipeline);
+            assert!(dxmt_config_applies(node), "{:?} should use shared DXMT_CONFIG contract", pipeline);
+        }
+    }
+
+    #[test]
+    fn m9_m10_steam_env_does_not_export_dxmt_config_contract() {
+        let home = test_dir("steam-env-no-dxmt-config");
+
+        for pipeline in [PipelineId::M9, PipelineId::M10] {
+            let node = get_pipeline(pipeline);
+            let env = steam_pipeline_env_pairs(&home, node, 620);
+            let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+            assert!(keys.contains("WINEDLLPATH"), "{:?} should still bind DXMT runtime paths", pipeline);
+            assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"), "{:?} should still bind winemetal", pipeline);
+            assert!(keys.contains("DXMT_SHADER_CACHE_PATH"), "{:?} should still use DXMT shader cache", pipeline);
+            assert!(!keys.contains("DXMT_CONFIG_FILE"), "{:?} should not export DXMT_CONFIG_FILE", pipeline);
+            assert!(!keys.contains("DXMT_CONFIG"), "{:?} should not export DXMT_CONFIG", pipeline);
+        }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_config_contract_sets_seventy_percent_render_scale() {
+        assert!(dxmt_config_matches_contract(DXMT_CONFIG_CONTENT));
+        assert!(DXMT_CONFIG_ENV.contains("d3d11.metalSpatialUpscaleFactor=1.43"));
+        assert_eq!(DXMT_TARGET_RENDER_SCALE, "0.70");
+        assert_eq!(DXMT_SPATIAL_UPSCALE_FACTOR, "1.43");
+    }
+
+    #[test]
+    fn dxmt_config_contract_merge_preserves_unrelated_settings() {
+        let existing = "# local tuning\n\
+custom.option = enabled\n\
+d3d11.metalSpatialUpscaleFactor = 2.0\n\
+d3d11.maxFeatureLevel = 11_0 # old value\n\
+dxgi.deferSurfaceCreation = True\n";
+
+        let merged = merge_dxmt_config_contract(existing);
+
+        assert!(dxmt_config_matches_contract(&merged));
+        assert!(merged.contains("# local tuning"));
+        assert!(merged.contains("custom.option = enabled"));
+        assert!(merged.contains("dxgi.deferSurfaceCreation = True"));
+        assert!(merged.contains("d3d11.metalSpatialUpscaleFactor = 1.43"));
+        assert!(merged.contains("d3d11.preferredMaxFrameRate = 60"));
+        assert!(merged.contains("d3d11.maxFeatureLevel = 12_1"));
+        assert!(!merged.contains("d3d11.metalSpatialUpscaleFactor = 2.0"));
+        assert!(!merged.contains("d3d11.maxFeatureLevel = 11_0"));
+    }
+
+    #[test]
     fn steam_pipeline_env_includes_route_overrides_and_cache_keys() {
         let home = test_dir("steam-env");
         let node = get_pipeline(PipelineId::M12);
@@ -1178,7 +1791,11 @@ mod tests {
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
+        assert!(keys.contains("WINEDLLPATH"));
+        assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("DXMT_CONFIG"));
+        assert!(keys.contains("DXMT_D3D12_TRACE_FILE"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
@@ -1188,7 +1805,54 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
+        let dll_path = env.iter().find(|(key, _)| key == "WINEDLLPATH").map(|(_, value)| value).unwrap();
+        assert!(dll_path.contains("lib/dxmt:"));
+        assert!(dll_path.contains("lib/wine:"));
+        assert!(dll_path.contains("lib/dxmt/x86_64-windows"));
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()),
+            Some("winemetal.so")
+        );
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_CONFIG").map(|(_, value)| value.as_str()),
+            Some(DXMT_CONFIG_ENV)
+        );
+        let trace_file = env.iter().find(|(key, _)| key == "DXMT_D3D12_TRACE_FILE").map(|(_, value)| value).unwrap();
+        assert!(trace_file.starts_with("Z:\\"));
+        assert!(trace_file.ends_with("\\.metalsharp\\logs\\dxmt-d3d12-steam-1583230.log"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_wine_dll_path_prefers_game_and_runtime_dll_dirs() {
+        let node = get_pipeline(PipelineId::M11);
+        let ms_root = PathBuf::from("/tmp/metalsharp-runtime/wine");
+        let exe_dir = PathBuf::from("/tmp/game/Binaries/Win64");
+
+        let dll_path = dxmt_wine_dll_path(&ms_root, &exe_dir, node).expect("dxmt dll path");
+
+        assert!(dll_path.starts_with("/tmp/game/Binaries/Win64:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/dxmt:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/wine:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/dxmt/x86_64-windows"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/wine/x86_64-windows"));
+    }
+
+    #[test]
+    fn non_dxmt_routes_do_not_force_winedllpath() {
+        let node = get_pipeline(PipelineId::WineBare);
+
+        assert!(dxmt_wine_dll_path(&PathBuf::from("/tmp/runtime"), &PathBuf::from("/tmp/game"), node).is_none());
+    }
+
+    #[test]
+    fn dxmt_trace_log_sits_next_to_mtsp_launch_log() {
+        let launch_log = PathBuf::from("/tmp/ms/logs/mtsp-launch-1326470-1779390426.log");
+
+        let trace_log = dxmt_trace_log_path_for_launch(1326470, &launch_log);
+
+        assert_eq!(trace_log, PathBuf::from("/tmp/ms/logs/dxmt-d3d12-1326470-1779390426.log"));
+        assert_eq!(host_path_to_wine_z_path(&trace_log), "Z:\\tmp\\ms\\logs\\dxmt-d3d12-1326470-1779390426.log");
     }
 
     #[test]
@@ -1209,6 +1873,18 @@ mod tests {
         assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn direct_wine_launches_include_steam_identity() {
+        let mut cmd = Command::new("wine");
+
+        apply_steam_identity_env(&mut cmd, 1326470);
+
+        let env: std::collections::HashMap<_, _> =
+            cmd.get_envs().filter_map(|(key, value)| value.map(|value| (key, value))).collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("SteamAppId")), Some(&std::ffi::OsStr::new("1326470")));
+        assert_eq!(env.get(std::ffi::OsStr::new("SteamGameId")), Some(&std::ffi::OsStr::new("1326470")));
     }
 
     #[test]
@@ -1250,6 +1926,56 @@ mod tests {
     }
 
     #[test]
+    fn dxmt_winemetal_is_bound_from_prefix_not_game_dir() {
+        let root = test_dir("dxmt-winemetal");
+        let ms_root = root.join("runtime").join("wine");
+        let prefix = root.join("prefix");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(ms_root.join("lib/dxmt/x86_64-windows")).expect("create dxmt pe dir");
+        std::fs::create_dir_all(ms_root.join("lib/dxmt/x86_64-unix")).expect("create dxmt unix dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        let pe_source = ms_root.join("lib/dxmt/x86_64-windows/winemetal.dll");
+        let unix_source = ms_root.join("lib/dxmt/x86_64-unix/winemetal.so");
+        std::fs::write(&pe_source, b"pe").expect("write pe source");
+        std::fs::write(&unix_source, b"unix").expect("write unix source");
+        std::fs::write(game_dir.join("Game.exe"), b"exe").expect("write exe");
+        std::fs::write(game_dir.join("winemetal.dll"), b"old game-local winemetal").expect("write stale dll");
+
+        let recipe = super::super::recipe::LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M11,
+            pipeline_name: "M11".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(game_dir.join("Game.exe")),
+            exe_name: Some("Game.exe".into()),
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            anti_cheat_status: vec![],
+            warnings: vec![],
+        };
+
+        let bindings = ensure_dxmt_winemetal_runtime(
+            &recipe,
+            super::super::engine::get_pipeline(PipelineId::M11),
+            &prefix,
+            &ms_root,
+        )
+        .expect("bind winemetal runtime");
+
+        assert_eq!(bindings.len(), 2);
+        assert!(prefix.join("drive_c/windows/system32/winemetal.dll").exists());
+        assert!(ms_root.join("lib/wine/x86_64-unix/winemetal.so").exists());
+        assert!(!game_dir.join("winemetal.dll").exists());
+        assert!(game_dir.join(".metalsharp/originals/winemetal.dll.removed").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn nested_executables_launch_from_their_parent_directory() {
         let game_dir = PathBuf::from("/tmp/Game");
         let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
@@ -1270,6 +1996,47 @@ mod tests {
         assert!(text.contains("steam_bridge_port="));
         assert!(text.contains("compatdata_manifest="));
         assert!(text.contains("steam_identity_mode=wine_steam_background"));
+    }
+
+    #[test]
+    fn dxmt_launch_contract_records_runtime_evidence() {
+        let mut log = Vec::new();
+        let node = get_pipeline(PipelineId::M12);
+        let prefix = PathBuf::from("/tmp/prefix");
+        let cwd = PathBuf::from("/tmp/game");
+        let args = vec!["-force-d3d12".to_string()];
+        let cache = CachePaths { shader: "/tmp/shaders".into(), pipeline: "/tmp/pipelines".into() };
+
+        let context = LaunchLogContext {
+            appid: 1583230,
+            node,
+            prefix: &prefix,
+            cwd: &cwd,
+            exe_name: "SonsOfTheForest.exe",
+            args: &args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key: "DYLD_LIBRARY_PATH",
+            runtime_lib_path: "/tmp/runtime/lib",
+            wine_dll_path: Some("/tmp/game:/tmp/runtime/lib/dxmt:/tmp/runtime/lib/wine"),
+            dxmt_config_file: Some("/tmp/runtime/etc/dxmt.conf"),
+            dxmt_trace_file: Some(Path::new("/tmp/logs/dxmt-d3d12-1583230.log")),
+            dxmt_trace_file_wine: Some("Z:\\tmp\\logs\\dxmt-d3d12-1583230.log"),
+            cache_paths: Some(&cache),
+            dlls: &[],
+            runtime_bindings: &[],
+        };
+
+        write_dxmt_launch_contract(&mut log, &context).expect("write dxmt launch contract");
+
+        let text = String::from_utf8(log).expect("utf8 log");
+        assert!(text.contains("dxmt_runtime_contract="));
+        assert!(text.contains("WINEDLLOVERRIDES="));
+        assert!(text.contains("WINEDLLPATH=/tmp/game:/tmp/runtime/lib/dxmt:/tmp/runtime/lib/wine"));
+        assert!(text.contains("DXMT_WINEMETAL_UNIXLIB=winemetal.so"));
+        assert!(text.contains("DXMT_CONFIG_FILE=/tmp/runtime/etc/dxmt.conf"));
+        assert!(text.contains("DXMT_D3D12_TRACE_FILE=Z:\\tmp\\logs\\dxmt-d3d12-1583230.log"));
+        assert!(text.contains("DXMT_SHADER_CACHE_PATH=/tmp/shaders/"));
+        assert!(text.contains("expected_load_order=game_dir,dxmt_runtime,wine_runtime"));
     }
 
     fn test_dir(name: &str) -> PathBuf {

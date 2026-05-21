@@ -66,11 +66,20 @@ POST /launcher/evidence
 
 POST /launcher/evidence
 {"family":"ubisoft"}
+
+POST /launcher/evidence
+{"family":"easyanticheat"}
 ```
 
 EA currently reports `ea_msi_1603`: the bootstrapper reaches MSI apply and fails with `0x80070643 / INST-14-1603`.
 
 Ubisoft currently reports `ubisoft_auto_started_then_crash_reporter`: the installer staged `UbisoftConnect.exe`, auto-started Ubisoft Game Launcher `171.0.13174`, then entered the crash-reporter path. A clean direct launch of `UbisoftConnect.exe` still needs to be captured after runtime repair.
+
+EAC evidence is compatibility-only. The report records whether the game-local
+`EasyAntiCheat_EOS_Setup.exe` install path was attempted, extracts the EOS
+product id when visible, checks for Proton-style `.so` assets, and distinguishes
+setup presence from the later "failed to load anti-cheat module" game-launch
+failure. This path must not introduce bypass behavior.
 
 ## Remaining Work
 

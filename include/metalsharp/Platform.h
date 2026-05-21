@@ -63,6 +63,7 @@ typedef struct GUID {
 #define E_OUTOFMEMORY           ((HRESULT)0x8007000EL)
 #define DXGI_ERROR_INVALID_CALL ((HRESULT)0x887A0001L)
 #define DXGI_ERROR_NOT_FOUND    ((HRESULT)0x887A0002L)
+#define DXGI_ERROR_MORE_DATA    ((HRESULT)0x887A0003L)
 
 #define FAILED(hr)    (((HRESULT)(hr)) < 0)
 #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)

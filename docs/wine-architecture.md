@@ -134,7 +134,6 @@ M11/M10:
 d3d11.dll
 dxgi.dll
 d3d10core.dll
-winemetal.dll
 ```
 
 M10 deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for D3D10 imports, then uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11.
@@ -146,8 +145,21 @@ d3d12.dll
 d3d11.dll
 dxgi.dll
 d3d10core.dll
-winemetal.dll
 ```
+
+DXMT's `winemetal.dll` is not staged beside the game executable. MetalSharp
+binds it into the active Wine prefix under `C:\windows\system32` and keeps the
+paired `winemetal.so` under the DXMT/Wine Unix library roots. DXMT routes set
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so` and include the parent runtime roots in
+`WINEDLLPATH`; this lets the PE stub recover the Unix Metal bridge even when Wine
+loaded the PE side as a native prefix DLL instead of a builtin module. Stale
+game-local `winemetal` copies are removed during preparation.
+
+The Wine runtime patch exports the macOS driver bridge used by DXMT:
+`get_win_data`, `release_win_data`, `macdrv_client_surface_create`,
+`macdrv_view_create_metal_view`, and `macdrv_view_get_metal_layer`. DXMT uses
+those symbols to create the Wine client surface if it does not exist yet, then
+attaches its CAMetalLayer-backed swapchain to that view.
 
 M9:
 
@@ -186,7 +198,9 @@ run the game executable directly through the selected MTSP pipeline with this pr
 | `DYLD_FALLBACK_LIBRARY_PATH` | Unix library lookup for Wine and DXMT |
 | `WINEDLLOVERRIDES` | Selects injected/native DLL behavior |
 | `DXMT_SHADER_CACHE_PATH` | DXMT shader cache |
+| `DXMT_PIPELINE_CACHE_PATH` | DXMT pipeline cache |
 | `DXMT_CONFIG_FILE` | DXMT config file |
+| `DXMT_CONFIG` | Per-launch DXMT overrides; M11/M12 set `d3d11.metalSpatialUpscaleFactor=1.43` for roughly 70 percent render scale before MetalFX upscaling |
 | `SteamAppId` / `SteamGameId` | Steam identity for direct Steam-bottle game launches |
 
 ## Steam Wrapper

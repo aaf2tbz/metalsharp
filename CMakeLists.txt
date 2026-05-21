@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.33.29 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.33.30 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -146,7 +146,7 @@ add_library(metalsharp_dxgi SHARED
     src/dxgi/DXGISwapChain.mm
     src/dxgi/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core)
+target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core metalsharp_d3d12)
 target_compile_options(metalsharp_dxgi PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_dxgi PROPERTIES OUTPUT_NAME "dxgi" PREFIX "")
 

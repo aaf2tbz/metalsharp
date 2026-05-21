@@ -24,6 +24,12 @@ struct LauncherFacts {
     ea_msi_log_empty: bool,
     ubisoft_launcher_started: bool,
     ubisoft_version: Option<String>,
+    eac_setup_detected: bool,
+    eac_eos_setup_detected: bool,
+    eac_install_attempted: bool,
+    eac_product_id: Option<String>,
+    eac_proton_asset_present: bool,
+    anticheat_module_failure: bool,
     mscompatdb_errors: usize,
 }
 
@@ -77,6 +83,12 @@ pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
             "eaMsiLogEmpty": facts.ea_msi_log_empty,
             "ubisoftLauncherStarted": facts.ubisoft_launcher_started,
             "ubisoftVersion": facts.ubisoft_version,
+            "eacSetupDetected": facts.eac_setup_detected,
+            "eacEosSetupDetected": facts.eac_eos_setup_detected,
+            "eacInstallAttempted": facts.eac_install_attempted,
+            "eacProductId": facts.eac_product_id,
+            "eacProtonAssetPresent": facts.eac_proton_asset_present,
+            "anticheatModuleFailure": facts.anticheat_module_failure,
             "mscompatdbErrors": facts.mscompatdb_errors,
         },
         "detections": detections,
@@ -99,9 +111,20 @@ fn latest_bottle_for_family(family: &str) -> Option<String> {
         let Some(manifest) = serde_json::from_str::<BottleManifest>(&data).ok() else {
             continue;
         };
-        let haystack =
-            format!("{} {} {}", manifest.id, manifest.name, manifest.source_installer_path.clone().unwrap_or_default())
-                .to_ascii_lowercase();
+        let asset_haystack = manifest
+            .runtime_assets
+            .iter()
+            .map(|asset| format!("{} {}", asset.kind, asset.source_path))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let haystack = format!(
+            "{} {} {} {}",
+            manifest.id,
+            manifest.name,
+            manifest.source_installer_path.clone().unwrap_or_default(),
+            asset_haystack
+        )
+        .to_ascii_lowercase();
         if !tokens.iter().any(|token| haystack.contains(token)) {
             continue;
         }
@@ -121,18 +144,34 @@ fn family_tokens(family: &str) -> Vec<String> {
     match family {
         "ea" | "ea_app" | "origin" => vec!["eaapp".to_string(), "ea app".to_string(), "origin".to_string()],
         "ubisoft" | "ubisoft_connect" | "uplay" => vec!["ubisoft".to_string(), "uplay".to_string()],
+        "eac" | "easyanticheat" | "easyanticheat_eos" => {
+            vec!["easyanticheat".to_string(), "easy anti-cheat".to_string(), "eac".to_string()]
+        },
         _ => vec![family.to_string()],
     }
 }
 
 fn launcher_family(manifest: &BottleManifest) -> String {
-    let haystack =
-        format!("{} {} {}", manifest.id, manifest.name, manifest.source_installer_path.clone().unwrap_or_default())
-            .to_ascii_lowercase();
+    let asset_haystack = manifest
+        .runtime_assets
+        .iter()
+        .map(|asset| format!("{} {}", asset.kind, asset.source_path))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let haystack = format!(
+        "{} {} {} {}",
+        manifest.id,
+        manifest.name,
+        manifest.source_installer_path.clone().unwrap_or_default(),
+        asset_haystack
+    )
+    .to_ascii_lowercase();
     if haystack.contains("ubisoft") || haystack.contains("uplay") {
         "ubisoft".to_string()
     } else if haystack.contains("eaapp") || haystack.contains("ea app") || haystack.contains("origin") {
         "ea".to_string()
+    } else if haystack.contains("easyanticheat") || haystack.contains("easy anti-cheat") {
+        "easyanticheat".to_string()
     } else {
         "unknown".to_string()
     }
@@ -167,6 +206,13 @@ fn collect_launcher_artifacts(manifest: &BottleManifest, family: &str) -> Vec<Va
         "ubisoft" => {
             let root = prefix.join("drive_c").join("Program Files (x86)").join("Ubisoft").join("Ubisoft Game Launcher");
             collect_logs_in(&root.join("logs"), "ubisoft_launcher_log", &mut candidates);
+        },
+        "easyanticheat" => {
+            if let Some(game_path) = manifest.game_install_path.as_deref() {
+                collect_logs_in(Path::new(game_path), "eac_game_log", &mut candidates);
+            }
+            collect_logs_in(&prefix.join("drive_c").join("users"), "eac_user_log", &mut candidates);
+            collect_logs_in(&prefix.join("drive_c").join("ProgramData"), "eac_programdata_log", &mut candidates);
         },
         _ => {
             collect_logs_in(&prefix.join("drive_c").join("users"), "launcher_user_log", &mut candidates);
@@ -205,6 +251,8 @@ fn collect_logs_in(root: &Path, id: &'static str, candidates: &mut Vec<(&'static
             || name.contains("uplay")
             || name.contains("launcher")
             || name.contains("crash")
+            || name.contains("easyanticheat")
+            || name.contains("eac")
             || name.contains("msedge")
             || name.contains("edgeupdate"))
         {
@@ -237,6 +285,10 @@ fn launcher_exe_candidates(prefix: &Path, family: &str) -> Vec<PathBuf> {
             roots.push(prefix.join("drive_c").join("Program Files").join("Electronic Arts").join("EA Desktop"));
             roots.push(prefix.join("drive_c").join("Program Files").join("Electronic Arts"));
         },
+        "easyanticheat" => {
+            roots.push(prefix.join("drive_c").join("Program Files"));
+            roots.push(prefix.join("drive_c").join("Program Files (x86)"));
+        },
         _ => roots.push(prefix.join("drive_c").join("Program Files")),
     }
 
@@ -254,6 +306,7 @@ fn launcher_exe_candidates(prefix: &Path, family: &str) -> Vec<PathBuf> {
             let wanted = match family {
                 "ubisoft" => name == "ubisoftconnect.exe" || name == "ubisoftgamelauncher.exe",
                 "ea" => name == "eadesktop.exe" || name == "ealauncher.exe" || name == "eabackgroundservice.exe",
+                "easyanticheat" => name.contains("easyanticheat") && name.ends_with(".exe"),
                 _ => name.ends_with(".exe"),
             };
             if wanted {
@@ -302,6 +355,24 @@ fn summarize_launcher(
         }
     }
 
+    if family == "easyanticheat" {
+        for asset in &manifest.runtime_assets {
+            let lower = asset.source_path.to_ascii_lowercase();
+            if lower.contains("easyanticheat") {
+                facts.eac_setup_detected = true;
+            }
+            if lower.contains("easyanticheat_eos") || lower.contains("eos") {
+                facts.eac_eos_setup_detected = true;
+            }
+            if is_eac_proton_asset(&lower) {
+                facts.eac_proton_asset_present = true;
+            }
+            if let Some(product_id) = parse_eac_product_id(&lower) {
+                facts.eac_product_id = Some(product_id);
+            }
+        }
+    }
+
     if family == "ubisoft" && facts.ubisoft_launcher_started && !facts.direct_launcher_launch_attempted {
         facts.installer_auto_launch_evidence = true;
     }
@@ -313,6 +384,19 @@ fn summarize_launcher(
             .unwrap_or(false);
     }
     facts
+}
+
+fn is_eac_proton_asset(lower_path: &str) -> bool {
+    let normalized = lower_path.replace('\\', "/");
+    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    if !file_name.ends_with(".so") {
+        return false;
+    }
+
+    file_name == "easyanticheat.so"
+        || file_name.starts_with("easyanticheat_")
+        || file_name.starts_with("easyanticheat-eos")
+        || file_name.starts_with("easyanticheat_eos")
 }
 
 fn parse_launcher_line(family: &str, line: &str, facts: &mut LauncherFacts) {
@@ -341,6 +425,26 @@ fn parse_launcher_line(family: &str, line: &str, facts: &mut LauncherFacts) {
                 facts.crash_reporter_evidence = true;
             }
         },
+        "easyanticheat" => {
+            if lower.contains("easyanticheat_eos_setup.exe") || lower.contains("easyanticheat setup") {
+                facts.eac_setup_detected = true;
+            }
+            if lower.contains("easyanticheat_eos_setup.exe") {
+                facts.eac_eos_setup_detected = true;
+            }
+            if lower.contains(" install ") && lower.contains("easyanticheat") {
+                facts.eac_install_attempted = true;
+            }
+            if lower.contains("failed to load the anti-cheat module") || lower.contains("failed to load anti-cheat") {
+                facts.anticheat_module_failure = true;
+            }
+            if lower.contains(".so") && lower.contains("easyanticheat") {
+                facts.eac_proton_asset_present = true;
+            }
+            if facts.eac_product_id.is_none() {
+                facts.eac_product_id = parse_eac_product_id(&lower);
+            }
+        },
         _ => {},
     }
 }
@@ -357,6 +461,12 @@ fn launcher_status(facts: &LauncherFacts) -> String {
         "ubisoft" if facts.installed_exe.is_some() && !facts.direct_launcher_launch_attempted => {
             "ubisoft_installed_no_direct_launch_proof".to_string()
         },
+        "easyanticheat" if facts.anticheat_module_failure => "eac_module_load_failure".to_string(),
+        "easyanticheat" if facts.eac_install_attempted && facts.eac_proton_asset_present => {
+            "eac_installed_with_proton_assets".to_string()
+        },
+        "easyanticheat" if facts.eac_install_attempted => "eac_install_attempted_no_proton_assets".to_string(),
+        "easyanticheat" if facts.eac_setup_detected => "eac_setup_detected".to_string(),
         _ if facts.installed_exe.is_some() => "installed_launcher_detected".to_string(),
         _ => "installer_evidence_incomplete".to_string(),
     }
@@ -375,6 +485,20 @@ fn launcher_summary(status: &str, facts: &LauncherFacts) -> String {
         ),
         "ubisoft_installed_no_direct_launch_proof" => {
             "Ubisoft Connect files are installed and a launcher executable is detected, but no direct post-install launcher launch is recorded.".to_string()
+        },
+        "eac_module_load_failure" => {
+            "Easy Anti-Cheat reached game launch but the protected module failed to load; inspect vendor Unix asset presence and protected-launch handoff logs.".to_string()
+        },
+        "eac_installed_with_proton_assets" => format!(
+            "Easy Anti-Cheat install was attempted{} and Proton-style Unix assets are present.",
+            facts.eac_product_id.as_ref().map(|id| format!(" for product {}", id)).unwrap_or_default()
+        ),
+        "eac_install_attempted_no_proton_assets" => format!(
+            "Easy Anti-Cheat install was attempted{}, but no Proton-style `.so` asset is visible in the evidence.",
+            facts.eac_product_id.as_ref().map(|id| format!(" for product {}", id)).unwrap_or_default()
+        ),
+        "eac_setup_detected" => {
+            "Easy Anti-Cheat setup assets are detected, but no completed install/protected-launch evidence is recorded yet.".to_string()
         },
         "installed_not_launched_directly" => {
             "Launcher files are installed, but no direct post-install launcher launch is recorded.".to_string()
@@ -400,10 +524,28 @@ fn launcher_next_actions(status: &str, family: &str) -> Vec<&'static str> {
             "Launch UbisoftConnect.exe directly from the detected app path.",
             "Refresh this report and inspect launcher_log.txt plus client_crash_reporter.txt.",
         ],
+        "eac_module_load_failure" => vec![
+            "Check whether the game ships vendor-supported Unix EAC assets before treating this as a MetalSharp runtime bug.",
+            "Compare Steam protected handoff logs against direct app launch logs; EAC should be evaluated through the Steam route first.",
+            "Keep this in compatibility mode only; do not add bypass or patching behavior.",
+        ],
+        "eac_install_attempted_no_proton_assets" | "eac_setup_detected" => vec![
+            "Run the game-local EAC setup from the Steam game bottle repair path and refresh evidence.",
+            "Inspect runtime assets for easyanticheat_x64.so or equivalent vendor-supported Unix modules.",
+            "If no Unix module exists, classify online anti-cheat as pending vendor support.",
+        ],
         _ => vec![
             "Relaunch the installed launcher executable directly, then refresh this evidence report.",
         ],
     }
+}
+
+fn parse_eac_product_id(text: &str) -> Option<String> {
+    let marker = " install ";
+    let after = text.split(marker).nth(1)?;
+    let candidate =
+        after.split(|ch: char| !ch.is_ascii_hexdigit()).find(|part| part.len() >= 16 && part.len() <= 64)?;
+    Some(candidate.to_string())
 }
 
 fn artifact_json(id: &str, path: &Path) -> Value {
@@ -480,5 +622,40 @@ mod tests {
         assert!(facts.ubisoft_launcher_started);
         assert!(facts.crash_reporter_evidence);
         assert_eq!(launcher_status(&facts), "ubisoft_auto_started_then_crash_reporter");
+    }
+
+    #[test]
+    fn parses_eac_eos_install_and_module_failure() {
+        let mut facts = LauncherFacts { family: "easyanticheat".to_string(), ..LauncherFacts::default() };
+
+        parse_launcher_line(
+            "easyanticheat",
+            "EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709",
+            &mut facts,
+        );
+        parse_launcher_line("easyanticheat", "failed to load the anti-cheat module", &mut facts);
+
+        assert!(facts.eac_setup_detected);
+        assert!(facts.eac_eos_setup_detected);
+        assert!(facts.eac_install_attempted);
+        assert_eq!(facts.eac_product_id.as_deref(), Some("789399aada914e66bb3c3facebc5d709"));
+        assert_eq!(launcher_status(&facts), "eac_module_load_failure");
+    }
+
+    #[test]
+    fn eac_family_tokens_cover_easyanticheat_aliases() {
+        let tokens = family_tokens("easyanticheat_eos");
+
+        assert!(tokens.contains(&"easyanticheat".to_string()));
+        assert!(tokens.contains(&"eac".to_string()));
+    }
+
+    #[test]
+    fn eac_proton_asset_detection_requires_eac_specific_so() {
+        assert!(is_eac_proton_asset("/game/EasyAntiCheat/easyanticheat_x64.so"));
+        assert!(is_eac_proton_asset(r"C:\Game\EasyAntiCheat\easyanticheat_eos_x64.so"));
+        assert!(!is_eac_proton_asset("/game/EasyAntiCheat/unix_bridge.so"));
+        assert!(!is_eac_proton_asset("/game/redistributables/helper.so"));
+        assert!(!is_eac_proton_asset("/game/EasyAntiCheat/EasyAntiCheat_EOS_Setup.exe"));
     }
 }

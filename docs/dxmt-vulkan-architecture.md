@@ -30,16 +30,66 @@ DXMT-family DLLs:
 | `dxgi.dll` | M12, M11, M10 |
 | `d3d10core.dll` | M12, M11, M10 |
 | `d3d10.dll`, `d3d10_1.dll` | M10 public Wine D3D10 entrypoints |
-| `winemetal.dll` | M12, M11, M10 |
+| `winemetal.dll` | M12, M11, M10 prefix runtime binding |
 | `d3d9.dll` | M9 |
 | `winemetal.so` | Unix Metal bridge |
+
+MetalSharp's DXMT runtime patch set includes:
+
+- `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`
+- `tools/wine/patches/dxmt-d3d12-infoqueue-compat.patch`
+- `tools/wine/patches/dxmt-d3d12-shader-model-default.patch`
+- `tools/wine/patches/dxmt-d3d12-trace-file-env.patch`
+- `tools/wine/patches/dxmt-d3d12-typed-uav-feature.patch`
+
+Apply or validate the patch set from the MetalSharp repository root with:
+
+```sh
+tools/wine/apply-dxmt-patches.sh --check /path/to/dxmt-src
+tools/wine/apply-dxmt-patches.sh /path/to/dxmt-src
+```
+
+The script sorts patch filenames before checking or applying them. `--check`
+does not mutate the DXMT checkout and is the preferred preflight before building
+or updating runtime binaries. The current patch set expects a diagnostics-bearing
+DXMT source tree that already contains `src/d3d12/d3d12_trace.hpp`; the apply
+script fails before mutation when that helper is absent.
+
+The DXGI patch exports Wine's private `DXGID3D10CreateDevice` and
+`DXGID3D10RegisterLayers` handoff from DXMT `dxgi.dll`, forwarding device
+creation back into DXMT `d3d11.dll`. Unity D3D11 titles can request this private
+DXGI path even when they are not D3D10 games, so M10/M11/M12 treat it as part of
+the shared DXGI contract.
+
+The D3D12 InfoQueue patch adds a no-op `ID3D12InfoQueue` compatibility surface.
+Unity HDRP D3D12 startup queries that D3D12 SDK-layers interface; returning
+`E_NOINTERFACE` can collapse startup into Unity's generic DirectX 11
+initialization error even after DXMT has already created a D3D12 device.
+
+The D3D12 shader-model patch makes default/zero shader-model probes return the
+runtime cap of SM 6.0 instead of leaving the caller with a zero value. This
+matches MetalSharp's native D3D12 contract and prevents Unity from observing a
+D3D12 device while classifying shader support below the intended route.
+
+The typed-UAV feature patch makes the D3D12 options contract match the runtime's
+format-support path. DXMT already reports typed UAV load/store support per
+format, and Unity HDRP compute paths inspect `TypedUAVLoadAdditionalFormats`
+before selecting depth/downsample kernels.
+
+The D3D12 trace-file patch lets MetalSharp route DXMT's D3D12 evidence into a
+per-launch log by setting `DXMT_D3D12_TRACE_FILE`. Without the env var, DXMT
+keeps its historical fallback path at `Z:\tmp\dxmt_d3d12_trace.log`. This patch
+intentionally only redirects the existing trace helper; it does not create the
+larger DXMT diagnostics surface by itself.
 
 Basic flow:
 
 ```text
 Game
   -> DXMT PE DLL
-  -> winemetal.so
+  -> prefix system32 winemetal.dll
+  -> DXMT_WINEMETAL_UNIXLIB=winemetal.so
+  -> runtime winemetal.so
   -> Metal command buffers
   -> Apple GPU
 ```
@@ -51,10 +101,21 @@ DXMT uses per-game shader caches under:
 ~/.metalsharp/shader-cache/m10/<appid>/
 ~/.metalsharp/shader-cache/m11/<appid>/
 ~/.metalsharp/shader-cache/m12/<appid>/
+~/.metalsharp/pipeline-cache/m9/<appid>/
+~/.metalsharp/pipeline-cache/m10/<appid>/
+~/.metalsharp/pipeline-cache/m11/<appid>/
+~/.metalsharp/pipeline-cache/m12/<appid>/
 ```
 
 Older `dxmt-metal` and `dxmt-metal12` cache family names may still exist on disk from previous builds, but current MTSP
 routes prefer the explicit M9/M10/M11/M12 cache namespaces.
+
+M9, M10, M11, and M12 all create those cache directories before launch and
+export the same Metal/DXMT cache contract: `METALSHARP_SHADER_CACHE_PATH`,
+`METALSHARP_PIPELINE_CACHE_PATH`, `MTL_SHADER_CACHE_DIR`,
+`DXMT_SHADER_CACHE_PATH`, and `DXMT_PIPELINE_CACHE_PATH`. M11 and M12 also
+force DXMT's MetalFX swapchain path to a 70 percent internal render target by
+writing and exporting `d3d11.metalSpatialUpscaleFactor = 1.43`.
 
 ## M9 D3D9
 
