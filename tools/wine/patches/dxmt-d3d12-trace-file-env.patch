@@ -1,0 +1,21 @@
+diff --git a/src/d3d12/d3d12_trace.hpp b/src/d3d12/d3d12_trace.hpp
+index 1111111..2222222 100644
+--- a/src/d3d12/d3d12_trace.hpp
++++ b/src/d3d12/d3d12_trace.hpp
+@@ -3,10 +3,15 @@
+ #include <cstdarg>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib>
+ #include <windows.h>
+ 
+ static inline void DXMTD3D12Trace(const char *component, const char *fmt, ...) {
+-  FILE *f = fopen("Z:\\tmp\\dxmt_d3d12_trace.log", "a");
++  const char *trace_file = getenv("DXMT_D3D12_TRACE_FILE");
++  if (!trace_file || !trace_file[0])
++    trace_file = "Z:\\tmp\\dxmt_d3d12_trace.log";
++
++  FILE *f = fopen(trace_file, "a");
+   if (!f)
+     return;
+ 

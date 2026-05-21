@@ -33,14 +33,17 @@ uses for Wine-launched games.
    `DXMT_WINEMETAL_UNIXLIB=winemetal.so` so the PE stub can load the Unix Metal
    bridge even when Wine treats `winemetal.dll` as a native prefix DLL.
 6. M12 adds DXMT/Wine unix library paths to `DYLD_FALLBACK_LIBRARY_PATH`.
-7. M12 sets shader and pipeline cache paths under the MetalSharp cache root.
-8. Wine launches the executable. Unity games only receive automatic DirectX
+7. M12 sets `DXMT_D3D12_TRACE_FILE` so rebuilt DXMT runtimes write D3D12 device,
+   queue, shader, and present evidence next to the normal per-launch MetalSharp
+   log instead of merging every run into `/tmp/dxmt_d3d12_trace.log`.
+8. M12 sets shader and pipeline cache paths under the MetalSharp cache root.
+9. Wine launches the executable. Unity games only receive automatic DirectX
    flags when their configured route owns that API; diagnostic user launch args
    remain explicit.
-9. DXMT handles D3D12/DXGI calls, creates a Wine client surface when needed,
+10. DXMT handles D3D12/DXGI calls, creates a Wine client surface when needed,
    attaches a CAMetalLayer through `winemetal.so`, compiles DXIL/MSL work, sends
    commands through `winemetal`, and presents through the Wine/macOS surface.
-10. Wine-backed Steam app launches also carry `SteamAppId` and `SteamGameId` in
+11. Wine-backed Steam app launches also carry `SteamAppId` and `SteamGameId` in
     the direct game process environment so SteamAPI does not bounce the run back
     through a naked Steam confirmation handoff.
 

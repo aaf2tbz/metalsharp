@@ -39,6 +39,7 @@ MetalSharp's DXMT runtime patch set includes:
 - `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`
 - `tools/wine/patches/dxmt-d3d12-infoqueue-compat.patch`
 - `tools/wine/patches/dxmt-d3d12-shader-model-default.patch`
+- `tools/wine/patches/dxmt-d3d12-trace-file-env.patch`
 - `tools/wine/patches/dxmt-d3d12-typed-uav-feature.patch`
 
 Apply or validate the patch set from the MetalSharp repository root with:
@@ -72,6 +73,10 @@ The typed-UAV feature patch makes the D3D12 options contract match the runtime's
 format-support path. DXMT already reports typed UAV load/store support per
 format, and Unity HDRP compute paths inspect `TypedUAVLoadAdditionalFormats`
 before selecting depth/downsample kernels.
+
+The D3D12 trace-file patch lets MetalSharp route DXMT's D3D12 evidence into a
+per-launch log by setting `DXMT_D3D12_TRACE_FILE`. Without the env var, DXMT
+keeps its historical fallback path at `Z:\tmp\dxmt_d3d12_trace.log`.
 
 Basic flow:
 
