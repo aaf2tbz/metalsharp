@@ -34,10 +34,21 @@ DXMT-family DLLs:
 | `d3d9.dll` | M9 |
 | `winemetal.so` | Unix Metal bridge |
 
-MetalSharp's DXMT runtime patch set includes `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`.
-That patch exports Wine's private `DXGID3D10CreateDevice` and `DXGID3D10RegisterLayers` handoff from DXMT
-`dxgi.dll`, forwarding device creation back into DXMT `d3d11.dll`. Unity D3D11 titles can request this private
-DXGI path even when they are not D3D10 games, so M10/M11/M12 treat it as part of the shared DXGI contract.
+MetalSharp's DXMT runtime patch set includes:
+
+- `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`
+- `tools/wine/patches/dxmt-d3d12-infoqueue-compat.patch`
+
+The DXGI patch exports Wine's private `DXGID3D10CreateDevice` and
+`DXGID3D10RegisterLayers` handoff from DXMT `dxgi.dll`, forwarding device
+creation back into DXMT `d3d11.dll`. Unity D3D11 titles can request this private
+DXGI path even when they are not D3D10 games, so M10/M11/M12 treat it as part of
+the shared DXGI contract.
+
+The D3D12 InfoQueue patch adds a no-op `ID3D12InfoQueue` compatibility surface.
+Unity HDRP D3D12 startup queries that D3D12 SDK-layers interface; returning
+`E_NOINTERFACE` can collapse startup into Unity's generic DirectX 11
+initialization error even after DXMT has already created a D3D12 device.
 
 Basic flow:
 

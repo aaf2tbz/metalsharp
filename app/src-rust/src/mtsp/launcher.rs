@@ -587,6 +587,7 @@ fn launch_dxmt_metal_with_context(
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", &wine_debug)
         .env(runtime_lib_key, &dyld_path);
+    apply_steam_identity_env(&mut cmd, appid);
     if let Some(path) = wine_dll_path.as_ref() {
         cmd.env("WINEDLLPATH", path);
     }
@@ -958,6 +959,11 @@ fn apply_dxmt_winemetal_env(cmd: &mut Command, node: &PipelineNode) {
     if node.backend == "dxmt" {
         cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
+}
+
+fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
+    let appid = appid.to_string();
+    cmd.env("SteamAppId", &appid).env("SteamGameId", appid);
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -1511,6 +1517,18 @@ mod tests {
         assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn direct_wine_launches_include_steam_identity() {
+        let mut cmd = Command::new("wine");
+
+        apply_steam_identity_env(&mut cmd, 1326470);
+
+        let env: std::collections::HashMap<_, _> =
+            cmd.get_envs().filter_map(|(key, value)| value.map(|value| (key, value))).collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("SteamAppId")), Some(&std::ffi::OsStr::new("1326470")));
+        assert_eq!(env.get(std::ffi::OsStr::new("SteamGameId")), Some(&std::ffi::OsStr::new("1326470")));
     }
 
     #[test]

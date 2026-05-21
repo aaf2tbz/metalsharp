@@ -39,6 +39,9 @@ uses for Wine-launched games.
 9. DXMT handles D3D12/DXGI calls, creates a Wine client surface when needed,
    attaches a CAMetalLayer through `winemetal.so`, compiles DXIL/MSL work, sends
    commands through `winemetal`, and presents through the Wine/macOS surface.
+10. Wine-backed Steam app launches also carry `SteamAppId` and `SteamGameId` in
+    the direct game process environment so SteamAPI does not bounce the run back
+    through a naked Steam confirmation handoff.
 
 ## Current Verification
 
@@ -70,6 +73,29 @@ ninja -C <dxmt-source>/build src/winemetal/unix/winemetal.so src/d3d12/d3d12.dll
 ```
 
 No runtime DLL deployment was performed during this mapping pass.
+
+## Sons Of The Forest Runtime Check
+
+The local M12 runtime now gets past the old Unity `d3d12: no D3D12 installed`
+startup wall. The DXMT patch set includes a no-op `ID3D12InfoQueue` compatibility
+surface because Unity queries that D3D12 SDK-layers interface during startup.
+Without it, DXMT created the device but Unity collapsed into the generic
+DirectX 11 initialization dialog.
+
+After the InfoQueue shim, the live trace showed:
+
+- `D3D12CreateDevice` succeeds at feature level 12.1.
+- `D3D11On12CreateDevice` succeeds for Unity compatibility.
+- The M12 swapchain presents frames through a CAMetalLayer at 1920 x 1080.
+- The next observed blocker is HDRP shader content:
+  `Kernel 'KDepthDownsample8DualUav' not found`.
+
+Sons is still intentionally mapped to M11 in `configs/mtsp-rules.toml`. The
+M12 diagnostic run proved the loader/device path, but forcing Unity into D3D12
+on an M11-mapped title can select a D3D12/HDRP shader path that the shipped game
+content does not satisfy. MetalSharp now only auto-adds `-force-d3d12` for Unity
+games whose configured route is M12; M12 probes of M11 titles keep user launch
+arguments authoritative instead of injecting the D3D12 flag.
 
 ## Completion State
 
