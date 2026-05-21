@@ -45,6 +45,8 @@ struct LaunchLogContext<'a> {
     runtime_lib_key: &'a str,
     runtime_lib_path: &'a str,
     wine_dll_path: Option<&'a str>,
+    dxmt_config_file: Option<&'a str>,
+    cache_paths: Option<&'a CachePaths>,
     dlls: &'a [super::recipe::RecipeDll],
     runtime_bindings: &'a [DxmtRuntimeBinding],
 }
@@ -557,7 +559,8 @@ fn launch_dxmt_metal_with_args(
     node: &PipelineNode,
     launch_args: &[String],
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_dxmt_metal_with_context(appid, node, launch_args, None, &[], None)
+    let log_path = default_mtsp_launch_log_path(appid);
+    launch_dxmt_metal_with_context(appid, node, launch_args, None, &[], Some(&log_path))
 }
 
 fn launch_dxmt_metal_with_context(
@@ -639,6 +642,8 @@ fn launch_dxmt_metal_with_context(
             runtime_lib_key,
             runtime_lib_path: &dyld_path,
             wine_dll_path: wine_dll_path.as_deref(),
+            dxmt_config_file: Some(&dxmt_config_file),
+            cache_paths: cache_paths.as_ref(),
             dlls: &recipe.dlls,
             runtime_bindings: &runtime_bindings,
         },
@@ -652,7 +657,8 @@ fn launch_wine_bare_with_args(
     node: &PipelineNode,
     launch_args: &[String],
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_wine_bare_with_context(appid, node, launch_args, None, &[], None)
+    let log_path = default_mtsp_launch_log_path(appid);
+    launch_wine_bare_with_context(appid, node, launch_args, None, &[], Some(&log_path))
 }
 
 fn launch_wine_bare_with_context(
@@ -725,6 +731,8 @@ fn launch_wine_bare_with_context(
             runtime_lib_key,
             runtime_lib_path: &dyld_path,
             wine_dll_path: wine_dll_path.as_deref(),
+            dxmt_config_file: None,
+            cache_paths: cache_paths.as_ref(),
             dlls: &recipe.dlls,
             runtime_bindings: &[],
         },
@@ -752,6 +760,7 @@ fn attach_launch_log(
     writeln!(log, "cwd={}", context.cwd.display())?;
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
+    write_dxmt_launch_contract(&mut log, &context)?;
     if let Some(overrides) = context.wine_overrides {
         writeln!(log, "winedlloverrides={}", overrides)?;
     }
@@ -794,6 +803,31 @@ fn attach_launch_log(
     Ok(())
 }
 
+fn write_dxmt_launch_contract(log: &mut dyn Write, context: &LaunchLogContext<'_>) -> std::io::Result<()> {
+    if context.node.backend != "dxmt" {
+        return Ok(());
+    }
+
+    writeln!(log, "dxmt_runtime_contract=")?;
+    writeln!(log, "  pipeline={}", context.node.name)?;
+    if let Some(overrides) = context.wine_overrides {
+        writeln!(log, "  WINEDLLOVERRIDES={}", overrides)?;
+    }
+    if let Some(path) = context.wine_dll_path {
+        writeln!(log, "  WINEDLLPATH={}", path)?;
+    }
+    writeln!(log, "  DXMT_WINEMETAL_UNIXLIB=winemetal.so")?;
+    if let Some(config) = context.dxmt_config_file {
+        writeln!(log, "  DXMT_CONFIG_FILE={}", config)?;
+    }
+    if let Some(cache) = context.cache_paths {
+        writeln!(log, "  DXMT_SHADER_CACHE_PATH={}/", cache.shader)?;
+        writeln!(log, "  DXMT_PIPELINE_CACHE_PATH={}/", cache.pipeline)?;
+    }
+    writeln!(log, "  expected_load_order=game_dir,dxmt_runtime,wine_runtime")?;
+    Ok(())
+}
+
 fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>) -> std::io::Result<()> {
     let home = dirs::home_dir().unwrap_or_default();
     let metalsharp_home = home.join(".metalsharp");
@@ -811,6 +845,15 @@ fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>
         writeln!(log, "steam_identity_mode=wine_steam_background")?;
     }
     Ok(())
+}
+
+fn default_mtsp_launch_log_path(appid: u32) -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_default();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    home.join(".metalsharp").join("logs").join(format!("mtsp-launch-{}-{}.log", appid, timestamp))
 }
 
 fn launch_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -1662,6 +1705,44 @@ mod tests {
         assert!(text.contains("steam_bridge_port="));
         assert!(text.contains("compatdata_manifest="));
         assert!(text.contains("steam_identity_mode=wine_steam_background"));
+    }
+
+    #[test]
+    fn dxmt_launch_contract_records_runtime_evidence() {
+        let mut log = Vec::new();
+        let node = get_pipeline(PipelineId::M12);
+        let prefix = PathBuf::from("/tmp/prefix");
+        let cwd = PathBuf::from("/tmp/game");
+        let args = vec!["-force-d3d12".to_string()];
+        let cache = CachePaths { shader: "/tmp/shaders".into(), pipeline: "/tmp/pipelines".into() };
+
+        let context = LaunchLogContext {
+            appid: 1583230,
+            node,
+            prefix: &prefix,
+            cwd: &cwd,
+            exe_name: "SonsOfTheForest.exe",
+            args: &args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key: "DYLD_LIBRARY_PATH",
+            runtime_lib_path: "/tmp/runtime/lib",
+            wine_dll_path: Some("/tmp/game:/tmp/runtime/lib/dxmt:/tmp/runtime/lib/wine"),
+            dxmt_config_file: Some("/tmp/runtime/etc/dxmt.conf"),
+            cache_paths: Some(&cache),
+            dlls: &[],
+            runtime_bindings: &[],
+        };
+
+        write_dxmt_launch_contract(&mut log, &context).expect("write dxmt launch contract");
+
+        let text = String::from_utf8(log).expect("utf8 log");
+        assert!(text.contains("dxmt_runtime_contract="));
+        assert!(text.contains("WINEDLLOVERRIDES="));
+        assert!(text.contains("WINEDLLPATH=/tmp/game:/tmp/runtime/lib/dxmt:/tmp/runtime/lib/wine"));
+        assert!(text.contains("DXMT_WINEMETAL_UNIXLIB=winemetal.so"));
+        assert!(text.contains("DXMT_CONFIG_FILE=/tmp/runtime/etc/dxmt.conf"));
+        assert!(text.contains("DXMT_SHADER_CACHE_PATH=/tmp/shaders/"));
+        assert!(text.contains("expected_load_order=game_dir,dxmt_runtime,wine_runtime"));
     }
 
     fn test_dir(name: &str) -> PathBuf {
