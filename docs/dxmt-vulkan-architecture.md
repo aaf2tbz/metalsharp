@@ -34,6 +34,11 @@ DXMT-family DLLs:
 | `d3d9.dll` | M9 |
 | `winemetal.so` | Unix Metal bridge |
 
+MetalSharp's DXMT runtime patch set includes `tools/wine/patches/dxmt-dxgi-d3d10-device-export.patch`.
+That patch exports Wine's private `DXGID3D10CreateDevice` and `DXGID3D10RegisterLayers` handoff from DXMT
+`dxgi.dll`, forwarding device creation back into DXMT `d3d11.dll`. Unity D3D11 titles can request this private
+DXGI path even when they are not D3D10 games, so M10/M11/M12 treat it as part of the shared DXGI contract.
+
 Basic flow:
 
 ```text
