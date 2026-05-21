@@ -80,10 +80,20 @@ HRESULT DXGIFactory::EnumAdapters(UINT Adapter, IDXGIAdapter** ppAdapter) {
 HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapChain** ppSwapChain) {
     if (!ppSwapChain || !pDesc)
         return E_POINTER;
-    if (!pDevice)
-        return E_INVALIDARG;
 
     auto* desc = static_cast<DXGI_SWAP_CHAIN_DESC*>(pDesc);
+    return createSwapChainForMetalDevice(pDevice, desc->OutputWindow, desc->BufferDesc.Width, desc->BufferDesc.Height,
+                                         desc->BufferCount, desc->BufferDesc.Format, ppSwapChain);
+}
+
+HRESULT DXGIFactory::createSwapChainForMetalDevice(IUnknown* pDevice, HWND hWnd, uint32_t width, uint32_t height,
+                                                   uint32_t bufferCount, DXGI_FORMAT format,
+                                                   IDXGISwapChain** ppSwapChain) {
+    if (!ppSwapChain)
+        return E_POINTER;
+    *ppSwapChain = nullptr;
+    if (!pDevice)
+        return E_INVALIDARG;
 
     MetalDevice* metalDev = nullptr;
     D3D11Device* d3d11Device = nullptr;
@@ -95,13 +105,10 @@ HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapCh
     }
 
     if (!metalDev) {
+        if (d3d11Device)
+            d3d11Device->Release();
         return E_INVALIDARG;
     }
-
-    uint32_t width = desc->BufferDesc.Width;
-    uint32_t height = desc->BufferDesc.Height;
-    uint32_t bufferCount = desc->BufferCount > 0 ? desc->BufferCount : 2;
-    DXGI_FORMAT format = desc->BufferDesc.Format;
 
     if (width == 0)
         width = 1920;
@@ -109,12 +116,91 @@ HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapCh
         height = 1080;
     if (format == 0)
         format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    bufferCount = bufferCount > 0 ? bufferCount : 2;
 
-    hr = DXGISwapChainImpl::create(metalDev, desc->OutputWindow, width, height, bufferCount, format, ppSwapChain);
+    hr = DXGISwapChainImpl::create(metalDev, hWnd, width, height, bufferCount, format, ppSwapChain);
 
     if (d3d11Device)
         d3d11Device->Release();
     return hr;
+}
+
+HRESULT DXGIFactory::CreateSwapChainForHwnd(IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc,
+                                            const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*,
+                                            IDXGISwapChain1** ppSwapChain) {
+    if (!ppSwapChain || !pDesc)
+        return E_POINTER;
+    IDXGISwapChain* swapChain = nullptr;
+    HRESULT hr = createSwapChainForMetalDevice(pDevice, hWnd, pDesc->Width, pDesc->Height, pDesc->BufferCount,
+                                               pDesc->Format, &swapChain);
+    if (FAILED(hr))
+        return hr;
+    *ppSwapChain = static_cast<IDXGISwapChain1*>(swapChain);
+    return S_OK;
+}
+
+HRESULT DXGIFactory::CreateSwapChainForCoreWindow(IUnknown* pDevice, IUnknown* pWindow,
+                                                  const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput,
+                                                  IDXGISwapChain1** ppSwapChain) {
+    return CreateSwapChainForHwnd(pDevice, reinterpret_cast<HWND>(pWindow), pDesc, nullptr, pRestrictToOutput,
+                                  ppSwapChain);
+}
+
+HRESULT DXGIFactory::CreateSwapChainForComposition(IUnknown* pDevice, const DXGI_SWAP_CHAIN_DESC1* pDesc,
+                                                   IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) {
+    return CreateSwapChainForHwnd(pDevice, nullptr, pDesc, nullptr, pRestrictToOutput, ppSwapChain);
+}
+
+HRESULT DXGIFactory::GetSharedResourceAdapterLuid(HANDLE, LUID* pLuid) {
+    if (!pLuid)
+        return E_POINTER;
+    pLuid->LowPart = 0x106b;
+    pLuid->HighPart = 0;
+    return S_OK;
+}
+
+HRESULT DXGIFactory::RegisterStereoStatusWindow(HWND, UINT, DWORD* pdwCookie) {
+    if (!pdwCookie)
+        return E_POINTER;
+    *pdwCookie = 1;
+    return S_OK;
+}
+
+HRESULT DXGIFactory::RegisterStereoStatusEvent(HANDLE, DWORD* pdwCookie) {
+    if (!pdwCookie)
+        return E_POINTER;
+    *pdwCookie = 1;
+    return S_OK;
+}
+
+HRESULT DXGIFactory::RegisterOcclusionStatusWindow(HWND, UINT, DWORD* pdwCookie) {
+    if (!pdwCookie)
+        return E_POINTER;
+    *pdwCookie = 2;
+    return S_OK;
+}
+
+HRESULT DXGIFactory::RegisterOcclusionStatusEvent(HANDLE, DWORD* pdwCookie) {
+    if (!pdwCookie)
+        return E_POINTER;
+    *pdwCookie = 2;
+    return S_OK;
+}
+
+HRESULT DXGIFactory::EnumAdapterByLuid(LUID, const GUID&, void** ppvAdapter) {
+    if (!ppvAdapter)
+        return E_POINTER;
+    IDXGIAdapter* adapter = nullptr;
+    HRESULT hr = EnumAdapters(0, &adapter);
+    *ppvAdapter = adapter;
+    return hr;
+}
+
+HRESULT DXGIFactory::EnumWarpAdapter(const GUID&, void** ppvAdapter) {
+    if (!ppvAdapter)
+        return E_POINTER;
+    *ppvAdapter = nullptr;
+    return DXGI_ERROR_NOT_FOUND;
 }
 
 } // namespace metalsharp

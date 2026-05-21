@@ -93,10 +93,30 @@ class DXGIFactory : public IDXGIFactory4 {
     STDMETHOD(CreateSoftwareAdapter)(HMODULE, IDXGIAdapter**) override { return E_NOTIMPL; }
     STDMETHOD(EnumAdapters1)(UINT, IDXGIAdapter**) override { return DXGI_ERROR_NOT_FOUND; }
     STDMETHOD_(INT, IsCurrent)() override { return TRUE; }
+    STDMETHOD_(BOOL, IsWindowedStereoEnabled)() override { return FALSE; }
+    STDMETHOD(CreateSwapChainForHwnd)(IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc,
+                                      const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
+                                      IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) override;
+    STDMETHOD(CreateSwapChainForCoreWindow)(IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc,
+                                            IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) override;
+    STDMETHOD(GetSharedResourceAdapterLuid)(HANDLE, LUID* pLuid) override;
+    STDMETHOD(RegisterStereoStatusWindow)(HWND, UINT, DWORD* pdwCookie) override;
+    STDMETHOD(RegisterStereoStatusEvent)(HANDLE, DWORD* pdwCookie) override;
+    STDMETHOD_(void, UnregisterStereoStatus)(DWORD) override {}
+    STDMETHOD(RegisterOcclusionStatusWindow)(HWND, UINT, DWORD* pdwCookie) override;
+    STDMETHOD(RegisterOcclusionStatusEvent)(HANDLE, DWORD* pdwCookie) override;
+    STDMETHOD_(void, UnregisterOcclusionStatus)(DWORD) override {}
+    STDMETHOD(CreateSwapChainForComposition)(IUnknown* pDevice, const DXGI_SWAP_CHAIN_DESC1* pDesc,
+                                             IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) override;
+    STDMETHOD_(UINT, GetCreationFlags)() override { return 0; }
+    STDMETHOD(EnumAdapterByLuid)(LUID AdapterLuid, const GUID& riid, void** ppvAdapter) override;
+    STDMETHOD(EnumWarpAdapter)(const GUID& riid, void** ppvAdapter) override;
 
   private:
     DXGIFactory() = default;
     ~DXGIFactory() = default;
+    HRESULT createSwapChainForMetalDevice(IUnknown* pDevice, HWND hWnd, uint32_t width, uint32_t height,
+                                          uint32_t bufferCount, DXGI_FORMAT format, IDXGISwapChain** ppSwapChain);
     ULONG m_refCount = 1;
 };
 

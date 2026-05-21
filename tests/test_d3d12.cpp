@@ -68,6 +68,8 @@ int main() {
     printf("\n--- DXGI D3D12 Swap Chain ---\n");
     IDXGIFactory1* factory = nullptr;
     IDXGISwapChain* swapChain = nullptr;
+    IDXGIFactory2* factory2 = nullptr;
+    IDXGISwapChain1* hwndSwapChain = nullptr;
     if (cmdQueue) {
         GUID anyFactory = {};
         hr = CreateDXGIFactory1(anyFactory, (void**)&factory);
@@ -89,6 +91,25 @@ int main() {
             hr = swapChain->GetDesc(&readback);
             CHECK(SUCCEEDED(hr) && readback.BufferDesc.Width == 1280 && readback.BufferDesc.Height == 720,
                   "D3D12 swap chain desc round-trips dimensions");
+        }
+        if (factory) {
+            hr = factory->QueryInterface(anyFactory, (void**)&factory2);
+            CHECK(SUCCEEDED(hr) && factory2, "QueryInterface exposes IDXGIFactory2");
+        }
+        if (factory2) {
+            DXGI_SWAP_CHAIN_DESC1 desc1 = {};
+            desc1.Width = 1024;
+            desc1.Height = 576;
+            desc1.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc1.SampleDesc.Count = 1;
+            desc1.BufferUsage = 0x20;
+            desc1.BufferCount = 2;
+            hr = factory2->CreateSwapChainForHwnd(cmdQueue, nullptr, &desc1, nullptr, nullptr, &hwndSwapChain);
+            CHECK(SUCCEEDED(hr) && hwndSwapChain, "CreateSwapChainForHwnd accepts ID3D12CommandQueue");
+            if (hwndSwapChain) {
+                hr = hwndSwapChain->Present1(0, 0, nullptr);
+                CHECK(SUCCEEDED(hr), "IDXGISwapChain1::Present1");
+            }
         }
     }
 
@@ -869,6 +890,10 @@ int main() {
         pso->Release();
     if (computePso)
         computePso->Release();
+    if (hwndSwapChain)
+        hwndSwapChain->Release();
+    if (factory2)
+        factory2->Release();
     if (swapChain)
         swapChain->Release();
     if (factory)
