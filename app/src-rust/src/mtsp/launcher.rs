@@ -744,6 +744,7 @@ fn launch_wine_bare_with_context(
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", &wine_debug)
         .env(runtime_lib_key, &dyld_path);
+    apply_steam_identity_env(&mut cmd, appid);
     if let Some(path) = wine_dll_path.as_ref() {
         cmd.env("WINEDLLPATH", path);
     }
