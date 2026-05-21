@@ -61,6 +61,7 @@
 #include <memory>
 #include <metalsharp/D3D12ResourceStateTracker.h>
 #include <metalsharp/FormatTranslation.h>
+#include <metalsharp/Logger.h>
 #include <metalsharp/MetalBackend.h>
 #include <metalsharp/MetalCapabilities.h>
 #include <metalsharp/PipelineState.h>
@@ -391,6 +392,12 @@ static bool d3d12FormatIsBlockCompressed(UINT format) {
     return (format >= ::DXGI_FORMAT_BC1_UNORM && format <= ::DXGI_FORMAT_BC5_SNORM) ||
            format == ::DXGI_FORMAT_BC6H_UF16 || format == ::DXGI_FORMAT_BC6H_SF16 ||
            format == ::DXGI_FORMAT_BC7_UNORM || format == ::DXGI_FORMAT_BC7_UNORM_SRGB;
+}
+
+static bool d3d12ShouldLogFeatureQuery() {
+    static std::atomic<uint64_t> queryCount{0};
+    uint64_t count = ++queryCount;
+    return count <= 32 || (count % 256) == 0;
 }
 
 static UINT64 d3d12EstimateSubresourceSize(UINT64 width, UINT height, UINT depth, UINT format) {
@@ -1022,6 +1029,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 maxRequested = std::max(maxRequested, data->pFeatureLevelsRequested[i]);
             }
             data->MaxSupportedFeatureLevel = std::min(maxRequested, D3D_FEATURE_LEVEL_12_0);
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_levels requested=%u max_requested=0x%x selected=0x%x", data->NumFeatureLevels,
+                        maxRequested, data->MaxSupportedFeatureLevel);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_D3D12_OPTIONS: {
@@ -1037,6 +1048,13 @@ class D3D12DeviceImpl final : public ID3D12Device {
             data->MaxGPUVirtualAddressBitsPerResource = 40;
             data->StandardSwizzle64KBSupported = TRUE;
             data->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_options binding_tier=%u typed_uav_additional=%s tiled_resources=%u "
+                        "heap_tier=%u argument_buffers=%s",
+                        data->ResourceBindingTier, data->TypedUAVLoadAdditionalFormats ? "true" : "false",
+                        data->TiledResourcesTier, data->ResourceHeapTier,
+                        m_metalCapabilities.supportsArgumentBuffers ? "true" : "false");
+            }
             return S_OK;
         }
         case D3D12_FEATURE_ARCHITECTURE: {
@@ -1065,8 +1083,13 @@ class D3D12DeviceImpl final : public ID3D12Device {
             data->Support1 = 0;
             data->Support2 = 0;
             DXGITranslation dxgiFormat = static_cast<DXGITranslation>(data->Format);
-            if (!d3d12FormatHasMetalBacking(data->Format))
+            if (!d3d12FormatHasMetalBacking(data->Format)) {
+                if (d3d12ShouldLogFeatureQuery()) {
+                    MS_INFO("d3d12_feature_format_support format=0x%x metal_backed=false support1=0 support2=0",
+                            data->Format);
+                }
                 return S_OK;
+            }
 
             data->Support1 = D3D12_FORMAT_SUPPORT1_TEXTURE1D | D3D12_FORMAT_SUPPORT1_TEXTURE2D |
                              D3D12_FORMAT_SUPPORT1_TEXTURECUBE | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
@@ -1083,6 +1106,14 @@ class D3D12DeviceImpl final : public ID3D12Device {
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL;
             if (d3d12FormatSupportsTypedUAV(data->Format))
                 data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_format_support format=0x%x metal_backed=true render_target=%s depth=%s "
+                        "compressed=%s typed_uav=%s support1=0x%x support2=0x%x",
+                        data->Format, (data->Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET) ? "true" : "false",
+                        (data->Support1 & D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL) ? "true" : "false",
+                        dxgiFormatIsCompressed(dxgiFormat) ? "true" : "false", data->Support2 ? "true" : "false",
+                        data->Support1, data->Support2);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
@@ -1093,6 +1124,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
             bool sampleCountSupported = data->SampleCount == 1 || data->SampleCount == 2 || data->SampleCount == 4;
             bool formatSupported = d3d12FormatHasMetalBacking(data->Format) && !dxgiFormatIsCompressed(dxgiFormat);
             data->NumQualityLevels = (sampleCountSupported && formatSupported) ? 1 : 0;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_msaa format=0x%x sample_count=%u supported=%s quality_levels=%u", data->Format,
+                        data->SampleCount, data->NumQualityLevels > 0 ? "true" : "false", data->NumQualityLevels);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_FORMAT_INFO: {
@@ -1114,8 +1149,13 @@ class D3D12DeviceImpl final : public ID3D12Device {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_SHADER_MODEL))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_SHADER_MODEL*>(pFeatureSupportData);
+            UINT requestedShaderModel = data->HighestShaderModel;
             if (data->HighestShaderModel == 0 || data->HighestShaderModel > D3D_SHADER_MODEL_6_0)
                 data->HighestShaderModel = D3D_SHADER_MODEL_6_0;
+            if (d3d12ShouldLogFeatureQuery()) {
+                MS_INFO("d3d12_feature_shader_model requested=0x%x selected=0x%x", requestedShaderModel,
+                        data->HighestShaderModel);
+            }
             return S_OK;
         }
         case D3D12_FEATURE_ROOT_SIGNATURE: {
