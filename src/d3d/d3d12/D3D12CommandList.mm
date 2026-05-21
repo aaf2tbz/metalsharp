@@ -73,6 +73,23 @@ static const char* d3d12ShaderSourceKind(const uint8_t* data, size_t size) {
     return "dxbc_or_unknown";
 }
 
+static const char* d3d12PrimitiveTopologyName(UINT topology) {
+    switch (topology) {
+    case D3D12_PRIMITIVE_TOPOLOGY_POINTLIST:
+        return "pointlist";
+    case D3D12_PRIMITIVE_TOPOLOGY_LINELIST:
+        return "linelist";
+    case D3D12_PRIMITIVE_TOPOLOGY_LINESTRIP:
+        return "linestrip";
+    case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLELIST:
+        return "trianglelist";
+    case D3D12_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+        return "trianglestrip";
+    default:
+        return "unknown";
+    }
+}
+
 static uint32_t d3d12FormatSize(UINT format) {
     switch (format) {
     case DXGI_FORMAT_R32G32B32A32_FLOAT:
@@ -749,8 +766,15 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                 [enc endEncoding];
             }
 
-            if (!m_drawCmds.empty() && m_pso) {
-                void* pipelinePtr = m_pso->__metalRenderPipelineState();
+            if (!m_drawCmds.empty()) {
+                UINT boundRenderTargets = 0;
+                for (UINT i = 0; i < m_numRenderTargets && i < 8; ++i) {
+                    if (m_renderTargets[i])
+                        ++boundRenderTargets;
+                }
+
+                const DrawCmd& firstDraw = m_drawCmds.front();
+                void* pipelinePtr = m_pso ? m_pso->__metalRenderPipelineState() : nullptr;
                 if (pipelinePtr) {
                     id<MTLRenderPipelineState> pipeline = (__bridge id<MTLRenderPipelineState>)pipelinePtr;
 
@@ -920,7 +944,28 @@ HRESULT D3D12DeviceImpl::CreateCommandList(UINT, UINT, ID3D12CommandAllocator* p
                             }
                         }
                     }
+                    MS_INFO("d3d12_draw_execute count=%zu first_indexed=%s first_vertices=%u first_instances=%u "
+                            "topology=%s rt_count=%u has_depth=%s argument_buffer_bytes=%zu vb0_bound=%s "
+                            "ib_bound=%s icb=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false",
+                            m_rootSignature ? (size_t)m_rootSignature->argumentBufferSize : 0,
+                            m_vertexBuffers[0].metalBuffer ? "true" : "false",
+                            m_indexBuffer.metalBuffer ? "true" : "false", usedIndirectCommandBuffer ? "true" : "false");
                     [enc endEncoding];
+                } else if (!m_pso) {
+                    MS_WARN("d3d12_draw_no_pipeline_state count=%zu first_indexed=%s first_vertices=%u "
+                            "first_instances=%u topology=%s rt_count=%u has_depth=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false");
+                } else {
+                    MS_WARN("d3d12_draw_no_render_pipeline count=%zu first_indexed=%s first_vertices=%u "
+                            "first_instances=%u topology=%s rt_count=%u has_depth=%s",
+                            m_drawCmds.size(), firstDraw.indexed ? "true" : "false", firstDraw.vertexCount,
+                            firstDraw.instanceCount, d3d12PrimitiveTopologyName(m_primitiveTopology),
+                            boundRenderTargets, m_depthTarget ? "true" : "false");
                 }
             }
 
