@@ -12,6 +12,11 @@ const DXMT_SPATIAL_UPSCALE_FACTOR: &str = "1.43";
 const DXMT_CONFIG_CONTENT: &str = "d3d11.metalSpatialUpscaleFactor = 1.43\n\
 d3d11.preferredMaxFrameRate = 60\n\
 d3d11.maxFeatureLevel = 12_1\n";
+const DXMT_CONFIG_REQUIRED_LINES: [(&str, &str); 3] = [
+    ("d3d11.metalspatialupscalefactor", "d3d11.metalSpatialUpscaleFactor = 1.43"),
+    ("d3d11.preferredmaxframerate", "d3d11.preferredMaxFrameRate = 60"),
+    ("d3d11.maxfeaturelevel", "d3d11.maxFeatureLevel = 12_1"),
+];
 const DXMT_CONFIG_ENV: &str =
     "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60;d3d11.maxFeatureLevel=12_1;";
 
@@ -1069,15 +1074,56 @@ fn ensure_dxmt_config(node: &PipelineNode, ms_root: &Path) -> Result<Option<Path
     }
     let current = std::fs::read_to_string(&config_path).unwrap_or_default();
     if !dxmt_config_matches_contract(&current) {
-        std::fs::write(&config_path, DXMT_CONFIG_CONTENT)?;
+        std::fs::write(&config_path, merge_dxmt_config_contract(&current))?;
     }
     Ok(Some(config_path))
 }
 
 fn dxmt_config_matches_contract(config: &str) -> bool {
-    config.lines().any(|line| normalized_config_line(line) == "d3d11.metalspatialupscalefactor=1.43")
-        && config.lines().any(|line| normalized_config_line(line) == "d3d11.preferredmaxframerate=60")
-        && config.lines().any(|line| normalized_config_line(line) == "d3d11.maxfeaturelevel=12_1")
+    DXMT_CONFIG_REQUIRED_LINES.iter().all(|(key, value)| {
+        config.lines().any(|line| {
+            normalized_config_line(line) == normalized_config_line(value)
+                && config_line_key(line).as_deref() == Some(*key)
+        })
+    })
+}
+
+fn merge_dxmt_config_contract(config: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut lines = Vec::new();
+
+    for line in config.lines() {
+        if let Some(key) = config_line_key(line) {
+            if let Some((required_key, required_line)) =
+                DXMT_CONFIG_REQUIRED_LINES.iter().find(|(required_key, _)| *required_key == key)
+            {
+                if seen.insert(*required_key) {
+                    lines.push((*required_line).to_string());
+                }
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+
+    for (required_key, required_line) in DXMT_CONFIG_REQUIRED_LINES {
+        if seen.insert(required_key) {
+            lines.push(required_line.to_string());
+        }
+    }
+
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
+}
+
+fn config_line_key(line: &str) -> Option<String> {
+    line.split('#')
+        .next()
+        .and_then(|line| line.split_once('='))
+        .map(|(key, _)| key.chars().filter(|ch| !ch.is_whitespace()).collect::<String>().to_ascii_lowercase())
 }
 
 fn normalized_config_line(line: &str) -> String {
@@ -1662,6 +1708,27 @@ mod tests {
         assert!(DXMT_CONFIG_ENV.contains("d3d11.metalSpatialUpscaleFactor=1.43"));
         assert_eq!(DXMT_TARGET_RENDER_SCALE, "0.70");
         assert_eq!(DXMT_SPATIAL_UPSCALE_FACTOR, "1.43");
+    }
+
+    #[test]
+    fn dxmt_config_contract_merge_preserves_unrelated_settings() {
+        let existing = "# local tuning\n\
+custom.option = enabled\n\
+d3d11.metalSpatialUpscaleFactor = 2.0\n\
+d3d11.maxFeatureLevel = 11_0 # old value\n\
+dxgi.deferSurfaceCreation = True\n";
+
+        let merged = merge_dxmt_config_contract(existing);
+
+        assert!(dxmt_config_matches_contract(&merged));
+        assert!(merged.contains("# local tuning"));
+        assert!(merged.contains("custom.option = enabled"));
+        assert!(merged.contains("dxgi.deferSurfaceCreation = True"));
+        assert!(merged.contains("d3d11.metalSpatialUpscaleFactor = 1.43"));
+        assert!(merged.contains("d3d11.preferredMaxFrameRate = 60"));
+        assert!(merged.contains("d3d11.maxFeatureLevel = 12_1"));
+        assert!(!merged.contains("d3d11.metalSpatialUpscaleFactor = 2.0"));
+        assert!(!merged.contains("d3d11.maxFeatureLevel = 11_0"));
     }
 
     #[test]
