@@ -188,8 +188,9 @@ static bool test_d3d12_descriptor_heap_copy() {
     desc->bufferSize = 256;
     desc->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE dst = {2};
-    D3D12_CPU_DESCRIPTOR_HANDLE src = {1};
+    D3D12_CPU_DESCRIPTOR_HANDLE heapStart = heap.__getCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE dst = {heapStart.ptr + 1};
+    D3D12_CPU_DESCRIPTOR_HANDLE src = heapStart;
     heap.copyDescriptors(1, dst, src);
 
     auto* copied = heap.getDescriptorByIndex(1);

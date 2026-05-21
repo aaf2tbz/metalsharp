@@ -140,15 +140,25 @@ pub fn launch_with_pipeline(
     appid: u32,
     pipeline_id: PipelineId,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_with_pipeline_and_args(appid, pipeline_id, &[])
+}
+
+pub fn launch_with_pipeline_and_args(
+    appid: u32,
+    pipeline_id: PipelineId,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
-        PipelineId::M32 => launch_wine_bare(appid, node),
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal_with_args(appid, node, launch_args)
+        },
+        PipelineId::M32 => launch_wine_bare_with_args(appid, node, launch_args),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam => launch_steam(appid),
         PipelineId::MacSteam => launch_macos_steam(appid),
-        PipelineId::WineBare => launch_wine_bare(appid, node),
+        PipelineId::WineBare => launch_wine_bare_with_args(appid, node, launch_args),
     }
 }
 
@@ -163,10 +173,10 @@ pub fn launch_steam_bottle_with_pipeline(
 
     let result = match pipeline_id {
         PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            launch_dxmt_metal_with_context(appid, node, &[], Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
-            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            launch_wine_bare_with_context(appid, node, &[], Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
             Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
@@ -542,13 +552,18 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
     }
 }
 
-fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_dxmt_metal_with_context(appid, node, None, &[], None)
+fn launch_dxmt_metal_with_args(
+    appid: u32,
+    node: &PipelineNode,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_dxmt_metal_with_context(appid, node, launch_args, None, &[], None)
 }
 
 fn launch_dxmt_metal_with_context(
     appid: u32,
     node: &PipelineNode,
+    extra_launch_args: &[String],
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
@@ -561,7 +576,8 @@ fn launch_dxmt_metal_with_context(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let mut recipe = super::recipe::build_launch_recipe(appid, node)?;
+    recipe.launch_args.extend(extra_launch_args.iter().cloned());
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -631,13 +647,18 @@ fn launch_dxmt_metal_with_context(
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
-fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_wine_bare_with_context(appid, node, None, &[], None)
+fn launch_wine_bare_with_args(
+    appid: u32,
+    node: &PipelineNode,
+    launch_args: &[String],
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_wine_bare_with_context(appid, node, launch_args, None, &[], None)
 }
 
 fn launch_wine_bare_with_context(
     appid: u32,
     node: &PipelineNode,
+    extra_launch_args: &[String],
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
@@ -650,7 +671,8 @@ fn launch_wine_bare_with_context(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let mut recipe = super::recipe::build_launch_recipe(appid, node)?;
+    recipe.launch_args.extend(extra_launch_args.iter().cloned());
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);

@@ -1,6 +1,6 @@
 # M12 Pipeline Map
 
-Last verified: 2026-05-16.
+Last verified: 2026-05-21.
 
 M12 is the D3D12 -> DXMT -> Metal path used by the game launcher. The current
 MetalSharp tree also contains a native `metalsharp_d3d12` implementation and a
@@ -15,7 +15,7 @@ uses for Wine-launched games.
 | Pipeline definition | `app/src-rust/src/mtsp/engine.rs` | M12 is named `D3D12 -> Metal via DXMT`, is the first stable pipeline, deploys DXMT DLLs, and sets D3D12/DXGI/D3D11 overrides. | Present in current project |
 | Launcher handoff | `app/src-rust/src/mtsp/launcher.rs` | M12 routes through `launch_dxmt_metal`, copies D3D/DXGI DLLs into the game directory, binds winemetal into the prefix/runtime, and sets Wine/DYLD/cache env. | Present in current project |
 | Shader/cache routing | `app/src-rust/src/mtsp/shader_cache.rs` | M12 uses `m12` and `dxmt-metal12` cache directories. | Present in current project |
-| DXMT D3D12 implementation | External DXMT source tree | Conformance branch contains the real DXMT D3D12/DXIL/winemetal work used by M12 runtime DLLs. | External source tree |
+| DXMT D3D12 implementation | MetalSharp patch contract + DXMT source checkout | `tools/wine/patches` and `tools/wine/apply-dxmt-patches.sh` define the repo-owned patch contract used to build the M12 runtime DLLs. | Repo-owned patch contract, built from DXMT source |
 | Native D3D12 target | `include/metalsharp/D3D12Device.h`, `src/d3d/d3d12/*` | Builds `build/d3d12.dylib` and exposes `D3D12CreateDevice`. | In-tree, smoke-tested |
 | Cocoa surface | `src/win32/user32/WindowManager.mm`, `src/dxgi/DXGISwapChain.mm` | Creates NSWindow/CAMetalLayer for the native loader path. | In-tree, not the Wine M12 surface |
 | Wine M12 surface | DXMT `winemetal.so` plus Wine/macOS windowing | DXMT presents through Wine/winemetal, not through the native `WindowManager` path. | External runtime path |
@@ -34,8 +34,9 @@ uses for Wine-launched games.
    bridge even when Wine treats `winemetal.dll` as a native prefix DLL.
 6. M12 adds DXMT/Wine unix library paths to `DYLD_FALLBACK_LIBRARY_PATH`.
 7. M12 sets shader and pipeline cache paths under the MetalSharp cache root.
-8. Wine launches the executable. Unity games receive `-force-d3d12` so they do
-   not silently fall back to OpenGL before DXMT is tried.
+8. Wine launches the executable. Unity games only receive automatic DirectX
+   flags when their configured route owns that API; diagnostic user launch args
+   remain explicit.
 9. DXMT handles D3D12/DXGI calls, creates a Wine client surface when needed,
    attaches a CAMetalLayer through `winemetal.so`, compiles DXIL/MSL work, sends
    commands through `winemetal`, and presents through the Wine/macOS surface.
@@ -48,31 +49,43 @@ uses for Wine-launched games.
 These checks were run from the repository root:
 
 ```sh
-cmake --build build --target test_d3d12
-cmake --build build --target test_d3d12_entrypoint test_d3d12
-./build/tests/test_d3d12
-./build/tests/test_d3d12_entrypoint
-ctest --test-dir build -R "d3d12|d3d12_entrypoint|phase18|phase19" --output-on-failure
-nm -gU build/d3d12.dylib | rg "D3D12CreateDevice|D3D12GetDebugInterface|D3D12SerializeRootSignature"
-otool -L build/d3d12.dylib
+cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+cmake --build build-native --target test_phase18 test_d3d12 --parallel $(sysctl -n hw.ncpu)
+ctest --test-dir build-native -R "^(phase18|d3d12)$" --output-on-failure
+cargo test --manifest-path app/src-rust/Cargo.toml mtsp
+bash -n tools/wine/apply-dxmt-patches.sh
+tools/wine/apply-dxmt-patches.sh --help
 ```
 
 Results:
 
-- `test_d3d12` passed: 50 passed, 0 failed.
-- `test_d3d12_entrypoint` passed: 5 passed, 0 failed.
-- `ctest` passed `d3d12`, `d3d12_entrypoint`, `phase18`, and `phase19`.
-- `build/d3d12.dylib` exports `D3D12CreateDevice`.
-- `build/d3d12.dylib` links Metal, Foundation, QuartzCore, AppKit, and
-  `libmetalirconverter`.
+- `d3d12` and `phase18` passed under `build-native`.
+- MTSP Rust tests passed, including the M12 runtime asset contract and launch
+  environment checks.
+- `tools/wine/apply-dxmt-patches.sh` parses cleanly and exposes a non-mutating
+  `--check` mode.
 
-The external DXMT source tree also rebuilt successfully with:
+Runtime asset preflight now treats the M12 contract as required:
+
+- Wine runtime binary
+- `lib/wine/x86_64-unix`
+- `lib/dxmt/x86_64-unix`
+- `lib/dxmt/x86_64-windows/d3d12.dll`
+- `lib/dxmt/x86_64-windows/d3d11.dll`
+- `lib/dxmt/x86_64-windows/dxgi.dll`
+- `lib/dxmt/x86_64-windows/d3d10core.dll`
+- `lib/dxmt/x86_64-windows/winemetal.dll`
+- `lib/dxmt/x86_64-unix/winemetal.so`
+- `etc/dxmt.conf`
+
+After the patch set is applied, the DXMT source tree is built with:
 
 ```sh
 ninja -C <dxmt-source>/build src/winemetal/unix/winemetal.so src/d3d12/d3d12.dll
 ```
 
-No runtime DLL deployment was performed during this mapping pass.
+The source checkout may live outside this repository, but the patch contract,
+launch contract, runtime doctor expectations, and tests live in this PR.
 
 ## Sons Of The Forest Runtime Check
 
@@ -165,7 +178,7 @@ The first compatibility expansion from this matrix covers two broad surfaces:
 | M12 backend handoff | Present | The handoff copies DXMT DLLs, configures Wine/DYLD env, cache env, and launch args. |
 | Subnautica-class M12 runtime | Demonstrated by local use | This validates the launcher/runtime path, not the native CMake D3D12 dylib. |
 | Avery DXMT probes | Strongest external proof | `tests/ROADMAP.md` in `dxmt-src` marks probes 2-6 complete, including compute, triangle, indexed draw, depth, and texture sampling. |
-| Deployed runtime parity | Needs cleanup | The rebuilt Avery `d3d12.dll` checksum does not match the deployed runtime DLL, while `winemetal.so` does match. |
+| Deployed runtime parity | In progress | Runtime asset doctor now requires the M12 PE DLLs, winemetal bridge, and `dxmt.conf`; packaged binary checksum parity still needs release-bundle verification. |
 | Avery source cleanliness | Needs cleanup | `dxmt-src` has dirty debug/probe changes and notes that prior dirty changes broke Steam launching. |
 | Native in-tree D3D12 | Expanded coverage | Smoke, C entrypoint, MSL compute PSO dispatch, and MSL indexed draw tests pass. |
 | Native compute PSO | Implemented for MSL/DXBC/DXIL paths | The in-tree native `CreateComputePipelineState` now creates a real Metal compute pipeline when shader bytecode is available. |

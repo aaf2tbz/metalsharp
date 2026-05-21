@@ -808,6 +808,16 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
     }
 
+    for dll in &node.deploy_dlls {
+        let path = ms_root.join(dll.source_subpath).join(dll.filename);
+        assets.push(RuntimeAsset {
+            name: format!("{}/{}", dll.source_subpath, dll.filename),
+            present: path.exists(),
+            path,
+            required: true,
+        });
+    }
+
     if node.backend == "dxmt" {
         let pe = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll");
         assets.push(RuntimeAsset { name: "dxmt/winemetal.dll".into(), present: pe.exists(), path: pe, required: true });
@@ -819,7 +829,7 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
             required: true,
         });
         let conf = ms_root.join("etc").join("dxmt.conf");
-        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
+        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: true });
     }
 
     assets
@@ -1308,6 +1318,32 @@ mod tests {
         assert_eq!(report[0].status, "vendor_supported_on_proton_assets_present");
         assert!(report[0].evidence.iter().any(|path| path.ends_with(".so")));
         let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn m12_runtime_assets_include_full_dxmt_contract() {
+        let ms_root = test_dir("m12-runtime-assets");
+        let node = super::super::engine::get_pipeline(PipelineId::M12);
+
+        let assets = runtime_assets_for_node(node, &ms_root);
+        let names: std::collections::HashSet<_> = assets.iter().map(|asset| asset.name.as_str()).collect();
+
+        for required in [
+            "wine",
+            "lib/wine/x86_64-unix",
+            "lib/dxmt/x86_64-unix",
+            "lib/dxmt/x86_64-windows/d3d12.dll",
+            "lib/dxmt/x86_64-windows/d3d11.dll",
+            "lib/dxmt/x86_64-windows/dxgi.dll",
+            "lib/dxmt/x86_64-windows/d3d10core.dll",
+            "dxmt/winemetal.dll",
+            "dxmt/winemetal.so",
+            "dxmt.conf",
+        ] {
+            assert!(names.contains(required), "missing runtime asset {}", required);
+        }
+        assert!(assets.iter().all(|asset| asset.required), "all M12 runtime assets should be required");
+        let _ = std::fs::remove_dir_all(ms_root);
     }
 
     fn test_dir(name: &str) -> PathBuf {

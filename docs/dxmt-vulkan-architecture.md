@@ -41,6 +41,17 @@ MetalSharp's DXMT runtime patch set includes:
 - `tools/wine/patches/dxmt-d3d12-shader-model-default.patch`
 - `tools/wine/patches/dxmt-d3d12-typed-uav-feature.patch`
 
+Apply or validate the patch set from the MetalSharp repository root with:
+
+```sh
+tools/wine/apply-dxmt-patches.sh --check /path/to/dxmt-src
+tools/wine/apply-dxmt-patches.sh /path/to/dxmt-src
+```
+
+The script sorts patch filenames before checking or applying them. `--check`
+does not mutate the DXMT checkout and is the preferred preflight before building
+or updating runtime binaries.
+
 The DXGI patch exports Wine's private `DXGID3D10CreateDevice` and
 `DXGID3D10RegisterLayers` handoff from DXMT `dxgi.dll`, forwarding device
 creation back into DXMT `d3d11.dll`. Unity D3D11 titles can request this private
