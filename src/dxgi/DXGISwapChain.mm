@@ -8,6 +8,7 @@
 #include <metalsharp/D3D11Device.h>
 #include <metalsharp/DXGI.h>
 #include <metalsharp/FormatTranslation.h>
+#include <metalsharp/Logger.h>
 #include <metalsharp/Platform.h>
 #ifdef METALSHARP_NATIVE_LOADER
 #include <metalsharp/WindowManager.h>
@@ -58,12 +59,20 @@ struct MetalSwapChain::Impl {
     CAMetalLayer* layer = nil;
     id<CAMetalDrawable> currentDrawable = nil;
     id<MTLTexture> offscreenTexture = nil;
+    uint64_t drawableAcquireCount = 0;
+    uint64_t textureRequestCount = 0;
+    uint64_t presentCount = 0;
+    uint64_t resizeCount = 0;
     uint32_t bufferCount = 2;
     uint32_t width = 0;
     uint32_t height = 0;
     DXGI_FORMAT dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
     bool hdrEnabled = false;
 };
+
+static bool shouldLogSwapChainEvent(uint64_t count) {
+    return count <= 5 || (count % 120) == 0;
+}
 
 MetalSwapChain::MetalSwapChain() : m_impl(new Impl()) {}
 MetalSwapChain::~MetalSwapChain() {
@@ -118,8 +127,10 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
                 m_impl->height = (uint32_t)view.bounds.size.height;
             }
 
-            fprintf(stderr, "[MetalSharp] Swapchain: DXGI 0x%x -> MTLPixelFormat %u, HDR=%s\n", format,
-                    (unsigned)metalFormat, m_impl->hdrEnabled ? "true" : "false");
+            MS_INFO("dxgi_swapchain_init width=%u height=%u buffer_count=%u dxgi_format=0x%x metal_format=%u "
+                    "layer=true hdr=%s",
+                    m_impl->width, m_impl->height, m_impl->bufferCount, format, (unsigned)metalFormat,
+                    m_impl->hdrEnabled ? "true" : "false");
         }
     }
 
@@ -132,6 +143,10 @@ bool MetalSwapChain::init(MetalDevice& device, void* window, uint32_t width, uin
                      MTLTextureUsagePixelFormatView;
         desc.storageMode = MTLStorageModePrivate;
         m_impl->offscreenTexture = [m_impl->device newTextureWithDescriptor:desc];
+        MS_INFO("dxgi_swapchain_init width=%u height=%u buffer_count=%u dxgi_format=0x%x metal_format=%u "
+                "layer=false offscreen=%s hdr=%s",
+                m_impl->width, m_impl->height, m_impl->bufferCount, format, (unsigned)metalFormat,
+                m_impl->offscreenTexture ? "true" : "false", m_impl->hdrEnabled ? "true" : "false");
     }
 
     return true;
@@ -148,17 +163,40 @@ MetalSwapChain* MetalSwapChain::create(MetalDevice& device, void* window, uint32
 }
 
 void MetalSwapChain::present(uint32_t syncInterval) {
-    if (!m_impl->layer)
+    ++m_impl->presentCount;
+    if (!m_impl->layer) {
+        if (shouldLogSwapChainEvent(m_impl->presentCount)) {
+            MS_INFO("dxgi_swapchain_present count=%llu sync=%u layer=false offscreen=%s",
+                    (unsigned long long)m_impl->presentCount, syncInterval,
+                    m_impl->offscreenTexture ? "true" : "false");
+        }
         return;
+    }
 
     @autoreleasepool {
-        m_impl->currentDrawable = [m_impl->layer nextDrawable];
-        if (!m_impl->currentDrawable)
+        bool reusedDrawable = m_impl->currentDrawable != nil;
+        id<CAMetalDrawable> drawable = m_impl->currentDrawable;
+        if (!drawable) {
+            drawable = [m_impl->layer nextDrawable];
+            ++m_impl->drawableAcquireCount;
+        }
+
+        if (!drawable) {
+            MS_WARN("dxgi_swapchain_present_no_drawable count=%llu sync=%u reused=false",
+                    (unsigned long long)m_impl->presentCount, syncInterval);
             return;
+        }
 
         id<MTLCommandBuffer> cmdBuffer = [m_impl->commandQueue commandBuffer];
-        [cmdBuffer presentDrawable:m_impl->currentDrawable];
+        [cmdBuffer presentDrawable:drawable];
         [cmdBuffer commit];
+        m_impl->currentDrawable = nil;
+
+        if (shouldLogSwapChainEvent(m_impl->presentCount)) {
+            MS_INFO("dxgi_swapchain_present count=%llu sync=%u reused_drawable=%s acquired=%llu size=%ux%u",
+                    (unsigned long long)m_impl->presentCount, syncInterval, reusedDrawable ? "true" : "false",
+                    (unsigned long long)m_impl->drawableAcquireCount, m_impl->width, m_impl->height);
+        }
     }
 
 #ifdef METALSHARP_NATIVE_LOADER
@@ -170,21 +208,38 @@ void* MetalSwapChain::getCurrentDrawable() {
     if (!m_impl->currentDrawable) {
         @autoreleasepool {
             m_impl->currentDrawable = [m_impl->layer nextDrawable];
+            if (m_impl->currentDrawable)
+                ++m_impl->drawableAcquireCount;
         }
     }
     return (__bridge void*)m_impl->currentDrawable;
 }
 
 void* MetalSwapChain::getCurrentTexture() {
-    if (!m_impl->layer && m_impl->offscreenTexture)
+    ++m_impl->textureRequestCount;
+    if (!m_impl->layer && m_impl->offscreenTexture) {
+        if (shouldLogSwapChainEvent(m_impl->textureRequestCount)) {
+            MS_INFO("dxgi_swapchain_get_texture count=%llu layer=false offscreen=true size=%ux%u",
+                    (unsigned long long)m_impl->textureRequestCount, m_impl->width, m_impl->height);
+        }
         return (__bridge void*)m_impl->offscreenTexture;
+    }
     id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)getCurrentDrawable();
-    if (!drawable)
+    if (!drawable) {
+        MS_WARN("dxgi_swapchain_get_texture_no_drawable count=%llu layer=%s",
+                (unsigned long long)m_impl->textureRequestCount, m_impl->layer ? "true" : "false");
         return nullptr;
+    }
+    if (shouldLogSwapChainEvent(m_impl->textureRequestCount)) {
+        MS_INFO("dxgi_swapchain_get_texture count=%llu layer=true drawable_acquired=%llu size=%ux%u",
+                (unsigned long long)m_impl->textureRequestCount, (unsigned long long)m_impl->drawableAcquireCount,
+                m_impl->width, m_impl->height);
+    }
     return (__bridge void*)drawable.texture;
 }
 
 void MetalSwapChain::resize(uint32_t width, uint32_t height) {
+    ++m_impl->resizeCount;
     m_impl->width = width;
     m_impl->height = height;
     if (m_impl->layer) {
@@ -202,6 +257,9 @@ void MetalSwapChain::resize(uint32_t width, uint32_t height) {
         m_impl->offscreenTexture = [m_impl->device newTextureWithDescriptor:desc];
     }
     m_impl->currentDrawable = nil;
+    MS_INFO("dxgi_swapchain_resize count=%llu width=%u height=%u layer=%s offscreen=%s",
+            (unsigned long long)m_impl->resizeCount, m_impl->width, m_impl->height, m_impl->layer ? "true" : "false",
+            m_impl->offscreenTexture ? "true" : "false");
 }
 
 void* MetalSwapChain::metalLayer() const {
