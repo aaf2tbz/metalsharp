@@ -69,7 +69,10 @@ int main() {
     IDXGIFactory1* factory = nullptr;
     IDXGISwapChain* swapChain = nullptr;
     IDXGIFactory2* factory2 = nullptr;
+    IDXGIFactory3* factory3 = nullptr;
+    IDXGIFactory4* factory4 = nullptr;
     IDXGISwapChain1* hwndSwapChain = nullptr;
+    IDXGISwapChain1* compositionSwapChain = nullptr;
     ID3D12Resource* swapChainBackBuffer = nullptr;
     if (cmdQueue) {
         GUID anyFactory = {};
@@ -96,6 +99,10 @@ int main() {
         if (factory) {
             hr = factory->QueryInterface(anyFactory, (void**)&factory2);
             CHECK(SUCCEEDED(hr) && factory2, "QueryInterface exposes IDXGIFactory2");
+            hr = factory->QueryInterface(anyFactory, (void**)&factory3);
+            CHECK(SUCCEEDED(hr) && factory3, "QueryInterface exposes IDXGIFactory3");
+            hr = factory->QueryInterface(anyFactory, (void**)&factory4);
+            CHECK(SUCCEEDED(hr) && factory4, "QueryInterface exposes IDXGIFactory4");
         }
         if (factory2) {
             DXGI_SWAP_CHAIN_DESC1 desc1 = {};
@@ -105,8 +112,18 @@ int main() {
             desc1.SampleDesc.Count = 1;
             desc1.BufferUsage = 0x20;
             desc1.BufferCount = 2;
+            CHECK(factory2->IsWindowedStereoEnabled() == FALSE, "IDXGIFactory2::IsWindowedStereoEnabled stub");
+            DWORD cookie = 0;
+            hr = factory2->RegisterStereoStatusWindow(nullptr, 0, &cookie);
+            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterStereoStatusWindow stub");
+            factory2->UnregisterStereoStatus(cookie);
+            hr = factory2->RegisterOcclusionStatusWindow(nullptr, 0, &cookie);
+            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterOcclusionStatusWindow stub");
+            factory2->UnregisterOcclusionStatus(cookie);
             hr = factory2->CreateSwapChainForHwnd(cmdQueue, nullptr, &desc1, nullptr, nullptr, &hwndSwapChain);
             CHECK(SUCCEEDED(hr) && hwndSwapChain, "CreateSwapChainForHwnd accepts ID3D12CommandQueue");
+            hr = factory2->CreateSwapChainForComposition(cmdQueue, &desc1, nullptr, &compositionSwapChain);
+            CHECK(SUCCEEDED(hr) && compositionSwapChain, "CreateSwapChainForComposition accepts ID3D12CommandQueue");
             if (hwndSwapChain) {
                 hr = hwndSwapChain->GetBuffer(0, IID_ID3D12Resource, (void**)&swapChainBackBuffer);
                 CHECK(SUCCEEDED(hr) && swapChainBackBuffer && swapChainBackBuffer->__metalTexturePtr() != nullptr,
@@ -117,6 +134,20 @@ int main() {
                 hr = hwndSwapChain->GetLastPresentCount(&presentCount);
                 CHECK(SUCCEEDED(hr) && presentCount == 1, "IDXGISwapChain1::GetLastPresentCount advances");
             }
+        }
+        if (factory3) {
+            CHECK(factory3->GetCreationFlags() == 0, "IDXGIFactory3::GetCreationFlags stub");
+        }
+        if (factory4) {
+            void* warp = nullptr;
+            hr = factory4->EnumWarpAdapter(anyFactory, &warp);
+            CHECK(hr == DXGI_ERROR_NOT_FOUND && warp == nullptr, "IDXGIFactory4::EnumWarpAdapter stub");
+            IDXGIAdapter* adapterByLuid = nullptr;
+            LUID luid = {};
+            hr = factory4->EnumAdapterByLuid(luid, anyFactory, (void**)&adapterByLuid);
+            CHECK(SUCCEEDED(hr) && adapterByLuid, "IDXGIFactory4::EnumAdapterByLuid returns primary adapter");
+            if (adapterByLuid)
+                adapterByLuid->Release();
         }
     }
 
