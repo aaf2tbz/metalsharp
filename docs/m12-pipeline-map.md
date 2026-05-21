@@ -124,6 +124,29 @@ the user already supplied `-screen-width`, `-screen-height`, or
 feeding zero-sized HDRP compute dispatches while keeping user launch arguments
 authoritative.
 
+## Static Surface Extraction
+
+Use `tools/diagnostics/extract_d3d12_surface.py` to regenerate a derived D3D
+surface matrix from local game installs. The report is written under
+`~/.metalsharp/logs/` and records file layout, PE string markers, Unity shader
+container counts, and optional ILSpy-managed callsite snippets. It does not copy
+game binaries or assets into the report.
+
+The current local comparison gives MetalSharp five useful proof surfaces:
+
+| Game | Runtime shape | M12 signal |
+| --- | --- | --- |
+| Sons Of The Forest | Unity IL2CPP, HDRP/Crest | 2623 DXBC containers, no DXIL containers in Unity assets, heavy HDRP/Crest shader surface, current blocker is Unity D3D12 compute-kernel/capability selection. |
+| Subnautica: Below Zero | Unity managed/Mono | 59 DXBC containers, no DXIL containers, older built-in/Post FX shader stack, no matching managed graphics callsites in `Assembly-CSharp` or firstpass assemblies. |
+| ARMORED CORE VI FIRES OF RUBICON | Non-Unity FromSoftware + EAC | `start_protected_game.exe` is D3D11/DXGI/EAC-facing, while `armoredcore6.exe` is D3D12/DXGI/DXBC/DXIL-facing and loads EOS/Steam surfaces. |
+| ELDEN RING | Non-Unity FromSoftware + EAC | Matches Rubicon's split: `start_protected_game.exe` is D3D11/DXGI/EAC-facing, while `eldenring.exe` is D3D12/DXGI/DXBC-facing with EOS/Steam surfaces. |
+| Ghostrunner | Unreal Engine | `Ghostrunner-Win64-Shipping.exe` exposes D3D11 and D3D12 RHI markers, `D3D12CreateDevice`, `D3DCompile`, DLSS D3D11/D3D12 toggles, EOS, and Steam surfaces without Unity shader-variant ambiguity. |
+
+This split matters for the next M12 fixes: Sons is the Unity HDRP
+shader-variant stress case, Subnautica is the Unity D3D11/DXMT baseline,
+Rubicon and Elden Ring are protected-launch FromSoftware D3D12 surfaces, and
+Ghostrunner is the Unreal Engine D3D11/D3D12 RHI surface.
+
 ## Completion State
 
 | Area | State | Notes |
