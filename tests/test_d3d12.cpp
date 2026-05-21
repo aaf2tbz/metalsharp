@@ -193,8 +193,7 @@ int main() {
 
         D3D12_FEATURE_DATA_FORMAT_INFO unknownFormatInfo = {0xffffu, 7};
         hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_INFO, &unknownFormatInfo, sizeof(unknownFormatInfo));
-        CHECK(SUCCEEDED(hr) && unknownFormatInfo.PlaneCount == 0,
-              "CheckFeatureSupport: unknown format has no planes");
+        CHECK(SUCCEEDED(hr) && unknownFormatInfo.PlaneCount == 0, "CheckFeatureSupport: unknown format has no planes");
 
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS msaa = {DXGI_FORMAT_B8G8R8A8_UNORM, 4, 0, 0};
         hr = device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &msaa, sizeof(msaa));
