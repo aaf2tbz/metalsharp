@@ -1,25 +1,5 @@
 # Changelog
 
-## v0.33.28 - 2026-05-20
-
-WTMKT Phase 1 runtime hook and Wine 11.9 readiness follow-up.
-
-### Added
-
-- **mscompatdb hook contract** - added the C header, Wine-side loader shims, exported contract checks, and build staging for the anti-cheat compatibility substrate handoff.
-- **Protected-launch evidence** - added focused Steam/EAC handoff probes for process lineage, module imports/exports, crash evidence, and failure-tail diagnostics.
-
-### Changed
-
-- **Wine 11.9 runtime path** - promotes the Wine 11.9 runtime hook surface as the primary retest direction while preserving migration handling for existing prefixes, bottles, and Steam state.
-- **Migration UX** - tightens the migration wizard step labels and adds active progress affordances during slower install phases.
-
-### Fixed
-
-- **PE directory parsing** - reads PE export and import directories from their correct data directory slots so ordinal/export checks and import evidence do not alias each other.
-- **Steam handoff tracking** - avoids treating the background Steam handoff process as the launched game process when capturing protected-launch evidence.
-- **mscompatdb protections** - restores syscall table protection behavior and gates mutation behind explicit readiness/contract checks.
-
 ## v0.33.27 - 2026-05-20
 
 WTMKT Phase 1 anti-cheat translation evidence.

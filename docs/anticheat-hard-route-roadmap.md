@@ -21,7 +21,7 @@ POST /steam/anticheat-evidence
 {"appid":1888160}
 ```
 
-The report returns a normalized `status`, a human summary, EAC fields, Steam protected-launch fields, collected artifact paths, log tails, and next-action hints. The last Wine 11.5 Rubicon baseline was `module_mapping_failed`, with EAC setup exit `0`, module target `linux64`, launcher exit `206`, and Steam tracking `start_protected_game.exe`. Wine 11.9 is now the primary local runtime, so the next report should be compared against that historical 11.5 result rather than treated as the same baseline.
+The report returns a normalized `status`, a human summary, EAC fields, Steam protected-launch fields, collected artifact paths, log tails, and next-action hints. For Rubicon, the expected current status is `module_mapping_failed`, with EAC setup exit `0`, module target `linux64`, Wine version `11.5`, launcher exit `206`, and Steam tracking `start_protected_game.exe`.
 
 ## Phase 2: Wine Module-Mapping Probe
 
@@ -48,7 +48,6 @@ This probe does not load or tamper with anti-cheat modules. It classifies the ho
 Map MetalSharp Wine against Proton and upstream Wine behavior:
 
 - `ntdll` loader and syscall dispatch,
-- `mscompatdb` hook/load behavior on Darwin,
 - wineserver process and handle behavior,
 - `steamclient` and `lsteamclient` behavior,
 - mmap and memory protection behavior,
@@ -69,56 +68,8 @@ This report groups the local runtime into audit surfaces:
 - Linux runtime assumptions: pressure-vessel, seccomp, and Linux namespaces, which are comparison rows on macOS rather than direct requirements.
 - Graphics runtime adjacency: DXMT, DXVK, and MoltenVK assets that must stay intact while protected launch is debugged.
 - Anti-cheat module contract: whether EAC selected a Linux module, whether Darwin can directly load it, and whether a vendor macOS module is present.
-- MetalSharp `mscompatdb` bridge: whether the shim exists, whether a Darwin `.dylib` alias exists and is signed, and whether Wine `ntdll.so` exposes a usable hook point.
 
 For Rubicon, the expected status is `blocking_delta_found`: the ordinary Wine/DXMT runtime pieces exist, but the protected launcher selected `linux64`, no vendor Mach-O module was found, and macOS cannot directly load Linux ELF modules.
-
-### Phase 3a: Darwin `mscompatdb` parity
-
-MetalSharp currently carries a Mach-O `mscompatdb.so`, which is useful for Wine's Unix module naming, but macOS runtime loading still needs a dyld-shaped view of the same shim:
-
-- `mscompatdb.so` remains the Wine-facing Unix module name.
-- `mscompatdb.dylib` is the adjacent Darwin alias used for dyld-oriented inspection/loading.
-- The alias must be Mach-O, have an install name such as `@rpath/mscompatdb.dylib`, have quarantine removed when present, and be ad-hoc signed so macOS will load it consistently during local runtime tests.
-
-Initial backend surfaces:
-
-```http
-POST /steam/mscompatdb-probe
-{"appid":1245620}
-
-POST /steam/mscompatdb-prepare-dylib
-{"force":false}
-```
-
-The Wine 11.5 local proof result was `present_but_ke_table_unresolved`: `mscompatdb.so` existed and contained the expected trace/rule strings, but Wine `ntdll.so` exposed `KeServiceDescriptorTable` as a local/private Mach-O symbol rather than an exported hook point. The Wine 11.9 primary runtime adds an explicit `MetalSharpGetMscompatdbHookContract` export from Unix `ntdll.so`.
-
-Current Wine 11.9 proof:
-
-- `mscompatdb.so` and `mscompatdb.dylib` are Mach-O x86_64 and ad-hoc signed.
-- `mscompatdb.so` autoloads from Unix `ntdll.so`.
-- The new `src/wine/mscompatdb/mscompatdb_contract_shim.c` no longer searches for `KeServiceDescriptorTable`.
-- `/steam/mscompatdb-probe` reports `hook_surface_ready`, `hookContractReady=true`, `expectsKeServiceDescriptorTable=false`, and sees `hook_NtCreateUserProcess` trace calls after a smoke `wineboot`.
-- Rubicon/Elden evidence currently points at historical Wine 11.5 protected-launch logs; those games need fresh protected launches under Wine 11.9 before the anti-cheat failure mode can be reclassified.
-
-### Phase 3b: explicit Wine hook contract
-
-The next runtime rebuild should stop asking `mscompatdb` to find private Wine internals through `dlsym`. MetalSharp now has a source-controlled ABI header at `include/metalsharp/MscompatdbHookContract.h` with the intended contract:
-
-- `MetalSharpGetMscompatdbHookContractVersion()`
-- `MetalSharpGetMscompatdbHookContract()`
-- a versioned `MetalSharpMscompatdbHookContract` struct containing the service table, syscall dispatcher, service-table registration function, and key NT entrypoint pointers.
-
-The backend probe checks for those symbols in `ntdll.so` as `hookContractReady`. The Wine 11.9 primary runtime should keep that field true; if it regresses, fix the runtime/package before interpreting protected-launch behavior as an anti-cheat module problem.
-
-Implementation seed:
-
-- `src/wine/ntdll_mscompatdb_contract.c` is the C source template to compile into the patched Wine `ntdll.so`.
-- `src/wine/ntdll_mscompatdb_loader.c` is the loader template for restoring `mscompatdb.so` autoload from Unix `ntdll.so`.
-- `src/wine/mscompatdb/mscompatdb_contract_shim.c` is the Darwin shim that consumes the explicit contract.
-- `tools/wine/build-mscompatdb-shim.sh` builds the signed `.so`/`.dylib` pair for bundle staging.
-- The Wine build must add `include/` to the compiler include path so `metalsharp/MscompatdbHookContract.h` resolves.
-- The exported functions must be visible from Mach-O `nm -gU` or the backend probe will keep reporting `hookContractReady=false`.
 
 ## Phase 4: macOS Runtime Substrate Decision
 
@@ -152,4 +103,4 @@ Rejected paths:
 
 ## Current Proof Target
 
-Rubicon showed useful progress but not success under the Wine 11.5 baseline: EAC EOS setup completed, protected launch downloaded the `linux64` module, Wine module mapping started, and then EAC failed with `Failed to map the anti-cheat module` / exit code 206. Wine 11.9 with the explicit `mscompatdb` hook contract is now the primary runtime to retest against.
+Rubicon showed useful progress but not success: EAC EOS setup completed, protected launch downloaded the `linux64` module, Wine module mapping started under Wine 11.5, and then EAC failed with `Failed to map the anti-cheat module` / exit code 206. That is the first failure to reduce.

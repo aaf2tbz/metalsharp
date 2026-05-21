@@ -15,13 +15,12 @@ const percent = computed(() => {
   return Math.round((step.value / total.value) * 100);
 });
 
-const busy = computed(() => !complete.value && !error.value);
-
 const stages = [
-  { name: "[Wine]" },
-  { name: "[DXMT]" },
-  { name: "[x86_x64]" },
-  { name: "[Metal]" },
+  { name: "D3D11", color: "#66c0f4" },
+  { name: "Metal", color: "#4fc3f7" },
+  { name: "DXGI", color: "#29b6f6" },
+  { name: "DXMT", color: "#03a9f4" },
+  { name: "FNA", color: "#039be5" },
 ];
 
 const MAX_START_RETRIES = 20;
@@ -140,10 +139,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="status-row" :class="{ error: !!error, complete }">
-        <span v-if="busy" class="step-spinner" aria-hidden="true"></span>
-        <p class="status-message">{{ message }}</p>
-      </div>
+      <p class="status-message" :class="{ error: !!error, complete }">{{ message }}</p>
 
       <button v-if="complete" class="restart-btn" @click="restartApp()">Restart MetalSharp</button>
       <p v-if="error" class="error-hint">Try restarting the app. If the issue persists, check the logs.</p>
@@ -164,20 +160,20 @@ onUnmounted(() => {
 
 .migration-card {
   text-align: center;
-  max-width: 420px;
-  padding: 34px 32px;
+  max-width: 480px;
+  padding: 48px 40px;
 }
 
 .migration-header {
-  margin-bottom: 28px;
+  margin-bottom: 40px;
 }
 
 .migration-title {
-  font-size: 21px;
+  font-size: 24px;
   font-weight: 700;
   color: #fff;
   margin: 0 0 8px 0;
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
 }
 
 .migration-subtitle {
@@ -192,7 +188,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 0;
-  margin-bottom: 26px;
+  margin-bottom: 36px;
 }
 
 .pipeline-stage {
@@ -203,15 +199,14 @@ onUnmounted(() => {
 
 .stage-label {
   font-family: "SF Mono", "Menlo", monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: #66c0f4;
   background: rgba(102, 192, 244, 0.08);
   border: 1px solid rgba(102, 192, 244, 0.2);
-  border-radius: 5px;
-  padding: 4px 7px;
+  border-radius: 6px;
+  padding: 4px 10px;
   transition: all 0.3s ease;
-  white-space: nowrap;
 }
 
 .pipeline-stage.active .stage-label {
@@ -231,7 +226,7 @@ onUnmounted(() => {
 }
 
 .progress-section {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .progress-bar-track {
@@ -265,43 +260,19 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.5);
 }
 
-.status-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  min-height: 22px;
-  margin: 0 0 22px 0;
-  color: rgba(255, 255, 255, 0.6);
-}
-
 .status-message {
   font-size: 13px;
-  color: inherit;
-  margin: 0;
-  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0 0 24px 0;
+  min-height: 20px;
 }
 
-.status-row.complete {
+.status-message.complete {
   color: #4caf50;
 }
 
-.status-row.error {
+.status-message.error {
   color: #ef5350;
-}
-
-.step-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(102, 192, 244, 0.22);
-  border-top-color: #66c0f4;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .restart-btn {

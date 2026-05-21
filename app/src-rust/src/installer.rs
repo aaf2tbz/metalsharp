@@ -231,11 +231,8 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         let wine_dir = runtime_dir.join("wine");
         let _ = fs::create_dir_all(&wine_dir);
 
-        let source = ["wine-11.9", "wine-11.5", "wine"]
-            .iter()
-            .map(|name| tmp_extract.join(name))
-            .find(|path| path.exists())
-            .unwrap_or_else(|| tmp_extract.join("wine"));
+        let extracted_wine115 = tmp_extract.join("wine-11.5");
+        let source = if extracted_wine115.exists() { extracted_wine115 } else { tmp_extract.join("wine") };
 
         if source.exists() {
             if let Ok(entries) = fs::read_dir(&source) {

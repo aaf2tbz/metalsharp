@@ -376,65 +376,35 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let compatdata = bottles::load_steam_compatdata(id).ok();
-                            let force_protected_handoff =
-                                body.get("protectedHandoff").and_then(|v| v.as_bool()).unwrap_or(false);
-                            let protected_handoff = force_protected_handoff || !recipe.anti_cheat.is_empty();
-                            if protected_handoff {
-                                let log_path = bottles::steam_compatdata_launch_log_path(id);
-                                steam::launch_game_via_steam_with_protected_env(id, &env, Some(&log_path)).map(
-                                    |mut v| {
-                                        let compatdata = bottles::set_launch_delegated(&bottle.id, &log_path)
-                                            .ok()
-                                            .and_then(|manifest| {
-                                                bottles::save_steam_compatdata(&manifest, pipeline).ok()
-                                            })
-                                            .or(compatdata);
-                                        if let Some(obj) = v.as_object_mut() {
-                                            obj.insert("bottle_id".into(), json!(bottle.id));
-                                            obj.insert("bottle_prefix".into(), json!(bottle.prefix_path));
-                                            obj.insert("compatdata".into(), json!(compatdata));
-                                            obj.insert("pipeline".into(), json!(pipeline));
-                                            obj.insert("recipe".into(), json!(recipe));
-                                            obj.insert("launch_handoff".into(), json!("protected_steam_url"));
-                                            obj.insert("protected_launch".into(), json!(true));
-                                            obj.insert("steam_runtime".into(), json!("background"));
-                                        }
-                                        v
-                                    },
-                                )
-                            } else {
-                                let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
-                                    Ok(started) => started,
-                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
-                                };
-                                let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
-                                mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env)
-                                    .map(|(pid, game_type, log_path)| {
-                                        let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
-                                            .ok()
-                                            .and_then(|manifest| {
-                                                bottles::save_steam_compatdata(&manifest, pipeline).ok()
-                                            })
-                                            .or(compatdata);
-                                        bottles::watch_bottle_launch(bottle.id.clone(), pid);
-                                        json!({
-                                            "ok": true,
-                                            "pid": pid,
-                                            "appid": id,
-                                            "gameType": game_type,
-                                            "bottle_id": bottle.id,
-                                            "bottle_prefix": bottle.prefix_path,
-                                            "launch_log": log_path.to_string_lossy().to_string(),
-                                            "compatdata": compatdata,
-                                            "pipeline": pipeline,
-                                            "recipe": recipe,
-                                            "steam_started": steam_started,
-                                            "steam_runtime": "background",
-                                            "env_applied_to": "game_process",
-                                            "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-                                        })
+                            let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
+                                Ok(started) => started,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            };
+                            let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
+                            mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
+                                |(pid, game_type, log_path)| {
+                                    let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
+                                        .ok()
+                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
+                                        .or(compatdata);
+                                    json!({
+                                        "ok": true,
+                                        "pid": pid,
+                                        "appid": id,
+                                        "gameType": game_type,
+                                        "bottle_id": bottle.id,
+                                        "bottle_prefix": bottle.prefix_path,
+                                        "launch_log": log_path.to_string_lossy().to_string(),
+                                        "compatdata": compatdata,
+                                        "pipeline": pipeline,
+                                        "recipe": recipe,
+                                        "steam_started": steam_started,
+                                        "steam_runtime": "background",
+                                        "env_applied_to": "game_process",
+                                        "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
                                     })
-                            }
+                                },
+                            )
                         },
                         None => {
                             let pipeline = mtsp::rules::resolve_pipeline(id);
@@ -751,33 +721,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
-        },
-        (Method::Post, "/steam/wine-syscall-probe") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_wine_syscall_probe(&body))
-        },
-        (Method::Post, "/steam/mscompatdb-probe") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_mscompatdb_probe(&body))
-        },
-        (Method::Post, "/steam/mscompatdb-prepare-dylib") => {
-            let body = read_body(req);
-            match runtime_mutation_trust_reason(installer::is_installing(), migrate::is_migrating()) {
-                Some(reason) => {
-                    let mut result = anticheat::handle_steam_mscompatdb_prepare_dylib(&body);
-                    if let Some(obj) = result.as_object_mut() {
-                        obj.insert("trusted_context".into(), json!(reason));
-                    }
-                    resp(200, result)
-                },
-                None => resp(
-                    403,
-                    json!({
-                        "ok": false,
-                        "error": "mscompatdb dylib preparation is only allowed while setup install or runtime migration is active",
-                    }),
-                ),
-            }
         },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
@@ -1350,16 +1293,6 @@ fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Res
     Ok(appid)
 }
 
-fn runtime_mutation_trust_reason(installing: bool, migrating: bool) -> Option<&'static str> {
-    if installing {
-        Some("setup_install")
-    } else if migrating {
-        Some("runtime_migration")
-    } else {
-        None
-    }
-}
-
 fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1442,12 +1375,5 @@ mod tests {
         body.insert("appid".into(), json!(620));
 
         assert_eq!(parse_request_appid(&body), Ok(620));
-    }
-
-    #[test]
-    fn runtime_mutation_guard_only_trusts_setup_or_migration() {
-        assert_eq!(runtime_mutation_trust_reason(false, false), None);
-        assert_eq!(runtime_mutation_trust_reason(true, false), Some("setup_install"));
-        assert_eq!(runtime_mutation_trust_reason(false, true), Some("runtime_migration"));
     }
 }

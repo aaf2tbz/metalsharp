@@ -210,7 +210,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "metalsharp_wine",
                 "name": "MetalSharp Wine",
-                "desc": "From-source Wine 11.9 with DXMT/DXVK, gnutls TLS, MoltenVK, WoW64, and the MetalSharp mscompatdb hook contract. Runs Windows Steam, installer bottles, protected-launch probes, and games with native Metal routing.",
+                "desc": "From-source Wine 11.5 with DXMT Metal D3D11, gnutls TLS, MoltenVK. Runs Windows Steam and launches games with native Metal rendering.",
                 "installed": metalsharp_wine,
                 "required": true,
                 "installCmd": "metalsharp-setup-wine",
