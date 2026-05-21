@@ -26,13 +26,26 @@ struct CachePaths {
     pipeline: String,
 }
 
+#[derive(Debug, Clone)]
+struct DxmtRuntimeBinding {
+    name: String,
+    source_path: PathBuf,
+    dest_path: PathBuf,
+    present: bool,
+}
+
 struct LaunchLogContext<'a> {
     appid: u32,
     node: &'a PipelineNode,
     prefix: &'a Path,
     cwd: &'a Path,
     exe_name: &'a str,
-    args: &'a [&'a str],
+    args: &'a [String],
+    wine_overrides: Option<&'static str>,
+    runtime_lib_key: &'a str,
+    runtime_lib_path: &'a str,
+    dlls: &'a [super::recipe::RecipeDll],
+    runtime_bindings: &'a [DxmtRuntimeBinding],
 }
 
 #[derive(Default)]
@@ -173,6 +186,10 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
     deploy_recipe_dlls(&recipe)?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
     Ok(serde_json::json!({
         "ok": true,
@@ -182,6 +199,14 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "runtime_bindings": runtime_bindings.iter().map(|binding| {
+            serde_json::json!({
+                "name": binding.name,
+                "source_path": binding.source_path,
+                "dest_path": binding.dest_path,
+                "present": binding.present,
+            })
+        }).collect::<Vec<_>>(),
     }))
 }
 
@@ -209,6 +234,9 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
@@ -269,6 +297,96 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
     Ok(())
 }
 
+fn ensure_dxmt_winemetal_runtime(
+    recipe: &super::recipe::LaunchRecipe,
+    node: &PipelineNode,
+    prefix: &Path,
+    ms_root: &Path,
+) -> Result<Vec<DxmtRuntimeBinding>, Box<dyn std::error::Error>> {
+    if node.backend != "dxmt" {
+        return Ok(Vec::new());
+    }
+
+    let pe_source = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll");
+    let unix_source = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+    if !pe_source.exists() {
+        return Err(format!("required DXMT runtime PE missing at {}", pe_source.display()).into());
+    }
+    if !unix_source.exists() {
+        return Err(format!("required DXMT unix bridge missing at {}", unix_source.display()).into());
+    }
+
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let unix_dir = ms_root.join("lib").join("wine").join("x86_64-unix");
+    std::fs::create_dir_all(&system32)?;
+    std::fs::create_dir_all(&unix_dir)?;
+
+    let pe_dest = system32.join("winemetal.dll");
+    let unix_dest = unix_dir.join("winemetal.so");
+    std::fs::copy(&pe_source, &pe_dest)?;
+    replace_runtime_file(&unix_source, &unix_dest)?;
+    remove_game_local_winemetal(recipe, &pe_source, &unix_source)?;
+
+    Ok(vec![
+        DxmtRuntimeBinding {
+            name: "winemetal.dll".into(),
+            source_path: pe_source,
+            present: pe_dest.exists(),
+            dest_path: pe_dest,
+        },
+        DxmtRuntimeBinding {
+            name: "winemetal.so".into(),
+            source_path: unix_source,
+            present: unix_dest.exists(),
+            dest_path: unix_dest,
+        },
+    ])
+}
+
+fn replace_runtime_file(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if dest.exists() || std::fs::symlink_metadata(dest).is_ok() {
+        std::fs::remove_file(dest)?;
+    }
+    std::fs::copy(source, dest)?;
+    Ok(())
+}
+
+fn remove_game_local_winemetal(
+    recipe: &super::recipe::LaunchRecipe,
+    pe_source: &Path,
+    unix_source: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(game_dir) = recipe.game_dir.as_ref() else {
+        return Ok(());
+    };
+    let Some(exe_path) = recipe.exe_path.as_ref() else {
+        return Ok(());
+    };
+
+    let target_dir = exe_path.parent().unwrap_or(game_dir);
+    let injection_dir = game_dir.join(".metalsharp");
+    let originals_dir = injection_dir.join("originals");
+    std::fs::create_dir_all(&originals_dir)?;
+
+    for (filename, source) in [("winemetal.dll", pe_source), ("winemetal.so", unix_source)] {
+        let dest = target_dir.join(filename);
+        if !dest.exists() && std::fs::symlink_metadata(&dest).is_err() {
+            continue;
+        }
+
+        let backup_path = originals_dir.join(format!("{}.removed", backup_name_for(game_dir, &dest)));
+        if !files_match(source, &dest) && !backup_path.exists() {
+            std::fs::copy(&dest, &backup_path)?;
+        }
+        std::fs::remove_file(dest)?;
+    }
+
+    Ok(())
+}
+
 pub fn launch_custom_with_pipeline(
     launch_id: u32,
     game_dir: &std::path::Path,
@@ -309,14 +427,15 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
+    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    std::fs::create_dir_all(&prefix)?;
     if node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
     }
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
-    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
-    std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
@@ -353,6 +472,19 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
+        if !runtime_bindings.is_empty() {
+            writeln!(log, "runtime_bindings=")?;
+            for binding in &runtime_bindings {
+                writeln!(
+                    log,
+                    "  {} -> {} present={} source={}",
+                    binding.name,
+                    binding.dest_path.display(),
+                    binding.present,
+                    binding.source_path.display()
+                )?;
+            }
+        }
         writeln!(log, "--- wine output ---")?;
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -426,6 +558,7 @@ fn launch_dxmt_metal_with_context(
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
     deploy_recipe_dlls(&recipe)?;
+    let runtime_bindings = ensure_dxmt_winemetal_runtime(&recipe, node, &prefix, &ms_root)?;
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
@@ -452,11 +585,23 @@ fn launch_dxmt_metal_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key,
+            runtime_lib_path: &dyld_path,
+            dlls: &recipe.dlls,
+            runtime_bindings: &runtime_bindings,
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -510,11 +655,23 @@ fn launch_wine_bare_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            wine_overrides: node.wine_overrides,
+            runtime_lib_key,
+            runtime_lib_path: &dyld_path,
+            dlls: &recipe.dlls,
+            runtime_bindings: &[],
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -539,6 +696,36 @@ fn attach_launch_log(
     writeln!(log, "cwd={}", context.cwd.display())?;
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
+    if let Some(overrides) = context.wine_overrides {
+        writeln!(log, "winedlloverrides={}", overrides)?;
+    }
+    writeln!(log, "{}={}", context.runtime_lib_key, context.runtime_lib_path)?;
+    if !context.dlls.is_empty() {
+        writeln!(log, "dll_bindings=")?;
+        for dll in context.dlls {
+            writeln!(
+                log,
+                "  {} -> {} present={} source={}",
+                dll.filename,
+                dll.dest_path.display(),
+                dll.dest_path.exists(),
+                dll.source_path.display()
+            )?;
+        }
+    }
+    if !context.runtime_bindings.is_empty() {
+        writeln!(log, "runtime_bindings=")?;
+        for binding in context.runtime_bindings {
+            writeln!(
+                log,
+                "  {} -> {} present={} source={}",
+                binding.name,
+                binding.dest_path.display(),
+                binding.present,
+                binding.source_path.display()
+            )?;
+        }
+    }
     writeln!(log, "--- wine output ---")?;
     let stdout = log.try_clone()?;
     cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -1247,6 +1434,56 @@ mod tests {
         };
 
         deploy_recipe_dlls(&recipe).expect("no-op deploy should succeed");
+    }
+
+    #[test]
+    fn dxmt_winemetal_is_bound_from_prefix_not_game_dir() {
+        let root = test_dir("dxmt-winemetal");
+        let ms_root = root.join("runtime").join("wine");
+        let prefix = root.join("prefix");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(ms_root.join("lib/dxmt/x86_64-windows")).expect("create dxmt pe dir");
+        std::fs::create_dir_all(ms_root.join("lib/dxmt/x86_64-unix")).expect("create dxmt unix dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        let pe_source = ms_root.join("lib/dxmt/x86_64-windows/winemetal.dll");
+        let unix_source = ms_root.join("lib/dxmt/x86_64-unix/winemetal.so");
+        std::fs::write(&pe_source, b"pe").expect("write pe source");
+        std::fs::write(&unix_source, b"unix").expect("write unix source");
+        std::fs::write(game_dir.join("Game.exe"), b"exe").expect("write exe");
+        std::fs::write(game_dir.join("winemetal.dll"), b"old game-local winemetal").expect("write stale dll");
+
+        let recipe = super::super::recipe::LaunchRecipe {
+            appid: 1,
+            pipeline: PipelineId::M11,
+            pipeline_name: "M11".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(game_dir.join("Game.exe")),
+            exe_name: Some("Game.exe".into()),
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            anti_cheat_status: vec![],
+            warnings: vec![],
+        };
+
+        let bindings = ensure_dxmt_winemetal_runtime(
+            &recipe,
+            super::super::engine::get_pipeline(PipelineId::M11),
+            &prefix,
+            &ms_root,
+        )
+        .expect("bind winemetal runtime");
+
+        assert_eq!(bindings.len(), 2);
+        assert!(prefix.join("drive_c/windows/system32/winemetal.dll").exists());
+        assert!(ms_root.join("lib/wine/x86_64-unix/winemetal.so").exists());
+        assert!(!game_dir.join("winemetal.dll").exists());
+        assert!(game_dir.join(".metalsharp/originals/winemetal.dll.removed").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

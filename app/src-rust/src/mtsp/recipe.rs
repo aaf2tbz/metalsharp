@@ -118,6 +118,8 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         );
     }
 
+    let launch_args = launch_args_for_recipe(node, game_dir.as_deref(), node.launch_args.iter().copied());
+
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -126,7 +128,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args,
         env: node
             .env_vars
             .iter()
@@ -179,6 +181,8 @@ pub fn build_custom_launch_recipe(
         );
     }
 
+    let launch_args = launch_args_for_recipe(node, Some(&game_dir), node.launch_args.iter().copied());
+
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -187,7 +191,7 @@ pub fn build_custom_launch_recipe(
         game_dir: Some(game_dir),
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args,
         env: node
             .env_vars
             .iter()
@@ -199,6 +203,40 @@ pub fn build_custom_launch_recipe(
         anti_cheat_status,
         warnings,
     })
+}
+
+fn launch_args_for_recipe<'a>(
+    node: &PipelineNode,
+    game_dir: Option<&Path>,
+    base_args: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = base_args.into_iter().map(str::to_string).collect();
+    if is_unity_game_dir(game_dir) {
+        match node.id {
+            PipelineId::M12 => push_arg_once(&mut args, "-force-d3d12"),
+            PipelineId::M11 | PipelineId::M10 => push_arg_once(&mut args, "-force-d3d11"),
+            _ => {},
+        }
+    }
+    args
+}
+
+fn is_unity_game_dir(game_dir: Option<&Path>) -> bool {
+    let Some(game_dir) = game_dir else {
+        return false;
+    };
+    game_dir.join("UnityPlayer.dll").exists()
+        || WalkDir::new(game_dir)
+            .max_depth(2)
+            .into_iter()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().eq_ignore_ascii_case("UnityPlayer.dll"))
+}
+
+fn push_arg_once(args: &mut Vec<String>, arg: &str) {
+    if !args.iter().any(|existing| existing.eq_ignore_ascii_case(arg)) {
+        args.push(arg.to_string());
+    }
 }
 
 pub fn resolve_game_exe(appid: u32, game_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -748,6 +786,15 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     }
 
     if node.backend == "dxmt" {
+        let pe = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll");
+        assets.push(RuntimeAsset { name: "dxmt/winemetal.dll".into(), present: pe.exists(), path: pe, required: true });
+        let unix = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+        assets.push(RuntimeAsset {
+            name: "dxmt/winemetal.so".into(),
+            present: unix.exists(),
+            path: unix,
+            required: true,
+        });
         let conf = ms_root.join("etc").join("dxmt.conf");
         assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
     }
@@ -892,6 +939,38 @@ mod tests {
         assert!(dlls.iter().all(|dll| dll.dest_path.parent() == Some(exe_dir.as_path())));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn unity_m12_recipes_force_d3d12() {
+        let game_dir = test_dir("unity-m12-args");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
+
+        let args = launch_args_for_recipe(
+            super::super::engine::get_pipeline(PipelineId::M12),
+            Some(&game_dir),
+            std::iter::empty(),
+        );
+
+        assert_eq!(args, vec!["-force-d3d12"]);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn unity_m11_recipes_force_d3d11() {
+        let game_dir = test_dir("unity-m11-args");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
+
+        let args = launch_args_for_recipe(
+            super::super::engine::get_pipeline(PipelineId::M11),
+            Some(&game_dir),
+            std::iter::empty(),
+        );
+
+        assert_eq!(args, vec!["-force-d3d11"]);
+        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     #[test]

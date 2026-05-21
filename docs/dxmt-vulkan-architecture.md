@@ -30,7 +30,7 @@ DXMT-family DLLs:
 | `dxgi.dll` | M12, M11, M10 |
 | `d3d10core.dll` | M12, M11, M10 |
 | `d3d10.dll`, `d3d10_1.dll` | M10 public Wine D3D10 entrypoints |
-| `winemetal.dll` | M12, M11, M10 |
+| `winemetal.dll` | M12, M11, M10 prefix runtime binding |
 | `d3d9.dll` | M9 |
 | `winemetal.so` | Unix Metal bridge |
 
@@ -39,6 +39,7 @@ Basic flow:
 ```text
 Game
   -> DXMT PE DLL
+  -> prefix system32 winemetal.dll
   -> winemetal.so
   -> Metal command buffers
   -> Apple GPU

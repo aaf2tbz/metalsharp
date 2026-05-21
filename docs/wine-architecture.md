@@ -134,7 +134,6 @@ M11/M10:
 d3d11.dll
 dxgi.dll
 d3d10core.dll
-winemetal.dll
 ```
 
 M10 deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for D3D10 imports, then uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11.
@@ -146,8 +145,13 @@ d3d12.dll
 d3d11.dll
 dxgi.dll
 d3d10core.dll
-winemetal.dll
 ```
+
+DXMT's `winemetal.dll` is not staged beside the game executable. MetalSharp
+binds it into the active Wine prefix under `C:\windows\system32` and keeps the
+paired `winemetal.so` under Wine's Unix library directory so Wine can attach the
+PE stub to the Unix Metal bridge correctly. Stale game-local `winemetal` copies
+are removed during preparation.
 
 M9:
 
