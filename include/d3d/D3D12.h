@@ -959,8 +959,6 @@ class ID3D12Device : public ID3D12Object {
     STDMETHOD(CreateCommittedResource)(const D3D12_HEAP_PROPERTIES* pHeapProperties, UINT HeapFlags,
                                        const D3D12_RESOURCE_DESC* pDesc, UINT InitialResourceState,
                                        const void* pOptimizedClearValue, REFIID riid, void** ppvResource) PURE;
-    STDMETHOD_(D3D12_RESOURCE_ALLOCATION_INFO, GetResourceAllocationInfo)
-    (UINT VisibleMask, UINT NumResourceDescs, const D3D12_RESOURCE_DESC* pResourceDescs) PURE;
     STDMETHOD(CreateDescriptorHeap)(const D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc, REFIID riid,
                                     void** ppvDescriptorHeap) PURE;
     STDMETHOD(CreateRootSignature)(UINT nodeMask, const void* pBlobWithRootSignature, SIZE_T blobLengthInBytes,
@@ -981,6 +979,8 @@ class ID3D12Device : public ID3D12Object {
     STDMETHOD_(void, CopyDescriptorsSimple)(UINT NumDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptorRangeStart,
                                             D3D12_CPU_DESCRIPTOR_HANDLE SrcDescriptorRangeStart,
                                             UINT DescriptorHeapsType) PURE;
+    STDMETHOD_(D3D12_RESOURCE_ALLOCATION_INFO, GetResourceAllocationInfo)
+    (UINT VisibleMask, UINT NumResourceDescs, const D3D12_RESOURCE_DESC* pResourceDescs) PURE;
 
     STDMETHOD(ReserveTiles)(ID3D12Resource* pTiledResource, UINT NumTileRegions,
                             const D3D12_TILED_RESOURCE_COORDINATE* pTileRegionStartCoordinates,

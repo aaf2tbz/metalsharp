@@ -1251,31 +1251,6 @@ class D3D12DeviceImpl final : public ID3D12Device {
         return S_OK;
     }
 
-    D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo(UINT, UINT numResourceDescs,
-                                                             const D3D12_RESOURCE_DESC* pResourceDescs) override {
-        D3D12_RESOURCE_ALLOCATION_INFO info = {};
-        if (numResourceDescs == 0 || !pResourceDescs)
-            return info;
-
-        UINT64 maxAlignment = 0;
-        UINT64 offset = 0;
-        for (UINT i = 0; i < numResourceDescs; ++i) {
-            const D3D12_RESOURCE_DESC& desc = pResourceDescs[i];
-            UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
-            UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
-                                                   : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
-                                                                      : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
-            UINT64 resourceSize = d3d12EstimateResourceSize(desc);
-            offset = d3d12AlignUp(offset, alignment);
-            offset += resourceSize;
-            maxAlignment = std::max(maxAlignment, alignment);
-        }
-
-        info.Alignment = maxAlignment;
-        info.SizeInBytes = d3d12AlignUp(offset, maxAlignment);
-        return info;
-    }
-
     HRESULT CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC* pDesc, REFIID riid, void** ppHeap) override {
         if (!pDesc || !ppHeap)
             return E_INVALIDARG;
@@ -1566,6 +1541,31 @@ class D3D12DeviceImpl final : public ID3D12Device {
         for (UINT i = 0; i < copyCount; ++i)
             *dstHeap->getDescriptorByIndex(dstIdx + i) = snapshot[i];
         dstHeap->markDirty(dstIdx, copyCount);
+    }
+
+    D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo(UINT, UINT numResourceDescs,
+                                                             const D3D12_RESOURCE_DESC* pResourceDescs) override {
+        D3D12_RESOURCE_ALLOCATION_INFO info = {};
+        if (numResourceDescs == 0 || !pResourceDescs)
+            return info;
+
+        UINT64 maxAlignment = 0;
+        UINT64 offset = 0;
+        for (UINT i = 0; i < numResourceDescs; ++i) {
+            const D3D12_RESOURCE_DESC& desc = pResourceDescs[i];
+            UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
+            UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
+                                                   : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                                                                      : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+            UINT64 resourceSize = d3d12EstimateResourceSize(desc);
+            offset = d3d12AlignUp(offset, alignment);
+            offset += resourceSize;
+            maxAlignment = std::max(maxAlignment, alignment);
+        }
+
+        info.Alignment = maxAlignment;
+        info.SizeInBytes = d3d12AlignUp(offset, maxAlignment);
+        return info;
     }
 
     HRESULT ReserveTiles(ID3D12Resource* pTiledResource, UINT NumTileRegions,
