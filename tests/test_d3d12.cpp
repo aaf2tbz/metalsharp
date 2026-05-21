@@ -236,6 +236,36 @@ int main() {
         }
     }
 
+    printf("\n--- Resource Allocation Info ---\n");
+    if (device) {
+        D3D12_RESOURCE_DESC allocationDescs[2] = {};
+        allocationDescs[0].Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        allocationDescs[0].Width = 1024;
+        allocationDescs[0].Height = 1;
+        allocationDescs[0].DepthOrArraySize = 1;
+        allocationDescs[0].MipLevels = 1;
+        allocationDescs[0].SampleDesc.Count = 1;
+        allocationDescs[0].Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        allocationDescs[1].Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        allocationDescs[1].Width = 256;
+        allocationDescs[1].Height = 256;
+        allocationDescs[1].DepthOrArraySize = 1;
+        allocationDescs[1].MipLevels = 4;
+        allocationDescs[1].Format = DXGI_FORMAT_BC7_UNORM;
+        allocationDescs[1].SampleDesc.Count = 1;
+
+        D3D12_RESOURCE_ALLOCATION_INFO allocationInfo = device->GetResourceAllocationInfo(0, 2, allocationDescs);
+        CHECK(allocationInfo.Alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
+              "GetResourceAllocationInfo reports default alignment");
+        CHECK(allocationInfo.SizeInBytes >= D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT * 2,
+              "GetResourceAllocationInfo accumulates aligned resource sizes");
+
+        D3D12_RESOURCE_ALLOCATION_INFO emptyAllocation = device->GetResourceAllocationInfo(0, 0, nullptr);
+        CHECK(emptyAllocation.SizeInBytes == 0 && emptyAllocation.Alignment == 0,
+              "GetResourceAllocationInfo handles empty requests");
+    }
+
     printf("\n--- Committed Resource (Texture2D) ---\n");
     ID3D12Resource* rtTexture = nullptr;
     if (device) {

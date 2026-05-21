@@ -290,6 +290,140 @@ static bool d3d12FormatSupportsTypedUAV(UINT format) {
     }
 }
 
+static UINT64 d3d12AlignUp(UINT64 value, UINT64 alignment) {
+    if (alignment == 0)
+        return value;
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+static UINT d3d12FormatBitsPerBlock(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32G32B32A32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+        return 128;
+    case ::DXGI_FORMAT_R32G32B32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32B32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32_UINT:
+    case ::DXGI_FORMAT_R32G32B32_SINT:
+        return 96;
+    case ::DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R32G32_TYPELESS:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+        return 64;
+    case ::DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case ::DXGI_FORMAT_R10G10B10A2_UNORM:
+    case ::DXGI_FORMAT_R10G10B10A2_UINT:
+    case ::DXGI_FORMAT_R11G11B10_FLOAT:
+    case ::DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16G16_TYPELESS:
+    case ::DXGI_FORMAT_R16G16_FLOAT:
+    case ::DXGI_FORMAT_R16G16_UNORM:
+    case ::DXGI_FORMAT_R16G16_UINT:
+    case ::DXGI_FORMAT_R16G16_SNORM:
+    case ::DXGI_FORMAT_R16G16_SINT:
+    case ::DXGI_FORMAT_R32_TYPELESS:
+    case ::DXGI_FORMAT_D32_FLOAT:
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+        return 32;
+    case ::DXGI_FORMAT_R8G8_TYPELESS:
+    case ::DXGI_FORMAT_R8G8_UNORM:
+    case ::DXGI_FORMAT_R8G8_UINT:
+    case ::DXGI_FORMAT_R8G8_SNORM:
+    case ::DXGI_FORMAT_R8G8_SINT:
+    case ::DXGI_FORMAT_R16_TYPELESS:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_D16_UNORM:
+    case ::DXGI_FORMAT_R16_UNORM:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SNORM:
+    case ::DXGI_FORMAT_R16_SINT:
+        return 16;
+    case ::DXGI_FORMAT_R8_TYPELESS:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SNORM:
+    case ::DXGI_FORMAT_R8_SINT:
+    case ::DXGI_FORMAT_A8_UNORM:
+        return 8;
+    case ::DXGI_FORMAT_BC1_UNORM:
+    case ::DXGI_FORMAT_BC1_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC4_UNORM:
+    case ::DXGI_FORMAT_BC4_SNORM:
+        return 64;
+    case ::DXGI_FORMAT_BC2_UNORM:
+    case ::DXGI_FORMAT_BC2_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC3_UNORM:
+    case ::DXGI_FORMAT_BC3_UNORM_SRGB:
+    case ::DXGI_FORMAT_BC5_UNORM:
+    case ::DXGI_FORMAT_BC5_SNORM:
+    case ::DXGI_FORMAT_BC6H_UF16:
+    case ::DXGI_FORMAT_BC6H_SF16:
+    case ::DXGI_FORMAT_BC7_UNORM:
+    case ::DXGI_FORMAT_BC7_UNORM_SRGB:
+        return 128;
+    default:
+        return 32;
+    }
+}
+
+static bool d3d12FormatIsBlockCompressed(UINT format) {
+    return (format >= ::DXGI_FORMAT_BC1_UNORM && format <= ::DXGI_FORMAT_BC5_SNORM) ||
+           format == ::DXGI_FORMAT_BC6H_UF16 || format == ::DXGI_FORMAT_BC6H_SF16 ||
+           format == ::DXGI_FORMAT_BC7_UNORM || format == ::DXGI_FORMAT_BC7_UNORM_SRGB;
+}
+
+static UINT64 d3d12EstimateSubresourceSize(UINT64 width, UINT height, UINT depth, UINT format) {
+    UINT blockWidth = d3d12FormatIsBlockCompressed(format) ? 4 : 1;
+    UINT blockHeight = d3d12FormatIsBlockCompressed(format) ? 4 : 1;
+    UINT64 blocksWide = std::max<UINT64>(1, (width + blockWidth - 1) / blockWidth);
+    UINT64 blocksHigh = std::max<UINT64>(1, (static_cast<UINT64>(height) + blockHeight - 1) / blockHeight);
+    UINT64 bitsPerBlock = d3d12FormatBitsPerBlock(format);
+    return d3d12AlignUp(blocksWide * blocksHigh * std::max<UINT>(1, depth) * bitsPerBlock, 8) / 8;
+}
+
+static UINT64 d3d12EstimateResourceSize(const D3D12_RESOURCE_DESC& desc) {
+    if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        return d3d12AlignUp(desc.Width, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+
+    UINT mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
+    UINT arrayOrDepth = std::max<UINT>(1, desc.DepthOrArraySize);
+    UINT64 totalSize = 0;
+    for (UINT mip = 0; mip < mipLevels; ++mip) {
+        UINT64 width = std::max<UINT64>(1, desc.Width >> mip);
+        UINT height = std::max<UINT>(1, desc.Height >> mip);
+        UINT depth = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? std::max<UINT>(1, arrayOrDepth >> mip)
+                                                                          : arrayOrDepth;
+        totalSize += d3d12EstimateSubresourceSize(width, height, depth, desc.Format);
+    }
+    UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
+    totalSize *= sampleCount;
+    UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
+                                           : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                                                              : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+    return d3d12AlignUp(totalSize, alignment);
+}
+
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
     std::atomic<ULONG> refCount{1};
@@ -1067,6 +1201,31 @@ class D3D12DeviceImpl final : public ID3D12Device {
 
         *ppvResource = res;
         return S_OK;
+    }
+
+    D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo(UINT, UINT numResourceDescs,
+                                                             const D3D12_RESOURCE_DESC* pResourceDescs) override {
+        D3D12_RESOURCE_ALLOCATION_INFO info = {};
+        if (numResourceDescs == 0 || !pResourceDescs)
+            return info;
+
+        UINT64 maxAlignment = 0;
+        UINT64 offset = 0;
+        for (UINT i = 0; i < numResourceDescs; ++i) {
+            const D3D12_RESOURCE_DESC& desc = pResourceDescs[i];
+            UINT sampleCount = desc.SampleDesc.Count > 0 ? desc.SampleDesc.Count : 1;
+            UINT64 alignment = desc.Alignment != 0 ? desc.Alignment
+                                                   : (sampleCount > 1 ? D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                                                                      : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+            UINT64 resourceSize = d3d12EstimateResourceSize(desc);
+            offset = d3d12AlignUp(offset, alignment);
+            offset += resourceSize;
+            maxAlignment = std::max(maxAlignment, alignment);
+        }
+
+        info.Alignment = maxAlignment;
+        info.SizeInBytes = d3d12AlignUp(offset, maxAlignment);
+        return info;
     }
 
     HRESULT CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC* pDesc, REFIID riid, void** ppHeap) override {

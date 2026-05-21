@@ -35,6 +35,10 @@ constexpr UINT D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES = 4;
 constexpr UINT D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE = 0x1;
 constexpr UINT D3D12_DESCRIPTOR_HEAP_FLAG_NONE = 0x0;
 
+constexpr UINT64 D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT = 65536;
+constexpr UINT64 D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT = 4194304;
+constexpr UINT64 D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT = 4096;
+
 constexpr UINT D3D12_RESOURCE_DIMENSION_UNKNOWN = 0;
 constexpr UINT D3D12_RESOURCE_DIMENSION_BUFFER = 1;
 constexpr UINT D3D12_RESOURCE_DIMENSION_TEXTURE1D = 2;
@@ -487,6 +491,11 @@ struct D3D12_RESOURCE_DESC {
     } SampleDesc;
     UINT Layout;
     UINT Flags;
+};
+
+struct D3D12_RESOURCE_ALLOCATION_INFO {
+    UINT64 SizeInBytes;
+    UINT64 Alignment;
 };
 
 struct D3D12_DESCRIPTOR_HEAP_DESC {
@@ -949,6 +958,8 @@ class ID3D12Device : public ID3D12Object {
     STDMETHOD(CreateCommittedResource)(const D3D12_HEAP_PROPERTIES* pHeapProperties, UINT HeapFlags,
                                        const D3D12_RESOURCE_DESC* pDesc, UINT InitialResourceState,
                                        const void* pOptimizedClearValue, REFIID riid, void** ppvResource) PURE;
+    STDMETHOD_(D3D12_RESOURCE_ALLOCATION_INFO, GetResourceAllocationInfo)
+    (UINT VisibleMask, UINT NumResourceDescs, const D3D12_RESOURCE_DESC* pResourceDescs) PURE;
     STDMETHOD(CreateDescriptorHeap)(const D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc, REFIID riid,
                                     void** ppvDescriptorHeap) PURE;
     STDMETHOD(CreateRootSignature)(UINT nodeMask, const void* pBlobWithRootSignature, SIZE_T blobLengthInBytes,
