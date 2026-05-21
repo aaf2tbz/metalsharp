@@ -455,6 +455,7 @@ pub fn launch_custom_with_options(
     if let Some(path) = wine_dll_path.as_ref() {
         cmd.env("WINEDLLPATH", path);
     }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -589,6 +590,7 @@ fn launch_dxmt_metal_with_context(
     if let Some(path) = wine_dll_path.as_ref() {
         cmd.env("WINEDLLPATH", path);
     }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -672,6 +674,7 @@ fn launch_wine_bare_with_context(
     if let Some(path) = wine_dll_path.as_ref() {
         cmd.env("WINEDLLPATH", path);
     }
+    apply_dxmt_winemetal_env(&mut cmd, node);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -732,6 +735,9 @@ fn attach_launch_log(
     writeln!(log, "{}={}", context.runtime_lib_key, context.runtime_lib_path)?;
     if let Some(path) = context.wine_dll_path {
         writeln!(log, "WINEDLLPATH={}", path)?;
+    }
+    if context.node.backend == "dxmt" {
+        writeln!(log, "DXMT_WINEMETAL_UNIXLIB=winemetal.so")?;
     }
     if !context.dlls.is_empty() {
         writeln!(log, "dll_bindings=")?;
@@ -887,6 +893,8 @@ fn dxmt_wine_dll_path(ms_root: &Path, exe_dir: &Path, node: &PipelineNode) -> Op
     Some(
         [
             exe_dir.to_path_buf(),
+            ms_root.join("lib").join("dxmt"),
+            ms_root.join("lib").join("wine"),
             ms_root.join("lib").join("dxmt").join("x86_64-windows"),
             ms_root.join("lib").join("wine").join("x86_64-windows"),
         ]
@@ -928,6 +936,8 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push((
             "WINEDLLPATH".to_string(),
             [
+                ms_root.join("lib").join("dxmt"),
+                ms_root.join("lib").join("wine"),
                 ms_root.join("lib").join("dxmt").join("x86_64-windows"),
                 ms_root.join("lib").join("wine").join("x86_64-windows"),
             ]
@@ -936,11 +946,18 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
             .collect::<Vec<_>>()
             .join(":"),
         ));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env
+}
+
+fn apply_dxmt_winemetal_env(cmd: &mut Command, node: &PipelineNode) {
+    if node.backend == "dxmt" {
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
+    }
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -1432,6 +1449,7 @@ mod tests {
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
         assert!(keys.contains("WINEDLLPATH"));
+        assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
@@ -1443,7 +1461,13 @@ mod tests {
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
         let dll_path = env.iter().find(|(key, _)| key == "WINEDLLPATH").map(|(_, value)| value).unwrap();
+        assert!(dll_path.contains("lib/dxmt:"));
+        assert!(dll_path.contains("lib/wine:"));
         assert!(dll_path.contains("lib/dxmt/x86_64-windows"));
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()),
+            Some("winemetal.so")
+        );
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -1456,6 +1480,8 @@ mod tests {
         let dll_path = dxmt_wine_dll_path(&ms_root, &exe_dir, node).expect("dxmt dll path");
 
         assert!(dll_path.starts_with("/tmp/game/Binaries/Win64:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/dxmt:"));
+        assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/wine:"));
         assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/dxmt/x86_64-windows"));
         assert!(dll_path.contains("/tmp/metalsharp-runtime/wine/lib/wine/x86_64-windows"));
     }

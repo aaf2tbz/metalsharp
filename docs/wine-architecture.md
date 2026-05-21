@@ -149,9 +149,17 @@ d3d10core.dll
 
 DXMT's `winemetal.dll` is not staged beside the game executable. MetalSharp
 binds it into the active Wine prefix under `C:\windows\system32` and keeps the
-paired `winemetal.so` under Wine's Unix library directory so Wine can attach the
-PE stub to the Unix Metal bridge correctly. Stale game-local `winemetal` copies
-are removed during preparation.
+paired `winemetal.so` under the DXMT/Wine Unix library roots. DXMT routes set
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so` and include the parent runtime roots in
+`WINEDLLPATH`; this lets the PE stub recover the Unix Metal bridge even when Wine
+loaded the PE side as a native prefix DLL instead of a builtin module. Stale
+game-local `winemetal` copies are removed during preparation.
+
+The Wine runtime patch exports the macOS driver bridge used by DXMT:
+`get_win_data`, `release_win_data`, `macdrv_client_surface_create`,
+`macdrv_view_create_metal_view`, and `macdrv_view_get_metal_layer`. DXMT uses
+those symbols to create the Wine client surface if it does not exist yet, then
+attaches its CAMetalLayer-backed swapchain to that view.
 
 M9:
 

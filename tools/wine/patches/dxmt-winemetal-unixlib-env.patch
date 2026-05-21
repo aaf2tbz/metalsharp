@@ -1,0 +1,228 @@
+diff --git a/src/winemetal/main.c b/src/winemetal/main.c
+index 8c7e00f..9d04314 100644
+--- a/src/winemetal/main.c
++++ b/src/winemetal/main.c
+@@ -1,13 +1,69 @@
+ #include "windef.h"
+ #include "winbase.h"
+ #include "wineunixlib.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#ifndef STATUS_SUCCESS
++#define STATUS_SUCCESS ((NTSTATUS)0x00000000)
++#endif
++#ifndef STATUS_BUFFER_OVERFLOW
++#define STATUS_BUFFER_OVERFLOW ((NTSTATUS)0x80000005)
++#endif
++
++static NTSTATUS load_unixlib_from_env(void) {
++  const char *path = getenv("DXMT_WINEMETAL_UNIXLIB");
++  WCHAR wide_path[MAX_PATH * 4];
++  UNICODE_STRING name;
++  unixlib_module_t module = 0;
++  size_t i;
++
++  if (!path || !path[0])
++    return STATUS_DLL_NOT_FOUND;
++
++  for (i = 0; path[i] && i < (sizeof(wide_path) / sizeof(wide_path[0])) - 1; i++)
++    wide_path[i] = (WCHAR)(unsigned char)path[i];
++  if (path[i])
++    return STATUS_BUFFER_OVERFLOW;
++  wide_path[i] = 0;
++
++  name.Buffer = wide_path;
++  name.Length = i * sizeof(WCHAR);
++  name.MaximumLength = (i + 1) * sizeof(WCHAR);
++
++  return __wine_load_unix_lib(&name, &module, &__wine_unixlib_handle);
++}
++
++static int winemetal_debug_enabled(void) {
++  const char *value = getenv("DXMT_WINEMETAL_DEBUG");
++  return value && value[0] && strcmp(value, "0") != 0;
++}
+ 
+ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
++  NTSTATUS status;
++  NTSTATUS fallback_status = STATUS_SUCCESS;
++  FILE *log;
++
+   if (reason != DLL_PROCESS_ATTACH)
+     return TRUE;
+ 
+   DisableThreadLibraryCalls(instance);
+-  return !__wine_init_unix_call();
++  status = __wine_init_unix_call();
++  if ((DWORD)status == STATUS_DLL_NOT_FOUND)
++    fallback_status = load_unixlib_from_env();
++  if (winemetal_debug_enabled()) {
++    log = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
++    if (log) {
++      fprintf(log,
++              "DllMain PROCESS_ATTACH __wine_init_unix_call status=0x%08lx "
++              "fallback=0x%08lx unixlib=%s\n",
++              (unsigned long)status, (unsigned long)fallback_status,
++              getenv("DXMT_WINEMETAL_UNIXLIB") ? getenv("DXMT_WINEMETAL_UNIXLIB") : "<unset>");
++      fclose(log);
++    }
++  }
++  return !status || !fallback_status;
+ }
+ 
+ extern BOOL WINAPI DllMainCRTStartup(HANDLE hDllHandle, DWORD dwReason,
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index e1cd567..0851662 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -1870,11 +1870,11 @@ typedef struct macdrv_opaque_window *macdrv_window;
+ typedef struct macdrv_opaque_window_data *macdrv_window_data;
+ typedef struct opaque_window_surface *window_surface;
+ typedef struct opaque_HWND *HWND;
++typedef struct macdrv_client_surface *macdrv_client_surface;
+ struct macdrv_win_data {
+   HWND hwnd; /* hwnd that this private data belongs to */
+   macdrv_window cocoa_window;
+-  macdrv_view cocoa_view;
+-  macdrv_view client_cocoa_view;
++  macdrv_view client_view;
+ };
+ 
+ struct macdrv_functions_t {
+@@ -1893,9 +1893,11 @@ struct macdrv_functions_t {
+ static NTSTATUS
+ _CreateMetalViewFromHWND(void *obj) {
+   struct unixcall_create_metal_view_from_hwnd *params = obj;
++  FILE *dl = winemetal_debug_log();
+ 
+   struct macdrv_win_data *(*pfn_get_win_data)(HWND hwnd) = NULL;
+   void (*pfn_release_win_data)(struct macdrv_win_data *data) = NULL;
++  macdrv_client_surface (*pfn_macdrv_client_surface_create)(HWND hwnd) = NULL;
+   macdrv_metal_view (*pfn_macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d) = NULL;
+   macdrv_metal_layer (*pfn_macdrv_view_get_metal_layer)(macdrv_metal_view v) = NULL;
+ 
+@@ -1903,27 +1905,95 @@ _CreateMetalViewFromHWND(void *obj) {
+   if ((macdrv_functions = dlsym(RTLD_DEFAULT, "macdrv_functions"))) {
+     pfn_get_win_data = macdrv_functions->get_win_data;
+     pfn_release_win_data = macdrv_functions->release_win_data;
++    pfn_macdrv_client_surface_create = dlsym(RTLD_DEFAULT, "macdrv_client_surface_create");
+     pfn_macdrv_view_create_metal_view = macdrv_functions->macdrv_view_create_metal_view;
+     pfn_macdrv_view_get_metal_layer = macdrv_functions->macdrv_view_get_metal_layer;
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via macdrv_functions=%p\n",
++          (void *)params->hwnd, (void *)params->device, macdrv_functions);
++    }
+   } else {
+     pfn_get_win_data = dlsym(RTLD_DEFAULT, "get_win_data");
+     pfn_release_win_data = dlsym(RTLD_DEFAULT, "release_win_data");
++    pfn_macdrv_client_surface_create = dlsym(RTLD_DEFAULT, "macdrv_client_surface_create");
+     pfn_macdrv_view_create_metal_view = dlsym(RTLD_DEFAULT, "macdrv_view_create_metal_view");
+     pfn_macdrv_view_get_metal_layer = dlsym(RTLD_DEFAULT, "macdrv_view_get_metal_layer");
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via RTLD_DEFAULT symbols\n",
++          (void *)params->hwnd, (void *)params->device);
++    }
++  }
++
++  params->ret_view = 0;
++  params->ret_layer = 0;
++
++  if (!pfn_get_win_data || !pfn_release_win_data || !pfn_macdrv_view_create_metal_view ||
++      !pfn_macdrv_view_get_metal_layer) {
++    if (dl) {
++      fprintf(dl,
++          "[winemetal] CreateMetalViewFromHWND missing bridge get=%p release=%p create=%p layer=%p\n",
++          pfn_get_win_data, pfn_release_win_data, pfn_macdrv_view_create_metal_view,
++          pfn_macdrv_view_get_metal_layer);
++      fclose(dl);
++    }
++    return STATUS_SUCCESS;
+   }
+ 
+-  if (pfn_get_win_data && pfn_release_win_data && pfn_macdrv_view_create_metal_view &&
+-      pfn_macdrv_view_get_metal_layer) {
+-    struct macdrv_win_data *win_data = pfn_get_win_data((HWND)params->hwnd);
++  struct macdrv_win_data *win_data = pfn_get_win_data((HWND)params->hwnd);
++  if (!win_data) {
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data returned NULL\n");
++      fclose(dl);
++    }
++    return STATUS_SUCCESS;
++  }
++
++  if (dl) {
++    fprintf(dl,
++        "[winemetal] CreateMetalViewFromHWND win_data=%p cocoa_window=%p client_view=%p\n",
++        win_data, win_data->cocoa_window, win_data->client_view);
++  }
++
++  if (!win_data->client_view && pfn_macdrv_client_surface_create) {
++    pfn_release_win_data(win_data);
++    win_data = NULL;
++    macdrv_client_surface surface = pfn_macdrv_client_surface_create((HWND)params->hwnd);
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND created client_surface=%p\n", surface);
++    }
++    win_data = pfn_get_win_data((HWND)params->hwnd);
++    if (!win_data) {
++      if (dl) {
++        fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data after client surface returned NULL\n");
++        fclose(dl);
++      }
++      return STATUS_SUCCESS;
++    }
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND after client surface client_view=%p\n",
++          win_data->client_view);
++    }
++  }
++
++  if (win_data->client_view) {
+     macdrv_metal_view view =
+-        pfn_macdrv_view_create_metal_view(win_data->client_cocoa_view, (macdrv_metal_device)params->device);
++        pfn_macdrv_view_create_metal_view(win_data->client_view, (macdrv_metal_device)params->device);
+     params->ret_view = (obj_handle_t)view;
+     if (view) {
+       params->ret_layer = (obj_handle_t)pfn_macdrv_view_get_metal_layer(view);
+     }
+-    pfn_release_win_data(win_data);
++    if (dl) {
++      fprintf(dl, "[winemetal] CreateMetalViewFromHWND view=%p layer=%p\n", view,
++          (void *)params->ret_layer);
++    }
++  } else if (dl) {
++    fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view is NULL\n");
+   }
+ 
++  if (win_data)
++    pfn_release_win_data(win_data);
++  if (dl)
++    fclose(dl);
+   return STATUS_SUCCESS;
+ }
+ 
+diff --git a/src/winemetal/wineunixlib.h b/src/winemetal/wineunixlib.h
+index 5157b24..f0f0752 100644
+--- a/src/winemetal/wineunixlib.h
++++ b/src/winemetal/wineunixlib.h
+@@ -7,6 +7,7 @@
+ #define __WINE_WINE_UNIXLIB_H
+ 
+ typedef UINT64 unixlib_handle_t;
++typedef UINT64 unixlib_module_t;
+ 
+ extern NTSTATUS WINAPI __wine_unix_call(unixlib_handle_t handle,
+                                         unsigned int code, void *args);
+@@ -308,6 +309,9 @@ extern unixlib_handle_t __wine_unixlib_handle;
+ extern NTSTATUS(WINAPI *__wine_unix_call_dispatcher)(unixlib_handle_t,
+                                                      unsigned int, void *);
+ extern NTSTATUS WINAPI __wine_init_unix_call(void);
++extern NTSTATUS WINAPI __wine_load_unix_lib(const UNICODE_STRING *name,
++                                            unixlib_module_t *lib,
++                                            unixlib_handle_t *handle);
+ 
+ #define WINE_UNIX_CALL(code, args)                                             \
+   __wine_unix_call_dispatcher(__wine_unixlib_handle, (code), (args))

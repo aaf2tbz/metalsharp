@@ -26,17 +26,19 @@ uses for Wine-launched games.
 2. The launcher resolves the game directory and Wine prefix.
 3. M12 deploys DXMT PE DLLs into the game directory:
    `d3d12.dll`, `d3d11.dll`, `dxgi.dll`, and `d3d10core.dll`.
-4. M12 binds `winemetal.dll` into the prefix `C:\windows\system32` and ensures
-   `winemetal.so` is present in Wine's Unix library directory, then removes
+4. M12 binds `winemetal.dll` into the prefix `C:\windows\system32`, ensures
+   `winemetal.so` is present in the runtime Unix library roots, and removes
    stale game-local `winemetal` copies.
-5. M12 sets `WINEDLLOVERRIDES` so Wine prefers the deployed native DXMT DLLs
-   and the runtime `winemetal` bridge.
+5. M12 sets `WINEDLLOVERRIDES`, parent-root `WINEDLLPATH`, and
+   `DXMT_WINEMETAL_UNIXLIB=winemetal.so` so the PE stub can load the Unix Metal
+   bridge even when Wine treats `winemetal.dll` as a native prefix DLL.
 6. M12 adds DXMT/Wine unix library paths to `DYLD_FALLBACK_LIBRARY_PATH`.
 7. M12 sets shader and pipeline cache paths under the MetalSharp cache root.
 8. Wine launches the executable. Unity games receive `-force-d3d12` so they do
    not silently fall back to OpenGL before DXMT is tried.
-9. DXMT handles D3D12/DXGI calls, compiles DXIL/MSL work, sends commands through
-   `winemetal`, and presents through the Wine/macOS surface.
+9. DXMT handles D3D12/DXGI calls, creates a Wine client surface when needed,
+   attaches a CAMetalLayer through `winemetal.so`, compiles DXIL/MSL work, sends
+   commands through `winemetal`, and presents through the Wine/macOS surface.
 
 ## Current Verification
 

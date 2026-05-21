@@ -45,7 +45,8 @@ Basic flow:
 Game
   -> DXMT PE DLL
   -> prefix system32 winemetal.dll
-  -> winemetal.so
+  -> DXMT_WINEMETAL_UNIXLIB=winemetal.so
+  -> runtime winemetal.so
   -> Metal command buffers
   -> Apple GPU
 ```
