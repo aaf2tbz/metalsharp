@@ -27,7 +27,26 @@ if [[ ! -d "$DXMT_SRC/src/dxgi" ]]; then
   exit 1
 fi
 
-mapfile -t patches < <(find "$ROOT/tools/wine/patches" -maxdepth 1 -type f -name '*.patch' | sort)
+required_files=(
+  "src/d3d12/d3d12_trace.hpp"
+)
+
+for required in "${required_files[@]}"; do
+  if [[ ! -f "$DXMT_SRC/$required" ]]; then
+    cat >&2 <<EOF
+error: DXMT checkout is missing '$required'
+MetalSharp's D3D12 trace-file patch is layered on the diagnostics-bearing DXMT
+runtime source. Use a DXMT checkout that already contains the D3D12 trace helper
+before applying tools/wine/patches.
+EOF
+    exit 1
+  fi
+done
+
+patches=()
+while IFS= read -r patch; do
+  patches+=("$patch")
+done < <(find "$ROOT/tools/wine/patches" -maxdepth 1 -type f -name '*.patch' | sort)
 
 if [[ "${#patches[@]}" -eq 0 ]]; then
   echo "error: no DXMT patches found under $ROOT/tools/wine/patches" >&2
@@ -36,8 +55,15 @@ fi
 
 for patch in "${patches[@]}"; do
   echo "$MODE $(basename "$patch")"
-  git -C "$DXMT_SRC" apply --check "$patch"
-  if [[ "$MODE" == "apply" ]]; then
-    git -C "$DXMT_SRC" apply "$patch"
+  if git -C "$DXMT_SRC" apply --check "$patch" 2>/dev/null; then
+    if [[ "$MODE" == "apply" ]]; then
+      git -C "$DXMT_SRC" apply "$patch"
+    fi
+  elif git -C "$DXMT_SRC" apply --reverse --check "$patch" 2>/dev/null; then
+    echo "already applied $(basename "$patch")"
+  else
+    git -C "$DXMT_SRC" apply --check "$patch"
+    echo "error: patch does not apply cleanly: $(basename "$patch")" >&2
+    exit 1
   fi
 done

@@ -51,7 +51,9 @@ tools/wine/apply-dxmt-patches.sh /path/to/dxmt-src
 
 The script sorts patch filenames before checking or applying them. `--check`
 does not mutate the DXMT checkout and is the preferred preflight before building
-or updating runtime binaries.
+or updating runtime binaries. The current patch set expects a diagnostics-bearing
+DXMT source tree that already contains `src/d3d12/d3d12_trace.hpp`; the apply
+script fails before mutation when that helper is absent.
 
 The DXGI patch exports Wine's private `DXGID3D10CreateDevice` and
 `DXGID3D10RegisterLayers` handoff from DXMT `dxgi.dll`, forwarding device
@@ -76,7 +78,9 @@ before selecting depth/downsample kernels.
 
 The D3D12 trace-file patch lets MetalSharp route DXMT's D3D12 evidence into a
 per-launch log by setting `DXMT_D3D12_TRACE_FILE`. Without the env var, DXMT
-keeps its historical fallback path at `Z:\tmp\dxmt_d3d12_trace.log`.
+keeps its historical fallback path at `Z:\tmp\dxmt_d3d12_trace.log`. This patch
+intentionally only redirects the existing trace helper; it does not create the
+larger DXMT diagnostics surface by itself.
 
 Basic flow:
 
