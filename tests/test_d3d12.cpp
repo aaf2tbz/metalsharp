@@ -404,6 +404,25 @@ int main() {
                   "CopyDescriptorsSimple copies RTV descriptor across heaps");
         }
 
+        auto* rtvHeapImpl = static_cast<metalsharp::D3D12DescriptorHeapImpl*>(rtvHeap);
+        if (rtvHeapImpl) {
+            auto heapStart = rtvHeap->__getCPUDescriptorHandleForHeapStart();
+            auto* original0 = rtvHeapImpl->getDescriptorByIndex(0);
+            auto* original1 = rtvHeapImpl->getDescriptorByIndex(1);
+            auto* original2 = rtvHeapImpl->getDescriptorByIndex(2);
+            if (original0 && original1 && original2) {
+                *original1 = *original0;
+                original1->resource = uploadBuffer;
+                *original2 = *original0;
+                original2->resource = rtTexture;
+                D3D12_CPU_DESCRIPTOR_HANDLE overlapDst = {heapStart.ptr + 1};
+                device->CopyDescriptorsSimple(2, overlapDst, heapStart, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+                CHECK(rtvHeapImpl->getDescriptorByIndex(1)->resource == original0->resource &&
+                          rtvHeapImpl->getDescriptorByIndex(2)->resource == uploadBuffer,
+                      "CopyDescriptorsSimple handles same-heap overlapping ranges");
+            }
+        }
+
         FLOAT clearColor[4] = {0.2f, 0.3f, 0.4f, 1.0f};
         ID3D12GraphicsCommandList* clearList = nullptr;
         device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList,

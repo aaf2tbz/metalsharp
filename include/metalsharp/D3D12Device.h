@@ -700,12 +700,19 @@ class D3D12DescriptorHeapImpl final : public ID3D12DescriptorHeap {
         UINT srcIdx = handleToIndex(srcStart);
         if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
             return;
-        for (UINT i = 0; i < numDescriptors; ++i) {
-            if (dstIdx + i < desc.NumDescriptors && srcIdx + i < desc.NumDescriptors) {
-                descriptors[dstIdx + i] = descriptors[srcIdx + i];
-            }
-        }
-        markDirty(dstIdx, numDescriptors);
+        UINT copyCount = std::min(numDescriptors, desc.NumDescriptors - dstIdx);
+        copyCount = std::min(copyCount, desc.NumDescriptors - srcIdx);
+        if (copyCount == 0)
+            return;
+
+        std::vector<D3D12Descriptor> snapshot;
+        snapshot.reserve(copyCount);
+        for (UINT i = 0; i < copyCount; ++i)
+            snapshot.push_back(descriptors[srcIdx + i]);
+
+        for (UINT i = 0; i < copyCount; ++i)
+            descriptors[dstIdx + i] = snapshot[i];
+        markDirty(dstIdx, copyCount);
     }
 };
 
@@ -1505,14 +1512,19 @@ class D3D12DeviceImpl final : public ID3D12Device {
         if (dstIdx == UINT_MAX || srcIdx == UINT_MAX)
             return;
 
-        for (UINT i = 0; i < numDescriptors; ++i) {
-            auto* dst = dstHeap->getDescriptorByIndex(dstIdx + i);
-            auto* src = srcHeap->getDescriptorByIndex(srcIdx + i);
-            if (!dst || !src)
-                break;
-            *dst = *src;
-        }
-        dstHeap->markDirty(dstIdx, numDescriptors);
+        UINT copyCount = std::min(numDescriptors, dstHeap->desc.NumDescriptors - dstIdx);
+        copyCount = std::min(copyCount, srcHeap->desc.NumDescriptors - srcIdx);
+        if (copyCount == 0)
+            return;
+
+        std::vector<D3D12Descriptor> snapshot;
+        snapshot.reserve(copyCount);
+        for (UINT i = 0; i < copyCount; ++i)
+            snapshot.push_back(*srcHeap->getDescriptorByIndex(srcIdx + i));
+
+        for (UINT i = 0; i < copyCount; ++i)
+            *dstHeap->getDescriptorByIndex(dstIdx + i) = snapshot[i];
+        dstHeap->markDirty(dstIdx, copyCount);
     }
 
     HRESULT ReserveTiles(ID3D12Resource* pTiledResource, UINT NumTileRegions,
