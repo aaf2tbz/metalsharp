@@ -56,6 +56,23 @@ static bool looksLikeMSL(const uint8_t* data, size_t size) {
            source.find("using namespace metal") != std::string::npos || source.find("kernel ") != std::string::npos;
 }
 
+static const char* d3d12ShaderSourceKind(const uint8_t* data, size_t size) {
+    if (!data || size == 0)
+        return "empty";
+    if (looksLikeMSL(data, size))
+        return "msl";
+
+    auto& bridge = IRConverterBridge::instance();
+    if (bridge.isDXIL(data, size))
+        return "dxil";
+
+    std::vector<uint8_t> dxil;
+    if (bridge.extractDXILFromDXBC(data, size, dxil))
+        return "dxbc_dxil";
+
+    return "dxbc_or_unknown";
+}
+
 static uint32_t d3d12FormatSize(UINT format) {
     switch (format) {
     case DXGI_FORMAT_R32G32B32A32_FLOAT:
@@ -1109,12 +1126,14 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     const uint8_t* shaderData = static_cast<const uint8_t*>(desc->CS.pShaderBytecode);
     size_t shaderSize = desc->CS.BytecodeLength;
     if (!shaderData || shaderSize == 0) {
+        MS_WARN("d3d12_compute_pso_empty_shader bytecode_size=%zu", shaderSize);
         *ppPSO = pso;
         return S_OK;
     }
 
     CompiledShader compiled;
     D3D12RootSignatureImpl* rootSig = static_cast<D3D12RootSignatureImpl*>(desc->pRootSignature);
+    const char* sourceKind = d3d12ShaderSourceKind(shaderData, shaderSize);
     bool ok = false;
     if (rootSig && !rootSig->rawBytecode.empty()) {
         ok = m_shaderTranslator->translateDXBCWithRootSignature(shaderData, shaderSize, ShaderStage::Compute,
@@ -1124,10 +1143,18 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     if (!ok) {
         ok = m_shaderTranslator->translateDXBC(shaderData, shaderSize, ShaderStage::Compute, compiled);
     }
+    if (!ok && !looksLikeMSL(shaderData, shaderSize)) {
+        MS_WARN("d3d12_compute_pso_translate_failed source=%s bytecode_size=%zu root_signature_bytes=%zu", sourceKind,
+                shaderSize, rootSig ? rootSig->rawBytecode.size() : 0);
+    }
 
     id<MTLFunction> function = nil;
     if (ok && compiled.computeFunction) {
         function = (__bridge id<MTLFunction>)compiled.computeFunction;
+        MS_INFO("d3d12_compute_pso_shader source=%s bytecode_size=%zu entry=%s tg=%u,%u,%u resources=%zu", sourceKind,
+                shaderSize, compiled.entryPointName.empty() ? "unknown" : compiled.entryPointName.c_str(),
+                compiled.reflection.threadgroupSize[0], compiled.reflection.threadgroupSize[1],
+                compiled.reflection.threadgroupSize[2], compiled.reflection.resources.size());
     } else if (looksLikeMSL(shaderData, shaderSize)) {
         id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)m_metalDevice->nativeDevice();
         NSString* source = [[NSString alloc] initWithBytes:shaderData length:shaderSize encoding:NSUTF8StringEncoding];
@@ -1139,12 +1166,17 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
                 function = [library newFunctionWithName:@"main0"];
             if (!function && library.functionNames.count > 0)
                 function = [library newFunctionWithName:library.functionNames.firstObject];
+            MS_INFO("d3d12_compute_pso_shader source=msl bytecode_size=%zu functions=%lu selected=%s", shaderSize,
+                    (unsigned long)library.functionNames.count, function ? [[function name] UTF8String] : "none");
         } else if (libraryError) {
-            NSLog(@"MetalSharp D3D12 compute shader compile error: %@", [libraryError localizedDescription]);
+            const char* errorMessage = [[libraryError localizedDescription] UTF8String];
+            MS_WARN("d3d12_compute_pso_msl_compile_failed bytecode_size=%zu error=%s", shaderSize,
+                    errorMessage ? errorMessage : "unknown");
         }
     }
 
     if (!function) {
+        MS_WARN("d3d12_compute_pso_no_function source=%s bytecode_size=%zu", sourceKind, shaderSize);
         pso->Release();
         return E_FAIL;
     }
@@ -1153,12 +1185,16 @@ HRESULT D3D12DeviceImpl::CreateComputePipelineState(const void* pDesc, REFIID ri
     NSError* error = nil;
     id<MTLComputePipelineState> pipeline = [mtlDevice newComputePipelineStateWithFunction:function error:&error];
     if (!pipeline) {
-        if (error)
-            NSLog(@"MetalSharp D3D12 compute pipeline error: %@", [error localizedDescription]);
+        const char* errorMessage = error ? [[error localizedDescription] UTF8String] : "unknown";
+        MS_WARN("d3d12_compute_pso_pipeline_failed source=%s bytecode_size=%zu function=%s error=%s", sourceKind,
+                shaderSize, [[function name] UTF8String] ? [[function name] UTF8String] : "unknown",
+                errorMessage ? errorMessage : "unknown");
         pso->Release();
         return E_FAIL;
     }
 
+    MS_INFO("d3d12_compute_pso_ready source=%s bytecode_size=%zu function=%s", sourceKind, shaderSize,
+            [[function name] UTF8String] ? [[function name] UTF8String] : "unknown");
     pso->m_computePipeline = (__bridge_retained void*)pipeline;
     pso->m_ownedComputePipeline = pso->m_computePipeline;
     *ppPSO = pso;
