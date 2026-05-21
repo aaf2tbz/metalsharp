@@ -81,6 +81,92 @@ static HRESULT E_NOT_IMPL = E_NOTIMPL;
 class D3D12ResourceImpl;
 using GPUAddressRegistry = std::unordered_map<UINT64, D3D12ResourceImpl*>;
 
+static bool d3d12FormatHasMetalBacking(UINT format) {
+    if (format == ::DXGI_FORMAT_UNKNOWN)
+        return false;
+    DXGITranslation dxgiFormat = static_cast<DXGITranslation>(format);
+    return dxgiFormatToMetal(dxgiFormat) != 0 || dxgiDepthFormatToMetal(dxgiFormat) != 0;
+}
+
+static bool d3d12FormatIsRenderTargetCompatible(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SNORM:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+    case ::DXGI_FORMAT_R10G10B10A2_UNORM:
+    case ::DXGI_FORMAT_R10G10B10A2_UINT:
+    case ::DXGI_FORMAT_R11G11B10_FLOAT:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16G16_FLOAT:
+    case ::DXGI_FORMAT_R16G16_UNORM:
+    case ::DXGI_FORMAT_R16G16_UINT:
+    case ::DXGI_FORMAT_R16G16_SNORM:
+    case ::DXGI_FORMAT_R16G16_SINT:
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_R16_UNORM:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SNORM:
+    case ::DXGI_FORMAT_R16_SINT:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SNORM:
+    case ::DXGI_FORMAT_R8_SINT:
+    case ::DXGI_FORMAT_A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM:
+    case ::DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    case ::DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool d3d12FormatSupportsTypedUAV(UINT format) {
+    switch (format) {
+    case ::DXGI_FORMAT_R32_FLOAT:
+    case ::DXGI_FORMAT_R32_UINT:
+    case ::DXGI_FORMAT_R32_SINT:
+    case ::DXGI_FORMAT_R32G32_FLOAT:
+    case ::DXGI_FORMAT_R32G32_UINT:
+    case ::DXGI_FORMAT_R32G32_SINT:
+    case ::DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case ::DXGI_FORMAT_R32G32B32A32_UINT:
+    case ::DXGI_FORMAT_R32G32B32A32_SINT:
+    case ::DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case ::DXGI_FORMAT_R16G16B16A16_UINT:
+    case ::DXGI_FORMAT_R16G16B16A16_SINT:
+    case ::DXGI_FORMAT_R8G8B8A8_UNORM:
+    case ::DXGI_FORMAT_R8G8B8A8_UINT:
+    case ::DXGI_FORMAT_R8G8B8A8_SINT:
+    case ::DXGI_FORMAT_R16_FLOAT:
+    case ::DXGI_FORMAT_R16_UINT:
+    case ::DXGI_FORMAT_R16_SINT:
+    case ::DXGI_FORMAT_R8_UNORM:
+    case ::DXGI_FORMAT_R8_UINT:
+    case ::DXGI_FORMAT_R8_SINT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 class D3D12FenceImpl final : public ID3D12Fence {
   public:
     std::atomic<ULONG> refCount{1};
@@ -732,20 +818,27 @@ class D3D12DeviceImpl final : public ID3D12Device {
             if (featureSupportDataSize < sizeof(D3D12_FEATURE_DATA_FORMAT_SUPPORT))
                 return E_INVALIDARG;
             auto* data = static_cast<D3D12_FEATURE_DATA_FORMAT_SUPPORT*>(pFeatureSupportData);
+            data->Support1 = 0;
+            data->Support2 = 0;
+            DXGITranslation dxgiFormat = static_cast<DXGITranslation>(data->Format);
+            if (!d3d12FormatHasMetalBacking(data->Format))
+                return S_OK;
+
             data->Support1 = D3D12_FORMAT_SUPPORT1_TEXTURE1D | D3D12_FORMAT_SUPPORT1_TEXTURE2D |
                              D3D12_FORMAT_SUPPORT1_TEXTURECUBE | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
-                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
-            data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+                             D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE;
+            if (!dxgiFormatIsDepth(dxgiFormat) && !dxgiFormatIsCompressed(dxgiFormat))
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            if (!dxgiFormatIsDepth(dxgiFormat))
+                data->Support1 |= D3D12_FORMAT_SUPPORT1_SHADER_GATHER;
             if (data->Format == ::DXGI_FORMAT_R16_UINT || data->Format == ::DXGI_FORMAT_R32_UINT)
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_IA_INDEX_BUFFER;
-            if (data->Format == ::DXGI_FORMAT_B8G8R8A8_UNORM || data->Format == ::DXGI_FORMAT_R8G8B8A8_UNORM ||
-                data->Format == ::DXGI_FORMAT_R16G16B16A16_FLOAT || data->Format == ::DXGI_FORMAT_R10G10B10A2_UNORM)
+            if (d3d12FormatIsRenderTargetCompatible(data->Format))
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_RENDER_TARGET;
-            if (data->Format == ::DXGI_FORMAT_D32_FLOAT || data->Format == ::DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                data->Format == ::DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+            if (dxgiFormatIsDepth(dxgiFormat))
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL;
-            if (data->Format != ::DXGI_FORMAT_UNKNOWN)
-                data->Support1 |= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+            if (d3d12FormatSupportsTypedUAV(data->Format))
+                data->Support2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
             return S_OK;
         }
         case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
@@ -841,6 +934,10 @@ class D3D12DeviceImpl final : public ID3D12Device {
             bool isDepthStencil =
                 (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) && dxgiFormatIsDepth(dxgiFormat);
             uint32_t fmt = isDepthStencil ? dxgiDepthFormatToMetal(dxgiFormat) : dxgiFormatToMetal(dxgiFormat);
+            if (fmt == 0) {
+                delete res;
+                return E_INVALIDARG;
+            }
             uint32_t usage = 0;
             if (pDesc->Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
                 usage |= 0x1;

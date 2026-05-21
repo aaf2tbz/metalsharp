@@ -3,6 +3,7 @@
 #include <cstring>
 #include <d3d/D3D12.h>
 #include <metalsharp/D3D12Device.h>
+#include <metalsharp/DXGI.h>
 #include <thread>
 
 extern "C" {
@@ -11,6 +12,29 @@ HRESULT D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATUR
 HRESULT D3D12GetDebugInterface(const GUID&, void**);
 HRESULT D3D12EnableExperimentalFeatures(unsigned int, const GUID*, void*, unsigned int*);
 }
+
+struct TestSwapChainDesc {
+    struct {
+        DXGI_FORMAT Format;
+        UINT ScanlineOrdering;
+        UINT Scaling;
+        UINT Width;
+        UINT Height;
+        UINT RefreshRateNumerator;
+        UINT RefreshRateDenominator;
+    } BufferDesc;
+    struct {
+        UINT Count;
+        UINT Quality;
+    } SampleDesc;
+    DXGI_FORMAT BufferFormat;
+    UINT BufferUsage;
+    UINT BufferCount;
+    HWND OutputWindow;
+    INT Windowed;
+    UINT SwapEffect;
+    UINT Flags;
+};
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -39,6 +63,33 @@ int main() {
     if (device) {
         hr = device->CreateCommandQueue(nullptr, IID_ID3D12CommandQueue, (void**)&cmdQueue);
         CHECK(SUCCEEDED(hr) && cmdQueue, "CreateCommandQueue");
+    }
+
+    printf("\n--- DXGI D3D12 Swap Chain ---\n");
+    IDXGIFactory1* factory = nullptr;
+    IDXGISwapChain* swapChain = nullptr;
+    if (cmdQueue) {
+        GUID anyFactory = {};
+        hr = CreateDXGIFactory1(anyFactory, (void**)&factory);
+        CHECK(SUCCEEDED(hr) && factory, "CreateDXGIFactory1 for D3D12 queue");
+
+        TestSwapChainDesc swapDesc = {};
+        swapDesc.BufferDesc.Width = 1280;
+        swapDesc.BufferDesc.Height = 720;
+        swapDesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        swapDesc.SampleDesc.Count = 1;
+        swapDesc.BufferCount = 2;
+        swapDesc.Windowed = TRUE;
+        if (factory) {
+            hr = factory->CreateSwapChain(cmdQueue, &swapDesc, &swapChain);
+            CHECK(SUCCEEDED(hr) && swapChain, "CreateSwapChain accepts ID3D12CommandQueue");
+        }
+        if (swapChain) {
+            TestSwapChainDesc readback = {};
+            hr = swapChain->GetDesc(&readback);
+            CHECK(SUCCEEDED(hr) && readback.BufferDesc.Width == 1280 && readback.BufferDesc.Height == 720,
+                  "D3D12 swap chain desc round-trips dimensions");
+        }
     }
 
     printf("\n--- Command Allocator ---\n");
@@ -89,6 +140,27 @@ int main() {
         hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &formatSupport, sizeof(formatSupport));
         CHECK(SUCCEEDED(hr) && (formatSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
               "CheckFeatureSupport: render target format");
+
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT hdrSupport = {DXGI_FORMAT_R11G11B10_FLOAT, 0, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &hdrSupport, sizeof(hdrSupport));
+        CHECK(SUCCEEDED(hr) && (hdrSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
+              "CheckFeatureSupport: R11G11B10 render target");
+
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT srgbSupport = {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, 0, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &srgbSupport, sizeof(srgbSupport));
+        CHECK(SUCCEEDED(hr) && (srgbSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
+              "CheckFeatureSupport: BGRA8 sRGB render target");
+
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT bc7Support = {DXGI_FORMAT_BC7_UNORM, 0, 0};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &bc7Support, sizeof(bc7Support));
+        CHECK(SUCCEEDED(hr) && (bc7Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) &&
+                  !(bc7Support.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
+              "CheckFeatureSupport: BC7 shader sample only");
+
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT unknownSupport = {0xffffu, 123, 456};
+        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &unknownSupport, sizeof(unknownSupport));
+        CHECK(SUCCEEDED(hr) && unknownSupport.Support1 == 0 && unknownSupport.Support2 == 0,
+              "CheckFeatureSupport: unknown format has no support");
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5 = {};
         hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5));
@@ -190,6 +262,27 @@ int main() {
             CHECK(rtTexture->__getResourceState() == D3D12_RESOURCE_STATE_RENDER_TARGET,
                   "Initial resource state correct");
         }
+    }
+
+    printf("\n--- Committed Resource (HDR Render Target) ---\n");
+    ID3D12Resource* hdrTexture = nullptr;
+    if (device) {
+        D3D12_HEAP_PROPERTIES heapProps = {};
+        heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC texDesc = {};
+        texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        texDesc.Width = 128;
+        texDesc.Height = 128;
+        texDesc.DepthOrArraySize = 1;
+        texDesc.MipLevels = 1;
+        texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+        texDesc.SampleDesc = {1, 0};
+        texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        hr = device->CreateCommittedResource(&heapProps, 0, &texDesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
+                                             IID_ID3D12Resource, (void**)&hdrTexture);
+        CHECK(SUCCEEDED(hr) && hdrTexture && hdrTexture->__metalTexturePtr() != nullptr,
+              "CreateCommittedResource (R11G11B10 render target)");
     }
 
     printf("\n--- Resource Barrier ---\n");
@@ -707,6 +800,10 @@ int main() {
         pso->Release();
     if (computePso)
         computePso->Release();
+    if (swapChain)
+        swapChain->Release();
+    if (factory)
+        factory->Release();
     if (cmdSig)
         cmdSig->Release();
     if (fence)
@@ -717,6 +814,8 @@ int main() {
         rtvHeap->Release();
     if (rtTexture)
         rtTexture->Release();
+    if (hdrTexture)
+        hdrTexture->Release();
     if (uploadBuffer)
         uploadBuffer->Release();
     if (cmdList)

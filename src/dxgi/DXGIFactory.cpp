@@ -10,6 +10,8 @@
 
 namespace metalsharp {
 
+MetalDevice* metalDeviceForD3D12CommandQueue(IUnknown* queue);
+
 HRESULT DXGIFactory::create(const GUID& riid, void** ppFactory) {
     if (!ppFactory)
         return E_POINTER;
@@ -78,16 +80,23 @@ HRESULT DXGIFactory::EnumAdapters(UINT Adapter, IDXGIAdapter** ppAdapter) {
 HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapChain** ppSwapChain) {
     if (!ppSwapChain || !pDesc)
         return E_POINTER;
+    if (!pDevice)
+        return E_INVALIDARG;
 
     auto* desc = static_cast<DXGI_SWAP_CHAIN_DESC*>(pDesc);
 
+    MetalDevice* metalDev = nullptr;
     D3D11Device* d3d11Device = nullptr;
     HRESULT hr = pDevice->QueryInterface(__uuidof(ID3D11Device), (void**)&d3d11Device);
-    if (FAILED(hr) || !d3d11Device) {
-        return E_INVALIDARG;
+    if (SUCCEEDED(hr) && d3d11Device) {
+        metalDev = &d3d11Device->metalDevice();
+    } else {
+        metalDev = metalDeviceForD3D12CommandQueue(pDevice);
     }
 
-    MetalDevice* metalDev = &d3d11Device->metalDevice();
+    if (!metalDev) {
+        return E_INVALIDARG;
+    }
 
     uint32_t width = desc->BufferDesc.Width;
     uint32_t height = desc->BufferDesc.Height;
@@ -103,7 +112,8 @@ HRESULT DXGIFactory::CreateSwapChain(IUnknown* pDevice, void* pDesc, IDXGISwapCh
 
     hr = DXGISwapChainImpl::create(metalDev, desc->OutputWindow, width, height, bufferCount, format, ppSwapChain);
 
-    d3d11Device->Release();
+    if (d3d11Device)
+        d3d11Device->Release();
     return hr;
 }
 

@@ -147,6 +147,16 @@ shader-variant stress case, Subnautica is the Unity D3D11/DXMT baseline,
 Rubicon and Elden Ring are protected-launch FromSoftware D3D12 surfaces, and
 Ghostrunner is the Unreal Engine D3D11/D3D12 RHI surface.
 
+The first compatibility expansion from this matrix covers two broad surfaces:
+
+- D3D12 format support now reports against the Metal translation table instead
+  of a small hand-picked subset. HDR render targets such as
+  `R11G11B10_FLOAT`, BGRA sRGB swapchain formats, BC7 shader resources, and
+  typed UAV-capable formats now return consistent `CheckFeatureSupport` bits.
+- DXGI swapchain creation now accepts `ID3D12CommandQueue`, matching the
+  D3D12/DXGI handoff used by Unreal and FromSoftware titles instead of only
+  accepting an `ID3D11Device`.
+
 ## Completion State
 
 | Area | State | Notes |

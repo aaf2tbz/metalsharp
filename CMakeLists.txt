@@ -146,7 +146,7 @@ add_library(metalsharp_dxgi SHARED
     src/dxgi/DXGISwapChain.mm
     src/dxgi/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core)
+target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core metalsharp_d3d12)
 target_compile_options(metalsharp_dxgi PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_dxgi PROPERTIES OUTPUT_NAME "dxgi" PREFIX "")
 
