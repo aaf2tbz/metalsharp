@@ -9,7 +9,6 @@ use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
 const MANIFEST_FILE: &str = "library.json";
-const INSTALLER_WINEDEBUG_DEFAULT: &str = "-all,+msi,+seh,+tid";
 
 fn base_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_default();
@@ -567,10 +566,9 @@ fn start_wine_installer_in_bottle(
     let launch_id = installer_launch_id(src, pipeline);
     let log_path = crate::bottles::next_launch_log_path(&bottle.id);
     let prefix_path = PathBuf::from(&bottle.prefix_path);
-    write_installer_launch_metadata(&log_path, src, &staged_exe, classification, bottle, pipeline)?;
 
     let pid = if classification.installer_kind == crate::bottles::InstallerKind::Msi {
-        launch_msi_installer(&staged_exe, classification, &prefix_path, &log_path)?
+        launch_msi_installer(&staged_exe, &prefix_path, &log_path)?
     } else {
         let (pid, _, _) = crate::mtsp::launcher::launch_custom_with_options(
             launch_id,
@@ -581,7 +579,6 @@ fn start_wine_installer_in_bottle(
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(prefix_path),
                 log_path: Some(log_path.clone()),
-                extra_env: installer_extra_env(classification),
             },
         )?;
         pid
@@ -599,57 +596,8 @@ fn start_wine_installer_in_bottle(
     })
 }
 
-fn write_installer_launch_metadata(
-    log_path: &Path,
-    source: &Path,
-    staged: &Path,
-    classification: &crate::bottles::InstallerClassification,
-    bottle: &crate::bottles::BottleManifest,
-    pipeline: crate::mtsp::engine::PipelineId,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
-    writeln!(log, "installer_source={}", source.display())?;
-    writeln!(log, "installer_staged={}", staged.display())?;
-    writeln!(log, "installer_kind={:?}", classification.installer_kind)?;
-    writeln!(log, "installer_arch={:?}", classification.arch)?;
-    writeln!(log, "runtime_profile={:?}", classification.runtime_profile)?;
-    writeln!(log, "pipeline={}", pipeline_engine_id(pipeline))?;
-    writeln!(log, "bottle_id={}", bottle.id)?;
-    writeln!(log, "bottle_prefix={}", bottle.prefix_path)?;
-    writeln!(log, "classification_hints={}", classification.hints.join(","))?;
-    for (key, value) in installer_extra_env(classification) {
-        writeln!(log, "installer_env:{}={}", key, value)?;
-    }
-    Ok(())
-}
-
-fn installer_extra_env(classification: &crate::bottles::InstallerClassification) -> Vec<(String, String)> {
-    let wine_debug =
-        std::env::var("METALSHARP_INSTALLER_WINEDEBUG").unwrap_or_else(|_| INSTALLER_WINEDEBUG_DEFAULT.to_string());
-    let mut env = vec![
-        ("WINEDEBUG".to_string(), wine_debug),
-        ("METALSHARP_INSTALLER_KIND".to_string(), format!("{:?}", classification.installer_kind).to_ascii_lowercase()),
-        (
-            "METALSHARP_INSTALLER_PROFILE".to_string(),
-            format!("{:?}", classification.runtime_profile).to_ascii_lowercase(),
-        ),
-    ];
-    if classification.hints.iter().any(|hint| hint == "known_launcher:ea_app") {
-        env.push(("METALSHARP_LAUNCHER_FAMILY".to_string(), "ea".to_string()));
-    } else if classification.hints.iter().any(|hint| hint == "known_launcher:ubisoft_connect") {
-        env.push(("METALSHARP_LAUNCHER_FAMILY".to_string(), "ubisoft".to_string()));
-    } else if classification.hints.iter().any(|hint| hint == "known_launcher:eac_eos") {
-        env.push(("METALSHARP_LAUNCHER_FAMILY".to_string(), "easyanticheat".to_string()));
-    }
-    env
-}
-
 fn launch_msi_installer(
     staged_msi: &Path,
-    classification: &crate::bottles::InstallerClassification,
     prefix_path: &Path,
     log_path: &Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
@@ -667,11 +615,6 @@ fn launch_msi_installer(
     writeln!(log, "installer_kind=msi")?;
     writeln!(log, "prefix={}", prefix_path.display())?;
     writeln!(log, "msi={}", staged_msi.display())?;
-    let msi_log_path = log_path.with_file_name(format!(
-        "{}.msi.log",
-        log_path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("installer")
-    ));
-    writeln!(log, "msi_log={}", msi_log_path.display())?;
     writeln!(log, "--- wine output ---")?;
     let stdout = log.try_clone()?;
 
@@ -679,14 +622,10 @@ fn launch_msi_installer(
     cmd.arg("msiexec")
         .arg("/i")
         .arg(staged_msi)
-        .arg("/L*v")
-        .arg(&msi_log_path)
         .env("WINEPREFIX", prefix_path.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
-    for (key, value) in installer_extra_env(classification) {
-        cmd.env(key, value);
-    }
     if let Some(parent) = staged_msi.parent() {
         cmd.current_dir(parent);
     }
@@ -843,7 +782,6 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(PathBuf::from(bottle.prefix_path)),
                 log_path: Some(log_path.clone()),
-                extra_env: Vec::new(),
             },
         )
         .inspect(|result| {

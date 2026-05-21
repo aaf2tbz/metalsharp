@@ -7,10 +7,6 @@ int main() {
 
     assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_R8G8B8A8_UNORM) != 0);
     assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_B8G8R8A8_UNORM) != 0);
-    assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_R11G11B10_FLOAT) != 0);
-    assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_R16G16B16A16_UNORM) != 0);
-    assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) != 0);
-    assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_BC7_UNORM) != 0);
     assert(dxgiFormatToMetal(DXGI_FORMAT_D32_FLOAT) != 0);
     assert(dxgiFormatToMetal(DXGITranslation::DXGI_FORMAT_UNKNOWN) == 0);
     assert(static_cast<unsigned int>(DXGITranslation::DXGI_FORMAT_R16G16_UNORM) == 35);
@@ -25,7 +21,6 @@ int main() {
     assert(!dxgiFormatIsDepth(DXGITranslation::DXGI_FORMAT_R8G8B8A8_UNORM));
 
     assert(dxgiFormatIsCompressed(DXGITranslation::DXGI_FORMAT_BC1_UNORM));
-    assert(dxgiFormatIsCompressed(DXGITranslation::DXGI_FORMAT_BC7_UNORM));
     assert(!dxgiFormatIsCompressed(DXGITranslation::DXGI_FORMAT_R8G8B8A8_UNORM));
 
     assert(dxgiFormatToBytesPerPixel(DXGITranslation::DXGI_FORMAT_R8G8B8A8_UNORM) == 4);

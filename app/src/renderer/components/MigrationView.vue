@@ -9,12 +9,6 @@ const error = ref<string | null>(null);
 const complete = ref(false);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let pollFailures = 0;
-let lastProgressSignature = "";
-let lastProgressAt = Date.now();
-
-const MAX_POLL_FAILURES = 20;
-const STALE_PROGRESS_MS = 7 * 60 * 1000;
 
 const percent = computed(() => {
   if (total.value === 0) return 0;
@@ -79,13 +73,7 @@ async function pollProgress() {
   try {
     const res = await window.metalsharp.migrateProgress();
     if (!res) return;
-    pollFailures = 0;
     const data = res.data ?? res;
-    const signature = `${data.status ?? "idle"}:${data.step ?? 0}:${data.total ?? 0}:${data.message ?? ""}:${data.error ?? ""}`;
-    if (signature !== lastProgressSignature) {
-      lastProgressSignature = signature;
-      lastProgressAt = Date.now();
-    }
     status.value = data.status ?? "idle";
     step.value = data.step ?? 0;
     total.value = data.total ?? 0;
@@ -97,24 +85,11 @@ async function pollProgress() {
       stopPolling();
     } else if (status.value === "error") {
       stopPolling();
-    } else if (Date.now() - lastProgressAt > STALE_PROGRESS_MS) {
-      error.value = "migration_stalled";
-      message.value = "Migration stopped reporting progress. Restart MetalSharp and run setup repair.";
-      stopPolling();
     }
-  } catch (e: unknown) {
-    pollFailures += 1;
-    if (pollFailures >= MAX_POLL_FAILURES) {
-      error.value = e instanceof Error ? e.message : "Migration backend unavailable";
-      message.value = `Error: ${error.value}`;
-      stopPolling();
-    }
-  }
+  } catch {}
 }
 
 function startPolling() {
-  stopPolling();
-  void pollProgress();
   pollTimer = setInterval(pollProgress, 500);
 }
 

@@ -957,12 +957,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             return resp(500, json!({"ok": false, "error": "no pipeline resolved"}));
                         },
                     };
-                    let launch_args = parse_launch_args(&body);
-                    if !launch_args.is_empty() {
-                        app_log(&format!("[LAUNCH] appid {} | args: {:?}", id, launch_args));
-                    }
-                    let result =
-                        crate::mtsp::launcher::launch_with_pipeline_and_args(id as u32, pipeline, &launch_args);
+                    let result = crate::mtsp::launcher::launch_with_pipeline(id as u32, pipeline);
                     match result {
                         Ok((pid, game_type)) => {
                             register_game_pid(id as u32, pid);
@@ -1355,20 +1350,6 @@ fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Res
     Ok(appid)
 }
 
-fn parse_launch_args(body: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
-    body.get("launchArgs")
-        .and_then(|value| value.as_array())
-        .map(|args| {
-            args.iter()
-                .filter_map(|arg| arg.as_str())
-                .filter(|arg| !arg.is_empty())
-                .take(32)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn runtime_mutation_trust_reason(installing: bool, migrating: bool) -> Option<&'static str> {
     if installing {
         Some("setup_install")
@@ -1461,18 +1442,6 @@ mod tests {
         body.insert("appid".into(), json!(620));
 
         assert_eq!(parse_request_appid(&body), Ok(620));
-    }
-
-    #[test]
-    fn launch_args_accept_only_string_values_with_a_small_cap() {
-        let mut body = serde_json::Map::new();
-        body.insert("launchArgs".into(), json!(["-force-d3d12", "", 12, true, "-screen-width", "1920", "-extra"]));
-
-        assert_eq!(parse_launch_args(&body), vec!["-force-d3d12", "-screen-width", "1920", "-extra"]);
-
-        let mut many = serde_json::Map::new();
-        many.insert("launchArgs".into(), json!((0..40).map(|i| format!("-arg{}", i)).collect::<Vec<_>>()));
-        assert_eq!(parse_launch_args(&many).len(), 32);
     }
 
     #[test]

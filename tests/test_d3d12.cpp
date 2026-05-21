@@ -3,7 +3,6 @@
 #include <cstring>
 #include <d3d/D3D12.h>
 #include <metalsharp/D3D12Device.h>
-#include <metalsharp/DXGI.h>
 #include <thread>
 
 extern "C" {
@@ -12,29 +11,6 @@ HRESULT D3D12SerializeVersionedRootSignature(const D3D12_VERSIONED_ROOT_SIGNATUR
 HRESULT D3D12GetDebugInterface(const GUID&, void**);
 HRESULT D3D12EnableExperimentalFeatures(unsigned int, const GUID*, void*, unsigned int*);
 }
-
-struct TestSwapChainDesc {
-    struct {
-        DXGI_FORMAT Format;
-        UINT ScanlineOrdering;
-        UINT Scaling;
-        UINT Width;
-        UINT Height;
-        UINT RefreshRateNumerator;
-        UINT RefreshRateDenominator;
-    } BufferDesc;
-    struct {
-        UINT Count;
-        UINT Quality;
-    } SampleDesc;
-    DXGI_FORMAT BufferFormat;
-    UINT BufferUsage;
-    UINT BufferCount;
-    HWND OutputWindow;
-    INT Windowed;
-    UINT SwapEffect;
-    UINT Flags;
-};
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -63,106 +39,6 @@ int main() {
     if (device) {
         hr = device->CreateCommandQueue(nullptr, IID_ID3D12CommandQueue, (void**)&cmdQueue);
         CHECK(SUCCEEDED(hr) && cmdQueue, "CreateCommandQueue");
-    }
-
-    printf("\n--- DXGI D3D12 Swap Chain ---\n");
-    IDXGIFactory1* factory = nullptr;
-    IDXGISwapChain* swapChain = nullptr;
-    IDXGIFactory2* factory2 = nullptr;
-    IDXGIFactory3* factory3 = nullptr;
-    IDXGIFactory4* factory4 = nullptr;
-    IDXGISwapChain1* hwndSwapChain = nullptr;
-    IDXGISwapChain1* compositionSwapChain = nullptr;
-    ID3D12Resource* swapChainBackBuffer = nullptr;
-    if (cmdQueue) {
-        GUID anyFactory = {};
-        hr = CreateDXGIFactory1(anyFactory, (void**)&factory);
-        CHECK(SUCCEEDED(hr) && factory, "CreateDXGIFactory1 for D3D12 queue");
-
-        TestSwapChainDesc swapDesc = {};
-        swapDesc.BufferDesc.Width = 1280;
-        swapDesc.BufferDesc.Height = 720;
-        swapDesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        swapDesc.SampleDesc.Count = 1;
-        swapDesc.BufferCount = 2;
-        swapDesc.Windowed = TRUE;
-        if (factory) {
-            hr = factory->CreateSwapChain(cmdQueue, &swapDesc, &swapChain);
-            CHECK(SUCCEEDED(hr) && swapChain, "CreateSwapChain accepts ID3D12CommandQueue");
-        }
-        if (swapChain) {
-            TestSwapChainDesc readback = {};
-            hr = swapChain->GetDesc(&readback);
-            CHECK(SUCCEEDED(hr) && readback.BufferDesc.Width == 1280 && readback.BufferDesc.Height == 720,
-                  "D3D12 swap chain desc round-trips dimensions");
-        }
-        if (factory) {
-            hr = factory->QueryInterface(anyFactory, (void**)&factory2);
-            CHECK(SUCCEEDED(hr) && factory2, "QueryInterface exposes IDXGIFactory2");
-            hr = factory->QueryInterface(anyFactory, (void**)&factory3);
-            CHECK(SUCCEEDED(hr) && factory3, "QueryInterface exposes IDXGIFactory3");
-            hr = factory->QueryInterface(anyFactory, (void**)&factory4);
-            CHECK(SUCCEEDED(hr) && factory4, "QueryInterface exposes IDXGIFactory4");
-        }
-        if (factory2) {
-            DXGI_SWAP_CHAIN_DESC1 desc1 = {};
-            desc1.Width = 1024;
-            desc1.Height = 576;
-            desc1.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-            desc1.SampleDesc.Count = 1;
-            desc1.BufferUsage = 0x20;
-            desc1.BufferCount = 2;
-            CHECK(factory2->IsWindowedStereoEnabled() == FALSE, "IDXGIFactory2::IsWindowedStereoEnabled stub");
-            DWORD cookie = 0;
-            hr = factory2->RegisterStereoStatusWindow(nullptr, 0, &cookie);
-            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterStereoStatusWindow stub");
-            factory2->UnregisterStereoStatus(cookie);
-            hr = factory2->RegisterStereoStatusEvent(nullptr, &cookie);
-            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterStereoStatusEvent stub");
-            factory2->UnregisterStereoStatus(cookie);
-            hr = factory2->RegisterOcclusionStatusWindow(nullptr, 0, &cookie);
-            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterOcclusionStatusWindow stub");
-            factory2->UnregisterOcclusionStatus(cookie);
-            hr = factory2->RegisterOcclusionStatusEvent(nullptr, &cookie);
-            CHECK(SUCCEEDED(hr) && cookie != 0, "IDXGIFactory2::RegisterOcclusionStatusEvent stub");
-            factory2->UnregisterOcclusionStatus(cookie);
-            LUID sharedLuid = {};
-            hr = factory2->GetSharedResourceAdapterLuid(nullptr, &sharedLuid);
-            CHECK(SUCCEEDED(hr) && sharedLuid.LowPart == 0x106b, "IDXGIFactory2::GetSharedResourceAdapterLuid stub");
-            hr = factory2->CreateSwapChainForHwnd(cmdQueue, nullptr, &desc1, nullptr, nullptr, &hwndSwapChain);
-            CHECK(SUCCEEDED(hr) && hwndSwapChain, "CreateSwapChainForHwnd accepts ID3D12CommandQueue");
-            IDXGISwapChain1* coreWindowSwapChain = nullptr;
-            hr = factory2->CreateSwapChainForCoreWindow(cmdQueue, nullptr, &desc1, nullptr, &coreWindowSwapChain);
-            CHECK(SUCCEEDED(hr) && coreWindowSwapChain, "CreateSwapChainForCoreWindow accepts ID3D12CommandQueue");
-            if (coreWindowSwapChain)
-                coreWindowSwapChain->Release();
-            hr = factory2->CreateSwapChainForComposition(cmdQueue, &desc1, nullptr, &compositionSwapChain);
-            CHECK(SUCCEEDED(hr) && compositionSwapChain, "CreateSwapChainForComposition accepts ID3D12CommandQueue");
-            if (hwndSwapChain) {
-                hr = hwndSwapChain->GetBuffer(0, IID_ID3D12Resource, (void**)&swapChainBackBuffer);
-                CHECK(SUCCEEDED(hr) && swapChainBackBuffer && swapChainBackBuffer->__metalTexturePtr() != nullptr,
-                      "IDXGISwapChain1::GetBuffer returns ID3D12Resource");
-                hr = hwndSwapChain->Present1(0, 0, nullptr);
-                CHECK(SUCCEEDED(hr), "IDXGISwapChain1::Present1");
-                UINT presentCount = 0;
-                hr = hwndSwapChain->GetLastPresentCount(&presentCount);
-                CHECK(SUCCEEDED(hr) && presentCount == 1, "IDXGISwapChain1::GetLastPresentCount advances");
-            }
-        }
-        if (factory3) {
-            CHECK(factory3->GetCreationFlags() == 0, "IDXGIFactory3::GetCreationFlags stub");
-        }
-        if (factory4) {
-            void* warp = nullptr;
-            hr = factory4->EnumWarpAdapter(anyFactory, &warp);
-            CHECK(hr == DXGI_ERROR_NOT_FOUND && warp == nullptr, "IDXGIFactory4::EnumWarpAdapter stub");
-            IDXGIAdapter* adapterByLuid = nullptr;
-            LUID luid = {};
-            hr = factory4->EnumAdapterByLuid(luid, anyFactory, (void**)&adapterByLuid);
-            CHECK(SUCCEEDED(hr) && adapterByLuid, "IDXGIFactory4::EnumAdapterByLuid returns primary adapter");
-            if (adapterByLuid)
-                adapterByLuid->Release();
-        }
     }
 
     printf("\n--- Command Allocator ---\n");
@@ -214,54 +90,9 @@ int main() {
         CHECK(SUCCEEDED(hr) && (formatSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
               "CheckFeatureSupport: render target format");
 
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT hdrSupport = {DXGI_FORMAT_R11G11B10_FLOAT, 0, 0};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &hdrSupport, sizeof(hdrSupport));
-        CHECK(SUCCEEDED(hr) && (hdrSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
-              "CheckFeatureSupport: R11G11B10 render target");
-
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT srgbSupport = {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, 0, 0};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &srgbSupport, sizeof(srgbSupport));
-        CHECK(SUCCEEDED(hr) && (srgbSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
-              "CheckFeatureSupport: BGRA8 sRGB render target");
-
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT bc7Support = {DXGI_FORMAT_BC7_UNORM, 0, 0};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &bc7Support, sizeof(bc7Support));
-        CHECK(SUCCEEDED(hr) && (bc7Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) &&
-                  !(bc7Support.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET),
-              "CheckFeatureSupport: BC7 shader sample only");
-
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT unknownSupport = {0xffffu, 123, 456};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &unknownSupport, sizeof(unknownSupport));
-        CHECK(SUCCEEDED(hr) && unknownSupport.Support1 == 0 && unknownSupport.Support2 == 0,
-              "CheckFeatureSupport: unknown format has no support");
-
-        D3D12_FEATURE_DATA_FORMAT_INFO formatInfo = {DXGI_FORMAT_B8G8R8A8_UNORM, 0};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_INFO, &formatInfo, sizeof(formatInfo));
-        CHECK(SUCCEEDED(hr) && formatInfo.PlaneCount == 1, "CheckFeatureSupport: supported format plane count");
-
-        D3D12_FEATURE_DATA_FORMAT_INFO unknownFormatInfo = {0xffffu, 7};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_INFO, &unknownFormatInfo, sizeof(unknownFormatInfo));
-        CHECK(SUCCEEDED(hr) && unknownFormatInfo.PlaneCount == 0, "CheckFeatureSupport: unknown format has no planes");
-
-        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS msaa = {DXGI_FORMAT_B8G8R8A8_UNORM, 4, 0, 0};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &msaa, sizeof(msaa));
-        CHECK(SUCCEEDED(hr) && msaa.NumQualityLevels == 1, "CheckFeatureSupport: supported MSAA count");
-
-        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS unsupportedMsaa = {DXGI_FORMAT_BC7_UNORM, 4, 0, 99};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &unsupportedMsaa,
-                                         sizeof(unsupportedMsaa));
-        CHECK(SUCCEEDED(hr) && unsupportedMsaa.NumQualityLevels == 0,
-              "CheckFeatureSupport: compressed format has no MSAA quality");
-
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5 = {};
         hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5));
-        CHECK(SUCCEEDED(hr) && options5.RaytracingTier == D3D12_RAYTRACING_TIER_NOT_SUPPORTED,
-              "CheckFeatureSupport: raytracing tier not advertised");
-
-        D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
-        hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7));
-        CHECK(SUCCEEDED(hr) && options7.MeshShaderTier == D3D12_MESH_SHADER_TIER_NOT_SUPPORTED,
-              "CheckFeatureSupport: mesh shader tier not advertised");
+        CHECK(SUCCEEDED(hr), "CheckFeatureSupport: options5");
 
         hr = device->CheckFeatureSupport(0xffffffffu, &options, sizeof(options));
         CHECK(hr == E_INVALIDARG, "CheckFeatureSupport rejects unknown feature");
@@ -333,36 +164,6 @@ int main() {
         }
     }
 
-    printf("\n--- Resource Allocation Info ---\n");
-    if (device) {
-        D3D12_RESOURCE_DESC allocationDescs[2] = {};
-        allocationDescs[0].Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        allocationDescs[0].Width = 1024;
-        allocationDescs[0].Height = 1;
-        allocationDescs[0].DepthOrArraySize = 1;
-        allocationDescs[0].MipLevels = 1;
-        allocationDescs[0].SampleDesc.Count = 1;
-        allocationDescs[0].Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        allocationDescs[1].Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        allocationDescs[1].Width = 256;
-        allocationDescs[1].Height = 256;
-        allocationDescs[1].DepthOrArraySize = 1;
-        allocationDescs[1].MipLevels = 4;
-        allocationDescs[1].Format = DXGI_FORMAT_BC7_UNORM;
-        allocationDescs[1].SampleDesc.Count = 1;
-
-        D3D12_RESOURCE_ALLOCATION_INFO allocationInfo = device->GetResourceAllocationInfo(0, 2, allocationDescs);
-        CHECK(allocationInfo.Alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
-              "GetResourceAllocationInfo reports default alignment");
-        CHECK(allocationInfo.SizeInBytes >= D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT * 2,
-              "GetResourceAllocationInfo accumulates aligned resource sizes");
-
-        D3D12_RESOURCE_ALLOCATION_INFO emptyAllocation = device->GetResourceAllocationInfo(0, 0, nullptr);
-        CHECK(emptyAllocation.SizeInBytes == 0 && emptyAllocation.Alignment == 0,
-              "GetResourceAllocationInfo handles empty requests");
-    }
-
     printf("\n--- Committed Resource (Texture2D) ---\n");
     ID3D12Resource* rtTexture = nullptr;
     if (device) {
@@ -391,27 +192,6 @@ int main() {
         }
     }
 
-    printf("\n--- Committed Resource (HDR Render Target) ---\n");
-    ID3D12Resource* hdrTexture = nullptr;
-    if (device) {
-        D3D12_HEAP_PROPERTIES heapProps = {};
-        heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-        D3D12_RESOURCE_DESC texDesc = {};
-        texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        texDesc.Width = 128;
-        texDesc.Height = 128;
-        texDesc.DepthOrArraySize = 1;
-        texDesc.MipLevels = 1;
-        texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-        texDesc.SampleDesc = {1, 0};
-        texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-
-        hr = device->CreateCommittedResource(&heapProps, 0, &texDesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
-                                             IID_ID3D12Resource, (void**)&hdrTexture);
-        CHECK(SUCCEEDED(hr) && hdrTexture && hdrTexture->__metalTexturePtr() != nullptr,
-              "CreateCommittedResource (R11G11B10 render target)");
-    }
-
     printf("\n--- Resource Barrier ---\n");
     if (cmdList && rtTexture) {
         D3D12_RESOURCE_BARRIER barrier = {};
@@ -436,7 +216,6 @@ int main() {
 
     printf("\n--- Descriptor Heap ---\n");
     ID3D12DescriptorHeap* rtvHeap = nullptr;
-    ID3D12DescriptorHeap* copiedRtvHeap = nullptr;
     if (device) {
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
         heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -450,14 +229,6 @@ int main() {
             CHECK(rtvHeap->__getDescriptorCount() == 4, "Descriptor count is 4");
             CHECK(rtvHeap->__getHeapType() == D3D12_DESCRIPTOR_HEAP_TYPE_RTV, "Heap type is RTV");
         }
-
-        hr = device->CreateDescriptorHeap(&heapDesc, IID_ID3D12DescriptorHeap, (void**)&copiedRtvHeap);
-        CHECK(SUCCEEDED(hr) && copiedRtvHeap, "CreateDescriptorHeap (copy target)");
-        if (rtvHeap && copiedRtvHeap) {
-            CHECK(rtvHeap->__getCPUDescriptorHandleForHeapStart().ptr !=
-                      copiedRtvHeap->__getCPUDescriptorHandleForHeapStart().ptr,
-                  "Descriptor heaps have distinct CPU handle ranges");
-        }
     }
 
     printf("\n--- Render Target View ---\n");
@@ -465,35 +236,6 @@ int main() {
         D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->__getCPUDescriptorHandleForHeapStart();
         hr = device->CreateRenderTargetView(rtTexture, nullptr, rtvHandle);
         CHECK(SUCCEEDED(hr), "CreateRenderTargetView");
-
-        if (copiedRtvHeap) {
-            D3D12_CPU_DESCRIPTOR_HANDLE copyHandle = copiedRtvHeap->__getCPUDescriptorHandleForHeapStart();
-            device->CopyDescriptorsSimple(1, copyHandle, rtvHandle, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-            auto* copiedHeapImpl = static_cast<metalsharp::D3D12DescriptorHeapImpl*>(copiedRtvHeap);
-            auto* copiedDescriptor = copiedHeapImpl->getDescriptor(copyHandle);
-            CHECK(copiedDescriptor && copiedDescriptor->resource == rtTexture &&
-                      copiedDescriptor->type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
-                  "CopyDescriptorsSimple copies RTV descriptor across heaps");
-        }
-
-        auto* rtvHeapImpl = static_cast<metalsharp::D3D12DescriptorHeapImpl*>(rtvHeap);
-        if (rtvHeapImpl) {
-            auto heapStart = rtvHeap->__getCPUDescriptorHandleForHeapStart();
-            auto* original0 = rtvHeapImpl->getDescriptorByIndex(0);
-            auto* original1 = rtvHeapImpl->getDescriptorByIndex(1);
-            auto* original2 = rtvHeapImpl->getDescriptorByIndex(2);
-            if (original0 && original1 && original2) {
-                *original1 = *original0;
-                original1->resource = uploadBuffer;
-                *original2 = *original0;
-                original2->resource = rtTexture;
-                D3D12_CPU_DESCRIPTOR_HANDLE overlapDst = {heapStart.ptr + 1};
-                device->CopyDescriptorsSimple(2, overlapDst, heapStart, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-                CHECK(rtvHeapImpl->getDescriptorByIndex(1)->resource == original0->resource &&
-                          rtvHeapImpl->getDescriptorByIndex(2)->resource == uploadBuffer,
-                      "CopyDescriptorsSimple handles same-heap overlapping ranges");
-            }
-        }
 
         FLOAT clearColor[4] = {0.2f, 0.3f, 0.4f, 1.0f};
         ID3D12GraphicsCommandList* clearList = nullptr;
@@ -505,26 +247,6 @@ int main() {
             clearList->Close();
             clearList->Release();
         }
-    }
-
-    printf("\n--- Private Data ---\n");
-    if (device && rtTexture) {
-        static const GUID privateGuid = {0x9bd8ecdb, 0x2b7b, 0x4da3, {0xb5, 0x3b, 0x01, 0x8a, 0xf7, 0x1b, 0xf8, 0x90}};
-        const char tag[] = "sons-d3d12-resource";
-        hr = rtTexture->SetPrivateData(privateGuid, sizeof(tag), tag);
-        CHECK(SUCCEEDED(hr), "SetPrivateData on D3D12 resource");
-
-        UINT privateSize = 0;
-        hr = rtTexture->GetPrivateData(privateGuid, &privateSize, nullptr);
-        CHECK(SUCCEEDED(hr) && privateSize == sizeof(tag), "GetPrivateData reports required size");
-
-        char privateBuffer[sizeof(tag)] = {};
-        privateSize = sizeof(privateBuffer);
-        hr = rtTexture->GetPrivateData(privateGuid, &privateSize, privateBuffer);
-        CHECK(SUCCEEDED(hr) && strcmp(privateBuffer, tag) == 0, "GetPrivateData round-trips resource blob");
-
-        hr = rtTexture->SetName("MetalSharp D3D12 test resource");
-        CHECK(SUCCEEDED(hr), "SetName on D3D12 resource");
     }
 
     printf("\n--- Root Signature ---\n");
@@ -844,38 +566,6 @@ int main() {
         }
     }
 
-    printf("\n--- Swapchain D3D12 Render Target View ---\n");
-    if (device && swapChainBackBuffer && rtvHeap) {
-        D3D12_CPU_DESCRIPTOR_HANDLE swapchainRtv = rtvHeap->__getCPUDescriptorHandleForHeapStart();
-        swapchainRtv.ptr += 1;
-        hr = device->CreateRenderTargetView(swapChainBackBuffer, nullptr, swapchainRtv);
-        CHECK(SUCCEEDED(hr), "CreateRenderTargetView accepts swapchain ID3D12Resource");
-
-        ID3D12GraphicsCommandList* presentList = nullptr;
-        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr,
-                                       IID_ID3D12GraphicsCommandList, (void**)&presentList);
-        CHECK(SUCCEEDED(hr) && presentList, "Create command list for swapchain present barriers");
-        if (presentList) {
-            D3D12_RESOURCE_BARRIER toRenderTarget = {};
-            toRenderTarget.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-            toRenderTarget.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-            toRenderTarget.pResource = swapChainBackBuffer;
-            hr = presentList->ResourceBarrier(1, &toRenderTarget);
-            CHECK(SUCCEEDED(hr) && swapChainBackBuffer->__getResourceState() == D3D12_RESOURCE_STATE_RENDER_TARGET,
-                  "Swapchain backbuffer transitions PRESENT to RENDER_TARGET");
-
-            D3D12_RESOURCE_BARRIER toPresent = {};
-            toPresent.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-            toPresent.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-            toPresent.pResource = swapChainBackBuffer;
-            hr = presentList->ResourceBarrier(1, &toPresent);
-            CHECK(SUCCEEDED(hr) && swapChainBackBuffer->__getResourceState() == D3D12_RESOURCE_STATE_PRESENT,
-                  "Swapchain backbuffer transitions RENDER_TARGET to PRESENT");
-            presentList->Close();
-            presentList->Release();
-        }
-    }
-
     printf("\n--- Descriptor handle increment ---\n");
     if (device) {
         UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -1017,30 +707,16 @@ int main() {
         pso->Release();
     if (computePso)
         computePso->Release();
-    if (swapChainBackBuffer)
-        swapChainBackBuffer->Release();
-    if (hwndSwapChain)
-        hwndSwapChain->Release();
-    if (factory2)
-        factory2->Release();
-    if (swapChain)
-        swapChain->Release();
-    if (factory)
-        factory->Release();
     if (cmdSig)
         cmdSig->Release();
     if (fence)
         fence->Release();
     if (rootSig)
         rootSig->Release();
-    if (copiedRtvHeap)
-        copiedRtvHeap->Release();
     if (rtvHeap)
         rtvHeap->Release();
     if (rtTexture)
         rtTexture->Release();
-    if (hdrTexture)
-        hdrTexture->Release();
     if (uploadBuffer)
         uploadBuffer->Release();
     if (cmdList)

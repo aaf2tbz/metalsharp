@@ -100,10 +100,6 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
     default_pipeline()
 }
 
-pub fn configured_pipeline(appid: u32) -> Option<PipelineId> {
-    load_rules().get(&appid).copied()
-}
-
 fn default_pipeline() -> PipelineId {
     PipelineId::M12
 }

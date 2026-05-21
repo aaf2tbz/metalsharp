@@ -106,8 +106,6 @@ class MetalTexture {
                                   uint32_t mipLevels = 1, uint32_t sampleCount = 1);
     static MetalTexture* create3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format,
                                   uint32_t usage, uint32_t mipLevels = 1);
-    static MetalTexture* wrapNative2D(void* nativeTexture, uint32_t width, uint32_t height, uint32_t format,
-                                      uint32_t mipLevels = 1, uint32_t sampleCount = 1);
     ~MetalTexture();
 
     void* nativeTexture() const;
@@ -127,8 +125,6 @@ class MetalTexture {
                 uint32_t mipLevels, uint32_t sampleCount);
     bool init3D(MetalDevice& device, uint32_t width, uint32_t height, uint32_t depth, uint32_t format, uint32_t usage,
                 uint32_t mipLevels);
-    bool wrap2D(void* nativeTexture, uint32_t width, uint32_t height, uint32_t format, uint32_t mipLevels,
-                uint32_t sampleCount);
 
     struct Impl;
     Impl* m_impl;

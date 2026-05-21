@@ -108,19 +108,6 @@ bool MetalTexture::init3D(MetalDevice& device, uint32_t width, uint32_t height, 
     return m_impl->texture != nil;
 }
 
-bool MetalTexture::wrap2D(void* nativeTexture, uint32_t width, uint32_t height, uint32_t, uint32_t mipLevels,
-                          uint32_t sampleCount) {
-    if (!nativeTexture)
-        return false;
-    m_impl->texture = (__bridge id<MTLTexture>)nativeTexture;
-    m_impl->w = width;
-    m_impl->h = height;
-    m_impl->d = 1;
-    m_impl->mips = mipLevels > 0 ? mipLevels : 1;
-    m_impl->samples = sampleCount > 0 ? sampleCount : 1;
-    return true;
-}
-
 MetalTexture* MetalTexture::create1D(MetalDevice& device, uint32_t width, uint32_t format, uint32_t usage,
                                      uint32_t mipLevels) {
     MetalTexture* tex = new MetalTexture();
@@ -145,16 +132,6 @@ MetalTexture* MetalTexture::create3D(MetalDevice& device, uint32_t width, uint32
                                      uint32_t format, uint32_t usage, uint32_t mipLevels) {
     MetalTexture* tex = new MetalTexture();
     if (!tex->init3D(device, width, height, depth, format, usage, mipLevels)) {
-        delete tex;
-        return nullptr;
-    }
-    return tex;
-}
-
-MetalTexture* MetalTexture::wrapNative2D(void* nativeTexture, uint32_t width, uint32_t height, uint32_t format,
-                                         uint32_t mipLevels, uint32_t sampleCount) {
-    MetalTexture* tex = new MetalTexture();
-    if (!tex->wrap2D(nativeTexture, width, height, format, mipLevels, sampleCount)) {
         delete tex;
         return nullptr;
     }

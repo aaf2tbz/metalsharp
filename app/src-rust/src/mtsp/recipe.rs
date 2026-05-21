@@ -118,13 +118,6 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         );
     }
 
-    let launch_args = launch_args_for_recipe(
-        node,
-        game_dir.as_deref(),
-        super::rules::configured_pipeline(appid),
-        node.launch_args.iter().copied(),
-    );
-
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -133,7 +126,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args,
+        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
         env: node
             .env_vars
             .iter()
@@ -186,8 +179,6 @@ pub fn build_custom_launch_recipe(
         );
     }
 
-    let launch_args = launch_args_for_recipe(node, Some(&game_dir), None, node.launch_args.iter().copied());
-
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -196,7 +187,7 @@ pub fn build_custom_launch_recipe(
         game_dir: Some(game_dir),
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args,
+        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
         env: node
             .env_vars
             .iter()
@@ -208,67 +199,6 @@ pub fn build_custom_launch_recipe(
         anti_cheat_status,
         warnings,
     })
-}
-
-fn launch_args_for_recipe<'a>(
-    node: &PipelineNode,
-    game_dir: Option<&Path>,
-    configured_pipeline: Option<PipelineId>,
-    base_args: impl IntoIterator<Item = &'a str>,
-) -> Vec<String> {
-    let mut args: Vec<String> = base_args.into_iter().map(str::to_string).collect();
-    if is_unity_game_dir(game_dir) {
-        ensure_unity_screen_defaults(&mut args);
-        match node.id {
-            PipelineId::M12 if !matches!(configured_pipeline, Some(PipelineId::M10 | PipelineId::M11)) => {
-                push_unity_renderer_arg_once(&mut args, "-force-d3d12")
-            },
-            PipelineId::M11 | PipelineId::M10 => push_unity_renderer_arg_once(&mut args, "-force-d3d11"),
-            _ => {},
-        }
-    }
-    args
-}
-
-fn is_unity_game_dir(game_dir: Option<&Path>) -> bool {
-    let Some(game_dir) = game_dir else {
-        return false;
-    };
-    game_dir.join("UnityPlayer.dll").exists()
-        || WalkDir::new(game_dir)
-            .max_depth(2)
-            .into_iter()
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy().eq_ignore_ascii_case("UnityPlayer.dll"))
-}
-
-fn push_arg_once(args: &mut Vec<String>, arg: &str) {
-    if !args.iter().any(|existing| existing.eq_ignore_ascii_case(arg)) {
-        args.push(arg.to_string());
-    }
-}
-
-fn ensure_unity_screen_defaults(args: &mut Vec<String>) {
-    push_arg_value_once(args, "-screen-width", "1920");
-    push_arg_value_once(args, "-screen-height", "1080");
-    push_arg_value_once(args, "-screen-fullscreen", "0");
-}
-
-fn push_unity_renderer_arg_once(args: &mut Vec<String>, arg: &str) {
-    if args.iter().any(|existing| existing.to_ascii_lowercase().starts_with("-force-d3d")) {
-        return;
-    }
-    push_arg_once(args, arg);
-}
-
-fn push_arg_value_once(args: &mut Vec<String>, name: &str, value: &str) {
-    if !args.iter().any(|existing| {
-        existing.eq_ignore_ascii_case(name)
-            || existing.strip_prefix(name).is_some_and(|suffix| suffix.starts_with('=') || suffix.starts_with(':'))
-    }) {
-        args.push(name.to_string());
-        args.push(value.to_string());
-    }
 }
 
 pub fn resolve_game_exe(appid: u32, game_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -817,37 +747,12 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
     }
 
-    for dll in &node.deploy_dlls {
-        let path = ms_root.join(dll.source_subpath).join(dll.filename);
-        assets.push(RuntimeAsset {
-            name: format!("{}/{}", dll.source_subpath, dll.filename),
-            present: path.exists(),
-            path,
-            required: true,
-        });
-    }
-
     if node.backend == "dxmt" {
-        let pe = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll");
-        assets.push(RuntimeAsset { name: "dxmt/winemetal.dll".into(), present: pe.exists(), path: pe, required: true });
-        let unix = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
-        assets.push(RuntimeAsset {
-            name: "dxmt/winemetal.so".into(),
-            present: unix.exists(),
-            path: unix,
-            required: true,
-        });
-        if dxmt_config_asset_applies(node) {
-            let conf = ms_root.join("etc").join("dxmt.conf");
-            assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: true });
-        }
+        let conf = ms_root.join("etc").join("dxmt.conf");
+        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
     }
 
     assets
-}
-
-fn dxmt_config_asset_applies(node: &PipelineNode) -> bool {
-    matches!(node.id, PipelineId::M11 | PipelineId::M12)
 }
 
 fn detect_anti_cheat(game_dir: &PathBuf) -> Vec<String> {
@@ -987,123 +892,6 @@ mod tests {
         assert!(dlls.iter().all(|dll| dll.dest_path.parent() == Some(exe_dir.as_path())));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
-    }
-
-    #[test]
-    fn unity_m12_recipes_force_d3d12() {
-        let game_dir = test_dir("unity-m12-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M12),
-            Some(&game_dir),
-            Some(PipelineId::M12),
-            std::iter::empty(),
-        );
-
-        assert_eq!(
-            args,
-            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
-        );
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn explicit_unity_m12_recipe_keeps_m11_titles_renderer_authoritative() {
-        let game_dir = test_dir("unity-m12-m11-rule-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M12),
-            Some(&game_dir),
-            Some(PipelineId::M11),
-            std::iter::empty(),
-        );
-
-        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn custom_unity_m12_recipes_force_d3d12() {
-        let game_dir = test_dir("unity-custom-m12-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M12),
-            Some(&game_dir),
-            None,
-            std::iter::empty(),
-        );
-
-        assert_eq!(
-            args,
-            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
-        );
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn unity_m11_recipes_force_d3d11() {
-        let game_dir = test_dir("unity-m11-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M11),
-            Some(&game_dir),
-            Some(PipelineId::M11),
-            std::iter::empty(),
-        );
-
-        assert_eq!(
-            args,
-            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d11"]
-        );
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn unity_renderer_defaults_do_not_override_user_d3d_force_args() {
-        let game_dir = test_dir("unity-user-d3d-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M12),
-            Some(&game_dir),
-            Some(PipelineId::M12),
-            ["-force-d3d11"],
-        );
-
-        assert_eq!(
-            args,
-            vec!["-force-d3d11", "-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]
-        );
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn unity_screen_defaults_preserve_user_screen_args() {
-        let game_dir = test_dir("unity-user-screen-args");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
-
-        let args = launch_args_for_recipe(
-            super::super::engine::get_pipeline(PipelineId::M11),
-            Some(&game_dir),
-            Some(PipelineId::M11),
-            ["-screen-width", "2560", "-screen-height=1440", "-screen-fullscreen", "1"],
-        );
-
-        assert_eq!(
-            args,
-            vec!["-screen-width", "2560", "-screen-height=1440", "-screen-fullscreen", "1", "-force-d3d11"]
-        );
-        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     #[test]
@@ -1356,55 +1144,6 @@ mod tests {
         assert_eq!(report[0].status, "vendor_supported_on_proton_assets_present");
         assert!(report[0].evidence.iter().any(|path| path.ends_with(".so")));
         let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn m12_runtime_assets_include_full_dxmt_contract() {
-        let ms_root = test_dir("m12-runtime-assets");
-        let node = super::super::engine::get_pipeline(PipelineId::M12);
-
-        let assets = runtime_assets_for_node(node, &ms_root);
-        let names: std::collections::HashSet<_> = assets.iter().map(|asset| asset.name.as_str()).collect();
-
-        for required in [
-            "wine",
-            "lib/wine/x86_64-unix",
-            "lib/dxmt/x86_64-unix",
-            "lib/dxmt/x86_64-windows/d3d12.dll",
-            "lib/dxmt/x86_64-windows/d3d11.dll",
-            "lib/dxmt/x86_64-windows/dxgi.dll",
-            "lib/dxmt/x86_64-windows/d3d10core.dll",
-            "dxmt/winemetal.dll",
-            "dxmt/winemetal.so",
-            "dxmt.conf",
-        ] {
-            assert!(names.contains(required), "missing runtime asset {}", required);
-        }
-        assert!(assets.iter().all(|asset| asset.required), "all M12 runtime assets should be required");
-        let _ = std::fs::remove_dir_all(ms_root);
-    }
-
-    #[test]
-    fn m9_m10_runtime_assets_do_not_require_dxmt_config() {
-        let ms_root = test_dir("legacy-dxmt-runtime-assets");
-
-        for pipeline in [PipelineId::M9, PipelineId::M10] {
-            let node = super::super::engine::get_pipeline(pipeline);
-            let assets = runtime_assets_for_node(node, &ms_root);
-
-            assert!(
-                assets.iter().all(|asset| asset.name != "dxmt.conf"),
-                "{:?} should not require dxmt.conf",
-                pipeline
-            );
-            assert!(
-                assets.iter().any(|asset| asset.name == "dxmt/winemetal.so" && asset.required),
-                "{:?} should still require winemetal runtime binding",
-                pipeline
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(ms_root);
     }
 
     fn test_dir(name: &str) -> PathBuf {

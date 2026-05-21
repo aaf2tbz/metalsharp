@@ -4,11 +4,6 @@
 
 typedef UINT DXGI_FORMAT;
 
-typedef struct {
-    DWORD LowPart;
-    LONG HighPart;
-} LUID;
-
 class ID3D11ClassInstance;
 class ID3D11ClassLinkage;
 
@@ -24,7 +19,6 @@ class IDXGIObject : public IUnknown {
 class IDXGIAdapter;
 class IDXGIOutput;
 class IDXGISwapChain;
-class IDXGISwapChain1;
 
 class MIDL_INTERFACE("770aae78-f26f-4dba-a829-253c83d1b387") IDXGIFactory : public IUnknown {
   public:
@@ -41,66 +35,11 @@ class MIDL_INTERFACE("2411e7e1-12ac-4ccf-bd14-9798e8534dc0") IDXGIFactory1 : pub
     STDMETHOD_(INT, IsCurrent)() PURE;
 };
 
-typedef struct {
-    UINT Numerator;
-    UINT Denominator;
-} DXGI_RATIONAL;
+class MIDL_INTERFACE("790a45f7-0d42-4876-983a-0a55c2762d7f") IDXGIFactory2 : public IDXGIFactory1 {};
 
-typedef struct {
-    UINT Count;
-    UINT Quality;
-} DXGI_SAMPLE_DESC_LOCAL;
+class MIDL_INTERFACE("3103a90d-34de-4ec3-988a-743f4c28c6d5") IDXGIFactory3 : public IDXGIFactory2 {};
 
-typedef struct {
-    UINT Width;
-    UINT Height;
-    DXGI_FORMAT Format;
-    BOOL Stereo;
-    DXGI_SAMPLE_DESC_LOCAL SampleDesc;
-    UINT BufferUsage;
-    UINT BufferCount;
-    UINT Scaling;
-    UINT SwapEffect;
-    UINT AlphaMode;
-    UINT Flags;
-} DXGI_SWAP_CHAIN_DESC1;
-
-typedef struct {
-    DXGI_RATIONAL RefreshRate;
-    UINT ScanlineOrdering;
-    UINT Scaling;
-    BOOL Windowed;
-} DXGI_SWAP_CHAIN_FULLSCREEN_DESC;
-
-class MIDL_INTERFACE("790a45f7-0d42-4876-983a-0a55c2762d7f") IDXGIFactory2 : public IDXGIFactory1 {
-  public:
-    STDMETHOD_(BOOL, IsWindowedStereoEnabled)() PURE;
-    STDMETHOD(CreateSwapChainForHwnd)(IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc,
-                                      const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
-                                      IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) PURE;
-    STDMETHOD(CreateSwapChainForCoreWindow)(IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc,
-                                            IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) PURE;
-    STDMETHOD(GetSharedResourceAdapterLuid)(HANDLE hResource, LUID* pLuid) PURE;
-    STDMETHOD(RegisterStereoStatusWindow)(HWND WindowHandle, UINT wMsg, DWORD* pdwCookie) PURE;
-    STDMETHOD(RegisterStereoStatusEvent)(HANDLE hEvent, DWORD* pdwCookie) PURE;
-    STDMETHOD_(void, UnregisterStereoStatus)(DWORD dwCookie) PURE;
-    STDMETHOD(RegisterOcclusionStatusWindow)(HWND WindowHandle, UINT wMsg, DWORD* pdwCookie) PURE;
-    STDMETHOD(RegisterOcclusionStatusEvent)(HANDLE hEvent, DWORD* pdwCookie) PURE;
-    STDMETHOD_(void, UnregisterOcclusionStatus)(DWORD dwCookie) PURE;
-    STDMETHOD(CreateSwapChainForComposition)(IUnknown* pDevice, const DXGI_SWAP_CHAIN_DESC1* pDesc,
-                                             IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain) PURE;
-};
-
-class MIDL_INTERFACE("3103a90d-34de-4ec3-988a-743f4c28c6d5") IDXGIFactory3 : public IDXGIFactory2 {
-  public:
-    STDMETHOD_(UINT, GetCreationFlags)() PURE;
-};
-
-class MIDL_INTERFACE("1bc6ea02-ef36-464f-bf0c-21ca39e5cd85") IDXGIFactory4 : public IDXGIFactory3 {
-  public:
-    STDMETHOD(EnumAdapterByLuid)(LUID AdapterLuid, const GUID& riid, void** ppvAdapter) PURE;
-    STDMETHOD(EnumWarpAdapter)(const GUID& riid, void** ppvAdapter) PURE;
-};
+class MIDL_INTERFACE("1bc6ea02-ef36-464f-bf0c-21ca39e5cd85") IDXGIFactory4 : public IDXGIFactory3 {};
 
 typedef struct {
     DXGI_FORMAT Format;

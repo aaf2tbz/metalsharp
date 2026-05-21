@@ -489,14 +489,22 @@ fn launch_game_via_steam_with_env_options(
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
     }
-    let steam_running = is_wine_steam_running();
-    let restarted_for_env = false;
-    let mut env_inherited_by_steam = false;
+    let mut steam_running = is_wine_steam_running();
+    let mut restarted_for_env = false;
     if steam_running && !extra_env.is_empty() {
         if restart_for_env {
-            // Protected games must keep Wine Steam as the stable account/session owner.
-            // If Steam is already alive, launching steam://run through a helper process is
-            // safer than tearing down the client just to try to inherit per-route env.
+            stop_wine_steam()?;
+            for _ in 0..20 {
+                if !is_wine_steam_running() {
+                    steam_running = false;
+                    restarted_for_env = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if steam_running {
+                return Err("Wine Steam did not stop cleanly before protected route handoff".into());
+            }
         } else {
             return Err(
                 "Wine Steam is already running; route-specific environment cannot be inherited without restarting Steam"
@@ -506,7 +514,6 @@ fn launch_game_via_steam_with_env_options(
     }
     if !steam_running {
         launch_wine_steam_with_env(extra_env)?;
-        env_inherited_by_steam = !extra_env.is_empty();
         let mut ready = false;
         for _ in 0..12 {
             if is_wine_steam_running() {
@@ -522,18 +529,10 @@ fn launch_game_via_steam_with_env_options(
     }
 
     let url = format!("steam://run/{}", appid);
-    let env_applied_to = if env_inherited_by_steam { "wine_steam_process" } else { "steam_url_process" };
+    let env_applied_to = if extra_env.is_empty() { "steam_url_process" } else { "wine_steam_process" };
     let pid = spawn_wine_steam_with_env(&[&url], extra_env)?;
     if let Some(path) = handoff_log_path {
-        write_steam_handoff_log(
-            path,
-            appid,
-            pid,
-            extra_env,
-            restarted_for_env,
-            env_applied_to,
-            env_inherited_by_steam,
-        )?;
+        write_steam_handoff_log(path, appid, pid, extra_env, restarted_for_env, env_applied_to)?;
     }
 
     Ok(json!({
@@ -542,7 +541,6 @@ fn launch_game_via_steam_with_env_options(
         "appid": appid,
         "steam_restarted_for_env": restarted_for_env,
         "env_applied_to": env_applied_to,
-        "env_inherited_by_steam": env_inherited_by_steam,
         "env_handoff": extra_env.iter().map(|(key, _)| key).collect::<Vec<_>>(),
         "handoff_log": handoff_log_path.map(|path| path.to_string_lossy().to_string()),
     }))
@@ -570,7 +568,6 @@ fn write_steam_handoff_log(
     extra_env: &[(String, String)],
     restarted_for_env: bool,
     env_applied_to: &str,
-    env_inherited_by_steam: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -582,7 +579,6 @@ fn write_steam_handoff_log(
     lines.push(format!("steam_url_pid={}", pid));
     lines.push(format!("steam_restarted_for_env={}", restarted_for_env));
     lines.push(format!("env_applied_to={}", env_applied_to));
-    lines.push(format!("env_inherited_by_steam={}", env_inherited_by_steam));
     lines.push(format!("env_handoff={}", extra_env.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>().join(",")));
     lines.push("note=Protected games must be launched through Steam so start_protected_game.exe and vendor anti-cheat logs are observable.".to_string());
     std::fs::write(path, format!("{}\n", lines.join("\n")))?;
@@ -1386,14 +1382,12 @@ mod tests {
             ("DXMT_CONFIG_FILE".to_string(), "/tmp/dxmt.conf".to_string()),
         ];
 
-        write_steam_handoff_log(&path, 1245620, 42, &env, false, "steam_url_process", false)
-            .expect("write handoff log");
+        write_steam_handoff_log(&path, 1245620, 42, &env, true, "wine_steam_process").expect("write handoff log");
         let text = std::fs::read_to_string(&path).expect("read handoff log");
 
         assert!(text.contains("launch_handoff=protected_steam_url"));
-        assert!(text.contains("steam_restarted_for_env=false"));
-        assert!(text.contains("env_applied_to=steam_url_process"));
-        assert!(text.contains("env_inherited_by_steam=false"));
+        assert!(text.contains("steam_restarted_for_env=true"));
+        assert!(text.contains("env_applied_to=wine_steam_process"));
         assert!(text.contains("env_handoff=WINEDLLOVERRIDES,DXMT_CONFIG_FILE"));
         assert!(!text.contains("secret-ish-value"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1405,12 +1399,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("launch.log");
 
-        write_steam_handoff_log(&path, 1245620, 42, &[], false, "steam_url_process", false).expect("write handoff log");
+        write_steam_handoff_log(&path, 1245620, 42, &[], false, "steam_url_process").expect("write handoff log");
         let text = std::fs::read_to_string(&path).expect("read handoff log");
 
         assert!(text.contains("steam_restarted_for_env=false"));
         assert!(text.contains("env_applied_to=steam_url_process"));
-        assert!(text.contains("env_inherited_by_steam=false"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -204,7 +204,6 @@ Likely runtime: .NET custom action or MSI service behavior.
 ## Implementation Notes
 
 - `POST /sharp-library/install` accepts `freshBottle: true` for proof runs that must avoid stale prefix state from a previous run of the same installer path.
-- `POST /launcher/evidence` collects launcher-installer proof for EA, Origin, Ubisoft, and EAC bottles. It reports installer launch logs, launcher-specific logs, detected launcher executables, known EA MSI failures, Ubisoft crash-reporter evidence, EAC EOS install/product-id evidence, Proton-style `.so` asset presence, and whether a direct post-install launcher launch has actually been recorded.
-- Installer launches now write classification metadata into the launch log before Wine starts, including installer kind, arch, runtime profile, pipeline, bottle id, hints, and installer-specific environment. Direct MSI installs also create a sibling verbose `.msi.log`.
+- `POST /launcher/evidence` collects launcher-installer proof for EA and Ubisoft bottles. It reports installer launch logs, launcher-specific logs, detected launcher executables, known EA MSI failures, Ubisoft crash-reporter evidence, and whether a direct post-install launcher launch has actually been recorded.
 - Steam game runtime asset detection now covers `_CommonRedist`, `installscript.vdf`, `EasyAntiCheat`, `EasyAntiCheat_EOS`, `BEService`, `BEClient`, and `BEDaisy` markers.
 - Anti-cheat proof should begin with Doctor/dry-run evidence, because running service installers can leave stale Wine service state behind.
