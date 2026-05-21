@@ -384,6 +384,7 @@ HRESULT DXGISwapChainImpl::GetParent(const GUID& riid, void** ppParent) {
 HRESULT DXGISwapChainImpl::Present(UINT SyncInterval, UINT Flags) {
     if (m_metalSwapChain) {
         m_metalSwapChain->present(SyncInterval);
+        ++m_lastPresentCount;
         if (m_d3d11BackBufferTexture) {
             static_cast<DXGISwapChainBackBuffer*>(m_d3d11BackBufferTexture)->Release();
             m_d3d11BackBufferTexture = nullptr;
@@ -515,7 +516,7 @@ HRESULT DXGISwapChainImpl::GetFrameStatistics(void* pStats) {
 }
 HRESULT DXGISwapChainImpl::GetLastPresentCount(UINT* pLastPresentCount) {
     if (pLastPresentCount)
-        *pLastPresentCount = 0;
+        *pLastPresentCount = m_lastPresentCount;
     return S_OK;
 }
 

@@ -113,6 +113,9 @@ int main() {
                       "IDXGISwapChain1::GetBuffer returns ID3D12Resource");
                 hr = hwndSwapChain->Present1(0, 0, nullptr);
                 CHECK(SUCCEEDED(hr), "IDXGISwapChain1::Present1");
+                UINT presentCount = 0;
+                hr = hwndSwapChain->GetLastPresentCount(&presentCount);
+                CHECK(SUCCEEDED(hr) && presentCount == 1, "IDXGISwapChain1::GetLastPresentCount advances");
             }
         }
     }
