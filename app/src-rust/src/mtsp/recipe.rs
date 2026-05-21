@@ -213,15 +213,15 @@ pub fn build_custom_launch_recipe(
 fn launch_args_for_recipe<'a>(
     node: &PipelineNode,
     game_dir: Option<&Path>,
-    configured_pipeline: Option<PipelineId>,
+    _configured_pipeline: Option<PipelineId>,
     base_args: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = base_args.into_iter().map(str::to_string).collect();
     if is_unity_game_dir(game_dir) {
         ensure_unity_screen_defaults(&mut args);
         match node.id {
-            PipelineId::M12 if configured_pipeline == Some(PipelineId::M12) => push_arg_once(&mut args, "-force-d3d12"),
-            PipelineId::M11 | PipelineId::M10 => push_arg_once(&mut args, "-force-d3d11"),
+            PipelineId::M12 => push_unity_renderer_arg_once(&mut args, "-force-d3d12"),
+            PipelineId::M11 | PipelineId::M10 => push_unity_renderer_arg_once(&mut args, "-force-d3d11"),
             _ => {},
         }
     }
@@ -250,6 +250,13 @@ fn ensure_unity_screen_defaults(args: &mut Vec<String>) {
     push_arg_value_once(args, "-screen-width", "1920");
     push_arg_value_once(args, "-screen-height", "1080");
     push_arg_value_once(args, "-screen-fullscreen", "0");
+}
+
+fn push_unity_renderer_arg_once(args: &mut Vec<String>, arg: &str) {
+    if args.iter().any(|existing| existing.to_ascii_lowercase().starts_with("-force-d3d")) {
+        return;
+    }
+    push_arg_once(args, arg);
 }
 
 fn push_arg_value_once(args: &mut Vec<String>, name: &str, value: &str) {
@@ -995,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn unity_m12_probe_does_not_force_d3d12_for_m11_titles() {
+    fn explicit_unity_m12_recipe_forces_d3d12_even_for_m11_titles() {
         let game_dir = test_dir("unity-m12-m11-rule-args");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
         std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
@@ -1007,12 +1014,15 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
+        assert_eq!(
+            args,
+            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
+        );
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
     #[test]
-    fn custom_unity_m12_recipes_do_not_force_d3d12_without_user_args() {
+    fn custom_unity_m12_recipes_force_d3d12() {
         let game_dir = test_dir("unity-custom-m12-args");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
         std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
@@ -1024,7 +1034,10 @@ mod tests {
             std::iter::empty(),
         );
 
-        assert_eq!(args, vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]);
+        assert_eq!(
+            args,
+            vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d12"]
+        );
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
@@ -1044,6 +1057,26 @@ mod tests {
         assert_eq!(
             args,
             vec!["-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0", "-force-d3d11"]
+        );
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn unity_renderer_defaults_do_not_override_user_d3d_force_args() {
+        let game_dir = test_dir("unity-user-d3d-args");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("UnityPlayer.dll"), b"unity").expect("write unity marker");
+
+        let args = launch_args_for_recipe(
+            super::super::engine::get_pipeline(PipelineId::M12),
+            Some(&game_dir),
+            Some(PipelineId::M12),
+            ["-force-d3d11"],
+        );
+
+        assert_eq!(
+            args,
+            vec!["-force-d3d11", "-screen-width", "1920", "-screen-height", "1080", "-screen-fullscreen", "0"]
         );
         let _ = std::fs::remove_dir_all(game_dir);
     }
