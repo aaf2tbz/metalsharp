@@ -131,10 +131,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                 ],
-                env_vars: vec![
-                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
-                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
-                ],
+                env_vars: vec![EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" }],
                 launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M11,
@@ -158,10 +155,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
                 ],
-                env_vars: vec![
-                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
-                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
-                ],
+                env_vars: vec![EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" }],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::Steam, PipelineId::MacSteam],
                 shader_cache_subdir: Some("m9"),
@@ -377,7 +371,7 @@ mod tests {
 
         let m10_env: std::collections::HashSet<_> = m10.env_vars.iter().map(|env| env.key).collect();
         assert!(m10_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
-        assert!(m10_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
+        assert!(!m10_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
 
         assert!(m10.alternatives.contains(&PipelineId::M11));
         assert!(m10.alternatives.contains(&PipelineId::M9));
@@ -426,7 +420,7 @@ mod tests {
 
         let m9_env: std::collections::HashSet<_> = m9.env_vars.iter().map(|env| env.key).collect();
         assert!(m9_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
-        assert!(m9_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
+        assert!(!m9_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
 
         assert!(m9.alternatives.contains(&PipelineId::M11));
         assert!(m9.alternatives.contains(&PipelineId::M10));

@@ -1065,7 +1065,7 @@ fn ensure_cache_dir(path: &Path, label: &str) {
 }
 
 fn ensure_dxmt_config(node: &PipelineNode, ms_root: &Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
-    if node.backend != "dxmt" {
+    if !dxmt_config_applies(node) {
         return Ok(None);
     }
 
@@ -1078,6 +1078,10 @@ fn ensure_dxmt_config(node: &PipelineNode, ms_root: &Path) -> Result<Option<Path
         std::fs::write(&config_path, merge_dxmt_config_contract(&current))?;
     }
     Ok(Some(config_path))
+}
+
+fn dxmt_config_applies(node: &PipelineNode) -> bool {
+    matches!(node.id, PipelineId::M11 | PipelineId::M12)
 }
 
 fn dxmt_config_matches_contract(config: &str) -> bool {
@@ -1166,12 +1170,14 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
             .join(":"),
         ));
         env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
+        let trace_path = home.join(".metalsharp").join("logs").join(format!("dxmt-d3d12-steam-{}.log", appid));
+        env.push(("DXMT_D3D12_TRACE_FILE".to_string(), host_path_to_wine_z_path(&trace_path)));
+    }
+    if dxmt_config_applies(node) {
         let config_path =
             ensure_dxmt_config(node, &ms_root).ok().flatten().unwrap_or_else(|| ms_root.join("etc").join("dxmt.conf"));
         env.push(("DXMT_CONFIG_FILE".to_string(), config_path.to_string_lossy().to_string()));
         env.push(("DXMT_CONFIG".to_string(), DXMT_CONFIG_ENV.to_string()));
-        let trace_path = home.join(".metalsharp").join("logs").join(format!("dxmt-d3d12-steam-{}.log", appid));
-        env.push(("DXMT_D3D12_TRACE_FILE".to_string(), host_path_to_wine_z_path(&trace_path)));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
@@ -1185,7 +1191,7 @@ fn apply_dxmt_winemetal_env(cmd: &mut Command, node: &PipelineNode) {
 }
 
 fn apply_dxmt_config_env(cmd: &mut Command, node: &PipelineNode, config_path: Option<&Path>) {
-    if node.backend != "dxmt" {
+    if !dxmt_config_applies(node) {
         return;
     }
     if let Some(config_path) = config_path {
@@ -1679,7 +1685,7 @@ mod tests {
     }
 
     #[test]
-    fn dxmt_routes_share_cache_and_upscale_contract() {
+    fn dxmt_routes_share_cache_and_runtime_contract() {
         let cache = CachePaths { shader: "/tmp/shaders".into(), pipeline: "/tmp/pipelines".into() };
 
         for pipeline in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
@@ -1698,9 +1704,53 @@ mod tests {
             assert!(keys.contains("MTL_SHADER_CACHE_DIR"), "{:?} missing Metal shader cache", pipeline);
             assert!(keys.contains("DXMT_SHADER_CACHE_PATH"), "{:?} missing DXMT shader cache", pipeline);
             assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"), "{:?} missing DXMT pipeline cache", pipeline);
-            assert_eq!(node_env.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some(&"1"), "{:?} missing MetalFX", pipeline);
             assert_eq!(node_env.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"), "{:?} missing async PSO", pipeline);
+            if matches!(pipeline, PipelineId::M11 | PipelineId::M12) {
+                assert_eq!(
+                    node_env.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"),
+                    Some(&"1"),
+                    "{:?} missing MetalFX",
+                    pipeline
+                );
+            } else {
+                assert!(
+                    !node_env.contains_key("DXMT_METALFX_SPATIAL_SWAPCHAIN"),
+                    "{:?} should not force MetalFX",
+                    pipeline
+                );
+            }
         }
+    }
+
+    #[test]
+    fn dxmt_config_contract_is_m11_m12_only() {
+        for pipeline in [PipelineId::M9, PipelineId::M10] {
+            let node = get_pipeline(pipeline);
+            assert!(!dxmt_config_applies(node), "{:?} should not use shared DXMT_CONFIG contract", pipeline);
+        }
+        for pipeline in [PipelineId::M11, PipelineId::M12] {
+            let node = get_pipeline(pipeline);
+            assert!(dxmt_config_applies(node), "{:?} should use shared DXMT_CONFIG contract", pipeline);
+        }
+    }
+
+    #[test]
+    fn m9_m10_steam_env_does_not_export_dxmt_config_contract() {
+        let home = test_dir("steam-env-no-dxmt-config");
+
+        for pipeline in [PipelineId::M9, PipelineId::M10] {
+            let node = get_pipeline(pipeline);
+            let env = steam_pipeline_env_pairs(&home, node, 620);
+            let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+            assert!(keys.contains("WINEDLLPATH"), "{:?} should still bind DXMT runtime paths", pipeline);
+            assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"), "{:?} should still bind winemetal", pipeline);
+            assert!(keys.contains("DXMT_SHADER_CACHE_PATH"), "{:?} should still use DXMT shader cache", pipeline);
+            assert!(!keys.contains("DXMT_CONFIG_FILE"), "{:?} should not export DXMT_CONFIG_FILE", pipeline);
+            assert!(!keys.contains("DXMT_CONFIG"), "{:?} should not export DXMT_CONFIG", pipeline);
+        }
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
