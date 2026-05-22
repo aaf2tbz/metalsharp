@@ -312,7 +312,7 @@ async function goToStep2() {
 
         <div class="setup-steam-section">
           <h2>GPTK Steam</h2>
-          <p>Separate Steam install for M-Anticheat routes and anti-cheat compatible games.</p>
+          <p>Separate Steam install for D3DMetal routes and anti-cheat compatible games.</p>
           <span v-if="!gptkToolkitInstalled" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">GPTK missing</span>
           <span v-else-if="gptkSteamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">GPTK Steam installed</span>
           <span v-else-if="gptkSteamInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">Installing</span>

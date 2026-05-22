@@ -403,7 +403,7 @@ function cacheStatusText(cache: CacheSummary | null): string {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">GPTK Steam (M-Anticheat)</div>
+          <div class="settings-label">GPTK Steam (D3DMetal)</div>
           <div class="settings-desc">Separate Windows Steam install inside Game Porting Toolkit Wine</div>
           <div v-if="gptkInstallMessage" class="settings-desc">{{ gptkInstallMessage }}</div>
         </div>

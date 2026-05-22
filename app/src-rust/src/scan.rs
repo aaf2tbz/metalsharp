@@ -113,7 +113,7 @@ pub fn find_macos_app(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn parse_installdir_from_acf(contents: &str) -> Option<String> {
+pub fn parse_installdir_from_acf(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("\"installdir\"") {
@@ -192,7 +192,7 @@ fn steam_library_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn parse_library_folders(steamapps: &PathBuf) -> Vec<PathBuf> {
+pub fn parse_library_folders(steamapps: &PathBuf) -> Vec<PathBuf> {
     let lf_path = steamapps.join("libraryfolders.vdf");
     let contents = match std::fs::read_to_string(&lf_path) {
         Ok(c) => c,
@@ -263,6 +263,29 @@ pub fn wine_steam_library_paths() -> Vec<PathBuf> {
 
     let mut paths = vec![wine_steamapps.clone()];
     paths.extend(parse_library_folders(&wine_steamapps));
+    paths
+}
+
+pub fn gptk_steam_library_paths() -> Vec<PathBuf> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+
+    let gptk_steamapps = home
+        .join(".metalsharp")
+        .join("prefix-gptk-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    if !gptk_steamapps.exists() {
+        return Vec::new();
+    }
+
+    let mut paths = vec![gptk_steamapps.clone()];
+    paths.extend(parse_library_folders(&gptk_steamapps));
     paths
 }
 

@@ -3902,7 +3902,7 @@ mod tests {
 
         assert_eq!(record.prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
         assert_eq!(record.steam_prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
-        assert_eq!(record.launch_pipeline, "gptk");
+        assert_eq!(record.launch_pipeline, "d3dmetal");
     }
 
     #[test]

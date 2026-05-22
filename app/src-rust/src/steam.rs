@@ -1487,10 +1487,18 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
 }
 
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
+    installed_games_in_steamapps(crate::scan::wine_steam_library_paths(), true)
+}
+
+pub fn get_gptk_steam_installed_games() -> Vec<u32> {
+    installed_games_in_steamapps(crate::scan::gptk_steam_library_paths(), false)
+}
+
+fn installed_games_in_steamapps(paths: Vec<PathBuf>, skip_macos: bool) -> Vec<u32> {
     let mut appids = Vec::new();
 
-    for steamapps in crate::scan::wine_steam_library_paths() {
-        if is_macos_steamapps_path(&steamapps) {
+    for steamapps in paths {
+        if skip_macos && is_macos_steamapps_path(&steamapps) {
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&steamapps) {
@@ -1510,6 +1518,40 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
     }
 
     appids
+}
+
+fn resolve_game_dir_in_steamapps(appid: u32, paths: Vec<PathBuf>) -> Option<PathBuf> {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+    for steamapps in paths {
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Some(dir_name) = crate::scan::parse_installdir_from_acf(&contents) {
+                let dir = steamapps.join("common").join(dir_name);
+                if dir.exists() {
+                    return Some(dir);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_game_name_from_manifest_in_paths(appid: u32, paths: Vec<PathBuf>) -> Option<String> {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+
+    for steamapps in paths {
+        if is_macos_steamapps_path(&steamapps) {
+            continue;
+        }
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Some(name) = parse_acf_field(&contents, "name") {
+                return Some(name);
+            }
+        }
+    }
+
+    None
 }
 
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
@@ -1806,6 +1848,7 @@ pub fn library() -> Value {
     let installed_appids = get_installed_appids();
     let downloaded_appids = get_downloaded_appids();
     let wine_steam_appids = get_wine_steam_installed_games();
+    let gptk_steam_appids = get_gptk_steam_installed_games();
 
     let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
         Ok(games) if !games.is_empty() => games,
@@ -1820,12 +1863,19 @@ pub fn library() -> Value {
                     fallback.push((appid, format!("Game {}", appid)));
                 }
             }
+            for &appid in &gptk_steam_appids {
+                if !fallback.iter().any(|(id, _)| *id == appid) {
+                    let name = get_game_name_from_manifest_in_paths(appid, crate::scan::gptk_steam_library_paths())
+                        .unwrap_or_else(|| format!("Game {}", appid));
+                    fallback.push((appid, name));
+                }
+            }
             fallback
         },
     };
 
     let owned_appids: Vec<u32> = owned.iter().map(|(id, _)| *id).collect();
-    let mut all_games = owned;
+    let mut all_games = owned.clone();
     for &appid in &wine_steam_appids {
         if !owned_appids.contains(&appid) {
             let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
@@ -1837,62 +1887,159 @@ pub fn library() -> Value {
             all_games.push((appid, format!("Game {}", appid)));
         }
     }
+    for &appid in &gptk_steam_appids {
+        if !all_games.iter().any(|(id, _)| *id == appid) {
+            let name = get_game_name_from_manifest_in_paths(appid, crate::scan::gptk_steam_library_paths())
+                .unwrap_or_else(|| format!("Game {}", appid));
+            all_games.push((appid, name));
+        }
+    }
 
-    let games: Vec<Value> = all_games
-        .iter()
-        .map(|(appid, name)| {
-            let is_installed = installed_appids.contains(appid)
-                || downloaded_appids.contains(appid)
-                || wine_steam_appids.contains(appid);
-            let can_uninstall = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
-            let dual = crate::scan::resolve_dual_game_dir(*appid);
-            let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
-            let bottle = if is_installed {
-                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+    let mut games: Vec<Value> = Vec::new();
+    for (appid, name) in &all_games {
+        let dual = crate::scan::resolve_dual_game_dir(*appid);
+        let has_metalsharp_install = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
+        let has_any_install =
+            installed_appids.contains(appid) || has_metalsharp_install || gptk_steam_appids.contains(appid);
+
+        if has_metalsharp_install {
+            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
+            let pipeline_id = if matches!(resolved, crate::mtsp::engine::PipelineId::M13) {
+                crate::mtsp::engine::PipelineId::M12
             } else {
-                None
+                resolved
             };
-            let recommended = pipeline_id.to_legacy_method();
-            let node = crate::mtsp::engine::get_pipeline(pipeline_id);
-            let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
-                "id": node.id,
-                "name": node.name,
-                "recommended": true,
-            }))
-            .chain(node.alternatives.iter().map(|alt| {
-                let alt_node = crate::mtsp::engine::get_pipeline(*alt);
-                serde_json::json!({
-                    "id": alt_node.id,
-                    "name": alt_node.name,
-                    "recommended": false,
-                })
-            }))
-            .collect();
-            json!({
-                "appid": appid,
-                "name": name,
-                "installed": is_installed,
-                "state": if is_installed { "installed" } else { "not_installed" },
-                "can_uninstall": can_uninstall,
-                "launch_method": recommended,
-                "available_pipelines": available_pipelines,
-                "has_native_build": dual.has_native_build,
-                "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
-                "wine_game_path": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
-                "bottle_id": bottle.as_ref().map(|b| b.id.clone()),
-                "bottle_health": bottle.as_ref().map(|b| json!(b.health)),
-                "bottle_runtime_assets": bottle.as_ref().map(|b| b.runtime_assets.len()).unwrap_or(0),
-                "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
-                "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
-            })
-        })
-        .collect();
+            let bottle =
+                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok();
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "metalsharp",
+                source_label: "MetalSharp",
+                installed: true,
+                can_uninstall: downloaded_appids.contains(appid) || wine_steam_appids.contains(appid),
+                pipeline_id,
+                has_native_build: dual.has_native_build,
+                native_app_path: dual.macos_app.as_ref(),
+                wine_game_path: dual.wine_dir.as_ref(),
+                bottle: bottle.as_ref(),
+            }));
+        }
+
+        if gptk_steam_appids.contains(appid) {
+            let gptk_game_dir = resolve_game_dir_in_steamapps(*appid, crate::scan::gptk_steam_library_paths());
+            let bottle = crate::bottles::ensure_steam_game_bottle(
+                *appid,
+                name,
+                gptk_game_dir.as_deref(),
+                crate::mtsp::engine::PipelineId::M13,
+            )
+            .ok();
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "gptk",
+                source_label: "GPTK",
+                installed: true,
+                can_uninstall: true,
+                pipeline_id: crate::mtsp::engine::PipelineId::M13,
+                has_native_build: false,
+                native_app_path: None,
+                wine_game_path: gptk_game_dir.as_ref(),
+                bottle: bottle.as_ref(),
+            }));
+        }
+
+        if !has_any_install {
+            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
+            let pipeline_id = if matches!(resolved, crate::mtsp::engine::PipelineId::M13) {
+                crate::mtsp::engine::PipelineId::M12
+            } else {
+                resolved
+            };
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "steam",
+                source_label: "Steam",
+                installed: false,
+                can_uninstall: false,
+                pipeline_id,
+                has_native_build: dual.has_native_build,
+                native_app_path: dual.macos_app.as_ref(),
+                wine_game_path: dual.wine_dir.as_ref(),
+                bottle: None,
+            }));
+        }
+    }
 
     json!({
         "ok": true,
         "total": games.len(),
         "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
         "games": games,
+    })
+}
+
+struct SteamLibraryCardData<'a> {
+    appid: u32,
+    name: &'a str,
+    source: &'a str,
+    source_label: &'a str,
+    installed: bool,
+    can_uninstall: bool,
+    pipeline_id: crate::mtsp::engine::PipelineId,
+    has_native_build: bool,
+    native_app_path: Option<&'a PathBuf>,
+    wine_game_path: Option<&'a PathBuf>,
+    bottle: Option<&'a crate::bottles::BottleManifest>,
+}
+
+fn steam_library_card(card: SteamLibraryCardData<'_>) -> Value {
+    let available_pipelines: Vec<serde_json::Value> = if card.source == "gptk" {
+        vec![serde_json::json!({
+            "id": "d3dmetal",
+            "name": "D3DMetal",
+            "recommended": true,
+        })]
+    } else {
+        let node = crate::mtsp::engine::get_pipeline(card.pipeline_id);
+        std::iter::once(serde_json::json!({
+            "id": node.id,
+            "name": node.name,
+            "recommended": true,
+        }))
+        .chain(node.alternatives.iter().filter(|alt| !matches!(alt, crate::mtsp::engine::PipelineId::M13)).map(|alt| {
+            let alt_node = crate::mtsp::engine::get_pipeline(*alt);
+            serde_json::json!({
+                "id": alt_node.id,
+                "name": alt_node.name,
+                "recommended": false,
+            })
+        }))
+        .collect()
+    };
+    let launch_method = if card.source == "gptk" { "d3dmetal" } else { card.pipeline_id.to_legacy_method() };
+
+    json!({
+        "library_id": format!("{}:{}", card.source, card.appid),
+        "library_source": card.source,
+        "library_source_label": card.source_label,
+        "appid": card.appid,
+        "name": card.name,
+        "installed": card.installed,
+        "state": if card.installed { "installed" } else { "not_installed" },
+        "can_uninstall": card.can_uninstall,
+        "launch_method": launch_method,
+        "available_pipelines": available_pipelines,
+        "has_native_build": card.has_native_build,
+        "native_app_path": card.native_app_path.map(|p| p.to_string_lossy().to_string()),
+        "wine_game_path": card.wine_game_path.map(|p| p.to_string_lossy().to_string()),
+        "bottle_id": card.bottle.map(|b| b.id.clone()),
+        "bottle_health": card.bottle.map(|b| json!(b.health)),
+        "bottle_runtime_assets": card.bottle.map(|b| b.runtime_assets.len()).unwrap_or(0),
+        "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", card.appid),
+        "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", card.appid),
     })
 }
 

@@ -14,6 +14,9 @@ import { getAPI, api } from "./composables/useApi";
 import type { AppConfig, UpdateStatus, SteamStatus } from "./api-types";
 
 interface SteamGame {
+  library_id?: string;
+  library_source?: "steam" | "metalsharp" | "gptk";
+  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
