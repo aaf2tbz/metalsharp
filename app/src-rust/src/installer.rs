@@ -717,6 +717,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     wineboot_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
@@ -728,6 +729,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     install_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .arg(&installer)
         .args(["/S"])
         .stdout(std::process::Stdio::null())

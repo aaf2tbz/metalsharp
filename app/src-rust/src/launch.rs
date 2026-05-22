@@ -42,6 +42,7 @@ pub fn launch_via_steam(appid: u32) -> Result<u32, Box<dyn std::error::Error>> {
     let mut cmd = Command::new(&wine);
     cmd.env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .args(["start", &url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -85,7 +86,7 @@ pub fn launch_via_steam_with_env(
     let url = format!("steam://run/{}", appid);
 
     let mut cmd = Command::new(&wine);
-    cmd.env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all");
+    cmd.env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     for (key, val) in extra_env {

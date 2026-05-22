@@ -244,6 +244,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     cmd.current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
         .env(
@@ -1176,6 +1177,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     wineboot_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
@@ -1204,6 +1206,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     install_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .arg(&installer)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
