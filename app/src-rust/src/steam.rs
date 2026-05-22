@@ -1,10 +1,12 @@
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 static GPTK_STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
+static GPTK_TOOLKIT_INSTALLING: AtomicBool = AtomicBool::new(false);
+static TEMP_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
 
@@ -130,7 +132,7 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
         "phase": phase,
         "message": message,
         "error": error,
-        "installing": is_installing_gptk_steam(),
+        "installing": is_installing_gptk_toolkit() || is_installing_gptk_steam(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     });
@@ -194,6 +196,15 @@ fn metalsharp_home() -> PathBuf {
 
 fn current_timestamp_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0)
+}
+
+fn unique_operation_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let counter = TEMP_NAME_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{}-{}-{}", std::process::id(), nanos, counter)
 }
 
 fn current_account_name() -> String {
@@ -297,7 +308,7 @@ pub fn status() -> Value {
     let gptk_identity = gptk_prefix_identity();
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
-    let gptk_installing = is_installing_gptk_steam();
+    let gptk_installing = is_installing_gptk_toolkit() || is_installing_gptk_steam();
 
     json!({
         "installed": windows_installed,
@@ -526,6 +537,10 @@ pub fn is_installing_gptk_steam() -> bool {
     GPTK_STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
+pub fn is_installing_gptk_toolkit() -> bool {
+    GPTK_TOOLKIT_INSTALLING.load(Ordering::SeqCst)
+}
+
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     ensure_steam_launch_ready_with_wrapper(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
 }
@@ -721,7 +736,7 @@ fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("metalsharp-{}-{}-{}", name, std::process::id(), current_timestamp_secs()))
+    std::env::temp_dir().join(format!("metalsharp-{}-{}", name, unique_operation_suffix()))
 }
 
 fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -879,7 +894,7 @@ fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::erro
     let target = gptk_local_root();
     let parent = target.parent().ok_or("Game Porting Toolkit runtime target does not have a parent directory")?;
     std::fs::create_dir_all(parent)?;
-    let suffix = format!("{}-{}", current_timestamp_secs(), std::process::id());
+    let suffix = unique_operation_suffix();
     let staging = parent.join(format!(".gptk-redist-stage-{}", suffix));
     let backup = parent.join(format!(".gptk-redist-backup-{}", suffix));
 
@@ -949,6 +964,24 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
 }
 
 fn ensure_gptk_toolkit_installed_from_download() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if gptk_installed() {
+        return Ok(None);
+    }
+    if GPTK_TOOLKIT_INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        write_gptk_toolkit_progress(
+            "installing_toolkit",
+            "Game Porting Toolkit runtime installation is already in progress.",
+            None,
+        );
+        return Err("Game Porting Toolkit runtime installation is already in progress".into());
+    }
+
+    let result = ensure_gptk_toolkit_installed_from_download_locked();
+    GPTK_TOOLKIT_INSTALLING.store(false, Ordering::SeqCst);
+    result
+}
+
+fn ensure_gptk_toolkit_installed_from_download_locked() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
     if gptk_installed() {
         return Ok(None);
     }
@@ -2648,6 +2681,13 @@ mod tests {
         std::fs::write(root.join("x86_64-windows").join("dxgi.dll"), b"dxgi").expect("write dxgi");
         assert!(gptk_redist_payload_complete(&root));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gptk_temp_paths_do_not_collide_within_one_process() {
+        let first = unique_temp_dir("gptk-outer");
+        let second = unique_temp_dir("gptk-outer");
+        assert_ne!(first, second);
     }
 
     #[test]
