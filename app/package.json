@@ -192,6 +192,10 @@
         "to": "bundles/steamwebhelper.exe"
       },
       {
+        "from": "bundles/steamwebhelper-gptk.exe",
+        "to": "bundles/steamwebhelper-gptk.exe"
+      },
+      {
         "from": "bundles/steamwebhelper-wrapper.c",
         "to": "bundles/steamwebhelper-wrapper.c"
       },
