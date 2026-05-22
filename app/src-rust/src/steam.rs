@@ -319,7 +319,14 @@ fn is_gptk_steam_owner_command(command: &str) -> bool {
         return false;
     }
     let lower = command.to_lowercase();
-    is_gptk_runtime_command(command) && lower.contains("c:\\program files (x86)\\steam")
+    let prefix = gptk_steam_prefix().to_string_lossy().to_lowercase();
+    let exe = gptk_steam_exe_path().to_string_lossy().to_lowercase();
+    let steam_process =
+        lower.contains("steam.exe") || lower.contains("steamservice.exe") || lower.contains("steamerrorreporter");
+    let windows_steam_path = lower.contains("c:\\program files (x86)\\steam") && steam_process;
+    let gptk_prefix_steam_path = lower.contains(&exe) || (lower.contains(&prefix) && steam_process);
+
+    (is_gptk_runtime_command(command) && windows_steam_path) || gptk_prefix_steam_path
 }
 
 fn is_gptk_steam_cleanup_command(command: &str) -> bool {
@@ -1975,6 +1982,30 @@ mod tests {
         ));
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
+        ));
+    }
+
+    #[test]
+    fn detects_gptk_steam_posix_launch_command() {
+        let command =
+            format!("arch -x86_64 {} {} -no-cef-sandbox", gptk_wine_path().display(), gptk_steam_exe_path().display());
+
+        assert!(is_gptk_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command));
+    }
+
+    #[test]
+    fn detects_gptk_steam_windows_path_command() {
+        let command = format!("{} C:\\Program Files (x86)\\Steam\\steam.exe -silent", gptk_wine_path().display());
+
+        assert!(is_gptk_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command));
+    }
+
+    #[test]
+    fn ignores_gptk_steam_shell_searches() {
+        assert!(!is_gptk_steam_owner_command(
+            "/bin/zsh -lc ps axo pid=,command= | rg -i \"prefix-gptk-steam|Steam.exe\"",
         ));
     }
 }
