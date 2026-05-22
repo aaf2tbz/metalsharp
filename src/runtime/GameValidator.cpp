@@ -136,9 +136,9 @@ ValidationResult GameValidator::validate(const std::string& exePath, const std::
     report << "\n--- Assessment ---\n";
     const bool needsRuntimeProof = detector.requiresRuntimeProof(result.drmResults);
     report << "Can launch:     "
-           << (result.canLaunch ? (needsRuntimeProof ? "Needs runtime proof" : "Yes")
-                                : (needsRuntimeProof ? "No (protected runtime proof required)"
-                                                     : "No (unsupported kernel driver)"))
+           << (result.canLaunch
+                   ? (needsRuntimeProof ? "Needs runtime proof" : "Yes")
+                   : (needsRuntimeProof ? "No (protected runtime proof required)" : "No (unsupported kernel driver)"))
            << "\n";
     report << "Suggested status: " << CompatDatabase::statusToString(result.suggestedStatus) << "\n";
 
