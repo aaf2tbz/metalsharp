@@ -103,6 +103,7 @@ Expected result:
 - Shell syntax passes.
 - Launcher tests pass.
 - No installed runtime files change.
+- Optional verifier fixture proves the live-suite verifier accepts surviving Wine Steam PIDs and rejects disappeared pre-existing Wine Steam PIDs.
 
 ## Pass 1: Runtime Candidate Preparation
 
@@ -198,6 +199,7 @@ Required pass conditions:
 - Schedule I launches with `launchMethod: "m11"`.
 - Subnautica Below Zero launches with `launchMethod: "m11"`.
 - Each game has a live game PID, not just a Steam URL/helper PID.
+- If Wine Steam was already running before a game launch, the pre-existing `Steam.exe` PID survives that launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.
 
 If `dxmt32` fails specifically on the i386 WineMetal artifact, repeat Passes 2

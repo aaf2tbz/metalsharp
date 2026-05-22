@@ -891,10 +891,12 @@ Live control verification is handled by `scripts/verify-wine119-live-control-sui
   - requires backend `/status` to report current-main version `0.33.27`
   - requires every launch JSON to report `ok: true` and the expected pipeline
   - requires each proof directory to contain a live game PID
+  - requires Wine Steam PID snapshots before/after each launch and fails if a pre-existing `Steam.exe` PID disappears
   - requires loaded-module/cache evidence for each control game from `summary.txt`
 - expected gate:
   - `pass` only when all three control games satisfy the acceptance matrix
   - `fail` for log-only captures, wrong route, missing DXMT/WineMetal/MoltenVK evidence, missing cache evidence, or failed launch JSON
+  - `fail` if an already-running Wine Steam process is killed/relaunched during a control-game launch
 
 This verifier is the final local release gate before any Wine 11.9 tag bump. A green manifest or backend preflight is not enough.
 

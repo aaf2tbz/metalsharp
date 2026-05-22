@@ -71,6 +71,37 @@ require_contains() {
     fi
 }
 
+verify_steam_survives() {
+    local label="$1"
+    local before="$suite_dir/steam/before-$label-wine-steam-pids.txt"
+    local after="$suite_dir/steam/after-$label-wine-steam-pids.txt"
+
+    if [[ ! -f "$before" || ! -f "$after" ]]; then
+        fail "$label" "missing Wine Steam PID snapshots for attach/relaunch proof"
+        return
+    fi
+
+    if [[ ! -s "$before" ]]; then
+        pass "$label" "no pre-existing Wine Steam PID before launch; attach survival gate not applicable"
+        return
+    fi
+
+    local missing=()
+    local pid
+    while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        if ! grep -qx "$pid" "$after"; then
+            missing+=("$pid")
+        fi
+    done < "$before"
+
+    if (( ${#missing[@]} == 0 )); then
+        pass "$label" "pre-existing Wine Steam PID(s) survived launch: $(tr '\n' ' ' < "$before" | sed 's/[[:space:]]*$//')"
+    else
+        fail "$label" "pre-existing Wine Steam PID(s) disappeared after launch: ${missing[*]}"
+    fi
+}
+
 verify_game() {
     local label="$1"
     local expected_pipeline="$2"
@@ -106,8 +137,11 @@ verify_game() {
         fail "$label" "missing live game PID; log-only proof is not a release gate"
     fi
 
-    require_contains "$label" "$summary" "pipeline[=:]${expected_pipeline}|pipeline[=:]${expected_pipeline^^}" "proof summary includes expected pipeline"
+    local expected_pipeline_upper
+    expected_pipeline_upper="$(printf '%s' "$expected_pipeline" | tr '[:lower:]' '[:upper:]')"
+    require_contains "$label" "$summary" "pipeline[=:]${expected_pipeline}|pipeline[=:]${expected_pipeline_upper}" "proof summary includes expected pipeline"
     require_contains "$label" "$summary" "$appid" "proof summary includes appid $appid"
+    verify_steam_survives "$label"
 
     for pattern in "${patterns[@]}"; do
         require_contains "$label" "$summary" "$pattern" "proof summary includes $pattern"
@@ -129,7 +163,7 @@ fi
 
 if [[ -f "$suite_dir/status.json" ]]; then
     require_contains "backend" "$suite_dir/status.json" '"ok"[[:space:]]*:[[:space:]]*true' "backend status ok=true"
-    require_contains "backend" "$suite_dir/status.json" '"version"[[:space:]]*:[[:space:]]*"0\\.33\\.27"' "backend status is current main version 0.33.27"
+    require_contains "backend" "$suite_dir/status.json" '"version"[[:space:]]*:[[:space:]]*"0[.]33[.]27"' "backend status is current main version 0.33.27"
 else
     fail "backend" "missing status.json"
 fi

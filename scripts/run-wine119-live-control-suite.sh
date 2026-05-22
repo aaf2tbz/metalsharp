@@ -166,6 +166,32 @@ if find "$parity_home/.metalsharp/compatdata" -type d -name logs -print -quit 2>
     exit 1
 fi
 
+mkdir -p "$out_dir/steam"
+
+capture_steam_snapshot() {
+    local label="$1"
+    local all_processes="$out_dir/steam/$label-processes.txt"
+    local matching="$out_dir/steam/$label-matching-steam.txt"
+    local pids="$out_dir/steam/$label-wine-steam-pids.txt"
+
+    ps -axo pid,ppid,etime,command > "$all_processes"
+    grep -iE 'Steam\.exe|steam\.exe|steamwebhelper|steam://|metalsharp-backend|wine' \
+        "$all_processes" > "$matching" || true
+    awk '
+        {
+            line = tolower($0)
+            if (index(line, "steam.exe") > 0 &&
+                index(line, "run-wine119-live-control-suite.sh") == 0 &&
+                index(line, "/bin/zsh -lc") == 0 &&
+                index(line, "/bin/bash") == 0 &&
+                index(line, " grep ") == 0 &&
+                index(line, " rg ") == 0) print $1
+        }
+    ' "$all_processes" | sort -n > "$pids"
+}
+
+capture_steam_snapshot "before-backend"
+
 backend_pid=""
 cleanup() {
     if [[ -n "$backend_pid" ]] && kill -0 "$backend_pid" 2>/dev/null; then
@@ -211,6 +237,8 @@ if [[ "$ready" != "1" ]]; then
     exit 1
 fi
 
+capture_steam_snapshot "backend-ready"
+
 launch_game() {
     local label="$1"
     local appid="$2"
@@ -220,6 +248,8 @@ launch_game() {
     local launch_curl="$out_dir/launches/$label-launch.curl.log"
     local proof_dir="$out_dir/proof/$label"
 
+    capture_steam_snapshot "before-$label"
+
     printf '{"appid":%s,"launchMethod":"%s"}' "$appid" "$method" \
         | curl -fsS -X POST "$base_url/steam/launch-game" \
             -H 'Content-Type: application/json' \
@@ -227,6 +257,8 @@ launch_game() {
             > "$launch_json" 2> "$launch_curl" || true
 
     sleep "$wait_secs"
+
+    capture_steam_snapshot "after-$label"
 
     HOME="$parity_home" \
     METALSHARP_HOME="$parity_home/.metalsharp" \
@@ -246,6 +278,7 @@ launch_game "subnautica-bz" 848450 "m11" "SubnauticaZero"
     echo "status_json=$out_dir/status.json"
     echo "backend_stdout=$out_dir/backend.stdout.log"
     echo "backend_stderr=$out_dir/backend.stderr.log"
+    echo "steam_snapshots=$out_dir/steam"
     echo
     for label in nidhogg2 schedule-i subnautica-bz; do
         echo "## $label"
@@ -256,6 +289,12 @@ launch_game "subnautica-bz" 848450 "m11" "SubnauticaZero"
             echo "- live_game_pids: $(tr '\n' ' ' < "$out_dir/proof/$label/game-pids.txt" | sed 's/[[:space:]]*$//')"
         else
             echo "- live_game_pids: none"
+        fi
+        if [[ -f "$out_dir/steam/before-$label-wine-steam-pids.txt" ]]; then
+            echo "- wine_steam_pids_before: $(tr '\n' ' ' < "$out_dir/steam/before-$label-wine-steam-pids.txt" | sed 's/[[:space:]]*$//')"
+        fi
+        if [[ -f "$out_dir/steam/after-$label-wine-steam-pids.txt" ]]; then
+            echo "- wine_steam_pids_after: $(tr '\n' ' ' < "$out_dir/steam/after-$label-wine-steam-pids.txt" | sed 's/[[:space:]]*$//')"
         fi
         echo
     done
