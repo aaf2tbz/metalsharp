@@ -373,7 +373,7 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
-    if is_gptk_runtime_command(command) {
+    if is_gptk_runtime_command(command) || is_gptk_steam_prefix_command(command) {
         return false;
     }
 
@@ -399,7 +399,7 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
-    if is_gptk_runtime_command(command) {
+    if is_gptk_runtime_command(command) || is_gptk_steam_prefix_command(command) {
         return false;
     }
 
@@ -417,8 +417,10 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
 
 fn is_gptk_runtime_command(command: &str) -> bool {
     command.contains("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/")
-        || command.contains(&gptk_steam_prefix().to_string_lossy().to_string())
-        || command.contains(&gptk_local_root().to_string_lossy().to_string())
+}
+
+fn is_gptk_steam_prefix_command(command: &str) -> bool {
+    command.to_lowercase().contains(&gptk_steam_prefix().to_string_lossy().to_lowercase())
 }
 
 fn is_gptk_steam_owner_command(command: &str) -> bool {
@@ -2705,6 +2707,16 @@ mod tests {
     fn gptk_steam_cleanup_stays_scoped_to_steam_prefix() {
         let game_command =
             format!("arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe", gptk_wine_path().display());
+        let prefixed_game_command = format!(
+            "arch -x86_64 {} {}/steamapps/common/ELDEN RING/Game/eldenring.exe",
+            gptk_wine_path().display(),
+            gptk_steam_prefix().display()
+        );
+        let local_redist_game_command = format!(
+            "arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe {}",
+            gptk_wine_path().display(),
+            gptk_local_root().display()
+        );
         let helper_command = format!(
             "{} {}/drive_c/Program Files (x86)/Steam/bin/cef/cef.win64/steamwebhelper.exe",
             gptk_wine_path().display(),
@@ -2712,6 +2724,12 @@ mod tests {
         );
 
         assert!(!is_gptk_steam_cleanup_command(&game_command));
+        assert!(!is_gptk_steam_cleanup_command(&prefixed_game_command));
+        assert!(!is_gptk_steam_cleanup_command(&local_redist_game_command));
+        assert!(!is_gptk_steam_owner_command(&prefixed_game_command));
+        assert!(!is_wine_steam_cleanup_command(&prefixed_game_command));
+        assert!(!is_gptk_runtime_command(&prefixed_game_command));
+        assert!(!is_gptk_runtime_command(&local_redist_game_command));
         assert!(is_gptk_steam_cleanup_command(&helper_command));
     }
 
