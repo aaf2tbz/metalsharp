@@ -333,7 +333,22 @@ fn is_gptk_steam_cleanup_command(command: &str) -> bool {
     if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
         return false;
     }
-    is_gptk_runtime_command(command)
+
+    let lower = command.to_lowercase();
+    let prefix = gptk_steam_prefix().to_string_lossy().to_lowercase();
+    let steam_cleanup_process = lower.contains("steam.exe")
+        || lower.contains("steamservice.exe")
+        || lower.contains("steamerrorreporter")
+        || lower.contains("steamwebhelper.exe")
+        || lower.contains("steamwebhelper_real.exe")
+        || lower.contains("winedevice.exe")
+        || lower.contains("wineloader");
+
+    is_gptk_steam_owner_command(command)
+        || (lower.contains(&prefix) && steam_cleanup_process)
+        || (is_gptk_runtime_command(command)
+            && lower.contains("c:\\program files (x86)\\steam")
+            && steam_cleanup_process)
 }
 
 fn gptk_steam_cleanup_pids() -> Vec<u32> {
@@ -1038,8 +1053,10 @@ pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 pub fn stop_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let prefix_str = gptk_steam_prefix().to_string_lossy().to_string();
     let _ = Command::new(gptk_wineserver_path())
         .arg("-k")
+        .env("WINEPREFIX", &prefix_str)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -2007,5 +2024,19 @@ mod tests {
         assert!(!is_gptk_steam_owner_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"prefix-gptk-steam|Steam.exe\"",
         ));
+    }
+
+    #[test]
+    fn gptk_steam_cleanup_stays_scoped_to_steam_prefix() {
+        let game_command =
+            format!("arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe", gptk_wine_path().display());
+        let helper_command = format!(
+            "{} {}/drive_c/Program Files (x86)/Steam/bin/cef/cef.win64/steamwebhelper.exe",
+            gptk_wine_path().display(),
+            gptk_steam_prefix().display()
+        );
+
+        assert!(!is_gptk_steam_cleanup_command(&game_command));
+        assert!(is_gptk_steam_cleanup_command(&helper_command));
     }
 }

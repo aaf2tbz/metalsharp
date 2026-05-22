@@ -331,7 +331,7 @@ pub fn launch_custom_with_options(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    let prefix = options.prefix_path.unwrap_or_else(|| default_prefix_for_node(&home, node));
     std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -425,6 +425,14 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
 
+fn default_prefix_for_node(home: &Path, node: &PipelineNode) -> PathBuf {
+    if node.backend == "gptk" {
+        crate::steam::gptk_steam_prefix()
+    } else {
+        home.join(".metalsharp").join("prefix-steam")
+    }
+}
+
 fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
     let appid = appid.to_string();
     cmd.env("SteamAppId", &appid).env("SteamGameId", &appid).env("SteamOverlayGameId", &appid);
@@ -452,8 +460,7 @@ fn launch_dxmt_metal_with_context(
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix =
-        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    let prefix = prefix_override.map(Path::to_path_buf).unwrap_or_else(|| default_prefix_for_node(&home, node));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -1300,6 +1307,16 @@ mod tests {
         assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
         assert!(!keys.contains("DXVK_LOG_PATH"));
         assert!(!keys.contains("VK_ICD_FILENAMES"));
+    }
+
+    #[test]
+    fn m13_defaults_to_gptk_steam_prefix() {
+        let home = test_dir("m13-prefix");
+        let m13 = get_pipeline(PipelineId::M13);
+        let m12 = get_pipeline(PipelineId::M12);
+
+        assert_eq!(default_prefix_for_node(&home, m13), crate::steam::gptk_steam_prefix());
+        assert_eq!(default_prefix_for_node(&home, m12), home.join(".metalsharp").join("prefix-steam"));
     }
 
     #[test]
