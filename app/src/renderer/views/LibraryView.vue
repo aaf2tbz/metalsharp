@@ -172,7 +172,8 @@ async function toggleMacSteam() {
 
 async function toggleGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    toast.show("Install Game Porting Toolkit from Apple, then refresh MetalSharp", "error");
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
+    toast.show(result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"), result?.ok ? "success" : "error");
     return;
   }
   if (gptkSteamInstalling.value) {
@@ -186,6 +187,7 @@ async function toggleGptkSteam() {
       gptkSteamInstalling.value = result.installing ?? false;
       gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
       toast.show(result.installed ? "GPTK Steam is already installed" : "Steam installer launched in GPTK Wine", "success");
+      if (result.installing) pollGptkSteamInstall();
     } else {
       toast.show(result?.error ?? "Could not start GPTK Steam setup", "error");
     }
@@ -222,6 +224,34 @@ async function toggleGptkSteam() {
     }
   }
   reloadLibrary();
+}
+
+function pollGptkSteamInstall() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const status = await api<{
+      gptk_steam_installed?: boolean;
+      gptk_installing?: boolean;
+      gptk_install_progress?: { phase: string; message: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!status) return;
+    gptkSteamInstalling.value = status.gptk_installing ?? false;
+    gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
+    if (status.gptk_steam_installed) {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      toast.show("GPTK Steam is ready", "success");
+      reloadLibrary();
+    } else if (status.gptk_install_progress?.phase === "error") {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
+    } else if (attempts > 180) {
+      clearInterval(poll);
+      toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
+    }
+  }, 2000);
 }
 
 async function launchGame(game: SteamGame, launchMethod = "auto") {

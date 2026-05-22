@@ -302,6 +302,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
             }
         },
+        (Method::Post, "/steam/gptk-toolkit-install") => {
+            app_log("Opening Game Porting Toolkit download...");
+            match steam::open_gptk_toolkit_download() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-install", "gptk-toolkit", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
         (Method::Post, "/steam/gptk-sync") => {
             app_log("Installing GPTK Wine Steam...");
             match steam::sync_gptk_steam_prefix() {

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 static GPTK_STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
+const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
@@ -46,6 +47,50 @@ fn gptk_wineserver_path() -> PathBuf {
 
 fn gptk_installed() -> bool {
     gptk_wine_path().exists() && gptk_wineserver_path().exists()
+}
+
+fn gptk_steam_install_progress_path() -> PathBuf {
+    metalsharp_home().join("gptk_steam_install_progress.json")
+}
+
+fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&str>) {
+    let progress = json!({
+        "phase": phase,
+        "message": message,
+        "error": error,
+        "installing": is_installing_gptk_steam(),
+        "toolkit_installed": gptk_installed(),
+        "steam_installed": gptk_steam_installed(),
+    });
+    let path = gptk_steam_install_progress_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, serde_json::to_string_pretty(&progress).unwrap_or_default());
+}
+
+fn read_gptk_steam_install_progress() -> Value {
+    let path = gptk_steam_install_progress_path();
+    if path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+                return value;
+            }
+        }
+    }
+
+    json!({
+        "phase": if gptk_steam_installed() { "ready" } else { "idle" },
+        "message": if gptk_steam_installed() {
+            "GPTK Steam is installed"
+        } else {
+            "GPTK Steam is not installed"
+        },
+        "error": null,
+        "installing": is_installing_gptk_steam(),
+        "toolkit_installed": gptk_installed(),
+        "steam_installed": gptk_steam_installed(),
+    })
 }
 
 fn gptk_steam_installed() -> bool {
@@ -172,12 +217,14 @@ pub fn status() -> Value {
         "mac_running": mac_running,
         "gptk_installed": gptk_installed(),
         "gptk_toolkit_installed": gptk_installed(),
+        "gptk_toolkit_url": GPTK_TOOLKIT_URL,
         "gptk_steam_installed": gptk_steam_installed,
         "gptk_path": gptk_steam_dir.to_string_lossy().to_string(),
         "gptk_prefix": gptk_steam_prefix().to_string_lossy().to_string(),
         "gptk_running": gptk_running,
         "gptk_synced": gptk_steam_installed,
         "gptk_installing": gptk_installing,
+        "gptk_install_progress": read_gptk_steam_install_progress(),
         "gptk_profile": gptk_identity,
         "running": running,
         "metalsharp_wine_available": ms_available,
@@ -514,18 +561,44 @@ pub fn sync_gptk_steam_prefix() -> Result<Value, Box<dyn std::error::Error>> {
     install_gptk_steam()
 }
 
+pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>> {
+    let child = Command::new("open")
+        .arg(GPTK_TOOLKIT_URL)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({
+        "ok": true,
+        "pid": child.id(),
+        "url": GPTK_TOOLKIT_URL
+    }))
+}
+
 pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if !gptk_installed() {
-        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+        write_gptk_steam_install_progress(
+            "toolkit_missing",
+            "Game Porting Toolkit is not installed. Install it before setting up GPTK Steam.",
+            Some("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app"),
+        );
+        return Ok(json!({
+            "ok": false,
+            "error": "Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app",
+            "toolkit_url": GPTK_TOOLKIT_URL,
+            "progress": read_gptk_steam_install_progress()
+        }));
     }
 
     if gptk_steam_installed() {
         ensure_gptk_steam_launch_ready(&steam_dir_for_prefix(&gptk_steam_prefix()));
+        write_gptk_steam_install_progress("ready", "GPTK Steam is installed and ready to launch.", None);
         return Ok(json!({
             "ok": true,
             "installed": true,
             "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
             "steam_path": steam_dir_for_prefix(&gptk_steam_prefix()).to_string_lossy().to_string(),
+            "progress": read_gptk_steam_install_progress(),
             "profile": gptk_prefix_identity()
         }));
     }
@@ -534,7 +607,8 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({
             "ok": true,
             "installing": true,
-            "message": "GPTK Steam installation already in progress"
+            "message": "GPTK Steam installation already in progress",
+            "progress": read_gptk_steam_install_progress()
         }));
     }
 
@@ -542,20 +616,31 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({
             "ok": true,
             "installing": true,
-            "message": "GPTK Steam installation already in progress"
+            "message": "GPTK Steam installation already in progress",
+            "progress": read_gptk_steam_install_progress()
         }));
     }
 
+    write_gptk_steam_install_progress("starting", "Starting GPTK Steam setup...", None);
     std::thread::spawn(move || {
-        let _ = run_install_gptk_steam();
+        let result = run_install_gptk_steam();
         GPTK_STEAM_INSTALLING.store(false, Ordering::SeqCst);
+        match result {
+            Ok(message) => write_gptk_steam_install_progress("ready", &message, None),
+            Err(error) => write_gptk_steam_install_progress(
+                "error",
+                &format!("GPTK Steam setup failed: {}", error),
+                Some(&error.to_string()),
+            ),
+        }
     });
 
     Ok(json!({
         "ok": true,
         "installing": true,
         "message": "GPTK Steam installation started",
-        "prefix": gptk_steam_prefix().to_string_lossy().to_string()
+        "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+        "progress": read_gptk_steam_install_progress()
     }))
 }
 
@@ -660,16 +745,24 @@ fn archive_contaminated_gptk_prefix(prefix: &Path) -> Result<Option<PathBuf>, Bo
 }
 
 fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
+    write_gptk_steam_install_progress("checking_toolkit", "Checking Game Porting Toolkit installation...", None);
+    if !gptk_installed() {
+        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+    }
+
     let metalsharp_dir = metalsharp_home();
     std::fs::create_dir_all(&metalsharp_dir)?;
 
+    write_gptk_steam_install_progress("downloading_steam", "Downloading SteamSetup.exe for GPTK Steam...", None);
     let installer = prepare_steam_installer(&metalsharp_dir)?;
     let prefix = gptk_steam_prefix();
+    write_gptk_steam_install_progress("preparing_prefix", "Preparing a dedicated GPTK Steam prefix...", None);
     let archived_prefix = archive_contaminated_gptk_prefix(&prefix)?;
     std::fs::create_dir_all(&prefix)?;
 
     ensure_clean_gptk_prefix(&prefix)?;
 
+    write_gptk_steam_install_progress("running_installer", "Running SteamSetup.exe inside the GPTK prefix...", None);
     let prefix_str = prefix.to_string_lossy().to_string();
     let mut install_cmd = Command::new("arch");
     install_cmd
@@ -683,23 +776,35 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
     apply_gptk_env(&mut install_cmd);
     let _child = install_cmd.spawn()?;
 
+    write_gptk_steam_install_progress(
+        "waiting_for_steam",
+        "Waiting for Steam installer to finish writing the GPTK Steam files...",
+        None,
+    );
     let steam_dir = steam_dir_for_prefix(&prefix);
     let steam_exe = steam_dir.join("Steam.exe");
     let steam_ui_dll = steam_dir.join("steamui.dll");
-    for _ in 0..120 {
+    for _ in 0..180 {
         if steam_exe.exists() && steam_ui_dll.exists() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    if steam_exe.exists() && steam_ui_dll.exists() {
-        ensure_gptk_steam_launch_ready(&steam_dir);
-        repair_fresh_gptk_identity(&prefix, &current_account_name())?;
+    if !steam_exe.exists() || !steam_ui_dll.exists() {
+        return Err("SteamSetup.exe did not finish writing Steam.exe and steamui.dll into the GPTK prefix".into());
+    }
+
+    write_gptk_steam_install_progress("deploying_wrapper", "Deploying the GPTK Steam CEF wrapper...", None);
+    ensure_gptk_steam_launch_ready(&steam_dir);
+    repair_fresh_gptk_identity(&prefix, &current_account_name())?;
+
+    if !gptk_steam_installed() {
+        return Err("GPTK Steam files were created, but the prefix is not launch-ready".into());
     }
 
     Ok(format!(
-        "GPTK Steam install thread complete{}",
+        "GPTK Steam is installed and ready{}",
         archived_prefix.map(|path| format!("; archived contaminated prefix to {}", path.display())).unwrap_or_default()
     ))
 }

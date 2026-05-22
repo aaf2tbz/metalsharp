@@ -38,6 +38,7 @@ const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
 const pipelineCache = ref<CacheSummary | null>(null);
 const apiKeyInput = ref("");
+const gptkInstallMessage = ref("");
 
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
@@ -108,7 +109,7 @@ async function toggleSteam() {
 
 async function installGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    toast.show("Install Game Porting Toolkit first, then refresh MetalSharp", "error");
+    await openGptkToolkitDownload();
     return;
   }
   if (gptkSteamInstalling.value) {
@@ -123,11 +124,51 @@ async function installGptkSteam() {
   if (result?.ok) {
     gptkSteamInstalling.value = result.installing ?? false;
     gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
+    gptkInstallMessage.value = result.installed ? "GPTK Steam is ready" : "Steam installer is running in GPTK Wine";
     toast.show(result.installed ? "GPTK Steam is already installed" : "Steam installer launched in GPTK Wine", "success");
+    if (result.installing) pollGptkSteamInstall();
     await reloadLibrary();
   } else {
     toast.show(result?.error ?? "Could not start GPTK Steam setup", "error");
   }
+}
+
+async function openGptkToolkitDownload() {
+  const result = await api<{ ok: boolean; url?: string; error?: string }>("POST", "/steam/gptk-toolkit-install");
+  if (result?.ok) {
+    toast.show("Game Porting Toolkit download page opened", "success");
+  } else {
+    toast.show(result?.error ?? "Could not open Game Porting Toolkit download", "error");
+  }
+}
+
+function pollGptkSteamInstall() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const status = await api<{
+      gptk_steam_installed?: boolean;
+      gptk_installing?: boolean;
+      gptk_install_progress?: { phase: string; message: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!status) return;
+    gptkSteamInstalling.value = status.gptk_installing ?? false;
+    gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
+    gptkInstallMessage.value = status.gptk_install_progress?.message ?? "";
+    if (status.gptk_steam_installed) {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      toast.show("GPTK Steam is ready", "success");
+      await reloadLibrary();
+    } else if (status.gptk_install_progress?.phase === "error") {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
+    } else if (attempts > 180) {
+      clearInterval(poll);
+      toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
+    }
+  }, 2000);
 }
 
 async function toggleGptkSteam() {
@@ -340,6 +381,7 @@ function cacheStatusText(cache: CacheSummary | null): string {
         <div>
           <div class="settings-label">GPTK Steam (M-Anticheat)</div>
           <div class="settings-desc">Separate Windows Steam install inside Game Porting Toolkit Wine</div>
+          <div v-if="gptkInstallMessage" class="settings-desc">{{ gptkInstallMessage }}</div>
         </div>
         <div class="settings-value">
           <span v-if="!gptkToolkitInstalled" class="badge badge-warn">GPTK Missing</span>
@@ -359,9 +401,10 @@ function cacheStatusText(cache: CacheSummary | null): string {
                   ? gptkSteamRunning
                     ? "Stop GPTK Steam"
                     : "Start GPTK Steam"
-                  : "Install GPTK Steam"
+              : "Install GPTK Steam"
             }}
           </button>
+          <button v-else class="btn btn-primary btn-sm" @click="openGptkToolkitDownload">Get GPTK</button>
         </div>
       </div>
       <div class="settings-row">
