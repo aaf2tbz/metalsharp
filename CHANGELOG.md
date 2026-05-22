@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.33.29 - 2026-05-22
+
+M-Anticheat GPTK Steam lane.
+
+### Added
+
+- **M-Anticheat pipeline** - adds the M13/M-Anticheat route for GPTK D3DMetal launches, including library card labeling, setup wizard support, Settings controls, and launch-button handling for anti-cheat compatible offline play.
+- **Dedicated GPTK Steam prefix** - adds a separate `prefix-gptk-steam` Wine tree with its own Steam installer flow, launch wrapper, process detection, setup progress reporting, and GPTK Steam start/stop controls.
+
+### Changed
+
+- **GPTK Steam launch model** - M13 Steam launches now keep the GPTK Steam lane separate from the normal MetalSharp Wine/DXMT lane, with bottle metadata, compatdata, response payloads, and the actual Wine prefix aligned to the GPTK Steam prefix.
+- **Post-update migration** - runtime migration now preserves GPTK Steam prefix data and install-progress state alongside normal Steam, bottles, compatdata, games, and Sharp Library data.
+
+### Fixed
+
+- **GPTK process ownership** - GPTK Steam readiness detection now matches both POSIX launch commands and Windows Steam process paths without confusing normal Wine Steam or shell searches.
+- **GPTK cleanup scope** - stopping GPTK Steam no longer treats every GPTK Wine process as cleanup-eligible, avoiding accidental termination of active M13 game processes.
+- **Packaged GPTK CEF wrapper** - release builds now include the GPTK-specific Steam CEF wrapper asset and materialize it from the base wrapper during bundle fetches when needed.
+- **Settings GPTK install polling** - marks the GPTK Steam polling helper async so frontend builds and install-status refreshes remain explicit.
+
 ## v0.33.27 - 2026-05-20
 
 WTMKT Phase 1 anti-cheat translation evidence.
