@@ -32,6 +32,9 @@ Environment:
   METALSHARP_PORT       Port to use, default 9375
   METALSHARP_BACKEND    Backend binary override
   METALSHARP_WAIT_SECS  Seconds to wait after each launch before proof, default 20
+  METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1
+                       Start Wine Steam before the controls and require every
+                       launch to attach to that pre-existing Steam process.
   METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1
                        Allow a parity home outside /tmp or /private/tmp
 USAGE
@@ -78,6 +81,7 @@ repo_root="$(cd "$script_dir/.." && pwd -P)"
 port="${METALSHARP_PORT:-9375}"
 backend="${METALSHARP_BACKEND:-$repo_root/app/src-rust/target/release/metalsharp-backend}"
 wait_secs="${METALSHARP_WAIT_SECS:-20}"
+require_preexisting_steam="${METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM:-0}"
 
 if [[ ! -x "$backend" ]]; then
     backend="$repo_root/app/src-rust/target/debug/metalsharp-backend"
@@ -239,6 +243,28 @@ fi
 
 capture_steam_snapshot "backend-ready"
 
+if [[ "$require_preexisting_steam" == "1" ]]; then
+    curl -fsS -X POST "$base_url/steam/launch" \
+        -H 'Content-Type: application/json' \
+        --data-binary '{}' \
+        > "$out_dir/steam/prestart-launch.json" \
+        2> "$out_dir/steam/prestart-launch.curl.log" || true
+
+    prestarted=0
+    for _ in $(seq 1 120); do
+        capture_steam_snapshot "prestarted"
+        if [[ -s "$out_dir/steam/prestarted-wine-steam-pids.txt" ]]; then
+            prestarted=1
+            break
+        fi
+        sleep 0.5
+    done
+    if [[ "$prestarted" != "1" ]]; then
+        echo "refusing to launch games: Wine Steam did not become visible before controls" >&2
+        exit 1
+    fi
+fi
+
 launch_game() {
     local label="$1"
     local appid="$2"
@@ -279,6 +305,10 @@ launch_game "subnautica-bz" 848450 "m11" "SubnauticaZero"
     echo "backend_stdout=$out_dir/backend.stdout.log"
     echo "backend_stderr=$out_dir/backend.stderr.log"
     echo "steam_snapshots=$out_dir/steam"
+    echo "require_preexisting_wine_steam=$require_preexisting_steam"
+    if [[ -f "$out_dir/steam/prestarted-wine-steam-pids.txt" ]]; then
+        echo "prestarted_wine_steam_pids=$(tr '\n' ' ' < "$out_dir/steam/prestarted-wine-steam-pids.txt" | sed 's/[[:space:]]*$//')"
+    fi
     echo
     for label in nidhogg2 schedule-i subnautica-bz; do
         echo "## $label"

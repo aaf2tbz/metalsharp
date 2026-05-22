@@ -189,6 +189,7 @@ Command:
 
 ```bash
 METALSHARP_RUN_LIVE_GAMES=1 \
+METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1 \
 scripts/run-wine119-live-control-suite.sh \
   /private/tmp/metalsharp-home-wine119-dxmt32-state \
   /tmp/metalsharp-live-controls-dxmt32
@@ -208,7 +209,9 @@ Required pass conditions:
 - Schedule I launches with `launchMethod: "m11"`.
 - Subnautica Below Zero launches with `launchMethod: "m11"`.
 - Each game has a live game PID, not just a Steam URL/helper PID.
-- If Wine Steam was already running before a game launch, the pre-existing `Steam.exe` PID survives that launch.
+- Wine Steam is prestarted before the controls.
+- Each game launch has a pre-existing `Steam.exe` PID before launch.
+- The pre-existing `Steam.exe` PID survives each launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.
 - Before release, keep the app-facing route audit green and, if the packaged UI
   changes, repeat this proof through Electron before tag bump.

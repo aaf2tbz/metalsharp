@@ -900,6 +900,7 @@ Live control verification is handled by `scripts/verify-wine119-live-control-sui
   - requires every launch JSON to report `ok: true` and the expected pipeline
   - requires each proof directory to contain a live game PID
   - requires Wine Steam PID snapshots before/after each launch and fails if a pre-existing `Steam.exe` PID disappears
+  - when `METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1` is used, starts Wine Steam before the controls and fails verification unless each control had a pre-existing Wine Steam PID to attach to
   - requires loaded-module/cache evidence for each control game from `summary.txt`
 - expected gate:
   - `pass` only when all three control games satisfy the acceptance matrix

@@ -47,6 +47,10 @@ fail() {
     append "- FAIL [$label] $message"
 }
 
+requires_preexisting_steam() {
+    [[ -f "$suite_dir/summary.md" ]] && rg -q '^require_preexisting_wine_steam=1$' "$suite_dir/summary.md"
+}
+
 pass() {
     local label="$1"
     local message="$2"
@@ -82,7 +86,11 @@ verify_steam_survives() {
     fi
 
     if [[ ! -s "$before" ]]; then
-        pass "$label" "no pre-existing Wine Steam PID before launch; attach survival gate not applicable"
+        if requires_preexisting_steam; then
+            fail "$label" "required pre-existing Wine Steam PID before launch, but snapshot is empty"
+        else
+            pass "$label" "no pre-existing Wine Steam PID before launch; attach survival gate not applicable"
+        fi
         return
     fi
 
