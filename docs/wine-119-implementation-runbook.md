@@ -145,7 +145,7 @@ scripts/fetch-wine119-release-assets.sh \
 
 scripts/prepare-wine119-parity-candidates.sh \
   /tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst \
-  /tmp/metalsharp-wine119-parity
+  /Volumes/AverySSD/metalsharp/wine119-parity-clean-i386
 
 scripts/audit-i386-winemetal-provenance.sh \
   /Volumes/AverySSD/metalsharp/dxmt-src \
@@ -175,8 +175,10 @@ Expected candidate meaning:
   SHA256 above, and `verified=1` before candidate preparation
 - `clean`: must fail because release asset lacks i386 `winemetal.dll`.
 - `dxmt32`: primary test candidate, still release-blocked until live M9 proof.
-  Prefer the clean 11.9-linked i386 WineMetal artifact over the older dirty
-  AverySSD `build32` artifact whenever it has a clean provenance report.
+  The orchestrator now prefers the clean 11.9-linked i386 WineMetal artifact
+  over the older dirty AverySSD `build32` artifact whenever the clean artifact
+  exists. Use `METALSHARP_I386_WINEMETAL_SOURCE` only for an explicit
+  diagnostic override.
 - `borrowed`: manifest-complete fallback experiment, not release-ready without live proof.
 - every prepared candidate must rewrite Vulkan ICD `library_path` entries to
   its own runtime root and provide `lib/libMoltenVK.dylib`, otherwise proof can

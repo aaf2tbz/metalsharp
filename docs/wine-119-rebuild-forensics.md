@@ -615,9 +615,10 @@ Release gates:
 1. Create a Wine 11.9 parity branch from `main`/`v0.33.27`.
 2. Add diagnostics/manifests first, without changing runtime behavior.
 3. Package Wine 11.9 into the 11.5-compatible runtime layout.
-4. Prepare two M9 candidate variants:
-   - 11.9 bundle plus `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
-   - 11.9 bundle plus borrowed 11.5 i386 `winemetal.dll` as a compatibility fallback experiment
+4. Prepare M9 candidate variants:
+   - 11.9 bundle plus the clean 11.9-linked i386 `winemetal.dll` at `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`
+   - dirty AverySSD `build32` i386 `winemetal.dll` only as a diagnostic fallback
+   - 11.9 bundle plus borrowed 11.5 i386 `winemetal.dll` only as a compatibility fallback experiment
 5. Install candidates only into a disposable `~/.metalsharp-119-parity` or alternate runtime root first.
 6. Run the three control games with the exact 0.33.27 route semantics.
 7. Only after parity, cherry-pick or reimplement anti-cheat hook commits in isolation.
@@ -631,7 +632,7 @@ The next Wine 11.9 attempt should be built as multiple small passes. Each pass h
 | --- | --- | --- | --- |
 | A: Baseline diagnostics on 11.5 | add manifest generation, launch contract logging, route/cache/env introspection, and `lsof` capture helpers | no Wine version change, no route behavior change, no migration bump | 11.5 controls still launch; logs include pipeline, runtime root, `WINEDLLOVERRIDES`, config/cache paths, winemetal binding model, and Steam identity mode |
 | B: Wine 11.9 asset packaging | install from `bundles/metalsharp_bundle.tar.zst`; normalize archive root `wine-11.9` into final runtime root `~/.metalsharp/runtime/wine`; regenerate/carry `bin/metalsharp-wine` | no protected Steam handoff, no winemetal relocation, no native-only DirectX overrides, no Unity arg changes | runtime manifest shows complete 11.9 file tree plus 11.5-compatible final paths; `wine --version` and `wineserver --version` return 11.9; `bin/metalsharp-wine` exists or all callers are updated |
-| C1: 11.9 parity with explicit DXMT i386 WineMetal | run M9/M11/M12 routes using 0.33.27 overrides, config visibility, game-local deployment, and Steam attach semantics; source i386 WineMetal from `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll` | no mscompatdb hook mutation, no schema-forced prefix migration, no Steam handoff changes | Nidhogg 2, Schedule I, and Subnautica BZ match the control matrix below under Wine 11.9; i386 artifact provenance is logged |
+| C1: 11.9 parity with explicit DXMT i386 WineMetal | run M9/M11/M12 routes using 0.33.27 overrides, config visibility, game-local deployment, and Steam attach semantics; source i386 WineMetal from the clean 11.9-linked artifact at `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`, falling back to the dirty AverySSD `build32` artifact only for diagnosis | no mscompatdb hook mutation, no schema-forced prefix migration, no Steam handoff changes | Nidhogg 2, Schedule I, and Subnautica BZ match the control matrix below under Wine 11.9; i386 artifact provenance is logged |
 | C2: 11.9 parity with borrowed 11.5 i386 fallback | only if C1 fails specifically on i386 WineMetal compatibility, test the borrowed 11.5 i386 `winemetal.dll` as a compatibility artifact | no release blessing without live M9 proof and an explicit compatibility rationale | Nidhogg 2 proves whether the 11.5 i386 bridge can safely pair with Wine 11.9, or the path is rejected |
 | D: Anti-cheat hook surface | add hook headers/exports/probes and mscompatdb readiness reporting | no route behavior changes; no Steam relaunch for normal routes | symbol probe proves hook contract; runtime endpoint reports hook readiness; non-anti-cheat control games still match pass C |
 | E: Protected Steam handoff | enable protected handoff only for explicit anti-cheat recipes | no global Steam launch path replacement | logs prove protected handoff is used only for opted-in games; already-running Wine Steam is not killed for normal routes |
@@ -755,22 +756,26 @@ Candidate orchestration is handled by `scripts/prepare-wine119-parity-candidates
   - `scripts/prepare-wine119-parity-candidates.sh /tmp/metalsharp-wine-assets-IjmErR/metalsharp_bundle.tar.zst /tmp/metalsharp-wine119-parity`
 - behavior:
   - creates a fresh 11.5 baseline manifest
-  - prepares `clean`, `dxmt32`, and `borrowed` Wine 11.9 runtime candidates under `/tmp/metalsharp-wine119-parity/candidates`
-  - writes manifests under `/tmp/metalsharp-wine119-parity/manifests`
+  - prepares `clean`, `dxmt32`, and `borrowed` Wine 11.9 runtime candidates under the requested work directory
+  - writes manifests under the requested work directory
   - compares each candidate against the 11.5 baseline contract
-  - writes `/tmp/metalsharp-wine119-parity/summary.md`
+  - writes `<work-dir>/summary.md`
 - default explicit i386 DXMT source:
-  - `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
+  - preferred when present:
+    `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`
+  - fallback:
+    `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
 - override:
   - `METALSHARP_I386_WINEMETAL_SOURCE=/path/to/winemetal.dll`
+  - `METALSHARP_I386_WINEMETAL_CLEAN_SOURCE=/path/to/clean/winemetal.dll`
 
 Latest orchestration result:
 
 | Candidate | Root | Manifest gate | Meaning |
 | --- | --- | --- | --- |
-| `clean` | `/tmp/metalsharp-wine119-parity/candidates/clean/wine` | fail | release 11.9 bundle lacks i386 `winemetal.dll` |
-| `dxmt32` | `/tmp/metalsharp-wine119-parity/candidates/dxmt32/wine` | fail | i386 WineMetal exists but differs from 11.5 control; requires live M9 proof |
-| `borrowed` | `/tmp/metalsharp-wine119-parity/candidates/borrowed/wine` | pass | manifest-complete by borrowing 11.5 i386 WineMetal; still requires live M9 proof before any release blessing |
+| `clean` | `<work-dir>/candidates/clean/wine` | fail | release 11.9 bundle lacks i386 `winemetal.dll` |
+| `dxmt32` | `<work-dir>/candidates/dxmt32/wine` | fail | i386 WineMetal exists but differs from 11.5 control; now defaults to the clean 11.9-linked artifact when present; requires live M9 proof |
+| `borrowed` | `<work-dir>/candidates/borrowed/wine` | pass | manifest-complete by borrowing 11.5 i386 WineMetal; still requires live M9 proof before any release blessing |
 
 Manifest pass is not a release gate. The orchestrator only proves runtime-shape readiness. Live control games remain mandatory.
 
@@ -1143,7 +1148,9 @@ A third disposable candidate was prepared from the 11.9 bundle plus that explici
 - classified diff gate: `fail`
 - gate reason: i386 `winemetal.dll` exists, but it differs from the 11.5 control and therefore remains `release_blocker_until_live_m9_proves_unneeded`
 
-This is the current best M9 test candidate, not a release candidate.
+That older dirty-source candidate is no longer the preferred M9 test candidate
+when the clean 11.9-linked artifact is available. It remains useful only as a
+diagnostic fallback if the clean artifact cannot be staged.
 
 Borrowed-i386 experiment:
 

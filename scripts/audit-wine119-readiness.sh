@@ -16,6 +16,10 @@ It checks whether the repo, installed 11.5 baseline, prepared 11.9 candidates,
 isolated parity home, and existing live-suite proof satisfy the rebuild gates.
 
 The final release gate still requires a passing live control suite.
+
+Environment:
+  METALSHARP_WINE119_CANDIDATE_WORK_DIR  candidate work dir, default prefers
+                                         AverySSD clean-i386 output when present
 USAGE
 }
 
@@ -27,6 +31,14 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/.." && pwd -P)"
 parity_home="${1:-/private/tmp/metalsharp-home-wine119-dxmt32-state}"
+default_candidate_work_dir="/tmp/metalsharp-wine119-parity"
+clean_candidate_work_dir="/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386"
+if [[ -z "${METALSHARP_WINE119_CANDIDATE_WORK_DIR:-}" && -f "$clean_candidate_work_dir/summary.md" ]]; then
+    candidate_work_dir="$clean_candidate_work_dir"
+else
+    candidate_work_dir="${METALSHARP_WINE119_CANDIDATE_WORK_DIR:-$default_candidate_work_dir}"
+fi
+candidate_summary="$candidate_work_dir/summary.md"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out_dir="${2:-/tmp/metalsharp-wine119-readiness-$timestamp}"
 report="$out_dir/readiness.md"
@@ -125,6 +137,7 @@ append
 append "- captured_at_utc: \`$timestamp\`"
 append "- repo: \`$repo_root\`"
 append "- parity_home: \`$parity_home\`"
+append "- candidate_work_dir: \`$candidate_work_dir\`"
 append
 
 append "## Source State"
@@ -164,24 +177,44 @@ else
 fi
 
 for candidate in clean dxmt32 borrowed; do
-    root="/tmp/metalsharp-wine119-parity/candidates/$candidate/wine"
+    root="$candidate_work_dir/candidates/$candidate/wine"
     check_wine_version "candidate-$candidate" "$root" "wine-11.9"
     check_local_moltenvk_icd "candidate-$candidate" "$root"
 done
 
-if [[ -f /tmp/metalsharp-wine119-parity/summary.md ]]; then
+if [[ -f "$candidate_summary" ]]; then
     pass "candidates" "candidate summary exists"
-    [[ "$(candidate_gate clean /tmp/metalsharp-wine119-parity/summary.md)" == "fail" ]] \
+    [[ "$(candidate_gate clean "$candidate_summary")" == "fail" ]] \
         && pass "candidate-clean" "clean candidate is documented as fail" \
         || warn "candidate-clean" "clean candidate failure not found in summary"
-    [[ "$(candidate_gate dxmt32 /tmp/metalsharp-wine119-parity/summary.md)" == "fail" ]] \
+    [[ "$(candidate_gate dxmt32 "$candidate_summary")" == "fail" ]] \
         && pass "candidate-dxmt32" "dxmt32 candidate is documented as needing live proof" \
         || warn "candidate-dxmt32" "dxmt32 live-proof blocker not found in summary"
-    [[ "$(candidate_gate borrowed /tmp/metalsharp-wine119-parity/summary.md)" == "pass" ]] \
+    [[ "$(candidate_gate borrowed "$candidate_summary")" == "pass" ]] \
         && pass "candidate-borrowed" "borrowed candidate is manifest-complete" \
         || warn "candidate-borrowed" "borrowed manifest pass not found in summary"
+    if contains "$candidate_summary" 'dxmt32_source_kind: `clean-11[.]9-linked-default`'; then
+        pass "candidate-dxmt32-source" "dxmt32 defaults to clean 11.9-linked i386 WineMetal"
+    else
+        warn "candidate-dxmt32-source" "dxmt32 summary does not prove clean 11.9-linked source selection"
+    fi
 else
-    fail "candidates" "missing /tmp/metalsharp-wine119-parity/summary.md"
+    fail "candidates" "missing $candidate_summary"
+fi
+
+dxmt32_prepare="$candidate_work_dir/candidates/dxmt32/prepare-report.txt"
+dxmt32_provenance="$candidate_work_dir/candidates/dxmt32/provenance-report.txt"
+if [[ -f "$dxmt32_prepare" ]] && contains "$dxmt32_prepare" 'i386_winemetal_source=/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal[.]dll'; then
+    pass "candidate-dxmt32-source" "prepare report records the clean i386 WineMetal source"
+else
+    fail "candidate-dxmt32-source" "prepare report does not record the clean i386 WineMetal source: $dxmt32_prepare"
+fi
+if [[ -f "$dxmt32_provenance" ]] &&
+    contains "$dxmt32_provenance" 'source_sha256=12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab' &&
+    contains "$dxmt32_provenance" 'destination_sha256=12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab'; then
+    pass "candidate-dxmt32-source" "provenance records clean i386 WineMetal source/destination SHA256"
+else
+    fail "candidate-dxmt32-source" "provenance does not prove clean i386 WineMetal SHA256 copy: $dxmt32_provenance"
 fi
 append
 
@@ -197,6 +230,13 @@ install_report="$parity_home/parity-install-report.txt"
 if [[ -f "$install_report" ]]; then
     pass "parity-home" "install report exists"
     source_ms_home="$(awk -F= '$1 == "source_metalsharp_home" { print substr($0, index($0, "=") + 1); exit }' "$install_report")"
+    installed_candidate_root="$(awk -F= '$1 == "candidate_root" { print substr($0, index($0, "=") + 1); exit }' "$install_report")"
+    expected_candidate_root="$candidate_work_dir/candidates/dxmt32/wine"
+    if [[ "$(canonical_dir "$installed_candidate_root")" == "$(canonical_dir "$expected_candidate_root")" ]]; then
+        pass "parity-home" "install report source matches the audited clean dxmt32 candidate"
+    else
+        fail "parity-home" "install report candidate_root '$installed_candidate_root' does not match audited dxmt32 '$expected_candidate_root'"
+    fi
 else
     fail "parity-home" "missing install report"
     source_ms_home=""

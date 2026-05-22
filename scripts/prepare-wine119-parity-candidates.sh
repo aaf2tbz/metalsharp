@@ -14,11 +14,15 @@ Example:
 Builds disposable Wine 11.9 parity candidates and manifest comparisons:
 
   clean    - release bundle only, with x86_64 WineMetal rebound into lib/wine
-  dxmt32   - clean + explicit i386 WineMetal from METALSHARP_I386_WINEMETAL_SOURCE
+  dxmt32   - clean + preferred explicit i386 WineMetal candidate
   borrowed - clean + 11.5 baseline i386 WineMetal compatibility experiment
 
 The script does not modify ~/.metalsharp. It reads the installed 11.5 runtime as
 the baseline unless METALSHARP_BASELINE_WINE is set.
+
+Environment:
+  METALSHARP_I386_WINEMETAL_SOURCE        explicit i386 WineMetal candidate
+  METALSHARP_I386_WINEMETAL_CLEAN_SOURCE  clean 11.9-linked i386 candidate
 USAGE
 }
 
@@ -43,7 +47,19 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/.." && pwd -P)"
 baseline_wine="${METALSHARP_BASELINE_WINE:-$HOME/.metalsharp/runtime/wine}"
-dxmt32_source="${METALSHARP_I386_WINEMETAL_SOURCE:-/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll}"
+clean_i386_source="${METALSHARP_I386_WINEMETAL_CLEAN_SOURCE:-/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll}"
+legacy_i386_source="/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll"
+dxmt32_source="${METALSHARP_I386_WINEMETAL_SOURCE:-}"
+dxmt32_source_kind="explicit"
+if [[ -z "$dxmt32_source" ]]; then
+    if [[ -f "$clean_i386_source" ]]; then
+        dxmt32_source="$clean_i386_source"
+        dxmt32_source_kind="clean-11.9-linked-default"
+    else
+        dxmt32_source="$legacy_i386_source"
+        dxmt32_source_kind="legacy-dirty-dxmt-build32-fallback"
+    fi
+fi
 
 if [[ ! -d "$baseline_wine" ]]; then
     echo "baseline Wine runtime not found: $baseline_wine" >&2
@@ -112,6 +128,9 @@ append_summary "- bundle_sha256: \`$(shasum -a 256 "$bundle" | awk '{ print $1 }
 append_summary "- baseline_wine: \`$baseline_wine\`"
 append_summary "- work_dir: \`$work_dir\`"
 append_summary "- dxmt32_source: \`$dxmt32_source\`"
+append_summary "- dxmt32_source_kind: \`$dxmt32_source_kind\`"
+append_summary "- clean_i386_source: \`$clean_i386_source\`"
+append_summary "- legacy_i386_source: \`$legacy_i386_source\`"
 append_summary
 
 "$repo_root/scripts/runtime-manifest.sh" "$baseline_wine" "$work_dir/manifests/11.5-baseline"
