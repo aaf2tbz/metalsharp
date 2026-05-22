@@ -883,12 +883,16 @@ Backend parity preflight is handled by `scripts/probe-wine119-parity-backend.sh`
 Live control suite orchestration is handled by `scripts/run-wine119-live-control-suite.sh`:
 
 - guarded command:
-  - `METALSHARP_RUN_LIVE_GAMES=1 scripts/run-wine119-live-control-suite.sh /tmp/metalsharp-home-wine119-dxmt32 /tmp/metalsharp-live-controls-dxmt32`
+  - `METALSHARP_RUN_LIVE_GAMES=1 METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1 METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1 METALSHARP_WINE119_CANDIDATE_WORK_DIR=/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386 scripts/run-wine119-live-control-suite.sh /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/live-controls-clean-dxmt32`
 - hard guard:
   - the script refuses to launch anything unless `METALSHARP_RUN_LIVE_GAMES=1` is set
 - active-state guard:
   - before launching, the script reads the parity install report or `METALSHARP_PARITY_SOURCE_HOME`
   - source-home metadata is mandatory for cloned-state live runs
+  - it refuses to continue unless the parity install report points at the
+    audited clean `dxmt32` candidate under the selected candidate work dir
+  - it refuses to continue unless `dxmt32` summary/provenance prove the clean
+    i386 WineMetal SHA256 copy
   - it refuses to continue if active cloned JSON/TOML/CONF/ENV manifests under bottles, compatdata, or configs still reference the source MetalSharp home
   - it requires the three control-game bottle and compatdata manifests to reference the parity MetalSharp home
   - it refuses to run if copied historical `compatdata/*/logs` directories are present
@@ -917,7 +921,7 @@ This script is the release-candidate gate runner. It should be run first against
 Live control verification is handled by `scripts/verify-wine119-live-control-suite.sh`:
 
 - command:
-  - `scripts/verify-wine119-live-control-suite.sh /tmp/metalsharp-live-controls-dxmt32`
+  - `scripts/verify-wine119-live-control-suite.sh /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/live-controls-clean-dxmt32`
 - behavior:
   - requires parity runtime identity to report Wine 11.9
   - requires backend `/status` to report current-main version `0.33.27`

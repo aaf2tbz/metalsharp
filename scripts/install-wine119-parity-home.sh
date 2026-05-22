@@ -261,6 +261,15 @@ set -euo pipefail
 export HOME="$parity_home_abs"
 export METALSHARP_HOME="$parity_ms_home"
 export METALSHARP_REQUIRE_PARITY_HOME=1
+export METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1
+export METALSHARP_WINE119_CANDIDATE_WORK_DIR="$(cd "$(dirname "$(dirname "$(dirname "$candidate_root")")")" && pwd -P)"
+
+# Full release-gate capture. Intentionally guarded: this launches real games.
+# METALSHARP_RUN_LIVE_GAMES=1 \\
+# METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1 \\
+# "$repo_root/scripts/run-wine119-live-control-suite.sh" \\
+#   "$parity_home_abs" \\
+#   "$parity_home_abs/live-controls-clean-dxmt32"
 
 "$repo_root/scripts/capture-steam-game-proof.sh" 535520 Nidhogg_2 "$parity_home_abs/proof-nidhogg2"
 "$repo_root/scripts/capture-steam-game-proof.sh" 3164500 "Schedule I" "$parity_home_abs/proof-schedule-i"

@@ -212,25 +212,28 @@ Commands:
 ```bash
 METALSHARP_CLONE_USER_STATE=1 \
 METALSHARP_COPY_MODE=clone \
+METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1 \
 scripts/install-wine119-parity-home.sh \
-  /tmp/metalsharp-wine119-parity/candidates/dxmt32/wine \
-  /tmp/metalsharp-home-wine119-dxmt32-state
+  /Volumes/AverySSD/metalsharp/wine119-parity-clean-i386/candidates/dxmt32/wine \
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state
 
+METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1 \
 scripts/probe-wine119-parity-backend.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state \
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/backend-probe-main03327-guard-v2
 
 scripts/audit-mscompatdb-hook-surface.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state/.metalsharp/runtime/wine \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/mscompatdb-hook-surface
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/.metalsharp/runtime/wine \
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/backend-probe-main03327-guard-v2/mscompatdb-hook-surface
 
 node scripts/audit-electron-launch-routes.mjs \
-  --library-json /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/steam-library.json \
-  --out-dir /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/electron-launch-routes
+  --library-json /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/backend-probe-main03327-guard-v2/steam-library.json \
+  --out-dir /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/backend-probe-main03327-guard-v2/electron-launch-routes
 
+METALSHARP_WINE119_CANDIDATE_WORK_DIR=/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386 \
 scripts/audit-wine119-readiness.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state \
-  /tmp/metalsharp-wine119-readiness-current
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state \
+  /tmp/metalsharp-wine119-readiness-clean-current
 ```
 
 Required proof before live launch:
@@ -240,6 +243,11 @@ Required proof before live launch:
   and every WineMetal bridge was original, copied from DXMT, supplied from
   AverySSD, or borrowed from 11.5.
 - Wine reports `wine-11.9`.
+- The parity install report source matches
+  `/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386/candidates/dxmt32/wine`.
+- Readiness proves `dxmt32_source_kind: clean-11.9-linked-default` and the
+  clean i386 WineMetal source/destination SHA256
+  `12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab`.
 - Backend reports version `0.33.27`.
 - Backend binary must be freshly built from this branch before probing:
   `(cd app/src-rust && cargo build)`, then the probe must show `/status`
@@ -264,17 +272,20 @@ Command:
 ```bash
 METALSHARP_RUN_LIVE_GAMES=1 \
 METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM=1 \
+METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1 \
+METALSHARP_WINE119_CANDIDATE_WORK_DIR=/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386 \
 scripts/run-wine119-live-control-suite.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state \
-  /tmp/metalsharp-live-controls-dxmt32
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state \
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/live-controls-clean-dxmt32
 
 scripts/verify-wine119-live-control-suite.sh \
-  /tmp/metalsharp-live-controls-dxmt32
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/live-controls-clean-dxmt32
 
-METALSHARP_LIVE_SUITE_DIR=/tmp/metalsharp-live-controls-dxmt32 \
+METALSHARP_LIVE_SUITE_DIR=/Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state/live-controls-clean-dxmt32 \
+METALSHARP_WINE119_CANDIDATE_WORK_DIR=/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386 \
 scripts/audit-wine119-readiness.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state \
-  /tmp/metalsharp-wine119-readiness-current
+  /Volumes/AverySSD/metalsharp/home-wine119-dxmt32-clean-state \
+  /tmp/metalsharp-wine119-readiness-clean-current
 ```
 
 Required pass conditions:
@@ -284,6 +295,9 @@ Required pass conditions:
 - Subnautica Below Zero launches with `launchMethod: "m11"`.
 - Each game has a live game PID, not just a Steam URL/helper PID.
 - Wine Steam is prestarted before the controls.
+- The live runner refuses to proceed unless the parity home was installed from
+  the audited clean `dxmt32` candidate and the candidate provenance proves the
+  clean i386 WineMetal SHA256 copy.
 - Each game launch has a pre-existing `Steam.exe` PID before launch.
 - The pre-existing `Steam.exe` PID survives each launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.

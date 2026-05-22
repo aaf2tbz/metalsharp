@@ -37,6 +37,11 @@ Environment:
                        launch to attach to that pre-existing Steam process.
   METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1
                        Allow a parity home outside /tmp or /private/tmp
+  METALSHARP_WINE119_CANDIDATE_WORK_DIR
+                       Candidate work dir, default prefers AverySSD clean-i386
+                       output when present. The live runner refuses to launch
+                       if the parity home was not installed from this dxmt32
+                       candidate or if i386 WineMetal provenance is stale.
 USAGE
 }
 
@@ -82,6 +87,13 @@ port="${METALSHARP_PORT:-9375}"
 backend="${METALSHARP_BACKEND:-$repo_root/app/src-rust/target/release/metalsharp-backend}"
 wait_secs="${METALSHARP_WAIT_SECS:-20}"
 require_preexisting_steam="${METALSHARP_REQUIRE_PREEXISTING_WINE_STEAM:-0}"
+default_candidate_work_dir="/tmp/metalsharp-wine119-parity"
+clean_candidate_work_dir="/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386"
+if [[ -z "${METALSHARP_WINE119_CANDIDATE_WORK_DIR:-}" && -f "$clean_candidate_work_dir/summary.md" ]]; then
+    candidate_work_dir="$clean_candidate_work_dir"
+else
+    candidate_work_dir="${METALSHARP_WINE119_CANDIDATE_WORK_DIR:-$default_candidate_work_dir}"
+fi
 
 if [[ ! -x "$backend" ]]; then
     backend="$repo_root/app/src-rust/target/debug/metalsharp-backend"
@@ -170,6 +182,38 @@ if find "$parity_home/.metalsharp/compatdata" -path '*/logs/*' -type f -print -q
     exit 1
 fi
 
+install_report="$parity_home/parity-install-report.txt"
+if [[ ! -f "$install_report" ]]; then
+    echo "refusing to launch games: missing parity install report: $install_report" >&2
+    exit 1
+fi
+installed_candidate_root="$(awk -F= '$1 == "candidate_root" { print substr($0, index($0, "=") + 1); exit }' "$install_report")"
+expected_candidate_root="$candidate_work_dir/candidates/dxmt32/wine"
+installed_candidate_abs="$(cd "$installed_candidate_root" && pwd -P 2>/dev/null || printf '%s\n' "$installed_candidate_root")"
+expected_candidate_abs="$(cd "$expected_candidate_root" && pwd -P 2>/dev/null || printf '%s\n' "$expected_candidate_root")"
+if [[ "$installed_candidate_abs" != "$expected_candidate_abs" ]]; then
+    echo "refusing to launch games: parity home was installed from '$installed_candidate_root', expected clean dxmt32 '$expected_candidate_root'" >&2
+    exit 1
+fi
+
+candidate_summary="$candidate_work_dir/summary.md"
+dxmt32_prepare="$candidate_work_dir/candidates/dxmt32/prepare-report.txt"
+dxmt32_provenance="$candidate_work_dir/candidates/dxmt32/provenance-report.txt"
+if [[ ! -f "$candidate_summary" ]] || ! rg -q 'dxmt32_source_kind: `clean-11[.]9-linked-default`' "$candidate_summary"; then
+    echo "refusing to launch games: dxmt32 summary does not prove clean 11.9-linked i386 source: $candidate_summary" >&2
+    exit 1
+fi
+if [[ ! -f "$dxmt32_prepare" ]] || ! rg -q 'i386_winemetal_source=/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal[.]dll' "$dxmt32_prepare"; then
+    echo "refusing to launch games: dxmt32 prepare report does not record the clean i386 source: $dxmt32_prepare" >&2
+    exit 1
+fi
+if [[ ! -f "$dxmt32_provenance" ]] ||
+    ! rg -q 'source_sha256=12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab' "$dxmt32_provenance" ||
+    ! rg -q 'destination_sha256=12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab' "$dxmt32_provenance"; then
+    echo "refusing to launch games: dxmt32 provenance does not prove clean i386 WineMetal SHA256 copy: $dxmt32_provenance" >&2
+    exit 1
+fi
+
 mkdir -p "$out_dir/steam"
 
 capture_steam_snapshot() {
@@ -212,6 +256,8 @@ trap cleanup EXIT
     echo "backend=$backend"
     echo "port=$port"
     echo "wait_secs=$wait_secs"
+    echo "candidate_work_dir=$candidate_work_dir"
+    echo "candidate_root=$installed_candidate_abs"
     echo "captured_at_utc=$timestamp"
     printf "wine_version="
     "$parity_home/.metalsharp/runtime/wine/bin/wine" --version 2>&1 || true
