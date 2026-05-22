@@ -142,7 +142,7 @@ async function openGptkToolkitDownload() {
   }
 }
 
-function pollGptkSteamInstall() {
+async function pollGptkSteamInstall() {
   let attempts = 0;
   const poll = setInterval(async () => {
     attempts += 1;
