@@ -102,6 +102,14 @@ fn gptk_runtime_external_dir() -> PathBuf {
     }
 }
 
+fn gptk_runtime_status_path() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root()
+    } else {
+        gptk_local_root()
+    }
+}
+
 fn gptk_steam_install_progress_path() -> PathBuf {
     metalsharp_home().join("gptk_steam_install_progress.json")
 }
@@ -292,11 +300,7 @@ pub fn status() -> Value {
         "gptk_toolkit_installed": gptk_installed(),
         "gptk_toolkit_url": GPTK_TOOLKIT_URL,
         "gptk_toolkit_downloaded": downloaded_gptk_dmgs().first().map(|p| p.to_string_lossy().to_string()),
-        "gptk_runtime_path": if gptk_app_wine_path().exists() {
-            gptk_root().to_string_lossy().to_string()
-        } else {
-            gptk_local_root().to_string_lossy().to_string()
-        },
+        "gptk_runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
         "gptk_steam_installed": gptk_steam_installed,
         "gptk_path": gptk_steam_dir.to_string_lossy().to_string(),
         "gptk_prefix": gptk_steam_prefix().to_string_lossy().to_string(),
@@ -832,7 +836,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
             "ok": true,
             "installed": true,
             "source": dmg.to_string_lossy().to_string(),
-            "runtime_path": gptk_local_root().to_string_lossy().to_string(),
+            "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -840,7 +844,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
         return Ok(json!({
             "ok": true,
             "installed": true,
-            "runtime_path": gptk_local_root().to_string_lossy().to_string(),
+            "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
             "progress": read_gptk_steam_install_progress()
         }));
     }
