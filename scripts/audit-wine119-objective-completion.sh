@@ -145,10 +145,14 @@ else
     requirement_row "Prepare 11.9 candidates in 11.5-compatible runtime shape" "missing" "$candidate_summary missing" "run scripts/prepare-wine119-parity-candidates.sh"
 fi
 
-if contains_file "$readiness" 'PASS \[electron-route\]' && contains_file "$readiness" 'PASS \[mscompatdb-hook\]' && contains_file "$readiness" 'PASS \[parity-home\] active state has no source-home references'; then
-    requirement_row "Prove non-live parity home/backend/app route readiness" "proven" "$readiness passes backend, Electron route, mscompatdb symbol, and isolated state checks" "live suite still required"
+if contains_file "$readiness" 'PASS \[electron-route\]' &&
+    contains_file "$readiness" 'PASS \[mscompatdb-hook\]' &&
+    contains_file "$readiness" 'PASS \[parity-home\] active state has no source-home references' &&
+    contains_file "$readiness" 'PASS \[candidate-dxmt32-source\] provenance records clean i386 WineMetal source/destination SHA256' &&
+    contains_file "$readiness" 'PASS \[parity-home\] install report source matches the audited clean dxmt32 candidate'; then
+    requirement_row "Prove non-live parity home/backend/app route readiness" "proven" "$readiness passes backend, Electron route, mscompatdb symbol, clean dxmt32 source, and isolated state checks" "live suite still required"
 else
-    requirement_row "Prove non-live parity home/backend/app route readiness" "incomplete" "$readiness lacks expected non-live passes" "rerun probe/readiness scripts"
+    requirement_row "Prove non-live parity home/backend/app route readiness" "incomplete" "$readiness lacks expected non-live clean-candidate/backend/app passes" "rerun probe/readiness scripts against the clean dxmt32 candidate work dir and parity home"
 fi
 
 live_verification=""

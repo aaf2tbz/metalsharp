@@ -983,6 +983,14 @@ Objective-level completion auditing is handled by `scripts/audit-wine119-objecti
   - fails while any requirement is missing, incomplete, or unverified
   - records the remaining proof needed for live controls, i386 WineMetal provenance, and protected anti-cheat hook readiness
 
+Objective-audit fixture coverage is handled by `scripts/test-wine119-objective-audit-guards.sh`:
+
+- proves stale readiness cannot satisfy non-live completion unless the readiness
+  report also proves clean `dxmt32` i386 WineMetal SHA provenance and parity
+  install source alignment
+- proves the objective audit still fails without live controls even when
+  non-live clean-candidate readiness is complete
+
 This audit is the guard against redefining the goal around the evidence branch. It should not pass until the real Wine 11.9 candidate has passed live controls and all release-grade provenance gaps are closed.
 
 Candidate preparation for Pass B is handled by `scripts/prepare-wine119-candidate.sh`:

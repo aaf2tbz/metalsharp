@@ -106,11 +106,13 @@ bash -n scripts/runtime-manifest.sh \
   scripts/audit-i386-winemetal-provenance.sh \
   scripts/preflight-i386-winemetal-build.sh \
   scripts/audit-wine119-objective-completion.sh \
-  scripts/test-wine119-live-suite-guards.sh
+  scripts/test-wine119-live-suite-guards.sh \
+  scripts/test-wine119-objective-audit-guards.sh
 
 node --check scripts/audit-electron-launch-routes.mjs
 
 scripts/test-wine119-live-suite-guards.sh
+scripts/test-wine119-objective-audit-guards.sh
 
 (cd app/src-rust && cargo test launcher::tests::)
 ```
@@ -123,6 +125,9 @@ Expected result:
 - Live-suite guard fixture proves the live runner accepts only the clean
   candidate preflight and refuses stale/dirty candidate wiring before backend,
   Steam, or game launch.
+- Objective-audit guard fixture proves stale readiness cannot satisfy non-live
+  completion unless it also proves clean `dxmt32` source and parity-home source
+  alignment.
 - Optional verifier fixture proves the live-suite verifier accepts surviving Wine Steam PIDs and rejects disappeared pre-existing Wine Steam PIDs.
 
 ## Pass 1: Runtime Candidate Preparation
