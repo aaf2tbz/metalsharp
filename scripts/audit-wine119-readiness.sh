@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  scripts/audit-wine119-readiness.sh [parity-home] [output-dir]
+
+Example:
+  scripts/audit-wine119-readiness.sh \
+    /private/tmp/metalsharp-home-wine119-dxmt32-state \
+    /tmp/metalsharp-wine119-readiness
+
+Runs a non-live Wine 11.9 readiness audit. This script does not launch games.
+It checks whether the repo, installed 11.5 baseline, prepared 11.9 candidates,
+isolated parity home, and existing live-suite proof satisfy the rebuild gates.
+
+The final release gate still requires a passing live control suite.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd "$script_dir/.." && pwd -P)"
+parity_home="${1:-/private/tmp/metalsharp-home-wine119-dxmt32-state}"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+out_dir="${2:-/tmp/metalsharp-wine119-readiness-$timestamp}"
+report="$out_dir/readiness.md"
+failures=0
+warnings=0
+
+mkdir -p "$out_dir"
+: > "$report"
+
+append() {
+    printf '%s\n' "$*" >> "$report"
+}
+
+pass() {
+    append "- PASS [$1] $2"
+}
+
+fail() {
+    failures=$((failures + 1))
+    append "- FAIL [$1] $2"
+}
+
+warn() {
+    warnings=$((warnings + 1))
+    append "- WARN [$1] $2"
+}
+
+contains() {
+    local file="$1"
+    local pattern="$2"
+    [[ -f "$file" ]] && rg -q "$pattern" "$file"
+}
+
+canonical_dir() {
+    local path="$1"
+    if [[ -d "$path" ]]; then
+        cd "$path" && pwd -P
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
+check_wine_version() {
+    local label="$1"
+    local wine_root="$2"
+    local expected="$3"
+    if [[ ! -x "$wine_root/bin/wine" ]]; then
+        fail "$label" "missing executable wine at $wine_root/bin/wine"
+        return
+    fi
+    local version
+    version="$("$wine_root/bin/wine" --version 2>&1 || true)"
+    if [[ "$version" == "$expected" ]]; then
+        pass "$label" "wine version is $expected"
+    else
+        fail "$label" "wine version is '$version', expected '$expected'"
+    fi
+}
+
+candidate_gate() {
+    local candidate="$1"
+    local summary="$2"
+    awk -v candidate="$candidate" '
+        $0 == "## " candidate { in_section=1; next }
+        in_section && /^## (clean|dxmt32|borrowed|Required Live Gates)$/ { in_section=0 }
+        in_section && /^- gate: / {
+            print $3
+            exit
+        }
+    ' "$summary"
+}
+
+append "# MetalSharp Wine 11.9 Readiness Audit"
+append
+append "- captured_at_utc: \`$timestamp\`"
+append "- repo: \`$repo_root\`"
+append "- parity_home: \`$parity_home\`"
+append
+
+append "## Source State"
+append
+main_head="$(git -C "$repo_root" rev-parse --short HEAD)"
+main_tag="$(git -C "$repo_root" describe --tags --exact-match HEAD 2>/dev/null || true)"
+if [[ "$main_head" == "cebf936" ]]; then
+    pass "repo" "main HEAD is rollback commit cebf936"
+else
+    warn "repo" "main HEAD is $main_head; expected rollback commit cebf936 for this audit"
+fi
+if [[ "$main_tag" == "v0.33.27" ]]; then
+    pass "repo" "HEAD is exactly tag v0.33.27"
+else
+    warn "repo" "HEAD exact tag is '${main_tag:-none}', but rollback commit may still be tree-equivalent"
+fi
+
+check_wine_version "installed-11.5" "$HOME/.metalsharp/runtime/wine" "wine-11.5"
+if [[ -f "$HOME/.metalsharp/runtime/wine/lib/wine/i386-windows/winemetal.dll" ]]; then
+    pass "installed-11.5" "i386 WineMetal baseline exists"
+else
+    fail "installed-11.5" "missing i386 WineMetal baseline"
+fi
+append
+
+append "## Candidate Runtime Shape"
+for candidate in clean dxmt32 borrowed; do
+    root="/tmp/metalsharp-wine119-parity/candidates/$candidate/wine"
+    check_wine_version "candidate-$candidate" "$root" "wine-11.9"
+done
+
+if [[ -f /tmp/metalsharp-wine119-parity/summary.md ]]; then
+    pass "candidates" "candidate summary exists"
+    [[ "$(candidate_gate clean /tmp/metalsharp-wine119-parity/summary.md)" == "fail" ]] \
+        && pass "candidate-clean" "clean candidate is documented as fail" \
+        || warn "candidate-clean" "clean candidate failure not found in summary"
+    [[ "$(candidate_gate dxmt32 /tmp/metalsharp-wine119-parity/summary.md)" == "fail" ]] \
+        && pass "candidate-dxmt32" "dxmt32 candidate is documented as needing live proof" \
+        || warn "candidate-dxmt32" "dxmt32 live-proof blocker not found in summary"
+    [[ "$(candidate_gate borrowed /tmp/metalsharp-wine119-parity/summary.md)" == "pass" ]] \
+        && pass "candidate-borrowed" "borrowed candidate is manifest-complete" \
+        || warn "candidate-borrowed" "borrowed manifest pass not found in summary"
+else
+    fail "candidates" "missing /tmp/metalsharp-wine119-parity/summary.md"
+fi
+append
+
+append "## Isolated Parity Home"
+if [[ ! -d "$parity_home/.metalsharp/runtime/wine" ]]; then
+    fail "parity-home" "missing parity runtime"
+else
+    parity_home="$(canonical_dir "$parity_home")"
+    check_wine_version "parity-home" "$parity_home/.metalsharp/runtime/wine" "wine-11.9"
+fi
+
+install_report="$parity_home/parity-install-report.txt"
+if [[ -f "$install_report" ]]; then
+    pass "parity-home" "install report exists"
+    source_ms_home="$(awk -F= '$1 == "source_metalsharp_home" { print substr($0, index($0, "=") + 1); exit }' "$install_report")"
+else
+    fail "parity-home" "missing install report"
+    source_ms_home=""
+fi
+
+if [[ -n "$source_ms_home" ]]; then
+    stale_refs="$out_dir/stale-active-state-refs.txt"
+    : > "$stale_refs"
+    if find "$parity_home/.metalsharp/bottles" "$parity_home/.metalsharp/compatdata" "$parity_home/.metalsharp/configs" \
+        -type f \( -name '*.json' -o -name '*.toml' -o -name '*.conf' -o -name '*.env' \) -print0 2>/dev/null \
+        | xargs -0 rg -n --fixed-strings "$source_ms_home" -S > "$stale_refs" 2>/dev/null; then
+        fail "parity-home" "active state still references source MetalSharp home; see $stale_refs"
+    else
+        pass "parity-home" "active state has no source-home references"
+    fi
+else
+    fail "parity-home" "cannot check stale state refs without source_metalsharp_home"
+fi
+
+if find "$parity_home/.metalsharp/compatdata" -type d -name logs -print -quit 2>/dev/null | grep -q .; then
+    fail "parity-home" "copied compatdata logs are present and can contaminate proof"
+else
+    pass "parity-home" "copied compatdata logs are pruned"
+fi
+
+for appid in 535520 3164500 848450; do
+    bottle="$parity_home/.metalsharp/bottles/steam_$appid/bottle.json"
+    compat="$parity_home/.metalsharp/compatdata/$appid/metalsharp-compatdata.json"
+    if [[ -f "$bottle" ]] && grep -Fq "$parity_home/.metalsharp" "$bottle"; then
+        pass "control-$appid" "bottle manifest references parity home"
+    else
+        fail "control-$appid" "bottle manifest missing or not bound to parity home"
+    fi
+    if [[ -f "$compat" ]] && grep -Fq "$parity_home/.metalsharp" "$compat"; then
+        pass "control-$appid" "compatdata manifest references parity home"
+    else
+        fail "control-$appid" "compatdata manifest missing or not bound to parity home"
+    fi
+done
+append
+
+append "## Backend Preflight"
+probe="$parity_home/backend-probe-main03327-guard-v2"
+if [[ -f "$probe/status.json" ]]; then
+    contains "$probe/status.json" '"version"[[:space:]]*:[[:space:]]*"0\.33\.27"' \
+        && pass "backend" "preflight status reports version 0.33.27" \
+        || fail "backend" "preflight status does not report version 0.33.27"
+else
+    warn "backend" "latest guard-v2 backend preflight not found"
+fi
+append
+
+append "## Live Gate"
+live_suite="${METALSHARP_LIVE_SUITE_DIR:-}"
+if [[ -n "$live_suite" && -d "$live_suite" ]]; then
+    if "$repo_root/scripts/verify-wine119-live-control-suite.sh" "$live_suite" >/dev/null 2>&1; then
+        pass "live-gate" "live control suite verifier passes: $live_suite"
+    else
+        fail "live-gate" "live control suite verifier fails: $live_suite"
+    fi
+else
+    fail "live-gate" "no passing live control suite supplied; set METALSHARP_LIVE_SUITE_DIR after running guarded live controls"
+fi
+append
+
+append "## Summary"
+append
+append "- failures: $failures"
+append "- warnings: $warnings"
+if [[ "$failures" -eq 0 ]]; then
+    append "- gate: pass"
+    echo "Wine 11.9 readiness audit passed: $report"
+else
+    append "- gate: fail"
+    echo "Wine 11.9 readiness audit failed: $report"
+    exit 2
+fi
