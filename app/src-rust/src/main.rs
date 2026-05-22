@@ -437,11 +437,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                     Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                                 }
                             };
-                            let bottle_prefix = if matches!(pipeline, mtsp::engine::PipelineId::M13) {
-                                steam::gptk_steam_prefix()
-                            } else {
-                                std::path::PathBuf::from(&bottle.prefix_path)
-                            };
+                            let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
                             mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
                                 |(pid, game_type, log_path)| {
                                     let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
@@ -454,7 +450,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "appid": id,
                                         "gameType": game_type,
                                         "bottle_id": bottle.id,
-                                        "bottle_prefix": bottle.prefix_path,
+                                        "bottle_prefix": bottle_prefix.to_string_lossy().to_string(),
                                         "launch_log": log_path.to_string_lossy().to_string(),
                                         "compatdata": compatdata,
                                         "pipeline": pipeline,
