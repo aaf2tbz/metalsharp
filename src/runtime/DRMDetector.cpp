@@ -15,38 +15,38 @@
 namespace metalsharp {
 
 const DRMDetector::Signature DRMDetector::kSignatures[] = {
-    {"Easy Anti-Cheat", "Anti-cheat", "EasyAntiCheat", 14, true},
-    {"BattlEye", "Anti-cheat", "BattlEye", 8, true},
-    {"Ricochet", "Anti-cheat", "Ricochet", 8, true},
-    {"EA AntiCheat", "Anti-cheat", "EAAntiCheat", 11, true},
-    {"ACE (Tencent)", "Anti-cheat", "AntiCheatExpert", 16, true},
-    {"nProtect", "Anti-cheat", "nProtect", 8, true},
-    {"GameGuard", "Anti-cheat", "GameGuard", 9, true},
-    {"XIGNCODE3", "Anti-cheat", "XIGNCODE", 8, true},
-    {"VAC", "Anti-cheat", "ValveAntiCheat", 14, false},
-    {"VAC2", "Anti-cheat", "steamservice", 12, false},
-    {"PunkBuster", "Anti-cheat", "PunkBuster", 10, false},
+    {"Easy Anti-Cheat", "Anti-cheat", "EasyAntiCheat", 14, false, "blocked_pending_vendor_support"},
+    {"BattlEye", "Anti-cheat", "BattlEye", 8, false, "blocked_pending_vendor_support"},
+    {"Ricochet", "Anti-cheat", "Ricochet", 8, true, "unsupported_kernel_driver"},
+    {"EA AntiCheat", "Anti-cheat", "EAAntiCheat", 11, true, "unsupported_kernel_driver"},
+    {"ACE (Tencent)", "Anti-cheat", "AntiCheatExpert", 16, true, "unsupported_kernel_driver"},
+    {"nProtect", "Anti-cheat", "nProtect", 8, true, "unsupported_kernel_driver"},
+    {"GameGuard", "Anti-cheat", "GameGuard", 9, true, "unsupported_kernel_driver"},
+    {"XIGNCODE3", "Anti-cheat", "XIGNCODE", 8, false, "user_mode_possible"},
+    {"VAC", "Anti-cheat", "ValveAntiCheat", 14, false, "user_mode_possible"},
+    {"VAC2", "Anti-cheat", "steamservice", 12, false, "user_mode_possible"},
+    {"PunkBuster", "Anti-cheat", "PunkBuster", 10, false, "user_mode_possible"},
 
-    {"Denuvo Anti-Tamper", "DRM", "Denuvo", 6, false},
-    {"Denuvo Anti-Tamper", "DRM", "\x44\x65\x6E\x75\x76\x6F", 6, false},
-    {"SecuROM", "DRM", "SecuROM", 7, false},
-    {"SafeDisc", "DRM", "SafeDisc", 8, false},
-    {"VMProtect", "DRM", "VMProtect", 9, false},
-    {"Themida", "DRM", "Themida", 7, false},
-    {"Arxan", "DRM", "Arxan", 5, false},
-    {"Steam Stub", "DRM", "Steamstub", 9, false},
-    {"Steam Stub", "DRM", "Steam.dll", 9, false},
-    {"CEG (Custom Executable Generation)", "DRM", "CEG", 3, false},
+    {"Denuvo Anti-Tamper", "DRM", "Denuvo", 6, false, "user_mode_possible"},
+    {"Denuvo Anti-Tamper", "DRM", "\x44\x65\x6E\x75\x76\x6F", 6, false, "user_mode_possible"},
+    {"SecuROM", "DRM", "SecuROM", 7, false, "user_mode_possible"},
+    {"SafeDisc", "DRM", "SafeDisc", 8, false, "user_mode_possible"},
+    {"VMProtect", "DRM", "VMProtect", 9, false, "user_mode_possible"},
+    {"Themida", "DRM", "Themida", 7, false, "user_mode_possible"},
+    {"Arxan", "DRM", "Arxan", 5, false, "user_mode_possible"},
+    {"Steam Stub", "DRM", "Steamstub", 9, false, "user_mode_possible"},
+    {"Steam Stub", "DRM", "Steam.dll", 9, false, "user_mode_possible"},
+    {"CEG (Custom Executable Generation)", "DRM", "CEG", 3, false, "user_mode_possible"},
 
-    {".NET", "Runtime", "mscoree.dll", 10, false},
-    {"Unity", "Engine", "UnityPlayer", 11, false},
-    {"Unreal Engine", "Engine", "UnrealEngine", 12, false},
-    {"Unreal Engine", "Engine", "UE4", 3, false},
-    {"Unreal Engine 5", "Engine", "UE5", 3, false},
-    {"Mono", "Runtime", "mono-", 5, false},
-    {"XNA", "Runtime", "XNA", 3, false},
-    {"FNA", "Runtime", "FNA", 3, false},
-    {"Godot", "Engine", "Godot", 5, false},
+    {".NET", "Runtime", "mscoree.dll", 10, false, "runtime_marker"},
+    {"Unity", "Engine", "UnityPlayer", 11, false, "runtime_marker"},
+    {"Unreal Engine", "Engine", "UnrealEngine", 12, false, "runtime_marker"},
+    {"Unreal Engine", "Engine", "UE4", 3, false, "runtime_marker"},
+    {"Unreal Engine 5", "Engine", "UE5", 3, false, "runtime_marker"},
+    {"Mono", "Runtime", "mono-", 5, false, "runtime_marker"},
+    {"XNA", "Runtime", "XNA", 3, false, "runtime_marker"},
+    {"FNA", "Runtime", "FNA", 3, false, "runtime_marker"},
+    {"Godot", "Engine", "Godot", 5, false, "runtime_marker"},
 };
 
 DRMDetector& DRMDetector::instance() {
@@ -116,6 +116,8 @@ std::vector<DRMDetection> DRMDetector::scanMemory(const uint8_t* data, size_t si
         det.detected = found;
         det.confidence = found ? 0.9f : 0.0f;
         det.evidence = found ? ("matched signature: " + std::string(sig.bytePattern, sig.patternLen)) : "";
+        det.supportStatus = sig.supportStatus;
+        det.kernelOnly = sig.kernelOnly;
         results.push_back(det);
     }
 
@@ -131,9 +133,20 @@ bool DRMDetector::hasKernelAntiCheat(const std::vector<DRMDetection>& results) c
 
         size_t sigCount = sizeof(kSignatures) / sizeof(kSignatures[0]);
         for (size_t i = 0; i < sigCount; i++) {
-            if (kSignatures[i].name == r.name && kSignatures[i].kernelLevel) {
+            if (kSignatures[i].name == r.name && kSignatures[i].kernelOnly) {
                 return true;
             }
+        }
+    }
+    return false;
+}
+
+bool DRMDetector::requiresRuntimeProof(const std::vector<DRMDetection>& results) const {
+    for (const auto& r : results) {
+        if (!r.detected)
+            continue;
+        if (r.supportStatus == "blocked_pending_vendor_support" || r.supportStatus == "user_mode_possible") {
+            return true;
         }
     }
     return false;
@@ -150,7 +163,7 @@ std::string DRMDetector::summary(const std::vector<DRMDetection>& results) const
             continue;
         if (!s.empty())
             s += ", ";
-        s += r.name + " [" + r.type + "]";
+        s += r.name + " [" + r.type + "; " + r.supportStatus + "]";
     }
     return s.empty() ? "No DRM/anti-cheat detected" : s;
 }

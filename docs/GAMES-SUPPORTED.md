@@ -35,7 +35,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | Portal 2 | Best with M9. Audio does not work once inside the game. | **M9** |
 | Hollow Knight | Works with native Mono ARM launch. | **Native macOS**, High settings |
 | Hollow Knight: Silksong | Works with Native macOS and M12. | **Native macOS**, High settings |
-| Skate 2 | Not compatible because of kernel-level anti-cheat. | Unsupported |
+| Skate 2 | Anti-cheat path is unsupported without title-specific protected-runtime proof. | Unsupported |
 | Cyberpunk 2077 | Errors out. | Work in progress |
 | Resident Evil 4 | Work in progress. | Work in progress |
 | Goat Simulator | Does not load yet. | Work in progress |

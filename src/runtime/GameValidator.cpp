@@ -49,6 +49,9 @@ CompatStatus GameValidator::estimateStatus(const ValidationResult& result) const
         if (detector.hasKernelAntiCheat(result.drmResults)) {
             return CompatStatus::Broken;
         }
+        if (detector.requiresRuntimeProof(result.drmResults)) {
+            return CompatStatus::Untested;
+        }
     }
 
     if (result.missingImports.empty()) {
@@ -92,8 +95,8 @@ ValidationResult GameValidator::validate(const std::string& exePath, const std::
         bool anyDetected = false;
         for (const auto& d : result.drmResults) {
             if (d.detected) {
-                report << "  DETECTED: " << d.name << " [" << d.type << "] (confidence: " << (int)(d.confidence * 100)
-                       << "%)\n";
+                report << "  DETECTED: " << d.name << " [" << d.type << "; " << d.supportStatus
+                       << "] (confidence: " << (int)(d.confidence * 100) << "%)\n";
                 anyDetected = true;
             }
         }
@@ -131,7 +134,11 @@ ValidationResult GameValidator::validate(const std::string& exePath, const std::
     result.suggestedStatus = estimateStatus(result);
 
     report << "\n--- Assessment ---\n";
-    report << "Can launch:     " << (result.canLaunch ? "Yes" : "No (kernel anti-cheat)") << "\n";
+    const bool needsRuntimeProof = detector.requiresRuntimeProof(result.drmResults);
+    report << "Can launch:     "
+           << (result.canLaunch ? (needsRuntimeProof ? "Needs runtime proof" : "Yes")
+                                : "No (unsupported kernel driver)")
+           << "\n";
     report << "Suggested status: " << CompatDatabase::statusToString(result.suggestedStatus) << "\n";
 
     result.report = report.str();

@@ -24,28 +24,29 @@ static bool test_anticheat_db_has_entries() {
 
 static bool test_anticheat_find_eac() {
     auto* eac = findAntiCheat("Easy Anti-Cheat");
-    return eac && !eac->compatible && eac->kernelLevel;
+    return eac && !eac->kernelLevel && strcmp(eac->status, "blocked_pending_vendor_support") == 0;
 }
 
 static bool test_anticheat_find_denuvo() {
     auto* dnv = findAntiCheat("Denuvo Anti-Tamper");
-    return dnv && dnv->compatible && !dnv->kernelLevel;
+    return dnv && strcmp(dnv->status, "user_mode_possible") == 0 && !dnv->kernelLevel;
 }
 
 static bool test_anticheat_find_vac() {
     auto* vac = findAntiCheat("Valve Anti-Cheat");
-    return vac && vac->compatible;
+    return vac && strcmp(vac->status, "user_mode_possible") == 0;
 }
 
 static bool test_anticheat_find_steam_stub() {
     auto* ss = findAntiCheat("Steam Stub");
-    return ss && ss->compatible;
+    return ss && strcmp(ss->status, "user_mode_possible") == 0;
 }
 
-static bool test_anticheat_compatible_count() {
-    size_t compat = getCompatibleCount();
-    size_t incompat = getIncompatibleCount();
-    return compat > 0 && incompat > 0 && (compat + incompat) == kAntiCheatEntryCount;
+static bool test_anticheat_status_counts() {
+    size_t vendorBlocked = getStatusCount("blocked_pending_vendor_support");
+    size_t kernelUnsupported = getStatusCount("unsupported_kernel_driver");
+    size_t proofRequired = getRuntimeProofRequiredCount();
+    return vendorBlocked > 0 && kernelUnsupported > 0 && proofRequired >= vendorBlocked;
 }
 
 static bool test_anticheat_drm_type() {
@@ -53,12 +54,14 @@ static bool test_anticheat_drm_type() {
     return dnv && strcmp(dnv->type, "DRM") == 0;
 }
 
-static bool test_anticheat_kernel_impossible() {
+static bool test_anticheat_kernel_boundaries_are_precise() {
     auto* eac = findAntiCheat("Easy Anti-Cheat");
     auto* be = findAntiCheat("BattlEye");
     auto* ricochet = findAntiCheat("Ricochet");
-    return eac && be && ricochet && !eac->compatible && !be->compatible && !ricochet->compatible && eac->kernelLevel &&
-           be->kernelLevel && ricochet->kernelLevel;
+    return eac && be && ricochet && !eac->kernelLevel && !be->kernelLevel && ricochet->kernelLevel &&
+           strcmp(eac->status, "blocked_pending_vendor_support") == 0 &&
+           strcmp(be->status, "blocked_pending_vendor_support") == 0 &&
+           strcmp(ricochet->status, "unsupported_kernel_driver") == 0;
 }
 
 static bool test_anticheat_find_nonexistent() {
@@ -115,9 +118,9 @@ int main() {
     TEST(anticheat_find_denuvo);
     TEST(anticheat_find_vac);
     TEST(anticheat_find_steam_stub);
-    TEST(anticheat_compatible_count);
+    TEST(anticheat_status_counts);
     TEST(anticheat_drm_type);
-    TEST(anticheat_kernel_impossible);
+    TEST(anticheat_kernel_boundaries_are_precise);
     TEST(anticheat_find_nonexistent);
 
     printf("\n--- 20.2 DRM Shims (Firmware, MAC, Disk) ---\n");
