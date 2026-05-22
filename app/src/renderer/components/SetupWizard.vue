@@ -122,17 +122,27 @@ async function installSteam() {
 }
 
 async function openGptkToolkitDownload() {
-  const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
+  const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+    "POST",
+    "/steam/gptk-toolkit-install",
+  );
+  if (result?.ok && result.installed) {
+    gptkToolkitInstalled.value = true;
+    gptkSteamMessage.value = "Game Porting Toolkit runtime is installed";
+    toast.show("Game Porting Toolkit runtime installed", "success");
+    return true;
+  }
   toast.show(
-    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"),
+    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not set up GPTK runtime"),
     result?.ok ? "success" : "error",
   );
+  return false;
 }
 
 async function installGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    await openGptkToolkitDownload();
-    return;
+    const installed = await openGptkToolkitDownload();
+    if (!installed) return;
   }
   gptkSteamInstalling.value = true;
   gptkSteamMessage.value = "Starting GPTK Steam setup...";

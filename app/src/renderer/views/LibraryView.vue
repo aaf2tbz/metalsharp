@@ -184,9 +184,22 @@ async function toggleMacSteam() {
 
 async function toggleGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
-    toast.show(result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"), result?.ok ? "success" : "error");
-    return;
+    const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+      "POST",
+      "/steam/gptk-toolkit-install",
+    );
+    if (result?.ok && result.installed) {
+      gptkToolkitInstalled.value = true;
+      toast.show("Game Porting Toolkit runtime installed", "success");
+    } else {
+      toast.show(
+        result?.ok && result.download_required
+          ? "Game Porting Toolkit download page opened"
+          : (result?.error ?? "Could not set up GPTK runtime"),
+        result?.ok ? "success" : "error",
+      );
+      return;
+    }
   }
   if (gptkSteamInstalling.value) {
     toast.show("GPTK Steam setup is already running", "success");

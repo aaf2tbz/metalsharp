@@ -95,6 +95,8 @@ async function refreshSteamStatus() {
     running: boolean;
     gptk_installed: boolean;
     gptk_toolkit_installed?: boolean;
+    gptk_toolkit_downloaded?: string | null;
+    gptk_runtime_path?: string;
     gptk_steam_installed?: boolean;
     gptk_installing?: boolean;
     gptk_running: boolean;

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.33.31 - 2026-05-22
+
+Downloaded GPTK runtime setup.
+
+### Fixed
+
+- **GPTK download detection** - detects downloaded Game Porting Toolkit DMGs from Downloads/Desktop instead of only checking for `/Applications/Game Porting Toolkit.app`.
+- **GPTK runtime install** - mounts Apple’s GPTK DMG, installs the nested Windows games evaluation redist into `~/.metalsharp/runtime/wine/lib/gptk`, and exposes the runtime path in Steam status.
+- **GPTK Steam setup flow** - the Library, Settings, and setup wizard GPTK buttons can install the downloaded GPTK runtime first, then continue into the dedicated GPTK Steam prefix setup.
+
 ## v0.33.30 - 2026-05-22
 
 GPTK Steam prefix readiness hotfix.
