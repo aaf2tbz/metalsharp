@@ -71,10 +71,13 @@ fn gptk_installed() -> bool {
 
 fn gptk_local_redist_installed() -> bool {
     let root = gptk_local_root();
-    ms_wine().exists()
-        && ms_wine_root().join("bin").join("wineserver").exists()
-        && root.join("x86_64-windows").join("d3d12.dll").exists()
+    ms_wine().exists() && ms_wine_root().join("bin").join("wineserver").exists() && gptk_redist_payload_complete(&root)
+}
+
+fn gptk_redist_payload_complete(root: &Path) -> bool {
+    root.join("x86_64-windows").join("d3d12.dll").exists()
         && root.join("x86_64-windows").join("dxgi.dll").exists()
+        && root.join("x86_64-unix").exists()
         && root.join("external").join("D3DMetal.framework").exists()
 }
 
@@ -860,6 +863,63 @@ fn verify_gptk_redist_identity(redist: &Path) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+fn copy_gptk_redist_to_payload_root(redist: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    ditto_copy(&redist.join("wine").join("x86_64-windows"), &target.join("x86_64-windows"))?;
+    ditto_copy(&redist.join("wine").join("x86_64-unix"), &target.join("x86_64-unix"))?;
+    ditto_copy(&redist.join("wine").join("i386-windows"), &target.join("i386-windows"))?;
+    ditto_copy(&redist.join("external"), &target.join("external"))?;
+    if gptk_redist_payload_complete(target) {
+        Ok(())
+    } else {
+        Err(format!("Staged Game Porting Toolkit runtime is incomplete at {}", target.display()).into())
+    }
+}
+
+fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let target = gptk_local_root();
+    let parent = target.parent().ok_or("Game Porting Toolkit runtime target does not have a parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    let suffix = format!("{}-{}", current_timestamp_secs(), std::process::id());
+    let staging = parent.join(format!(".gptk-redist-stage-{}", suffix));
+    let backup = parent.join(format!(".gptk-redist-backup-{}", suffix));
+
+    let _ = std::fs::remove_dir_all(&staging);
+    if let Err(err) = copy_gptk_redist_to_payload_root(redist, &staging) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    let mut target_moved = false;
+    let swap_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        if target.exists() {
+            std::fs::rename(&target, &backup)?;
+            target_moved = true;
+        }
+        std::fs::rename(&staging, &target)?;
+        Ok(())
+    })();
+
+    match swap_result {
+        Ok(()) => {
+            if backup.exists() {
+                let archive = metalsharp_home().join("backups").join(format!("gptk-redist-{}", suffix));
+                if let Some(parent) = archive.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let _ = std::fs::rename(&backup, archive);
+            }
+            Ok(())
+        },
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            if target_moved && backup.exists() && !target.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            Err(err)
+        },
+    }
+}
+
 fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let outer_mount = unique_temp_dir("gptk-outer");
     let inner_mount = unique_temp_dir("gptk-inner");
@@ -878,19 +938,7 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
                 return Err("Mounted Game Porting Toolkit image did not contain redist/lib".into());
             }
             verify_gptk_redist_identity(&redist)?;
-            let target = gptk_local_root();
-            if target.exists() {
-                let backup =
-                    metalsharp_home().join("backups").join(format!("gptk-redist-{}", current_timestamp_secs()));
-                if let Some(parent) = backup.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::rename(&target, backup)?;
-            }
-            ditto_copy(&redist.join("wine").join("x86_64-windows"), &target.join("x86_64-windows"))?;
-            ditto_copy(&redist.join("wine").join("x86_64-unix"), &target.join("x86_64-unix"))?;
-            ditto_copy(&redist.join("wine").join("i386-windows"), &target.join("i386-windows"))?;
-            ditto_copy(&redist.join("external"), &target.join("external"))?;
+            install_gptk_redist_atomically(&redist)?;
             Ok(())
         })();
         detach_dmg(&inner_mount);
@@ -2585,6 +2633,21 @@ mod tests {
         assert!(!codesign_output_has_apple_authority(
             "Authority=Developer ID Application: Example Corp\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA"
         ));
+    }
+
+    #[test]
+    fn gptk_redist_payload_requires_required_runtime_components() {
+        let root = std::env::temp_dir().join(format!("metalsharp-gptk-payload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("x86_64-windows")).expect("create windows payload dir");
+        std::fs::create_dir_all(root.join("x86_64-unix")).expect("create unix payload dir");
+        std::fs::create_dir_all(root.join("external").join("D3DMetal.framework")).expect("create framework dir");
+        std::fs::write(root.join("x86_64-windows").join("d3d12.dll"), b"d3d12").expect("write d3d12");
+
+        assert!(!gptk_redist_payload_complete(&root));
+        std::fs::write(root.join("x86_64-windows").join("dxgi.dll"), b"dxgi").expect("write dxgi");
+        assert!(gptk_redist_payload_complete(&root));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
