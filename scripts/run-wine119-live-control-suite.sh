@@ -98,15 +98,6 @@ else
     candidate_work_dir="${METALSHARP_WINE119_CANDIDATE_WORK_DIR:-$default_candidate_work_dir}"
 fi
 
-if [[ ! -x "$backend" ]]; then
-    backend="$repo_root/app/src-rust/target/debug/metalsharp-backend"
-fi
-
-if [[ ! -x "$backend" ]]; then
-    echo "backend binary not found; run cargo build --release in app/src-rust first" >&2
-    exit 1
-fi
-
 mkdir -p "$out_dir/launches" "$out_dir/proof"
 
 source_ms_home="${METALSHARP_PARITY_SOURCE_HOME:-}"
@@ -226,6 +217,15 @@ if [[ "${METALSHARP_LIVE_PREFLIGHT_ONLY:-0}" == "1" ]]; then
     } > "$out_dir/preflight-only.txt"
     echo "live control preflight passed without launching games: $out_dir/preflight-only.txt"
     exit 0
+fi
+
+if [[ ! -x "$backend" ]]; then
+    backend="$repo_root/app/src-rust/target/debug/metalsharp-backend"
+fi
+
+if [[ ! -x "$backend" ]]; then
+    echo "backend binary not found; run cargo build --release in app/src-rust first" >&2
+    exit 1
 fi
 
 mkdir -p "$out_dir/steam"
