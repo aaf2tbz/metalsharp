@@ -359,7 +359,14 @@ async function installGame(game: SteamGame) {
 
 async function uninstallGame(game: SteamGame) {
   if (game.can_uninstall === false) {
-    toast.show(`${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`, "error");
+    const source = game.library_source;
+    let message = `${game.name} cannot be uninstalled from this library card.`;
+    if (source === "gptk") {
+      message = `${game.name} is installed in GPTK Steam. Uninstall it from GPTK Steam.`;
+    } else if (source === "steam") {
+      message = `${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`;
+    }
+    toast.show(message, "error");
     return;
   }
   if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;

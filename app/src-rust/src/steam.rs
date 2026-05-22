@@ -2119,7 +2119,7 @@ pub fn library() -> Value {
                 source: "gptk",
                 source_label: "GPTK",
                 installed: true,
-                can_uninstall: true,
+                can_uninstall: false,
                 pipeline_id: crate::mtsp::engine::PipelineId::M13,
                 has_native_build: false,
                 native_app_path: None,
@@ -2731,6 +2731,27 @@ mod tests {
         assert!(!is_gptk_runtime_command(&prefixed_game_command));
         assert!(!is_gptk_runtime_command(&local_redist_game_command));
         assert!(is_gptk_steam_cleanup_command(&helper_command));
+    }
+
+    #[test]
+    fn gptk_library_cards_do_not_advertise_appid_only_uninstall() {
+        let card = steam_library_card(SteamLibraryCardData {
+            appid: 1245620,
+            name: "ELDEN RING",
+            source: "gptk",
+            source_label: "GPTK",
+            installed: true,
+            can_uninstall: false,
+            pipeline_id: crate::mtsp::engine::PipelineId::M13,
+            has_native_build: false,
+            native_app_path: None,
+            wine_game_path: None,
+            bottle: None,
+        });
+
+        assert_eq!(card.get("library_source").and_then(Value::as_str), Some("gptk"));
+        assert_eq!(card.get("can_uninstall").and_then(Value::as_bool), Some(false));
+        assert_eq!(card.get("launch_method").and_then(Value::as_str), Some("d3dmetal"));
     }
 
     #[test]
