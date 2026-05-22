@@ -145,6 +145,11 @@ if command -v node >/dev/null 2>&1 && [[ -s "$out_dir/steam-library.json" ]]; th
         > "$out_dir/electron-launch-routes.log" 2>&1 || true
 fi
 
+"$repo_root/scripts/audit-mscompatdb-hook-surface.sh" \
+    "$parity_home/.metalsharp/runtime/wine" \
+    "$out_dir/mscompatdb-hook-surface" \
+    > "$out_dir/mscompatdb-hook-surface.log" 2>&1 || true
+
 {
     echo "# MetalSharp Parity Backend Probe"
     echo
@@ -156,6 +161,7 @@ fi
     echo "bottles_profiles_json=$out_dir/bottles-profiles.json"
     echo "steam_library_json=$out_dir/steam-library.json"
     echo "electron_launch_route_audit=$out_dir/electron-launch-routes/electron-launch-route-audit.md"
+    echo "mscompatdb_hook_surface=$out_dir/mscompatdb-hook-surface/hook-surface.md"
     echo "backend_stdout=$out_dir/backend.stdout.log"
     echo "backend_stderr=$out_dir/backend.stderr.log"
 } > "$out_dir/summary.txt"

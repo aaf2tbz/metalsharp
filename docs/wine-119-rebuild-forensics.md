@@ -705,6 +705,16 @@ Every Wine 11.9 build candidate should emit or archive a manifest with:
 - `nm -gU` hook probe output for `ntdll.so`, `mscompatdb.so`, and `mscompatdb.dylib`
 - final installer source URL or artifact digest
 
+mscompatdb hook surface auditing is handled by `scripts/audit-mscompatdb-hook-surface.sh`:
+
+- command:
+  - `scripts/audit-mscompatdb-hook-surface.sh <candidate-runtime-root>/wine <out-dir>`
+- behavior:
+  - probes `lib/wine/x86_64-unix/ntdll.so`, `mscompatdb.so`, and `mscompatdb.dylib`
+  - requires `_MetalSharpGetMscompatdbHookContract` and `_MetalSharpGetMscompatdbHookContractVersion` in Unix `ntdll.so`
+  - records whether `mscompatdb.so` and `mscompatdb.dylib` exist and expose public symbols
+  - always keeps `hookReady=false` until a protected runtime launch proves load and behavior
+
 The manifest script is `scripts/runtime-manifest.sh`. It is read-only against the runtime root and writes:
 
 - `versions.txt`

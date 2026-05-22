@@ -160,6 +160,10 @@ scripts/probe-wine119-parity-backend.sh \
   /private/tmp/metalsharp-home-wine119-dxmt32-state \
   /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2
 
+scripts/audit-mscompatdb-hook-surface.sh \
+  /private/tmp/metalsharp-home-wine119-dxmt32-state/.metalsharp/runtime/wine \
+  /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/mscompatdb-hook-surface
+
 node scripts/audit-electron-launch-routes.mjs \
   --library-json /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/steam-library.json \
   --out-dir /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/electron-launch-routes
@@ -179,6 +183,7 @@ Required proof before live launch:
   created by backend scans do not contaminate proof.
 - Nidhogg 2, Schedule I, and Subnautica BZ manifests point at the parity MetalSharp home.
 - Electron route audit proves renderer `auto` and explicit M9/M11 selections call `/steam/launch-game` for the control games.
+- mscompatdb hook audit proves the 11.9 `ntdll.so` contract symbols exist while keeping `hookReady=false` until protected runtime behavior is proven.
 - Readiness audit has only the live-suite failure remaining.
 
 ## Pass 3: Live Parity Gate

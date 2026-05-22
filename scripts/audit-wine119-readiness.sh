@@ -256,6 +256,18 @@ if [[ -f "$route_audit" ]]; then
 else
     warn "electron-route" "app-facing route audit not found at $route_audit"
 fi
+
+hook_audit="$probe/mscompatdb-hook-surface/hook-surface.json"
+if [[ -f "$hook_audit" ]]; then
+    contains "$hook_audit" '"symbolSurfaceReady"[[:space:]]*:[[:space:]]*true' \
+        && pass "mscompatdb-hook" "ntdll hook symbols are present in the parity runtime" \
+        || fail "mscompatdb-hook" "ntdll hook symbols are not ready in the parity runtime"
+    contains "$hook_audit" '"hookReady"[[:space:]]*:[[:space:]]*false' \
+        && pass "mscompatdb-hook" "hook readiness is explicitly not claimed without runtime proof" \
+        || fail "mscompatdb-hook" "hook readiness state is ambiguous"
+else
+    warn "mscompatdb-hook" "hook surface audit not found at $hook_audit"
+fi
 append
 
 append "## Live Gate"
