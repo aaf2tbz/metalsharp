@@ -244,8 +244,9 @@ Top-level/runtime-shape comparison:
 | `bin/metalsharp-wine` | present shell wrapper, SHA256 `6873d7f19ff16c707b76806732f531f06cd2b5305231f7142d12b3ebc8ad9cd0` | missing | must be regenerated or carried forward; launcher prefers this wrapper when present |
 | `etc/dxmt.conf` | present, SHA256 `166e2fe829de03d64b225c65fa1682162e198852df51e9520adc3f3b37244621` | present, same SHA256 | preserve path and visibility for M9/M11/M12 |
 | `etc/mscompatdb_rules.toml` | present, SHA256 `7b17e2feafa3453e79a43ab0cfe246faecc70ec8c3427a1128eb8bd1fd375e87` | present, same SHA256 | not a differentiator by itself |
-| `etc/vulkan/icd.d/MoltenVK_icd.json` | present, SHA256 `61d212ba97b02155cd8a16ef3e1be0ef7bf7a8c93e9f20c30506550f69a673ae` | present, same SHA256 | preserve |
-| `etc/vulkan/icd.d/MoltenVK_x86_64_icd.json` | present, SHA256 `7ce881b47fd3adbc29855703c147566e7ffebf514bf7191e6f7903b4eb433af8` | present, same SHA256 | preserve |
+| `etc/vulkan/icd.d/MoltenVK_icd.json` | present, SHA256 `61d212ba97b02155cd8a16ef3e1be0ef7bf7a8c93e9f20c30506550f69a673ae` | raw bundle is same SHA256 | candidate preparation must rewrite `library_path` to the candidate runtime so isolated proof does not load MoltenVK from the installed 11.5 home |
+| `etc/vulkan/icd.d/MoltenVK_x86_64_icd.json` | present, SHA256 `7ce881b47fd3adbc29855703c147566e7ffebf514bf7191e6f7903b4eb433af8` | raw bundle is same SHA256 | candidate preparation must rewrite `library_path` to the candidate runtime so isolated proof does not load MoltenVK from the installed 11.5 home |
+| `lib/libMoltenVK.dylib` | missing, while ICD JSON points at this absolute path under the installed home | missing in raw bundle | candidate preparation must create a candidate-local binding to `lib/wine/x86_64-unix/libMoltenVK.1.dylib` and rewrite ICD JSON to that candidate-local path |
 | Wine version marker | `share/wine/wine.inf` says Wine 11.5, SHA256 `14f55c9a641549b253445ffabc2fccf4ede4852f2ffc5aaea780f2c5da19c763` | says Wine 11.9, SHA256 `a4db2eb9c9746ec670dd982e306e419dda2fcb5625de577fddc109d8e6e888b6` | expected version change |
 
 DXMT/WineMetal internal comparison:
@@ -282,6 +283,7 @@ Critical internal mismatches found by file-list comparison:
 - Wine 11.9 asset is missing `wine/lib/wine/i386-windows/winemetal.dll`.
 - Wine 11.9 asset is missing the working install's `.dxvk` and `.wine-builtin` backup filenames under `lib/wine`, including `d3d11.dll.dxvk`, `d3d11.dll.wine-builtin`, and `winevulkan.dll.115`.
 - Wine 11.9 asset adds `wine/lib/wine/x86_64-unix/mscompatdb.dylib`.
+- Both the working 11.5 install and raw 11.9 asset carry Vulkan ICD JSON that points at `/Users/alexmondello/.metalsharp/runtime/wine/lib/libMoltenVK.dylib`, but that file is absent in the inspected roots; isolated 11.9 candidates must localize the ICD path before live proof, otherwise Subnautica/Schedule evidence can accidentally borrow the installed runtime.
 - Wine 11.9 asset adds headers under `include/wine/...`, which are useful for building but do not prove runtime parity.
 
 Internal rebuild contract:
@@ -373,6 +375,8 @@ This is likely related to Schedule I and Subnautica BZ ambiguity. Wine 11.9 rebu
 
 - Yin: current `main`, tree-equivalent to `v0.33.27`
 - Yang: `backup/main-before-v0.33.28-reset-20260521T223249Z` at `797db720c852b7f46356fa2541fb4dac81afcc69`
+
+There is a second backup ref, `backup/main-before-v0.33.27-reset-20260521T225540Z`, at `e16b754eb770fdabc4810b371839d1d42c11cf70`. That ref is not the full regression tip. Its tree is identical to `c2eb975907cc5e285463ce08989a36d8b55f9412` (`Bump version to 0.33.28`), which is already after the Wine 11.9 promotion commit `6e235de53e717f106d4b61e2f2e29f00e21bcba3`. Treat `e16b754` as an intermediate rollback checkpoint, not as "pre-Wine-11.9" evidence.
 
 Code surfaces that changed between yin and yang:
 
@@ -689,6 +693,7 @@ Every Wine 11.9 build candidate should emit or archive a manifest with:
   - `etc/mscompatdb_rules.toml`
   - `etc/vulkan/icd.d/MoltenVK_icd.json`
   - `etc/vulkan/icd.d/MoltenVK_x86_64_icd.json`
+  - `lib/libMoltenVK.dylib`
   - `lib/dxmt/x86_64-windows/{d3d10core.dll,d3d11.dll,d3d12.dll,dxgi.dll,winemetal.dll}`
   - `lib/dxmt/x86_64-unix/winemetal.so`
   - `lib/wine/x86_64-unix/{winemetal.so,mscompatdb.so,mscompatdb.dylib,libMoltenVK.1.dylib}`
@@ -696,6 +701,7 @@ Every Wine 11.9 build candidate should emit or archive a manifest with:
   - `lib/wine/i386-windows/{d3d11.dll,dxgi.dll,winemetal.dll}`
 - `file` output for Wine executables and Mach-O dylibs
 - `otool -L` output for `winemetal.so`, `mscompatdb.so`, `mscompatdb.dylib`, and `libMoltenVK.1.dylib`
+- `otool -l` load-command output for Unix-side probes, so install names, `LC_RPATH`, and `@rpath` loader contracts are captured instead of inferred
 - `nm -gU` hook probe output for `ntdll.so`, `mscompatdb.so`, and `mscompatdb.dylib`
 - final installer source URL or artifact digest
 
@@ -707,6 +713,7 @@ The manifest script is `scripts/runtime-manifest.sh`. It is read-only against th
 - `critical-sha256.txt`
 - `file.txt`
 - `otool-L.txt`
+- `otool-l.txt`
 - `nm-gU.txt`
 - `manifest.json`
 
@@ -719,7 +726,8 @@ Manifest comparison is handled by `scripts/compare-runtime-manifests.sh`:
   - allows expected Wine version changes
   - allows expected DXMT D3D12/DXGI/WineMetal bridge changes
   - allows expected anti-cheat hook-surface changes
-  - requires wrapper/config/Vulkan/MoltenVK/shared DXMT files to match
+  - requires wrapper/config/MoltenVK/shared DXMT files to match
+  - allows Vulkan ICD JSON and `lib/libMoltenVK.dylib` to differ only as candidate-local binding repairs
   - marks unknown or route-critical missing files as release blockers
 
 Candidate orchestration is handled by `scripts/prepare-wine119-parity-candidates.sh`:
@@ -899,6 +907,10 @@ Live control verification is handled by `scripts/verify-wine119-live-control-sui
   - `fail` if an already-running Wine Steam process is killed/relaunched during a control-game launch
 
 This verifier is the final local release gate before any Wine 11.9 tag bump. A green manifest or backend preflight is not enough.
+
+Current verifier limitation: the live suite exercises the backend `/steam/launch-game` route directly. The Electron path is `LibraryView.vue` -> `window.metalsharpAPI.backendRequest` -> `RustBridge.request` -> backend HTTP, and `auto` can still fall through to `/game/launch-auto` when Steam route metadata is missing or stale. Before a Wine 11.9 release candidate is marked app-ready, add an app-facing proof pass that launches the same controls through the renderer-selected route or proves the renderer will call `/steam/launch-game` for each configured M9/M11 control.
+
+Current M12 limitation: the first live gate intentionally targets the reported regressions: Nidhogg 2 M9, Schedule I M11, and Subnautica Below Zero M11. M12 remains a mapped rebuild surface, not a passed live surface. Add a dedicated M12 control before enabling D3D12/M12 behavior changes beyond this parity plan.
 
 Non-live readiness auditing is handled by `scripts/audit-wine119-readiness.sh`:
 

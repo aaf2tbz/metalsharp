@@ -86,6 +86,27 @@ check_wine_version() {
     fi
 }
 
+check_local_moltenvk_icd() {
+    local label="$1"
+    local wine_root="$2"
+    local icd="$wine_root/etc/vulkan/icd.d/MoltenVK_x86_64_icd.json"
+    local expected="$wine_root/lib/libMoltenVK.dylib"
+
+    if [[ ! -f "$expected" ]]; then
+        fail "$label" "missing candidate-local MoltenVK ICD target: $expected"
+        return
+    fi
+    if [[ ! -f "$icd" ]]; then
+        fail "$label" "missing MoltenVK_x86_64_icd.json"
+        return
+    fi
+    if grep -Fq "\"library_path\": \"$expected\"" "$icd"; then
+        pass "$label" "MoltenVK ICD points at candidate-local runtime"
+    else
+        fail "$label" "MoltenVK ICD does not point at candidate-local runtime"
+    fi
+}
+
 candidate_gate() {
     local candidate="$1"
     local summary="$2"
@@ -145,6 +166,7 @@ fi
 for candidate in clean dxmt32 borrowed; do
     root="/tmp/metalsharp-wine119-parity/candidates/$candidate/wine"
     check_wine_version "candidate-$candidate" "$root" "wine-11.9"
+    check_local_moltenvk_icd "candidate-$candidate" "$root"
 done
 
 if [[ -f /tmp/metalsharp-wine119-parity/summary.md ]]; then

@@ -11,8 +11,9 @@ Examples:
   scripts/runtime-manifest.sh /tmp/wine-11.9-candidate/runtime/wine /tmp/metalsharp-runtime-11.9
 
 Captures a reproducible Wine/DXMT runtime manifest for MetalSharp route parity:
-versions, normalized file list, route-critical hashes, file(1), otool -L, and
-nm -gU hook probes. The script is read-only against the runtime root.
+versions, normalized file list, route-critical hashes, file(1), otool -L,
+Mach-O load commands/rpaths, and nm -gU hook probes. The script is read-only
+against the runtime root.
 USAGE
 }
 
@@ -43,6 +44,7 @@ critical_paths=(
     "etc/mscompatdb_rules.toml"
     "etc/vulkan/icd.d/MoltenVK_icd.json"
     "etc/vulkan/icd.d/MoltenVK_x86_64_icd.json"
+    "lib/libMoltenVK.dylib"
     "lib/dxmt/x86_64-windows/d3d10core.dll"
     "lib/dxmt/x86_64-windows/d3d11.dll"
     "lib/dxmt/x86_64-windows/d3d12.dll"
@@ -71,6 +73,7 @@ probe_paths=(
     "lib/wine/x86_64-unix/winemetal.so"
     "lib/wine/x86_64-unix/mscompatdb.so"
     "lib/wine/x86_64-unix/mscompatdb.dylib"
+    "lib/libMoltenVK.dylib"
     "lib/wine/x86_64-unix/libMoltenVK.1.dylib"
     "lib/wine/x86_64-unix/ntdll.so"
     "lib/wine/x86_64-unix/win32u.so"
@@ -134,6 +137,18 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
 } > "$out_dir/otool-L.txt"
 
 {
+    for rel in "${probe_paths[@]}"; do
+        abs="$real_root/$rel"
+        echo "== $rel =="
+        if [[ -f "$abs" ]]; then
+            otool -l "$abs" 2>&1 || true
+        else
+            echo "missing"
+        fi
+    done
+} > "$out_dir/otool-l.txt"
+
+{
     for rel in \
         "lib/wine/x86_64-unix/ntdll.so" \
         "lib/wine/x86_64-unix/mscompatdb.so" \
@@ -159,6 +174,7 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
     echo '    "critical_sha256": "critical-sha256.txt",'
     echo '    "file": "file.txt",'
     echo '    "otool_L": "otool-L.txt",'
+    echo '    "otool_l": "otool-l.txt",'
     echo '    "nm_gU": "nm-gU.txt"'
     echo "  }"
     echo "}"

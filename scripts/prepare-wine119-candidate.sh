@@ -17,8 +17,9 @@ It does not modify ~/.metalsharp.
 
 The script normalizes the archive root (wine-11.9 -> runtime/wine), carries the
 current metalsharp-wine wrapper when the bundle lacks one, binds x86_64
-WineMetal into lib/wine fallback paths, then writes reports beside the runtime
-root. Set METALSHARP_I386_WINEMETAL_SOURCE=/path/to/winemetal.dll to bind an
+WineMetal into lib/wine fallback paths, localizes Vulkan ICD bindings so proof
+does not load MoltenVK from the installed runtime, then writes reports beside
+the runtime root. Set METALSHARP_I386_WINEMETAL_SOURCE=/path/to/winemetal.dll to bind an
 explicit i386 WineMetal candidate. Set
 METALSHARP_BORROW_BASELINE_I386_WINEMETAL=1 to intentionally borrow the 11.5
 i386 winemetal.dll for an experiment; the default is to report it missing.
@@ -110,6 +111,30 @@ bind_if_missing \
     "$candidate_root/lib/dxmt/x86_64-windows/winemetal.dll" \
     "$candidate_root/lib/wine/x86_64-windows/winemetal.dll"
 
+localize_vulkan_icd() {
+    local molten_src="$candidate_root/lib/wine/x86_64-unix/libMoltenVK.1.dylib"
+    local molten_dst="$candidate_root/lib/libMoltenVK.dylib"
+    local icd
+
+    if [[ -f "$molten_src" ]]; then
+        mkdir -p "$candidate_root/lib"
+        if [[ ! -e "$molten_dst" ]]; then
+            ln -s "wine/x86_64-unix/libMoltenVK.1.dylib" "$molten_dst"
+        fi
+    fi
+
+    for icd in "$candidate_root/etc/vulkan/icd.d/"*.json; do
+        [[ -f "$icd" ]] || continue
+        if grep -Fq '"library_path"' "$icd"; then
+            tmp_icd="$icd.tmp.$$"
+            sed -E 's#"library_path"[[:space:]]*:[[:space:]]*"[^"]*"#"library_path": "'"$molten_dst"'"#' "$icd" > "$tmp_icd"
+            mv "$tmp_icd" "$icd"
+        fi
+    done
+}
+
+localize_vulkan_icd
+
 if [[ -n "${METALSHARP_I386_WINEMETAL_SOURCE:-}" ]]; then
     if [[ ! -f "$METALSHARP_I386_WINEMETAL_SOURCE" ]]; then
         echo "METALSHARP_I386_WINEMETAL_SOURCE not found: $METALSHARP_I386_WINEMETAL_SOURCE" >&2
@@ -133,6 +158,7 @@ critical=(
     "etc/mscompatdb_rules.toml"
     "etc/vulkan/icd.d/MoltenVK_icd.json"
     "etc/vulkan/icd.d/MoltenVK_x86_64_icd.json"
+    "lib/libMoltenVK.dylib"
     "lib/dxmt/x86_64-windows/d3d10core.dll"
     "lib/dxmt/x86_64-windows/d3d11.dll"
     "lib/dxmt/x86_64-windows/d3d12.dll"

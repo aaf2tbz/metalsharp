@@ -74,7 +74,10 @@ classify_path() {
         lib/wine/x86_64-unix/winemetal.so|lib/wine/x86_64-windows/winemetal.dll)
             echo "expected_rebound_from_dxmt"
             ;;
-        bin/metalsharp-wine|etc/dxmt.conf|etc/mscompatdb_rules.toml|etc/vulkan/icd.d/MoltenVK_icd.json|etc/vulkan/icd.d/MoltenVK_x86_64_icd.json|lib/dxmt/x86_64-windows/d3d10core.dll|lib/dxmt/x86_64-windows/d3d11.dll|lib/dxmt/x86_64-windows/winemetal.dll|lib/wine/x86_64-unix/libMoltenVK.1.dylib)
+        etc/vulkan/icd.d/MoltenVK_icd.json|etc/vulkan/icd.d/MoltenVK_x86_64_icd.json|lib/libMoltenVK.dylib)
+            echo "expected_vulkan_icd_local_binding"
+            ;;
+        bin/metalsharp-wine|etc/dxmt.conf|etc/mscompatdb_rules.toml|lib/dxmt/x86_64-windows/d3d10core.dll|lib/dxmt/x86_64-windows/d3d11.dll|lib/dxmt/x86_64-windows/winemetal.dll|lib/wine/x86_64-unix/libMoltenVK.1.dylib)
             echo "must_match"
             ;;
         lib/wine/x86_64-windows/d3d11.dll|lib/wine/x86_64-windows/dxgi.dll|lib/wine/i386-windows/d3d11.dll|lib/wine/i386-windows/dxgi.dll)
@@ -135,6 +138,10 @@ unknowns=0
             case "$class" in
                 expected_anticheat_delta)
                     gate="ok_if_intentional_new_surface_absent"
+                    ;;
+                expected_vulkan_icd_local_binding)
+                    gate="packaging_defect"
+                    packaging_defects=$((packaging_defects + 1))
                     ;;
                 must_exist_for_m9_or_live_prove_unneeded)
                     gate="release_blocker"

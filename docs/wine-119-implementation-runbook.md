@@ -139,6 +139,9 @@ Expected candidate meaning:
 - `clean`: must fail because release asset lacks i386 `winemetal.dll`.
 - `dxmt32`: primary test candidate, still release-blocked until live M9 proof.
 - `borrowed`: manifest-complete fallback experiment, not release-ready without live proof.
+- every prepared candidate must rewrite Vulkan ICD `library_path` entries to
+  its own runtime root and provide `lib/libMoltenVK.dylib`, otherwise proof can
+  accidentally borrow MoltenVK from the installed 11.5 runtime.
 
 ## Pass 2: Isolated Parity Home
 
@@ -201,6 +204,12 @@ Required pass conditions:
 - Each game has a live game PID, not just a Steam URL/helper PID.
 - If Wine Steam was already running before a game launch, the pre-existing `Steam.exe` PID survives that launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.
+- Before release, repeat or supplement this proof through the app-facing route:
+  confirm the renderer-selected launch method calls `/steam/launch-game` for
+  each configured M9/M11 control, or launch through Electron and capture the
+  same proof bundle.
+- M12 remains a mapped rebuild surface until a dedicated M12 control game has
+  passed with the same process/module/cache proof.
 
 If `dxmt32` fails specifically on the i386 WineMetal artifact, repeat Passes 2
 and 3 with the `borrowed` candidate. A borrowed i386 bridge is only acceptable
