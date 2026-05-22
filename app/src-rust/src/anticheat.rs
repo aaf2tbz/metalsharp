@@ -2,7 +2,9 @@ use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
@@ -506,11 +508,6 @@ fn steamapps_roots() -> Vec<PathBuf> {
         }
     }
 
-    let avery = PathBuf::from("/Volumes/AverySSD/SteamLibrary/steamapps");
-    if avery.exists() {
-        roots.push(avery);
-    }
-
     let mut seen = HashSet::new();
     roots.into_iter().filter(|path| path.exists()).filter(|path| seen.insert(path.clone())).collect()
 }
@@ -773,17 +770,16 @@ fn anonymous_executable_mapping_probe() -> Value {
 
 #[cfg(unix)]
 fn synthetic_elf_direct_load_probe() -> Value {
-    let path = synthetic_probe_path("metalsharp-synthetic-eac-module", "so");
-    let bytes = synthetic_elf_bytes();
-    let write_result = fs::write(&path, bytes);
-    if let Err(err) = write_result {
-        return json!({
-            "ok": false,
-            "path": path.to_string_lossy(),
-            "stage": "write_synthetic_elf",
-            "error": err.to_string(),
-        });
-    }
+    let path = match write_secure_synthetic_elf() {
+        Ok(path) => path,
+        Err(err) => {
+            return json!({
+                "ok": false,
+                "stage": "write_synthetic_elf",
+                "error": err,
+            });
+        },
+    };
 
     let c_path = match CString::new(path.to_string_lossy().as_bytes()) {
         Ok(path) => path,
@@ -823,6 +819,31 @@ fn synthetic_elf_direct_load_probe() -> Value {
     }
 }
 
+#[cfg(unix)]
+fn write_secure_synthetic_elf() -> Result<PathBuf, String> {
+    let template = std::env::temp_dir().join("metalsharp-synthetic-eac-module-XXXXXX");
+    let mut bytes = template.to_string_lossy().into_owned().into_bytes();
+    bytes.push(0);
+
+    let fd = unsafe { libc::mkstemp(bytes.as_mut_ptr().cast()) };
+    if fd < 0 {
+        return Err(format!("mkstemp failed with errno {}", last_errno()));
+    }
+
+    let path_bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
+    let path = PathBuf::from(String::from_utf8_lossy(path_bytes).into_owned());
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    if let Err(err) = file.write_all(synthetic_elf_bytes()) {
+        let _ = fs::remove_file(&path);
+        return Err(err.to_string());
+    }
+    if let Err(err) = file.flush() {
+        let _ = fs::remove_file(&path);
+        return Err(err.to_string());
+    }
+    Ok(path)
+}
+
 #[cfg(not(unix))]
 fn synthetic_elf_direct_load_probe() -> Value {
     json!({
@@ -848,12 +869,6 @@ fn dlerror_string() -> Option<String> {
 #[cfg(unix)]
 fn last_errno() -> i32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or_default()
-}
-
-fn synthetic_probe_path(stem: &str, extension: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!("{}-{}.{}", stem, std::process::id(), extension));
-    path
 }
 
 fn synthetic_elf_bytes() -> &'static [u8] {
@@ -1664,6 +1679,20 @@ mod tests {
         });
 
         assert_eq!(contract_probe_status("macos", &eac, &[], &host_contract), "loader_contract_needs_delta_audit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn synthetic_elf_probe_file_is_exclusive_and_removed_by_caller() {
+        let path = write_secure_synthetic_elf().expect("secure synthetic elf");
+        assert!(path.exists());
+        assert!(path.file_name().unwrap_or_default().to_string_lossy().starts_with("metalsharp-synthetic-eac-module-"));
+        assert_ne!(
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            format!("metalsharp-synthetic-eac-module-{}.so", std::process::id())
+        );
+        assert_eq!(read_binary_format(&path), "elf");
+        std::fs::remove_file(path).expect("remove synthetic elf");
     }
 
     #[test]
