@@ -48,9 +48,9 @@ const toast = useToast();
 const search = ref("");
 const filter = ref<"all" | "metalsharp_installed" | "gptk_installed" | "not_installed">("all");
 
-const runningAppId = ref<number | null>(null);
+const runningLibraryId = ref<string | null>(null);
 const runningPid = ref<number | null>(null);
-const launchingAppId = ref<number | null>(null);
+const launchingLibraryId = ref<string | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -285,6 +285,7 @@ function pollGptkSteamInstall() {
 }
 
 async function launchGame(game: SteamGame, launchMethod = "auto") {
+  const libraryId = game.library_id ?? String(game.appid);
   if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
     const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
@@ -296,7 +297,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     wineSteamRunning.value = false;
   }
 
-  launchingAppId.value = game.appid;
+  launchingLibraryId.value = libraryId;
   const useWineSteamRoute = isWineSteamRouteLaunch(game, launchMethod);
   const launchEndpoint = useWineSteamRoute ? "/steam/launch-game" : "/game/launch-auto";
   const launchResult = await api<{
@@ -311,11 +312,11 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     launchMethod,
   });
 
-  launchingAppId.value = null;
+  launchingLibraryId.value = null;
 
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
-    runningAppId.value = game.appid;
+    runningLibraryId.value = libraryId;
     if (
       launchResult.steam_runtime === "offline_gptk" ||
       launchMethod.toLowerCase() === "m13" ||
@@ -337,7 +338,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
 async function stopGame(game: SteamGame) {
   await api("POST", "/kill", { pid: runningPid.value, appid: game.appid });
   runningPid.value = null;
-  runningAppId.value = null;
+  runningLibraryId.value = null;
   toast.show(`Stopped ${game.name}`);
 }
 
@@ -495,8 +496,8 @@ watch([library, search, filter], applyFilter);
         v-for="game in filteredGames"
         :key="game.library_id ?? game.appid"
         :game="game"
-        :running="runningAppId === game.appid"
-        :launching="launchingAppId === game.appid"
+        :running="runningLibraryId === (game.library_id ?? String(game.appid))"
+        :launching="launchingLibraryId === (game.library_id ?? String(game.appid))"
         :steam-installed="wineSteamInstalled"
         @play="launchGame(game, $event)"
         @stop="stopGame(game)"

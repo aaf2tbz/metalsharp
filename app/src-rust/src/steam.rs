@@ -1950,7 +1950,7 @@ pub fn library() -> Value {
             }));
         }
 
-        if !has_any_install {
+        if !has_metalsharp_install && !gptk_steam_appids.contains(appid) {
             let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
             let pipeline_id = if matches!(resolved, crate::mtsp::engine::PipelineId::M13) {
                 crate::mtsp::engine::PipelineId::M12
@@ -1962,7 +1962,7 @@ pub fn library() -> Value {
                 name,
                 source: "steam",
                 source_label: "Steam",
-                installed: false,
+                installed: has_any_install,
                 can_uninstall: false,
                 pipeline_id,
                 has_native_build: dual.has_native_build,
