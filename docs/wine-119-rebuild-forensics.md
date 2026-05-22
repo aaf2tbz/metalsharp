@@ -183,6 +183,14 @@ Additional recovered asset from the deleted/working investigation path:
 - Release/upload tar listing contains `wine-11.9/lib/dxmt/x86_64-windows/winemetal.dll` and `wine-11.9/lib/dxmt/x86_64-unix/winemetal.so`.
 - Release/upload tar listing does not contain `wine-11.9/lib/wine/i386-windows/winemetal.dll`.
 
+Reproducible fetch path:
+
+- `scripts/fetch-wine119-release-assets.sh /tmp/metalsharp-wine-assets metalsharp_bundle.tar.zst`
+- output asset: `/tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst`
+- fetch report: `/tmp/metalsharp-wine-assets/fetch-report.txt`
+- digest source: GitHub release metadata for the `bundles` release
+- required SHA256: `833f63566b0c1b98fa917337716f57d689c42d0c2878204b4716ba29637d7372`
+
 The same `bundles` release also has `metalsharp_bundle2.tar.zst`:
 
 - Local download: `/tmp/metalsharp-bundle2-aSicSS/metalsharp_bundle2.tar.zst`
@@ -1060,6 +1068,7 @@ Current investigation status:
 - Done: rollback source-of-truth identified (`main` tree-equivalent to `v0.33.27`).
 - Done: three live 11.5 control samples captured and documented.
 - Done: release asset source for current Wine 11.9 identified (`bundles/metalsharp_bundle.tar.zst`, also embedded in the recovered `v0.33.30` Actions DMG artifact).
+- Done: reproducible GitHub release asset fetch/verify script added for `bundles/metalsharp_bundle.tar.zst`.
 - Done: release/upload evidence checked; the Wine 11.9 release asset does not contain an i386 `winemetal.dll`.
 - Done: external AverySSD DXMT source/build workspace found, including a true PE32 i386 WineMetal candidate at `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`.
 - Done: Wine 11.5 vs Wine 11.9 internal runtime map added.

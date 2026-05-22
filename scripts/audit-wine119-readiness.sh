@@ -112,8 +112,10 @@ main_head="$(git -C "$repo_root" rev-parse --short HEAD)"
 main_tag="$(git -C "$repo_root" describe --tags --exact-match HEAD 2>/dev/null || true)"
 if [[ "$main_head" == "cebf936" ]]; then
     pass "repo" "main HEAD is rollback commit cebf936"
+elif git -C "$repo_root" merge-base --is-ancestor cebf936 HEAD 2>/dev/null; then
+    pass "repo" "current branch descends from rollback commit cebf936"
 else
-    warn "repo" "main HEAD is $main_head; expected rollback commit cebf936 for this audit"
+    warn "repo" "current HEAD is $main_head and does not descend from rollback commit cebf936"
 fi
 if [[ "$main_tag" == "v0.33.27" ]]; then
     pass "repo" "HEAD is exactly tag v0.33.27"
@@ -130,6 +132,16 @@ fi
 append
 
 append "## Candidate Runtime Shape"
+fetch_report="/tmp/metalsharp-wine-assets/fetch-report.txt"
+if [[ -f "$fetch_report" ]] &&
+    contains "$fetch_report" 'asset=metalsharp_bundle\.tar\.zst' &&
+    contains "$fetch_report" 'sha256=833f63566b0c1b98fa917337716f57d689c42d0c2878204b4716ba29637d7372' &&
+    contains "$fetch_report" 'verified=1'; then
+    pass "release-asset" "GitHub bundles/metalsharp_bundle.tar.zst was fetched and SHA256 verified"
+else
+    warn "release-asset" "verified fetch report not found at $fetch_report"
+fi
+
 for candidate in clean dxmt32 borrowed; do
     root="/tmp/metalsharp-wine119-parity/candidates/$candidate/wine"
     check_wine_version "candidate-$candidate" "$root" "wine-11.9"

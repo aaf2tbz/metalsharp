@@ -70,6 +70,7 @@ Allowed files:
 - `docs/wine-119-implementation-runbook.md`
 - `scripts/runtime-manifest.sh`
 - `scripts/compare-runtime-manifests.sh`
+- `scripts/fetch-wine119-release-assets.sh`
 - `scripts/prepare-wine119-candidate.sh`
 - `scripts/prepare-wine119-parity-candidates.sh`
 - `scripts/install-wine119-parity-home.sh`
@@ -84,6 +85,7 @@ Commands:
 ```bash
 bash -n scripts/runtime-manifest.sh \
   scripts/compare-runtime-manifests.sh \
+  scripts/fetch-wine119-release-assets.sh \
   scripts/prepare-wine119-candidate.sh \
   scripts/prepare-wine119-parity-candidates.sh \
   scripts/install-wine119-parity-home.sh \
@@ -110,15 +112,19 @@ preserving the 11.5 final runtime shape.
 Inputs:
 
 - Release asset: `bundles/metalsharp_bundle.tar.zst`
-- Current known local extraction source: `/tmp/metalsharp-wine-assets-IjmErR/metalsharp_bundle.tar.zst`
+- Reproducible local asset path after fetch: `/tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst`
 - Working baseline: `/Users/alexmondello/.metalsharp/runtime/wine`
 - DXMT i386 candidate: `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
 
 Commands:
 
 ```bash
+scripts/fetch-wine119-release-assets.sh \
+  /tmp/metalsharp-wine-assets \
+  metalsharp_bundle.tar.zst
+
 scripts/prepare-wine119-parity-candidates.sh \
-  /tmp/metalsharp-wine-assets-IjmErR/metalsharp_bundle.tar.zst \
+  /tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst \
   /tmp/metalsharp-wine119-parity
 
 scripts/audit-wine119-readiness.sh \
@@ -128,6 +134,7 @@ scripts/audit-wine119-readiness.sh \
 
 Expected candidate meaning:
 
+- fetch report must verify `metalsharp_bundle.tar.zst` against the GitHub release digest before candidate preparation
 - `clean`: must fail because release asset lacks i386 `winemetal.dll`.
 - `dxmt32`: primary test candidate, still release-blocked until live M9 proof.
 - `borrowed`: manifest-complete fallback experiment, not release-ready without live proof.
@@ -156,6 +163,7 @@ scripts/audit-wine119-readiness.sh \
 
 Required proof before live launch:
 
+- `/tmp/metalsharp-wine-assets/fetch-report.txt` verifies the GitHub `bundles/metalsharp_bundle.tar.zst` SHA256.
 - Wine reports `wine-11.9`.
 - Backend reports version `0.33.27`.
 - Active bottle/compatdata/config manifests have zero references to `/Users/alexmondello/.metalsharp`.
