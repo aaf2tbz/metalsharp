@@ -27,23 +27,19 @@ Allowed direct replay candidates are diagnostic only:
 - `1148f57` Tighten mscompatdb readiness checks
 - `cfade4e` Read PE export and import directories separately
 - `f654c10` Add D3D12 surface extraction diagnostics
-- `1c0b788` Log direct MTSP runtime contracts
 - `38fed0a` Format D3D12 feature checks
 - `d269d74` Log D3D12 compute pipeline evidence
 - `e796968` Log D3D12 compute dispatch evidence
 - `1e54117` Log D3D12 draw execution evidence
 - `ddba26f` Log D3D12 feature query decisions
-- `e3c2a63` Track DXGI present count
-- `557cb14` Route DXMT D3D12 traces per launch
 - `05d7fd9` Harden DXMT patch preflight
 - `a514813` Fix EAC Proton asset evidence detection
 - `5e9a23c` Cover expanded DXGI factory surface
-- `1683b79` Cover DXGI factory implementation surface
 
 Before replaying any of these, inspect its patch. If it changes launch route
 selection, Steam handoff, migration, runtime install source, Wine DLL override
-semantics, or cache behavior, do not cherry-pick it. Rebuild only the diagnostic
-piece manually.
+semantics, launch environment, native runtime behavior, or cache behavior, do
+not cherry-pick it. Rebuild only the diagnostic piece manually.
 
 Never cherry-pick as-is:
 
@@ -55,7 +51,14 @@ Never cherry-pick as-is:
 - `e2dff52` WineMetal runtime binding
 - `c1dd812` native-only DirectX overrides
 - `c01180f` DXMT launch cache contract
+- `e3c2a63` DXGI present count runtime behavior
 - `230c2ec` and `c95024d` M9 config narrowing
+
+Source material only; rebuild manually after the relevant gate:
+
+- `1c0b788` direct MTSP launch-log context
+- `557cb14` DXMT D3D12 trace routing and env injection
+- `1683b79` expanded DXGI factory tests
 
 These commits are source material only. Rebuild their useful intent in smaller
 patches after the relevant gate.
@@ -75,10 +78,13 @@ Allowed files:
 - `scripts/prepare-wine119-parity-candidates.sh`
 - `scripts/install-wine119-parity-home.sh`
 - `scripts/probe-wine119-parity-backend.sh`
+- `scripts/audit-electron-launch-routes.mjs`
+- `scripts/audit-mscompatdb-hook-surface.sh`
 - `scripts/capture-steam-game-proof.sh`
 - `scripts/run-wine119-live-control-suite.sh`
 - `scripts/verify-wine119-live-control-suite.sh`
 - `scripts/audit-wine119-readiness.sh`
+- `scripts/audit-wine119-objective-completion.sh`
 
 Commands:
 
@@ -93,7 +99,11 @@ bash -n scripts/runtime-manifest.sh \
   scripts/capture-steam-game-proof.sh \
   scripts/run-wine119-live-control-suite.sh \
   scripts/verify-wine119-live-control-suite.sh \
-  scripts/audit-wine119-readiness.sh
+  scripts/audit-wine119-readiness.sh \
+  scripts/audit-mscompatdb-hook-surface.sh \
+  scripts/audit-wine119-objective-completion.sh
+
+node --check scripts/audit-electron-launch-routes.mjs
 
 (cd app/src-rust && cargo test launcher::tests::)
 ```
@@ -112,7 +122,10 @@ preserving the 11.5 final runtime shape.
 
 Inputs:
 
-- Release asset: `bundles/metalsharp_bundle.tar.zst`
+- Release repo: `aaf2tbz/metalsharp`
+- Release tag: `bundles`
+- Release asset: `metalsharp_bundle.tar.zst`
+- Expected asset SHA256: `833f63566b0c1b98fa917337716f57d689c42d0c2878204b4716ba29637d7372`
 - Reproducible local asset path after fetch: `/tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst`
 - Working baseline: `/Users/alexmondello/.metalsharp/runtime/wine`
 - DXMT i386 candidate: `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
@@ -127,24 +140,24 @@ scripts/fetch-wine119-release-assets.sh \
 scripts/prepare-wine119-parity-candidates.sh \
   /tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst \
   /tmp/metalsharp-wine119-parity
-
-scripts/audit-wine119-readiness.sh \
-  /private/tmp/metalsharp-home-wine119-dxmt32-state \
-  /tmp/metalsharp-wine119-readiness-current
-
-scripts/audit-wine119-objective-completion.sh \
-  /tmp/metalsharp-wine119-objective-audit
 ```
 
 Expected candidate meaning:
 
-- fetch report must verify `metalsharp_bundle.tar.zst` against the GitHub release digest before candidate preparation
+- fetch report must verify `repo=aaf2tbz/metalsharp`, `tag=bundles`,
+  `release_tag_name=bundles`, `asset=metalsharp_bundle.tar.zst`, the expected
+  SHA256 above, and `verified=1` before candidate preparation
 - `clean`: must fail because release asset lacks i386 `winemetal.dll`.
 - `dxmt32`: primary test candidate, still release-blocked until live M9 proof.
 - `borrowed`: manifest-complete fallback experiment, not release-ready without live proof.
 - every prepared candidate must rewrite Vulkan ICD `library_path` entries to
   its own runtime root and provide `lib/libMoltenVK.dylib`, otherwise proof can
   accidentally borrow MoltenVK from the installed 11.5 runtime.
+- every prepared candidate must write `provenance-report.txt` with bundle hash,
+  copied/original/borrowed bridge decisions, i386 WineMetal source path,
+  source/destination SHA256s, and Vulkan ICD before/after target proof.
+- Pass 1 does not run readiness or objective completion audits; those require a
+  Pass 2 parity home and backend probe.
 
 ## Pass 2: Isolated Parity Home
 
@@ -179,8 +192,14 @@ scripts/audit-wine119-readiness.sh \
 Required proof before live launch:
 
 - `/tmp/metalsharp-wine-assets/fetch-report.txt` verifies the GitHub `bundles/metalsharp_bundle.tar.zst` SHA256.
+- Candidate `provenance-report.txt` identifies whether `bin/metalsharp-wine`
+  and every WineMetal bridge was original, copied from DXMT, supplied from
+  AverySSD, or borrowed from 11.5.
 - Wine reports `wine-11.9`.
 - Backend reports version `0.33.27`.
+- Backend binary must be freshly built from this branch before probing:
+  `(cd app/src-rust && cargo build)`, then the probe must show `/status`
+  from the parity home and version `0.33.27`.
 - Active bottle/compatdata/config manifests have zero references to `/Users/alexmondello/.metalsharp`.
 - Copied historical `compatdata/*/logs` files are absent; empty log directories
   created by backend scans do not contaminate proof.
@@ -224,6 +243,15 @@ Required pass conditions:
 - Each game launch has a pre-existing `Steam.exe` PID before launch.
 - The pre-existing `Steam.exe` PID survives each launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.
+- Nidhogg 2 proof must include i386 `d3d11.dll`, `dxgi.dll`,
+  `winemetal.dll`, Unix `winemetal.so`, `dxmt.conf`, and
+  `shader-cache/m9/535520`.
+- Schedule I proof must include M11 DXMT route evidence, x86_64 `d3d11.dll`,
+  `dxgi.dll`, `winemetal.dll`, Unix `winemetal.so`, MoltenVK, `dxmt.conf`,
+  and `shader-cache/m11/3164500`.
+- Subnautica Below Zero proof must include M11 DXMT route evidence, x86_64
+  `d3d11.dll`, `dxgi.dll`, `winemetal.dll`, Unix `winemetal.so`, MoltenVK,
+  `dxmt.conf`, and `shader-cache/m11/848450`.
 - Before release, keep the app-facing route audit green and, if the packaged UI
   changes, repeat this proof through Electron before tag bump.
 - M12 remains a mapped rebuild surface until a dedicated M12 control game has
@@ -305,4 +333,7 @@ Each later experiment needs:
   - AverySSD DXMT i386 bridge,
   - or borrowed 11.5 i386 compatibility bridge.
 - Release notes explicitly say whether anti-cheat hook surface is enabled, diagnostic-only, or deferred.
+- First Wine 11.9 parity tag is allowed after Pass 3 only if anti-cheat hook
+  surface is explicitly diagnostic-only/deferred. A release claiming anti-cheat
+  readiness must also pass Passes 4 and 5 with separate protected-target proof.
 - GitHub release asset is verified after upload by re-downloading and re-running `scripts/runtime-manifest.sh`.

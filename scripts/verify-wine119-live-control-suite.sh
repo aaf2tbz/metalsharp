@@ -184,14 +184,19 @@ verify_game \
     "i386-windows.*/dxgi\\.dll|i386-windows/dxgi\\.dll" \
     "i386-windows.*/d3d11\\.dll|i386-windows/d3d11\\.dll" \
     "x86_64-unix.*/winemetal\\.so|x86_64-unix/winemetal\\.so" \
+    "dxmt\\.conf" \
     "shader-cache/m9/535520"
 
 verify_game \
     "schedule-i" \
     "m11" \
     "3164500" \
+    "x86_64-windows.*/d3d11\\.dll|x86_64-windows/d3d11\\.dll" \
+    "x86_64-windows.*/dxgi\\.dll|x86_64-windows/dxgi\\.dll" \
+    "x86_64-windows.*/winemetal\\.dll|x86_64-windows/winemetal\\.dll" \
     "x86_64-unix.*/winemetal\\.so|x86_64-unix/winemetal\\.so" \
     "libMoltenVK\\.1\\.dylib|MoltenVK" \
+    "dxmt\\.conf" \
     "shader-cache/m11/3164500"
 
 verify_game \
@@ -203,6 +208,7 @@ verify_game \
     "x86_64-windows.*/winemetal\\.dll|x86_64-windows/winemetal\\.dll" \
     "x86_64-unix.*/winemetal\\.so|x86_64-unix/winemetal\\.so" \
     "libMoltenVK\\.1\\.dylib|MoltenVK" \
+    "dxmt\\.conf" \
     "shader-cache/m11/848450"
 
 append

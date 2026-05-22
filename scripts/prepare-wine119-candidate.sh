@@ -86,30 +86,85 @@ mkdir -p "$candidate_root/bin" \
     "$candidate_root/lib/wine/x86_64-windows" \
     "$candidate_root/lib/wine/i386-windows"
 
+report_dir="$(dirname "$candidate_root")"
+provenance_report="$report_dir/provenance-report.txt"
+: > "$provenance_report"
+
+sha256_or_missing() {
+    local path="$1"
+    if [[ -f "$path" ]]; then
+        shasum -a 256 "$path" | awk '{ print $1 }'
+    else
+        printf 'missing'
+    fi
+}
+
+record_provenance() {
+    local label="$1"
+    local src="$2"
+    local dst="$3"
+    local action="$4"
+    {
+        echo "[$label]"
+        echo "action=$action"
+        echo "source=$src"
+        echo "source_sha256=$(sha256_or_missing "$src")"
+        echo "destination=$dst"
+        echo "destination_sha256=$(sha256_or_missing "$dst")"
+        echo
+    } >> "$provenance_report"
+}
+
+{
+    echo "[bundle]"
+    echo "path=$bundle"
+    echo "sha256=$(sha256_or_missing "$bundle")"
+    echo "fetch_report=${METALSHARP_FETCH_REPORT:-/tmp/metalsharp-wine-assets/fetch-report.txt}"
+    echo "release_repo=${METALSHARP_RELEASE_REPO:-aaf2tbz/metalsharp}"
+    echo "release_tag=${METALSHARP_RELEASE_TAG:-bundles}"
+    echo "asset_name=$(basename "$bundle")"
+    echo
+    echo "[source-root]"
+    echo "path=$source_root"
+    echo "name=$(basename "$source_root")"
+    echo
+} >> "$provenance_report"
+
 if [[ ! -f "$candidate_root/bin/metalsharp-wine" ]]; then
     wrapper_source="${METALSHARP_WINE_WRAPPER:-$baseline_root/bin/metalsharp-wine}"
     if [[ -f "$wrapper_source" ]]; then
         cp "$wrapper_source" "$candidate_root/bin/metalsharp-wine"
         chmod +x "$candidate_root/bin/metalsharp-wine"
+        record_provenance "bin/metalsharp-wine" "$wrapper_source" "$candidate_root/bin/metalsharp-wine" "copied_wrapper"
     fi
+else
+    record_provenance "bin/metalsharp-wine" "$candidate_root/bin/metalsharp-wine" "$candidate_root/bin/metalsharp-wine" "original_bundle_file"
 fi
 
 bind_if_missing() {
     local src="$1"
     local dst="$2"
+    local label="${3:-$dst}"
     if [[ ! -f "$dst" && -f "$src" ]]; then
         mkdir -p "$(dirname "$dst")"
         cp "$src" "$dst"
+        record_provenance "$label" "$src" "$dst" "copied_if_missing"
+    elif [[ -f "$dst" ]]; then
+        record_provenance "$label" "$dst" "$dst" "kept_existing_destination"
+    else
+        record_provenance "$label" "$src" "$dst" "missing_source_and_destination"
     fi
 }
 
 bind_if_missing \
     "$candidate_root/lib/dxmt/x86_64-unix/winemetal.so" \
-    "$candidate_root/lib/wine/x86_64-unix/winemetal.so"
+    "$candidate_root/lib/wine/x86_64-unix/winemetal.so" \
+    "lib/wine/x86_64-unix/winemetal.so"
 
 bind_if_missing \
     "$candidate_root/lib/dxmt/x86_64-windows/winemetal.dll" \
-    "$candidate_root/lib/wine/x86_64-windows/winemetal.dll"
+    "$candidate_root/lib/wine/x86_64-windows/winemetal.dll" \
+    "lib/wine/x86_64-windows/winemetal.dll"
 
 localize_vulkan_icd() {
     local molten_src="$candidate_root/lib/wine/x86_64-unix/libMoltenVK.1.dylib"
@@ -125,11 +180,23 @@ localize_vulkan_icd() {
 
     for icd in "$candidate_root/etc/vulkan/icd.d/"*.json; do
         [[ -f "$icd" ]] || continue
+        before_path="$(awk -F\" '/"library_path"/ { print $4; exit }' "$icd")"
         if grep -Fq '"library_path"' "$icd"; then
             tmp_icd="$icd.tmp.$$"
             sed -E 's#"library_path"[[:space:]]*:[[:space:]]*"[^"]*"#"library_path": "'"$molten_dst"'"#' "$icd" > "$tmp_icd"
             mv "$tmp_icd" "$icd"
         fi
+        after_path="$(awk -F\" '/"library_path"/ { print $4; exit }' "$icd")"
+        {
+            echo "[vulkan-icd $(basename "$icd")]"
+            echo "before_library_path=$before_path"
+            echo "after_library_path=$after_path"
+            echo "target=$molten_dst"
+            echo "target_exists=$([[ -e "$molten_dst" ]] && echo 1 || echo 0)"
+            echo "target_realpath=$(cd "$(dirname "$molten_dst")" && pwd -P)/$(basename "$molten_dst")"
+            echo "target_readlink=$(readlink "$molten_dst" 2>/dev/null || true)"
+            echo
+        } >> "$provenance_report"
     done
 }
 
@@ -142,11 +209,19 @@ if [[ -n "${METALSHARP_I386_WINEMETAL_SOURCE:-}" ]]; then
     fi
     bind_if_missing \
         "$METALSHARP_I386_WINEMETAL_SOURCE" \
-        "$candidate_root/lib/wine/i386-windows/winemetal.dll"
+        "$candidate_root/lib/wine/i386-windows/winemetal.dll" \
+        "lib/wine/i386-windows/winemetal.dll"
 elif [[ "${METALSHARP_BORROW_BASELINE_I386_WINEMETAL:-0}" == "1" ]]; then
     bind_if_missing \
         "$baseline_root/lib/wine/i386-windows/winemetal.dll" \
-        "$candidate_root/lib/wine/i386-windows/winemetal.dll"
+        "$candidate_root/lib/wine/i386-windows/winemetal.dll" \
+        "lib/wine/i386-windows/winemetal.dll"
+else
+    record_provenance \
+        "lib/wine/i386-windows/winemetal.dll" \
+        "${METALSHARP_I386_WINEMETAL_SOURCE:-}" \
+        "$candidate_root/lib/wine/i386-windows/winemetal.dll" \
+        "not_supplied"
 fi
 
 critical=(
@@ -177,7 +252,6 @@ critical=(
     "lib/wine/i386-windows/winemetal.dll"
 )
 
-report_dir="$(dirname "$candidate_root")"
 missing_report="$report_dir/missing-critical.txt"
 : > "$missing_report"
 for rel in "${critical[@]}"; do
@@ -200,6 +274,7 @@ done
     fi
     echo "i386_winemetal_source=${METALSHARP_I386_WINEMETAL_SOURCE:-}"
     echo "borrowed_baseline_i386_winemetal=${METALSHARP_BORROW_BASELINE_I386_WINEMETAL:-0}"
+    echo "provenance_report=$provenance_report"
     echo "missing_count=$(wc -l < "$missing_report" | tr -d ' ')"
 } > "$report_dir/prepare-report.txt"
 

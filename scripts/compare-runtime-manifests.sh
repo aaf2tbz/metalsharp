@@ -14,7 +14,9 @@ Example:
 
 Classifies route-critical Wine/DXMT runtime manifest deltas into expected
 version changes, expected DXMT/anti-cheat changes, packaging defects, and
-release blockers. Inputs are directories produced by scripts/runtime-manifest.sh.
+release blockers. It also reports critical-path file(1) type changes when the
+input manifests include critical-file.txt. Inputs are directories produced by
+scripts/runtime-manifest.sh.
 USAGE
 }
 
@@ -59,6 +61,22 @@ extract_value() {
     awk -v rel="$rel" '$2 == rel { print $1; found=1 } END { if (!found) exit 1 }' "$file" 2>/dev/null || true
 }
 
+extract_block_line() {
+    local file="$1"
+    local rel="$2"
+    [[ -f "$file" ]] || return 0
+    awk -v header="== $rel ==" '
+        $0 == header {
+            getline
+            sub(/^[^:]+: /, "")
+            print
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$file" 2>/dev/null || true
+}
+
 classify_path() {
     local rel="$1"
     case "$rel" in
@@ -67,6 +85,9 @@ classify_path() {
             ;;
         lib/dxmt/x86_64-windows/d3d12.dll|lib/dxmt/x86_64-windows/dxgi.dll|lib/dxmt/x86_64-unix/winemetal.so)
             echo "expected_dxmt_delta"
+            ;;
+        lib/dxmt/i386-windows/d3d11.dll|lib/dxmt/i386-windows/dxgi.dll|lib/dxmt/i386-windows/winemetal.dll)
+            echo "optional_i386_dxmt_source_surface"
             ;;
         lib/wine/x86_64-unix/mscompatdb.so|lib/wine/x86_64-unix/mscompatdb.dylib)
             echo "expected_anticheat_delta"
@@ -134,10 +155,13 @@ unknowns=0
         class="$(classify_path "$rel")"
         gate="ok"
 
-        if [[ "$cand_hash" == "MISSING" || "$cand_hash" == "ABSENT" ]]; then
+        if [[ ("$base_hash" == "MISSING" || "$base_hash" == "ABSENT") && ("$cand_hash" == "MISSING" || "$cand_hash" == "ABSENT") ]]; then
+            gate="ok_absent_in_both"
+        elif [[ "$cand_hash" == "MISSING" || "$cand_hash" == "ABSENT" ]]; then
             case "$class" in
                 expected_anticheat_delta)
-                    gate="ok_if_intentional_new_surface_absent"
+                    gate="release_blocker_missing_11_9_anticheat_surface"
+                    release_blockers=$((release_blockers + 1))
                     ;;
                 expected_vulkan_icd_local_binding)
                     gate="packaging_defect"
@@ -168,6 +192,34 @@ unknowns=0
 
         printf '| `%s` | `%s` | `%s` | `%s` | `%s` |\n' "$rel" "$base_hash" "$cand_hash" "$class" "$gate"
     done < "$all_paths"
+
+    if [[ -f "$baseline/critical-file.txt" || -f "$candidate/critical-file.txt" ]]; then
+        echo
+        echo "## Critical File Type Changes"
+        echo
+        echo "| Path | Baseline file(1) | Candidate file(1) | Gate |"
+        echo "| --- | --- | --- | --- |"
+
+        while IFS= read -r rel; do
+            [[ -z "$rel" ]] && continue
+            base_type="$(extract_block_line "$baseline/critical-file.txt" "$rel")"
+            cand_type="$(extract_block_line "$candidate/critical-file.txt" "$rel")"
+            [[ -z "$base_type" ]] && base_type="missing manifest evidence"
+            [[ -z "$cand_type" ]] && cand_type="missing manifest evidence"
+            if [[ "$base_type" != "$cand_type" || "$base_type" == *"missing"* || "$cand_type" == *"missing"* ]]; then
+                gate="review"
+                class="$(classify_path "$rel")"
+                if [[ "$class" == "optional_i386_dxmt_source_surface" && "$base_type" == "missing" && "$cand_type" == "missing" ]]; then
+                    gate="ok_absent_optional"
+                elif [[ "$cand_type" == "missing"* || "$cand_type" == "missing manifest evidence" ]]; then
+                    gate="release_blocker_if_route_critical"
+                fi
+                base_type="${base_type//|/\\|}"
+                cand_type="${cand_type//|/\\|}"
+                printf '| `%s` | `%s` | `%s` | `%s` |\n' "$rel" "$base_type" "$cand_type" "$gate"
+            fi
+        done < "$all_paths"
+    fi
 
     echo
     echo "## Summary"

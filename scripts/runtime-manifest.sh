@@ -12,8 +12,8 @@ Examples:
 
 Captures a reproducible Wine/DXMT runtime manifest for MetalSharp route parity:
 versions, normalized file list, route-critical hashes, file(1), otool -L,
-Mach-O load commands/rpaths, and nm -gU hook probes. The script is read-only
-against the runtime root.
+Mach-O load commands/rpaths, critical-path type/linkage probes, and nm -gU hook
+probes. The script is read-only against the runtime root.
 USAGE
 }
 
@@ -50,6 +50,9 @@ critical_paths=(
     "lib/dxmt/x86_64-windows/d3d12.dll"
     "lib/dxmt/x86_64-windows/dxgi.dll"
     "lib/dxmt/x86_64-windows/winemetal.dll"
+    "lib/dxmt/i386-windows/d3d11.dll"
+    "lib/dxmt/i386-windows/dxgi.dll"
+    "lib/dxmt/i386-windows/winemetal.dll"
     "lib/dxmt/x86_64-unix/winemetal.so"
     "lib/wine/x86_64-unix/winemetal.so"
     "lib/wine/x86_64-unix/mscompatdb.so"
@@ -125,6 +128,18 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
 } > "$out_dir/file.txt"
 
 {
+    for rel in "${critical_paths[@]}"; do
+        abs="$real_root/$rel"
+        echo "== $rel =="
+        if [[ -e "$abs" ]]; then
+            file "$abs" || true
+        else
+            echo "missing"
+        fi
+    done
+} > "$out_dir/critical-file.txt"
+
+{
     for rel in "${probe_paths[@]}"; do
         abs="$real_root/$rel"
         echo "== $rel =="
@@ -137,6 +152,18 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
 } > "$out_dir/otool-L.txt"
 
 {
+    for rel in "${critical_paths[@]}"; do
+        abs="$real_root/$rel"
+        echo "== $rel =="
+        if [[ -f "$abs" ]]; then
+            otool -L "$abs" 2>&1 || true
+        else
+            echo "missing"
+        fi
+    done
+} > "$out_dir/critical-otool-L.txt"
+
+{
     for rel in "${probe_paths[@]}"; do
         abs="$real_root/$rel"
         echo "== $rel =="
@@ -147,6 +174,70 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
         fi
     done
 } > "$out_dir/otool-l.txt"
+
+{
+    for rel in "${critical_paths[@]}"; do
+        abs="$real_root/$rel"
+        echo "== $rel =="
+        if [[ -f "$abs" ]]; then
+            otool -l "$abs" 2>/dev/null |
+                awk '
+                    /cmd LC_ID_DYLIB/ { want=1; next }
+                    /cmd LC_LOAD_DYLIB/ { want=1; next }
+                    /cmd LC_LOAD_WEAK_DYLIB/ { want=1; next }
+                    /cmd LC_RPATH/ { want=1; next }
+                    want && /^[[:space:]]+(name|path) / {
+                        sub(/^[[:space:]]+/, "")
+                        print
+                        want=0
+                    }
+                    /^[[:space:]]*cmd / && !/LC_(ID_DYLIB|LOAD_DYLIB|LOAD_WEAK_DYLIB|RPATH)/ {
+                        want=0
+                    }
+                ' || true
+        else
+            echo "missing"
+        fi
+    done
+} > "$out_dir/critical-linkage-summary.txt"
+
+{
+    wrapper="$real_root/bin/metalsharp-wine"
+    echo "path=$wrapper"
+    if [[ -e "$wrapper" ]]; then
+        stat -f 'mode=%Sp' "$wrapper" 2>/dev/null || stat -c 'mode=%A' "$wrapper" 2>/dev/null || true
+        shasum -a 256 "$wrapper" | sed "s#  $real_root/#  #"
+        echo "first_line=$(sed -n '1p' "$wrapper")"
+        echo "exports:"
+        rg -n '^export ' "$wrapper" || true
+        echo "version_probe:"
+        "$wrapper" --version 2>&1 || true
+    else
+        echo "missing"
+    fi
+} > "$out_dir/metalsharp-wine-wrapper.txt"
+
+{
+    for rel in "${critical_paths[@]}"; do
+        case "$rel" in
+            *-windows/*.dll)
+                abs="$real_root/$rel"
+                echo "== $rel =="
+                if [[ -f "$abs" ]]; then
+                    objdump -p "$abs" 2>&1 | awk '
+                        /DLL Name:/ { print }
+                        /^The Export Tables / { in_exports=1; print; next }
+                        /^The Import Tables / { in_imports=1; print; next }
+                        in_exports && /Ordinal Base|Number in:|Name Pointer|Export Address Table|Export Flags|Time\/Date|Major\/Minor/ { print }
+                        in_imports && /DLL Name:/ { print }
+                    ' || true
+                else
+                    echo "missing"
+                fi
+                ;;
+        esac
+    done
+} > "$out_dir/critical-pe-objdump.txt"
 
 {
     for rel in \
@@ -173,8 +264,13 @@ find "$real_root" -type f | wc -l | tr -d ' ' > "$out_dir/file-count.txt"
     echo '    "files": "files.txt",'
     echo '    "critical_sha256": "critical-sha256.txt",'
     echo '    "file": "file.txt",'
+    echo '    "critical_file": "critical-file.txt",'
     echo '    "otool_L": "otool-L.txt",'
+    echo '    "critical_otool_L": "critical-otool-L.txt",'
     echo '    "otool_l": "otool-l.txt",'
+    echo '    "critical_linkage_summary": "critical-linkage-summary.txt",'
+    echo '    "metalsharp_wine_wrapper": "metalsharp-wine-wrapper.txt",'
+    echo '    "critical_pe_objdump": "critical-pe-objdump.txt",'
     echo '    "nm_gU": "nm-gU.txt"'
     echo "  }"
     echo "}"

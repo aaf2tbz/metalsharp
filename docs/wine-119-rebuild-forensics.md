@@ -406,8 +406,8 @@ Commit replay guidance:
 - Do not replay merge commit `797db720c852b7f46356fa2541fb4dac81afcc69` as a unit.
 - Do not cherry-pick `e2dff524f35604164ca5ab7f99bcd7b31a8f732e` as-is. It mixed WineMetal deployment model changes into the same regression cluster.
 - Do not cherry-pick the mscompatdb/protected-handoff cluster as-is. Commits `c95fd904812190809748feae0dacd8fcd8584c79`, `6e235de`, `8e83923`, `ef3377b`, and `10aeada` must be rebuilt as separately gated behavior.
-- Replay only the clean observability subset directly: `65032f7`, `168d235`, `ce2c008`, `1148f57`, `cfade4e`, `f654c10`, `1c0b788`, `38fed0a`, `d269d74`, `e796968`, `1e54117`, `ddba26f`, `e3c2a63`, `557cb14`, `05d7fd9`, `a514813`, `5e9a23c`, and `1683b79`.
-- Reimplement mixed evidence/behavior commits manually instead of replaying them: `df728e3`, `d86fd03`, `2644948`, `63867b1`, `ab719e3`, `b5e4e28`, `f9aa3bd`, and `610411d`.
+- Replay only the clean observability subset directly: `65032f7`, `168d235`, `ce2c008`, `1148f57`, `cfade4e`, `f654c10`, `38fed0a`, `d269d74`, `e796968`, `1e54117`, `ddba26f`, `05d7fd9`, `a514813`, and `5e9a23c`.
+- Reimplement mixed evidence/behavior commits manually instead of replaying them: `df728e3`, `d86fd03`, `2644948`, `63867b1`, `ab719e3`, `1c0b788`, `557cb14`, `b5e4e28`, `f9aa3bd`, `610411d`, and `1683b79`.
 - Rebuild route parsing and custom launch args next, but preserve configured route authority.
 - Rebuild DXMT file deployment for direct/non-Steam launches before touching Steam handoff.
 - Rebuild cache/config next, and keep the live-proven M9 config visibility intact.
@@ -421,7 +421,8 @@ This ledger is intentionally stricter than normal cherry-pick guidance. The next
 
 Classification meanings:
 
-- `safe-diagnostic`: may be replayed early if it does not change route, runtime, migration, or Steam handoff behavior.
+- `safe-diagnostic`: may be replayed early only if it does not change route, runtime, launch environment, migration, cache behavior, native runtime behavior, or Steam handoff behavior.
+- `diagnostic-source-only`: useful diagnostic/test intent, but do not replay directly because the original patch changes launch/runtime behavior or depends on quarantined runtime work.
 - `rebuild-manually`: useful intent, but must be reimplemented in a narrower patch because the original commit couples too many behaviors.
 - `quarantine-until-parity`: do not apply until the three Wine 11.9 control games pass with 0.33.27 semantics.
 - `never-as-is`: known regression cluster; only salvage small pieces after new tests and proof exist.
@@ -465,16 +466,16 @@ Classification meanings:
 | `82e46e0` | Stabilize M12 runtime contract | `quarantine-until-parity` | M12 contract work belongs after M9/M11 parity. |
 | `fe3164a` | Make D3D12 descriptor copies overlap-safe | `quarantine-until-parity` | Likely valid fix, but still D3D12 runtime mutation. |
 | `7ae7ce7` | Report D3D12 capabilities conservatively | `quarantine-until-parity` | Capability reporting can affect game decisions; prove later. |
-| `1c0b788` | Log direct MTSP runtime contracts | `safe-diagnostic` | Logging-only; useful for future rebuild verification. |
+| `1c0b788` | Log direct MTSP runtime contracts | `rebuild-manually` | Useful launch-log intent, but it threads new log context through launcher behavior; extract only minimal logging after parity. |
 | `38fed0a` | Format D3D12 feature checks | `safe-diagnostic` | Test formatting only. |
 | `d269d74` | Log D3D12 compute pipeline evidence | `safe-diagnostic` | Logging-only in D3D12 path; acceptable as diagnostics. |
 | `e796968` | Log D3D12 compute dispatch evidence | `safe-diagnostic` | Logging-only. |
 | `1e54117` | Log D3D12 draw execution evidence | `safe-diagnostic` | Logging-only. |
 | `194c66f` | Preserve swapchain drawable presentation | `quarantine-until-parity` | Presentation behavior change; validate in M12 pass. |
 | `ddba26f` | Log D3D12 feature query decisions | `safe-diagnostic` | Logging-only. |
-| `e3c2a63` | Track DXGI present count | `safe-diagnostic` | Counter/test evidence; useful for live proof. |
+| `e3c2a63` | Track DXGI present count | `quarantine-until-parity` | Changes DXGI runtime behavior; useful compatibility work only after base Wine/DXMT parity passes. |
 | `4e3afde` | Make explicit M12 Unity launches force D3D12 | `quarantine-until-parity` | Route-forcing must wait until base M11/M12 split is proven. |
-| `557cb14` | Route DXMT D3D12 traces per launch | `safe-diagnostic` | Trace file routing is good observability if non-invasive. |
+| `557cb14` | Route DXMT D3D12 traces per launch | `rebuild-manually` | Adds launch environment variables and a DXMT patch file; reintroduce only after route/env parity. |
 | `05d7fd9` | Harden DXMT patch preflight | `safe-diagnostic` | Patch preflight/docs are useful before applying anything. |
 | `c01180f` | Harden DXMT launch cache contract | `never-as-is` | Cache contract changes are implicated in shader-cache regression; rebuild in a smaller route-cache pass. |
 | `b5e4e28` | Capture launcher installer evidence | `rebuild-manually` | Evidence is useful, but original touches launcher/install surfaces too broadly. |
@@ -486,7 +487,7 @@ Classification meanings:
 | `230c2ec` | Scope DXMT config contract to M11 M12 | `never-as-is` | Explicitly narrows DXMT config away from M9, conflicting with working Nidhogg 2 evidence. |
 | `51e1417` | Preserve D3D12 device ABI method order | `quarantine-until-parity` | ABI fix may be valid, but belongs in later D3D12 pass. |
 | `c95024d` | Scope DXMT config recipe asset to M11 M12 | `never-as-is` | Same M9 exclusion risk as `230c2ec`; likely breaks M9 DXMT-family path. |
-| `1683b79` | Cover DXGI factory implementation surface | `safe-diagnostic` | Test/coverage around DXGI surface; safe as evidence. |
+| `1683b79` | Cover DXGI factory implementation surface | `diagnostic-source-only` | Test source material only; may depend on quarantined DXGI implementation changes. |
 | `79cc6fb` | Bump version to 0.33.30 | `version-only` | Release metadata only. |
 | `797db72` | Bind DXMT winemetal through Wine runtime | `never-as-is` | PR merge/rollup with mixed runtime, launcher, D3D12, patch, and version changes. |
 
@@ -695,15 +696,18 @@ Every Wine 11.9 build candidate should emit or archive a manifest with:
   - `etc/vulkan/icd.d/MoltenVK_x86_64_icd.json`
   - `lib/libMoltenVK.dylib`
   - `lib/dxmt/x86_64-windows/{d3d10core.dll,d3d11.dll,d3d12.dll,dxgi.dll,winemetal.dll}`
+  - optional `lib/dxmt/i386-windows/{d3d11.dll,dxgi.dll,winemetal.dll}` source-surface evidence when a build produces it
   - `lib/dxmt/x86_64-unix/winemetal.so`
   - `lib/wine/x86_64-unix/{winemetal.so,mscompatdb.so,mscompatdb.dylib,libMoltenVK.1.dylib}`
   - `lib/wine/x86_64-windows/{d3d11.dll,dxgi.dll,winemetal.dll}`
   - `lib/wine/i386-windows/{d3d11.dll,dxgi.dll,winemetal.dll}`
-- `file` output for Wine executables and Mach-O dylibs
+- `file` output for every route-critical path, including PE DLL architecture for `i386-windows` and `x86_64-windows`
 - `otool -L` output for `winemetal.so`, `mscompatdb.so`, `mscompatdb.dylib`, and `libMoltenVK.1.dylib`
 - `otool -l` load-command output for Unix-side probes, so install names, `LC_RPATH`, and `@rpath` loader contracts are captured instead of inferred
+- `objdump -p` PE import/export summary for every route-critical Windows DLL
+- `bin/metalsharp-wine` wrapper contract evidence: executable mode, shebang, wrapper exports, SHA256, and `--version` probe
 - `nm -gU` hook probe output for `ntdll.so`, `mscompatdb.so`, and `mscompatdb.dylib`
-- final installer source URL or artifact digest
+- final installer source URL, GitHub release identity, and artifact digest
 
 mscompatdb hook surface auditing is handled by `scripts/audit-mscompatdb-hook-surface.sh`:
 
@@ -722,8 +726,13 @@ The manifest script is `scripts/runtime-manifest.sh`. It is read-only against th
 - `file-count.txt`
 - `critical-sha256.txt`
 - `file.txt`
+- `critical-file.txt`
 - `otool-L.txt`
+- `critical-otool-L.txt`
 - `otool-l.txt`
+- `critical-linkage-summary.txt`
+- `metalsharp-wine-wrapper.txt`
+- `critical-pe-objdump.txt`
 - `nm-gU.txt`
 - `manifest.json`
 

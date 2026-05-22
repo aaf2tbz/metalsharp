@@ -55,6 +55,8 @@ gh release view "$tag" --repo "$repo" --json tagName,name,isDraft,isPrerelease,a
 {
     echo "repo=$repo"
     echo "tag=$tag"
+    gh release view "$tag" --repo "$repo" --json tagName,name,isDraft,isPrerelease \
+        --jq '"release_tag_name=\(.tagName)\nrelease_name=\(.name)\nrelease_is_draft=\(.isDraft)\nrelease_is_prerelease=\(.isPrerelease)"'
     echo "output_dir=$out_dir_abs"
     echo "release_assets_json=$assets_json"
 } >> "$report"
