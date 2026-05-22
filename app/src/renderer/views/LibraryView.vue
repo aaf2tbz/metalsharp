@@ -87,17 +87,37 @@ function isWineSteamRouteId(launchMethod: string) {
   ].includes(method);
 }
 
+function isGptkSteamRouteId(launchMethod: string) {
+  const method = launchMethod.toLowerCase();
+  return method === "m13" || method === "gptk" || method === "d3dmetal" || method === "steam_d3dmetal_gptk";
+}
+
 function recommendedLaunchMethod(game: SteamGame) {
   return game.launch_method ?? game.available_pipelines?.find((pipeline) => pipeline.recommended)?.id;
 }
 
+function isGptkSteamRouteLaunch(game: SteamGame, launchMethod: string) {
+  if (game.library_source === "gptk") return true;
+  const method = launchMethod.toLowerCase();
+  if (method === "auto") {
+    const recommended = recommendedLaunchMethod(game);
+    return recommended ? isGptkSteamRouteId(recommended) : false;
+  }
+  return isGptkSteamRouteId(method);
+}
+
 function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
+  if (game.library_source === "gptk") return true;
   const method = launchMethod.toLowerCase();
   if (method === "auto") {
     const recommended = recommendedLaunchMethod(game);
     return recommended ? isWineSteamRouteId(recommended) : false;
   }
   return isWineSteamRouteId(method);
+}
+
+function launchMethodForRequest(game: SteamGame, launchMethod: string) {
+  return game.library_source === "gptk" ? "d3dmetal" : launchMethod;
 }
 
 function applyFilter() {
@@ -288,7 +308,10 @@ function pollGptkSteamInstall() {
 
 async function launchGame(game: SteamGame, launchMethod = "auto") {
   const libraryId = game.library_id ?? String(game.appid);
-  if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
+  const requestLaunchMethod = launchMethodForRequest(game, launchMethod);
+  const useGptkSteamRoute = isGptkSteamRouteLaunch(game, requestLaunchMethod);
+  const useWineSteamRoute = isWineSteamRouteLaunch(game, requestLaunchMethod);
+  if (isMacSteamLaunch(requestLaunchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
     const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
     if (!stopResult?.ok || stopResult.running !== false) {
@@ -297,10 +320,27 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
       return;
     }
     wineSteamRunning.value = false;
+  } else if (useGptkSteamRoute && wineSteamRunning.value) {
+    if (!confirm(`Stop Wine Steam and launch ${game.name} through GPTK Steam?`)) return;
+    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+    if (!stopResult?.ok || stopResult.running !== false) {
+      wineSteamRunning.value = stopResult?.running ?? true;
+      toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+      return;
+    }
+    wineSteamRunning.value = false;
+  } else if (useWineSteamRoute && !useGptkSteamRoute && gptkSteamRunning.value) {
+    if (!confirm(`Stop GPTK Steam and launch ${game.name} through Wine Steam?`)) return;
+    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+    if (!stopResult?.ok || stopResult.running !== false) {
+      gptkSteamRunning.value = stopResult?.running ?? true;
+      toast.show(stopResult?.error ?? "GPTK Steam is still running", "error");
+      return;
+    }
+    gptkSteamRunning.value = false;
   }
 
   launchingLibraryId.value = libraryId;
-  const useWineSteamRoute = isWineSteamRouteLaunch(game, launchMethod);
   const launchEndpoint = useWineSteamRoute ? "/steam/launch-game" : "/game/launch-auto";
   const launchResult = await api<{
     ok: boolean;
@@ -311,7 +351,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     steam_runtime?: string;
   }>("POST", launchEndpoint, {
     appid: game.appid,
-    launchMethod,
+    launchMethod: requestLaunchMethod,
   });
 
   launchingLibraryId.value = null;
@@ -321,16 +361,16 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     runningLibraryId.value = libraryId;
     if (
       launchResult.steam_runtime === "offline_gptk" ||
-      launchMethod.toLowerCase() === "m13" ||
-      launchMethod.toLowerCase() === "gptk" ||
-      launchMethod.toLowerCase() === "d3dmetal"
+      requestLaunchMethod.toLowerCase() === "m13" ||
+      requestLaunchMethod.toLowerCase() === "gptk" ||
+      requestLaunchMethod.toLowerCase() === "d3dmetal"
     ) {
       gptkSteamRunning.value = true;
       wineSteamRunning.value = false;
     } else if (useWineSteamRoute) {
       wineSteamRunning.value = true;
     }
-    if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
+    if (isMacSteamLaunch(requestLaunchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
