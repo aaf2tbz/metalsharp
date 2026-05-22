@@ -1,5 +1,6 @@
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -364,6 +365,58 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
     })
 }
 
+pub fn handle_steam_anticheat_contract_probe(body: &Map<String, Value>) -> Value {
+    let appid =
+        body.get("appid").and_then(|v| v.as_u64()).filter(|id| *id > 0 && *id <= u32::MAX as u64).map(|id| id as u32);
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "error": "no home dir"}),
+    };
+
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let game_dir = appid.and_then(resolve_anticheat_game_dir);
+    let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
+    let eac = summarize_eac(appid.unwrap_or_default(), &artifacts, eac_identity.as_ref());
+    let steam = appid.map(|id| summarize_steam(id, &artifacts)).unwrap_or_default();
+    let module_assets = game_dir.as_ref().map(|dir| collect_module_assets(&dir.path)).unwrap_or_default();
+    let host_os = std::env::consts::OS;
+    let runtime_checks = runtime_probe_checks(&home);
+    let host_contract = host_contract_probe(host_os);
+    let status = contract_probe_status(host_os, &eac, &module_assets, &host_contract);
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "status": status,
+        "summary": contract_probe_summary(&status),
+        "prefix": prefix.to_string_lossy(),
+        "gameDir": game_dir.as_ref().map(|dir| dir.path.to_string_lossy().to_string()),
+        "gameDirSource": game_dir.as_ref().map(|dir| dir.source),
+        "gameDirStaged": game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false),
+        "evidenceStatus": evidence_status(&eac, &steam, &artifacts),
+        "easyAntiCheat": {
+            "settingsPath": eac.settings_path,
+            "processTitle": eac.process_title,
+            "executablePath": eac.executable_path,
+            "productId": eac.product_id,
+            "sandboxId": eac.sandbox_id,
+            "deploymentId": eac.deployment_id,
+            "moduleUrl": eac.module_url,
+            "moduleTarget": eac.module_target,
+            "wineVersion": eac.wine_version,
+            "moduleMappingStatus": eac.module_mapping_status,
+            "launcherExitCode": eac.launcher_exit_code,
+            "launcherError": eac.launcher_error,
+        },
+        "runtimeChecks": runtime_checks,
+        "hostContract": host_contract,
+        "moduleAssets": module_assets,
+        "contractChecks": module_contract_checks(host_os, &eac, &module_assets),
+        "nextActions": contract_probe_next_actions(&status),
+    })
+}
+
 pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> Value {
     let appid = match body.get("appid").and_then(|v| v.as_u64()) {
         Some(id) if id > 0 && id <= u32::MAX as u64 => id as u32,
@@ -653,6 +706,158 @@ fn runtime_probe_checks(home: &Path) -> Value {
         "expectedDyldBoundary": "macos_dylib",
         "linuxElfDirectHostLoadPossible": can_dlopen_linux_elf_directly(std::env::consts::OS),
     })
+}
+
+fn host_contract_probe(host_os: &str) -> Value {
+    json!({
+        "hostOs": host_os,
+        "hostArch": std::env::consts::ARCH,
+        "anonymousExecutableMapping": anonymous_executable_mapping_probe(),
+        "syntheticElfDirectLoad": synthetic_elf_direct_load_probe(),
+        "canDlopenLinuxElfDirectly": can_dlopen_linux_elf_directly(host_os),
+        "notes": [
+            "This probe uses synthetic temporary data only.",
+            "It does not load, patch, inject, or inspect protected anti-cheat modules.",
+            "It records whether the host looks like a Linux ELF module host or a macOS Mach-O/dyld host."
+        ],
+    })
+}
+
+#[cfg(unix)]
+fn anonymous_executable_mapping_probe() -> Value {
+    unsafe {
+        let len = 4096;
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
+            -1,
+            0,
+        );
+        if ptr == libc::MAP_FAILED {
+            return json!({
+                "ok": false,
+                "stage": "mmap_rw",
+                "errno": last_errno(),
+                "summary": "Anonymous read/write mmap failed on the host.",
+            });
+        }
+
+        std::ptr::write_bytes(ptr, 0x90, len);
+        let protect_result = libc::mprotect(ptr, len, libc::PROT_READ | libc::PROT_EXEC);
+        let errno = if protect_result == 0 { None } else { Some(last_errno()) };
+        let _ = libc::munmap(ptr, len);
+
+        json!({
+            "ok": protect_result == 0,
+            "stage": "mprotect_rx",
+            "errno": errno,
+            "summary": if protect_result == 0 {
+                "Anonymous memory can transition from writable to executable in this process."
+            } else {
+                "Anonymous memory could not transition from writable to executable in this process."
+            },
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn anonymous_executable_mapping_probe() -> Value {
+    json!({
+        "ok": false,
+        "stage": "unsupported_host",
+        "summary": "Anonymous executable mapping probe is only implemented for Unix hosts.",
+    })
+}
+
+#[cfg(unix)]
+fn synthetic_elf_direct_load_probe() -> Value {
+    let path = synthetic_probe_path("metalsharp-synthetic-eac-module", "so");
+    let bytes = synthetic_elf_bytes();
+    let write_result = fs::write(&path, bytes);
+    if let Err(err) = write_result {
+        return json!({
+            "ok": false,
+            "path": path.to_string_lossy(),
+            "stage": "write_synthetic_elf",
+            "error": err.to_string(),
+        });
+    }
+
+    let c_path = match CString::new(path.to_string_lossy().as_bytes()) {
+        Ok(path) => path,
+        Err(err) => {
+            let _ = fs::remove_file(&path);
+            return json!({
+                "ok": false,
+                "path": path.to_string_lossy(),
+                "stage": "prepare_dlopen_path",
+                "error": err.to_string(),
+            });
+        },
+    };
+
+    unsafe {
+        libc::dlerror();
+        let handle = libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        let error = if handle.is_null() {
+            dlerror_string()
+        } else {
+            let _ = libc::dlclose(handle);
+            None
+        };
+        let _ = fs::remove_file(&path);
+        json!({
+            "ok": !handle.is_null(),
+            "path": path.to_string_lossy(),
+            "format": "elf",
+            "stage": "dlopen_synthetic_elf",
+            "error": error,
+            "summary": if handle.is_null() {
+                "Host dynamic loader did not accept a synthetic Linux ELF shared object."
+            } else {
+                "Host dynamic loader accepted a synthetic Linux ELF shared object."
+            },
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn synthetic_elf_direct_load_probe() -> Value {
+    json!({
+        "ok": false,
+        "format": "elf",
+        "stage": "unsupported_host",
+        "summary": "Synthetic ELF direct-load probe is only implemented for Unix hosts.",
+    })
+}
+
+#[cfg(unix)]
+fn dlerror_string() -> Option<String> {
+    unsafe {
+        let err = libc::dlerror();
+        if err.is_null() {
+            None
+        } else {
+            Some(std::ffi::CStr::from_ptr(err).to_string_lossy().to_string())
+        }
+    }
+}
+
+#[cfg(unix)]
+fn last_errno() -> i32 {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or_default()
+}
+
+fn synthetic_probe_path(stem: &str, extension: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("{}-{}.{}", stem, std::process::id(), extension));
+    path
+}
+
+fn synthetic_elf_bytes() -> &'static [u8] {
+    b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x03\0>\0\x01\0\0\0\0\0\0\0\0\0\0\0"
 }
 
 fn artifact_json(id: &str, path: &Path) -> Value {
@@ -964,6 +1169,64 @@ fn module_contract_checks(host_os: &str, eac: &EacSummary, module_assets: &[Valu
         "needsLinuxUserSpaceSubstrate": (selected_linux_module || has_elf_asset) && !can_dlopen_linux_elf_directly(host_os),
         "needsVendorMacOSAsset": host_os == "macos" && selected_linux_module && !has_macho_asset,
     })
+}
+
+fn contract_probe_status(host_os: &str, eac: &EacSummary, module_assets: &[Value], host_contract: &Value) -> String {
+    let selected_linux_module = eac.module_target.as_deref().unwrap_or("").starts_with("linux");
+    let has_elf_asset = module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("elf"));
+    let direct_elf_load = host_contract
+        .get("syntheticElfDirectLoad")
+        .and_then(|v| v.get("ok"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let executable_mapping = host_contract
+        .get("anonymousExecutableMapping")
+        .and_then(|v| v.get("ok"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if host_os == "macos" && (selected_linux_module || has_elf_asset) && !direct_elf_load {
+        "linux_elf_host_gap_confirmed".to_string()
+    } else if (selected_linux_module || has_elf_asset) && direct_elf_load && executable_mapping {
+        "linux_elf_host_contract_present".to_string()
+    } else if eac.module_mapping_status.as_deref() == Some("failed") {
+        "loader_contract_needs_delta_audit".to_string()
+    } else {
+        "host_contract_recorded".to_string()
+    }
+}
+
+fn contract_probe_summary(status: &str) -> &'static str {
+    match status {
+        "linux_elf_host_gap_confirmed" => {
+            "Protected launch selected Linux module semantics, but the current host contract is macOS/Mach-O rather than a Linux ELF module host."
+        },
+        "linux_elf_host_contract_present" => {
+            "The host contract appears able to load Linux ELF-style modules; compare remaining Wine loader behavior before claiming anti-cheat support."
+        },
+        "loader_contract_needs_delta_audit" => {
+            "Module mapping failed without a confirmed Linux ELF host gap; inspect Wine loader, memory protection, and wineserver state next."
+        },
+        _ => "Host contract probe recorded; collect protected-launch evidence to connect it to a game-specific anti-cheat failure.",
+    }
+}
+
+fn contract_probe_next_actions(status: &str) -> Vec<&'static str> {
+    match status {
+        "linux_elf_host_gap_confirmed" => vec![
+            "Do not change graphics routing; the failing layer is the protected module host contract.",
+            "Compare Proton's Linux EAC module host expectations against MetalSharp's macOS Wine boundary.",
+            "Choose between a transparent Linux user-space substrate prototype or vendor-supported macOS module assets.",
+        ],
+        "linux_elf_host_contract_present" => vec![
+            "Add narrower Wine loader probes for ntdll loader callbacks and executable section mapping.",
+            "Compare protected-launch logs before and after any Wine loader changes.",
+        ],
+        "loader_contract_needs_delta_audit" => vec![
+            "Run the delta audit and inspect loader/syscall rows before touching protected launch.",
+        ],
+        _ => vec!["Launch a protected offline-compatible title once, then re-run the evidence and contract probes."],
+    }
 }
 
 fn path_check(path: &Path) -> Value {
@@ -1375,6 +1638,32 @@ mod tests {
     fn substrate_decision_requires_linux_substrate_for_linux_module_on_macos() {
         let eac = EacSummary { module_target: Some("linux64".to_string()), ..Default::default() };
         assert_eq!(substrate_decision("macos", &eac, &[]), "requires_linux_user_space_substrate_or_vendor_macos_asset");
+    }
+
+    #[test]
+    fn contract_probe_confirms_macos_linux_elf_host_gap() {
+        let eac = EacSummary {
+            module_target: Some("linux64".to_string()),
+            module_mapping_status: Some("failed".to_string()),
+            ..Default::default()
+        };
+        let host_contract = json!({
+            "syntheticElfDirectLoad": {"ok": false},
+            "anonymousExecutableMapping": {"ok": true},
+        });
+
+        assert_eq!(contract_probe_status("macos", &eac, &[], &host_contract), "linux_elf_host_gap_confirmed");
+    }
+
+    #[test]
+    fn contract_probe_distinguishes_loader_gap_without_linux_target() {
+        let eac = EacSummary { module_mapping_status: Some("failed".to_string()), ..Default::default() };
+        let host_contract = json!({
+            "syntheticElfDirectLoad": {"ok": false},
+            "anonymousExecutableMapping": {"ok": true},
+        });
+
+        assert_eq!(contract_probe_status("macos", &eac, &[], &host_contract), "loader_contract_needs_delta_audit");
     }
 
     #[test]

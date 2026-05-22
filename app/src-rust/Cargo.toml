@@ -14,3 +14,4 @@ ureq = { version = "3", features = ["json"] }
 toml = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
 ctrlc = "3"
+libc = "0.2"

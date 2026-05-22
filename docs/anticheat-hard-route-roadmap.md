@@ -90,6 +90,24 @@ POST /steam/anticheat-substrate-decision
 
 The decision report synthesizes the evidence, probe, and delta audit into one explicit result. For Rubicon, the expected current decision is `requires_linux_user_space_substrate_or_vendor_macos_asset`.
 
+### Phase 4: Harmless Host Contract Probe
+
+Add an endpoint that records the host contract without loading protected modules:
+
+```http
+POST /steam/anticheat-contract-probe
+{"appid":1888160}
+```
+
+This endpoint uses the appid only for scoping existing logs and game-local identity. The host probe itself uses synthetic temporary data:
+
+- anonymous read/write memory mapping followed by read/execute protection transition,
+- synthetic ELF direct-load attempt through the host dynamic loader,
+- Wine loader and wineserver path/state evidence,
+- selected EAC module target from scoped protected-launch logs.
+
+Expected macOS result for Elden Ring and Rubicon is `linux_elf_host_gap_confirmed`: EAC selected `linux64`, Wine reached module mapping, and the host dynamic loader does not accept Linux ELF modules directly. That does not prove anti-cheat support is impossible; it proves the next implementation target is a truthful Linux user-space substrate or vendor-supported macOS module assets, not another graphics route.
+
 Allowed paths:
 
 - Build a signed Linux user-space compatibility substrate for ELF module hosting.

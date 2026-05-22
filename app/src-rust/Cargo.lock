@@ -491,6 +491,7 @@ version = "0.33.27"
 dependencies = [
  "ctrlc",
  "dirs",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

@@ -370,3 +370,17 @@ Current substrate decision:
 Next action:
 
 Prototype harmless loader/runtime contract probes for the Linux user-space boundary before changing protected launch behavior.
+
+Implementation follow-up:
+
+- `POST /steam/anticheat-contract-probe` records a harmless host contract probe.
+- The probe uses synthetic temporary data only; it does not load protected anti-cheat modules.
+- The probe reports memory mapping/protection behavior, synthetic ELF direct-load behavior, Wine loader/wineserver state, and the scoped game EAC identity.
+- For both Elden Ring and Rubicon, the expected macOS status is `linux_elf_host_gap_confirmed` until MetalSharp has either a truthful Linux user-space substrate or vendor-supported macOS module assets.
+
+Local probe result:
+
+- Elden Ring and Rubicon both return `linux_elf_host_gap_confirmed`.
+- Anonymous memory can transition from writable to executable in the backend process.
+- The host dynamic loader rejects a synthetic ELF `.so` as not valid Mach-O.
+- This narrows the next implementation target to the Linux ELF module host/substrate boundary rather than M11/M12 graphics routing.
