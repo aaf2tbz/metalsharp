@@ -937,6 +937,10 @@ Live control verification is handled by `scripts/verify-wine119-live-control-sui
   - `pass` only when all three control games satisfy the acceptance matrix
   - `fail` for log-only captures, wrong route, missing DXMT/WineMetal/MoltenVK evidence, missing cache evidence, or failed launch JSON
   - `fail` if an already-running Wine Steam process is killed/relaunched during a control-game launch
+- fixture:
+  - `scripts/test-wine119-live-verifier-fixtures.sh`
+  - proves the verifier accepts complete synthetic proof and rejects both
+    disappeared pre-existing Wine Steam PIDs and log-only game captures
 
 This verifier is the final local release gate before any Wine 11.9 tag bump. A green manifest or backend preflight is not enough.
 
