@@ -153,7 +153,17 @@ bool DRMDetector::requiresRuntimeProof(const std::vector<DRMDetection>& results)
 }
 
 bool DRMDetector::isCompatible(const std::vector<DRMDetection>& results) const {
-    return !hasKernelAntiCheat(results);
+    if (hasKernelAntiCheat(results))
+        return false;
+
+    for (const auto& r : results) {
+        if (!r.detected)
+            continue;
+        if (r.supportStatus == "blocked_pending_vendor_support")
+            return false;
+    }
+
+    return true;
 }
 
 std::string DRMDetector::summary(const std::vector<DRMDetection>& results) const {

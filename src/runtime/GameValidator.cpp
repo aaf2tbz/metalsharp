@@ -130,14 +130,15 @@ ValidationResult GameValidator::validate(const std::string& exePath, const std::
         }
     }
 
-    result.canLaunch = !detector.hasKernelAntiCheat(result.drmResults);
+    result.canLaunch = detector.isCompatible(result.drmResults);
     result.suggestedStatus = estimateStatus(result);
 
     report << "\n--- Assessment ---\n";
     const bool needsRuntimeProof = detector.requiresRuntimeProof(result.drmResults);
     report << "Can launch:     "
            << (result.canLaunch ? (needsRuntimeProof ? "Needs runtime proof" : "Yes")
-                                : "No (unsupported kernel driver)")
+                                : (needsRuntimeProof ? "No (protected runtime proof required)"
+                                                     : "No (unsupported kernel driver)"))
            << "\n";
     report << "Suggested status: " << CompatDatabase::statusToString(result.suggestedStatus) << "\n";
 

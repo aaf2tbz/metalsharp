@@ -293,7 +293,7 @@ static bool test_drm_detector_kernel_anticheat() {
     auto results = detector.scanMemory(fakeExe, sizeof(fakeExe));
 
     return !detector.hasKernelAntiCheat(results) && detector.requiresRuntimeProof(results) &&
-           detector.isCompatible(results);
+           !detector.isCompatible(results);
 }
 
 static bool test_drm_detector_clean_binary() {
