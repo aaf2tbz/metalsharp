@@ -132,7 +132,7 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
         "phase": phase,
         "message": message,
         "error": error,
-        "installing": is_installing_gptk_toolkit() || is_installing_gptk_steam(),
+        "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     });
@@ -161,7 +161,7 @@ fn read_gptk_steam_install_progress() -> Value {
             "GPTK Steam is not installed"
         },
         "error": null,
-        "installing": is_installing_gptk_steam(),
+        "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     })
@@ -172,7 +172,7 @@ fn write_gptk_toolkit_progress(phase: &str, message: &str, error: Option<&str>) 
         "phase": phase,
         "message": message,
         "error": error,
-        "installing": is_installing_gptk_steam(),
+        "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     });
@@ -308,7 +308,7 @@ pub fn status() -> Value {
     let gptk_identity = gptk_prefix_identity();
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
-    let gptk_installing = is_installing_gptk_toolkit() || is_installing_gptk_steam();
+    let gptk_installing = is_installing_gptk_setup();
 
     json!({
         "installed": windows_installed,
@@ -539,6 +539,10 @@ pub fn is_installing_gptk_steam() -> bool {
 
 pub fn is_installing_gptk_toolkit() -> bool {
     GPTK_TOOLKIT_INSTALLING.load(Ordering::SeqCst)
+}
+
+fn is_installing_gptk_setup() -> bool {
+    is_installing_gptk_toolkit() || is_installing_gptk_steam()
 }
 
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
