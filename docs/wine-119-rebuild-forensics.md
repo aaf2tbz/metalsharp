@@ -953,6 +953,17 @@ Non-live readiness auditing is handled by `scripts/audit-wine119-readiness.sh`:
 
 This audit is intentionally non-live. It proves the staged 11.9 testbed is clean enough to run controlled live tests, but it cannot bless a release candidate.
 
+Objective-level completion auditing is handled by `scripts/audit-wine119-objective-completion.sh`:
+
+- command:
+  - `scripts/audit-wine119-objective-completion.sh /tmp/metalsharp-wine119-objective-audit`
+- behavior:
+  - maps the original Wine 11.9 investigation/rebuild objective to concrete evidence rows
+  - fails while any requirement is missing, incomplete, or unverified
+  - records the remaining proof needed for live controls, i386 WineMetal provenance, and protected anti-cheat hook readiness
+
+This audit is the guard against redefining the goal around the evidence branch. It should not pass until the real Wine 11.9 candidate has passed live controls and all release-grade provenance gaps are closed.
+
 Candidate preparation for Pass B is handled by `scripts/prepare-wine119-candidate.sh`:
 
 - command:
@@ -1113,9 +1124,9 @@ Current investigation status:
 - Done: strict commit replay ledger added; the post-0.33.27 branch is source material only, not a linear replay plan.
 - Done: branch execution runbook added at `docs/wine-119-implementation-runbook.md`.
 - Done: non-live readiness audit added and currently fails only because no passing live control suite has been supplied.
-- Not done: no Wine 11.9 parity branch has been implemented yet.
+- Not done: no Wine 11.9 parity release candidate has passed the release gates yet.
 - Not done: no candidate Wine 11.9 runtime has passed the three control games.
 - Not done: no release-proven 11.9-built i386 `winemetal.dll` has been recovered or produced; the AverySSD DXMT i386 artifact and borrowed 11.5 i386 bridge both remain experiments until live M9 proof says otherwise.
-- Not done: anti-cheat hook readiness has not been proven beyond file presence.
+- Not done: anti-cheat hook readiness has not been proven beyond non-live symbol-surface evidence.
 
 Therefore the investigation/design artifact is ready to guide implementation, but the overall Wine 11.9 rebuild goal is not complete until a candidate build passes the matrix above.

@@ -131,6 +131,9 @@ scripts/prepare-wine119-parity-candidates.sh \
 scripts/audit-wine119-readiness.sh \
   /private/tmp/metalsharp-home-wine119-dxmt32-state \
   /tmp/metalsharp-wine119-readiness-current
+
+scripts/audit-wine119-objective-completion.sh \
+  /tmp/metalsharp-wine119-objective-audit
 ```
 
 Expected candidate meaning:
@@ -185,6 +188,9 @@ Required proof before live launch:
 - Electron route audit proves renderer `auto` and explicit M9/M11 selections call `/steam/launch-game` for the control games.
 - mscompatdb hook audit proves the 11.9 `ntdll.so` contract symbols exist while keeping `hookReady=false` until protected runtime behavior is proven.
 - Readiness audit has only the live-suite failure remaining.
+- Objective completion audit still fails only on truly unresolved end-state
+  requirements such as live controls, i386 WineMetal provenance, or protected
+  hook runtime readiness.
 
 ## Pass 3: Live Parity Gate
 
