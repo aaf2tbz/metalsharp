@@ -1065,6 +1065,20 @@ DXMT build outputs found:
 
 The AverySSD i386 WineMetal artifact is a better first 11.9/M9 candidate than borrowing the 11.5 installed `winemetal.dll`, because it is a true DXMT i386 build output. It is still not release-proven: it was built against a Wine 11.5 path, from a dirty DXMT workspace, and its x86_64 siblings do not match the released 11.9 bundle payload.
 
+Current provenance auditing is handled by `scripts/audit-i386-winemetal-provenance.sh`:
+
+- command:
+  - `scripts/audit-i386-winemetal-provenance.sh /Volumes/AverySSD/metalsharp/dxmt-src /Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll /tmp/metalsharp-i386-winemetal-provenance-current`
+- current result:
+  - fail
+  - artifact SHA256 `30dc23b57f6498df50217f71ee68029c2ff8ed1abdefa178574a07d9095c077e`
+  - branch `codex/d3d12-ordinal-compat`
+  - HEAD `f520cb84159ef7db1cdbd364d51738ef7effb0a6`
+  - source checkout is dirty
+  - linker metadata references `/Volumes/AverySSD/metalsharp/runtime/wine-11.5/lib/wine/i386-windows/libwinecrt0.a`, `libntdll.a`, and `dbghelp.dll`
+
+This makes the current `dxmt32` candidate explicitly non-release-proven. It can still be used as the first live M9 experiment because it is a real i386 DXMT WineMetal build, but a final Wine 11.9 release needs either a clean 11.9-built i386 artifact or a documented compatibility exception backed by live Nidhogg 2 proof.
+
 A third disposable candidate was prepared from the 11.9 bundle plus that explicit i386 artifact:
 
 - command:

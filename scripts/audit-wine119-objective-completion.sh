@@ -17,6 +17,7 @@ Environment:
   METALSHARP_CANDIDATE_SUMMARY     parity candidate summary.md path
   METALSHARP_FETCH_REPORT          release fetch-report.txt path
   METALSHARP_PARITY_PROBE_DIR      backend probe dir for route/hook evidence
+  METALSHARP_I386_WINEMETAL_PROVENANCE provenance.md path
   METALSHARP_LIVE_SUITE_DIR        optional live suite dir to prove live gate
 USAGE
 }
@@ -62,6 +63,7 @@ readiness="${METALSHARP_READINESS_REPORT:-/tmp/metalsharp-wine119-readiness-curr
 candidate_summary="${METALSHARP_CANDIDATE_SUMMARY:-/tmp/metalsharp-wine119-parity/summary.md}"
 fetch_report="${METALSHARP_FETCH_REPORT:-/tmp/metalsharp-wine-assets/fetch-report.txt}"
 parity_probe="${METALSHARP_PARITY_PROBE_DIR:-/private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2}"
+i386_provenance="${METALSHARP_I386_WINEMETAL_PROVENANCE:-/tmp/metalsharp-i386-winemetal-provenance-current/provenance.md}"
 live_suite="${METALSHARP_LIVE_SUITE_DIR:-}"
 
 main_head="$(git -C "$repo_root" rev-parse --short HEAD)"
@@ -143,8 +145,10 @@ else
     requirement_row "Pass Nidhogg 2, Schedule I, and Subnautica BZ under Wine 11.9" "unverified" "$readiness does not clearly prove live controls" "inspect METALSHARP_LIVE_SUITE_DIR and verification.md"
 fi
 
-if contains_file "$candidate_summary" 'dxmt32' && contains_file "$candidate_summary" 'release_blockers: 1' && contains_file "$forensics" 'no release-proven 11[.]9-built i386 `winemetal[.]dll`'; then
-    requirement_row "Recover or produce release-proven 11.9 i386 WineMetal" "missing" "candidate summary and forensics mark i386 WineMetal as unresolved" "build/recover true 11.9 i386 winemetal.dll or bless fallback only after live proof"
+if contains_file "$i386_provenance" '^- result: fail$'; then
+    requirement_row "Recover or produce release-proven 11.9 i386 WineMetal" "missing" "$i386_provenance reports the current i386 bridge is not release-proven" "build/recover true 11.9 i386 winemetal.dll or bless fallback only after live proof"
+elif contains_file "$candidate_summary" 'dxmt32' && contains_file "$candidate_summary" 'release_blockers: 1' && contains_file "$forensics" 'no release-proven 11[.]9-built i386 `winemetal[.]dll`'; then
+    requirement_row "Recover or produce release-proven 11.9 i386 WineMetal" "missing" "candidate summary and forensics mark i386 WineMetal as unresolved" "run scripts/audit-i386-winemetal-provenance.sh, then build/recover true 11.9 i386 winemetal.dll or bless fallback only after live proof"
 else
     requirement_row "Recover or produce release-proven 11.9 i386 WineMetal" "unverified" "i386 WineMetal status is not explicit" "audit candidate provenance and live M9 result"
 fi

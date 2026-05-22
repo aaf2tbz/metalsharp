@@ -80,6 +80,7 @@ Allowed files:
 - `scripts/probe-wine119-parity-backend.sh`
 - `scripts/audit-electron-launch-routes.mjs`
 - `scripts/audit-mscompatdb-hook-surface.sh`
+- `scripts/audit-i386-winemetal-provenance.sh`
 - `scripts/capture-steam-game-proof.sh`
 - `scripts/run-wine119-live-control-suite.sh`
 - `scripts/verify-wine119-live-control-suite.sh`
@@ -101,6 +102,7 @@ bash -n scripts/runtime-manifest.sh \
   scripts/verify-wine119-live-control-suite.sh \
   scripts/audit-wine119-readiness.sh \
   scripts/audit-mscompatdb-hook-surface.sh \
+  scripts/audit-i386-winemetal-provenance.sh \
   scripts/audit-wine119-objective-completion.sh
 
 node --check scripts/audit-electron-launch-routes.mjs
@@ -140,6 +142,11 @@ scripts/fetch-wine119-release-assets.sh \
 scripts/prepare-wine119-parity-candidates.sh \
   /tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst \
   /tmp/metalsharp-wine119-parity
+
+scripts/audit-i386-winemetal-provenance.sh \
+  /Volumes/AverySSD/metalsharp/dxmt-src \
+  /Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll \
+  /tmp/metalsharp-i386-winemetal-provenance-current
 ```
 
 Expected candidate meaning:
@@ -156,6 +163,10 @@ Expected candidate meaning:
 - every prepared candidate must write `provenance-report.txt` with bundle hash,
   copied/original/borrowed bridge decisions, i386 WineMetal source path,
   source/destination SHA256s, and Vulkan ICD before/after target proof.
+- i386 WineMetal provenance audit must be archived. The current AverySSD
+  artifact is only an experiment if the audit reports a dirty source tree or
+  Wine 11.5 linker inputs; it cannot satisfy the release-proven 11.9 i386
+  requirement by itself.
 - Pass 1 does not run readiness or objective completion audits; those require a
   Pass 2 parity home and backend probe.
 
