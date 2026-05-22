@@ -911,6 +911,9 @@ Live control suite orchestration is handled by `scripts/run-wine119-live-control
   - writes `summary.md`, launch JSON responses, backend logs, and per-game proof directories
 - latest guard validation:
   - running without `METALSHARP_RUN_LIVE_GAMES=1` exits with code `2` and launches nothing
+  - `scripts/test-wine119-live-suite-guards.sh` proves the live runner accepts
+    clean `dxmt32` preflight and refuses stale/dirty candidate summary or
+    mismatched parity install source before backend/game launch
   - a fake stale parity home with active manifests pointing at `/Users/alexmondello/.metalsharp` is refused before backend/game launch
   - a fake parity home with no source metadata is refused before backend/game launch
   - `scripts/install-wine119-parity-home.sh ... /Users/alexmondello` is refused before runtime copy

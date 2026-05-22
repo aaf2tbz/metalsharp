@@ -105,9 +105,12 @@ bash -n scripts/runtime-manifest.sh \
   scripts/audit-mscompatdb-hook-surface.sh \
   scripts/audit-i386-winemetal-provenance.sh \
   scripts/preflight-i386-winemetal-build.sh \
-  scripts/audit-wine119-objective-completion.sh
+  scripts/audit-wine119-objective-completion.sh \
+  scripts/test-wine119-live-suite-guards.sh
 
 node --check scripts/audit-electron-launch-routes.mjs
+
+scripts/test-wine119-live-suite-guards.sh
 
 (cd app/src-rust && cargo test launcher::tests::)
 ```
@@ -117,6 +120,9 @@ Expected result:
 - Shell syntax passes.
 - Launcher tests pass.
 - No installed runtime files change.
+- Live-suite guard fixture proves the live runner accepts only the clean
+  candidate preflight and refuses stale/dirty candidate wiring before backend,
+  Steam, or game launch.
 - Optional verifier fixture proves the live-suite verifier accepts surviving Wine Steam PIDs and rejects disappeared pre-existing Wine Steam PIDs.
 
 ## Pass 1: Runtime Candidate Preparation

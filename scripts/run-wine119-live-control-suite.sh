@@ -37,6 +37,9 @@ Environment:
                        launch to attach to that pre-existing Steam process.
   METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1
                        Allow a parity home outside /tmp or /private/tmp
+  METALSHARP_LIVE_PREFLIGHT_ONLY=1
+                       Run all non-destructive preflight guards, then exit
+                       before backend, Steam, or game launch.
   METALSHARP_WINE119_CANDIDATE_WORK_DIR
                        Candidate work dir, default prefers AverySSD clean-i386
                        output when present. The live runner refuses to launch
@@ -212,6 +215,17 @@ if [[ ! -f "$dxmt32_provenance" ]] ||
     ! rg -q 'destination_sha256=12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab' "$dxmt32_provenance"; then
     echo "refusing to launch games: dxmt32 provenance does not prove clean i386 WineMetal SHA256 copy: $dxmt32_provenance" >&2
     exit 1
+fi
+
+if [[ "${METALSHARP_LIVE_PREFLIGHT_ONLY:-0}" == "1" ]]; then
+    {
+        echo "parity_home=$parity_home"
+        echo "candidate_work_dir=$candidate_work_dir"
+        echo "candidate_root=$installed_candidate_abs"
+        echo "preflight_only=1"
+    } > "$out_dir/preflight-only.txt"
+    echo "live control preflight passed without launching games: $out_dir/preflight-only.txt"
+    exit 0
 fi
 
 mkdir -p "$out_dir/steam"
