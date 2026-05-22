@@ -314,6 +314,14 @@ fn steam_launch_prefix() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
 }
 
+fn steam_launch_prefix_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> PathBuf {
+    if matches!(pipeline, crate::mtsp::engine::PipelineId::M13) {
+        crate::steam::gptk_steam_prefix()
+    } else {
+        steam_launch_prefix()
+    }
+}
+
 pub fn bottle_dir(id: &str) -> PathBuf {
     bottles_root().join(id)
 }
@@ -412,7 +420,7 @@ fn steam_compatdata_record(
         bottle_id: manifest.id.clone(),
         compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
         prefix_path: manifest.prefix_path.clone(),
-        steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+        steam_prefix_path: steam_launch_prefix_for_pipeline(pipeline).to_string_lossy().to_string(),
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline.to_legacy_method().to_string(),
@@ -543,12 +551,13 @@ pub fn ensure_steam_game_bottle(
     let id = steam_game_bottle_id(appid);
     let now = timestamp_secs();
     let runtime_profile = runtime_profile_for_pipeline(pipeline);
+    let launch_prefix = steam_launch_prefix_for_pipeline(pipeline);
     let mut manifest = load_bottle(&id).unwrap_or_else(|_| BottleManifest {
         id: id.clone(),
         name: name.to_string(),
         bottle_type: BottleType::Steam,
         steam_app_id: Some(appid),
-        prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+        prefix_path: launch_prefix.to_string_lossy().to_string(),
         arch: BottleArch::Wow64,
         runtime_profile,
         installed_components: default_components_for(runtime_profile),
@@ -569,7 +578,7 @@ pub fn ensure_steam_game_bottle(
     manifest.name = name.to_string();
     manifest.bottle_type = BottleType::Steam;
     manifest.steam_app_id = Some(appid);
-    manifest.prefix_path = steam_launch_prefix().to_string_lossy().to_string();
+    manifest.prefix_path = launch_prefix.to_string_lossy().to_string();
     manifest.runtime_profile = runtime_profile;
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
@@ -3808,6 +3817,15 @@ mod tests {
     }
 
     #[test]
+    fn m13_steam_game_bottles_bind_to_gptk_steam_prefix() {
+        assert_eq!(
+            steam_launch_prefix_for_pipeline(crate::mtsp::engine::PipelineId::M13),
+            crate::steam::gptk_steam_prefix()
+        );
+        assert_eq!(steam_launch_prefix_for_pipeline(crate::mtsp::engine::PipelineId::M12), steam_launch_prefix());
+    }
+
+    #[test]
     fn steam_compatdata_record_is_appid_scoped_and_launch_authoritative() {
         let manifest = BottleManifest {
             id: steam_game_bottle_id(620),
@@ -3845,12 +3863,46 @@ mod tests {
         assert_eq!(record.launch_pipeline, "d3d9_metal");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");
+        assert_eq!(record.prefix_path, manifest.prefix_path);
+        assert_eq!(record.steam_prefix_path, steam_launch_prefix().to_string_lossy().to_string());
         assert!(record.launch_command_template.contains("/steam/launch-game"));
         assert!(record.launch_command_template.contains("620"));
         assert_eq!(record.runtime_assets.len(), 1);
         assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
         assert_eq!(record.last_launch_pid, Some(1234));
         assert_eq!(record.last_launch_status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn m13_compatdata_reports_gptk_steam_prefix() {
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(1245620),
+            name: "ELDEN RING".into(),
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(1245620),
+            prefix_path: crate::steam::gptk_steam_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M13),
+            installed_components: default_components_for(RuntimeProfile::Plain),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some("/games/ELDEN RING".into()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::M13);
+
+        assert_eq!(record.prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
+        assert_eq!(record.steam_prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
+        assert_eq!(record.launch_pipeline, "gptk");
     }
 
     #[test]

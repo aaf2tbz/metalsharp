@@ -4,19 +4,165 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
+static GPTK_STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
+const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
     crate::platform::runtime_wine_binary(&ms_root)
 }
 
+fn ms_wine_root() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine")
+}
+
 fn steam_prefix() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
 }
 
+pub fn gptk_steam_prefix() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-gptk-steam")
+}
+
 fn steam_exe_path() -> PathBuf {
     steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+}
+
+fn gptk_steam_exe_path() -> PathBuf {
+    gptk_steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+}
+
+fn gptk_root() -> PathBuf {
+    PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine")
+}
+
+fn gptk_wine_path() -> PathBuf {
+    gptk_root().join("bin").join("wine64")
+}
+
+fn gptk_wineserver_path() -> PathBuf {
+    gptk_root().join("bin").join("wineserver")
+}
+
+fn gptk_installed() -> bool {
+    gptk_wine_path().exists() && gptk_wineserver_path().exists()
+}
+
+fn gptk_steam_install_progress_path() -> PathBuf {
+    metalsharp_home().join("gptk_steam_install_progress.json")
+}
+
+fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&str>) {
+    let progress = json!({
+        "phase": phase,
+        "message": message,
+        "error": error,
+        "installing": is_installing_gptk_steam(),
+        "toolkit_installed": gptk_installed(),
+        "steam_installed": gptk_steam_installed(),
+    });
+    let path = gptk_steam_install_progress_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, serde_json::to_string_pretty(&progress).unwrap_or_default());
+}
+
+fn read_gptk_steam_install_progress() -> Value {
+    let path = gptk_steam_install_progress_path();
+    if path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+                return value;
+            }
+        }
+    }
+
+    json!({
+        "phase": if gptk_steam_installed() { "ready" } else { "idle" },
+        "message": if gptk_steam_installed() {
+            "GPTK Steam is installed"
+        } else {
+            "GPTK Steam is not installed"
+        },
+        "error": null,
+        "installing": is_installing_gptk_steam(),
+        "toolkit_installed": gptk_installed(),
+        "steam_installed": gptk_steam_installed(),
+    })
+}
+
+fn gptk_steam_installed() -> bool {
+    let steam_dir = steam_dir_for_prefix(&gptk_steam_prefix());
+    gptk_steam_exe_path().exists()
+        && steam_dir.join("steamui.dll").exists()
+        && !prefix_contains_crossover_identity(&gptk_steam_prefix())
+}
+
+fn metalsharp_home() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".metalsharp")
+}
+
+fn current_account_name() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "metalsharp".to_string())
+}
+
+fn steam_dir_for_prefix(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join("Program Files (x86)").join("Steam")
+}
+
+fn windows_user_dir(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join("users").join(current_account_name())
+}
+
+fn gptk_prefix_identity() -> Value {
+    let prefix = gptk_steam_prefix();
+    let username = current_account_name();
+    let has_steam = gptk_steam_exe_path().exists();
+    let crossover_detected = prefix_contains_crossover_identity(&prefix);
+    let profile_ok = prefix_profile_matches_user(&prefix, &username) && !crossover_detected;
+
+    json!({
+        "username": username,
+        "profile_ok": profile_ok,
+        "crossover_detected": crossover_detected,
+        "has_steam": has_steam
+    })
+}
+
+fn prefix_contains_crossover_identity(prefix: &Path) -> bool {
+    ["user.reg", "system.reg"]
+        .iter()
+        .map(|name| prefix.join(name))
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .any(|contents| {
+            let lower = contents.to_lowercase();
+            lower.contains("c:\\\\users\\\\crossover")
+                || lower.contains(r#"username"="crossover""#)
+                || lower.contains(r#"profileimagepath"="c:\\users\\crossover""#)
+        })
+}
+
+fn prefix_profile_matches_user(prefix: &Path, username: &str) -> bool {
+    let user_reg = prefix.join("user.reg");
+    let system_reg = prefix.join("system.reg");
+    if !user_reg.exists() || !system_reg.exists() {
+        return false;
+    }
+
+    let user = std::fs::read_to_string(user_reg).unwrap_or_default().to_lowercase();
+    let system = std::fs::read_to_string(system_reg).unwrap_or_default().to_lowercase();
+    let username = username.to_lowercase();
+    let profile = format!("c:\\\\users\\\\{}", username);
+
+    user.contains(&format!(r#""username"="{}""#, username))
+        || user.contains(&format!(r#""userprofile"="{}""#, profile))
+        || system.contains(&format!(r#""profileimagepath"="{}""#, profile))
 }
 
 fn macos_steam_app() -> Option<PathBuf> {
@@ -37,9 +183,11 @@ pub fn status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
     let wine_steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    let gptk_steam_dir = gptk_steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
     let wine_steam_exe = wine_steam_dir.join("Steam.exe");
     let windows_installed = wine_steam_exe.exists();
     let windows_path = if windows_installed { Some(wine_steam_dir.to_string_lossy().to_string()) } else { None };
+    let gptk_steam_installed = gptk_steam_installed();
 
     let login_state = detect_login_state();
 
@@ -53,8 +201,11 @@ pub fn status() -> Value {
     let mac_running = is_macos_steam_running();
 
     let running = is_wine_steam_running();
+    let gptk_running = is_gptk_steam_running();
+    let gptk_identity = gptk_prefix_identity();
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
+    let gptk_installing = is_installing_gptk_steam();
 
     json!({
         "installed": windows_installed,
@@ -64,6 +215,17 @@ pub fn status() -> Value {
         "mac_path": mac_app.map(|p| p.to_string_lossy().to_string()),
         "mac_install_url": macos_steam_install_url(),
         "mac_running": mac_running,
+        "gptk_installed": gptk_installed(),
+        "gptk_toolkit_installed": gptk_installed(),
+        "gptk_toolkit_url": GPTK_TOOLKIT_URL,
+        "gptk_steam_installed": gptk_steam_installed,
+        "gptk_path": gptk_steam_dir.to_string_lossy().to_string(),
+        "gptk_prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+        "gptk_running": gptk_running,
+        "gptk_synced": gptk_steam_installed,
+        "gptk_installing": gptk_installing,
+        "gptk_install_progress": read_gptk_steam_install_progress(),
+        "gptk_profile": gptk_identity,
         "running": running,
         "metalsharp_wine_available": ms_available,
         "installing": installing
@@ -75,6 +237,13 @@ pub fn is_wine_steam_running() -> bool {
         .iter()
         .filter_map(|line| parse_process_line(line))
         .any(|(_, command)| is_wine_steam_owner_command(command))
+}
+
+pub fn is_gptk_steam_running() -> bool {
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .any(|(_, command)| is_gptk_steam_owner_command(command))
 }
 
 fn process_lines() -> Vec<String> {
@@ -97,6 +266,9 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
         return false;
     }
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
+        return false;
+    }
+    if is_gptk_runtime_command(command) {
         return false;
     }
 
@@ -122,6 +294,9 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
+    if is_gptk_runtime_command(command) {
+        return false;
+    }
 
     let prefix = steam_prefix().to_string_lossy().to_string();
     let lower = command.to_lowercase();
@@ -133,6 +308,56 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
         || lower.contains("winedevice.exe")
         || lower.contains("wineserver")
         || lower.contains("wineloader")
+}
+
+fn is_gptk_runtime_command(command: &str) -> bool {
+    command.contains("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/")
+}
+
+fn is_gptk_steam_owner_command(command: &str) -> bool {
+    if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
+        return false;
+    }
+    let lower = command.to_lowercase();
+    let prefix = gptk_steam_prefix().to_string_lossy().to_lowercase();
+    let exe = gptk_steam_exe_path().to_string_lossy().to_lowercase();
+    let steam_process =
+        lower.contains("steam.exe") || lower.contains("steamservice.exe") || lower.contains("steamerrorreporter");
+    let windows_steam_path = lower.contains("c:\\program files (x86)\\steam") && steam_process;
+    let gptk_prefix_steam_path = lower.contains(&exe) || (lower.contains(&prefix) && steam_process);
+
+    (is_gptk_runtime_command(command) && windows_steam_path) || gptk_prefix_steam_path
+}
+
+fn is_gptk_steam_cleanup_command(command: &str) -> bool {
+    if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
+        return false;
+    }
+
+    let lower = command.to_lowercase();
+    let prefix = gptk_steam_prefix().to_string_lossy().to_lowercase();
+    let steam_cleanup_process = lower.contains("steam.exe")
+        || lower.contains("steamservice.exe")
+        || lower.contains("steamerrorreporter")
+        || lower.contains("steamwebhelper.exe")
+        || lower.contains("steamwebhelper_real.exe")
+        || lower.contains("winedevice.exe")
+        || lower.contains("wineloader");
+
+    is_gptk_steam_owner_command(command)
+        || (lower.contains(&prefix) && steam_cleanup_process)
+        || (is_gptk_runtime_command(command)
+            && lower.contains("c:\\program files (x86)\\steam")
+            && steam_cleanup_process)
+}
+
+fn gptk_steam_cleanup_pids() -> Vec<u32> {
+    let this_pid = std::process::id();
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .filter_map(|(pid, command)| (pid != this_pid && is_gptk_steam_cleanup_command(command)).then_some(pid))
+        .collect()
 }
 
 fn wine_steam_cleanup_pids() -> Vec<u32> {
@@ -201,7 +426,27 @@ pub fn is_installing_steam() -> bool {
     STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
+pub fn is_installing_gptk_steam() -> bool {
+    GPTK_STEAM_INSTALLING.load(Ordering::SeqCst)
+}
+
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
+    ensure_steam_launch_ready_with_wrapper(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
+}
+
+fn ensure_gptk_steam_launch_ready(steam_dir: &PathBuf) {
+    ensure_steam_launch_ready_with_wrapper(
+        steam_dir,
+        find_bundled_gptk_steamwebhelper_wrapper,
+        ".ms_gptk_wrapper_deployed",
+    );
+}
+
+fn ensure_steam_launch_ready_with_wrapper(
+    steam_dir: &PathBuf,
+    wrapper_finder: fn() -> Option<PathBuf>,
+    marker_name: &str,
+) {
     let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
     let wrapper = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
@@ -214,12 +459,376 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
     if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
-        deploy_steamwebhelper_wrapper(steam_dir);
+        deploy_steamwebhelper_wrapper_with(steam_dir, wrapper_finder, marker_name);
     }
 }
 
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     spawn_wine_steam_with_env(args, &[])
+}
+
+fn apply_wine_wrapper_env(cmd: &mut Command, ms_root: &Path) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let lib = ms_root.join("lib");
+    let unix_lib = lib.join("wine").join("x86_64-unix");
+    cmd.env("MS_ROOT", ms_root)
+        .env("CX_ROOT", ms_root)
+        .env("WINEDATADIR", ms_root.join("share"))
+        .env("DYLD_FALLBACK_LIBRARY_PATH", format!("{}:{}", lib.display(), unix_lib.display()))
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("MVK_PRESENT_MODE", "1")
+        .env("DXVK_STATE_CACHE_PATH", home.join(".metalsharp").join("dxvk-cache"))
+        .env("DXVK_LOG_PATH", home.join(".metalsharp").join("dxvk-logs"));
+
+    let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+    if moltenvk_icd.exists() {
+        cmd.env("VK_ICD_FILENAMES", moltenvk_icd);
+    }
+}
+
+fn apply_gptk_prefix_user_env(cmd: &mut Command) {
+    let username = current_account_name();
+    let user_profile = format!(r"C:\users\{}", username);
+    let local_app_data = format!(r"{}\AppData\Local", user_profile);
+    let app_data = format!(r"{}\AppData\Roaming", user_profile);
+    let temp = format!(r"{}\Temp", local_app_data);
+
+    cmd.env("USER", &username)
+        .env("LOGNAME", &username)
+        .env("USERNAME", &username)
+        .env("USERPROFILE", &user_profile)
+        .env("HOMEPATH", format!(r"\users\{}", username))
+        .env("APPDATA", &app_data)
+        .env("LOCALAPPDATA", &local_app_data)
+        .env("TEMP", &temp)
+        .env("TMP", &temp);
+}
+
+fn apply_gptk_env(cmd: &mut Command) {
+    let home = dirs::home_dir().unwrap_or_default();
+    let root = gptk_root();
+    let ms_root = ms_wine_root();
+    let base_dyld =
+        format!("{}:{}", ms_root.join("lib").display(), ms_root.join("lib").join("wine").join("x86_64-unix").display());
+    cmd.env("WINESERVER", gptk_wineserver_path())
+        .env("WINELOADER", gptk_wine_path())
+        .env("WINEDATADIR", root.join("share"))
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("MVK_PRESENT_MODE", "1")
+        .env("DXVK_STATE_CACHE_PATH", home.join(".metalsharp").join("dxvk-cache-gptk"))
+        .env("DXVK_LOG_PATH", home.join(".metalsharp").join("dxvk-logs-gptk"))
+        .env(
+            "WINEDLLPATH",
+            format!(
+                "{}:{}",
+                root.join("lib").join("wine").join("x86_64-windows").display(),
+                root.join("lib").join("wine").join("i386-windows").display()
+            ),
+        )
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            format!(
+                "{}:{}:{}:{}",
+                root.join("lib").join("wine").join("x86_64-unix").display(),
+                root.join("lib").join("external").display(),
+                root.join("lib").display(),
+                base_dyld
+            ),
+        );
+    let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+    if moltenvk_icd.exists() {
+        cmd.env("VK_ICD_FILENAMES", moltenvk_icd);
+    }
+    apply_gptk_prefix_user_env(cmd);
+}
+
+fn spawn_gptk_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
+    if !gptk_installed() {
+        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+    }
+
+    let exe = gptk_steam_exe_path();
+    let steam_dir = steam_dir_for_prefix(&gptk_steam_prefix());
+
+    if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
+        return Err("GPTK Steam is not installed — run the GPTK Steam setup first".into());
+    }
+
+    ensure_gptk_steam_launch_ready(&steam_dir);
+
+    let prefix_str = gptk_steam_prefix().to_string_lossy().to_string();
+    let mut cmd = Command::new("arch");
+    cmd.arg("-x86_64")
+        .arg(gptk_wine_path())
+        .arg(&exe)
+        .args(args)
+        .current_dir(&steam_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("STEAM_RUNTIME", "0")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env(
+            "WINEDLLOVERRIDES",
+            "dxgi,d3d11,d3d10core,d3d12=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        )
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    apply_gptk_env(&mut cmd);
+
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
+pub fn sync_gptk_steam_prefix() -> Result<Value, Box<dyn std::error::Error>> {
+    install_gptk_steam()
+}
+
+pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>> {
+    let child = Command::new("open")
+        .arg(GPTK_TOOLKIT_URL)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(json!({
+        "ok": true,
+        "pid": child.id(),
+        "url": GPTK_TOOLKIT_URL
+    }))
+}
+
+pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    if !gptk_installed() {
+        write_gptk_steam_install_progress(
+            "toolkit_missing",
+            "Game Porting Toolkit is not installed. Install it before setting up GPTK Steam.",
+            Some("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app"),
+        );
+        return Ok(json!({
+            "ok": false,
+            "error": "Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app",
+            "toolkit_url": GPTK_TOOLKIT_URL,
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
+    if gptk_steam_installed() {
+        ensure_gptk_steam_launch_ready(&steam_dir_for_prefix(&gptk_steam_prefix()));
+        write_gptk_steam_install_progress("ready", "GPTK Steam is installed and ready to launch.", None);
+        return Ok(json!({
+            "ok": true,
+            "installed": true,
+            "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+            "steam_path": steam_dir_for_prefix(&gptk_steam_prefix()).to_string_lossy().to_string(),
+            "progress": read_gptk_steam_install_progress(),
+            "profile": gptk_prefix_identity()
+        }));
+    }
+
+    if GPTK_STEAM_INSTALLING.load(Ordering::SeqCst) {
+        return Ok(json!({
+            "ok": true,
+            "installing": true,
+            "message": "GPTK Steam installation already in progress",
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
+    if GPTK_STEAM_INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Ok(json!({
+            "ok": true,
+            "installing": true,
+            "message": "GPTK Steam installation already in progress",
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
+    write_gptk_steam_install_progress("starting", "Starting GPTK Steam setup...", None);
+    std::thread::spawn(move || {
+        let result = run_install_gptk_steam();
+        GPTK_STEAM_INSTALLING.store(false, Ordering::SeqCst);
+        match result {
+            Ok(message) => write_gptk_steam_install_progress("ready", &message, None),
+            Err(error) => write_gptk_steam_install_progress(
+                "error",
+                &format!("GPTK Steam setup failed: {}", error),
+                Some(&error.to_string()),
+            ),
+        }
+    });
+
+    Ok(json!({
+        "ok": true,
+        "installing": true,
+        "message": "GPTK Steam installation started",
+        "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+        "progress": read_gptk_steam_install_progress()
+    }))
+}
+
+fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !gptk_installed() {
+        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+    }
+
+    std::fs::create_dir_all(prefix)?;
+
+    let windows_dir = prefix.join("drive_c").join("windows").join("system32");
+    if !windows_dir.exists() {
+        let prefix_str = prefix.to_string_lossy().to_string();
+        let mut cmd = Command::new("arch");
+        cmd.arg("-x86_64")
+            .arg(gptk_wine_path())
+            .arg("wineboot")
+            .arg("--init")
+            .env("WINEPREFIX", &prefix_str)
+            .env("WINEDEBUG", "-all")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        apply_gptk_env(&mut cmd);
+
+        let status = cmd.status()?;
+        if !status.success() {
+            return Err("GPTK wineboot --init failed while creating the MetalSharp GPTK prefix".into());
+        }
+
+        let mut ready = false;
+        for _ in 0..30 {
+            if windows_dir.exists() {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if !ready {
+            return Err("GPTK wineboot --init timed out before the prefix became usable".into());
+        }
+    }
+
+    let user_dir = windows_user_dir(prefix);
+    std::fs::create_dir_all(user_dir.join("AppData").join("Local").join("Temp"))?;
+    std::fs::create_dir_all(user_dir.join("AppData").join("Local").join("Steam"))?;
+    std::fs::create_dir_all(user_dir.join("AppData").join("Roaming"))?;
+
+    repair_fresh_gptk_identity(prefix, &current_account_name())?;
+    Ok(())
+}
+
+fn repair_fresh_gptk_identity(prefix: &Path, username: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for name in ["user.reg", "system.reg"] {
+        let path = prefix.join(name);
+        if !path.exists() {
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path)?;
+        let repaired = contents
+            .replace(r"C:\\users\\crossover", &format!(r"C:\\users\\{}", username))
+            .replace(r"C:\\Users\\crossover", &format!(r"C:\\Users\\{}", username))
+            .replace(r#""USERNAME"="crossover""#, &format!(r#""USERNAME"="{}""#, username))
+            .replace(r#""USERPROFILE"="C:\\users\\crossover""#, &format!(r#""USERPROFILE"="C:\\users\\{}""#, username))
+            .replace(
+                r#""LOCALAPPDATA"="C:\\users\\crossover\\AppData\\Local""#,
+                &format!(r#""LOCALAPPDATA"="C:\\users\\{}\\AppData\\Local""#, username),
+            )
+            .replace(
+                r#""APPDATA"="C:\\users\\crossover\\AppData\\Roaming""#,
+                &format!(r#""APPDATA"="C:\\users\\{}\\AppData\\Roaming""#, username),
+            )
+            .replace(
+                r#""ProfileImagePath"="C:\\users\\crossover""#,
+                &format!(r#""ProfileImagePath"="C:\\users\\{}""#, username),
+            );
+        if repaired != contents {
+            std::fs::write(path, repaired)?;
+        }
+    }
+    Ok(())
+}
+
+fn archive_contaminated_gptk_prefix(prefix: &Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if !prefix.exists() || !prefix_contains_crossover_identity(prefix) {
+        return Ok(None);
+    }
+
+    let backup_root = metalsharp_home().join("backups");
+    std::fs::create_dir_all(&backup_root)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let mut target = backup_root.join(format!("prefix-gptk-steam-contaminated-{}", stamp));
+    let mut counter = 1;
+    while target.exists() {
+        target = backup_root.join(format!("prefix-gptk-steam-contaminated-{}-{}", stamp, counter));
+        counter += 1;
+    }
+    std::fs::rename(prefix, &target)?;
+    Ok(Some(target))
+}
+
+fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
+    write_gptk_steam_install_progress("checking_toolkit", "Checking Game Porting Toolkit installation...", None);
+    if !gptk_installed() {
+        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+    }
+
+    let metalsharp_dir = metalsharp_home();
+    std::fs::create_dir_all(&metalsharp_dir)?;
+
+    write_gptk_steam_install_progress("downloading_steam", "Downloading SteamSetup.exe for GPTK Steam...", None);
+    let installer = prepare_steam_installer(&metalsharp_dir)?;
+    let prefix = gptk_steam_prefix();
+    write_gptk_steam_install_progress("preparing_prefix", "Preparing a dedicated GPTK Steam prefix...", None);
+    let archived_prefix = archive_contaminated_gptk_prefix(&prefix)?;
+    std::fs::create_dir_all(&prefix)?;
+
+    ensure_clean_gptk_prefix(&prefix)?;
+
+    write_gptk_steam_install_progress("running_installer", "Running SteamSetup.exe inside the GPTK prefix...", None);
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let mut install_cmd = Command::new("arch");
+    install_cmd
+        .arg("-x86_64")
+        .arg(gptk_wine_path())
+        .arg(&installer)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    apply_gptk_env(&mut install_cmd);
+    let _child = install_cmd.spawn()?;
+
+    write_gptk_steam_install_progress(
+        "waiting_for_steam",
+        "Waiting for Steam installer to finish writing the GPTK Steam files...",
+        None,
+    );
+    let steam_dir = steam_dir_for_prefix(&prefix);
+    let steam_exe = steam_dir.join("Steam.exe");
+    let steam_ui_dll = steam_dir.join("steamui.dll");
+    for _ in 0..180 {
+        if steam_exe.exists() && steam_ui_dll.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if !steam_exe.exists() || !steam_ui_dll.exists() {
+        return Err("SteamSetup.exe did not finish writing Steam.exe and steamui.dll into the GPTK prefix".into());
+    }
+
+    write_gptk_steam_install_progress("deploying_wrapper", "Deploying the GPTK Steam CEF wrapper...", None);
+    ensure_gptk_steam_launch_ready(&steam_dir);
+    repair_fresh_gptk_identity(&prefix, &current_account_name())?;
+
+    if !gptk_steam_installed() {
+        return Err("GPTK Steam files were created, but the prefix is not launch-ready".into());
+    }
+
+    Ok(format!(
+        "GPTK Steam is installed and ready{}",
+        archived_prefix.map(|path| format!("; archived contaminated prefix to {}", path.display())).unwrap_or_default()
+    ))
 }
 
 fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> Result<u32, Box<dyn std::error::Error>> {
@@ -256,6 +865,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
+    apply_wine_wrapper_env(&mut cmd, &ms_root);
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     for (key, val) in extra_env {
@@ -269,6 +879,17 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
 
 pub fn launch_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     launch_wine_steam_with_env(&[])
+}
+
+pub fn launch_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    if is_gptk_steam_running() {
+        return Ok(json!({
+            "ok": true,
+            "message": "GPTK Steam already running"
+        }));
+    }
+    let pid = spawn_gptk_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])?;
+    Ok(json!({"ok": true, "pid": pid}))
 }
 
 pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Value, Box<dyn std::error::Error>> {
@@ -311,8 +932,8 @@ pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if macos_steam_app().is_none() {
         return Err("macOS Steam is not installed".into());
     }
-    if is_wine_steam_running() {
-        return Err("Wine Steam is running. Stop Wine Steam before launching macOS Steam.".into());
+    if is_wine_steam_running() || is_gptk_steam_running() {
+        return Err("Wine Steam is running. Stop Wine or GPTK Steam before launching macOS Steam.".into());
     }
 
     let child = Command::new("open")
@@ -431,6 +1052,54 @@ pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     Ok(json!({"ok": true, "running": is_wine_steam_running()}))
 }
 
+pub fn stop_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let prefix_str = gptk_steam_prefix().to_string_lossy().to_string();
+    let _ = Command::new(gptk_wineserver_path())
+        .arg("-k")
+        .env("WINEPREFIX", &prefix_str)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let term_pids = gptk_steam_cleanup_pids();
+    for pid in term_pids {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    let kill_pids = gptk_steam_cleanup_pids();
+    for pid in kill_pids {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    Ok(json!({"ok": true, "running": is_gptk_steam_running()}))
+}
+
+pub fn ensure_gptk_steam_ready_for_game_launch() -> Result<bool, Box<dyn std::error::Error>> {
+    if is_gptk_steam_running() {
+        return Ok(false);
+    }
+
+    launch_gptk_steam()?;
+    for _ in 0..20 {
+        if is_gptk_steam_running() {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    Err("GPTK Steam was started but did not become ready for game launch".into())
+}
+
 pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     if !is_wine_steam_running() {
         launch_wine_steam()?;
@@ -544,12 +1213,16 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
 }
 
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
+    deploy_steamwebhelper_wrapper_with(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
+}
+
+fn deploy_steamwebhelper_wrapper_with(steam_dir: &PathBuf, wrapper_finder: fn() -> Option<PathBuf>, marker_name: &str) {
     let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
     let original = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
-    let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
+    let wrapper_marker = cef_dir.join(marker_name);
 
-    let wrapper = match find_bundled_steamwebhelper_wrapper() {
+    let wrapper = match wrapper_finder() {
         Some(wrapper) => wrapper,
         None => return,
     };
@@ -583,6 +1256,22 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     if std::fs::copy(&wrapper, &original).is_ok() {
         let _ = std::fs::write(&wrapper_marker, "deployed");
     }
+}
+
+fn find_bundled_gptk_steamwebhelper_wrapper() -> Option<PathBuf> {
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        let wrapper = resources.join("bundles").join("steamwebhelper-gptk.exe");
+        if wrapper.exists() {
+            return Some(wrapper);
+        }
+    }
+
+    let dev = PathBuf::from("app/bundles/steamwebhelper-gptk.exe");
+    if dev.exists() {
+        return Some(dev);
+    }
+
+    find_bundled_steamwebhelper_wrapper()
 }
 
 fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
@@ -1134,32 +1823,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let _ = std::fs::remove_dir_all(steam_prefix());
 
-    let installer = metalsharp_dir.join("SteamSetup.exe");
-    let _ = std::fs::remove_file(&installer);
-
-    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
-    let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
-    if !output.success() {
-        let mut found = false;
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
-                let bundled = resources.join("bundles").join("SteamSetup.exe");
-                if bundled.exists() {
-                    let _ = std::fs::copy(&bundled, &installer);
-                    found = true;
-                }
-            }
-        }
-        if !found {
-            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
-            if bundled.exists() {
-                let _ = std::fs::copy(&bundled, &installer);
-            }
-        }
-    }
-    if !installer.exists() {
-        return Err("Failed to download Steam installer".into());
-    }
+    let installer = prepare_steam_installer(&metalsharp_dir)?;
 
     let wine = ms_wine();
     if !wine.exists() {
@@ -1227,6 +1891,38 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     Ok("Steam install thread complete".into())
+}
+
+fn prepare_steam_installer(metalsharp_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(metalsharp_dir)?;
+    let installer = metalsharp_dir.join("SteamSetup.exe");
+    let _ = std::fs::remove_file(&installer);
+
+    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
+    let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
+    if !output.success() {
+        let mut found = false;
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
+                let bundled = resources.join("bundles").join("SteamSetup.exe");
+                if bundled.exists() {
+                    let _ = std::fs::copy(&bundled, &installer);
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
+            if bundled.exists() {
+                let _ = std::fs::copy(&bundled, &installer);
+            }
+        }
+    }
+    if !installer.exists() {
+        return Err("Failed to download Steam installer".into());
+    }
+
+    Ok(installer)
 }
 
 pub fn watch_steamapps() -> Option<String> {
@@ -1304,5 +2000,43 @@ mod tests {
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
         ));
+    }
+
+    #[test]
+    fn detects_gptk_steam_posix_launch_command() {
+        let command =
+            format!("arch -x86_64 {} {} -no-cef-sandbox", gptk_wine_path().display(), gptk_steam_exe_path().display());
+
+        assert!(is_gptk_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command));
+    }
+
+    #[test]
+    fn detects_gptk_steam_windows_path_command() {
+        let command = format!("{} C:\\Program Files (x86)\\Steam\\steam.exe -silent", gptk_wine_path().display());
+
+        assert!(is_gptk_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command));
+    }
+
+    #[test]
+    fn ignores_gptk_steam_shell_searches() {
+        assert!(!is_gptk_steam_owner_command(
+            "/bin/zsh -lc ps axo pid=,command= | rg -i \"prefix-gptk-steam|Steam.exe\"",
+        ));
+    }
+
+    #[test]
+    fn gptk_steam_cleanup_stays_scoped_to_steam_prefix() {
+        let game_command =
+            format!("arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe", gptk_wine_path().display());
+        let helper_command = format!(
+            "{} {}/drive_c/Program Files (x86)/Steam/bin/cef/cef.win64/steamwebhelper.exe",
+            gptk_wine_path().display(),
+            gptk_steam_prefix().display()
+        );
+
+        assert!(!is_gptk_steam_cleanup_command(&game_command));
+        assert!(is_gptk_steam_cleanup_command(&helper_command));
     }
 }

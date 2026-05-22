@@ -15,8 +15,12 @@ const installLogs = ref<{ text: string; cls: string }[]>([]);
 const steamInstalled = ref(false);
 const steamInstalling = ref(false);
 const installingSteam = ref(false);
+const gptkToolkitInstalled = ref(false);
+const gptkSteamInstalled = ref(false);
+const gptkSteamInstalling = ref(false);
+const gptkSteamMessage = ref("");
 
-const steps = ["Welcome", "Install Runtime", "Done"];
+const steps = ["Welcome", "Install Runtime", "Steam", "Done"];
 
 async function startInstall() {
   installing.value = true;
@@ -77,10 +81,21 @@ async function startInstall() {
 }
 
 async function checkSteam() {
-  const s = await api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
+  const s = await api<{
+    installed: boolean;
+    running: boolean;
+    gptk_toolkit_installed?: boolean;
+    gptk_steam_installed?: boolean;
+    gptk_installing?: boolean;
+    gptk_install_progress?: { message: string; phase: string; error?: string | null };
+  }>("GET", "/steam/status");
   if (s?.installed || s?.running) {
     steamInstalled.value = true;
   }
+  gptkToolkitInstalled.value = s?.gptk_toolkit_installed ?? false;
+  gptkSteamInstalled.value = s?.gptk_steam_installed ?? false;
+  gptkSteamInstalling.value = s?.gptk_installing ?? false;
+  gptkSteamMessage.value = s?.gptk_install_progress?.message ?? "";
   installingSteam.value = true;
 }
 
@@ -106,20 +121,79 @@ async function installSteam() {
   }, 300000);
 }
 
+async function openGptkToolkitDownload() {
+  const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
+  toast.show(
+    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"),
+    result?.ok ? "success" : "error",
+  );
+}
+
+async function installGptkSteam() {
+  if (!gptkToolkitInstalled.value) {
+    await openGptkToolkitDownload();
+    return;
+  }
+  gptkSteamInstalling.value = true;
+  gptkSteamMessage.value = "Starting GPTK Steam setup...";
+  const result = await api<{ ok: boolean; installing?: boolean; installed?: boolean; error?: string }>(
+    "POST",
+    "/steam/gptk-install",
+  );
+  if (!result?.ok) {
+    toast.show(result?.error ?? "Failed to install GPTK Steam", "error");
+    gptkSteamInstalling.value = false;
+    return;
+  }
+  gptkSteamInstalled.value = result.installed ?? false;
+  if (result.installed) {
+    gptkSteamInstalling.value = false;
+    gptkSteamMessage.value = "GPTK Steam is ready";
+    return;
+  }
+
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const s = await api<{
+      gptk_steam_installed?: boolean;
+      gptk_installing?: boolean;
+      gptk_install_progress?: { message: string; phase: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!s) return;
+    gptkSteamInstalled.value = s.gptk_steam_installed ?? false;
+    gptkSteamInstalling.value = s.gptk_installing ?? false;
+    gptkSteamMessage.value = s.gptk_install_progress?.message ?? "";
+    if (s.gptk_steam_installed) {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      gptkSteamMessage.value = "GPTK Steam is ready";
+      toast.show("GPTK Steam is ready", "success");
+    } else if (s.gptk_install_progress?.phase === "error") {
+      clearInterval(poll);
+      gptkSteamInstalling.value = false;
+      toast.show(s.gptk_install_progress.error ?? s.gptk_install_progress.message, "error");
+    } else if (attempts > 180) {
+      clearInterval(poll);
+      toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
+    }
+  }, 2000);
+}
+
 async function finish() {
   const keyInput = document.getElementById("setup-api-key") as HTMLInputElement;
   const nameInput = document.getElementById("setup-device-name") as HTMLInputElement;
   const name = nameInput?.value?.trim() || deviceName.value;
   const key = keyInput?.value?.trim();
 
-  await api("POST", "/setup/save", { step: 2, deviceName: name, completed: true });
+  await api("POST", "/setup/save", { step: 3, deviceName: name, completed: true });
   if (key) await api("POST", "/steam/save-api-key", { key });
 
   emit("done");
 }
 
 async function goToStep2() {
-  step.value = 2;
+  step.value = 3;
   const gen = await api<{ name: string }>("GET", "/setup/device-name");
   if (gen?.name) deviceName.value = gen.name;
 }
@@ -205,22 +279,58 @@ async function goToStep2() {
           </div>
         </div>
 
-        <div v-if="installStatus === 'complete'" class="setup-steam-section">
-          <h2>Steam</h2>
-          <p>Install Windows Steam to download and play games.</p>
-          <span v-if="steamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">Steam installed</span>
-          <button v-else class="btn btn-primary" :disabled="steamInstalling" @click="installSteam">
-            {{ steamInstalling ? "Installing Steam..." : "Install Steam" }}
-          </button>
-        </div>
-
         <div class="setup-actions">
           <button class="btn btn-secondary" @click="step = 0">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="goToStep2">Finish Setup</button>
+          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 2; checkSteam()">Continue</button>
         </div>
       </div>
 
       <div v-if="step === 2" class="setup-body">
+        <div class="setup-section-header">
+          <h1>Steam</h1>
+          <p>Install Windows Steam for normal games, and optionally install GPTK Steam for anti-cheat compatible games.</p>
+        </div>
+
+        <div class="setup-steam-section">
+          <h2>Wine Steam</h2>
+          <p>Windows Steam running in the MetalSharp Wine runtime.</p>
+          <span v-if="steamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">Steam installed</span>
+          <button v-else class="btn btn-primary" :disabled="steamInstalling" @click="installSteam">
+            {{ steamInstalling ? "Installing Steam..." : "Install Wine Steam" }}
+          </button>
+        </div>
+
+        <div class="setup-steam-section">
+          <h2>GPTK Steam</h2>
+          <p>Separate Steam install for M-Anticheat routes and anti-cheat compatible games.</p>
+          <span v-if="!gptkToolkitInstalled" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">GPTK missing</span>
+          <span v-else-if="gptkSteamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">GPTK Steam installed</span>
+          <span v-else-if="gptkSteamInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">Installing</span>
+          <button
+            v-if="!gptkToolkitInstalled"
+            class="btn btn-secondary"
+            @click="openGptkToolkitDownload"
+          >
+            Get Game Porting Toolkit
+          </button>
+          <button
+            v-else-if="!gptkSteamInstalled"
+            class="btn btn-primary"
+            :disabled="gptkSteamInstalling"
+            @click="installGptkSteam"
+          >
+            {{ gptkSteamInstalling ? "Installing GPTK Steam..." : "Install GPTK Steam" }}
+          </button>
+          <div v-if="gptkSteamMessage" class="setup-hint">{{ gptkSteamMessage }}</div>
+        </div>
+
+        <div class="setup-actions">
+          <button class="btn btn-secondary" @click="step = 1">Back</button>
+          <button class="btn btn-primary btn-lg" @click="goToStep2">Finish Setup</button>
+        </div>
+      </div>
+
+      <div v-if="step === 3" class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>

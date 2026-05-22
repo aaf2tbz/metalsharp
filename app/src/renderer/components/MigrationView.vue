@@ -18,6 +18,7 @@ const percent = computed(() => {
 const stages = [
   { name: "[D3D]" },
   { name: "[DXMT]" },
+  { name: "[GPTK]" },
   { name: "[x86_64]" },
   { name: "[Metal]" },
 ];
@@ -117,7 +118,7 @@ onUnmounted(() => {
       <div class="migration-header">
         <div class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
         <h1 class="migration-title">MetalSharp Migration</h1>
-        <p class="migration-subtitle">Preparing Wine 11.5 runtime lanes</p>
+        <p class="migration-subtitle">Preparing Wine 11.5 and GPTK runtime lanes</p>
       </div>
 
       <div class="pipeline-vis">
