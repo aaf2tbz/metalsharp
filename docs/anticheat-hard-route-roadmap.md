@@ -41,7 +41,7 @@ POST /steam/anticheat-probe
 {"appid":1888160}
 ```
 
-This probe does not load or tamper with anti-cheat modules. It classifies the host/runtime boundary from inspectable evidence: host OS and architecture, Wine runtime paths, EAC module target, game-local anti-cheat module assets, binary magic (`ELF`, `PE`, or `Mach-O`), and whether the selected module implies a Linux-user-space substrate requirement on macOS. For Rubicon, the expected current status is `linux_module_on_darwin_boundary`.
+This probe does not load or tamper with anti-cheat modules. It classifies the host/runtime boundary from inspectable evidence: host OS and architecture, Wine runtime paths, EAC module target, game-local anti-cheat module assets, binary magic (`ELF`, `PE`, or `Mach-O`), and whether the selected module implies a Linux-user-space substrate requirement on macOS. If Steam has only staged a download under `steamapps/downloading/<appid>` and the protected launcher or game executables still have unknown/null headers, the probe returns `staged_download_incomplete` instead of treating that payload as launchable. For Rubicon with completed protected-launch evidence, the expected current status is `linux_module_on_darwin_boundary`.
 
 ## Phase 3: Proton/Wine Delta Audit
 
@@ -64,8 +64,11 @@ POST /steam/anticheat-delta-audit
 This report groups the local runtime into audit surfaces:
 
 - Wine loader/syscall baseline: `wine`, `wineserver`, Unix `ntdll.so`, and Windows `ntdll.dll` lanes.
+- Wineserver state: whether a live `wineserver` process and per-user socket directory are present during runtime observation. Absence is expected in a clean idle install, but protected launch evidence should show the correct shared server boundary.
+- Win32 translation contract: PE `kernel32.dll`, `user32.dll`, and `ntdll.dll` plus Unix-side `ntdll.so`, proving that Windows API calls have the Wine translation lanes required before any graphics or anti-cheat diagnosis is meaningful.
 - Steam runtime bridge: Windows `steamclient.dll`/`steamclient64.dll` and whether a Proton-style `lsteamclient` bridge exists.
 - Linux runtime assumptions: pressure-vessel, seccomp, and Linux namespaces, which are comparison rows on macOS rather than direct requirements.
+- Darwin executable module boundary: whether the host can directly load Linux ELF modules, whether any vendor Mach-O module is present, and whether shipped Linux ELF assets imply a Linux user-space substrate.
 - Graphics runtime adjacency: DXMT, DXVK, and MoltenVK assets that must stay intact while protected launch is debugged.
 - Anti-cheat module contract: whether EAC selected a Linux module, whether Darwin can directly load it, and whether a vendor macOS module is present.
 
