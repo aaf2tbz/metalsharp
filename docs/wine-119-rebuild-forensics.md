@@ -1095,6 +1095,43 @@ The release-grade i386 build input preflight is handled by `scripts/preflight-i3
 
 That narrows the i386 blocker: the machine has the 11.9 Wine inputs needed to attempt a correct build, but the DXMT source must be made clean or forked before the output can be treated as release-grade.
 
+Clean 11.9-linked i386 WineMetal build:
+
+- A detached clean DXMT worktree was created at `/tmp/metalsharp-dxmt-clean-f520cb8`
+  from commit `f520cb84159ef7db1cdbd364d51738ef7effb0a6`.
+- `git submodule update --init --recursive` could not fetch
+  `include/native/directx` commit `53ce4bef9ee777ab896f2adf56417fcf67a07579`
+  from the remote, so that submodule tree was copied from the existing
+  AverySSD DXMT checkout and the copied source commit was recorded in
+  `/tmp/metalsharp-clean-i386-build-evidence/directx-submodule-copied.txt`.
+- Build command:
+  - `meson setup /tmp/metalsharp-dxmt-clean-build32-wine119 /tmp/metalsharp-dxmt-clean-f520cb8 --cross-file /tmp/metalsharp-dxmt-clean-f520cb8/build-win32.txt --buildtype release -Dwine_install_path=/tmp/metalsharp-wine119-parity/candidates/dxmt32/wine -Dwine_builtin_dll=true -Denable_tests=false`
+  - `ninja -C /tmp/metalsharp-dxmt-clean-build32-wine119 src/winemetal/winemetal.dll`
+- Built artifact:
+  - `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`
+  - type: `PE32 executable (DLL) (console) Intel 80386, for MS Windows`
+  - SHA256: `12b9343459d28dfe1d7668a31a58a0c3506948d7c533507fdaec65d59c6697ab`
+- Clean build preflight:
+  - `/tmp/metalsharp-i386-winemetal-build-preflight-clean-f520cb8/preflight.md`
+  - result: `gate: pass`
+  - proves clean source, Wine 11.9 runtime identity, Wine 11.9 i386 build
+    inputs, and local Meson/Ninja/i686 mingw tools.
+- Clean artifact provenance:
+  - `/tmp/metalsharp-clean-i386-winemetal-provenance-119/provenance.md`
+  - result: `review`
+  - reason: source tree is clean and linker metadata references the shaped Wine
+    11.9 runtime, but live M9 proof is still required before release.
+- AverySSD candidate staging:
+  - `/Volumes/AverySSD/metalsharp/wine119-parity-clean-i386/summary.md`
+  - uses the clean artifact as `dxmt32_source`
+  - still reports a release blocker because any i386 WineMetal delta must pass
+    live Nidhogg 2/M9 process, module, and cache proof.
+
+This changes the i386 status from "no true 11.9-linked build exists" to
+"a clean 11.9-linked candidate exists, but it is not release-proven until the
+live M9 gate passes." The older dirty AverySSD `build32` output should remain
+available only as a diagnostic fallback.
+
 A third disposable candidate was prepared from the 11.9 bundle plus that explicit i386 artifact:
 
 - command:
@@ -1156,6 +1193,7 @@ Current investigation status:
 - Done: reproducible GitHub release asset fetch/verify script added for `bundles/metalsharp_bundle.tar.zst`.
 - Done: release/upload evidence checked; the Wine 11.9 release asset does not contain an i386 `winemetal.dll`.
 - Done: external AverySSD DXMT source/build workspace found, including a true PE32 i386 WineMetal candidate at `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`.
+- Done: clean detached DXMT worktree build produced a Wine 11.9-linked PE32 i386 WineMetal candidate at `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`.
 - Done: Wine 11.5 vs Wine 11.9 internal runtime map added.
 - Done: WineMetal build-surface audit completed; this checkout can build the MetalSharp D3D9 shim but does not contain the DXMT source/build path needed to produce a fresh i386 `winemetal.dll`.
 - Done: code yin/yang map added against `backup/main-before-v0.33.28-reset-20260521T223249Z`.
@@ -1165,7 +1203,7 @@ Current investigation status:
 - Done: non-live readiness audit added and currently fails only because no passing live control suite has been supplied.
 - Not done: no Wine 11.9 parity release candidate has passed the release gates yet.
 - Not done: no candidate Wine 11.9 runtime has passed the three control games.
-- Not done: no release-proven 11.9-built i386 `winemetal.dll` has been recovered or produced; the AverySSD DXMT i386 artifact and borrowed 11.5 i386 bridge both remain experiments until live M9 proof says otherwise.
+- Not done: a clean 11.9-linked i386 `winemetal.dll` has been produced, but it is not release-proven until packaged into the active 11.9 candidate and backed by live Nidhogg 2/M9 proof. The dirty AverySSD DXMT i386 artifact and borrowed 11.5 i386 bridge remain diagnostic fallbacks only.
 - Not done: anti-cheat hook readiness has not been proven beyond non-live symbol-surface evidence.
 
 Therefore the investigation/design artifact is ready to guide implementation, but the overall Wine 11.9 rebuild goal is not complete until a candidate build passes the matrix above.

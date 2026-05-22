@@ -93,7 +93,7 @@ append "- dxmt_source_root: \`$src_root\`"
 append "- wine_119_runtime_root: \`$wine_root\`"
 append
 
-if [[ ! -d "$src_root/.git" ]]; then
+if ! git -C "$src_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fail "source" "$src_root is not a git checkout"
 else
     src_abs="$(cd "$src_root" && pwd -P)"

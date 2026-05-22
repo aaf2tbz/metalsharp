@@ -33,7 +33,7 @@ if [[ -z "$src_root" || -z "$artifact" ]]; then
     usage >&2
     exit 1
 fi
-if [[ ! -d "$src_root/.git" ]]; then
+if ! git -C "$src_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "DXMT source root is not a git checkout: $src_root" >&2
     exit 1
 fi
@@ -49,6 +49,14 @@ src_abs="$(cd "$src_root" && pwd -P)"
 artifact_dir="$(cd "$(dirname "$artifact")" && pwd -P)"
 artifact_abs="$artifact_dir/$(basename "$artifact")"
 build_root="$src_abs/build32"
+search_dir="$artifact_dir"
+while [[ "$search_dir" != "/" ]]; do
+    if [[ -d "$search_dir/meson-info" ]]; then
+        build_root="$search_dir"
+        break
+    fi
+    search_dir="$(dirname "$search_dir")"
+done
 target_info="$build_root/meson-info/intro-targets.json"
 machines_info="$build_root/meson-info/intro-machines.json"
 compilers_info="$build_root/meson-info/intro-compilers.json"
@@ -71,7 +79,7 @@ file "$artifact_abs" > "$out_dir/file.txt"
 shasum -a 256 "$artifact_abs" > "$out_dir/sha256.txt"
 
 if [[ -f "$target_info" ]] && command -v jq >/dev/null 2>&1; then
-    jq '.[] | select(.filename[]? | test("winemetal[.]dll$"))' "$target_info" > "$out_dir/meson-winemetal-target.json"
+    jq '.[] | select(.filename[]? | contains("winemetal.dll"))' "$target_info" > "$out_dir/meson-winemetal-target.json"
 else
     : > "$out_dir/meson-winemetal-target.json"
 fi
@@ -88,7 +96,7 @@ fi
 
 linker_wine_refs="$out_dir/linker-wine-refs.txt"
 if [[ -s "$out_dir/meson-winemetal-target.json" ]]; then
-    rg -o '/[^" ]*wine-[0-9][^" ]*' "$out_dir/meson-winemetal-target.json" > "$linker_wine_refs" || true
+    rg -o '/[^" ]*(wine-[0-9][^" ]*|metalsharp-wine119-parity[^" ]*)' "$out_dir/meson-winemetal-target.json" > "$linker_wine_refs" || true
 else
     : > "$linker_wine_refs"
 fi
@@ -113,9 +121,12 @@ fi
     elif rg -q 'wine-11[.]5' "$linker_wine_refs"; then
         echo "- result: fail"
         echo "- reason: linker/build metadata references Wine 11.5 inputs, so this is not a 11.9-built i386 WineMetal."
+    elif rg -q 'metalsharp-wine119-parity|wine-11[.]9' "$linker_wine_refs"; then
+        echo "- result: review"
+        echo "- reason: source tree is clean and linker metadata references the shaped Wine 11.9 runtime; still requires live M9 proof before release."
     else
         echo "- result: review"
-        echo "- reason: source tree is clean and no Wine 11.5 linker refs were detected; still requires live M9 proof before release."
+        echo "- reason: source tree is clean and no Wine 11.5 linker refs were detected, but Wine 11.9 linker refs were not explicit; still requires build log review and live M9 proof before release."
     fi
     echo
     echo "## Evidence Files"

@@ -19,6 +19,8 @@ Environment:
   METALSHARP_PARITY_PROBE_DIR      backend probe dir for route/hook evidence
   METALSHARP_I386_WINEMETAL_PROVENANCE provenance.md path
   METALSHARP_I386_WINEMETAL_BUILD_PREFLIGHT preflight.md path
+  METALSHARP_I386_WINEMETAL_CLEAN_PROVENANCE clean 11.9-linked provenance.md path
+  METALSHARP_I386_WINEMETAL_CLEAN_PREFLIGHT clean 11.9-linked preflight.md path
   METALSHARP_LIVE_SUITE_DIR        optional live suite dir to prove live gate
 USAGE
 }
@@ -66,6 +68,8 @@ fetch_report="${METALSHARP_FETCH_REPORT:-/tmp/metalsharp-wine-assets/fetch-repor
 parity_probe="${METALSHARP_PARITY_PROBE_DIR:-/private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2}"
 i386_provenance="${METALSHARP_I386_WINEMETAL_PROVENANCE:-/tmp/metalsharp-i386-winemetal-provenance-current/provenance.md}"
 i386_build_preflight="${METALSHARP_I386_WINEMETAL_BUILD_PREFLIGHT:-/tmp/metalsharp-i386-winemetal-build-preflight-current/preflight.md}"
+i386_clean_provenance="${METALSHARP_I386_WINEMETAL_CLEAN_PROVENANCE:-/tmp/metalsharp-clean-i386-winemetal-provenance-119/provenance.md}"
+i386_clean_preflight="${METALSHARP_I386_WINEMETAL_CLEAN_PREFLIGHT:-/tmp/metalsharp-i386-winemetal-build-preflight-clean-f520cb8/preflight.md}"
 live_suite="${METALSHARP_LIVE_SUITE_DIR:-}"
 
 main_head="$(git -C "$repo_root" rev-parse --short HEAD)"
@@ -147,7 +151,12 @@ else
     requirement_row "Pass Nidhogg 2, Schedule I, and Subnautica BZ under Wine 11.9" "unverified" "$readiness does not clearly prove live controls" "inspect METALSHARP_LIVE_SUITE_DIR and verification.md"
 fi
 
-if contains_file "$i386_provenance" '^- result: fail$'; then
+if contains_file "$i386_clean_provenance" '^- result: review$' &&
+    contains_file "$i386_clean_provenance" 'linker metadata references the shaped Wine 11[.]9 runtime' &&
+    contains_file "$i386_clean_preflight" 'PASS \[source-clean\]' &&
+    contains_file "$i386_clean_preflight" 'PASS \[wine-version\] wine reports wine-11[.]9'; then
+    requirement_row "Recover or produce release-proven 11.9 i386 WineMetal" "unverified" "$i386_clean_provenance records a clean 11.9-linked PE32 i386 WineMetal candidate; $i386_clean_preflight proves clean source and 11.9 build inputs" "package this clean artifact into the active candidate and pass live Nidhogg 2/M9 proof before release"
+elif contains_file "$i386_provenance" '^- result: fail$'; then
     evidence="$i386_provenance reports the current i386 bridge is not release-proven"
     if contains_file "$i386_build_preflight" 'PASS \[wine-version\] wine reports wine-11[.]9' &&
         contains_file "$i386_build_preflight" 'FAIL \[source-clean\]'; then

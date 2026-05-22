@@ -133,6 +133,8 @@ Inputs:
 - Reproducible local asset path after fetch: `/tmp/metalsharp-wine-assets/metalsharp_bundle.tar.zst`
 - Working baseline: `/Users/alexmondello/.metalsharp/runtime/wine`
 - DXMT i386 candidate: `/Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll`
+- Clean 11.9-linked i386 candidate, when present:
+  `/tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll`
 
 Commands:
 
@@ -154,6 +156,16 @@ scripts/preflight-i386-winemetal-build.sh \
   /Volumes/AverySSD/metalsharp/dxmt-src \
   /tmp/metalsharp-wine119-parity/candidates/dxmt32/wine \
   /tmp/metalsharp-i386-winemetal-build-preflight-current
+
+scripts/preflight-i386-winemetal-build.sh \
+  /tmp/metalsharp-dxmt-clean-f520cb8 \
+  /tmp/metalsharp-wine119-parity/candidates/dxmt32/wine \
+  /tmp/metalsharp-i386-winemetal-build-preflight-clean-f520cb8
+
+scripts/audit-i386-winemetal-provenance.sh \
+  /tmp/metalsharp-dxmt-clean-f520cb8 \
+  /tmp/metalsharp-dxmt-clean-build32-wine119/src/winemetal/winemetal.dll \
+  /tmp/metalsharp-clean-i386-winemetal-provenance-119
 ```
 
 Expected candidate meaning:
@@ -163,6 +175,8 @@ Expected candidate meaning:
   SHA256 above, and `verified=1` before candidate preparation
 - `clean`: must fail because release asset lacks i386 `winemetal.dll`.
 - `dxmt32`: primary test candidate, still release-blocked until live M9 proof.
+  Prefer the clean 11.9-linked i386 WineMetal artifact over the older dirty
+  AverySSD `build32` artifact whenever it has a clean provenance report.
 - `borrowed`: manifest-complete fallback experiment, not release-ready without live proof.
 - every prepared candidate must rewrite Vulkan ICD `library_path` entries to
   its own runtime root and provide `lib/libMoltenVK.dylib`, otherwise proof can
@@ -179,6 +193,11 @@ Expected candidate meaning:
   `i386-windows`, plus local Meson/Ninja/i686 mingw tools. A failing
   `source-clean` gate means the next branch must clean or fork DXMT source
   before producing a release-grade 11.9 i386 artifact.
+- A clean detached DXMT worktree at `f520cb84159ef7db1cdbd364d51738ef7effb0a6`
+  can produce a PE32 i386 `winemetal.dll` linked against the shaped Wine 11.9
+  runtime. This is stronger than the dirty AverySSD artifact, but it is still
+  not a release gate by itself; live Nidhogg 2/M9 module proof is required
+  before it can be blessed.
 - Pass 1 does not run readiness or objective completion audits; those require a
   Pass 2 parity home and backend probe.
 
