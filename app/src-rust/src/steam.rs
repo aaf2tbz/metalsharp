@@ -110,6 +110,14 @@ fn gptk_runtime_status_path() -> PathBuf {
     }
 }
 
+fn gptk_winedata_dir() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root().join("share")
+    } else {
+        ms_wine_root().join("share")
+    }
+}
+
 fn gptk_steam_install_progress_path() -> PathBuf {
     metalsharp_home().join("gptk_steam_install_progress.json")
 }
@@ -598,7 +606,7 @@ fn apply_gptk_env(cmd: &mut Command) {
     let gptk_external = gptk_runtime_external_dir();
     cmd.env("WINESERVER", gptk_wineserver_path())
         .env("WINELOADER", gptk_wine_path())
-        .env("WINEDATADIR", ms_root.join("share"))
+        .env("WINEDATADIR", gptk_winedata_dir())
         .env("MS_FWD_COMPAT_GL_CTX", "1")
         .env("MVK_PRESENT_MODE", "1")
         .env("DXVK_STATE_CACHE_PATH", home.join(".metalsharp").join("dxvk-cache-gptk"))
@@ -772,21 +780,104 @@ fn ditto_copy(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> 
     }
 }
 
+fn command_output_text(mut command: Command) -> Result<(bool, String), Box<dyn std::error::Error>> {
+    let output = command.output()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok((output.status.success(), text))
+}
+
+fn apple_signature_output_is_accepted(text: &str) -> bool {
+    let accepted = text.lines().any(|line| {
+        let trimmed = line.trim().to_ascii_lowercase();
+        trimmed == "accepted" || trimmed.ends_with(": accepted")
+    });
+    let apple_source = text.lines().any(|line| {
+        let trimmed = line.trim().to_ascii_lowercase();
+        trimmed == "source=apple" || trimmed.starts_with("source=apple ")
+    });
+    accepted && apple_source
+}
+
+fn codesign_output_has_apple_authority(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "Authority=Software Signing"
+            || trimmed == "Authority=Apple Code Signing Certification Authority"
+            || trimmed == "TeamIdentifier=59GAB85EFG"
+    })
+}
+
+fn verify_signed_disk_image(dmg: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut command = Command::new("spctl");
+    command.arg("-a").arg("-t").arg("open").arg("--context").arg("context:primary-signature").arg("-v").arg(dmg);
+    let (success, output) = command_output_text(command)?;
+    if success && apple_signature_output_is_accepted(&output) {
+        Ok(())
+    } else {
+        Err(format!("Refusing to install GPTK runtime: {} is not an accepted Apple-signed disk image", label).into())
+    }
+}
+
+fn verify_gptk_redist_identity(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    for relative in [
+        Path::new("wine").join("x86_64-windows").join("d3d12.dll"),
+        Path::new("wine").join("x86_64-windows").join("dxgi.dll"),
+        Path::new("wine").join("x86_64-unix"),
+        Path::new("external").join("D3DMetal.framework"),
+    ] {
+        let candidate = redist.join(relative);
+        if !candidate.exists() {
+            return Err(format!(
+                "Refusing to install GPTK runtime: expected signed redist component is missing at {}",
+                candidate.display()
+            )
+            .into());
+        }
+    }
+
+    let framework = redist.join("external").join("D3DMetal.framework");
+    let mut verify = Command::new("codesign");
+    verify.arg("--verify").arg("--deep").arg("--strict").arg(&framework);
+    let (verified, verify_output) = command_output_text(verify)?;
+    if !verified {
+        return Err(format!(
+            "Refusing to install GPTK runtime: D3DMetal.framework failed code signature verification ({})",
+            verify_output.trim()
+        )
+        .into());
+    }
+
+    let mut describe = Command::new("codesign");
+    describe.arg("-dv").arg("--verbose=4").arg(&framework);
+    let (described, describe_output) = command_output_text(describe)?;
+    if !described || !codesign_output_has_apple_authority(&describe_output) {
+        return Err(
+            "Refusing to install GPTK runtime: D3DMetal.framework is not signed by an Apple-controlled identity".into(),
+        );
+    }
+
+    Ok(())
+}
+
 fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let outer_mount = unique_temp_dir("gptk-outer");
     let inner_mount = unique_temp_dir("gptk-inner");
+    verify_signed_disk_image(dmg, "outer Game Porting Toolkit DMG")?;
     attach_dmg(dmg, &outer_mount)?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let inner_dmg =
             find_child_by_name_contains(&outer_mount, "evaluation environment for windows games", Some("dmg")).ok_or(
                 "Downloaded Game Porting Toolkit DMG did not contain the Windows games evaluation environment DMG",
             )?;
+        verify_signed_disk_image(&inner_dmg, "inner Game Porting Toolkit DMG")?;
         attach_dmg(&inner_dmg, &inner_mount)?;
         let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let redist = inner_mount.join("redist").join("lib");
             if !redist.exists() {
                 return Err("Mounted Game Porting Toolkit image did not contain redist/lib".into());
             }
+            verify_gptk_redist_identity(&redist)?;
             let target = gptk_local_root();
             if target.exists() {
                 let backup =
@@ -2470,6 +2561,30 @@ mod tests {
     fn detects_downloaded_gptk_dmg_names() {
         assert!("Game_Porting_Toolkit_3.0.dmg".to_lowercase().contains("game_porting_toolkit"));
         assert!("Game Porting Toolkit 3.0.dmg".to_lowercase().contains("game porting toolkit"));
+    }
+
+    #[test]
+    fn gptk_disk_image_signature_requires_apple_acceptance() {
+        assert!(apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: accepted\nsource=Apple System"
+        ));
+        assert!(!apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/gptk.dmg: accepted\nsource=Notarized Developer ID"
+        ));
+        assert!(!apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: rejected\nsource=Apple System"
+        ));
+    }
+
+    #[test]
+    fn gptk_codesign_identity_requires_apple_controlled_authority() {
+        assert!(codesign_output_has_apple_authority(
+            "Authority=Software Signing\nAuthority=Apple Code Signing Certification Authority\nAuthority=Apple Root CA"
+        ));
+        assert!(codesign_output_has_apple_authority("TeamIdentifier=59GAB85EFG"));
+        assert!(!codesign_output_has_apple_authority(
+            "Authority=Developer ID Application: Example Corp\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA"
+        ));
     }
 
     #[test]
