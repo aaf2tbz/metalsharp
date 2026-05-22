@@ -67,6 +67,8 @@ function isWineSteamRouteId(launchMethod: string) {
     "m10",
     "m11",
     "m12",
+    "m13",
+    "gptk",
     "d3dmetal",
     "m32",
     "dx9",
