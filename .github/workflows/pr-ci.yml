@@ -109,6 +109,40 @@ jobs:
       - name: Shell check
         run: bash -n updater/update.sh
 
+  wine119-evidence:
+    name: Wine 11.9 Evidence CI
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Script syntax
+        run: |
+          bash -n \
+            scripts/fetch-wine119-release-assets.sh \
+            scripts/runtime-manifest.sh \
+            scripts/compare-runtime-manifests.sh \
+            scripts/prepare-wine119-candidate.sh \
+            scripts/prepare-wine119-parity-candidates.sh \
+            scripts/install-wine119-parity-home.sh \
+            scripts/probe-wine119-parity-backend.sh \
+            scripts/capture-steam-game-proof.sh \
+            scripts/run-wine119-live-control-suite.sh \
+            scripts/verify-wine119-live-control-suite.sh \
+            scripts/audit-wine119-readiness.sh \
+            scripts/audit-mscompatdb-hook-surface.sh \
+            scripts/audit-i386-winemetal-provenance.sh \
+            scripts/preflight-i386-winemetal-build.sh \
+            scripts/audit-wine119-objective-completion.sh \
+            scripts/test-wine119-live-suite-guards.sh \
+            scripts/test-wine119-objective-audit-guards.sh \
+            scripts/test-wine119-live-verifier-fixtures.sh
+
+      - name: Non-live evidence guard fixtures
+        run: |
+          scripts/test-wine119-live-suite-guards.sh
+          scripts/test-wine119-objective-audit-guards.sh
+          scripts/test-wine119-live-verifier-fixtures.sh
+
   native:
     name: C/C++/Obj-C CI
     runs-on: macos-14
