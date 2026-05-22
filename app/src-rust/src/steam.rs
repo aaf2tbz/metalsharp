@@ -104,6 +104,10 @@ fn metalsharp_home() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp")
 }
 
+fn current_timestamp_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0)
+}
+
 fn current_account_name() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
@@ -542,6 +546,20 @@ fn apply_gptk_env(cmd: &mut Command) {
     apply_gptk_prefix_user_env(cmd);
 }
 
+fn stop_gptk_prefix_wineserver(prefix: &Path) {
+    if !gptk_wineserver_path().exists() {
+        return;
+    }
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let _ = Command::new(gptk_wineserver_path())
+        .arg("-k")
+        .env("WINEPREFIX", &prefix_str)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+}
+
 fn spawn_gptk_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     if !gptk_installed() {
         return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
@@ -683,6 +701,7 @@ fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Err
             .arg("--init")
             .env("WINEPREFIX", &prefix_str)
             .env("WINEDEBUG", "-all")
+            .env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         apply_gptk_env(&mut cmd);
@@ -703,6 +722,7 @@ fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Err
         if !ready {
             return Err("GPTK wineboot --init timed out before the prefix became usable".into());
         }
+        stop_gptk_prefix_wineserver(prefix);
     }
 
     let user_dir = windows_user_dir(prefix);
@@ -715,6 +735,18 @@ fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Err
 }
 
 fn repair_fresh_gptk_identity(prefix: &Path, username: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let users_dir = prefix.join("drive_c").join("users");
+    let crossover_dir = users_dir.join("crossover");
+    let user_dir = users_dir.join(username);
+    if crossover_dir.exists() {
+        if !user_dir.exists() {
+            std::fs::rename(&crossover_dir, &user_dir)?;
+        } else {
+            let backup = users_dir.join(format!("crossover.archived.{}", current_timestamp_secs()));
+            std::fs::rename(&crossover_dir, backup)?;
+        }
+    }
+
     for name in ["user.reg", "system.reg"] {
         let path = prefix.join(name);
         if !path.exists() {
@@ -724,6 +756,7 @@ fn repair_fresh_gptk_identity(prefix: &Path, username: &str) -> Result<(), Box<d
         let repaired = contents
             .replace(r"C:\\users\\crossover", &format!(r"C:\\users\\{}", username))
             .replace(r"C:\\Users\\crossover", &format!(r"C:\\Users\\{}", username))
+            .replace(r"\\users\\crossover", &format!(r"\\users\\{}", username))
             .replace(r#""USERNAME"="crossover""#, &format!(r#""USERNAME"="{}""#, username))
             .replace(r#""USERPROFILE"="C:\\users\\crossover""#, &format!(r#""USERPROFILE"="C:\\users\\{}""#, username))
             .replace(
@@ -737,7 +770,10 @@ fn repair_fresh_gptk_identity(prefix: &Path, username: &str) -> Result<(), Box<d
             .replace(
                 r#""ProfileImagePath"="C:\\users\\crossover""#,
                 &format!(r#""ProfileImagePath"="C:\\users\\{}""#, username),
-            );
+            )
+            .replace(r#""TEMP"="C:\\users\\crossover\\Temp""#, &format!(r#""TEMP"="C:\\users\\{}\\Temp""#, username))
+            .replace(r#""TMP"="C:\\users\\crossover\\Temp""#, &format!(r#""TMP"="C:\\users\\{}\\Temp""#, username))
+            .replace(r#""HOMEPATH"="\\users\\crossover""#, &format!(r#""HOMEPATH"="\\users\\{}""#, username));
         if repaired != contents {
             std::fs::write(path, repaired)?;
         }
@@ -793,6 +829,7 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         .arg(&installer)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     apply_gptk_env(&mut install_cmd);
@@ -817,6 +854,7 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         return Err("SteamSetup.exe did not finish writing Steam.exe and steamui.dll into the GPTK prefix".into());
     }
 
+    stop_gptk_prefix_wineserver(&prefix);
     write_gptk_steam_install_progress("deploying_wrapper", "Deploying the GPTK Steam CEF wrapper...", None);
     ensure_gptk_steam_launch_ready(&steam_dir);
     repair_fresh_gptk_identity(&prefix, &current_account_name())?;
@@ -885,11 +923,16 @@ pub fn launch_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if is_gptk_steam_running() {
         return Ok(json!({
             "ok": true,
-            "message": "GPTK Steam already running"
+            "message": "GPTK Steam already running",
+            "running": true,
+            "installed": gptk_steam_installed()
         }));
     }
+    if is_wine_steam_running() {
+        stop_wine_steam()?;
+    }
     let pid = spawn_gptk_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])?;
-    Ok(json!({"ok": true, "pid": pid}))
+    Ok(json!({"ok": true, "pid": pid, "running": true, "installed": gptk_steam_installed()}))
 }
 
 pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Value, Box<dyn std::error::Error>> {
@@ -918,6 +961,10 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
         }));
     }
 
+    if is_gptk_steam_running() {
+        stop_gptk_steam()?;
+    }
+
     ensure_steam_launch_ready(&steam_dir);
 
     let pid = spawn_wine_steam_with_env(
@@ -925,7 +972,7 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
         extra_env,
     )?;
 
-    Ok(json!({"ok": true, "pid": pid}))
+    Ok(json!({"ok": true, "pid": pid, "running": true}))
 }
 
 pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
@@ -2038,5 +2085,35 @@ mod tests {
 
         assert!(!is_gptk_steam_cleanup_command(&game_command));
         assert!(is_gptk_steam_cleanup_command(&helper_command));
+    }
+
+    #[test]
+    fn gptk_identity_repair_removes_crossover_profile() {
+        let root = std::env::temp_dir().join(format!("metalsharp-gptk-repair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let users = root.join("drive_c").join("users");
+        std::fs::create_dir_all(users.join("crossover")).expect("create crossover profile");
+        std::fs::write(
+            root.join("user.reg"),
+            r#""TEMP"="C:\\users\\crossover\\Temp"
+"USERNAME"="crossover"
+"USERPROFILE"="C:\\users\\crossover"
+"HOMEPATH"="\\users\\crossover"
+"AppData"="C:\\users\\crossover\\AppData\\Roaming"
+"#,
+        )
+        .expect("write user.reg");
+        std::fs::write(root.join("system.reg"), r#""ProfileImagePath"="C:\\users\\crossover""#)
+            .expect("write system.reg");
+
+        repair_fresh_gptk_identity(&root, "metalsharp").expect("repair identity");
+
+        assert!(users.join("metalsharp").exists());
+        assert!(!users.join("crossover").exists());
+        assert!(!prefix_contains_crossover_identity(&root));
+        let user_reg = std::fs::read_to_string(root.join("user.reg")).expect("read user.reg");
+        assert!(user_reg.contains(r#""USERNAME"="metalsharp""#));
+        assert!(user_reg.contains(r#""HOMEPATH"="\\users\\metalsharp""#));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

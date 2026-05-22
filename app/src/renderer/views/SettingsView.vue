@@ -96,15 +96,26 @@ async function toggleSteam() {
       toast.show(result?.error ?? "Wine Steam is still running", "error");
     }
   } else {
+    if (gptkSteamRunning.value) {
+      if (!confirm("Stop GPTK Steam and start Wine Steam?")) return;
+      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+      if (!stopResult?.ok || stopResult.running !== false) {
+        gptkSteamRunning.value = stopResult?.running ?? true;
+        toast.show(stopResult?.error ?? "GPTK Steam is still running", "error");
+        return;
+      }
+      gptkSteamRunning.value = false;
+    }
     toast.show("Starting Steam...", "success");
-    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/launch");
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/launch");
     if (result?.ok) {
-      wineSteamRunning.value = true;
+      wineSteamRunning.value = result.running ?? true;
       toast.show("Steam started", "success");
     } else {
       toast.show(result?.error ?? "Failed to start Steam", "error");
     }
   }
+  await reloadLibrary();
 }
 
 async function installGptkSteam() {
@@ -149,11 +160,13 @@ async function pollGptkSteamInstall() {
     const status = await api<{
       gptk_steam_installed?: boolean;
       gptk_installing?: boolean;
+      gptk_running?: boolean;
       gptk_install_progress?: { phase: string; message: string; error?: string | null };
     }>("GET", "/steam/status");
     if (!status) return;
     gptkSteamInstalling.value = status.gptk_installing ?? false;
     gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
+    gptkSteamRunning.value = status.gptk_running ?? gptkSteamRunning.value;
     gptkInstallMessage.value = status.gptk_install_progress?.message ?? "";
     if (status.gptk_steam_installed) {
       clearInterval(poll);
@@ -197,14 +210,16 @@ async function toggleGptkSteam() {
       wineSteamRunning.value = false;
     }
     toast.show("Starting GPTK Steam...", "success");
-    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-launch");
+    const result = await api<{ ok: boolean; running?: boolean; installed?: boolean; error?: string }>("POST", "/steam/gptk-launch");
     if (result?.ok) {
-      gptkSteamRunning.value = true;
+      gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
+      gptkSteamRunning.value = result.running ?? true;
       toast.show("GPTK Steam started", "success");
     } else {
       toast.show(result?.error ?? "Failed to start GPTK Steam", "error");
     }
   }
+  await reloadLibrary();
 }
 
 async function installMacSteam() {

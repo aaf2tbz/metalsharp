@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.33.30 - 2026-05-22
+
+GPTK Steam prefix readiness hotfix.
+
+### Fixed
+
+- **GPTK Steam install state** - keeps GPTK Steam marked uninstalled until the dedicated prefix is free of CrossOver identity, preventing the app from flipping back into a false installed/running state.
+- **GPTK prefix rebuild** - archives contaminated GPTK Steam prefixes, stops GPTK Wine before final registry repair, removes `users/crossover` from the rebuilt prefix, and disables Wine Mono/MSHTML during GPTK Steam setup.
+- **Steam lane switching** - Wine Steam and GPTK Steam starts now stop the opposite lane first in both backend and UI, keeping normal Wine Steam and M-Anticheat GPTK Steam isolated.
+- **GPTK Steam controls** - Library and Settings buttons refresh fresh backend state and show `Start GPTK Steam` after a clean install.
+
 ## v0.33.29 - 2026-05-22
 
 M-Anticheat GPTK Steam lane.
