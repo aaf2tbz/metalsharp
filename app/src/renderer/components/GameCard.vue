@@ -162,9 +162,9 @@ async function toggleEac(enable: boolean) {
   });
   if (result?.ok) {
     eacActive.value = result.eac_toggle_active;
-    toast.show(enable ? "EAC bypass enabled (offline only)" : "EAC bypass disabled", "success");
+    toast.show(enable ? "Offline EAC mode enabled" : "Offline EAC mode disabled", "success");
   } else {
-    toast.show("Failed to toggle EAC bypass", "error");
+    toast.show("Failed to toggle offline EAC mode", "error");
   }
 }
 
@@ -335,14 +335,14 @@ function formatBytes(bytes: number): string {
               <span class="toggle-switch"></span>
               <span class="toggle-text">Goldberg</span>
             </label>
-            <label class="tool-chip toggle-label" title="EAC bypass (offline only)">
+            <label class="tool-chip toggle-label" title="Offline EAC mode">
               <input
                 type="checkbox"
                 :checked="eacActive"
                 @change="toggleEac(($event.target as HTMLInputElement).checked)"
               />
               <span class="toggle-switch"></span>
-              <span class="toggle-text">No EAC</span>
+              <span class="toggle-text">Offline EAC</span>
             </label>
           </div>
           <button

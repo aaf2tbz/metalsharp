@@ -21,6 +21,36 @@ BUNDLES=(
     "steamwebhelper-wrapper.c"
 )
 
+validate_bundle_runtime() {
+    local main_bundle="$BUNDLE_DIR/metalsharp_bundle.tar.zst"
+    local support_bundle="$BUNDLE_DIR/metalsharp_bundle2.tar.zst"
+    local main_listing
+    local support_listing
+
+    if ! command -v unzstd >/dev/null 2>&1; then
+        echo "ERROR: unzstd not found; cannot validate bundled Wine runtime version"
+        exit 1
+    fi
+
+    main_listing="$(tar --use-compress-program=unzstd -tf "$main_bundle")"
+    support_listing="$(tar --use-compress-program=unzstd -tf "$support_bundle")"
+
+    if ! grep -q '^wine-11\.5/' <<<"$main_listing"; then
+        echo "ERROR: metalsharp_bundle.tar.zst does not contain the expected wine-11.5 runtime"
+        exit 1
+    fi
+
+    if grep -q '^wine-11\.9/' <<<"$main_listing"; then
+        echo "ERROR: metalsharp_bundle.tar.zst contains Wine 11.9; expected 0.33.27 Wine 11.5 assets"
+        exit 1
+    fi
+
+    if grep -Eq 'wine-11\.9|metalsharp-wine-11\.9-candidate' <<<"$support_listing"; then
+        echo "ERROR: metalsharp_bundle2.tar.zst contains Wine 11.9 candidate assets; expected 0.33.27 support bundle"
+        exit 1
+    fi
+}
+
 for bundle in "${BUNDLES[@]}"; do
     dest="$BUNDLE_DIR/$bundle"
     if [ -f "$dest" ] && [ -s "$dest" ]; then
@@ -48,6 +78,8 @@ for bundle in "${BUNDLES[@]}"; do
         exit 1
     fi
 done
+
+validate_bundle_runtime
 
 echo ""
 echo "=== Bundle Summary ==="

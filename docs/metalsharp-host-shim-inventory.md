@@ -31,7 +31,7 @@ Purpose: Phase 0 inventory of existing C, C++, and Objective-C host shims that c
 | PE loader shim registry | `src/loader/PELoader.cpp`, `src/loader/D3DShims.cpp` | Registers shim DLL exports and resolves imports for the native PE loader path. | stable | Keep as native-loader foundation; document boundary with Wine PE/unixlib path. |
 | Win32 shim layer | `src/win32/kernel32/*.cpp`, `include/metalsharp/Win32Types.h`, `include/metalsharp/ExtraShims.h` | Larger native-loader Win32 shim set for kernel32/ntdll/network/extra APIs. | stable | Use selectively for ABI service mapping; avoid duplicating behavior between FNA C shims and C++ Win32 shims. |
 | Anti-cheat database | `include/metalsharp/AntiCheatDB.h`, `src/runtime/DRMDetector.cpp` | Static detection/compatibility tables and signature scanning. | legacy-risk | Replace boolean compatibility with evidence-backed status enum and vendor-support states. |
-| EAC toggle naming | `app/src-rust/src/installer.rs`, `app/src-rust/src/main.rs` | Installer step and endpoints refer to EAC bypass/toggle behavior. | legacy-risk | Audit behavior, rename if legitimate compatibility flag, remove if bypass-like. |
+| Offline EAC mode naming | `app/src-rust/src/installer.rs`, `app/src-rust/src/main.rs` | Installer/UI text now avoids bypass wording, but endpoint names still expose the legacy `eac-toggle` route. | legacy-risk | Audit behavior, keep naming explicit if legitimate compatibility flag, remove if bypass-like. |
 | Runtime deploy glue | `app/src-rust/src/mtsp/launcher.rs`, `app/src-rust/src/setup.rs` | Copies shims into runtime/game folders and assembles launch env. | prototype | Move shim deployment into manifest-driven runtime asset selection. |
 
 ## Strongest Existing Pattern

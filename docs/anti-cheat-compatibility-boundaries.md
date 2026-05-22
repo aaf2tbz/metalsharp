@@ -79,15 +79,15 @@ This is both a user-safety rule and a product strategy rule. A runtime that gets
 
 ## Current Repo Risks
 
-The current tree has legacy naming and toggles that should be cleaned up during the anti-cheat classification phase:
+The current tree still has legacy endpoint names that should be cleaned up during the anti-cheat classification phase:
 
-- `app/src-rust/src/installer.rs` has an installer step named `EAC Bypass`.
+- `app/src-rust/src/installer.rs` now presents the legacy toggle asset as `Offline EAC Mode`.
 - `app/src-rust/src/main.rs` exposes `/eac-toggle/status` and `/eac-toggle/toggle`.
 - `include/metalsharp/AntiCheatDB.h` currently labels some anti-cheat systems as broadly compatible or impossible in ways that should become more precise.
 
 Recommended correction:
 
-- Rename "EAC Bypass" to an explicit, non-evasive name if the feature is retained.
+- Keep user-facing names explicit and non-evasive when the legacy offline toggle asset is retained.
 - Reframe the toggle endpoint as a compatibility flag only if it is not bypass behavior.
 - Replace boolean compatible/incompatible with a status enum. Launch recipes now expose structured anti-cheat status entries for detected game folders:
   - `vendor_supported`

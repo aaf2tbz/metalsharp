@@ -80,7 +80,7 @@ fn run_install_all() {
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXVK Runtime", Box::new(install_dxvk_fallback)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
-                ("EAC Bypass", Box::new(install_eac_toggle)),
+                ("Offline EAC Mode", Box::new(install_eac_toggle)),
                 ("Pipeline Rules", Box::new(install_mtsp_rules)),
                 ("Mono Configs", Box::new(install_mono_configs)),
             ]
@@ -92,7 +92,7 @@ fn run_install_all() {
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
-                ("EAC Bypass", Box::new(install_eac_toggle)),
+                ("Offline EAC Mode", Box::new(install_eac_toggle)),
                 ("Pipeline Rules", Box::new(install_mtsp_rules)),
                 ("Mono Configs", Box::new(install_mono_configs)),
                 ("Runtime Support", Box::new(|_| install_mono_arm64())),

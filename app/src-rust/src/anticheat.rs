@@ -1,7 +1,9 @@
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
@@ -36,6 +38,12 @@ struct SteamSummary {
     redist_exit_codes: Vec<Value>,
 }
 
+struct GameDirEvidence {
+    path: PathBuf,
+    source: &'static str,
+    staged: bool,
+}
+
 pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
     let appid = match body.get("appid").and_then(|v| v.as_u64()) {
         Some(id) if id > 0 && id <= u32::MAX as u64 => id as u32,
@@ -48,8 +56,8 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
     };
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    let game_dir = crate::setup::resolve_game_dir(appid);
-    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let game_dir = resolve_anticheat_game_dir(appid);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
     let eac = summarize_eac(&artifacts);
     let steam = summarize_steam(appid, &artifacts);
     let status = evidence_status(&eac, &steam, &artifacts);
@@ -60,7 +68,9 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
         "status": status,
         "summary": summary_text(&status, &eac, &steam),
         "prefix": prefix.to_string_lossy(),
-        "gameDir": game_dir.map(|p| p.to_string_lossy().to_string()),
+        "gameDir": game_dir.as_ref().map(|dir| dir.path.to_string_lossy().to_string()),
+        "gameDirSource": game_dir.as_ref().map(|dir| dir.source),
+        "gameDirStaged": game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false),
         "easyAntiCheat": {
             "settingsPath": eac.settings_path,
             "processTitle": eac.process_title,
@@ -100,13 +110,13 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
     };
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    let game_dir = crate::setup::resolve_game_dir(appid);
-    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let game_dir = resolve_anticheat_game_dir(appid);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
     let eac = summarize_eac(&artifacts);
     let steam = summarize_steam(appid, &artifacts);
-    let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let module_assets = game_dir.as_ref().map(|dir| collect_module_assets(&dir.path)).unwrap_or_default();
     let runtime_checks = runtime_probe_checks(&home);
-    let status = probe_status(&eac, &module_assets);
+    let status = probe_status(&eac, &module_assets, game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false));
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
 
@@ -121,7 +131,9 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
             "canDlopenLinuxElfDirectly": can_dlopen_linux_elf_directly(host_os),
         },
         "prefix": prefix.to_string_lossy(),
-        "gameDir": game_dir.map(|p| p.to_string_lossy().to_string()),
+        "gameDir": game_dir.as_ref().map(|dir| dir.path.to_string_lossy().to_string()),
+        "gameDirSource": game_dir.as_ref().map(|dir| dir.source),
+        "gameDirStaged": game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false),
         "evidenceStatus": evidence_status(&eac, &steam, &artifacts),
         "easyAntiCheat": {
             "moduleTarget": eac.module_target,
@@ -148,11 +160,19 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
     let wine_root = home.join(".metalsharp").join("runtime").join("wine");
-    let game_dir = appid.and_then(crate::setup::resolve_game_dir);
-    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let game_dir = appid.and_then(resolve_anticheat_game_dir);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
     let eac = summarize_eac(&artifacts);
-    let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let module_assets = game_dir.as_ref().map(|dir| collect_module_assets(&dir.path)).unwrap_or_default();
     let host_os = std::env::consts::OS;
+
+    let wineserver_socket_root = wineserver_socket_root();
+    let wineserver_socket_dirs = wineserver_socket_dirs();
+    let wineserver_running = process_list_contains(&["wineserver"]);
+    let kernel32_win64 = wine_root.join("lib").join("wine").join("x86_64-windows").join("kernel32.dll");
+    let user32_win64 = wine_root.join("lib").join("wine").join("x86_64-windows").join("user32.dll");
+    let ntdll_win64 = wine_root.join("lib").join("wine").join("x86_64-windows").join("ntdll.dll");
+    let ntdll_unix = wine_root.join("lib").join("wine").join("x86_64-unix").join("ntdll.so");
 
     let surfaces = vec![
         delta_group(
@@ -161,14 +181,55 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
             vec![
                 delta_path("wineserver", "required", &wine_root.join("bin").join("wineserver"), None),
                 delta_path("wine", "required", &wine_root.join("bin").join("wine"), None),
-                delta_path("ntdll_unix", "required", &wine_root.join("lib").join("wine").join("x86_64-unix").join("ntdll.so"), None),
-                delta_path("ntdll_win64", "required", &wine_root.join("lib").join("wine").join("x86_64-windows").join("ntdll.dll"), None),
+                delta_path("ntdll_unix", "required", &ntdll_unix, None),
+                delta_path("ntdll_win64", "required", &ntdll_win64, None),
                 delta_path("ntdll_win32", "wow64_required", &wine_root.join("lib").join("wine").join("i386-windows").join("ntdll.dll"), None),
                 delta_path(
                     "wine_preloader",
                     "proton_comparison",
                     &wine_root.join("bin").join("wine-preloader"),
                     Some("Absent is common in packaged macOS Wine; record it because Proton/Linux loader behavior often assumes Linux mapping semantics."),
+                ),
+            ],
+        ),
+        delta_group(
+            "wineserver_state",
+            "Wineserver process, socket, and synchronization boundary",
+            vec![
+                delta_capability(
+                    "wineserver_process_running",
+                    "runtime_observation",
+                    wineserver_running,
+                    "Wine synchronizes Windows processes through wineserver; absence is expected when no Wine app is active, but protected launch evidence should show the correct shared server boundary.",
+                ),
+                delta_path(
+                    "wineserver_socket_root",
+                    "runtime_observation",
+                    &wineserver_socket_root,
+                    Some("Wine stores per-user server socket directories here on macOS."),
+                ),
+                delta_observation(
+                    "active_wineserver_socket_dirs",
+                    "runtime_observation",
+                    !wineserver_socket_dirs.is_empty(),
+                    Some(json!(wineserver_socket_dirs)),
+                    "Active Wine server socket directories indicate currently initialized Wine server state.",
+                ),
+            ],
+        ),
+        delta_group(
+            "win32_translation_contract",
+            "Win32 DLL translation and syscall dispatch lanes",
+            vec![
+                delta_path("kernel32_win64", "required", &kernel32_win64, Some("Win32 process, file, and synchronization API calls enter Wine through this PE DLL lane.")),
+                delta_path("user32_win64", "required", &user32_win64, Some("Window/message/input calls enter Wine through this PE DLL lane before reaching macOS/Cocoa surfaces.")),
+                delta_path("ntdll_win64", "required", &ntdll_win64, Some("NT loader/syscall-facing calls enter Wine through this PE DLL lane.")),
+                delta_path("ntdll_unix", "required", &ntdll_unix, Some("Unix-side ntdll implementation is the host boundary for Wine's syscall/loader behavior.")),
+                delta_capability(
+                    "wine_dll_translation_lanes_present",
+                    "required",
+                    kernel32_win64.exists() && user32_win64.exists() && ntdll_win64.exists() && ntdll_unix.exists(),
+                    "Protected launch debugging should treat Win32 translation as present only when both PE DLL and Unix-side ntdll lanes exist.",
                 ),
             ],
         ),
@@ -203,6 +264,36 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
                 delta_capability("host_is_linux", "proton_comparison", host_os == "linux", "Proton anti-cheat support targets Linux user space; macOS cannot provide seccomp/namespaces directly."),
                 delta_capability("pressure_vessel_available", "proton_comparison", false, "No pressure-vessel container is present in the MetalSharp macOS runtime."),
                 delta_capability("seccomp_available", "proton_comparison", host_os == "linux", "Darwin has different syscall filtering and process policy APIs."),
+            ],
+        ),
+        delta_group(
+            "darwin_executable_module_boundary",
+            "Darwin executable mapping and module format boundary",
+            vec![
+                delta_capability(
+                    "host_uses_mach_o_loader",
+                    "required",
+                    host_os == "macos",
+                    "On macOS, executable host modules must satisfy dyld/Mach-O expectations rather than Linux ELF loader semantics.",
+                ),
+                delta_capability(
+                    "darwin_can_load_linux_elf_directly",
+                    "blocking_when_false",
+                    can_dlopen_linux_elf_directly(host_os),
+                    "A Linux EAC/BattlEye ELF module cannot be directly hosted by macOS dyld.",
+                ),
+                delta_capability(
+                    "vendor_mach_o_module_present",
+                    "possible_direct_path",
+                    module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("mach_o")),
+                    "A vendor-supported Mach-O module is the direct host-compatible path if a game ships one.",
+                ),
+                delta_capability(
+                    "linux_elf_module_present",
+                    "blocking_when_macos",
+                    module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("elf")),
+                    "Linux ELF anti-cheat modules imply a Linux user-space substrate on macOS.",
+                ),
             ],
         ),
         delta_group(
@@ -272,11 +363,11 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
     };
 
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    let game_dir = crate::setup::resolve_game_dir(appid);
-    let artifacts = collect_artifacts(&prefix, game_dir.as_deref());
+    let game_dir = resolve_anticheat_game_dir(appid);
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
     let eac = summarize_eac(&artifacts);
     let steam = summarize_steam(appid, &artifacts);
-    let module_assets = game_dir.as_deref().map(collect_module_assets).unwrap_or_default();
+    let module_assets = game_dir.as_ref().map(|dir| collect_module_assets(&dir.path)).unwrap_or_default();
     let host_os = std::env::consts::OS;
     let decision = substrate_decision(host_os, &eac, &module_assets);
 
@@ -290,6 +381,9 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
             "arch": std::env::consts::ARCH,
         },
         "evidenceStatus": evidence_status(&eac, &steam, &artifacts),
+        "gameDir": game_dir.as_ref().map(|dir| dir.path.to_string_lossy().to_string()),
+        "gameDirSource": game_dir.as_ref().map(|dir| dir.source),
+        "gameDirStaged": game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false),
         "facts": {
             "moduleTarget": eac.module_target,
             "moduleMappingStatus": eac.module_mapping_status,
@@ -308,6 +402,61 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
         ],
         "nextActions": substrate_next_actions(&decision),
     })
+}
+
+fn resolve_anticheat_game_dir(appid: u32) -> Option<GameDirEvidence> {
+    let completed = crate::setup::resolve_game_dir(appid).map(|path| GameDirEvidence {
+        path,
+        source: "resolved_install",
+        staged: false,
+    });
+    let staged = resolve_staged_steam_download_dir(appid);
+
+    match (completed, staged) {
+        (Some(install), Some(download)) if !path_has_anticheat_probe_targets(&install.path) => Some(download),
+        (Some(install), _) => Some(install),
+        (None, staged) => staged,
+    }
+}
+
+fn resolve_staged_steam_download_dir(appid: u32) -> Option<GameDirEvidence> {
+    steamapps_roots()
+        .into_iter()
+        .map(|steamapps| steamapps.join("downloading").join(appid.to_string()))
+        .find(|path| path.exists() && path_has_anticheat_probe_targets(path))
+        .map(|path| GameDirEvidence { path, source: "steam_downloading", staged: true })
+}
+
+fn steamapps_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    roots.extend(crate::scan::macos_steam_library_paths());
+    roots.extend(crate::scan::wine_steam_library_paths());
+
+    if let Ok(configured) = std::env::var("METALSHARP_STEAM_LIBRARY_ROOTS") {
+        for root in configured.split(':').map(str::trim).filter(|root| !root.is_empty()) {
+            roots.push(PathBuf::from(root).join("steamapps"));
+            roots.push(PathBuf::from(root));
+        }
+    }
+
+    let avery = PathBuf::from("/Volumes/AverySSD/SteamLibrary/steamapps");
+    if avery.exists() {
+        roots.push(avery);
+    }
+
+    let mut seen = HashSet::new();
+    roots.into_iter().filter(|path| path.exists()).filter(|path| seen.insert(path.clone())).collect()
+}
+
+fn path_has_anticheat_probe_targets(root: &Path) -> bool {
+    if !root.exists() {
+        return false;
+    }
+    WalkDir::new(root)
+        .max_depth(MODULE_ASSET_MAX_DEPTH)
+        .into_iter()
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_type().is_file() && is_anticheat_probe_target(entry.path()))
 }
 
 fn collect_artifacts(prefix: &Path, game_dir: Option<&Path>) -> Vec<Value> {
@@ -383,8 +532,7 @@ fn collect_module_assets(game_dir: &Path) -> Vec<Value> {
         .filter(|entry| entry.file_type().is_file())
         .filter_map(|entry| {
             let path = entry.path();
-            let path_lc = path.to_string_lossy().to_ascii_lowercase();
-            if !path_lc.contains("easyanticheat") && !path_lc.contains("battleye") && !path_lc.contains("beclient") {
+            if !is_anticheat_probe_target(path) {
                 return None;
             }
             let name = path.file_name().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -408,20 +556,42 @@ fn collect_module_assets(game_dir: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn is_anticheat_probe_target(path: &Path) -> bool {
+    let path_lc = path.to_string_lossy().to_ascii_lowercase();
+    let name = path.file_name().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
+    path_lc.contains("easyanticheat")
+        || path_lc.contains("battleye")
+        || path_lc.contains("beclient")
+        || name == "start_protected_game.exe"
+}
+
 fn runtime_probe_checks(home: &Path) -> Value {
     let wine_root = home.join(".metalsharp").join("runtime").join("wine");
     let wine_bin = wine_root.join("bin").join("wine");
     let wine64_bin = wine_root.join("bin").join("wine64");
+    let wineserver_bin = wine_root.join("bin").join("wineserver");
     let wine_unix = wine_root.join("lib").join("wine").join("x86_64-unix");
     let dxmt_unix = wine_root.join("lib").join("dxmt").join("x86_64-unix");
+    let ntdll = wine_unix.join("ntdll.so");
+    let kernel32 = wine_root.join("lib").join("wine").join("x86_64-windows").join("kernel32.dll");
+    let user32 = wine_root.join("lib").join("wine").join("x86_64-windows").join("user32.dll");
 
     json!({
         "wineRoot": path_check(&wine_root),
         "wineBinary": path_check(&wine_bin),
+        "wineVersion": wine_version(&wine_bin),
         "wine64Binary": path_check(&wine64_bin),
+        "wineserverBinary": path_check(&wineserver_bin),
+        "wineserverProcessRunning": process_list_contains(&["wineserver"]),
+        "wineserverSocketRoot": path_check(&wineserver_socket_root()),
+        "activeWineserverSocketDirs": wineserver_socket_dirs(),
         "wineUnixLibDir": path_check(&wine_unix),
         "dxmtUnixLibDir": path_check(&dxmt_unix),
+        "ntdllUnix": path_check(&ntdll),
+        "kernel32Win64": path_check(&kernel32),
+        "user32Win64": path_check(&user32),
         "expectedDyldBoundary": "macos_dylib",
+        "linuxElfDirectHostLoadPossible": can_dlopen_linux_elf_directly(std::env::consts::OS),
     })
 }
 
@@ -568,7 +738,12 @@ fn evidence_status(eac: &EacSummary, steam: &SteamSummary, artifacts: &[Value]) 
     "unknown".to_string()
 }
 
-fn probe_status(eac: &EacSummary, module_assets: &[Value]) -> String {
+fn probe_status(eac: &EacSummary, module_assets: &[Value], game_dir_staged: bool) -> String {
+    if game_dir_staged
+        && module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("unknown"))
+    {
+        return "staged_download_incomplete".to_string();
+    }
     if eac.module_mapping_status.as_deref() == Some("failed")
         && eac.module_target.as_deref().unwrap_or("").starts_with("linux")
     {
@@ -650,6 +825,9 @@ fn probe_summary(status: &str, eac: &EacSummary) -> String {
         "darwin_module_assets_present" => {
             "The game folder contains Darwin module assets. This is the only direct dylib path MetalSharp could investigate without a Linux substrate.".to_string()
         },
+        "staged_download_incomplete" => {
+            "Anti-cheat launch targets were found in Steam's staged download area, but at least one target does not have a valid binary header yet. Treat this install as evidence-only, not launchable.".to_string()
+        },
         _ => "No anti-cheat module asset or module-mapping target was found yet.".to_string(),
     }
 }
@@ -668,6 +846,10 @@ fn probe_next_actions(status: &str) -> Vec<&'static str> {
         "module_mapping_failed" => vec![
             "Capture the full EAC launcher log and locate the downloaded module target.",
             "Compare the failing Wine version against Proton's EAC-enabled Wine tree.",
+        ],
+        "staged_download_incomplete" => vec![
+            "Let Steam finish or repair the download before attempting protected launch.",
+            "Re-run the probe after executable headers classify as PE, ELF, or Mach-O instead of unknown.",
         ],
         _ => vec![
             "Launch once through the protected route, then run /steam/anticheat-evidence and /steam/anticheat-probe again.",
@@ -700,6 +882,57 @@ fn path_check(path: &Path) -> Value {
     })
 }
 
+fn wine_version(wine_bin: &Path) -> Option<String> {
+    command_stdout(wine_bin, &["--version"])
+        .map(|out| out.lines().next().unwrap_or("").trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn wineserver_socket_root() -> PathBuf {
+    current_uid_string()
+        .map(|uid| PathBuf::from("/tmp").join(format!(".wine-{}", uid)))
+        .unwrap_or_else(|| PathBuf::from("/tmp/.wine-unknown"))
+}
+
+fn wineserver_socket_dirs() -> Vec<String> {
+    let root = wineserver_socket_root();
+    let mut dirs = fs::read_dir(&root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name().and_then(|v| v.to_str()).map(|name| name.starts_with("server-")).unwrap_or(false)
+        })
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs
+}
+
+fn current_uid_string() -> Option<String> {
+    command_stdout(Path::new("id"), &["-u"]).map(|out| out.trim().to_string()).filter(|uid| !uid.is_empty())
+}
+
+fn process_list_contains(patterns: &[&str]) -> bool {
+    let Some(output) = command_stdout(Path::new("ps"), &["-axo", "comm,args"]) else {
+        return false;
+    };
+    process_text_contains(&output, patterns)
+}
+
+fn process_text_contains(output: &str, patterns: &[&str]) -> bool {
+    output.lines().any(|line| patterns.iter().any(|pattern| line.contains(pattern)))
+}
+
+fn command_stdout(program: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn delta_group(id: &str, label: &str, checks: Vec<Value>) -> Value {
     json!({
         "id": id,
@@ -725,6 +958,16 @@ fn delta_capability(id: &str, importance: &str, present: bool, note: &str) -> Va
         "id": id,
         "importance": importance,
         "present": present,
+        "note": note,
+    })
+}
+
+fn delta_observation(id: &str, importance: &str, present: bool, value: Option<Value>, note: &str) -> Value {
+    json!({
+        "id": id,
+        "importance": importance,
+        "present": present,
+        "value": value,
         "note": note,
     })
 }
@@ -1006,7 +1249,7 @@ mod tests {
             module_mapping_status: Some("failed".to_string()),
             ..Default::default()
         };
-        assert_eq!(probe_status(&eac, &[]), "linux_module_on_darwin_boundary");
+        assert_eq!(probe_status(&eac, &[], false), "linux_module_on_darwin_boundary");
         let checks = module_contract_checks("macos", &eac, &[]);
         assert_eq!(checks.get("needsLinuxUserSpaceSubstrate").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(checks.get("needsVendorMacOSAsset").and_then(|v| v.as_bool()), Some(true));
@@ -1028,8 +1271,62 @@ mod tests {
     }
 
     #[test]
+    fn process_text_detects_wineserver_rows() {
+        let ps = "/bin/zsh something else\n/Users/alex/.metalsharp/runtime/wine/bin/wineserver wineserver\n";
+
+        assert!(process_text_contains(ps, &["wineserver"]));
+        assert!(!process_text_contains(ps, &["steam.exe"]));
+    }
+
+    #[test]
     fn substrate_decision_requires_linux_substrate_for_linux_module_on_macos() {
         let eac = EacSummary { module_target: Some("linux64".to_string()), ..Default::default() };
         assert_eq!(substrate_decision("macos", &eac, &[]), "requires_linux_user_space_substrate_or_vendor_macos_asset");
+    }
+
+    #[test]
+    fn module_assets_include_protected_launcher_and_unknown_staged_payloads() {
+        let game_dir = test_dir("anticheat-staged-payload");
+        let launcher = game_dir.join("Game").join("start_protected_game.exe");
+        std::fs::create_dir_all(launcher.parent().expect("launcher parent")).expect("create launcher parent");
+        std::fs::write(&launcher, [0_u8; 16]).expect("write staged launcher");
+
+        let assets = collect_module_assets(&game_dir);
+        assert!(assets.iter().any(|asset| {
+            asset.get("path").and_then(|v| v.as_str()).unwrap_or_default().ends_with("start_protected_game.exe")
+                && asset.get("format").and_then(|v| v.as_str()) == Some("unknown")
+        }));
+        assert_eq!(probe_status(&EacSummary::default(), &assets, true), "staged_download_incomplete");
+
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn module_assets_classify_linux_eac_modules() {
+        let game_dir = test_dir("anticheat-linux-module");
+        let module = game_dir.join("EasyAntiCheat").join("easyanticheat_x64.so");
+        std::fs::create_dir_all(module.parent().expect("module parent")).expect("create module parent");
+        std::fs::write(&module, b"\x7fELF\x02\x01").expect("write elf module");
+
+        let assets = collect_module_assets(&game_dir);
+        assert!(assets.iter().any(|asset| {
+            asset.get("path").and_then(|v| v.as_str()).unwrap_or_default().ends_with("easyanticheat_x64.so")
+                && asset.get("format").and_then(|v| v.as_str()) == Some("elf")
+        }));
+        assert_eq!(probe_status(&EacSummary::default(), &assets, false), "linux_module_assets_present");
+
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("metalsharp-{}-{}", name, test_suffix()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
+    fn test_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
     }
 }
