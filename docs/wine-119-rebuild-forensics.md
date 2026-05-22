@@ -1079,6 +1079,22 @@ Current provenance auditing is handled by `scripts/audit-i386-winemetal-provenan
 
 This makes the current `dxmt32` candidate explicitly non-release-proven. It can still be used as the first live M9 experiment because it is a real i386 DXMT WineMetal build, but a final Wine 11.9 release needs either a clean 11.9-built i386 artifact or a documented compatibility exception backed by live Nidhogg 2 proof.
 
+The release-grade i386 build input preflight is handled by `scripts/preflight-i386-winemetal-build.sh`:
+
+- command:
+  - `scripts/preflight-i386-winemetal-build.sh /Volumes/AverySSD/metalsharp/dxmt-src /tmp/metalsharp-wine119-parity/candidates/dxmt32/wine /tmp/metalsharp-i386-winemetal-build-preflight-current`
+- current result:
+  - fail only on `source-clean`
+  - Wine root reports `wine-11.9`
+  - 11.9 runtime has executable `bin/winebuild`
+  - 11.9 runtime has `lib/wine/i386-windows/libwinecrt0.a`, `libntdll.a`, and `dbghelp.dll`
+  - local tools exist: Meson, Ninja, `i686-w64-mingw32-gcc`, `g++`, `ar`, `strip`, and `windres`
+- proposed build shape:
+  - `meson setup <tmp-build-dir> /Volumes/AverySSD/metalsharp/dxmt-src --cross-file /Volumes/AverySSD/metalsharp/dxmt-src/build-win32.txt --buildtype release -Dwine_install_path=/tmp/metalsharp-wine119-parity/candidates/dxmt32/wine -Dwine_builtin_dll=true -Denable_tests=false`
+  - `ninja -C <tmp-build-dir> src/winemetal/winemetal.dll`
+
+That narrows the i386 blocker: the machine has the 11.9 Wine inputs needed to attempt a correct build, but the DXMT source must be made clean or forked before the output can be treated as release-grade.
+
 A third disposable candidate was prepared from the 11.9 bundle plus that explicit i386 artifact:
 
 - command:

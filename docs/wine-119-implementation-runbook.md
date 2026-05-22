@@ -81,6 +81,7 @@ Allowed files:
 - `scripts/audit-electron-launch-routes.mjs`
 - `scripts/audit-mscompatdb-hook-surface.sh`
 - `scripts/audit-i386-winemetal-provenance.sh`
+- `scripts/preflight-i386-winemetal-build.sh`
 - `scripts/capture-steam-game-proof.sh`
 - `scripts/run-wine119-live-control-suite.sh`
 - `scripts/verify-wine119-live-control-suite.sh`
@@ -103,6 +104,7 @@ bash -n scripts/runtime-manifest.sh \
   scripts/audit-wine119-readiness.sh \
   scripts/audit-mscompatdb-hook-surface.sh \
   scripts/audit-i386-winemetal-provenance.sh \
+  scripts/preflight-i386-winemetal-build.sh \
   scripts/audit-wine119-objective-completion.sh
 
 node --check scripts/audit-electron-launch-routes.mjs
@@ -147,6 +149,11 @@ scripts/audit-i386-winemetal-provenance.sh \
   /Volumes/AverySSD/metalsharp/dxmt-src \
   /Volumes/AverySSD/metalsharp/dxmt-src/build32/src/winemetal/winemetal.dll \
   /tmp/metalsharp-i386-winemetal-provenance-current
+
+scripts/preflight-i386-winemetal-build.sh \
+  /Volumes/AverySSD/metalsharp/dxmt-src \
+  /tmp/metalsharp-wine119-parity/candidates/dxmt32/wine \
+  /tmp/metalsharp-i386-winemetal-build-preflight-current
 ```
 
 Expected candidate meaning:
@@ -167,6 +174,11 @@ Expected candidate meaning:
   artifact is only an experiment if the audit reports a dirty source tree or
   Wine 11.5 linker inputs; it cannot satisfy the release-proven 11.9 i386
   requirement by itself.
+- i386 WineMetal build preflight must show the shaped 11.9 runtime has
+  `bin/winebuild`, `libwinecrt0.a`, `libntdll.a`, and `dbghelp.dll` for
+  `i386-windows`, plus local Meson/Ninja/i686 mingw tools. A failing
+  `source-clean` gate means the next branch must clean or fork DXMT source
+  before producing a release-grade 11.9 i386 artifact.
 - Pass 1 does not run readiness or objective completion audits; those require a
   Pass 2 parity home and backend probe.
 
