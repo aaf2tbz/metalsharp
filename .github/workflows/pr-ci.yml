@@ -115,6 +115,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install evidence tools
+        run: brew install ripgrep
+
       - name: Script syntax
         run: |
           bash -n \
