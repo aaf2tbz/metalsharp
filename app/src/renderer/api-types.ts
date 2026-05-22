@@ -13,6 +13,12 @@ interface SteamStatus {
   installed: boolean;
   path?: string;
   login_state?: LoginState;
+  gptk_installed?: boolean;
+  gptk_toolkit_installed?: boolean;
+  gptk_steam_installed?: boolean;
+  gptk_installing?: boolean;
+  gptk_running?: boolean;
+  gptk_synced?: boolean;
   mac_installed?: boolean;
   mac_running?: boolean;
   mac_path?: string;

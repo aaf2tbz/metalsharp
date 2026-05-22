@@ -282,6 +282,46 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
             }
         },
+        (Method::Post, "/steam/gptk-launch") => {
+            app_log("Launching GPTK Wine Steam...");
+            match steam::launch_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-launch", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/steam/gptk-install") => {
+            app_log("Installing GPTK Wine Steam...");
+            match steam::install_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-install", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/steam/gptk-sync") => {
+            app_log("Installing GPTK Wine Steam...");
+            match steam::sync_gptk_steam_prefix() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-install", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/steam/gptk-stop") => {
+            app_log("Stopping GPTK Wine Steam...");
+            match steam::stop_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-stop", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
         (Method::Post, "/steam/mac-launch") => {
             app_log("Launching macOS Steam...");
             match steam::launch_macos_steam() {
@@ -376,11 +416,22 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let compatdata = bottles::load_steam_compatdata(id).ok();
-                            let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
-                                Ok(started) => started,
-                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            let steam_started = if matches!(pipeline, mtsp::engine::PipelineId::M13) {
+                                match steam::ensure_gptk_steam_ready_for_game_launch() {
+                                    Ok(started) => started,
+                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                                }
+                            } else {
+                                match steam::ensure_wine_steam_ready_for_game_launch() {
+                                    Ok(started) => started,
+                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                                }
                             };
-                            let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
+                            let bottle_prefix = if matches!(pipeline, mtsp::engine::PipelineId::M13) {
+                                steam::gptk_steam_prefix()
+                            } else {
+                                std::path::PathBuf::from(&bottle.prefix_path)
+                            };
                             mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
                                 |(pid, game_type, log_path)| {
                                     let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
@@ -399,7 +450,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "pipeline": pipeline,
                                         "recipe": recipe,
                                         "steam_started": steam_started,
-                                        "steam_runtime": "background",
+                                        "steam_runtime": if matches!(pipeline, mtsp::engine::PipelineId::M13) {
+                                            "offline_gptk"
+                                        } else {
+                                            "background"
+                                        },
                                         "env_applied_to": "game_process",
                                         "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
                                     })

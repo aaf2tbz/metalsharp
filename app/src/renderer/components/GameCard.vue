@@ -100,15 +100,26 @@ const launchModeOptions = computed(() => {
   byId.set("auto", { id: "auto", name: `Auto${pipelineName.value !== "Auto" ? ` (${pipelineName.value})` : ""}` });
   for (const option of pipelineOptions.value) {
     if (option.id === "mac_steam" && !props.game.has_native_build) continue;
-    byId.set(option.id, option);
+    byId.set(option.id, normalizePipelineOption(option));
   }
   for (const option of props.game.available_pipelines ?? []) {
     if (option.id === "mac_steam" && !props.game.has_native_build) continue;
-    byId.set(option.id, option);
+    byId.set(option.id, normalizePipelineOption(option));
   }
   if (props.game.has_native_build) byId.set("mac_steam", { id: "mac_steam", name: "MacOS Steam" });
   return [...byId.values()];
 });
+
+const hasAnticheatLaunch = computed(() =>
+  launchModeOptions.value.some((option) => option.id === "m13" || option.id === "gptk"),
+);
+
+function normalizePipelineOption(option: PipelineOption): PipelineOption {
+  if (option.id === "m13" || option.id === "gptk") {
+    return { ...option, name: "M-Anticheat" };
+  }
+  return option;
+}
 
 onMounted(async () => {
   const savedLaunchMode = localStorage.getItem(launchModeStorageKey.value);
@@ -273,6 +284,14 @@ function formatBytes(bytes: number): string {
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="primary-action-row">
             <button class="btn btn-play" @click="emit('play', selectedLaunchMode)">Play</button>
+            <button
+              v-if="hasAnticheatLaunch"
+              class="btn btn-secondary anticheat-play-button"
+              title="Launch through M-Anticheat"
+              @click="emit('play', 'm13')"
+            >
+              M-Anti
+            </button>
             <select v-model="selectedLaunchMode" class="launch-mode-select" title="Launch mode">
               <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
                 {{ option.name }}
@@ -578,6 +597,12 @@ function formatBytes(bytes: number): string {
 }
 .primary-action-row .btn-play {
   flex: 0 0 76px;
+}
+.anticheat-play-button {
+  flex: 0 0 68px;
+  min-width: 0;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 .wide-action {
   width: 100%;

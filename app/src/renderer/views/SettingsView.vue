@@ -17,6 +17,10 @@ interface CacheSummary {
 const config = inject<Ref<AppConfig | null>>("config")!;
 const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
+const gptkToolkitInstalled = inject<Ref<boolean>>("gptkToolkitInstalled")!;
+const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
+const gptkSteamInstalling = inject<Ref<boolean>>("gptkSteamInstalling")!;
+const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
@@ -98,6 +102,66 @@ async function toggleSteam() {
       toast.show("Steam started", "success");
     } else {
       toast.show(result?.error ?? "Failed to start Steam", "error");
+    }
+  }
+}
+
+async function installGptkSteam() {
+  if (!gptkToolkitInstalled.value) {
+    toast.show("Install Game Porting Toolkit first, then refresh MetalSharp", "error");
+    return;
+  }
+  if (gptkSteamInstalling.value) {
+    toast.show("GPTK Steam setup is already running", "success");
+    return;
+  }
+  toast.show("Starting GPTK Steam setup...", "success");
+  const result = await api<{ ok: boolean; installing?: boolean; installed?: boolean; error?: string }>(
+    "POST",
+    "/steam/gptk-install",
+  );
+  if (result?.ok) {
+    gptkSteamInstalling.value = result.installing ?? false;
+    gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
+    toast.show(result.installed ? "GPTK Steam is already installed" : "Steam installer launched in GPTK Wine", "success");
+    await reloadLibrary();
+  } else {
+    toast.show(result?.error ?? "Could not start GPTK Steam setup", "error");
+  }
+}
+
+async function toggleGptkSteam() {
+  if (!gptkSteamInstalled.value) {
+    await installGptkSteam();
+    return;
+  }
+  if (gptkSteamRunning.value) {
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+    if (result?.ok && result.running === false) {
+      gptkSteamRunning.value = false;
+      toast.show("GPTK Steam stopped");
+    } else {
+      gptkSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "GPTK Steam is still running", "error");
+    }
+  } else {
+    if (wineSteamRunning.value) {
+      if (!confirm("Stop Wine Steam and start GPTK Steam?")) return;
+      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+      if (!stopResult?.ok || stopResult.running !== false) {
+        wineSteamRunning.value = stopResult?.running ?? true;
+        toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+        return;
+      }
+      wineSteamRunning.value = false;
+    }
+    toast.show("Starting GPTK Steam...", "success");
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-launch");
+    if (result?.ok) {
+      gptkSteamRunning.value = true;
+      toast.show("GPTK Steam started", "success");
+    } else {
+      toast.show(result?.error ?? "Failed to start GPTK Steam", "error");
     }
   }
 }
@@ -269,6 +333,34 @@ function cacheStatusText(cache: CacheSummary | null): string {
           <span v-else class="badge badge-warn">Not Installed</span>
           <button v-if="wineSteamInstalled" class="btn btn-secondary btn-sm" @click="toggleSteam">
             {{ wineSteamRunning ? "Stop Steam" : "Start Steam" }}
+          </button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">GPTK Steam (M-Anticheat)</div>
+          <div class="settings-desc">Separate Windows Steam install inside Game Porting Toolkit Wine</div>
+        </div>
+        <div class="settings-value">
+          <span v-if="!gptkToolkitInstalled" class="badge badge-warn">GPTK Missing</span>
+          <span v-else-if="gptkSteamInstalling" class="badge badge-warn">Installing</span>
+          <span v-else-if="gptkSteamInstalled" class="badge badge-ok">Installed</span>
+          <span v-else class="badge badge-warn">Not Installed</span>
+          <button
+            v-if="gptkToolkitInstalled"
+            class="btn btn-secondary btn-sm"
+            :disabled="gptkSteamInstalling"
+            @click="gptkSteamInstalled ? toggleGptkSteam() : installGptkSteam()"
+          >
+            {{
+              gptkSteamInstalling
+                ? "Installing..."
+                : gptkSteamInstalled
+                  ? gptkSteamRunning
+                    ? "Stop GPTK Steam"
+                    : "Start GPTK Steam"
+                  : "Install GPTK Steam"
+            }}
           </button>
         </div>
       </div>
