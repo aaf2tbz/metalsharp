@@ -542,13 +542,21 @@ pub fn steam_game_bottle_id(appid: u32) -> String {
     format!("steam_{}", appid)
 }
 
+pub fn steam_game_bottle_id_for_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> String {
+    if matches!(pipeline, crate::mtsp::engine::PipelineId::M13) {
+        format!("gptk_steam_{}", appid)
+    } else {
+        steam_game_bottle_id(appid)
+    }
+}
+
 pub fn ensure_steam_game_bottle(
     appid: u32,
     name: &str,
     game_dir: Option<&Path>,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    let id = steam_game_bottle_id(appid);
+    let id = steam_game_bottle_id_for_pipeline(appid, pipeline);
     let now = timestamp_secs();
     let runtime_profile = runtime_profile_for_pipeline(pipeline);
     let launch_prefix = steam_launch_prefix_for_pipeline(pipeline);
@@ -1380,7 +1388,10 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let bottle = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
-    let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
+    let prefix = bottle
+        .as_ref()
+        .map(|b| PathBuf::from(&b.prefix_path))
+        .unwrap_or_else(|| steam_launch_prefix_for_pipeline(pipeline));
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let compatdata = load_steam_compatdata(appid).ok();
@@ -3785,6 +3796,8 @@ mod tests {
     fn steam_bottle_ids_are_appid_scoped() {
         assert_eq!(steam_game_bottle_id(620), "steam_620");
         assert_ne!(steam_game_bottle_id(620), steam_game_bottle_id(504230));
+        assert_eq!(steam_game_bottle_id_for_pipeline(620, crate::mtsp::engine::PipelineId::M12), "steam_620");
+        assert_eq!(steam_game_bottle_id_for_pipeline(620, crate::mtsp::engine::PipelineId::M13), "gptk_steam_620");
     }
 
     #[test]
@@ -3823,6 +3836,14 @@ mod tests {
             crate::steam::gptk_steam_prefix()
         );
         assert_eq!(steam_launch_prefix_for_pipeline(crate::mtsp::engine::PipelineId::M12), steam_launch_prefix());
+    }
+
+    #[test]
+    fn m13_steam_game_bottle_identity_stays_separate_from_wine_steam() {
+        assert_ne!(
+            steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M13),
+            steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M12)
+        );
     }
 
     #[test]
@@ -3876,7 +3897,7 @@ mod tests {
     #[test]
     fn m13_compatdata_reports_gptk_steam_prefix() {
         let manifest = BottleManifest {
-            id: steam_game_bottle_id(1245620),
+            id: steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M13),
             name: "ELDEN RING".into(),
             bottle_type: BottleType::Steam,
             steam_app_id: Some(1245620),
@@ -3900,6 +3921,7 @@ mod tests {
 
         let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::M13);
 
+        assert_eq!(record.bottle_id, "gptk_steam_1245620");
         assert_eq!(record.prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
         assert_eq!(record.steam_prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
         assert_eq!(record.launch_pipeline, "d3dmetal");
