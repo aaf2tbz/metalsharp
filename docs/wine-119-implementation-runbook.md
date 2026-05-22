@@ -160,6 +160,10 @@ scripts/probe-wine119-parity-backend.sh \
   /private/tmp/metalsharp-home-wine119-dxmt32-state \
   /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2
 
+node scripts/audit-electron-launch-routes.mjs \
+  --library-json /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/steam-library.json \
+  --out-dir /private/tmp/metalsharp-home-wine119-dxmt32-state/backend-probe-main03327-guard-v2/electron-launch-routes
+
 scripts/audit-wine119-readiness.sh \
   /private/tmp/metalsharp-home-wine119-dxmt32-state \
   /tmp/metalsharp-wine119-readiness-current
@@ -171,8 +175,10 @@ Required proof before live launch:
 - Wine reports `wine-11.9`.
 - Backend reports version `0.33.27`.
 - Active bottle/compatdata/config manifests have zero references to `/Users/alexmondello/.metalsharp`.
-- Copied historical `compatdata/*/logs` directories are absent.
+- Copied historical `compatdata/*/logs` files are absent; empty log directories
+  created by backend scans do not contaminate proof.
 - Nidhogg 2, Schedule I, and Subnautica BZ manifests point at the parity MetalSharp home.
+- Electron route audit proves renderer `auto` and explicit M9/M11 selections call `/steam/launch-game` for the control games.
 - Readiness audit has only the live-suite failure remaining.
 
 ## Pass 3: Live Parity Gate
@@ -204,10 +210,8 @@ Required pass conditions:
 - Each game has a live game PID, not just a Steam URL/helper PID.
 - If Wine Steam was already running before a game launch, the pre-existing `Steam.exe` PID survives that launch.
 - `lsof` and launch summaries prove the expected DXMT/WineMetal/MoltenVK/cache paths.
-- Before release, repeat or supplement this proof through the app-facing route:
-  confirm the renderer-selected launch method calls `/steam/launch-game` for
-  each configured M9/M11 control, or launch through Electron and capture the
-  same proof bundle.
+- Before release, keep the app-facing route audit green and, if the packaged UI
+  changes, repeat this proof through Electron before tag bump.
 - M12 remains a mapped rebuild surface until a dedicated M12 control game has
   passed with the same process/module/cache proof.
 

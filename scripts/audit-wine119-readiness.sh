@@ -216,10 +216,10 @@ else
     fail "parity-home" "cannot check stale state refs without source_metalsharp_home"
 fi
 
-if find "$parity_home/.metalsharp/compatdata" -type d -name logs -print -quit 2>/dev/null | grep -q .; then
-    fail "parity-home" "copied compatdata logs are present and can contaminate proof"
+if find "$parity_home/.metalsharp/compatdata" -path '*/logs/*' -type f -print -quit 2>/dev/null | grep -q .; then
+    fail "parity-home" "copied compatdata log files are present and can contaminate proof"
 else
-    pass "parity-home" "copied compatdata logs are pruned"
+    pass "parity-home" "copied compatdata log files are pruned"
 fi
 
 for appid in 535520 3164500 848450; do
@@ -246,6 +246,15 @@ if [[ -f "$probe/status.json" ]]; then
         || fail "backend" "preflight status does not report version 0.33.27"
 else
     warn "backend" "latest guard-v2 backend preflight not found"
+fi
+
+route_audit="$probe/electron-launch-routes/electron-launch-route-audit.json"
+if [[ -f "$route_audit" ]]; then
+    contains "$route_audit" '"ok"[[:space:]]*:[[:space:]]*true' \
+        && pass "electron-route" "app-facing route audit keeps controls on /steam/launch-game" \
+        || fail "electron-route" "app-facing route audit did not pass"
+else
+    warn "electron-route" "app-facing route audit not found at $route_audit"
 fi
 append
 

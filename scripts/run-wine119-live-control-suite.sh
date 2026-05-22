@@ -160,8 +160,8 @@ validate_control_state_paths "Nidhogg 2" 535520
 validate_control_state_paths "Schedule I" 3164500
 validate_control_state_paths "Subnautica Below Zero" 848450
 
-if find "$parity_home/.metalsharp/compatdata" -type d -name logs -print -quit 2>/dev/null | grep -q .; then
-    echo "refusing to launch games: copied compatdata logs are present and could contaminate proof" >&2
+if find "$parity_home/.metalsharp/compatdata" -path '*/logs/*' -type f -print -quit 2>/dev/null | grep -q .; then
+    echo "refusing to launch games: copied compatdata log files are present and could contaminate proof" >&2
     echo "reinstall parity state with scripts/install-wine119-parity-home.sh to prune historical logs" >&2
     exit 1
 fi

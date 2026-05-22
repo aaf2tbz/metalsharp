@@ -84,7 +84,9 @@ function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
   const method = launchMethod.toLowerCase();
   if (method === "auto") {
     const recommended = recommendedLaunchMethod(game);
-    return recommended ? isWineSteamRouteId(recommended) : false;
+    if (!recommended) return true;
+    if (isMacSteamLaunch(recommended)) return false;
+    return isWineSteamRouteId(recommended);
   }
   return isWineSteamRouteId(method);
 }

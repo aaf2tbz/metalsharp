@@ -783,7 +783,7 @@ Isolated parity-home installation is handled by `scripts/install-wine119-parity-
 - safety rails:
   - the installer refuses to target the real `HOME` or the source MetalSharp home
   - parity homes must live under `/tmp` or `/private/tmp` unless `METALSHARP_ALLOW_NON_TMP_PARITY_HOME=1` is explicitly set
-  - copied `compatdata/*/logs` directories are pruned so old 11.5 launch logs cannot contaminate Wine 11.9 proof summaries
+  - copied `compatdata/*/logs` files are pruned so old 11.5 launch logs cannot contaminate Wine 11.9 proof summaries; empty log directories created by backend scans are harmless
 
 Latest isolated install result:
 
@@ -908,7 +908,17 @@ Live control verification is handled by `scripts/verify-wine119-live-control-sui
 
 This verifier is the final local release gate before any Wine 11.9 tag bump. A green manifest or backend preflight is not enough.
 
-Current verifier limitation: the live suite exercises the backend `/steam/launch-game` route directly. The Electron path is `LibraryView.vue` -> `window.metalsharpAPI.backendRequest` -> `RustBridge.request` -> backend HTTP, and `auto` can still fall through to `/game/launch-auto` when Steam route metadata is missing or stale. Before a Wine 11.9 release candidate is marked app-ready, add an app-facing proof pass that launches the same controls through the renderer-selected route or proves the renderer will call `/steam/launch-game` for each configured M9/M11 control.
+App-facing route verification is handled by `scripts/audit-electron-launch-routes.mjs`. The Electron path is `LibraryView.vue` -> `window.metalsharpAPI.backendRequest` -> `RustBridge.request` -> backend HTTP. The audit mirrors the Library view routing decision and proves the control games resolve to `/steam/launch-game` from the renderer-facing model, including `auto` fallback behavior when library route metadata is missing.
+
+- command:
+  - `node scripts/audit-electron-launch-routes.mjs --base-url http://127.0.0.1:<port> --out-dir <probe>/electron-launch-routes`
+- behavior:
+  - reads `/steam/library`
+  - probes `/mtsp/pipelines?appid=<control>` for backend recommended route context
+  - checks Nidhogg 2, Schedule I, and Subnautica BZ
+  - requires both renderer `auto` and explicit M9/M11 selections to resolve to `/steam/launch-game`
+
+This plugs the previous proof gap where backend direct launches were covered but Electron's route selection could still fall through to `/game/launch-auto`.
 
 Current M12 limitation: the first live gate intentionally targets the reported regressions: Nidhogg 2 M9, Schedule I M11, and Subnautica Below Zero M11. M12 remains a mapped rebuild surface, not a passed live surface. Add a dedicated M12 control before enabling D3D12/M12 behavior changes beyond this parity plan.
 

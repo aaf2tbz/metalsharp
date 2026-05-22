@@ -136,6 +136,14 @@ fi
 curl -fsS "$base_url/setup/dependencies" > "$out_dir/setup-dependencies.json" 2> "$out_dir/setup-dependencies.curl.log" || true
 curl -fsS "$base_url/runtime/host-abi" > "$out_dir/runtime-host-abi.json" 2> "$out_dir/runtime-host-abi.curl.log" || true
 curl -fsS "$base_url/bottles/profiles" > "$out_dir/bottles-profiles.json" 2> "$out_dir/bottles-profiles.curl.log" || true
+curl -fsS "$base_url/steam/library" > "$out_dir/steam-library.json" 2> "$out_dir/steam-library.curl.log" || true
+
+if command -v node >/dev/null 2>&1 && [[ -s "$out_dir/steam-library.json" ]]; then
+    node "$repo_root/scripts/audit-electron-launch-routes.mjs" \
+        --base-url "$base_url" \
+        --out-dir "$out_dir/electron-launch-routes" \
+        > "$out_dir/electron-launch-routes.log" 2>&1 || true
+fi
 
 {
     echo "# MetalSharp Parity Backend Probe"
@@ -146,6 +154,8 @@ curl -fsS "$base_url/bottles/profiles" > "$out_dir/bottles-profiles.json" 2> "$o
     echo "setup_dependencies_json=$out_dir/setup-dependencies.json"
     echo "runtime_host_abi_json=$out_dir/runtime-host-abi.json"
     echo "bottles_profiles_json=$out_dir/bottles-profiles.json"
+    echo "steam_library_json=$out_dir/steam-library.json"
+    echo "electron_launch_route_audit=$out_dir/electron-launch-routes/electron-launch-route-audit.md"
     echo "backend_stdout=$out_dir/backend.stdout.log"
     echo "backend_stderr=$out_dir/backend.stderr.log"
 } > "$out_dir/summary.txt"
