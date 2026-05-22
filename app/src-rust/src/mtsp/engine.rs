@@ -45,6 +45,7 @@ pub struct PipelineNode {
 }
 
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
+const DXMT_70_PERCENT_UPSCALE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
 
 pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
@@ -70,6 +71,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
                     EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
                 ],
                 launch_args: vec![],
                 alternatives: vec![
@@ -99,6 +101,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
                 ],
                 launch_args: vec![],
                 alternatives: vec![
@@ -133,6 +136,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
                 ],
                 launch_args: vec![],
                 alternatives: vec![
@@ -160,6 +164,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
                 ],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::Steam, PipelineId::MacSteam],

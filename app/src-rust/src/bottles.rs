@@ -2336,6 +2336,7 @@ fn launch_component_installer(
     cmd.args(&installer.args)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
     if let Some(parent) = installer.path.parent() {
@@ -2377,6 +2378,7 @@ fn launch_wineboot_repair(
     cmd.arg("-u")
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "+loaddll")
+        .env("WINEDEBUGGER", "none")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
@@ -2415,6 +2417,7 @@ fn run_wine_reg_set_windows_version(
         .arg("/f")
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);

@@ -292,7 +292,8 @@ static bool test_drm_detector_kernel_anticheat() {
                                'e', 'a', 't', 0x00, 'B', 'i', 'n', 'a', 'r', 'y'};
     auto results = detector.scanMemory(fakeExe, sizeof(fakeExe));
 
-    return detector.hasKernelAntiCheat(results) && !detector.isCompatible(results);
+    return !detector.hasKernelAntiCheat(results) && detector.requiresRuntimeProof(results) &&
+           !detector.isCompatible(results);
 }
 
 static bool test_drm_detector_clean_binary() {

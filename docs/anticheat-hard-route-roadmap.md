@@ -41,7 +41,7 @@ POST /steam/anticheat-probe
 {"appid":1888160}
 ```
 
-This probe does not load or tamper with anti-cheat modules. It classifies the host/runtime boundary from inspectable evidence: host OS and architecture, Wine runtime paths, EAC module target, game-local anti-cheat module assets, binary magic (`ELF`, `PE`, or `Mach-O`), and whether the selected module implies a Linux-user-space substrate requirement on macOS. For Rubicon, the expected current status is `linux_module_on_darwin_boundary`.
+This probe does not load or tamper with anti-cheat modules. It classifies the host/runtime boundary from inspectable evidence: host OS and architecture, Wine runtime paths, EAC module target, game-local anti-cheat module assets, binary magic (`ELF`, `PE`, or `Mach-O`), and whether the selected module implies a Linux-user-space substrate requirement on macOS. If Steam has only staged a download under `steamapps/downloading/<appid>` and the protected launcher or game executables still have unknown/null headers, the probe returns `staged_download_incomplete` instead of treating that payload as launchable. For Rubicon with completed protected-launch evidence, the expected current status is `linux_module_on_darwin_boundary`.
 
 ## Phase 3: Proton/Wine Delta Audit
 
@@ -64,8 +64,11 @@ POST /steam/anticheat-delta-audit
 This report groups the local runtime into audit surfaces:
 
 - Wine loader/syscall baseline: `wine`, `wineserver`, Unix `ntdll.so`, and Windows `ntdll.dll` lanes.
+- Wineserver state: whether a live `wineserver` process and per-user socket directory are present during runtime observation. Absence is expected in a clean idle install, but protected launch evidence should show the correct shared server boundary.
+- Win32 translation contract: PE `kernel32.dll`, `user32.dll`, and `ntdll.dll` plus Unix-side `ntdll.so`, proving that Windows API calls have the Wine translation lanes required before any graphics or anti-cheat diagnosis is meaningful.
 - Steam runtime bridge: Windows `steamclient.dll`/`steamclient64.dll` and whether a Proton-style `lsteamclient` bridge exists.
 - Linux runtime assumptions: pressure-vessel, seccomp, and Linux namespaces, which are comparison rows on macOS rather than direct requirements.
+- Darwin executable module boundary: whether the host can directly load Linux ELF modules, whether any vendor Mach-O module is present, and whether shipped Linux ELF assets imply a Linux user-space substrate.
 - Graphics runtime adjacency: DXMT, DXVK, and MoltenVK assets that must stay intact while protected launch is debugged.
 - Anti-cheat module contract: whether EAC selected a Linux module, whether Darwin can directly load it, and whether a vendor macOS module is present.
 
@@ -86,6 +89,24 @@ POST /steam/anticheat-substrate-decision
 ```
 
 The decision report synthesizes the evidence, probe, and delta audit into one explicit result. For Rubicon, the expected current decision is `requires_linux_user_space_substrate_or_vendor_macos_asset`.
+
+### Phase 4: Harmless Host Contract Probe
+
+Add an endpoint that records the host contract without loading protected modules:
+
+```http
+POST /steam/anticheat-contract-probe
+{"appid":1888160}
+```
+
+This endpoint uses the appid only for scoping existing logs and game-local identity. The host probe itself uses synthetic temporary data:
+
+- anonymous read/write memory mapping followed by read/execute protection transition,
+- synthetic ELF direct-load attempt through the host dynamic loader,
+- Wine loader and wineserver path/state evidence,
+- selected EAC module target from scoped protected-launch logs.
+
+Expected macOS result for Elden Ring and Rubicon is `linux_elf_host_gap_confirmed`: EAC selected `linux64`, Wine reached module mapping, and the host dynamic loader does not accept Linux ELF modules directly. That does not prove anti-cheat support is impossible; it proves the next implementation target is a truthful Linux user-space substrate or vendor-supported macOS module assets, not another graphics route.
 
 Allowed paths:
 

@@ -16,11 +16,10 @@ const percent = computed(() => {
 });
 
 const stages = [
-  { name: "D3D11", color: "#66c0f4" },
-  { name: "Metal", color: "#4fc3f7" },
-  { name: "DXGI", color: "#29b6f6" },
-  { name: "DXMT", color: "#03a9f4" },
-  { name: "FNA", color: "#039be5" },
+  { name: "[D3D]" },
+  { name: "[DXMT]" },
+  { name: "[x86_64]" },
+  { name: "[Metal]" },
 ];
 
 const MAX_START_RETRIES = 20;
@@ -116,8 +115,9 @@ onUnmounted(() => {
   <div class="migration-overlay">
     <div class="migration-card">
       <div class="migration-header">
+        <div class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
         <h1 class="migration-title">MetalSharp Migration</h1>
-        <p class="migration-subtitle">Upgrading runtime to latest version</p>
+        <p class="migration-subtitle">Preparing Wine 11.5 runtime lanes</p>
       </div>
 
       <div class="pipeline-vis">
@@ -160,12 +160,32 @@ onUnmounted(() => {
 
 .migration-card {
   text-align: center;
-  max-width: 480px;
-  padding: 48px 40px;
+  width: min(560px, calc(100vw - 40px));
+  padding: 40px 28px;
 }
 
 .migration-header {
-  margin-bottom: 40px;
+  margin-bottom: 32px;
+}
+
+.loading-icon {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 18px auto;
+  border: 2px solid rgba(102, 192, 244, 0.18);
+  border-top-color: #66c0f4;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.loading-icon.complete {
+  animation: none;
+  border-color: #4caf50;
+}
+
+.loading-icon.error {
+  animation: none;
+  border-color: #ef5350;
 }
 
 .migration-title {
@@ -173,7 +193,6 @@ onUnmounted(() => {
   font-weight: 700;
   color: #fff;
   margin: 0 0 8px 0;
-  letter-spacing: -0.02em;
 }
 
 .migration-subtitle {
@@ -188,7 +207,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 0;
-  margin-bottom: 36px;
+  margin-bottom: 32px;
+  flex-wrap: nowrap;
 }
 
 .pipeline-stage {
@@ -207,6 +227,7 @@ onUnmounted(() => {
   border-radius: 6px;
   padding: 4px 10px;
   transition: all 0.3s ease;
+  white-space: nowrap;
 }
 
 .pipeline-stage.active .stage-label {
@@ -220,9 +241,13 @@ onUnmounted(() => {
   50% { opacity: 1; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .pipeline-arrow {
   color: rgba(102, 192, 244, 0.3);
-  margin: 0 2px;
+  margin: 0 4px;
 }
 
 .progress-section {

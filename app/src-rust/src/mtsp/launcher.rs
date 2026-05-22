@@ -33,6 +33,7 @@ struct LaunchLogContext<'a> {
     cwd: &'a Path,
     exe_name: &'a str,
     args: &'a [&'a str],
+    cache_paths: Option<&'a CachePaths>,
 }
 
 #[derive(Default)]
@@ -89,6 +90,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg(&bridge_exe)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .env("METALSHARP_STEAM_BRIDGE_PORT", port.to_string())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -326,7 +328,11 @@ pub fn launch_custom_with_options(
 
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -353,6 +359,10 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
+        if let Some(cache) = cache_paths.as_ref() {
+            writeln!(log, "shader_cache={}/", cache.shader)?;
+            writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
+        }
         writeln!(log, "--- wine output ---")?;
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -435,7 +445,11 @@ fn launch_dxmt_metal_with_context(
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -456,7 +470,15 @@ fn launch_dxmt_metal_with_context(
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &node.launch_args,
+            cache_paths: cache_paths.as_ref(),
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -497,7 +519,11 @@ fn launch_wine_bare_with_context(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env(runtime_lib_key, &dyld_path);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -514,7 +540,15 @@ fn launch_wine_bare_with_context(
     attach_launch_log(
         &mut cmd,
         log_path,
-        LaunchLogContext { appid, node, prefix: &prefix, cwd: exe_dir, exe_name: &exe_name, args: &node.launch_args },
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &node.launch_args,
+            cache_paths: cache_paths.as_ref(),
+        },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
@@ -539,6 +573,10 @@ fn attach_launch_log(
     writeln!(log, "cwd={}", context.cwd.display())?;
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
+    if let Some(cache) = context.cache_paths {
+        writeln!(log, "shader_cache={}/", cache.shader)?;
+        writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
+    }
     writeln!(log, "--- wine output ---")?;
     let stdout = log.try_clone()?;
     cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -706,13 +744,15 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
     let mut env = vec![
         ("METALSHARP_SHADER_CACHE_PATH".to_string(), shader_dir.clone()),
         ("METALSHARP_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()),
+        ("METALSHARP_CACHE_SUMMARY".to_string(), format!("shader={};pipeline={}", shader_dir, pipeline_dir)),
         ("MTL_SHADER_CACHE_DIR".to_string(), shader_dir.clone()),
     ];
 
     match node.backend {
         "dxmt" => {
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir));
-            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
+            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
+            env.push(("DXMT_LOG_PATH".to_string(), pipeline_dir));
         },
         "dxvk" => {
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
@@ -725,7 +765,8 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
         "wine32" | "wine" | "wine-steam" => {
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir.clone()));
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
-            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
+            env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
+            env.push(("DXMT_LOG_PATH".to_string(), pipeline_dir));
         },
         "mono" | "macos-steam" => {
             env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
@@ -1164,9 +1205,49 @@ mod tests {
 
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
+        assert!(keys.contains("DXMT_LOG_PATH"));
+        assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
         assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
         assert!(!keys.contains("DXVK_LOG_PATH"));
         assert!(!keys.contains("VK_ICD_FILENAMES"));
+    }
+
+    #[test]
+    fn dxmt_family_env_uses_seventy_percent_upscale_and_cache_paths() {
+        for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let home = test_dir(&format!("dxmt-env-{:?}", pipeline_id));
+            let node = get_pipeline(pipeline_id);
+
+            let env = steam_pipeline_env_pairs(&home, node, 42);
+            let config = env.iter().find(|(key, _)| key == "DXMT_CONFIG").map(|(_, value)| value.as_str());
+            let summary =
+                env.iter().find(|(key, _)| key == "METALSHARP_CACHE_SUMMARY").map(|(_, value)| value.as_str());
+
+            assert!(config.unwrap_or_default().contains("d3d11.metalSpatialUpscaleFactor=1.43"));
+            assert!(config.unwrap_or_default().contains("d3d11.preferredMaxFrameRate=60"));
+            assert!(summary.unwrap_or_default().contains("/shader-cache/"));
+            assert!(summary.unwrap_or_default().contains("/pipeline-cache/"));
+            assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
+            let _ = std::fs::remove_dir_all(home);
+        }
+    }
+
+    #[test]
+    fn m32_env_keeps_wine_fallback_cache_without_dxmt_config() {
+        let home = test_dir("m32-env");
+        let node = get_pipeline(PipelineId::M32);
+
+        let env = steam_pipeline_env_pairs(&home, node, 77);
+        let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
+
+        assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
+        assert!(keys.contains("METALSHARP_PIPELINE_CACHE_PATH"));
+        assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
+        assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
+        assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
+        assert!(keys.contains("DXVK_STATE_CACHE_PATH"));
+        assert!(!keys.contains("DXMT_CONFIG"));
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
@@ -1183,6 +1264,9 @@ mod tests {
         assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
+        assert!(keys.contains("DXMT_LOG_PATH"));
+        assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
+        assert!(keys.contains("DXMT_CONFIG"));
         assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));

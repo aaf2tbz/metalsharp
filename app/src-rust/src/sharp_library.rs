@@ -624,6 +624,7 @@ fn launch_msi_installer(
         .arg(staged_msi)
         .env("WINEPREFIX", prefix_path.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
     if let Some(parent) = staged_msi.parent() {

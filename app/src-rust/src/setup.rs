@@ -646,6 +646,7 @@ fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Re
         if wine.exists() {
             let mut cmd = std::process::Command::new(&wine);
             cmd.env("WINEPREFIX", &prefix_str)
+                .env("WINEDEBUGGER", "none")
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())
@@ -702,6 +703,7 @@ fn prepare_goldberg_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Resu
         if ms_wine.exists() {
             let mut cmd = std::process::Command::new(&ms_wine);
             cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .env("WINEDEBUGGER", "none")
                 .arg("wineboot")
                 .arg("--init")
                 .stdout(std::process::Stdio::null())

@@ -334,3 +334,53 @@ Evidence:
 Next action:
 
 Launch Rubicon through the Steam game bottle and capture whether the game reaches EAC bootstrap, offline mode, or an online/vendor block.
+
+### 2026-05-21: Protected EAC module mapping proof
+
+Read-only anti-cheat endpoint probes were run against the completed AverySSD Steam installs for:
+
+- `1245620` / `ELDEN RING`
+- `1888160` / `ARMORED CORE VI FIRES OF RUBICON`
+
+Install evidence:
+
+- Both manifests report `StateFlags 4`.
+- Both protected launchers and game executables have valid `PE` headers.
+- Both game folders contain game-local `EasyAntiCheat/Settings.json` plus `easyanticheat_eos_setup.exe`.
+
+Important diagnostic correction:
+
+- The shared Wine Steam prefix can contain EAC launcher logs for multiple games.
+- Anti-cheat evidence must be scoped by appid and the game-local EAC `productid` / `deploymentid`.
+- Without that filter, Elden Ring probes can accidentally summarize Rubicon's EAC launcher log.
+
+Current protected-launch status:
+
+- Elden Ring resolves to product `773d3a68f76f4b2ebebc5b4127bbad3e` and deployment `d2842e93d53b4c0c98a8f963ebb4c222`.
+- Rubicon resolves to product `789399aada914e66bb3c3facebc5d709` and deployment `b978a2afd2254108bbb39201d0a24a98`.
+- Both titles independently select EAC module target `linux64`.
+- Both titles reach Wine module mapping under `wine-11.5`.
+- Both titles fail with launcher exit `206` and `Failed to load the anti-cheat module`.
+
+Current substrate decision:
+
+- `linux_module_on_darwin_boundary`
+- `requires_linux_user_space_substrate_or_vendor_macos_asset`
+
+Next action:
+
+Prototype harmless loader/runtime contract probes for the Linux user-space boundary before changing protected launch behavior.
+
+Implementation follow-up:
+
+- `POST /steam/anticheat-contract-probe` records a harmless host contract probe.
+- The probe uses synthetic temporary data only; it does not load protected anti-cheat modules.
+- The probe reports memory mapping/protection behavior, synthetic ELF direct-load behavior, Wine loader/wineserver state, and the scoped game EAC identity.
+- For both Elden Ring and Rubicon, the expected macOS status is `linux_elf_host_gap_confirmed` until MetalSharp has either a truthful Linux user-space substrate or vendor-supported macOS module assets.
+
+Local probe result:
+
+- Elden Ring and Rubicon both return `linux_elf_host_gap_confirmed`.
+- Anonymous memory can transition from writable to executable in the backend process.
+- The host dynamic loader rejects a synthetic ELF `.so` as not valid Mach-O.
+- This narrows the next implementation target to the Linux ELF module host/substrate boundary rather than M11/M12 graphics routing.
