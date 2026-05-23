@@ -173,8 +173,17 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
-    let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
-    deploy_recipe_dlls(&recipe)?;
+    let deployed_sources: Vec<String> = if node.uses_winedllpath_routing() {
+        validate_recipe_runtime(&recipe)?;
+        if let Some(game_dir) = recipe.game_dir.as_ref() {
+            cleanup_legacy_injections(game_dir)?;
+        }
+        node.winedllpath_dirs.iter().map(|d| d.to_string()).collect()
+    } else {
+        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+        deploy_recipe_dlls(&recipe)?;
+        sources
+    };
 
     Ok(serde_json::json!({
         "ok": true,
@@ -206,12 +215,19 @@ pub fn prepare_steam_pipeline_env(
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
-    if !recipe.dlls.is_empty() {
+    if !node.uses_winedllpath_routing() && !recipe.dlls.is_empty() {
         deploy_recipe_dlls(&recipe)?;
+    } else if let Some(game_dir) = recipe.game_dir.as_ref() {
+        cleanup_legacy_injections(game_dir)?;
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let env = steam_pipeline_env_pairs(&home, node, appid);
+    let mut env = steam_pipeline_env_pairs(&home, node, appid);
+    if node.uses_winedllpath_routing() {
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        env.push(("WINEDLLPATH".to_string(), winedllpath));
+    }
     Ok((env, recipe))
 }
 
@@ -311,7 +327,7 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
-    if node.deploy_dlls.is_empty() {
+    if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
@@ -333,6 +349,11 @@ pub fn launch_custom_with_options(
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
         .env(runtime_lib_key, &dyld_path);
+
+    if node.uses_winedllpath_routing() {
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        cmd.env("WINEDLLPATH", &winedllpath);
+    }
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -435,7 +456,12 @@ fn launch_dxmt_metal_with_context(
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    deploy_recipe_dlls(&recipe)?;
+    if node.uses_winedllpath_routing() {
+        validate_recipe_runtime(&recipe)?;
+        cleanup_legacy_injections(game_dir)?;
+    } else {
+        deploy_recipe_dlls(&recipe)?;
+    }
 
     let dyld_path = build_dyld(&ms_root, &node.dyld_paths);
     let runtime_lib_key =
@@ -450,6 +476,11 @@ fn launch_dxmt_metal_with_context(
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
         .env(runtime_lib_key, &dyld_path);
+
+    if node.uses_winedllpath_routing() {
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        cmd.env("WINEDLLPATH", &winedllpath);
+    }
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -691,6 +722,45 @@ fn find_mono_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
+}
+
+fn build_winedllpath(ms_root: &PathBuf, dirs: &[&str]) -> String {
+    dirs.iter().map(|d| ms_root.join(d).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
+}
+
+fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let injection_dir = game_dir.join(".metalsharp");
+    let manifest_path = injection_dir.join("injections.json");
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+
+    let manifest_str = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+    let manifest: serde_json::Value = match serde_json::from_str(&manifest_str) {
+        Ok(v) => v,
+        Err(_) => {
+            let _ = std::fs::remove_dir_all(&injection_dir);
+            return Ok(());
+        },
+    };
+
+    if let Some(dlls) = manifest.get("dlls").and_then(|d| d.as_array()) {
+        for dll in dlls {
+            if let Some(backup) = dll.get("backup_path").and_then(|b| b.as_str()) {
+                let backup_path = PathBuf::from(backup);
+                if backup_path.exists() {
+                    if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
+                        let dest_path = PathBuf::from(dest);
+                        let _ = std::fs::copy(&backup_path, &dest_path);
+                        let _ = std::fs::remove_file(&backup_path);
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&injection_dir);
+    Ok(())
 }
 
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {

@@ -37,11 +37,18 @@ pub struct PipelineNode {
     pub requires_wine: bool,
     pub wine_overrides: Option<&'static str>,
     pub dyld_paths: Vec<&'static str>,
+    pub winedllpath_dirs: Vec<&'static str>,
     pub deploy_dlls: Vec<DllDeploy>,
     pub env_vars: Vec<EnvVar>,
     pub launch_args: Vec<&'static str>,
     pub alternatives: Vec<PipelineId>,
     pub shader_cache_subdir: Option<&'static str>,
+}
+
+impl PipelineNode {
+    pub fn uses_winedllpath_routing(&self) -> bool {
+        !self.winedllpath_dirs.is_empty()
+    }
 }
 
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
@@ -59,6 +66,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
@@ -92,6 +100,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
@@ -125,6 +134,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     "d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll" },
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll" },
@@ -157,6 +167,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/wine/i386-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
@@ -179,6 +190,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: None,
                 dyld_paths: vec!["lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -194,6 +206,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![
                     EnvVar { key: "FNA3D_DRIVER", value: "OpenGL" },
@@ -212,6 +225,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -227,6 +241,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -242,6 +257,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: None,
                 dyld_paths: vec!["lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
