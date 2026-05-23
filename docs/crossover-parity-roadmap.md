@@ -1,6 +1,6 @@
 # MetalSharp CrossOver Parity Roadmap
 
-Status: **In Progress** — PR #114 (codex/crossover-parity)
+Status: **In Progress** — PR #115 (`beta7-foundational-work`)
 
 ## Completed Phases
 
@@ -29,9 +29,10 @@ Status: **In Progress** — PR #114 (codex/crossover-parity)
 |-------|-------------|--------|
 | 1C | mscompatdb.so v2 | Deferred — long-term architecture |
 
-Based on a deep technical comparison between CrossOver 26.1.0 and MetalSharp v0.33.34
-(current main at 72827cc), this roadmap tracks the work needed to reach and exceed
-CrossOver's runtime reliability for Windows game compatibility on macOS.
+Based on a deep technical comparison between CrossOver 26.1.0 and the Beta 7
+foundational runtime work in PR #115, this roadmap tracks the work needed to
+reach and exceed CrossOver's runtime reliability for Windows game compatibility
+on macOS.
 
 ## Scope
 
@@ -166,94 +167,75 @@ lib64/apple_gptk/
 
 **Changes**:
 
-- `installer.rs`: New install step `install_gptk_bundle()` that:
+- `installer.rs`: New install step `install_gptk_runtime()` that:
   1. Checks if GPTK is already present at `~/.metalsharp/runtime/wine/lib/gptk/`
-  2. If not, downloads `gptk-bundle.tar.zst` from
-     `https://github.com/aaf2tbz/metalsharp/releases/download/bundles/gptk-bundle.tar.zst`
-  3. Extracts to `~/.metalsharp/runtime/wine/lib/gptk/` with this layout:
+     and `~/.metalsharp/runtime/wine/lib/external/D3DMetal.framework/`
+  2. If not, finds or downloads the bundled release asset `gptk.tar.zst` from
+     `https://github.com/aaf2tbz/metalsharp/releases/download/bundles/gptk.tar.zst`
+  3. Stages PE wrappers under `lib/gptk/` and D3DMetal under `lib/external/`:
      ```
+     lib/external/
+       D3DMetal.framework/Versions/A/D3DMetal
+       D3DMetal.framework/Versions/A/Resources/*.dylib
      lib/gptk/
-       external/
-         D3DMetal.framework/Versions/A/D3DMetal
-         D3DMetal.framework/Versions/A/Resources/default.metallib
-         D3DMetal.framework/Versions/A/Resources/libdxcompiler.dylib
-         D3DMetal.framework/Versions/A/Resources/libdxilconv.dylib
-         D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib
-         D3DMetal.framework/Versions/A/Resources/libdxccontainer.dylib
-         libd3dshared.dylib
        x86_64-windows/
+         d3d10.dll
+         d3d11.dll
          d3d12.dll
          dxgi.dll
          nvapi64.dll
          nvngx.dll
          atidxx64.dll
        x86_64-unix/
-         d3d12.so -> ../external/libd3dshared.dylib
-         dxgi.so -> ../external/libd3dshared.dylib
+         *.so
      ```
-  4. Verifies D3DMetal.framework is loadable via `dlopen` check
+  4. Verifies required PE DLLs, `D3DMetal.framework/Versions/A/D3DMetal`, and at
+     least one framework resource `.dylib` are present and non-empty
   5. Records install state in `~/.metalsharp/setup.json`
 
-- `installer.rs` macOS install steps: Add `GPTKBundle` step between
-  `DXMTRuntime` and `GoldbergSteamEmulator` in the install sequence.
+- `installer.rs` macOS install steps: Run `GPTK D3DMetal Runtime` between
+  `DXMT Metal Runtime` and `Goldberg Steam Emu` in the install sequence.
 
-- `launcher.rs`: Update M13 launch to prefer the bundled GPTK at
-  `~/.metalsharp/runtime/wine/lib/gptk/` over `/Applications/Game Porting Toolkit.app/`.
-  Keep the external path as a fallback for users who already have it installed.
+- `launcher.rs`: M13 continues to use MetalSharp's Wine and routes GPTK through
+  `WINEDLLPATH`, with the GPTK PE DLL directory staged at
+  `~/.metalsharp/runtime/wine/lib/gptk/x86_64-windows`.
 
-  Current M13 wine64 path:
-  ```rust
-  // launcher.rs:552-591 -- currently hardcodes external GPTK path
-  let gptk_wine = "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64";
-  ```
-  New logic:
-  ```rust
-  let gptk_wine = if bundled_gptk_exists() {
-      format!("{}/lib/gptk/wine/bin/wine64", ms_root)
-  } else {
-      "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64".into()
-  };
-  ```
+- `steam.rs`: GPTK Steam launches use the same M13 routing path; no separate
+  bundled GPTK wine64 is required.
 
-  Note: M13 also needs GPTK's own wine64 binary. The bundle should include it,
-  OR MetalSharp should use its own Wine binary with WINEDLLPATH pointing to
-  the bundled GPTK DLLs (which is the cleaner approach and what Phase 1B enables).
-
-- `steam.rs`: Update GPTK Steam install to use bundled GPTK paths instead of
-  external app path.
-
-- `bottles.rs`: Add `gptk_bundle` as a detectable component. Runtime doctor
-  should report if the bundled GPTK is present and its D3DMetal version.
-
-- `migrate.rs`: Add migration entry for GPTK bundle installation state.
+- `bottles.rs`: Keep GPTK-specific bottle checks aligned with the staged runtime:
+  NVIDIA vendor stubs are a DXMT-compatible component, while the GPTK-only AMD
+  stub is tracked separately for M13.
 
 **Bundle creation** (build-time):
-- New script `scripts/build-gptk-bundle.sh` that:
-  1. Locates `/Applications/Game Porting Toolkit.app/` on the build machine
-  2. Extracts D3DMetal.framework, libd3dshared.dylib, and PE wrapper DLLs
-  3. Packages as `gptk-bundle.tar.zst`
-  4. Uploads to GitHub releases as a bundle asset
+- `scripts/install-gptk-runtime.sh` stages an Apple GPTK redist or mounted GPTK
+  DMG into MetalSharp's local runtime layout:
+  1. Copies PE wrapper DLLs to `runtime/wine/lib/gptk/x86_64-windows/`
+  2. Copies Unix modules to `runtime/wine/lib/gptk/x86_64-unix/`
+  3. Copies D3DMetal.framework and `libd3dshared.dylib` to
+     `runtime/wine/lib/external/`
+  4. The staged layout is packaged for release as `gptk.tar.zst`
 
 - OR: Download Apple's GPTK DMG at build time and extract programmatically
   (this is what CrossOver does in their build pipeline).
 
 **Fallback behavior**:
-- If the bundled GPTK is not present AND external GPTK is not installed,
-  the runtime doctor should report `gptk_missing` with instructions to either:
-  1. Run `POST /setup/install-all` to download the bundle
-  2. Or install Apple's GPTK manually
+- If the bundled GPTK payload is not present or incomplete, setup should fail the
+  GPTK step with an explicit incomplete-runtime error instead of reporting the
+  runtime ready.
 
 **Size budget**: D3DMetal.framework (~5.3 MB) + dylibs (~60 MB) + PE wrappers (~0.5 MB)
 = ~66 MB compressed. This is significant but necessary for zero-setup D3D12 support.
 
 **Verification**:
 - `POST /setup/install-all` installs GPTK bundle
-- M13 launches Elden Ring using only the bundled GPTK (no external GPTK installed)
-- Runtime doctor reports `gptk_bundle: installed` with D3DMetal version
-- Fallback to external GPTK still works if bundled is missing
+- M13 launches Elden Ring using MetalSharp Wine plus the bundled GPTK PE DLLs and
+  D3DMetal framework
+- Runtime doctor/setup reports GPTK incomplete when required PE DLLs or framework
+  contents are missing
 
-**Files**: `installer.rs`, `launcher.rs`, `steam.rs`, `bottles.rs`, `migrate.rs`,
-new `scripts/build-gptk-bundle.sh`
+**Files**: `installer.rs`, `launcher.rs`, `steam.rs`, `bottles.rs`,
+`scripts/install-gptk-runtime.sh`
 
 ### Phase 1C: mscompatdb.so v2 -- Wine ntdll interception layer
 
