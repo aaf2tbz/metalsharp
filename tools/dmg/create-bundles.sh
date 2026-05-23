@@ -16,6 +16,8 @@ mkdir -p "$BUNDLE_DIR"
 BUNDLES=(
     "metalsharp_bundle.tar.zst"
     "metalsharp_bundle2.tar.zst"
+    "dxmt.tar.zst"
+    "gptk.tar.zst"
     "SteamSetup.exe"
     "steamwebhelper.exe"
     "steamwebhelper-wrapper.c"

@@ -8,6 +8,7 @@ pub enum PipelineId {
     M10,
     M11,
     M12,
+    M13,
     M32,
     FnaArm64,
     Steam,
@@ -37,11 +38,18 @@ pub struct PipelineNode {
     pub requires_wine: bool,
     pub wine_overrides: Option<&'static str>,
     pub dyld_paths: Vec<&'static str>,
+    pub winedllpath_dirs: Vec<&'static str>,
     pub deploy_dlls: Vec<DllDeploy>,
     pub env_vars: Vec<EnvVar>,
     pub launch_args: Vec<&'static str>,
     pub alternatives: Vec<PipelineId>,
     pub shader_cache_subdir: Option<&'static str>,
+}
+
+impl PipelineNode {
+    pub fn uses_winedllpath_routing(&self) -> bool {
+        !self.winedllpath_dirs.is_empty()
+    }
 }
 
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
@@ -59,12 +67,15 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -92,11 +103,14 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -125,6 +139,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     "d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll" },
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll" },
@@ -132,6 +147,8 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -157,9 +174,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/wine/i386-windows", "lib/dxmt/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -171,6 +190,29 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 shader_cache_subdir: Some("m9"),
             },
             PipelineNode {
+                id: PipelineId::M13,
+                name: "M13",
+                description: "D3D11/D3D12 via Apple Game Porting Toolkit (D3DMetal)",
+                backend: "gptk",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/gptk/x86_64-unix", "lib/external"],
+                winedllpath_dirs: vec!["lib/gptk/x86_64-windows"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d11.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "dxgi.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "atidxx64.dll" },
+                ],
+                env_vars: vec![],
+                launch_args: vec![],
+                alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::Steam],
+                shader_cache_subdir: Some("m13"),
+            },
+            PipelineNode {
                 id: PipelineId::M32,
                 name: "M32",
                 description: "32-bit Wine fallback",
@@ -179,6 +221,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: None,
                 dyld_paths: vec!["lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -194,6 +237,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![
                     EnvVar { key: "FNA3D_DRIVER", value: "OpenGL" },
@@ -212,6 +256,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -227,6 +272,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: false,
                 wine_overrides: None,
                 dyld_paths: vec![],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -242,6 +288,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: None,
                 dyld_paths: vec!["lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -279,6 +326,7 @@ impl PipelineId {
         match normalized.as_str() {
             "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
+            "m13" | "gptk" | "d3dmetal" | "steam_d3dmetal" => Some(PipelineId::M13),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
@@ -296,6 +344,7 @@ impl PipelineId {
             PipelineId::M10 => "d3d10_metal",
             PipelineId::M11 => "dxmt_metal",
             PipelineId::M12 => "dxmt_metal12",
+            PipelineId::M13 => "gptk_d3dmetal",
             PipelineId::M32 => "wined3d_32",
             PipelineId::FnaArm64 => "xna_fna_arm64",
             PipelineId::Steam => "steam",
@@ -400,13 +449,9 @@ mod tests {
 
         let m9_dlls: std::collections::HashSet<_> =
             m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
-        assert_eq!(
-            m9_dlls,
-            std::collections::HashSet::from([
-                ("lib/wine/x86_64-windows", "d3d9.dll"),
-                ("lib/wine/i386-windows", "d3d9.dll"),
-            ])
-        );
+        assert!(m9_dlls.contains(&("lib/wine/x86_64-windows", "d3d9.dll")));
+        assert!(m9_dlls.contains(&("lib/wine/i386-windows", "d3d9.dll")));
+        assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "nvapi64.dll")));
         assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
         assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
 

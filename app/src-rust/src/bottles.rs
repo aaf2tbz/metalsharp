@@ -49,6 +49,7 @@ pub enum RuntimeProfile {
     M10,
     M11,
     M12,
+    M13,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -272,6 +273,14 @@ pub struct SteamRuntimeDiagnostic {
     pub components: Vec<RuntimeComponent>,
     pub actions: Vec<BottleAction>,
     pub compatdata: Option<SteamCompatdataRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recipe_missing_components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recipe_missing_dlls: Vec<String>,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub recipe_env: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -695,6 +704,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
+            crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -1036,6 +1046,14 @@ pub fn prepare_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::
     manifest.health = BottleHealth::NeedsRepair;
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+
+    let system32 = prefix.join("drive_c/windows/system32");
+    let seeded_marker = prefix.join("drive_c/metalsharp-post-wineboot-seeded");
+    if system32.exists() && !seeded_marker.exists() {
+        let seed_log = bottle_logs_dir(id).join("post-wineboot-seed.log");
+        let _ = seed_post_wineboot_config(&prefix, &seed_log);
+    }
+
     diagnose_bottle(id)
 }
 
@@ -1143,6 +1161,73 @@ pub fn repair_component(
             },
             asset_path: None,
             log_path: Some(log_path.to_string_lossy().to_string()),
+            pid: None,
+        });
+    }
+
+    if matches!(component_id, "gpu_vendor_stubs" | "gptk_amd_stub") {
+        let home = dirs::home_dir().unwrap_or_default();
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32)?;
+
+        let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+        let gptk_dir = ms_root.join("lib").join("gptk").join("x86_64-windows");
+        let stub_files: &[(&str, bool)] = match component_id {
+            "gpu_vendor_stubs" => &[("nvapi64.dll", false), ("nvngx.dll", false)],
+            "gptk_amd_stub" => &[("atidxx64.dll", true)],
+            _ => &[],
+        };
+        let mut copied = 0usize;
+        for (stub, gptk_only) in stub_files {
+            let dst = system32.join(stub);
+            if dst.exists() {
+                copied += 1;
+                continue;
+            }
+            let src = if *gptk_only {
+                if gptk_dir.join(stub).exists() {
+                    gptk_dir.join(stub)
+                } else {
+                    continue;
+                }
+            } else if dxmt_dir.join(stub).exists() {
+                dxmt_dir.join(stub)
+            } else if gptk_dir.join(stub).exists() {
+                gptk_dir.join(stub)
+            } else {
+                continue;
+            };
+            if fs::copy(&src, &dst).is_ok() {
+                copied += 1;
+            }
+        }
+
+        let installed = copied == stub_files.len();
+        mark_component_state(
+            &mut manifest,
+            component_id,
+            if installed { ComponentState::Installed } else { ComponentState::Missing },
+        );
+        manifest.health = if installed && components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if installed { "installed" } else { "asset_missing" }.to_string(),
+            detail: if installed {
+                format!("Deployed {} GPU vendor stub(s) to prefix system32", copied)
+            } else if component_id == "gptk_amd_stub" {
+                "GPTK AMD vendor stub not found in GPTK runtime dirs".to_string()
+            } else {
+                "GPU vendor stubs not found in DXMT/GPTK runtime dirs".to_string()
+            },
+            asset_path: None,
+            log_path: None,
             pid: None,
         });
     }
@@ -1332,6 +1417,62 @@ pub fn handle_set_windows_version(body: &serde_json::Map<String, Value>) -> Valu
     }
 }
 
+pub fn handle_apply_font_substitutions(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let log_path = bottle_logs_dir(id).join("font-subs.log");
+    match apply_font_substitutions(&prefix, &log_path) {
+        Ok(pid) => json!({"ok": true, "pid": pid, "id": id}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_seed_post_wineboot(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let log_path = bottle_logs_dir(id).join("post-wineboot.log");
+    match seed_post_wineboot_config(&prefix, &log_path) {
+        Ok(pid) => json!({"ok": true, "pid": pid, "id": id}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_verify_directx(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let verification = verify_directx_jun2010(&prefix);
+    json!({
+        "ok": true,
+        "id": id,
+        "complete": verification.complete,
+        "present_count": verification.present.len(),
+        "missing_count": verification.missing.len(),
+        "present": verification.present,
+        "missing": verification.missing,
+    })
+}
+
 pub fn handle_compatibility_matrix() -> Value {
     json!({
         "ok": true,
@@ -1375,6 +1516,21 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let compatdata = load_steam_compatdata(appid).ok();
+    let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    let recipe = crate::mtsp::rules::get_game_recipe(appid);
+    let missing_check_dlls = recipe
+        .as_ref()
+        .map(|r| {
+            let system32 = prefix.join("drive_c/windows/system32");
+            let syswow64 = prefix.join("drive_c/windows/syswow64");
+            r.check_dlls
+                .iter()
+                .filter(|dll| !system32.join(dll).exists() && !syswow64.join(dll).exists())
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let recipe_env = recipe.as_ref().map(|r| r.env.clone()).unwrap_or_default();
     let report = SteamRuntimeDiagnostic {
         appid: Some(appid),
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
@@ -1386,6 +1542,10 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         components,
         actions,
         compatdata,
+        recipe_missing_components: recipe_deps,
+        recipe_name: recipe.map(|r| r.name),
+        recipe_missing_dlls: missing_check_dlls,
+        recipe_env,
     };
     json!({"ok": true, "report": report})
 }
@@ -1407,6 +1567,56 @@ pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
     {
         Ok(record) => json!({"ok": true, "compatdata": record}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Value {
+    let appid = match parse_steam_runtime_doctor_appid(body) {
+        Ok(appid) => appid,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+    let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    let manifest = match ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let missing = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    if missing.is_empty() {
+        return json!({"ok": true, "appid": appid, "installed": [], "message": "all recipe dependencies satisfied"});
+    }
+
+    let mut reports = Vec::new();
+    let mut errors = Vec::new();
+    for component_id in &missing {
+        match repair_component(&manifest.id, component_id, false) {
+            Ok(report) => {
+                reports.push(report);
+            },
+            Err(e) => {
+                errors.push(format!("{}: {}", component_id, e));
+            },
+        }
+    }
+
+    let mut manifest = match load_bottle(&manifest.id) {
+        Ok(m) => m,
+        Err(_) => return json!({"ok": false, "appid": appid, "installed": reports, "errors": errors}),
+    };
+    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    let _ = save_bottle(&manifest);
+
+    let still_missing = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    let actually_installed = missing.iter().filter(|c| !still_missing.contains(c)).count();
+
+    if errors.is_empty() && still_missing.is_empty() {
+        json!({"ok": true, "appid": appid, "installed": reports, "actually_installed": actually_installed, "message": format!("installed {} components", actually_installed)})
+    } else if errors.is_empty() {
+        json!({"ok": false, "appid": appid, "installed": reports, "actually_installed": actually_installed, "still_missing": still_missing, "message": format!("{} of {} components installed, {} still missing", actually_installed, missing.len(), still_missing.len())})
+    } else {
+        json!({"ok": false, "appid": appid, "installed": reports, "actually_installed": actually_installed, "still_missing": still_missing, "errors": errors})
     }
 }
 
@@ -1433,6 +1643,7 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::M10,
         RuntimeProfile::M11,
         RuntimeProfile::M12,
+        RuntimeProfile::M13,
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
@@ -1461,7 +1672,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "Game Installer",
             BottleArch::Wow64,
             true,
-            &["vcrun2019", "directx_jun2010", "corefonts"][..],
+            &["vcrun2019", "vcrun2013", "directx_jun2010", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::M9 => (
@@ -1489,8 +1700,15 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019"][..],
+            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs"][..],
             crate::mtsp::engine::PipelineId::M12,
+        ),
+        RuntimeProfile::M13 => (
+            "GPTK D3DMetal",
+            BottleArch::Win64,
+            true,
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
+            crate::mtsp::engine::PipelineId::M13,
         ),
         RuntimeProfile::Dotnet => (
             ".NET",
@@ -1585,6 +1803,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
+        crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -1599,6 +1818,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
+        "m13" | "gptk" | "d3dmetal" => Some(RuntimeProfile::M13),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
@@ -1732,6 +1952,9 @@ fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<Ru
             "vcredist" => {
                 ids.insert("vcrun2019".to_string());
             },
+            "vcredist_2013" => {
+                ids.insert("vcrun2013".to_string());
+            },
             "directx" => {
                 ids.insert("directx_jun2010".to_string());
             },
@@ -1782,7 +2005,21 @@ fn components_from_installscript(path: &Path) -> Vec<String> {
         }
     };
     maybe_add("vcrun2019", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
-    maybe_add("directx_jun2010", &["directx", "dxsetup", "d3dx9_43", "xinput1_3"]);
+    maybe_add("vcrun2013", &["vcredist_2013", "msvcr120", "msvcp120", "visual c++ 2013"]);
+    maybe_add(
+        "directx_jun2010",
+        &[
+            "directx",
+            "dxsetup",
+            "d3dx9_43",
+            "d3dx10_43",
+            "d3dx11_43",
+            "xinput1_3",
+            "xaudio2_7",
+            "x3daudio1_7",
+            "D3DCompiler_43",
+        ],
+    );
     maybe_add("dotnet48", &["dotnet", ".net framework", "ndp48", "ndp472", "ndp462", "ndp452"]);
     maybe_add("webview2", &["webview2", "edgewebview"]);
     maybe_add("openal", &["openal", "oalinst"]);
@@ -1825,6 +2062,75 @@ fn inspect_components(prefix: &Path, components: &[RuntimeComponent]) -> Vec<Run
         .collect()
 }
 
+pub fn verify_directx_jun2010(prefix: &Path) -> DirectXVerification {
+    let system32 = prefix.join("drive_c/windows/system32");
+    let syswow64 = prefix.join("drive_c/windows/syswow64");
+    let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+
+    let mut present = Vec::new();
+    let mut missing = Vec::new();
+
+    let expected = [
+        ("d3dx9_24.dll", "D3DX9"),
+        ("d3dx9_25.dll", "D3DX9"),
+        ("d3dx9_26.dll", "D3DX9"),
+        ("d3dx9_27.dll", "D3DX9"),
+        ("d3dx9_28.dll", "D3DX9"),
+        ("d3dx9_29.dll", "D3DX9"),
+        ("d3dx9_30.dll", "D3DX9"),
+        ("d3dx9_31.dll", "D3DX9"),
+        ("d3dx9_32.dll", "D3DX9"),
+        ("d3dx9_33.dll", "D3DX9"),
+        ("d3dx9_34.dll", "D3DX9"),
+        ("d3dx9_35.dll", "D3DX9"),
+        ("d3dx9_36.dll", "D3DX9"),
+        ("d3dx9_37.dll", "D3DX9"),
+        ("d3dx9_38.dll", "D3DX9"),
+        ("d3dx9_39.dll", "D3DX9"),
+        ("d3dx9_40.dll", "D3DX9"),
+        ("d3dx9_41.dll", "D3DX9"),
+        ("d3dx9_42.dll", "D3DX9"),
+        ("d3dx9_43.dll", "D3DX9"),
+        ("d3dx10_33.dll", "D3DX10"),
+        ("d3dx10_34.dll", "D3DX10"),
+        ("d3dx10_35.dll", "D3DX10"),
+        ("d3dx10_36.dll", "D3DX10"),
+        ("d3dx10_37.dll", "D3DX10"),
+        ("d3dx10_38.dll", "D3DX10"),
+        ("d3dx10_39.dll", "D3DX10"),
+        ("d3dx10_40.dll", "D3DX10"),
+        ("d3dx10_41.dll", "D3DX10"),
+        ("d3dx10_42.dll", "D3DX10"),
+        ("d3dx10_43.dll", "D3DX10"),
+        ("d3dx11_42.dll", "D3DX11"),
+        ("d3dx11_43.dll", "D3DX11"),
+        ("D3DCompiler_42.dll", "D3DCompiler"),
+        ("D3DCompiler_43.dll", "D3DCompiler"),
+        ("xinput1_3.dll", "XInput"),
+        ("xaudio2_7.dll", "XAudio"),
+        ("x3daudio1_7.dll", "X3DAudio"),
+        ("XAPOFX1_5.dll", "XAPOFX"),
+    ];
+
+    for (dll, _family) in &expected {
+        if has(dll) {
+            present.push(dll.to_string());
+        } else {
+            missing.push(dll.to_string());
+        }
+    }
+
+    let complete = missing.is_empty();
+    DirectXVerification { present, missing, complete }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DirectXVerification {
+    pub present: Vec<String>,
+    pub missing: Vec<String>,
+    pub complete: bool,
+}
+
 fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) -> ComponentState {
     let drive_c = prefix.join("drive_c");
     let windows = drive_c.join("windows");
@@ -1860,8 +2166,25 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2019" => {
-            if system32.join("vcruntime140.dll").exists() || syswow64.join("vcruntime140.dll").exists() {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+            let core_count = core.iter().filter(|dll| has(dll)).count();
+            if core_count == core.len() {
                 ComponentState::Installed
+            } else if core_count > 0 {
+                ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "vcrun2013" => {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core = ["msvcr120.dll", "msvcp120.dll"];
+            let core_count = core.iter().filter(|dll| has(dll)).count();
+            if core_count == core.len() {
+                ComponentState::Installed
+            } else if core_count > 0 {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -1874,12 +2197,13 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "directx_jun2010" => {
-            if system32.join("d3dx9_43.dll").exists()
-                || syswow64.join("d3dx9_43.dll").exists()
-                || system32.join("xinput1_3.dll").exists()
-                || syswow64.join("xinput1_3.dll").exists()
-            {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core_dlls = ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"];
+            let core_ok = core_dlls.iter().all(|dll| has(dll));
+            if core_ok {
                 ComponentState::Installed
+            } else if has("d3dx9_43.dll") || has("xinput1_3.dll") {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -1917,6 +2241,25 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 || syswow64.join("PhysXLoader.dll").exists()
                 || drive_c.join("Program Files (x86)").join("NVIDIA Corporation").join("PhysX").exists()
             {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gpu_vendor_stubs" => {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() };
+            let nv_ok = has("nvapi64.dll") && has("nvngx.dll");
+            let nv_partial = has("nvapi64.dll") || has("nvngx.dll");
+            if nv_ok {
+                ComponentState::Installed
+            } else if nv_partial {
+                ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gptk_amd_stub" => {
+            if system32.join("atidxx64.dll").exists() {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -2127,6 +2470,13 @@ fn resolve_component_installer_from_roots(
                 local_redist.join(filename),
             ])
         },
+        "vcrun2013" => {
+            let filename = match arch {
+                BottleArch::Win32 => "vcredist_x86.exe",
+                BottleArch::Win64 | BottleArch::Wow64 => "vcredist_x64.exe",
+            };
+            first_existing(&[redist_root.join("vcredist").join("2013").join(filename), local_redist.join(filename)])
+        },
         "dotnet48" => first_existing(&[
             redist_root.join("DotNet").join("4.8").join("ndp48-x86-x64-allos-enu.exe"),
             redist_root.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe"),
@@ -2173,7 +2523,7 @@ fn resolve_component_installer_from_roots(
     }?;
 
     let args = match component_id {
-        "vcrun2019" => vec!["/quiet".to_string(), "/norestart".to_string()],
+        "vcrun2019" | "vcrun2013" => vec!["/quiet".to_string(), "/norestart".to_string()],
         "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
@@ -2425,6 +2775,164 @@ fn run_wine_reg_set_windows_version(
     Ok(child.id())
 }
 
+const FONT_SUBSTITUTIONS: &[(&str, &str)] = &[
+    ("Helvetica", "Arial"),
+    ("Times", "Times New Roman"),
+    ("Helv", "MS Sans Serif"),
+    ("Tms Rmn", "Times New Roman"),
+    ("MS Shell Dlg", "Tahoma"),
+    ("MS Shell Dlg 2", "Tahoma"),
+    ("Arial Baltic,186", "Arial,186"),
+    ("Arial CE,238", "Arial,238"),
+    ("Arial CYR,204", "Arial,204"),
+    ("Arial Greek,161", "Arial,161"),
+    ("Arial TUR,162", "Arial,162"),
+    ("Courier New Baltic,186", "Courier New,186"),
+    ("Courier New CE,238", "Courier New,238"),
+    ("Courier New CYR,204", "Courier New,204"),
+    ("Courier New Greek,161", "Courier New,161"),
+    ("Courier New TUR,162", "Courier New,162"),
+    ("Times New Roman Baltic,186", "Times New Roman,186"),
+    ("Times New Roman CE,238", "Times New Roman,238"),
+    ("Times New Roman CYR,204", "Times New Roman,204"),
+    ("Times New Roman Greek,161", "Times New Roman,161"),
+    ("Times New Roman TUR,162", "Times New Roman,162"),
+];
+
+const WINE_FONT_REPLACEMENTS: &[(&str, &str)] = &[
+    ("Arial", "Helvetica Neue"),
+    ("MS Gothic", "Hiragino Sans"),
+    ("MS PGothic", "Hiragino Sans"),
+    ("SimSun", "STSong"),
+    ("NSimSun", "STSong"),
+    ("MingLiU", "LiSong Pro"),
+    ("PMingLiU", "LiSong Pro"),
+    ("Microsoft Himalaya", "Kailasa"),
+    ("Euphemia", "Euphemia UCAS"),
+    ("Gulim", "Apple SD Gothic Neo"),
+];
+
+pub fn apply_font_substitutions(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let reg_content = build_font_substitution_reg();
+    let reg_file = prefix.join("drive_c").join("metalsharp-fontsubs.reg");
+    fs::write(&reg_file, &reg_content)?;
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "font_substitutions_applied")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    let stdout = log.try_clone()?;
+
+    let reg_file_win = wine_z_drive_path(&reg_file);
+    let mut cmd = Command::new(&wine);
+    cmd.arg("regedit")
+        .arg(&reg_file_win)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
+fn build_font_substitution_reg() -> String {
+    let mut reg = String::from("REGEDIT4\r\n\r\n");
+    reg.push_str("[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes]\r\n");
+    for (name, value) in FONT_SUBSTITUTIONS {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", name, value));
+    }
+    reg.push_str("\r\n");
+    reg.push_str("[HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements]\r\n");
+    for (name, value) in WINE_FONT_REPLACEMENTS {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", name, value));
+    }
+    reg
+}
+
+const POST_WINEBOOT_DLL_OVERRIDES: &[(&str, &str)] = &[
+    ("atl", "native,builtin"),
+    ("msvcirt", "native,builtin"),
+    ("msvcrt40", "native,builtin"),
+    ("msvcrtd", "native,builtin"),
+    ("msxml3", "native,builtin"),
+    ("vcruntime140", "native,builtin"),
+    ("vcruntime140_1", "native,builtin"),
+    ("msvcp140", "native,builtin"),
+];
+
+pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let dosdevices = prefix.join("dosdevices");
+    if dosdevices.exists() {
+        let y_link = dosdevices.join("y:");
+        let needs_link = if y_link.exists() {
+            match std::fs::read_link(&y_link) {
+                Ok(target) => target != home,
+                Err(_) => true,
+            }
+        } else {
+            true
+        };
+        if needs_link {
+            let _ = std::fs::remove_file(&y_link);
+            let _ = std::os::unix::fs::symlink(&home, &y_link);
+        }
+    }
+
+    let mut reg = build_font_substitution_reg();
+    reg.push_str("\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
+    for (dll, mode) in POST_WINEBOOT_DLL_OVERRIDES {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", dll, mode));
+    }
+
+    let reg_file = prefix.join("drive_c").join("metalsharp-post-wineboot.reg");
+    fs::write(&reg_file, &reg)?;
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "post_wineboot_config_seed")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    let stdout = log.try_clone()?;
+
+    let reg_file_win = wine_z_drive_path(&reg_file);
+    let mut cmd = Command::new(&wine);
+    cmd.arg("regedit")
+        .arg(&reg_file_win)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    let exit_status = child.wait()?;
+    if exit_status.success() {
+        let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
+        let _ = fs::write(&marker, timestamp_secs().as_bytes());
+    }
+    Ok(pid)
+}
+
 fn wine_z_drive_path(path: &Path) -> String {
     if path.is_absolute() {
         format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
@@ -2551,9 +3059,12 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
+            "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
+            "gptk_amd_stub" => "GPTK AMD vendor stub from lib/gptk/x86_64-windows",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
-            "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
+            "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
             "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
@@ -2575,6 +3086,9 @@ fn component_action_detail(id: &str) -> String {
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
+        "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
+        "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
+        "gptk_amd_stub" => "Deploy GPTK AMD vendor stub for D3DMetal compatibility".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
@@ -2743,7 +3257,7 @@ fn compatibility_matrix() -> Vec<CompatibilityCase> {
         ),
         compatibility_case(
             "vc-redists",
-            "VC Runtime Redistributables",
+            "VC Runtime Redistributables (2015-2022 + 2013)",
             "runtime installer",
             RuntimeProfile::Plain,
             "supported",
@@ -2917,14 +3431,25 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
         },
         RedistSourceGuide {
             id: "vcrun2019".to_string(),
-            name: "Latest Microsoft Visual C++ Redistributable".to_string(),
+            name: "Latest Microsoft Visual C++ Redistributable (2015-2022)".to_string(),
             source_url: "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist".to_string(),
             local_targets: vec![
                 redist.join("VC_redist.x64.exe").to_string_lossy().to_string(),
                 redist.join("VC_redist.x86.exe").to_string_lossy().to_string(),
             ],
             policy: "official_download_or_steam_commonredist".to_string(),
-            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links.".to_string(),
+            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links. Installs vcruntime140, vcruntime140_1, msvcp140 family, concrt140, vcomp140.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "vcrun2013".to_string(),
+            name: "Microsoft Visual C++ 2013 Redistributable (12.0)".to_string(),
+            source_url: "https://support.microsoft.com/en-us/topic/update-for-visual-c-2013-redistributable-package-d8ccd6a4-4a90-bdbd-a060-8276036c0738".to_string(),
+            local_targets: vec![
+                redist.join("vcredist_x64.exe").to_string_lossy().to_string(),
+                redist.join("vcredist_x86.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Installs msvcr120.dll and msvcp120.dll. Required by some older titles.".to_string(),
         },
         RedistSourceGuide {
             id: "directx_jun2010".to_string(),
@@ -3925,5 +4450,152 @@ mod tests {
         data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
         data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
         data
+    }
+
+    #[test]
+    fn vcrun2019_detected_by_any_v14_dll() {
+        let dir = test_dir("vcrun2019-detect");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
+
+        fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write dll");
+        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2013_detected_by_msvcr120() {
+        let dir = test_dir("vcrun2013-detect");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("msvcr120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::NeedsRepair);
+
+        fs::write(system32.join("msvcp120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2019_extended_detection_covers_msvcp140() {
+        let dir = test_dir("vcrun2019-extended");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2013_detected_by_msvcp120_in_syswow64() {
+        let dir = test_dir("vcrun2013-syswow64");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        fs::write(syswow64.join("msvcp120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::NeedsRepair);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn game_install_profile_includes_vcrun2013() {
+        let components = default_components_for(RuntimeProfile::GameInstall);
+        let ids = components.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"vcrun2013"));
+        assert!(ids.contains(&"directx_jun2010"));
+    }
+
+    #[test]
+    fn gpu_vendor_stubs_do_not_require_gptk_amd_stub() {
+        let dir = test_dir("gpu-vendor-stubs");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32).expect("create system32");
+
+        fs::write(system32.join("nvapi64.dll"), b"dll").expect("write nvapi");
+        assert_eq!(
+            inspect_component_state(&dir, "gpu_vendor_stubs", ComponentState::Unknown),
+            ComponentState::NeedsRepair
+        );
+
+        fs::write(system32.join("nvngx.dll"), b"dll").expect("write nvngx");
+        assert_eq!(
+            inspect_component_state(&dir, "gpu_vendor_stubs", ComponentState::Unknown),
+            ComponentState::Installed
+        );
+        assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("atidxx64.dll"), b"dll").expect("write amd stub");
+        assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gptk_profile_splits_amd_stub_from_dxmt_vendor_stubs() {
+        let m12 = default_components_for(RuntimeProfile::M12);
+        let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(m12_ids.contains(&"gpu_vendor_stubs"));
+        assert!(!m12_ids.contains(&"gptk_amd_stub"));
+
+        let m13 = default_components_for(RuntimeProfile::M13);
+        let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(m13_ids.contains(&"gpu_vendor_stubs"));
+        assert!(m13_ids.contains(&"gptk_amd_stub"));
+    }
+
+    #[test]
+    fn redist_source_guides_cover_vcrun2013() {
+        let guides = redist_source_guides();
+        assert!(guides.iter().any(|g| g.id == "vcrun2013"));
+        assert!(guides.iter().any(|g| g.id == "vcrun2019"));
+    }
+
+    #[test]
+    fn installscript_heuristic_detects_vcrun2013() {
+        let dir = test_dir("installscript-vcrun2013");
+        fs::create_dir_all(&dir).expect("create dir");
+        let script = dir.join("installscript.vdf");
+        fs::write(&script, br#""vcredist_2013/x64/vcredist_x64.exe""#).expect("write script");
+        let components = components_from_installscript(&script);
+        assert!(components.iter().any(|c| c == "vcrun2013"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn font_substitution_reg_includes_core_entries() {
+        let reg = build_font_substitution_reg();
+        assert!(reg.contains("REGEDIT4"));
+        assert!(reg.contains("FontSubstitutes"));
+        assert!(reg.contains("Helvetica"));
+        assert!(reg.contains("MS Shell Dlg"));
+        assert!(reg.contains("Fonts\\Replacements"));
+        assert!(reg.contains("SimSun"));
+        assert!(reg.contains("Arial Baltic,186"));
+    }
+
+    #[test]
+    fn wine_font_replacements_map_to_macos_fonts() {
+        let reg = build_font_substitution_reg();
+        assert!(reg.contains("Hiragino"));
+        assert!(reg.contains("STSong"));
+        assert!(reg.contains("LiSong Pro"));
     }
 }

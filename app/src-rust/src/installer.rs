@@ -91,6 +91,7 @@ fn run_install_all() {
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+                ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
                 ("Offline EAC Mode", Box::new(install_eac_toggle)),
                 ("Pipeline Rules", Box::new(install_mtsp_rules)),
@@ -242,7 +243,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
                     let dst = wine_dir.join(&file_name);
                     if src_path.is_dir() {
                         let _ = fs::create_dir_all(&dst);
-                        copy_dir_recursive(&src_path, &dst);
+                        let _ = copy_dir_recursive(&src_path, &dst);
                     } else {
                         let _ = fs::copy(&src_path, &dst);
                     }
@@ -309,7 +310,7 @@ fn install_host_runtime(home: &PathBuf) -> Result<bool, String> {
         .ok_or_else(|| "MetalSharp host runtime not found — packaged runtime/host assets are missing".to_string())?;
     let _ = fs::remove_dir_all(&dest);
     fs::create_dir_all(&dest).map_err(|e| format!("create host runtime dir: {}", e))?;
-    copy_dir_recursive(&source, &dest);
+    copy_dir_recursive(&source, &dest)?;
 
     if host_runtime_ready(&dest) {
         Ok(true)
@@ -504,6 +505,90 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     }
 }
 
+fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
+    let gptk_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("gptk");
+    let ext_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("external");
+    let framework = ext_dir.join("D3DMetal.framework");
+
+    if gptk_runtime_ready(&gptk_dir, &framework) {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(gptk_dir.join("x86_64-windows")).map_err(|e| format!("create GPTK PE dir: {}", e))?;
+    fs::create_dir_all(gptk_dir.join("x86_64-unix")).map_err(|e| format!("create GPTK Unix dir: {}", e))?;
+    fs::create_dir_all(&ext_dir).map_err(|e| format!("create GPTK external dir: {}", e))?;
+
+    let bundled = find_bundled_archive("gptk");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-gptk-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "gptk")?;
+
+        let src_x64_windows = tmp.join("x86_64-windows");
+        let src_x64_unix = tmp.join("x86_64-unix");
+        let src_external = tmp.join("external");
+
+        if src_x64_windows.exists() {
+            for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                fs::copy(entry.path(), gptk_dir.join("x86_64-windows").join(entry.file_name()))
+                    .map_err(|e| format!("copy GPTK Windows DLL {}: {}", entry.file_name().to_string_lossy(), e))?;
+            }
+        }
+        if src_x64_unix.exists() {
+            for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read x86_64-unix: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                fs::copy(entry.path(), gptk_dir.join("x86_64-unix").join(entry.file_name()))
+                    .map_err(|e| format!("copy GPTK Unix library {}: {}", entry.file_name().to_string_lossy(), e))?;
+            }
+        }
+        if src_external.exists() {
+            for entry in fs::read_dir(&src_external).map_err(|e| format!("read external: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let dst = ext_dir.join(entry.file_name());
+                if entry.path().is_dir() {
+                    fs::create_dir_all(&dst)
+                        .map_err(|e| format!("create GPTK external dir {}: {}", dst.display(), e))?;
+                    copy_dir_recursive(&entry.path(), &dst)?;
+                } else {
+                    fs::copy(entry.path(), &dst)
+                        .map_err(|e| format!("copy GPTK external file {}: {}", dst.display(), e))?;
+                }
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    if gptk_runtime_ready(&gptk_dir, &framework) {
+        Ok(true)
+    } else {
+        Err("GPTK D3DMetal runtime incomplete — bundle gptk.tar.zst with required PE DLLs and D3DMetal.framework contents".into())
+    }
+}
+
+fn gptk_runtime_ready(gptk_dir: &Path, framework: &Path) -> bool {
+    let pe_dir = gptk_dir.join("x86_64-windows");
+    let required_pe = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "atidxx64.dll"];
+    required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
+        && file_nonempty(&framework.join("Versions").join("A").join("D3DMetal"))
+        && framework_has_resource_dylib(framework)
+}
+
+fn framework_has_resource_dylib(framework: &Path) -> bool {
+    for resources_dir in [framework.join("Resources"), framework.join("Versions").join("A").join("Resources")] {
+        if let Ok(entries) = fs::read_dir(resources_dir) {
+            if entries.flatten().any(|entry| {
+                entry.path().extension().and_then(|ext| ext.to_str()) == Some("dylib") && file_nonempty(&entry.path())
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
     let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
     let x86_dll = goldberg_dir.join("x86").join("steam_api.dll");
@@ -588,10 +673,6 @@ fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
 
 fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
-    if dest.exists() {
-        return Ok(false);
-    }
-
     let mut candidates = vec![
         PathBuf::from("configs/mtsp-rules.toml"),
         home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
@@ -613,11 +694,19 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     for src in &candidates {
         if src.exists() {
             if let Ok(contents) = fs::read_to_string(src) {
-                let _ = fs::create_dir_all(dest.parent().unwrap());
-                let _ = fs::write(&dest, &contents);
-                if dest.exists() {
+                if let Ok(existing) = fs::read_to_string(&dest) {
+                    if existing == contents {
+                        return Ok(false);
+                    }
+                    let backup = dest.with_extension("toml.bak");
+                    let _ = fs::write(&backup, existing);
+                }
+                fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("create MTSP config dir: {}", e))?;
+                fs::write(&dest, &contents).map_err(|e| format!("write mtsp-rules.toml: {}", e))?;
+                if fs::read_to_string(&dest).ok().as_deref() == Some(contents.as_str()) {
                     return Ok(true);
                 }
+                return Err("mtsp-rules.toml was written but could not be verified".into());
             }
         }
     }
@@ -957,19 +1046,20 @@ fn find_in_dev_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
-    if let Ok(entries) = fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-            if src_path.is_dir() {
-                let _ = fs::create_dir_all(&dst_path);
-                copy_dir_recursive(&src_path, &dst_path);
-            } else {
-                let _ = fs::copy(&src_path, &dst_path);
-            }
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| format!("create {}: {}", dst.display(), e))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("read {}: {}", src.display(), e))? {
+        let entry = entry.map_err(|e| format!("read entry in {}: {}", src.display(), e))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("copy {} to {}: {}", src_path.display(), dst_path.display(), e))?;
         }
     }
+    Ok(())
 }
 
 fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), String> {
@@ -1015,6 +1105,56 @@ mod tests {
         fs::write(bin.join("metalsharp-wine"), b"#!/bin/sh\n").expect("write renamed wine");
 
         assert_eq!(metalsharp_wine_binary(&home), bin.join("metalsharp-wine"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn gptk_runtime_readiness_requires_framework_contents() {
+        let home = test_home("gptk-readiness");
+        let gptk_dir = home.join("gptk");
+        let pe_dir = gptk_dir.join("x86_64-windows");
+        let framework = home.join("external").join("D3DMetal.framework");
+        let resources = framework.join("Versions").join("A").join("Resources");
+        fs::create_dir_all(&pe_dir).expect("create GPTK PE dir");
+        fs::create_dir_all(&resources).expect("create framework resources");
+        for dll in ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "atidxx64.dll"] {
+            fs::write(pe_dir.join(dll), b"dll").expect("write GPTK DLL");
+        }
+
+        assert!(!gptk_runtime_ready(&gptk_dir, &framework));
+
+        fs::write(framework.join("Versions").join("A").join("D3DMetal"), b"framework").expect("write framework binary");
+        fs::write(resources.join("libD3DMetalHelper.dylib"), b"dylib").expect("write framework resource dylib");
+
+        assert!(gptk_runtime_ready(&gptk_dir, &framework));
+        fs::remove_file(pe_dir.join("nvngx.dll")).expect("remove nvngx");
+        assert!(!gptk_runtime_ready(&gptk_dir, &framework));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_mtsp_rules_refreshes_stale_installed_copy() {
+        let cwd = std::env::current_dir().expect("current dir");
+        let repo = test_home("mtsp-rules-source");
+        let home = test_home("mtsp-rules-home");
+        let source_dir = repo.join("configs");
+        let dest_dir = home.join(".metalsharp").join("configs");
+        fs::create_dir_all(&source_dir).expect("create source config dir");
+        fs::create_dir_all(&dest_dir).expect("create dest config dir");
+        fs::write(source_dir.join("mtsp-rules.toml"), "# new rules\n[overrides]\n").expect("write source rules");
+        fs::write(dest_dir.join("mtsp-rules.toml"), "# stale rules\n").expect("write stale rules");
+
+        std::env::set_current_dir(&repo).expect("enter source repo");
+        let result = install_mtsp_rules(&home);
+        std::env::set_current_dir(cwd).expect("restore cwd");
+
+        assert_eq!(result, Ok(true));
+        assert_eq!(
+            fs::read_to_string(dest_dir.join("mtsp-rules.toml")).expect("read rules"),
+            "# new rules\n[overrides]\n"
+        );
+        assert_eq!(fs::read_to_string(dest_dir.join("mtsp-rules.toml.bak")).expect("read backup"), "# stale rules\n");
+        let _ = fs::remove_dir_all(repo);
         let _ = fs::remove_dir_all(home);
     }
 
