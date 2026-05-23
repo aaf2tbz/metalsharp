@@ -172,24 +172,33 @@ pub fn game_missing_dependencies(appid: u32, prefix: &Path) -> Vec<String> {
     if recipe.components.is_empty() {
         return Vec::new();
     }
-    let system32 = prefix.join("drive_c/windows/system32");
-    let syswow64 = prefix.join("drive_c/windows/syswow64");
-    let component_dll_map: &[(&str, &[&str])] = &[
-        ("vcrun2019", &["vcruntime140.dll"]),
-        ("vcrun2013", &["msvcr120.dll"]),
-        ("directx_jun2010", &["d3dx9_43.dll", "xinput1_3.dll"]),
-        ("corefonts", &["arial.ttf"]),
-    ];
     let mut missing = Vec::new();
     for component_id in &recipe.components {
-        let dlls = component_dll_map.iter().find(|(id, _)| *id == *component_id).map(|(_, dlls)| *dlls);
-        let Some(dlls) = dlls else { continue };
-        let found = dlls.iter().any(|dll| system32.join(dll).exists() || syswow64.join(dll).exists());
-        if !found {
+        if !recipe_component_satisfied(component_id, prefix) {
             missing.push(component_id.clone());
         }
     }
     missing
+}
+
+fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
+    let drive_c = prefix.join("drive_c");
+    let windows = drive_c.join("windows");
+    let system32 = windows.join("system32");
+    let syswow64 = windows.join("syswow64");
+    let has_system_dll = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+    let has_system32_dll = |dll: &str| -> bool { system32.join(dll).exists() };
+
+    match component_id {
+        "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
+        "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
+        "directx_jun2010" => {
+            ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
+        },
+        "corefonts" => ["arial.ttf", "times.ttf"].iter().all(|font| windows.join("Fonts").join(font).exists()),
+        "gpu_vendor_stubs" => ["nvapi64.dll", "nvngx.dll", "atidxx64.dll"].iter().all(|dll| has_system32_dll(dll)),
+        _ => true,
+    }
 }
 
 fn default_pipeline() -> PipelineId {
@@ -434,5 +443,36 @@ mod tests {
         assert!(goat.components.is_empty());
         assert!(goat.env.is_empty());
         assert!(goat.check_dlls.is_empty());
+    }
+
+    #[test]
+    fn recipe_component_detection_requires_complete_runtime_sets() {
+        let root = test_prefix("recipe-component-completeness");
+        let system32 = root.join("drive_c/windows/system32");
+        std::fs::create_dir_all(&system32).expect("create system32");
+
+        std::fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write partial vcrun");
+        assert!(!recipe_component_satisfied("vcrun2019", &root));
+        std::fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write vcrun dll");
+        std::fs::write(system32.join("msvcp140.dll"), b"dll").expect("write vcrun dll");
+        assert!(recipe_component_satisfied("vcrun2019", &root));
+
+        std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
+        assert!(!recipe_component_satisfied("directx_jun2010", &root));
+        for dll in ["d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"] {
+            std::fs::write(system32.join(dll), b"dll").expect("write directx dll");
+        }
+        assert!(recipe_component_satisfied("directx_jun2010", &root));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn test_prefix(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "metalsharp-rules-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ))
     }
 }
