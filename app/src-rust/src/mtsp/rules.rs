@@ -14,6 +14,8 @@ pub struct GameRecipe {
     pub components: Vec<String>,
     pub env: HashMap<String, String>,
     pub check_dlls: Vec<String>,
+    pub offline_capable: bool,
+    pub anticheat: Option<String>,
 }
 
 impl Default for GameRecipe {
@@ -24,6 +26,8 @@ impl Default for GameRecipe {
             components: Vec::new(),
             env: HashMap::new(),
             check_dlls: Vec::new(),
+            offline_capable: false,
+            anticheat: None,
         }
     }
 }
@@ -120,8 +124,10 @@ fn parse_rules_full(toml_str: &str) -> (HashMap<u32, PipelineId>, HashMap<u32, G
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
+        let offline_capable = entry.get("offline_capable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let anticheat = entry.get("anticheat").and_then(|v| v.as_str()).map(String::from);
 
-        recipes.insert(appid, GameRecipe { pipeline, name, components, env, check_dlls });
+        recipes.insert(appid, GameRecipe { pipeline, name, components, env, check_dlls, offline_capable, anticheat });
     }
 
     (pipelines, recipes)
@@ -163,6 +169,14 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
 pub fn get_game_recipe(appid: u32) -> Option<GameRecipe> {
     let recipes = load_game_recipes();
     recipes.get(&appid).cloned()
+}
+
+pub fn all_rules_with_recipes() -> Vec<(u32, GameRecipe)> {
+    let _ = load_rules();
+    let recipes = load_game_recipes();
+    let mut result: Vec<(u32, GameRecipe)> = recipes.iter().map(|(&appid, recipe)| (appid, recipe.clone())).collect();
+    result.sort_by_key(|(appid, _)| *appid);
+    result
 }
 
 pub fn game_missing_dependencies(appid: u32, prefix: &Path) -> Vec<String> {

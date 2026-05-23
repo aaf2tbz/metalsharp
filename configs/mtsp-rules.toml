@@ -88,6 +88,8 @@ name = "Ghostrunner"
 [overrides.1245620]
 pipeline = "m12"
 name = "ELDEN RING"
+offline_capable = true
+anticheat = "eac_eos"
 
 [overrides.1245620.dependencies]
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
@@ -194,6 +196,14 @@ name = "Resident Evil Re:Verse"
 [overrides.1888160]
 pipeline = "m12"
 name = "ARMORED CORE VI FIRES OF RUBICON"
+offline_capable = true
+anticheat = "eac_eos"
+
+[overrides.1888160.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.1888160.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
 
 [overrides.976310]
 pipeline = "m11"
