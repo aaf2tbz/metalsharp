@@ -88,6 +88,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
@@ -153,6 +154,7 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
@@ -306,7 +308,13 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     let mut warnings = recipe.warnings.clone();
     let direct_wine_pipeline = matches!(
         recipe.pipeline,
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 | PipelineId::WineBare
+        PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::M13
+            | PipelineId::M32
+            | PipelineId::WineBare
     );
     let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
 
