@@ -1042,6 +1042,14 @@ pub fn prepare_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::
     manifest.health = BottleHealth::NeedsRepair;
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+
+    let system32 = prefix.join("drive_c/windows/system32");
+    let seeded_marker = prefix.join("drive_c/metalsharp-post-wineboot-seeded");
+    if system32.exists() && !seeded_marker.exists() {
+        let seed_log = bottle_logs_dir(id).join("post-wineboot-seed.log");
+        let _ = seed_post_wineboot_config(&prefix, &seed_log);
+    }
+
     diagnose_bottle(id)
 }
 
@@ -2060,12 +2068,13 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2019" => {
-            if system32.join("vcruntime140.dll").exists()
-                || syswow64.join("vcruntime140.dll").exists()
-                || system32.join("vcruntime140_1.dll").exists()
-                || system32.join("msvcp140.dll").exists()
-            {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+            let core_count = core.iter().filter(|dll| has(dll)).count();
+            if core_count == core.len() {
                 ComponentState::Installed
+            } else if core_count > 0 {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -2805,6 +2814,8 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
         .stderr(Stdio::from(log));
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
     let child = cmd.spawn()?;
+    let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
+    let _ = fs::write(&marker, timestamp_secs());
     Ok(child.id())
 }
 
@@ -4336,6 +4347,10 @@ mod tests {
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Missing);
 
         fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
+
+        fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write dll");
+        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4364,7 +4379,7 @@ mod tests {
         fs::create_dir_all(&syswow64).expect("create syswow64");
 
         fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
         let _ = fs::remove_dir_all(&dir);
     }
 

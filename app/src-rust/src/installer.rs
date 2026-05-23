@@ -561,7 +561,7 @@ fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
     if gptk_dir.join("x86_64-windows").join("d3d11.dll").exists() && framework.exists() {
         Ok(true)
     } else {
-        Ok(false)
+        Err("GPTK D3DMetal runtime not found — bundle gptk.tar.zst or install Apple GPTK manually".into())
     }
 }
 

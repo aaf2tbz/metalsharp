@@ -1202,6 +1202,9 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
         return Err("wineboot --init timed out — Wine prefix was not created within 60 seconds".into());
     }
 
+    let seed_log = prefix.join("drive_c").join("metalsharp-post-wineboot.log");
+    let _ = crate::bottles::seed_post_wineboot_config(&prefix, &seed_log);
+
     let mut install_cmd = Command::new(&wine);
     install_cmd
         .env("WINEPREFIX", &prefix_str)
