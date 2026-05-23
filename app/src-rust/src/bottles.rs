@@ -1165,7 +1165,7 @@ pub fn repair_component(
         });
     }
 
-    if component_id == "gpu_vendor_stubs" {
+    if matches!(component_id, "gpu_vendor_stubs" | "gptk_amd_stub") {
         let home = dirs::home_dir().unwrap_or_default();
         let ms_root = home.join(".metalsharp").join("runtime").join("wine");
         let system32 = prefix.join("drive_c").join("windows").join("system32");
@@ -1173,9 +1173,13 @@ pub fn repair_component(
 
         let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
         let gptk_dir = ms_root.join("lib").join("gptk").join("x86_64-windows");
-        let stub_files = [("nvapi64.dll", false), ("nvngx.dll", false), ("atidxx64.dll", true)];
+        let stub_files: &[(&str, bool)] = match component_id {
+            "gpu_vendor_stubs" => &[("nvapi64.dll", false), ("nvngx.dll", false)],
+            "gptk_amd_stub" => &[("atidxx64.dll", true)],
+            _ => &[],
+        };
         let mut copied = 0usize;
-        for (stub, gptk_only) in &stub_files {
+        for (stub, gptk_only) in stub_files {
             let dst = system32.join(stub);
             if dst.exists() {
                 copied += 1;
@@ -1216,7 +1220,9 @@ pub fn repair_component(
             id: component_id.to_string(),
             status: if installed { "installed" } else { "asset_missing" }.to_string(),
             detail: if installed {
-                format!("Deployed {} GPU vendor stubs to prefix system32", copied)
+                format!("Deployed {} GPU vendor stub(s) to prefix system32", copied)
+            } else if component_id == "gptk_amd_stub" {
+                "GPTK AMD vendor stub not found in GPTK runtime dirs".to_string()
             } else {
                 "GPU vendor stubs not found in DXMT/GPTK runtime dirs".to_string()
             },
@@ -1701,7 +1707,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "GPTK D3DMetal",
             BottleArch::Win64,
             true,
-            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs"][..],
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
         RuntimeProfile::Dotnet => (
@@ -2243,11 +2249,18 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "gpu_vendor_stubs" => {
             let has = |dll: &str| -> bool { system32.join(dll).exists() };
             let nv_ok = has("nvapi64.dll") && has("nvngx.dll");
-            let amd_ok = has("atidxx64.dll");
-            if nv_ok && amd_ok {
+            let nv_partial = has("nvapi64.dll") || has("nvngx.dll");
+            if nv_ok {
                 ComponentState::Installed
-            } else if nv_ok || amd_ok {
+            } else if nv_partial {
                 ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gptk_amd_stub" => {
+            if system32.join("atidxx64.dll").exists() {
+                ComponentState::Installed
             } else {
                 ComponentState::Missing
             }
@@ -3048,6 +3061,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
+            "gptk_amd_stub" => "GPTK AMD vendor stub from lib/gptk/x86_64-windows",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
@@ -3074,6 +3088,7 @@ fn component_action_detail(id: &str) -> String {
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
         "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
         "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
+        "gptk_amd_stub" => "Deploy GPTK AMD vendor stub for D3DMetal compatibility".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
@@ -4507,6 +4522,43 @@ mod tests {
         assert!(ids.contains(&"vcrun2019"));
         assert!(ids.contains(&"vcrun2013"));
         assert!(ids.contains(&"directx_jun2010"));
+    }
+
+    #[test]
+    fn gpu_vendor_stubs_do_not_require_gptk_amd_stub() {
+        let dir = test_dir("gpu-vendor-stubs");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32).expect("create system32");
+
+        fs::write(system32.join("nvapi64.dll"), b"dll").expect("write nvapi");
+        assert_eq!(
+            inspect_component_state(&dir, "gpu_vendor_stubs", ComponentState::Unknown),
+            ComponentState::NeedsRepair
+        );
+
+        fs::write(system32.join("nvngx.dll"), b"dll").expect("write nvngx");
+        assert_eq!(
+            inspect_component_state(&dir, "gpu_vendor_stubs", ComponentState::Unknown),
+            ComponentState::Installed
+        );
+        assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("atidxx64.dll"), b"dll").expect("write amd stub");
+        assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gptk_profile_splits_amd_stub_from_dxmt_vendor_stubs() {
+        let m12 = default_components_for(RuntimeProfile::M12);
+        let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(m12_ids.contains(&"gpu_vendor_stubs"));
+        assert!(!m12_ids.contains(&"gptk_amd_stub"));
+
+        let m13 = default_components_for(RuntimeProfile::M13);
+        let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(m13_ids.contains(&"gpu_vendor_stubs"));
+        assert!(m13_ids.contains(&"gptk_amd_stub"));
     }
 
     #[test]

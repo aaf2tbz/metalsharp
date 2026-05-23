@@ -196,7 +196,8 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
             ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
         },
         "corefonts" => ["arial.ttf", "times.ttf"].iter().all(|font| windows.join("Fonts").join(font).exists()),
-        "gpu_vendor_stubs" => ["nvapi64.dll", "nvngx.dll", "atidxx64.dll"].iter().all(|dll| has_system32_dll(dll)),
+        "gpu_vendor_stubs" => ["nvapi64.dll", "nvngx.dll"].iter().all(|dll| has_system32_dll(dll)),
+        "gptk_amd_stub" => has_system32_dll("atidxx64.dll"),
         _ => true,
     }
 }
@@ -463,6 +464,14 @@ mod tests {
             std::fs::write(system32.join(dll), b"dll").expect("write directx dll");
         }
         assert!(recipe_component_satisfied("directx_jun2010", &root));
+
+        std::fs::write(system32.join("nvapi64.dll"), b"dll").expect("write partial gpu vendor stubs");
+        assert!(!recipe_component_satisfied("gpu_vendor_stubs", &root));
+        std::fs::write(system32.join("nvngx.dll"), b"dll").expect("write gpu vendor stubs");
+        assert!(recipe_component_satisfied("gpu_vendor_stubs", &root));
+        assert!(!recipe_component_satisfied("gptk_amd_stub", &root));
+        std::fs::write(system32.join("atidxx64.dll"), b"dll").expect("write amd vendor stub");
+        assert!(recipe_component_satisfied("gptk_amd_stub", &root));
 
         let _ = std::fs::remove_dir_all(root);
     }
