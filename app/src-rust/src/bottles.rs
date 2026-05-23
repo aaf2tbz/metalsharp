@@ -2193,7 +2193,6 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "directx_jun2010" => {
             let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
             let core_dlls = ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"];
-            let extended_dlls = ["xaudio2_7.dll", "x3daudio1_7.dll", "D3DCompiler_43.dll"];
             let core_ok = core_dlls.iter().all(|dll| has(dll));
             if core_ok {
                 ComponentState::Installed
@@ -2916,7 +2915,7 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
     let exit_status = child.wait()?;
     if exit_status.success() {
         let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
-        let _ = fs::write(&marker, timestamp_secs());
+        let _ = fs::write(&marker, timestamp_secs().as_bytes());
     }
     Ok(pid)
 }
