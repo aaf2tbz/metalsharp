@@ -9,6 +9,8 @@ static GPTK_TOOLKIT_INSTALLING: AtomicBool = AtomicBool::new(false);
 static TEMP_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
+const GPTK_UNSIGNED_CONTAINER_WARNING: &str =
+    "GPTK compatibility mode accepts Apple's unsigned GPTK disk images from Downloads/Desktop; the Apple-signed D3DMetal.framework payload remains the install trust boundary.";
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
@@ -163,6 +165,7 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
         "phase": phase,
         "message": message,
         "error": error,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -192,6 +195,7 @@ fn read_gptk_steam_install_progress() -> Value {
             "GPTK Steam is not installed"
         },
         "error": null,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -203,6 +207,7 @@ fn write_gptk_toolkit_progress(phase: &str, message: &str, error: Option<&str>) 
         "phase": phase,
         "message": message,
         "error": error,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -862,15 +867,23 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("metalsharp-{}-{}", name, unique_operation_suffix()))
 }
 
+fn gptk_attach_args(dmg: &Path, mountpoint: &Path) -> Vec<String> {
+    vec![
+        "attach".to_string(),
+        dmg.display().to_string(),
+        "-readonly".to_string(),
+        "-nobrowse".to_string(),
+        "-noautoopen".to_string(),
+        "-mountpoint".to_string(),
+        mountpoint.display().to_string(),
+    ]
+}
+
 fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(mountpoint)?;
+    let args = gptk_attach_args(dmg, mountpoint);
     let status = Command::new("hdiutil")
-        .arg("attach")
-        .arg(dmg)
-        .arg("-readonly")
-        .arg("-nobrowse")
-        .arg("-mountpoint")
-        .arg(mountpoint)
+        .args(&args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()?;
@@ -1109,6 +1122,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
             "installed": true,
             "source": dmg.to_string_lossy().to_string(),
             "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1117,6 +1131,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
             "ok": true,
             "installed": true,
             "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1132,6 +1147,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
         "installed": false,
         "download_required": true,
         "pid": child.id(),
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "url": GPTK_TOOLKIT_URL
     }))
 }
@@ -1151,6 +1167,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({
             "ok": false,
             "error": missing,
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "toolkit_url": GPTK_TOOLKIT_URL,
             "progress": read_gptk_steam_install_progress()
         }));
@@ -1164,6 +1181,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "installed": true,
             "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
             "steam_path": steam_dir_for_prefix(&gptk_steam_prefix()).to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress(),
             "profile": gptk_prefix_identity()
         }));
@@ -1174,6 +1192,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "ok": true,
             "installing": true,
             "message": "GPTK Steam installation already in progress",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1183,6 +1202,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "ok": true,
             "installing": true,
             "message": "GPTK Steam installation already in progress",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1206,6 +1226,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         "installing": true,
         "message": "GPTK Steam installation started",
         "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "progress": read_gptk_steam_install_progress()
     }))
 }
@@ -2776,6 +2797,26 @@ mod tests {
             "Format: UDZO\nName: gptk-3.dmg\nEncrypted: false\n",
             dmg
         ));
+    }
+
+    #[test]
+    fn gptk_attach_args_keep_mounts_read_only_hidden_and_non_autoopen() {
+        let args = gptk_attach_args(
+            Path::new("/Users/alex/Downloads/Game_Porting_Toolkit_3.0.dmg"),
+            Path::new("/tmp/metalsharp-gptk"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "attach",
+                "/Users/alex/Downloads/Game_Porting_Toolkit_3.0.dmg",
+                "-readonly",
+                "-nobrowse",
+                "-noautoopen",
+                "-mountpoint",
+                "/tmp/metalsharp-gptk",
+            ]
+        );
     }
 
     #[test]
