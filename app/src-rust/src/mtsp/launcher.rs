@@ -870,6 +870,7 @@ pub fn launch_custom_with_options(
         cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
         cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
+    cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
@@ -1010,6 +1011,8 @@ fn launch_dxmt_metal_with_context(
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
         cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
+
+    cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -1259,6 +1262,7 @@ fn launch_wine_bare_with_context(
 
     let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+    cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
@@ -1301,6 +1305,7 @@ fn attach_launch_log(
     writeln!(log, "cwd={}", context.cwd.display())?;
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
+    writeln!(log, "graphics_backend={}", context.node.graphics_backend)?;
     if let Some(cache) = context.cache_paths {
         writeln!(log, "shader_cache={}/", cache.shader)?;
         writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
@@ -1558,6 +1563,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
         env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
     }
+    env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env.extend(app_compat_env_pairs(appid, node.id));
