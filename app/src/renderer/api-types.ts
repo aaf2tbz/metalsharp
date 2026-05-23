@@ -20,6 +20,7 @@ interface SteamStatus {
   gptk_runtime_path?: string;
   gptk_steam_installed?: boolean;
   gptk_installing?: boolean;
+  gptk_toolkit_installing?: boolean;
   gptk_install_progress?: {
     phase: string;
     message: string;

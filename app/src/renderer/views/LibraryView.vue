@@ -37,6 +37,7 @@ const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const gptkToolkitInstalled = inject<Ref<boolean>>("gptkToolkitInstalled")!;
 const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
 const gptkSteamInstalling = inject<Ref<boolean>>("gptkSteamInstalling")!;
+const gptkToolkitInstalling = inject<Ref<boolean>>("gptkToolkitInstalling")!;
 const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
@@ -126,8 +127,11 @@ function applyFilter() {
     return;
   }
   let games = library.value.games;
+  games = games.filter((g) => g.library_source !== "gptk");
   if (filter.value === "metalsharp_installed") games = games.filter((g) => g.installed && g.library_source === "metalsharp");
-  if (filter.value === "gptk_installed") games = games.filter((g) => g.installed && g.library_source === "gptk");
+  if (filter.value === "gptk_installed") {
+    games = (library.value?.games ?? []).filter((g) => g.installed && g.library_source === "gptk");
+  }
   if (filter.value === "not_installed") games = games.filter((g) => !g.installed);
   if (search.value) {
     const q = search.value.toLowerCase();
@@ -207,23 +211,32 @@ async function toggleMacSteam() {
 }
 
 async function toggleGptkSteam() {
-  if (!gptkToolkitInstalled.value) {
-    const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+  if (!gptkToolkitInstalled.value && !gptkToolkitInstalling.value) {
+    const result = await api<{ ok: boolean; installed?: boolean; installing?: boolean; download_required?: boolean; error?: string; progress?: { phase: string; message: string } }>(
       "POST",
       "/steam/gptk-toolkit-install",
     );
     if (result?.ok && result.installed) {
       gptkToolkitInstalled.value = true;
       toast.show("Game Porting Toolkit runtime installed", "success");
+    } else if (result?.ok && result.installing) {
+      gptkToolkitInstalling.value = true;
+      toast.show(result.progress?.message ?? "Installing GPTK runtime...", "success");
+      pollGptkToolkitInstall();
+      return;
     } else {
       toast.show(
         result?.ok && result.download_required
-          ? "Game Porting Toolkit download page opened"
+          ? "Game Porting Toolkit download page opened — download the DMG, then click again"
           : (result?.error ?? "Could not set up GPTK runtime"),
         result?.ok ? "success" : "error",
       );
       return;
     }
+  }
+  if (gptkToolkitInstalling.value) {
+    toast.show("GPTK runtime is still being installed...", "success");
+    return;
   }
   if (gptkSteamInstalling.value) {
     toast.show("GPTK Steam setup is already running", "success");
@@ -290,10 +303,11 @@ function pollGptkSteamInstall() {
     gptkSteamInstalling.value = status.gptk_installing ?? false;
     gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
     gptkSteamRunning.value = status.gptk_running ?? gptkSteamRunning.value;
-    if (status.gptk_steam_installed) {
+    if (status.gptk_steam_installed && (status.gptk_running || !status.gptk_installing)) {
       clearInterval(poll);
       gptkSteamInstalling.value = false;
-      toast.show("GPTK Steam is ready", "success");
+      gptkSteamRunning.value = status.gptk_running ?? false;
+      toast.show(status.gptk_running ? "GPTK Steam is running" : "GPTK Steam is ready", "success");
       reloadLibrary();
     } else if (status.gptk_install_progress?.phase === "error") {
       clearInterval(poll);
@@ -304,6 +318,35 @@ function pollGptkSteamInstall() {
       gptkSteamInstalling.value = false;
       toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
       reloadLibrary();
+    }
+  }, 2000);
+}
+
+function pollGptkToolkitInstall() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const status = await api<{
+      gptk_toolkit_installed?: boolean;
+      gptk_toolkit_installing?: boolean;
+      gptk_install_progress?: { phase: string; message: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!status) return;
+    gptkToolkitInstalled.value = status.gptk_toolkit_installed ?? false;
+    gptkToolkitInstalling.value = status.gptk_toolkit_installing ?? false;
+    if (status.gptk_toolkit_installed) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      gptkToolkitInstalled.value = true;
+      toast.show("Game Porting Toolkit runtime installed", "success");
+    } else if (status.gptk_install_progress?.phase === "toolkit_error") {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
+    } else if (attempts > 120) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show("GPTK toolkit install timed out. Check disk image in Downloads.", "error");
     }
   }, 2000);
 }
@@ -448,6 +491,7 @@ watch([library, search, filter], applyFilter);
           <span v-if="gptkSteamRunning" class="badge badge-ok">GPTK Steam Running</span>
           <span v-else-if="gptkSteamInstalling" class="badge badge-warn">GPTK Steam Setup</span>
           <span v-else-if="gptkSteamInstalled" class="badge badge-warn">GPTK Steam Offline</span>
+          <span v-else-if="gptkToolkitInstalling" class="badge badge-warn">Installing GPTK Runtime</span>
           <span v-else-if="gptkToolkitInstalled" class="badge badge-warn">GPTK Steam Missing</span>
           <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
           <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
@@ -476,7 +520,7 @@ watch([library, search, filter], applyFilter);
             <path d="m9 19-4 4 4 4" transform="translate(0 -4)" />
           </svg>
           <span class="control-label">
-            {{ !gptkToolkitInstalled ? "Setup GPTK Wine" : gptkSteamInstalling ? "Installing GPTK Steam" : !gptkSteamInstalled ? "Install GPTK Steam" : gptkSteamRunning ? "Stop GPTK Steam" : "Start GPTK Steam" }}
+            {{ gptkToolkitInstalling ? "Installing GPTK Runtime..." : !gptkToolkitInstalled ? "Setup GPTK Wine" : gptkSteamInstalling ? "Installing GPTK Steam" : !gptkSteamInstalled ? "Install GPTK Steam" : gptkSteamRunning ? "Stop GPTK Steam" : "Start GPTK Steam" }}
           </span>
           </button>
           <button

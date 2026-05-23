@@ -18,6 +18,7 @@ const installingSteam = ref(false);
 const gptkToolkitInstalled = ref(false);
 const gptkSteamInstalled = ref(false);
 const gptkSteamInstalling = ref(false);
+const gptkToolkitInstalling = ref(false);
 const gptkSteamMessage = ref("");
 
 const steps = ["Welcome", "Install Runtime", "Steam", "Done"];
@@ -122,7 +123,7 @@ async function installSteam() {
 }
 
 async function openGptkToolkitDownload() {
-  const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+  const result = await api<{ ok: boolean; installed?: boolean; installing?: boolean; download_required?: boolean; error?: string; progress?: { phase: string; message: string } }>(
     "POST",
     "/steam/gptk-toolkit-install",
   );
@@ -132,17 +133,59 @@ async function openGptkToolkitDownload() {
     toast.show("Game Porting Toolkit runtime installed", "success");
     return true;
   }
+  if (result?.ok && result.installing) {
+    gptkToolkitInstalling.value = true;
+    gptkSteamMessage.value = result.progress?.message ?? "Installing GPTK runtime...";
+    toast.show(result.progress?.message ?? "Installing GPTK runtime...", "success");
+    pollGptkToolkitInstall();
+    return false;
+  }
   toast.show(
-    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not set up GPTK runtime"),
+    result?.ok ? "Game Porting Toolkit download page opened — download the DMG, then try again" : (result?.error ?? "Could not set up GPTK runtime"),
     result?.ok ? "success" : "error",
   );
   return false;
 }
 
+function pollGptkToolkitInstall() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const s = await api<{
+      gptk_toolkit_installed?: boolean;
+      gptk_toolkit_installing?: boolean;
+      gptk_install_progress?: { phase: string; message: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!s) return;
+    gptkToolkitInstalled.value = s.gptk_toolkit_installed ?? false;
+    gptkToolkitInstalling.value = s.gptk_toolkit_installing ?? false;
+    gptkSteamMessage.value = s.gptk_install_progress?.message ?? gptkSteamMessage.value;
+    if (s.gptk_toolkit_installed) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      gptkToolkitInstalled.value = true;
+      gptkSteamMessage.value = "Game Porting Toolkit runtime is installed";
+      toast.show("Game Porting Toolkit runtime installed", "success");
+    } else if (s.gptk_install_progress?.phase === "toolkit_error") {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show(s.gptk_install_progress.error ?? s.gptk_install_progress.message, "error");
+    } else if (attempts > 120) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show("GPTK toolkit install timed out. Check disk image in Downloads.", "error");
+    }
+  }, 2000);
+}
+
 async function installGptkSteam() {
-  if (!gptkToolkitInstalled.value) {
+  if (!gptkToolkitInstalled.value && !gptkToolkitInstalling.value) {
     const installed = await openGptkToolkitDownload();
     if (!installed) return;
+  }
+  if (gptkToolkitInstalling.value) {
+    toast.show("GPTK runtime is still being installed...", "success");
+    return;
   }
   gptkSteamInstalling.value = true;
   gptkSteamMessage.value = "Starting GPTK Steam setup...";
@@ -168,17 +211,18 @@ async function installGptkSteam() {
     const s = await api<{
       gptk_steam_installed?: boolean;
       gptk_installing?: boolean;
+      gptk_running?: boolean;
       gptk_install_progress?: { message: string; phase: string; error?: string | null };
     }>("GET", "/steam/status");
     if (!s) return;
     gptkSteamInstalled.value = s.gptk_steam_installed ?? false;
     gptkSteamInstalling.value = s.gptk_installing ?? false;
     gptkSteamMessage.value = s.gptk_install_progress?.message ?? "";
-    if (s.gptk_steam_installed) {
+    if (s.gptk_steam_installed && (s.gptk_running || !s.gptk_installing)) {
       clearInterval(poll);
       gptkSteamInstalling.value = false;
-      gptkSteamMessage.value = "GPTK Steam is ready";
-      toast.show("GPTK Steam is ready", "success");
+      gptkSteamMessage.value = s.gptk_running ? "GPTK Steam is running" : "GPTK Steam is ready";
+      toast.show(s.gptk_running ? "GPTK Steam is running" : "GPTK Steam is ready", "success");
     } else if (s.gptk_install_progress?.phase === "error") {
       clearInterval(poll);
       gptkSteamInstalling.value = false;
@@ -314,15 +358,23 @@ async function goToStep2() {
         <div class="setup-steam-section">
           <h2>GPTK Steam</h2>
           <p>Separate Steam install for D3DMetal routes and anti-cheat compatible games.</p>
-          <span v-if="!gptkToolkitInstalled" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">GPTK missing</span>
+          <span v-if="!gptkToolkitInstalled && !gptkToolkitInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">GPTK missing</span>
+          <span v-else-if="gptkToolkitInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">Installing GPTK Runtime</span>
           <span v-else-if="gptkSteamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">GPTK Steam installed</span>
           <span v-else-if="gptkSteamInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">Installing</span>
           <button
-            v-if="!gptkToolkitInstalled"
+            v-if="!gptkToolkitInstalled && !gptkToolkitInstalling"
             class="btn btn-secondary"
             @click="openGptkToolkitDownload"
           >
             Get Game Porting Toolkit
+          </button>
+          <button
+            v-else-if="gptkToolkitInstalling"
+            class="btn btn-secondary"
+            disabled
+          >
+            Installing GPTK Runtime...
           </button>
           <button
             v-else-if="!gptkSteamInstalled"

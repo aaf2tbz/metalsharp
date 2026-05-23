@@ -20,6 +20,7 @@ const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const gptkToolkitInstalled = inject<Ref<boolean>>("gptkToolkitInstalled")!;
 const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
 const gptkSteamInstalling = inject<Ref<boolean>>("gptkSteamInstalling")!;
+const gptkToolkitInstalling = inject<Ref<boolean>>("gptkToolkitInstalling")!;
 const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
@@ -119,9 +120,13 @@ async function toggleSteam() {
 }
 
 async function installGptkSteam() {
-  if (!gptkToolkitInstalled.value) {
+  if (!gptkToolkitInstalled.value && !gptkToolkitInstalling.value) {
     const installed = await openGptkToolkitDownload();
     if (!installed) return;
+  }
+  if (gptkToolkitInstalling.value) {
+    toast.show("GPTK runtime is still being installed...", "success");
+    return;
   }
   if (gptkSteamInstalling.value) {
     toast.show("GPTK Steam setup is already running", "success");
@@ -145,7 +150,7 @@ async function installGptkSteam() {
 }
 
 async function openGptkToolkitDownload() {
-  const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; url?: string; error?: string }>(
+  const result = await api<{ ok: boolean; installed?: boolean; installing?: boolean; download_required?: boolean; url?: string; error?: string; progress?: { phase: string; message: string } }>(
     "POST",
     "/steam/gptk-toolkit-install",
   );
@@ -154,12 +159,49 @@ async function openGptkToolkitDownload() {
     gptkInstallMessage.value = "Game Porting Toolkit runtime is installed";
     toast.show("Game Porting Toolkit runtime installed", "success");
     return true;
+  } else if (result?.ok && result.installing) {
+    gptkToolkitInstalling.value = true;
+    gptkInstallMessage.value = result.progress?.message ?? "Installing GPTK runtime...";
+    toast.show(result.progress?.message ?? "Installing GPTK runtime...", "success");
+    pollGptkToolkitInstall();
+    return false;
   } else if (result?.ok) {
-    toast.show("Game Porting Toolkit download page opened", "success");
+    toast.show("Game Porting Toolkit download page opened — download the DMG, then try again", "success");
   } else {
     toast.show(result?.error ?? "Could not set up Game Porting Toolkit runtime", "error");
   }
   return false;
+}
+
+function pollGptkToolkitInstall() {
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts += 1;
+    const status = await api<{
+      gptk_toolkit_installed?: boolean;
+      gptk_toolkit_installing?: boolean;
+      gptk_install_progress?: { phase: string; message: string; error?: string | null };
+    }>("GET", "/steam/status");
+    if (!status) return;
+    gptkToolkitInstalled.value = status.gptk_toolkit_installed ?? false;
+    gptkToolkitInstalling.value = status.gptk_toolkit_installing ?? false;
+    gptkInstallMessage.value = status.gptk_install_progress?.message ?? gptkInstallMessage.value;
+    if (status.gptk_toolkit_installed) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      gptkToolkitInstalled.value = true;
+      gptkInstallMessage.value = "Game Porting Toolkit runtime is installed";
+      toast.show("Game Porting Toolkit runtime installed", "success");
+    } else if (status.gptk_install_progress?.phase === "toolkit_error") {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
+    } else if (attempts > 120) {
+      clearInterval(poll);
+      gptkToolkitInstalling.value = false;
+      toast.show("GPTK toolkit install timed out. Check disk image in Downloads.", "error");
+    }
+  }, 2000);
 }
 
 async function pollGptkSteamInstall() {
@@ -177,10 +219,12 @@ async function pollGptkSteamInstall() {
     gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
     gptkSteamRunning.value = status.gptk_running ?? gptkSteamRunning.value;
     gptkInstallMessage.value = status.gptk_install_progress?.message ?? "";
-    if (status.gptk_steam_installed) {
+    if (status.gptk_steam_installed && (status.gptk_running || !status.gptk_installing)) {
       clearInterval(poll);
       gptkSteamInstalling.value = false;
-      toast.show("GPTK Steam is ready", "success");
+      gptkSteamRunning.value = status.gptk_running ?? false;
+      gptkInstallMessage.value = status.gptk_running ? "GPTK Steam is running" : "GPTK Steam is ready";
+      toast.show(status.gptk_running ? "GPTK Steam is running" : "GPTK Steam is ready", "success");
       await reloadLibrary();
     } else if (status.gptk_install_progress?.phase === "error") {
       clearInterval(poll);
@@ -409,12 +453,13 @@ function cacheStatusText(cache: CacheSummary | null): string {
           <div v-if="gptkInstallMessage" class="settings-desc">{{ gptkInstallMessage }}</div>
         </div>
         <div class="settings-value">
-          <span v-if="!gptkToolkitInstalled" class="badge badge-warn">GPTK Missing</span>
+          <span v-if="!gptkToolkitInstalled && !gptkToolkitInstalling" class="badge badge-warn">GPTK Missing</span>
+          <span v-else-if="gptkToolkitInstalling" class="badge badge-warn">Installing GPTK Runtime</span>
           <span v-else-if="gptkSteamInstalling" class="badge badge-warn">Installing</span>
           <span v-else-if="gptkSteamInstalled" class="badge badge-ok">Installed</span>
           <span v-else class="badge badge-warn">Not Installed</span>
           <button
-            v-if="gptkToolkitInstalled"
+            v-if="gptkToolkitInstalled && !gptkToolkitInstalling"
             class="btn btn-secondary btn-sm"
             :disabled="gptkSteamInstalling"
             @click="gptkSteamInstalled ? toggleGptkSteam() : installGptkSteam()"
@@ -429,6 +474,7 @@ function cacheStatusText(cache: CacheSummary | null): string {
               : "Install GPTK Steam"
             }}
           </button>
+          <button v-else-if="gptkToolkitInstalling" class="btn btn-secondary btn-sm" disabled>Installing GPTK...</button>
           <button v-else class="btn btn-primary btn-sm" @click="openGptkToolkitDownload">Get GPTK</button>
         </div>
       </div>

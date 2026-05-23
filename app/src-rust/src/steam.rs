@@ -197,6 +197,7 @@ fn read_gptk_steam_install_progress() -> Value {
                             | "running_installer"
                             | "waiting_for_steam"
                             | "deploying_wrapper"
+                            | "installing_toolkit"
                     );
                 if stale_in_progress {
                     value["phase"] = json!("idle");
@@ -400,6 +401,7 @@ pub fn status() -> Value {
         "gptk_running": gptk_running,
         "gptk_synced": gptk_steam_installed,
         "gptk_installing": gptk_installing,
+        "gptk_toolkit_installing": is_installing_gptk_toolkit(),
         "gptk_install_progress": read_gptk_steam_install_progress(),
         "gptk_profile": gptk_identity,
         "running": running,
@@ -910,15 +912,13 @@ fn gptk_attach_args(dmg: &Path, mountpoint: &Path) -> Vec<String> {
 fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(mountpoint)?;
     let args = gptk_attach_args(dmg, mountpoint);
-    let status = Command::new("hdiutil")
-        .args(&args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    if status.success() {
+    let output = Command::new("hdiutil").args(&args).output()?;
+    if output.status.success() {
         Ok(())
     } else {
-        Err(format!("Could not mount {}", dmg.display()).into())
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() { String::new() } else { format!(": {}", stderr) };
+        Err(format!("Could not mount {}{}", dmg.display(), detail).into())
     }
 }
 
@@ -1077,9 +1077,15 @@ fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::erro
 }
 
 fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_gptk_toolkit_progress(
+        "installing_toolkit",
+        &format!("Validating GPTK disk image at {}...", dmg.display()),
+        None,
+    );
     validate_user_gptk_dmg_candidate(dmg)?;
     let outer_mount = unique_temp_dir("gptk-outer");
     let inner_mount = unique_temp_dir("gptk-inner");
+    write_gptk_toolkit_progress("installing_toolkit", "Mounting GPTK disk image...", None);
     attach_dmg(dmg, &outer_mount)?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let inner_dmg =
@@ -1087,13 +1093,16 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
                 "Downloaded Game Porting Toolkit DMG did not contain the Windows games evaluation environment DMG",
             )?;
         validate_nested_gptk_dmg_candidate(&inner_dmg, &outer_mount)?;
+        write_gptk_toolkit_progress("installing_toolkit", "Mounting GPTK runtime image...", None);
         attach_dmg(&inner_dmg, &inner_mount)?;
         let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let redist = inner_mount.join("redist").join("lib");
             if !redist.exists() {
                 return Err("Mounted Game Porting Toolkit image did not contain redist/lib".into());
             }
+            write_gptk_toolkit_progress("installing_toolkit", "Verifying GPTK runtime signature...", None);
             verify_gptk_redist_identity(&redist)?;
+            write_gptk_toolkit_progress("installing_toolkit", "Installing GPTK runtime files...", None);
             install_gptk_redist_atomically(&redist)?;
             Ok(())
         })();
@@ -1117,9 +1126,29 @@ fn ensure_gptk_toolkit_installed_from_download() -> Result<Option<PathBuf>, Box<
         return Err("Game Porting Toolkit runtime installation is already in progress".into());
     }
 
-    let result = ensure_gptk_toolkit_installed_from_download_locked();
-    GPTK_TOOLKIT_INSTALLING.store(false, Ordering::SeqCst);
-    result
+    std::thread::spawn(move || {
+        let result = ensure_gptk_toolkit_installed_from_download_locked();
+        GPTK_TOOLKIT_INSTALLING.store(false, Ordering::SeqCst);
+        match result {
+            Ok(Some(dmg)) => {
+                write_gptk_toolkit_progress(
+                    "toolkit_ready",
+                    &format!("Game Porting Toolkit runtime installed from {}.", dmg.display()),
+                    None,
+                );
+            },
+            Ok(None) => {},
+            Err(e) => {
+                write_gptk_toolkit_progress(
+                    "toolkit_error",
+                    &format!("GPTK toolkit install failed: {}", e),
+                    Some(&e.to_string()),
+                );
+            },
+        }
+    });
+
+    Ok(None)
 }
 
 fn ensure_gptk_toolkit_installed_from_download_locked() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
@@ -1130,7 +1159,7 @@ fn ensure_gptk_toolkit_installed_from_download_locked() -> Result<Option<PathBuf
     if let Some(dmg) = dmg {
         write_gptk_toolkit_progress(
             "installing_toolkit",
-            &format!("Installing Game Porting Toolkit runtime from {}...", dmg.display()),
+            &format!("Found GPTK disk image at {}. Validating...", dmg.display()),
             None,
         );
         install_gptk_redist_from_dmg(&dmg)?;
@@ -1144,21 +1173,36 @@ fn ensure_gptk_toolkit_installed_from_download_locked() -> Result<Option<PathBuf
 }
 
 pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>> {
-    if let Some(dmg) = ensure_gptk_toolkit_installed_from_download()? {
-        return Ok(json!({
-            "ok": true,
-            "installed": true,
-            "source": dmg.to_string_lossy().to_string(),
-            "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
-            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
-            "progress": read_gptk_steam_install_progress()
-        }));
-    }
     if gptk_installed() {
         return Ok(json!({
             "ok": true,
             "installed": true,
             "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
+    if is_installing_gptk_toolkit() {
+        return Ok(json!({
+            "ok": true,
+            "installing": true,
+            "message": "GPTK toolkit installation is in progress",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
+    let dmgs = downloaded_gptk_dmgs();
+    if !dmgs.is_empty() {
+        let dmg = dmgs[0].display().to_string();
+        let _ = ensure_gptk_toolkit_installed_from_download();
+        return Ok(json!({
+            "ok": true,
+            "installing": true,
+            "dmg_available": true,
+            "message": format!("Installing GPTK runtime from {}...", dmg),
+            "source": dmg,
             "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
@@ -1174,6 +1218,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
         "ok": true,
         "installed": false,
         "download_required": true,
+        "dmg_available": false,
         "pid": child.id(),
         "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "url": GPTK_TOOLKIT_URL
@@ -1181,8 +1226,18 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
 }
 
 pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    if is_installing_gptk_toolkit() {
+        return Ok(json!({
+            "ok": true,
+            "installing_toolkit": true,
+            "message": "GPTK toolkit installation is in progress. Please wait for it to complete.",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
     if !gptk_installed() {
-        let _ = ensure_gptk_toolkit_installed_from_download()?;
+        let _ = ensure_gptk_toolkit_installed_from_download();
     }
 
     if !gptk_installed() {
@@ -1447,8 +1502,11 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         return Err("GPTK Steam files were created, but the prefix is not launch-ready".into());
     }
 
+    write_gptk_steam_install_progress("launching", "Launching GPTK Steam for first-time setup...", None);
+    let _ = spawn_gptk_steam(&["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"]);
+
     Ok(format!(
-        "GPTK Steam is installed and ready{}",
+        "GPTK Steam is installed and running{}",
         archived_prefix.map(|path| format!("; archived contaminated prefix to {}", path.display())).unwrap_or_default()
     ))
 }
