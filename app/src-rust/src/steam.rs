@@ -9,6 +9,8 @@ static GPTK_TOOLKIT_INSTALLING: AtomicBool = AtomicBool::new(false);
 static TEMP_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
+const GPTK_UNSIGNED_CONTAINER_WARNING: &str =
+    "GPTK compatibility mode accepts Apple's unsigned GPTK disk images from Downloads/Desktop; the Apple-signed D3DMetal.framework payload remains the install trust boundary.";
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
@@ -67,13 +69,44 @@ fn gptk_wineserver_path() -> PathBuf {
     }
 }
 
+fn metalsharp_wine_runtime_available() -> bool {
+    ms_wine().exists() && ms_wine_root().join("bin").join("wineserver").exists()
+}
+
+fn gptk_app_runtime_installed() -> bool {
+    gptk_app_wine_path().exists() && gptk_app_wineserver_path().exists()
+}
+
+fn gptk_runtime_source_label(app_installed: bool, local_installed: bool, local_root_exists: bool) -> &'static str {
+    if app_installed {
+        "application"
+    } else if local_installed {
+        "metalsharp"
+    } else if local_root_exists {
+        "incomplete_metalsharp"
+    } else {
+        "missing"
+    }
+}
+
+fn gptk_runtime_source() -> &'static str {
+    gptk_runtime_source_label(gptk_app_runtime_installed(), gptk_local_redist_installed(), gptk_local_root().exists())
+}
+
+fn gptk_missing_message() -> String {
+    format!(
+        "Game Porting Toolkit runtime was not found in /Applications/Game Porting Toolkit.app or {}",
+        gptk_local_root().display()
+    )
+}
+
 fn gptk_installed() -> bool {
-    (gptk_app_wine_path().exists() && gptk_app_wineserver_path().exists()) || gptk_local_redist_installed()
+    gptk_app_runtime_installed() || gptk_local_redist_installed()
 }
 
 fn gptk_local_redist_installed() -> bool {
     let root = gptk_local_root();
-    ms_wine().exists() && ms_wine_root().join("bin").join("wineserver").exists() && gptk_redist_payload_complete(&root)
+    metalsharp_wine_runtime_available() && gptk_redist_payload_complete(&root)
 }
 
 fn gptk_redist_payload_complete(root: &Path) -> bool {
@@ -132,6 +165,7 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
         "phase": phase,
         "message": message,
         "error": error,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -161,6 +195,7 @@ fn read_gptk_steam_install_progress() -> Value {
             "GPTK Steam is not installed"
         },
         "error": null,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -172,6 +207,7 @@ fn write_gptk_toolkit_progress(phase: &str, message: &str, error: Option<&str>) 
         "phase": phase,
         "message": message,
         "error": error,
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
@@ -306,7 +342,10 @@ pub fn status() -> Value {
     let running = is_wine_steam_running();
     let gptk_running = is_gptk_steam_running();
     let gptk_identity = gptk_prefix_identity();
-    let ms_available = ms_wine().exists();
+    let ms_available = metalsharp_wine_runtime_available();
+    let gptk_toolkit_installed = gptk_installed();
+    let gptk_wine = gptk_wine_path();
+    let gptk_wineserver = gptk_wineserver_path();
     let installing = is_installing_steam();
     let gptk_installing = is_installing_gptk_setup();
 
@@ -318,11 +357,15 @@ pub fn status() -> Value {
         "mac_path": mac_app.map(|p| p.to_string_lossy().to_string()),
         "mac_install_url": macos_steam_install_url(),
         "mac_running": mac_running,
-        "gptk_installed": gptk_installed(),
-        "gptk_toolkit_installed": gptk_installed(),
+        "gptk_installed": gptk_toolkit_installed,
+        "gptk_toolkit_installed": gptk_toolkit_installed,
         "gptk_toolkit_url": GPTK_TOOLKIT_URL,
         "gptk_toolkit_downloaded": downloaded_gptk_dmgs().first().map(|p| p.to_string_lossy().to_string()),
         "gptk_runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+        "gptk_runtime_source": gptk_runtime_source(),
+        "gptk_local_runtime_installed": gptk_local_redist_installed(),
+        "gptk_wine_path": gptk_wine.to_string_lossy().to_string(),
+        "gptk_wineserver_path": gptk_wineserver.to_string_lossy().to_string(),
         "gptk_steam_installed": gptk_steam_installed,
         "gptk_path": gptk_steam_dir.to_string_lossy().to_string(),
         "gptk_prefix": gptk_steam_prefix().to_string_lossy().to_string(),
@@ -676,7 +719,7 @@ fn stop_gptk_prefix_wineserver(prefix: &Path) {
 
 fn spawn_gptk_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     if !gptk_installed() {
-        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+        return Err(gptk_missing_message().into());
     }
 
     let exe = gptk_steam_exe_path();
@@ -722,12 +765,7 @@ fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-                if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false)
-                    && (name.contains("game_porting_toolkit")
-                        || name.contains("game porting toolkit")
-                        || name.contains("gptk"))
-                {
+                if validate_user_gptk_dmg_path(&path).is_ok() {
                     candidates.push(path);
                 }
             }
@@ -741,19 +779,111 @@ fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
     candidates
 }
 
+fn is_gptk_dmg_filename(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    if !path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false) {
+        return false;
+    }
+    let stem = name.strip_suffix(".dmg").unwrap_or(&name);
+    let normalized = stem.replace(['_', '-'], " ");
+    normalized.starts_with("game porting toolkit ") && normalized.chars().any(|c| c.is_ascii_digit())
+}
+
+fn user_gptk_download_dirs() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    vec![home.join("Downloads"), home.join("Desktop")]
+}
+
+fn validate_user_gptk_dmg_path(dmg: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if !is_gptk_dmg_filename(dmg) {
+        return Err(
+            "Refusing to install GPTK runtime: disk image filename must match Apple's Game Porting Toolkit download name"
+                .into(),
+        );
+    }
+
+    let canonical = std::fs::canonicalize(dmg)?;
+    let canonical_parent = canonical
+        .parent()
+        .ok_or("Refusing to install GPTK runtime: disk image path does not have a parent directory")?;
+    for dir in user_gptk_download_dirs() {
+        if let Ok(allowed_dir) = std::fs::canonicalize(dir) {
+            if canonical_parent == allowed_dir {
+                return Ok(canonical);
+            }
+        }
+    }
+
+    Err("Refusing to install GPTK runtime: disk image must be a direct file in Downloads or Desktop".into())
+}
+
+fn gptk_imageinfo_looks_like_expected_container(text: &str, dmg: &Path) -> bool {
+    let lower = text.to_lowercase();
+    let filename = dmg.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    lower.contains("format: udzo")
+        && lower.contains("udif read-only compressed")
+        && lower.contains("apple_hfs")
+        && lower.contains("encrypted: false")
+        && lower.contains(&filename)
+}
+
+fn validate_user_gptk_dmg_candidate(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let canonical = validate_user_gptk_dmg_path(dmg)?;
+    let metadata = std::fs::metadata(&canonical)?;
+    if metadata.len() < 10_000_000 || metadata.len() > 5_000_000_000 {
+        return Err("Refusing to install GPTK runtime: disk image size does not match the expected GPTK range".into());
+    }
+
+    let mut info = Command::new("hdiutil");
+    info.arg("imageinfo").arg(&canonical);
+    let (ok, output) = command_output_text(info)?;
+    if !ok || !gptk_imageinfo_looks_like_expected_container(&output, &canonical) {
+        return Err(
+            "Refusing to install GPTK runtime: disk image metadata does not match Apple's GPTK container".into()
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_nested_gptk_dmg_candidate(dmg: &Path, outer_mount: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let name = dmg.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    if !name.contains("evaluation environment for windows games")
+        || !dmg.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false)
+    {
+        return Err("Refusing to install GPTK runtime: nested disk image name was not recognized".into());
+    }
+
+    let canonical_dmg = std::fs::canonicalize(dmg)?;
+    let canonical_outer = std::fs::canonicalize(outer_mount)?;
+    if canonical_dmg.starts_with(&canonical_outer) {
+        Ok(())
+    } else {
+        Err("Refusing to install GPTK runtime: nested disk image was outside the mounted GPTK container".into())
+    }
+}
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("metalsharp-{}-{}", name, unique_operation_suffix()))
 }
 
+fn gptk_attach_args(dmg: &Path, mountpoint: &Path) -> Vec<String> {
+    vec![
+        "attach".to_string(),
+        dmg.display().to_string(),
+        "-readonly".to_string(),
+        "-nobrowse".to_string(),
+        "-noautoopen".to_string(),
+        "-mountpoint".to_string(),
+        mountpoint.display().to_string(),
+    ]
+}
+
 fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(mountpoint)?;
+    let args = gptk_attach_args(dmg, mountpoint);
     let status = Command::new("hdiutil")
-        .arg("attach")
-        .arg(dmg)
-        .arg("-readonly")
-        .arg("-nobrowse")
-        .arg("-mountpoint")
-        .arg(mountpoint)
+        .args(&args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()?;
@@ -811,18 +941,6 @@ fn command_output_text(mut command: Command) -> Result<(bool, String), Box<dyn s
     Ok((output.status.success(), text))
 }
 
-fn apple_signature_output_is_accepted(text: &str) -> bool {
-    let accepted = text.lines().any(|line| {
-        let trimmed = line.trim().to_ascii_lowercase();
-        trimmed == "accepted" || trimmed.ends_with(": accepted")
-    });
-    let apple_source = text.lines().any(|line| {
-        let trimmed = line.trim().to_ascii_lowercase();
-        trimmed == "source=apple" || trimmed.starts_with("source=apple ")
-    });
-    accepted && apple_source
-}
-
 fn codesign_output_has_apple_authority(text: &str) -> bool {
     text.lines().any(|line| {
         let trimmed = line.trim();
@@ -830,17 +948,6 @@ fn codesign_output_has_apple_authority(text: &str) -> bool {
             || trimmed == "Authority=Apple Code Signing Certification Authority"
             || trimmed == "TeamIdentifier=59GAB85EFG"
     })
-}
-
-fn verify_signed_disk_image(dmg: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = Command::new("spctl");
-    command.arg("-a").arg("-t").arg("open").arg("--context").arg("context:primary-signature").arg("-v").arg(dmg);
-    let (success, output) = command_output_text(command)?;
-    if success && apple_signature_output_is_accepted(&output) {
-        Ok(())
-    } else {
-        Err(format!("Refusing to install GPTK runtime: {} is not an accepted Apple-signed disk image", label).into())
-    }
 }
 
 fn verify_gptk_redist_identity(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -942,16 +1049,16 @@ fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::erro
 }
 
 fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    validate_user_gptk_dmg_candidate(dmg)?;
     let outer_mount = unique_temp_dir("gptk-outer");
     let inner_mount = unique_temp_dir("gptk-inner");
-    verify_signed_disk_image(dmg, "outer Game Porting Toolkit DMG")?;
     attach_dmg(dmg, &outer_mount)?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let inner_dmg =
             find_child_by_name_contains(&outer_mount, "evaluation environment for windows games", Some("dmg")).ok_or(
                 "Downloaded Game Porting Toolkit DMG did not contain the Windows games evaluation environment DMG",
             )?;
-        verify_signed_disk_image(&inner_dmg, "inner Game Porting Toolkit DMG")?;
+        validate_nested_gptk_dmg_candidate(&inner_dmg, &outer_mount)?;
         attach_dmg(&inner_dmg, &inner_mount)?;
         let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let redist = inner_mount.join("redist").join("lib");
@@ -1015,6 +1122,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
             "installed": true,
             "source": dmg.to_string_lossy().to_string(),
             "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1023,6 +1131,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
             "ok": true,
             "installed": true,
             "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1038,6 +1147,7 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
         "installed": false,
         "download_required": true,
         "pid": child.id(),
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "url": GPTK_TOOLKIT_URL
     }))
 }
@@ -1048,14 +1158,16 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     if !gptk_installed() {
+        let missing = gptk_missing_message();
         write_gptk_steam_install_progress(
             "toolkit_missing",
             "Game Porting Toolkit is not installed. Download it, then press Install GPTK Steam again.",
-            Some("Game Porting Toolkit was not found in /Applications or Downloads"),
+            Some(&missing),
         );
         return Ok(json!({
             "ok": false,
-            "error": "Game Porting Toolkit was not found in /Applications or Downloads",
+            "error": missing,
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "toolkit_url": GPTK_TOOLKIT_URL,
             "progress": read_gptk_steam_install_progress()
         }));
@@ -1069,6 +1181,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "installed": true,
             "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
             "steam_path": steam_dir_for_prefix(&gptk_steam_prefix()).to_string_lossy().to_string(),
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress(),
             "profile": gptk_prefix_identity()
         }));
@@ -1079,6 +1192,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "ok": true,
             "installing": true,
             "message": "GPTK Steam installation already in progress",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1088,6 +1202,7 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
             "ok": true,
             "installing": true,
             "message": "GPTK Steam installation already in progress",
+            "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
             "progress": read_gptk_steam_install_progress()
         }));
     }
@@ -1111,13 +1226,14 @@ pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         "installing": true,
         "message": "GPTK Steam installation started",
         "prefix": gptk_steam_prefix().to_string_lossy().to_string(),
+        "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
         "progress": read_gptk_steam_install_progress()
     }))
 }
 
 fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !gptk_installed() {
-        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+        return Err(gptk_missing_message().into());
     }
 
     std::fs::create_dir_all(prefix)?;
@@ -1236,7 +1352,7 @@ fn archive_contaminated_gptk_prefix(prefix: &Path) -> Result<Option<PathBuf>, Bo
 fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
     write_gptk_steam_install_progress("checking_toolkit", "Checking Game Porting Toolkit installation...", None);
     if !gptk_installed() {
-        return Err("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app".into());
+        return Err(gptk_missing_message().into());
     }
 
     let metalsharp_dir = metalsharp_home();
@@ -2655,16 +2771,52 @@ mod tests {
     }
 
     #[test]
-    fn gptk_disk_image_signature_requires_apple_acceptance() {
-        assert!(apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: accepted\nsource=Apple System"
+    fn gptk_runtime_source_prefers_app_then_local_runtime() {
+        assert_eq!(gptk_runtime_source_label(true, true, true), "application");
+        assert_eq!(gptk_runtime_source_label(false, true, true), "metalsharp");
+        assert_eq!(gptk_runtime_source_label(false, false, true), "incomplete_metalsharp");
+        assert_eq!(gptk_runtime_source_label(false, false, false), "missing");
+    }
+
+    #[test]
+    fn gptk_dmg_filename_allowlist_rejects_unrelated_images() {
+        assert!(is_gptk_dmg_filename(Path::new("Game_Porting_Toolkit_3.0.dmg")));
+        assert!(is_gptk_dmg_filename(Path::new("Game Porting Toolkit 3.0.dmg")));
+        assert!(is_gptk_dmg_filename(Path::new("game-porting-toolkit-3.1.dmg")));
+        assert!(!is_gptk_dmg_filename(Path::new("gptk-3.dmg")));
+        assert!(!is_gptk_dmg_filename(Path::new("random.dmg")));
+        assert!(!is_gptk_dmg_filename(Path::new("Game_Porting_Toolkit_3.0.zip")));
+    }
+
+    #[test]
+    fn gptk_imageinfo_requires_expected_container_metadata() {
+        let dmg = Path::new("Game_Porting_Toolkit_3.0.dmg");
+        let info = "Format Description: UDIF read-only compressed (zlib)\nFormat: UDZO\nName: Game_Porting_Toolkit_3.0.dmg\nName: disk image (Apple_HFS : 3)\nEncrypted: false\n";
+        assert!(gptk_imageinfo_looks_like_expected_container(info, dmg));
+        assert!(!gptk_imageinfo_looks_like_expected_container(
+            "Format: UDZO\nName: gptk-3.dmg\nEncrypted: false\n",
+            dmg
         ));
-        assert!(!apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/gptk.dmg: accepted\nsource=Notarized Developer ID"
-        ));
-        assert!(!apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: rejected\nsource=Apple System"
-        ));
+    }
+
+    #[test]
+    fn gptk_attach_args_keep_mounts_read_only_hidden_and_non_autoopen() {
+        let args = gptk_attach_args(
+            Path::new("/Users/alex/Downloads/Game_Porting_Toolkit_3.0.dmg"),
+            Path::new("/tmp/metalsharp-gptk"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "attach",
+                "/Users/alex/Downloads/Game_Porting_Toolkit_3.0.dmg",
+                "-readonly",
+                "-nobrowse",
+                "-noautoopen",
+                "-mountpoint",
+                "/tmp/metalsharp-gptk",
+            ]
+        );
     }
 
     #[test]

@@ -497,33 +497,12 @@ watch([library, search, filter], applyFilter);
             type="text"
             placeholder="Search games..."
           />
-          <div class="library-tabs" role="tablist" aria-label="Library filters">
-            <button class="library-tab" :class="{ active: filter === 'all' }" type="button" @click="filter = 'all'">All</button>
-            <button
-              class="library-tab"
-              :class="{ active: filter === 'metalsharp_installed' }"
-              type="button"
-              @click="filter = 'metalsharp_installed'"
-            >
-              MetalSharp Installed
-            </button>
-            <button
-              class="library-tab"
-              :class="{ active: filter === 'gptk_installed' }"
-              type="button"
-              @click="filter = 'gptk_installed'"
-            >
-              GPTK Installed
-            </button>
-            <button
-              class="library-tab"
-              :class="{ active: filter === 'not_installed' }"
-              type="button"
-              @click="filter = 'not_installed'"
-            >
-              Not Installed
-            </button>
-          </div>
+          <select v-model="filter" class="library-filter-select" title="Library filter" aria-label="Library filter">
+            <option value="all">All</option>
+            <option value="metalsharp_installed">MetalSharp Installed</option>
+            <option value="gptk_installed">GPTK Installed</option>
+            <option value="not_installed">Not Installed</option>
+          </select>
         </div>
         <button class="btn btn-secondary library-control-button refresh-button" title="Refresh" @click="reloadLibrary()">
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -624,37 +603,19 @@ watch([library, search, filter], applyFilter);
 .library-controls-center select {
   min-width: 0;
 }
-.library-tabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, auto));
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 3px;
+.library-filter-select {
+  min-height: 36px;
+  min-width: 170px;
+  max-width: 220px;
+  padding: 0 34px 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
-}
-.library-tab {
-  min-height: 30px;
-  min-width: 0;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
-  white-space: nowrap;
   cursor: pointer;
-}
-.library-tab.active {
-  background: var(--accent);
-  color: var(--bg-deep);
-}
-.library-tab:hover:not(.active) {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--text-primary);
+  white-space: nowrap;
 }
 .library-control-button {
   flex: 0 1 auto;
@@ -699,8 +660,9 @@ watch([library, search, filter], applyFilter);
   .library-controls-center {
     grid-template-columns: 1fr;
   }
-  .library-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .library-filter-select {
+    max-width: none;
+    width: 100%;
   }
 }
 
