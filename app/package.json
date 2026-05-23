@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.35",
+  "version": "0.33.36",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -182,6 +182,34 @@
       {
         "from": "bundles/metalsharp_bundle2.tar.zst",
         "to": "bundles/metalsharp_bundle2.tar.zst"
+      },
+      {
+        "from": "bundles/dxmt.tar.zst",
+        "to": "bundles/dxmt.tar.zst"
+      },
+      {
+        "from": "bundles/gptk.tar.zst",
+        "to": "bundles/gptk.tar.zst"
+      },
+      {
+        "from": "bundles/dxvk.tar.zst",
+        "to": "bundles/dxvk.tar.zst"
+      },
+      {
+        "from": "bundles/mono-x86.tar.zst",
+        "to": "bundles/mono-x86.tar.zst"
+      },
+      {
+        "from": "bundles/mono-arm64.tar.zst",
+        "to": "bundles/mono-arm64.tar.zst"
+      },
+      {
+        "from": "bundles/goldberg.tar.zst",
+        "to": "bundles/goldberg.tar.zst"
+      },
+      {
+        "from": "bundles/eac-toggle.tar.zst",
+        "to": "bundles/eac-toggle.tar.zst"
       },
       {
         "from": "bundles/SteamSetup.exe",

@@ -76,6 +76,10 @@ if ! download_asset "metalsharp_linux_runtime2.tar.zst" "$BUNDLE_DIR/metalsharp_
 fi
 
 for asset in \
+  dxvk.tar.zst \
+  mono-x86.tar.zst \
+  goldberg.tar.zst \
+  eac-toggle.tar.zst \
   SteamSetup.exe \
   steamwebhelper.exe \
   steamwebhelper-wrapper.c

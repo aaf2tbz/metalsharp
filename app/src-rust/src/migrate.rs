@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 2;
+const MIGRATE_SCHEMA_VERSION: u64 = 3;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
@@ -126,16 +126,57 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-unix"),
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvapi64.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
+        runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("dxgi.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvapi64.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvngx.dll"),
+        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("atidxx64.dll"),
+        runtime_wine
+            .join("lib")
+            .join("external")
+            .join("D3DMetal.framework")
+            .join("Versions")
+            .join("A")
+            .join("D3DMetal"),
+        runtime_wine
+            .join("lib")
+            .join("external")
+            .join("D3DMetal.framework")
+            .join("Versions")
+            .join("A")
+            .join("Resources"),
+        ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
+        ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
+        ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
+        ms_dir.join("configs").join("mtsp-rules.toml"),
         runtime_wine.join("etc").join("dxmt.conf"),
     ]
     .iter()
     .all(|path| path.exists())
+        && framework_has_resource_dylib(&runtime_wine.join("lib").join("external").join("D3DMetal.framework"))
+}
+
+fn framework_has_resource_dylib(framework: &Path) -> bool {
+    for resources_dir in [framework.join("Resources"), framework.join("Versions").join("A").join("Resources")] {
+        if let Ok(entries) = fs::read_dir(resources_dir) {
+            if entries.flatten().any(|entry| {
+                entry.path().extension().and_then(|ext| ext.to_str()) == Some("dylib") && file_nonempty(&entry.path())
+            }) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn host_runtime_ready(dir: &Path) -> bool {
@@ -612,6 +653,25 @@ mod tests {
     }
 
     #[test]
+    fn missing_beta7_foundation_requests_repair() {
+        let home = test_dir("missing-beta7-foundation");
+        let ms_dir = home.join(".metalsharp");
+        write_runtime_core(&ms_dir);
+
+        if crate::platform::current() != crate::platform::HostPlatform::Linux {
+            fs::remove_file(
+                ms_dir.join("runtime").join("wine").join("lib").join("gptk").join("x86_64-windows").join("nvngx.dll"),
+            )
+            .expect("remove beta7 foundation file");
+
+            assert!(!runtime_core_ready(&ms_dir));
+            assert!(runtime_needs_repair(&home, true));
+        }
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
         let ms_dir = home.join(".metalsharp");
@@ -685,6 +745,35 @@ mod tests {
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvapi64.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("dxgi.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvapi64.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvngx.dll"),
+            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("atidxx64.dll"),
+            runtime_wine
+                .join("lib")
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("D3DMetal"),
+            runtime_wine
+                .join("lib")
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("Resources")
+                .join("libD3DMetalHelper.dylib"),
+            ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
+            ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
+            ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
+            ms_dir.join("configs").join("mtsp-rules.toml"),
             runtime_wine.join("etc").join("dxmt.conf"),
         ] {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
