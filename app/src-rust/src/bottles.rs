@@ -2080,12 +2080,13 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2013" => {
-            if system32.join("msvcr120.dll").exists()
-                || syswow64.join("msvcr120.dll").exists()
-                || system32.join("msvcp120.dll").exists()
-                || syswow64.join("msvcp120.dll").exists()
-            {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core = ["msvcr120.dll", "msvcp120.dll"];
+            let core_count = core.iter().filter(|dll| has(dll)).count();
+            if core_count == core.len() {
                 ComponentState::Installed
+            } else if core_count > 0 {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -2813,10 +2814,14 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(log));
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
-    let child = cmd.spawn()?;
-    let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
-    let _ = fs::write(&marker, timestamp_secs());
-    Ok(child.id())
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    let exit_status = child.wait()?;
+    if exit_status.success() {
+        let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
+        let _ = fs::write(&marker, timestamp_secs());
+    }
+    Ok(pid)
 }
 
 fn wine_z_drive_path(path: &Path) -> String {
@@ -4366,6 +4371,9 @@ mod tests {
         assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Missing);
 
         fs::write(system32.join("msvcr120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::NeedsRepair);
+
+        fs::write(system32.join("msvcp120.dll"), b"dll").expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4392,7 +4400,7 @@ mod tests {
         fs::create_dir_all(&syswow64).expect("create syswow64");
 
         fs::write(syswow64.join("msvcp120.dll"), b"dll").expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Installed);
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::NeedsRepair);
         let _ = fs::remove_dir_all(&dir);
     }
 
