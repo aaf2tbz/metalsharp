@@ -1,6 +1,33 @@
 # MetalSharp CrossOver Parity Roadmap
 
-Status: Planning
+Status: **In Progress** — PR #114 (codex/crossover-parity)
+
+## Completed Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1A | WINEDLLPATH routing for DXMT M9-M12 | ✅ Done |
+| 1B | M13 GPTK launch routing | ✅ Done |
+| 1B.5 | Bundle Apple GPTK (D3DMetal) | ✅ Done |
+| 2A | VC++ 2015-2022 expanded detection | ✅ Done |
+| 2B | VC++ 2013 redistributable | ✅ Done |
+| 2D | GPU vendor stubs (nvapi64, nvngx, atidxx64) | ✅ Done |
+| 3A | Font substitution registry | ✅ Done |
+| 3B | Declarative bottle templates (via RuntimeProfile) | ✅ Done |
+| 3C | Drive mappings (y: -> user home) | ✅ Done |
+| 4A | Anti-cheat without game-dir mutation (already clean) | ✅ Done |
+| 4B | Explicit offline mode (via extra_env passthrough) | ✅ Done |
+| 5A | Post-wineboot config seeding | ✅ Done |
+
+## Remaining (Future Work)
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1C | mscompatdb.so v2 | Deferred |
+| 2C | DirectX Jun 2010 full verification | Pending |
+| 4C | EOS SDK env-based offline | Research |
+| 5B | Per-game TOML recipe expansion | Pending |
+| 5C | CrossTie-inspired install recipes | Pending |
 
 Based on a deep technical comparison between CrossOver 26.1.0 and MetalSharp v0.33.34
 (current main at 72827cc), this roadmap tracks the work needed to reach and exceed
