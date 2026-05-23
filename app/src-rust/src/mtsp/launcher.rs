@@ -741,6 +741,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
         return Ok(());
     }
 
+    let canonical_game_dir = game_dir.canonicalize().unwrap_or_else(|_| game_dir.to_path_buf());
+
     let manifest_str = std::fs::read_to_string(&manifest_path).unwrap_or_default();
     let manifest: serde_json::Value = match serde_json::from_str(&manifest_str) {
         Ok(v) => v,
@@ -754,19 +756,31 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
         for dll in dlls {
             if let Some(backup) = dll.get("backup_path").and_then(|b| b.as_str()) {
                 let backup_path = PathBuf::from(backup);
-                if !backup_path.starts_with(game_dir) {
-                    continue;
-                }
-                if !backup_path.exists() {
+                let canonical_backup = match backup_path.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                if !canonical_backup.starts_with(&canonical_game_dir) {
                     continue;
                 }
                 if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
                     let dest_path = PathBuf::from(dest);
-                    if !dest_path.starts_with(game_dir) {
+                    let canonical_dest = if dest_path.exists() {
+                        match dest_path.canonicalize() {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        }
+                    } else {
+                        match dest_path.parent().and_then(|p| p.canonicalize().ok()) {
+                            Some(parent) => parent.join(dest_path.file_name().unwrap_or_default()),
+                            None => continue,
+                        }
+                    };
+                    if !canonical_dest.starts_with(&canonical_game_dir) {
                         continue;
                     }
-                    let _ = std::fs::copy(&backup_path, &dest_path);
-                    let _ = std::fs::remove_file(&backup_path);
+                    let _ = std::fs::copy(&canonical_backup, &canonical_dest);
+                    let _ = std::fs::remove_file(&canonical_backup);
                 }
             }
         }
