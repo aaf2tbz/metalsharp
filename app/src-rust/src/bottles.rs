@@ -608,8 +608,16 @@ pub fn prepare_steam_game_launch(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let dual = crate::scan::resolve_dual_game_dir(appid);
+    prepare_steam_game_launch_with_game_dir(appid, pipeline, dual.wine_dir.as_deref())
+}
+
+pub fn prepare_steam_game_launch_with_game_dir(
+    appid: u32,
+    pipeline: crate::mtsp::engine::PipelineId,
+    game_dir: Option<&Path>,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
-    let mut manifest = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?;
+    let mut manifest = ensure_steam_game_bottle(appid, &name, game_dir, pipeline)?;
     let prefix = PathBuf::from(&manifest.prefix_path);
     fs::create_dir_all(&prefix)?;
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);

@@ -352,6 +352,8 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   }>("POST", launchEndpoint, {
     appid: game.appid,
     launchMethod: requestLaunchMethod,
+    library_id: game.library_id,
+    library_source: game.library_source,
   });
 
   launchingLibraryId.value = null;

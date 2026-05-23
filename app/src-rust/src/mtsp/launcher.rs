@@ -40,6 +40,7 @@ struct LaunchLogContext<'a> {
 pub struct CustomLaunchOptions {
     pub prefix_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
+    pub extra_env: Vec<(String, String)>,
 }
 
 pub fn bridge_is_running() -> bool {
@@ -148,19 +149,47 @@ pub fn launch_steam_bottle_with_pipeline(
     prefix_path: &Path,
     extra_env: &[(String, String)],
 ) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    launch_steam_bottle_with_pipeline_from_game_dir(appid, pipeline_id, prefix_path, extra_env, None)
+}
+
+pub fn launch_steam_bottle_with_pipeline_from_game_dir(
+    appid: u32,
+    pipeline_id: PipelineId,
+    prefix_path: &Path,
+    extra_env: &[(String, String)],
+    game_dir_override: Option<&Path>,
+) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
-    let result = match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
-            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-        },
-        PipelineId::M32 | PipelineId::WineBare => {
-            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-        },
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
-        },
+    let result = if let Some(game_dir) = game_dir_override {
+        let recipe = super::recipe::build_custom_launch_recipe(appid, node, game_dir, None)?;
+        let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?.clone();
+        launch_custom_with_options(
+            appid,
+            game_dir,
+            &exe_path,
+            pipeline_id,
+            &[],
+            CustomLaunchOptions {
+                prefix_path: Some(prefix_path.to_path_buf()),
+                log_path: Some(log_path.clone()),
+                extra_env: extra_env.to_vec(),
+            },
+        )
+        .map(|(pid, game_type, _)| (pid, game_type))
+    } else {
+        match pipeline_id {
+            PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
+                launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            },
+            PipelineId::M32 | PipelineId::WineBare => {
+                launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            },
+            PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+                Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
+            },
+        }
     }?;
 
     Ok((result.0, result.1, log_path))
@@ -356,6 +385,9 @@ pub fn launch_custom_with_options(
     }
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
+    }
+    for (key, value) in &options.extra_env {
+        cmd.env(key, value);
     }
 
     apply_steam_identity_env(&mut cmd, launch_id);

@@ -1714,6 +1714,10 @@ fn resolve_game_dir_in_steamapps(appid: u32, paths: Vec<PathBuf>) -> Option<Path
     None
 }
 
+pub fn resolve_gptk_game_dir(appid: u32) -> Option<PathBuf> {
+    resolve_game_dir_in_steamapps(appid, crate::scan::gptk_steam_library_paths())
+}
+
 fn get_game_name_from_manifest_in_paths(appid: u32, paths: Vec<PathBuf>) -> Option<String> {
     let manifest_name = format!("appmanifest_{}.acf", appid);
 

@@ -579,6 +579,7 @@ fn start_wine_installer_in_bottle(
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(prefix_path),
                 log_path: Some(log_path.clone()),
+                ..Default::default()
             },
         )?;
         pid
@@ -783,6 +784,7 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(PathBuf::from(bottle.prefix_path)),
                 log_path: Some(log_path.clone()),
+                ..Default::default()
             },
         )
         .inspect(|result| {
