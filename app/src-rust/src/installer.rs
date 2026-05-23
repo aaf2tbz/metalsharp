@@ -446,9 +446,8 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
     let unix_so = dxmt_dir.join("x86_64-unix").join("winemetal.so");
     let pe_dll = dxmt_dir.join("x86_64-windows").join("d3d11.dll");
-    let nvapi = dxmt_dir.join("x86_64-windows").join("nvapi64.dll");
 
-    if unix_so.exists() && pe_dll.exists() && nvapi.exists() {
+    if unix_so.exists() && pe_dll.exists() {
         return Ok(false);
     }
 
