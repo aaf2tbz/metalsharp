@@ -1,25 +1,55 @@
 use super::engine::PipelineId;
 use super::pe::{D3dApi, PeInfo};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-static RULES: OnceLock<std::collections::HashMap<u32, PipelineId>> = OnceLock::new();
+static RULES: OnceLock<HashMap<u32, PipelineId>> = OnceLock::new();
+static GAME_RECIPES: OnceLock<HashMap<u32, GameRecipe>> = OnceLock::new();
 
-fn load_rules() -> &'static std::collections::HashMap<u32, PipelineId> {
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GameRecipe {
+    pub pipeline: PipelineId,
+    pub name: String,
+    pub components: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub check_dlls: Vec<String>,
+}
+
+impl Default for GameRecipe {
+    fn default() -> Self {
+        Self {
+            pipeline: PipelineId::M12,
+            name: String::new(),
+            components: Vec::new(),
+            env: HashMap::new(),
+            check_dlls: Vec::new(),
+        }
+    }
+}
+
+fn load_rules() -> &'static HashMap<u32, PipelineId> {
     RULES.get_or_init(|| {
         let home = dirs::home_dir().unwrap_or_default();
         let current_exe = std::env::current_exe().ok();
 
         for path in rule_candidates(&home, current_exe.as_deref()) {
             if path.exists() {
-                if let Ok(contents) = std::fs::read_to_string(path) {
-                    return parse_rules(&contents);
+                if let Ok(contents) = std::fs::read_to_string(&path) {
+                    let (pipelines, recipes) = parse_rules_full(&contents);
+                    let _ = GAME_RECIPES.set(recipes);
+                    return pipelines;
                 }
             }
         }
 
-        std::collections::HashMap::new()
+        HashMap::new()
     })
+}
+
+fn load_game_recipes() -> &'static HashMap<u32, GameRecipe> {
+    let _ = load_rules();
+    GAME_RECIPES.get_or_init(HashMap::new)
 }
 
 fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
@@ -45,30 +75,60 @@ fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
     candidates
 }
 
-fn parse_rules(toml_str: &str) -> std::collections::HashMap<u32, PipelineId> {
-    let mut map = std::collections::HashMap::new();
+fn parse_rules_full(toml_str: &str) -> (HashMap<u32, PipelineId>, HashMap<u32, GameRecipe>) {
+    let mut pipelines = HashMap::new();
+    let mut recipes = HashMap::new();
 
     let doc: toml::Value = match toml_str.parse() {
         Ok(v) => v,
-        Err(_) => return map,
+        Err(_) => return (pipelines, recipes),
     };
 
     let overrides = match doc.get("overrides").and_then(|v| v.as_table()) {
         Some(t) => t,
-        None => return map,
+        None => return (pipelines, recipes),
     };
 
     for (appid_str, entry) in overrides {
-        if let Ok(appid) = appid_str.parse::<u32>() {
-            if let Some(pipeline_str) = entry.get("pipeline").and_then(|v| v.as_str()) {
-                if let Some(pipeline) = PipelineId::from_str_flexible(pipeline_str) {
-                    map.insert(appid, pipeline);
-                }
-            }
-        }
+        let Ok(appid) = appid_str.parse::<u32>() else {
+            continue;
+        };
+        let Some(pipeline_str) = entry.get("pipeline").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(pipeline) = PipelineId::from_str_flexible(pipeline_str) else {
+            continue;
+        };
+
+        pipelines.insert(appid, pipeline);
+
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let components = entry
+            .get("dependencies")
+            .and_then(|d| d.get("components"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let env = entry
+            .get("env")
+            .and_then(|v| v.as_table())
+            .map(|t| t.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+            .unwrap_or_default();
+        let check_dlls = entry
+            .get("diagnostics")
+            .and_then(|d| d.get("check_dlls"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        recipes.insert(appid, GameRecipe { pipeline, name, components, env, check_dlls });
     }
 
-    map
+    (pipelines, recipes)
+}
+
+fn parse_rules(toml_str: &str) -> HashMap<u32, PipelineId> {
+    parse_rules_full(toml_str).0
 }
 
 pub fn resolve_pipeline(appid: u32) -> PipelineId {
@@ -98,6 +158,38 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
     }
 
     default_pipeline()
+}
+
+pub fn get_game_recipe(appid: u32) -> Option<GameRecipe> {
+    let recipes = load_game_recipes();
+    recipes.get(&appid).cloned()
+}
+
+pub fn game_missing_dependencies(appid: u32, prefix: &Path) -> Vec<String> {
+    let Some(recipe) = get_game_recipe(appid) else {
+        return Vec::new();
+    };
+    if recipe.components.is_empty() {
+        return Vec::new();
+    }
+    let system32 = prefix.join("drive_c/windows/system32");
+    let syswow64 = prefix.join("drive_c/windows/syswow64");
+    let component_dll_map: &[(&str, &[&str])] = &[
+        ("vcrun2019", &["vcruntime140.dll"]),
+        ("vcrun2013", &["msvcr120.dll"]),
+        ("directx_jun2010", &["d3dx9_43.dll", "xinput1_3.dll"]),
+        ("corefonts", &["arial.ttf"]),
+    ];
+    let mut missing = Vec::new();
+    for component_id in &recipe.components {
+        let dlls = component_dll_map.iter().find(|(id, _)| *id == *component_id).map(|(_, dlls)| *dlls);
+        let Some(dlls) = dlls else { continue };
+        let found = dlls.iter().any(|dll| system32.join(dll).exists() || syswow64.join(dll).exists());
+        if !found {
+            missing.push(component_id.clone());
+        }
+    }
+    missing
 }
 
 fn default_pipeline() -> PipelineId {
@@ -318,5 +410,29 @@ mod tests {
         let stale_user_pos = candidates.iter().position(|path| path == &stale_user_rules).unwrap();
 
         assert!(repo_pos < stale_user_pos);
+    }
+
+    #[test]
+    fn game_recipes_parse_dependencies() {
+        let (pipelines, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        assert!(!pipelines.is_empty());
+        assert!(!recipes.is_empty());
+
+        let elden = recipes.get(&1245620).expect("elden ring recipe");
+        assert_eq!(elden.pipeline, PipelineId::M12);
+        assert_eq!(elden.name, "ELDEN RING");
+        assert!(elden.components.contains(&"vcrun2019".to_string()));
+        assert!(elden.components.contains(&"directx_jun2010".to_string()));
+        assert!(elden.check_dlls.contains(&"d3d12.dll".to_string()));
+    }
+
+    #[test]
+    fn game_recipes_without_dependencies_get_empty_vecs() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let goat = recipes.get(&265930).expect("goat simulator recipe");
+        assert_eq!(goat.pipeline, PipelineId::M9);
+        assert!(goat.components.is_empty());
+        assert!(goat.env.is_empty());
+        assert!(goat.check_dlls.is_empty());
     }
 }

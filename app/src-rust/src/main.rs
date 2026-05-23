@@ -706,6 +706,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, bottles::handle_seed_post_wineboot(&body))
         },
+        (Method::Post, "/bottles/verify-directx") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_verify_directx(&body))
+        },
+        (Method::Post, "/steam/install-recipe-deps") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_install_recipe_deps(&body))
+        },
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))

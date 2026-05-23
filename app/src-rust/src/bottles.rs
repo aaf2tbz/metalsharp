@@ -273,6 +273,10 @@ pub struct SteamRuntimeDiagnostic {
     pub components: Vec<RuntimeComponent>,
     pub actions: Vec<BottleAction>,
     pub compatdata: Option<SteamCompatdataRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recipe_missing_components: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -1368,6 +1372,28 @@ pub fn handle_seed_post_wineboot(body: &serde_json::Map<String, Value>) -> Value
     }
 }
 
+pub fn handle_verify_directx(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let verification = verify_directx_jun2010(&prefix);
+    json!({
+        "ok": true,
+        "id": id,
+        "complete": verification.complete,
+        "present_count": verification.present.len(),
+        "missing_count": verification.missing.len(),
+        "present": verification.present,
+        "missing": verification.missing,
+    })
+}
+
 pub fn handle_compatibility_matrix() -> Value {
     json!({
         "ok": true,
@@ -1411,6 +1437,8 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let compatdata = load_steam_compatdata(appid).ok();
+    let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    let recipe = crate::mtsp::rules::get_game_recipe(appid);
     let report = SteamRuntimeDiagnostic {
         appid: Some(appid),
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
@@ -1422,6 +1450,8 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         components,
         actions,
         compatdata,
+        recipe_missing_components: recipe_deps,
+        recipe_name: recipe.map(|r| r.name),
     };
     json!({"ok": true, "report": report})
 }
@@ -1443,6 +1473,44 @@ pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
     {
         Ok(record) => json!({"ok": true, "compatdata": record}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Value {
+    let appid = match parse_steam_runtime_doctor_appid(body) {
+        Ok(appid) => appid,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+    let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
+    let manifest = match ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let missing = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    if missing.is_empty() {
+        return json!({"ok": true, "appid": appid, "installed": [], "message": "all recipe dependencies satisfied"});
+    }
+
+    let mut installed = Vec::new();
+    let mut errors = Vec::new();
+    for component_id in &missing {
+        match repair_component(&manifest.id, component_id, false) {
+            Ok(report) => {
+                installed.push(report);
+            },
+            Err(e) => {
+                errors.push(format!("{}: {}", component_id, e));
+            },
+        }
+    }
+
+    if errors.is_empty() {
+        json!({"ok": true, "appid": appid, "installed": installed, "message": format!("installed {} components", missing.len())})
+    } else {
+        json!({"ok": false, "appid": appid, "installed": installed, "errors": errors})
     }
 }
 
@@ -1832,7 +1900,20 @@ fn components_from_installscript(path: &Path) -> Vec<String> {
     };
     maybe_add("vcrun2019", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
     maybe_add("vcrun2013", &["vcredist_2013", "msvcr120", "msvcp120", "visual c++ 2013"]);
-    maybe_add("directx_jun2010", &["directx", "dxsetup", "d3dx9_43", "xinput1_3"]);
+    maybe_add(
+        "directx_jun2010",
+        &[
+            "directx",
+            "dxsetup",
+            "d3dx9_43",
+            "d3dx10_43",
+            "d3dx11_43",
+            "xinput1_3",
+            "xaudio2_7",
+            "x3daudio1_7",
+            "D3DCompiler_43",
+        ],
+    );
     maybe_add("dotnet48", &["dotnet", ".net framework", "ndp48", "ndp472", "ndp462", "ndp452"]);
     maybe_add("webview2", &["webview2", "edgewebview"]);
     maybe_add("openal", &["openal", "oalinst"]);
@@ -1873,6 +1954,75 @@ fn inspect_components(prefix: &Path, components: &[RuntimeComponent]) -> Vec<Run
             state: inspect_component_state(prefix, &component.id, component.state),
         })
         .collect()
+}
+
+pub fn verify_directx_jun2010(prefix: &Path) -> DirectXVerification {
+    let system32 = prefix.join("drive_c/windows/system32");
+    let syswow64 = prefix.join("drive_c/windows/syswow64");
+    let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+
+    let mut present = Vec::new();
+    let mut missing = Vec::new();
+
+    let expected = [
+        ("d3dx9_24.dll", "D3DX9"),
+        ("d3dx9_25.dll", "D3DX9"),
+        ("d3dx9_26.dll", "D3DX9"),
+        ("d3dx9_27.dll", "D3DX9"),
+        ("d3dx9_28.dll", "D3DX9"),
+        ("d3dx9_29.dll", "D3DX9"),
+        ("d3dx9_30.dll", "D3DX9"),
+        ("d3dx9_31.dll", "D3DX9"),
+        ("d3dx9_32.dll", "D3DX9"),
+        ("d3dx9_33.dll", "D3DX9"),
+        ("d3dx9_34.dll", "D3DX9"),
+        ("d3dx9_35.dll", "D3DX9"),
+        ("d3dx9_36.dll", "D3DX9"),
+        ("d3dx9_37.dll", "D3DX9"),
+        ("d3dx9_38.dll", "D3DX9"),
+        ("d3dx9_39.dll", "D3DX9"),
+        ("d3dx9_40.dll", "D3DX9"),
+        ("d3dx9_41.dll", "D3DX9"),
+        ("d3dx9_42.dll", "D3DX9"),
+        ("d3dx9_43.dll", "D3DX9"),
+        ("d3dx10_33.dll", "D3DX10"),
+        ("d3dx10_34.dll", "D3DX10"),
+        ("d3dx10_35.dll", "D3DX10"),
+        ("d3dx10_36.dll", "D3DX10"),
+        ("d3dx10_37.dll", "D3DX10"),
+        ("d3dx10_38.dll", "D3DX10"),
+        ("d3dx10_39.dll", "D3DX10"),
+        ("d3dx10_40.dll", "D3DX10"),
+        ("d3dx10_41.dll", "D3DX10"),
+        ("d3dx10_42.dll", "D3DX10"),
+        ("d3dx10_43.dll", "D3DX10"),
+        ("d3dx11_42.dll", "D3DX11"),
+        ("d3dx11_43.dll", "D3DX11"),
+        ("D3DCompiler_42.dll", "D3DCompiler"),
+        ("D3DCompiler_43.dll", "D3DCompiler"),
+        ("xinput1_3.dll", "XInput"),
+        ("xaudio2_7.dll", "XAudio"),
+        ("x3daudio1_7.dll", "X3DAudio"),
+        ("XAPOFX1_5.dll", "XAPOFX"),
+    ];
+
+    for (dll, _family) in &expected {
+        if has(dll) {
+            present.push(dll.to_string());
+        } else {
+            missing.push(dll.to_string());
+        }
+    }
+
+    let complete = missing.is_empty();
+    DirectXVerification { present, missing, complete }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DirectXVerification {
+    pub present: Vec<String>,
+    pub missing: Vec<String>,
+    pub complete: bool,
 }
 
 fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) -> ComponentState {
@@ -1939,12 +2089,14 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "directx_jun2010" => {
-            if system32.join("d3dx9_43.dll").exists()
-                || syswow64.join("d3dx9_43.dll").exists()
-                || system32.join("xinput1_3.dll").exists()
-                || syswow64.join("xinput1_3.dll").exists()
-            {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let core_dlls = ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"];
+            let extended_dlls = ["xaudio2_7.dll", "x3daudio1_7.dll", "D3DCompiler_43.dll"];
+            let core_ok = core_dlls.iter().all(|dll| has(dll));
+            if core_ok {
                 ComponentState::Installed
+            } else if has("d3dx9_43.dll") || has("xinput1_3.dll") {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -2786,7 +2938,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
-            "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
+            "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
             "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
