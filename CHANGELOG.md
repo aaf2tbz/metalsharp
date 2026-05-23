@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.33.33 - 2026-05-22
+
+GPTK DMG signature hotfix.
+
+### Fixed
+
+- **GPTK runtime install** - accepts Apple’s GPTK 3.0 DMG layout even though the outer and nested DMG containers are not `spctl`-accepted disk images, while still verifying the embedded `D3DMetal.framework` against Apple-controlled code-signing authority before installing runtime payloads.
+
 ## v0.33.32 - 2026-05-22
 
 Downloaded GPTK runtime release hardening.

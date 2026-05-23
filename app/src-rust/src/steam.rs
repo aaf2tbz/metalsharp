@@ -811,18 +811,6 @@ fn command_output_text(mut command: Command) -> Result<(bool, String), Box<dyn s
     Ok((output.status.success(), text))
 }
 
-fn apple_signature_output_is_accepted(text: &str) -> bool {
-    let accepted = text.lines().any(|line| {
-        let trimmed = line.trim().to_ascii_lowercase();
-        trimmed == "accepted" || trimmed.ends_with(": accepted")
-    });
-    let apple_source = text.lines().any(|line| {
-        let trimmed = line.trim().to_ascii_lowercase();
-        trimmed == "source=apple" || trimmed.starts_with("source=apple ")
-    });
-    accepted && apple_source
-}
-
 fn codesign_output_has_apple_authority(text: &str) -> bool {
     text.lines().any(|line| {
         let trimmed = line.trim();
@@ -830,17 +818,6 @@ fn codesign_output_has_apple_authority(text: &str) -> bool {
             || trimmed == "Authority=Apple Code Signing Certification Authority"
             || trimmed == "TeamIdentifier=59GAB85EFG"
     })
-}
-
-fn verify_signed_disk_image(dmg: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = Command::new("spctl");
-    command.arg("-a").arg("-t").arg("open").arg("--context").arg("context:primary-signature").arg("-v").arg(dmg);
-    let (success, output) = command_output_text(command)?;
-    if success && apple_signature_output_is_accepted(&output) {
-        Ok(())
-    } else {
-        Err(format!("Refusing to install GPTK runtime: {} is not an accepted Apple-signed disk image", label).into())
-    }
 }
 
 fn verify_gptk_redist_identity(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -944,14 +921,12 @@ fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::erro
 fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let outer_mount = unique_temp_dir("gptk-outer");
     let inner_mount = unique_temp_dir("gptk-inner");
-    verify_signed_disk_image(dmg, "outer Game Porting Toolkit DMG")?;
     attach_dmg(dmg, &outer_mount)?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let inner_dmg =
             find_child_by_name_contains(&outer_mount, "evaluation environment for windows games", Some("dmg")).ok_or(
                 "Downloaded Game Porting Toolkit DMG did not contain the Windows games evaluation environment DMG",
             )?;
-        verify_signed_disk_image(&inner_dmg, "inner Game Porting Toolkit DMG")?;
         attach_dmg(&inner_dmg, &inner_mount)?;
         let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let redist = inner_mount.join("redist").join("lib");
@@ -2652,19 +2627,6 @@ mod tests {
     fn detects_downloaded_gptk_dmg_names() {
         assert!("Game_Porting_Toolkit_3.0.dmg".to_lowercase().contains("game_porting_toolkit"));
         assert!("Game Porting Toolkit 3.0.dmg".to_lowercase().contains("game porting toolkit"));
-    }
-
-    #[test]
-    fn gptk_disk_image_signature_requires_apple_acceptance() {
-        assert!(apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: accepted\nsource=Apple System"
-        ));
-        assert!(!apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/gptk.dmg: accepted\nsource=Notarized Developer ID"
-        ));
-        assert!(!apple_signature_output_is_accepted(
-            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: rejected\nsource=Apple System"
-        ));
     }
 
     #[test]
