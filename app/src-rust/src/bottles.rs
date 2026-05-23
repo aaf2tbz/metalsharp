@@ -1161,6 +1161,60 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "gpu_vendor_stubs" {
+        let home = dirs::home_dir().unwrap_or_default();
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32)?;
+
+        let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+        let gptk_dir = ms_root.join("lib").join("gptk").join("x86_64-windows");
+        let stub_files = ["nvapi64.dll", "nvngx.dll"];
+        let mut copied = 0usize;
+        for stub in &stub_files {
+            let dst = system32.join(stub);
+            if dst.exists() {
+                copied += 1;
+                continue;
+            }
+            let src = if dxmt_dir.join(stub).exists() {
+                dxmt_dir.join(stub)
+            } else if gptk_dir.join(stub).exists() {
+                gptk_dir.join(stub)
+            } else {
+                continue;
+            };
+            let _ = fs::copy(&src, &dst);
+            copied += 1;
+        }
+
+        let installed = copied == stub_files.len();
+        mark_component_state(
+            &mut manifest,
+            component_id,
+            if installed { ComponentState::Installed } else { ComponentState::Missing },
+        );
+        manifest.health = if installed && components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if installed { "installed" } else { "asset_missing" }.to_string(),
+            detail: if installed {
+                format!("Deployed {} GPU vendor stubs to prefix system32", copied)
+            } else {
+                "GPU vendor stubs not found in DXMT/GPTK runtime dirs".to_string()
+            },
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     let Some(installer) = resolve_component_installer(component_id, manifest.arch)
         .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
     else {
