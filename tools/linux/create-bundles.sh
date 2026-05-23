@@ -83,10 +83,6 @@ do
   download_asset "$asset" "$BUNDLE_DIR/$asset"
 done
 
-if [ ! -s "$BUNDLE_DIR/steamwebhelper-gptk.exe" ]; then
-  cp "$BUNDLE_DIR/steamwebhelper.exe" "$BUNDLE_DIR/steamwebhelper-gptk.exe"
-fi
-
 echo ""
 echo "Linux bundles saved to: $BUNDLE_DIR"
 ls -lh "$BUNDLE_DIR"

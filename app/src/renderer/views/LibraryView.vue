@@ -5,9 +5,6 @@ import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
 
 interface SteamGame {
-  library_id?: string;
-  library_source?: "steam" | "metalsharp" | "gptk";
-  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
@@ -34,10 +31,6 @@ interface SteamLibrary {
 const library = inject<Ref<SteamLibrary | null>>("library")!;
 const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
-const gptkToolkitInstalled = inject<Ref<boolean>>("gptkToolkitInstalled")!;
-const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
-const gptkSteamInstalling = inject<Ref<boolean>>("gptkSteamInstalling")!;
-const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
@@ -46,11 +39,11 @@ const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
 
 const toast = useToast();
 const search = ref("");
-const filter = ref<"all" | "metalsharp_installed" | "gptk_installed" | "not_installed">("all");
+const filter = ref<"all" | "installed" | "not_installed">("all");
 
-const runningLibraryId = ref<string | null>(null);
+const runningAppId = ref<number | null>(null);
 const runningPid = ref<number | null>(null);
-const launchingLibraryId = ref<string | null>(null);
+const launchingAppId = ref<number | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -67,9 +60,6 @@ function isWineSteamRouteId(launchMethod: string) {
     "m10",
     "m11",
     "m12",
-    "m13",
-    "gptk",
-    "d3dmetal",
     "m32",
     "dx9",
     "dx10",
@@ -82,32 +72,15 @@ function isWineSteamRouteId(launchMethod: string) {
     "d3d9_metal",
     "dxmt_metal",
     "dxmt_metal12",
-    "steam_d3dmetal_gptk",
     "wined3d_32",
   ].includes(method);
-}
-
-function isGptkSteamRouteId(launchMethod: string) {
-  const method = launchMethod.toLowerCase();
-  return method === "m13" || method === "gptk" || method === "d3dmetal" || method === "steam_d3dmetal_gptk";
 }
 
 function recommendedLaunchMethod(game: SteamGame) {
   return game.launch_method ?? game.available_pipelines?.find((pipeline) => pipeline.recommended)?.id;
 }
 
-function isGptkSteamRouteLaunch(game: SteamGame, launchMethod: string) {
-  if (game.library_source === "gptk") return true;
-  const method = launchMethod.toLowerCase();
-  if (method === "auto") {
-    const recommended = recommendedLaunchMethod(game);
-    return recommended ? isGptkSteamRouteId(recommended) : false;
-  }
-  return isGptkSteamRouteId(method);
-}
-
 function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
-  if (game.library_source === "gptk") return true;
   const method = launchMethod.toLowerCase();
   if (method === "auto") {
     const recommended = recommendedLaunchMethod(game);
@@ -116,18 +89,13 @@ function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
   return isWineSteamRouteId(method);
 }
 
-function launchMethodForRequest(game: SteamGame, launchMethod: string) {
-  return game.library_source === "gptk" ? "d3dmetal" : launchMethod;
-}
-
 function applyFilter() {
   if (!library.value) {
     filteredGames.value = [];
     return;
   }
   let games = library.value.games;
-  if (filter.value === "metalsharp_installed") games = games.filter((g) => g.installed && g.library_source === "metalsharp");
-  if (filter.value === "gptk_installed") games = games.filter((g) => g.installed && g.library_source === "gptk");
+  if (filter.value === "installed") games = games.filter((g) => g.installed);
   if (filter.value === "not_installed") games = games.filter((g) => !g.installed);
   if (search.value) {
     const q = search.value.toLowerCase();
@@ -147,23 +115,11 @@ async function toggleSteam() {
       toast.show(result?.error ?? "Wine Steam is still running", "error");
     }
   } else {
-    if (gptkSteamRunning.value) {
-      if (!confirm("Stop GPTK Steam and start Wine Steam?")) return;
-      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
-      if (!stopResult?.ok || stopResult.running !== false) {
-        gptkSteamRunning.value = stopResult?.running ?? true;
-        toast.show(stopResult?.error ?? "GPTK Steam is still running", "error");
-        return;
-      }
-      gptkSteamRunning.value = false;
-    }
     toast.show("Starting Steam...", "success");
-    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/launch");
+    const result = await api<{ ok: boolean }>("POST", "/steam/launch");
     if (result?.ok) {
-      wineSteamRunning.value = result.running ?? true;
+      wineSteamRunning.value = true;
       toast.show("Steam started — log in through the Steam window", "success");
-    } else {
-      toast.show(result?.error ?? "Could not start Wine Steam", "error");
     }
   }
   reloadLibrary();
@@ -206,114 +162,8 @@ async function toggleMacSteam() {
   reloadLibrary();
 }
 
-async function toggleGptkSteam() {
-  if (!gptkToolkitInstalled.value) {
-    const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
-      "POST",
-      "/steam/gptk-toolkit-install",
-    );
-    if (result?.ok && result.installed) {
-      gptkToolkitInstalled.value = true;
-      toast.show("Game Porting Toolkit runtime installed", "success");
-    } else {
-      toast.show(
-        result?.ok && result.download_required
-          ? "Game Porting Toolkit download page opened"
-          : (result?.error ?? "Could not set up GPTK runtime"),
-        result?.ok ? "success" : "error",
-      );
-      return;
-    }
-  }
-  if (gptkSteamInstalling.value) {
-    toast.show("GPTK Steam setup is already running", "success");
-    return;
-  }
-  if (!gptkSteamInstalled.value) {
-    toast.show("Starting GPTK Steam setup...", "success");
-    const result = await api<{ ok: boolean; installing?: boolean; installed?: boolean; error?: string }>("POST", "/steam/gptk-install");
-    if (result?.ok) {
-      gptkSteamInstalling.value = result.installing ?? false;
-      gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
-      toast.show(result.installed ? "GPTK Steam is already installed" : "Steam installer launched in GPTK Wine", "success");
-      if (result.installing) pollGptkSteamInstall();
-    } else {
-      toast.show(result?.error ?? "Could not start GPTK Steam setup", "error");
-    }
-    reloadLibrary();
-    return;
-  }
-  if (gptkSteamRunning.value) {
-    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
-    if (result?.ok && result.running === false) {
-      gptkSteamRunning.value = false;
-      toast.show("GPTK Steam stopped");
-    } else {
-      gptkSteamRunning.value = result?.running ?? true;
-      toast.show(result?.error ?? "GPTK Steam is still running", "error");
-    }
-  } else {
-    if (wineSteamRunning.value) {
-      if (!confirm("Stop Wine Steam and start GPTK Steam?")) return;
-      const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
-      if (!stopResult?.ok || stopResult.running !== false) {
-        wineSteamRunning.value = stopResult?.running ?? true;
-        toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
-        return;
-      }
-      wineSteamRunning.value = false;
-    }
-    toast.show("Starting GPTK Steam...", "success");
-    const result = await api<{ ok: boolean; pid?: number; running?: boolean; installed?: boolean; error?: string }>("POST", "/steam/gptk-launch");
-    if (result?.ok) {
-      gptkSteamInstalled.value = result.installed ?? gptkSteamInstalled.value;
-      gptkSteamRunning.value = result.running ?? true;
-      toast.show("GPTK Steam started", "success");
-    } else {
-      toast.show(result?.error ?? "Could not start GPTK Steam", "error");
-    }
-  }
-  reloadLibrary();
-}
-
-function pollGptkSteamInstall() {
-  let attempts = 0;
-  const poll = setInterval(async () => {
-    attempts += 1;
-    const status = await api<{
-      gptk_steam_installed?: boolean;
-      gptk_installing?: boolean;
-      gptk_running?: boolean;
-      gptk_install_progress?: { phase: string; message: string; error?: string | null };
-    }>("GET", "/steam/status");
-    if (!status) return;
-    gptkSteamInstalling.value = status.gptk_installing ?? false;
-    gptkSteamInstalled.value = status.gptk_steam_installed ?? false;
-    gptkSteamRunning.value = status.gptk_running ?? gptkSteamRunning.value;
-    if (status.gptk_steam_installed) {
-      clearInterval(poll);
-      gptkSteamInstalling.value = false;
-      toast.show("GPTK Steam is ready", "success");
-      reloadLibrary();
-    } else if (status.gptk_install_progress?.phase === "error") {
-      clearInterval(poll);
-      gptkSteamInstalling.value = false;
-      toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
-    } else if (attempts > 180) {
-      clearInterval(poll);
-      gptkSteamInstalling.value = false;
-      toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
-      reloadLibrary();
-    }
-  }, 2000);
-}
-
 async function launchGame(game: SteamGame, launchMethod = "auto") {
-  const libraryId = game.library_id ?? String(game.appid);
-  const requestLaunchMethod = launchMethodForRequest(game, launchMethod);
-  const useGptkSteamRoute = isGptkSteamRouteLaunch(game, requestLaunchMethod);
-  const useWineSteamRoute = isWineSteamRouteLaunch(game, requestLaunchMethod);
-  if (isMacSteamLaunch(requestLaunchMethod) && wineSteamRunning.value) {
+  if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
     const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
     if (!stopResult?.ok || stopResult.running !== false) {
@@ -322,27 +172,10 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
       return;
     }
     wineSteamRunning.value = false;
-  } else if (useGptkSteamRoute && wineSteamRunning.value) {
-    if (!confirm(`Stop Wine Steam and launch ${game.name} through GPTK Steam?`)) return;
-    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
-    if (!stopResult?.ok || stopResult.running !== false) {
-      wineSteamRunning.value = stopResult?.running ?? true;
-      toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
-      return;
-    }
-    wineSteamRunning.value = false;
-  } else if (useWineSteamRoute && !useGptkSteamRoute && gptkSteamRunning.value) {
-    if (!confirm(`Stop GPTK Steam and launch ${game.name} through Wine Steam?`)) return;
-    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
-    if (!stopResult?.ok || stopResult.running !== false) {
-      gptkSteamRunning.value = stopResult?.running ?? true;
-      toast.show(stopResult?.error ?? "GPTK Steam is still running", "error");
-      return;
-    }
-    gptkSteamRunning.value = false;
   }
 
-  launchingLibraryId.value = libraryId;
+  launchingAppId.value = game.appid;
+  const useWineSteamRoute = isWineSteamRouteLaunch(game, launchMethod);
   const launchEndpoint = useWineSteamRoute ? "/steam/launch-game" : "/game/launch-auto";
   const launchResult = await api<{
     ok: boolean;
@@ -350,31 +183,18 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     error?: string;
     engine?: string;
     gameType?: string;
-    steam_runtime?: string;
   }>("POST", launchEndpoint, {
     appid: game.appid,
-    launchMethod: requestLaunchMethod,
-    library_id: game.library_id,
-    library_source: game.library_source,
+    launchMethod,
   });
 
-  launchingLibraryId.value = null;
+  launchingAppId.value = null;
 
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
-    runningLibraryId.value = libraryId;
-    if (
-      launchResult.steam_runtime === "offline_gptk" ||
-      requestLaunchMethod.toLowerCase() === "m13" ||
-      requestLaunchMethod.toLowerCase() === "gptk" ||
-      requestLaunchMethod.toLowerCase() === "d3dmetal"
-    ) {
-      gptkSteamRunning.value = true;
-      wineSteamRunning.value = false;
-    } else if (useWineSteamRoute) {
-      wineSteamRunning.value = true;
-    }
-    if (isMacSteamLaunch(requestLaunchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
+    runningAppId.value = game.appid;
+    if (useWineSteamRoute) wineSteamRunning.value = true;
+    if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
@@ -384,7 +204,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
 async function stopGame(game: SteamGame) {
   await api("POST", "/kill", { pid: runningPid.value, appid: game.appid });
   runningPid.value = null;
-  runningLibraryId.value = null;
+  runningAppId.value = null;
   toast.show(`Stopped ${game.name}`);
 }
 
@@ -403,14 +223,7 @@ async function installGame(game: SteamGame) {
 
 async function uninstallGame(game: SteamGame) {
   if (game.can_uninstall === false) {
-    const source = game.library_source;
-    let message = `${game.name} cannot be uninstalled from this library card.`;
-    if (source === "gptk") {
-      message = `${game.name} is installed in GPTK Steam. Uninstall it from GPTK Steam.`;
-    } else if (source === "steam") {
-      message = `${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`;
-    }
-    toast.show(message, "error");
+    toast.show(`${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`, "error");
     return;
   }
   if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;
@@ -445,10 +258,6 @@ watch([library, search, filter], applyFilter);
         <div class="library-status-strip">
           <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
           <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
-          <span v-if="gptkSteamRunning" class="badge badge-ok">GPTK Steam Running</span>
-          <span v-else-if="gptkSteamInstalling" class="badge badge-warn">GPTK Steam Setup</span>
-          <span v-else-if="gptkSteamInstalled" class="badge badge-warn">GPTK Steam Offline</span>
-          <span v-else-if="gptkToolkitInstalled" class="badge badge-warn">GPTK Steam Missing</span>
           <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
           <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
           <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
@@ -463,21 +272,6 @@ watch([library, search, filter], applyFilter);
             <circle cx="12" cy="12" r="3" /><path d="M3 12h6" /><path d="M15 12h6" /><path d="M12 3v6" /><path d="M12 15v6" />
           </svg>
           <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
-          </button>
-          <button
-            class="btn btn-secondary library-control-button"
-            title="GPTK Steam"
-            @click="toggleGptkSteam"
-          >
-          <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 15a8 8 0 0 1 8-8h7" />
-            <path d="m15 3 4 4-4 4" />
-            <path d="M20 15a8 8 0 0 1-8 8H5" />
-            <path d="m9 19-4 4 4 4" transform="translate(0 -4)" />
-          </svg>
-          <span class="control-label">
-            {{ !gptkToolkitInstalled ? "Setup GPTK Wine" : gptkSteamInstalling ? "Installing GPTK Steam" : !gptkSteamInstalled ? "Install GPTK Steam" : gptkSteamRunning ? "Stop GPTK Steam" : "Start GPTK Steam" }}
-          </span>
           </button>
           <button
             class="btn btn-secondary library-control-button"
@@ -499,10 +293,9 @@ watch([library, search, filter], applyFilter);
             type="text"
             placeholder="Search games..."
           />
-          <select v-model="filter" class="library-filter-select" title="Library filter" aria-label="Library filter">
-            <option value="all">All</option>
-            <option value="metalsharp_installed">MetalSharp Installed</option>
-            <option value="gptk_installed">GPTK Installed</option>
+          <select v-model="filter" class="control-input">
+            <option value="all">All Games</option>
+            <option value="installed">Installed</option>
             <option value="not_installed">Not Installed</option>
           </select>
         </div>
@@ -526,10 +319,10 @@ watch([library, search, filter], applyFilter);
     <div v-else class="game-grid">
       <GameCard
         v-for="game in filteredGames"
-        :key="game.library_id ?? game.appid"
+        :key="game.appid"
         :game="game"
-        :running="runningLibraryId === (game.library_id ?? String(game.appid))"
-        :launching="launchingLibraryId === (game.library_id ?? String(game.appid))"
+        :running="runningAppId === game.appid"
+        :launching="launchingAppId === game.appid"
         :steam-installed="wineSteamInstalled"
         @play="launchGame(game, $event)"
         @stop="stopGame(game)"
@@ -581,23 +374,21 @@ watch([library, search, filter], applyFilter);
 }
 
 .library-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(260px, auto) minmax(280px, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
   gap: 12px;
   min-width: 0;
 }
 .library-launch-actions {
   display: flex;
   align-items: center;
-  flex: 0 1 auto;
   gap: 10px;
   min-width: 0;
 }
 .library-controls-center {
-  flex: 1 1 420px;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(170px, 220px);
+  grid-template-columns: minmax(150px, 1fr) 148px;
   gap: 10px;
   min-width: 0;
 }
@@ -607,26 +398,9 @@ watch([library, search, filter], applyFilter);
 .library-controls-center select {
   min-width: 0;
 }
-.library-filter-select {
-  min-height: 36px;
-  min-width: 170px;
-  max-width: 220px;
-  padding: 0 34px 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
 .library-control-button {
   flex: 0 1 auto;
   min-width: 0;
-}
-.refresh-button {
-  margin-left: auto;
 }
 .control-icon {
   flex: 0 0 15px;
@@ -637,8 +411,11 @@ watch([library, search, filter], applyFilter);
 }
 
 @media (max-width: 1040px) {
+  .library-controls {
+    grid-template-columns: 1fr;
+  }
   .refresh-button {
-    margin-left: 0;
+    justify-self: start;
   }
 }
 
@@ -659,14 +436,10 @@ watch([library, search, filter], applyFilter);
   }
   .library-launch-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr 1fr;
   }
   .library-controls-center {
     grid-template-columns: 1fr;
-  }
-  .library-filter-select {
-    max-width: none;
-    width: 100%;
   }
 }
 

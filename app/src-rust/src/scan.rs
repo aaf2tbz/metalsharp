@@ -113,7 +113,7 @@ pub fn find_macos_app(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn parse_installdir_from_acf(contents: &str) -> Option<String> {
+fn parse_installdir_from_acf(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("\"installdir\"") {
@@ -192,7 +192,7 @@ fn steam_library_paths() -> Vec<PathBuf> {
     paths
 }
 
-pub fn parse_library_folders(steamapps: &PathBuf) -> Vec<PathBuf> {
+fn parse_library_folders(steamapps: &PathBuf) -> Vec<PathBuf> {
     let lf_path = steamapps.join("libraryfolders.vdf");
     let contents = match std::fs::read_to_string(&lf_path) {
         Ok(c) => c,

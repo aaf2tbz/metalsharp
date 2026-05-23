@@ -457,62 +457,6 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     LaunchDoctorReport { ready, summary, blockers, warnings: dedupe_strings(warnings), checks, recipe }
 }
 
-fn compatible_route_hint(api: super::pe::D3dApi) -> &'static str {
-    match api {
-        super::pe::D3dApi::D3D9 => "M9",
-        super::pe::D3dApi::D3D10 => "M10",
-        super::pe::D3dApi::D3D11 => "M11",
-        super::pe::D3dApi::D3D12 => "M12",
-        super::pe::D3dApi::Unknown => "Auto",
-    }
-}
-
-fn explicit_route_api_mismatch_message(
-    pipeline: PipelineId,
-    pipeline_name: &str,
-    api: super::pe::D3dApi,
-    exe_name: &str,
-) -> Option<String> {
-    if api == super::pe::D3dApi::Unknown || !route_api_mismatch(pipeline, api) {
-        return None;
-    }
-
-    Some(format!(
-        "Selected route {} is not compatible with {} because it imports {}. Try Auto or {} instead.",
-        pipeline_name,
-        exe_name,
-        d3d_api_label(api),
-        compatible_route_hint(api)
-    ))
-}
-
-pub fn explicit_route_mismatch_message(recipe: &LaunchRecipe) -> Option<String> {
-    let exe_path = recipe.exe_path.as_deref()?;
-    let data = std::fs::read(exe_path).ok()?;
-    let pe = super::pe::parse_pe_imports(&data)?;
-    let exe_name = recipe
-        .exe_name
-        .as_deref()
-        .or_else(|| exe_path.file_name().and_then(|name| name.to_str()))
-        .unwrap_or("this executable");
-    explicit_route_api_mismatch_message(recipe.pipeline, &recipe.pipeline_name, pe.detected_api, exe_name)
-}
-
-pub fn validate_explicit_pipeline_selection(
-    appid: u32,
-    node: &PipelineNode,
-    game_dir_override: Option<&Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let recipe = match game_dir_override {
-        Some(game_dir) => build_custom_launch_recipe(appid, node, game_dir, None)?,
-        None => build_launch_recipe(appid, node)?,
-    };
-    if let Some(message) = explicit_route_mismatch_message(&recipe) {
-        return Err(message.into());
-    }
-    Ok(())
-}
-
 fn inspect_exe_route_compatibility(
     recipe: &LaunchRecipe,
     checks: &mut Vec<LaunchDoctorCheck>,
@@ -630,7 +574,6 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
 
 fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
     match appid {
-        1245620 => &["eldenring.exe"],
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
@@ -1074,33 +1017,6 @@ mod tests {
         assert!(report.summary.contains("Blocked"));
         assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
         assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
-    }
-
-    #[test]
-    fn explicit_route_mismatch_message_flags_d3d12_on_m11() {
-        let message = explicit_route_api_mismatch_message(
-            PipelineId::M11,
-            "M11",
-            super::super::pe::D3dApi::D3D12,
-            "Subnautica2.exe",
-        )
-        .expect("expected mismatch");
-
-        assert!(message.contains("Selected route M11"));
-        assert!(message.contains("Subnautica2.exe"));
-        assert!(message.contains("D3D12"));
-        assert!(message.contains("M12"));
-    }
-
-    #[test]
-    fn explicit_route_mismatch_message_allows_matching_route() {
-        assert!(explicit_route_api_mismatch_message(
-            PipelineId::M11,
-            "M11",
-            super::super::pe::D3dApi::D3D11,
-            "Game.exe",
-        )
-        .is_none());
     }
 
     #[test]
