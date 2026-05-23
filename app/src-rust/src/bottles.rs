@@ -1173,15 +1173,21 @@ pub fn repair_component(
 
         let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
         let gptk_dir = ms_root.join("lib").join("gptk").join("x86_64-windows");
-        let stub_files = ["nvapi64.dll", "nvngx.dll"];
+        let stub_files = [("nvapi64.dll", false), ("nvngx.dll", false), ("atidxx64.dll", true)];
         let mut copied = 0usize;
-        for stub in &stub_files {
+        for (stub, gptk_only) in &stub_files {
             let dst = system32.join(stub);
             if dst.exists() {
                 copied += 1;
                 continue;
             }
-            let src = if dxmt_dir.join(stub).exists() {
+            let src = if *gptk_only {
+                if gptk_dir.join(stub).exists() {
+                    gptk_dir.join(stub)
+                } else {
+                    continue;
+                }
+            } else if dxmt_dir.join(stub).exists() {
                 dxmt_dir.join(stub)
             } else if gptk_dir.join(stub).exists() {
                 gptk_dir.join(stub)
@@ -2237,9 +2243,11 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         "gpu_vendor_stubs" => {
             let has = |dll: &str| -> bool { system32.join(dll).exists() };
-            if has("nvapi64.dll") && has("nvngx.dll") {
+            let nv_ok = has("nvapi64.dll") && has("nvngx.dll");
+            let amd_ok = has("atidxx64.dll");
+            if nv_ok && amd_ok {
                 ComponentState::Installed
-            } else if has("nvapi64.dll") || has("nvngx.dll") {
+            } else if nv_ok || amd_ok {
                 ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
