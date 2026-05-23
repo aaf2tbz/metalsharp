@@ -243,6 +243,12 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
     let mut manifest_dlls = Vec::new();
     for deploy in &recipe.dlls {
         if !deploy.source_present {
+            let is_optional_stub = deploy.filename.starts_with("nvapi")
+                || deploy.filename.starts_with("nvngx")
+                || deploy.filename.starts_with("atidxx");
+            if is_optional_stub {
+                continue;
+            }
             return Err(format!(
                 "required runtime DLL {} missing at {}",
                 deploy.filename,

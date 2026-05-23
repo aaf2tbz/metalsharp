@@ -196,7 +196,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 backend: "gptk",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/gptk/x86_64-unix", "lib/external"],
                 winedllpath_dirs: vec!["lib/gptk/x86_64-windows"],
                 deploy_dlls: vec![
@@ -207,7 +207,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "nvapi64.dll" },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "atidxx64.dll" },
                 ],
-                env_vars: vec![EnvVar { key: "CX_GRAPHICS_BACKEND", value: "d3dmetal" }],
+                env_vars: vec![],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::Steam],
                 shader_cache_subdir: Some("m13"),

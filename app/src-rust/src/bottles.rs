@@ -2614,7 +2614,16 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
     let dosdevices = prefix.join("dosdevices");
     if dosdevices.exists() {
         let y_link = dosdevices.join("y:");
-        if !y_link.exists() {
+        let needs_link = if y_link.exists() {
+            match std::fs::read_link(&y_link) {
+                Ok(target) => target != home,
+                Err(_) => true,
+            }
+        } else {
+            true
+        };
+        if needs_link {
+            let _ = std::fs::remove_file(&y_link);
             let _ = std::os::unix::fs::symlink(&home, &y_link);
         }
     }
