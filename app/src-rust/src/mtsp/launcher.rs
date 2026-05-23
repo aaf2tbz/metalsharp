@@ -482,7 +482,9 @@ fn launch_dxmt_metal_with_context(
     }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+    if node.backend == "dxmt" {
+        cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+    }
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
