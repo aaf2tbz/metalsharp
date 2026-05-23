@@ -752,41 +752,53 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
         },
     };
 
-    if let Some(dlls) = manifest.get("dlls").and_then(|d| d.as_array()) {
-        for dll in dlls {
-            if let Some(backup) = dll.get("backup_path").and_then(|b| b.as_str()) {
-                let backup_path = PathBuf::from(backup);
-                let canonical_backup = match backup_path.canonicalize() {
-                    Ok(p) => p,
-                    Err(_) => continue,
+    let dlls = match manifest.get("dlls").and_then(|d| d.as_array()) {
+        Some(d) => d,
+        None => {
+            let _ = std::fs::remove_dir_all(&injection_dir);
+            return Ok(());
+        },
+    };
+
+    let mut any_copy_failed = false;
+    for dll in dlls {
+        if let Some(backup) = dll.get("backup_path").and_then(|b| b.as_str()) {
+            let backup_path = PathBuf::from(backup);
+            let canonical_backup = match backup_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !canonical_backup.starts_with(&canonical_game_dir) {
+                continue;
+            }
+            if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
+                let dest_path = PathBuf::from(dest);
+                let canonical_dest = if dest_path.exists() {
+                    match dest_path.canonicalize() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    }
+                } else {
+                    match dest_path.parent().and_then(|p| p.canonicalize().ok()) {
+                        Some(parent) => parent.join(dest_path.file_name().unwrap_or_default()),
+                        None => continue,
+                    }
                 };
-                if !canonical_backup.starts_with(&canonical_game_dir) {
+                if !canonical_dest.starts_with(&canonical_game_dir) {
                     continue;
                 }
-                if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
-                    let dest_path = PathBuf::from(dest);
-                    let canonical_dest = if dest_path.exists() {
-                        match dest_path.canonicalize() {
-                            Ok(p) => p,
-                            Err(_) => continue,
-                        }
-                    } else {
-                        match dest_path.parent().and_then(|p| p.canonicalize().ok()) {
-                            Some(parent) => parent.join(dest_path.file_name().unwrap_or_default()),
-                            None => continue,
-                        }
-                    };
-                    if !canonical_dest.starts_with(&canonical_game_dir) {
-                        continue;
-                    }
-                    let _ = std::fs::copy(&canonical_backup, &canonical_dest);
-                    let _ = std::fs::remove_file(&canonical_backup);
+                if std::fs::copy(&canonical_backup, &canonical_dest).is_err() {
+                    any_copy_failed = true;
+                    continue;
                 }
+                let _ = std::fs::remove_file(&canonical_backup);
             }
         }
     }
 
-    let _ = std::fs::remove_dir_all(&injection_dir);
+    if !any_copy_failed {
+        let _ = std::fs::remove_dir_all(&injection_dir);
+    }
     Ok(())
 }
 
