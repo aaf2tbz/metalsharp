@@ -760,7 +760,7 @@ fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if validate_user_gptk_dmg_candidate(&path).is_ok() {
+                if validate_user_gptk_dmg_path(&path).is_ok() {
                     candidates.push(path);
                 }
             }
@@ -776,8 +776,12 @@ fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
 
 fn is_gptk_dmg_filename(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-    path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false)
-        && (name.contains("game_porting_toolkit") || name.contains("game porting toolkit") || name.contains("gptk"))
+    if !path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false) {
+        return false;
+    }
+    let stem = name.strip_suffix(".dmg").unwrap_or(&name);
+    let normalized = stem.replace(['_', '-'], " ");
+    normalized.starts_with("game porting toolkit ") && normalized.chars().any(|c| c.is_ascii_digit())
 }
 
 fn user_gptk_download_dirs() -> Vec<PathBuf> {
@@ -785,9 +789,12 @@ fn user_gptk_download_dirs() -> Vec<PathBuf> {
     vec![home.join("Downloads"), home.join("Desktop")]
 }
 
-fn validate_user_gptk_dmg_candidate(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_user_gptk_dmg_path(dmg: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if !is_gptk_dmg_filename(dmg) {
-        return Err("Refusing to install GPTK runtime: disk image filename is not a recognized GPTK download".into());
+        return Err(
+            "Refusing to install GPTK runtime: disk image filename must match Apple's Game Porting Toolkit download name"
+                .into(),
+        );
     }
 
     let canonical = std::fs::canonicalize(dmg)?;
@@ -797,12 +804,41 @@ fn validate_user_gptk_dmg_candidate(dmg: &Path) -> Result<(), Box<dyn std::error
     for dir in user_gptk_download_dirs() {
         if let Ok(allowed_dir) = std::fs::canonicalize(dir) {
             if canonical_parent == allowed_dir {
-                return Ok(());
+                return Ok(canonical);
             }
         }
     }
 
     Err("Refusing to install GPTK runtime: disk image must be a direct file in Downloads or Desktop".into())
+}
+
+fn gptk_imageinfo_looks_like_expected_container(text: &str, dmg: &Path) -> bool {
+    let lower = text.to_lowercase();
+    let filename = dmg.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    lower.contains("format: udzo")
+        && lower.contains("udif read-only compressed")
+        && lower.contains("apple_hfs")
+        && lower.contains("encrypted: false")
+        && lower.contains(&filename)
+}
+
+fn validate_user_gptk_dmg_candidate(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let canonical = validate_user_gptk_dmg_path(dmg)?;
+    let metadata = std::fs::metadata(&canonical)?;
+    if metadata.len() < 10_000_000 || metadata.len() > 5_000_000_000 {
+        return Err("Refusing to install GPTK runtime: disk image size does not match the expected GPTK range".into());
+    }
+
+    let mut info = Command::new("hdiutil");
+    info.arg("imageinfo").arg(&canonical);
+    let (ok, output) = command_output_text(info)?;
+    if !ok || !gptk_imageinfo_looks_like_expected_container(&output, &canonical) {
+        return Err(
+            "Refusing to install GPTK runtime: disk image metadata does not match Apple's GPTK container".into()
+        );
+    }
+
+    Ok(())
 }
 
 fn validate_nested_gptk_dmg_candidate(dmg: &Path, outer_mount: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -2724,9 +2760,22 @@ mod tests {
     #[test]
     fn gptk_dmg_filename_allowlist_rejects_unrelated_images() {
         assert!(is_gptk_dmg_filename(Path::new("Game_Porting_Toolkit_3.0.dmg")));
-        assert!(is_gptk_dmg_filename(Path::new("gptk-3.dmg")));
+        assert!(is_gptk_dmg_filename(Path::new("Game Porting Toolkit 3.0.dmg")));
+        assert!(is_gptk_dmg_filename(Path::new("game-porting-toolkit-3.1.dmg")));
+        assert!(!is_gptk_dmg_filename(Path::new("gptk-3.dmg")));
         assert!(!is_gptk_dmg_filename(Path::new("random.dmg")));
         assert!(!is_gptk_dmg_filename(Path::new("Game_Porting_Toolkit_3.0.zip")));
+    }
+
+    #[test]
+    fn gptk_imageinfo_requires_expected_container_metadata() {
+        let dmg = Path::new("Game_Porting_Toolkit_3.0.dmg");
+        let info = "Format Description: UDIF read-only compressed (zlib)\nFormat: UDZO\nName: Game_Porting_Toolkit_3.0.dmg\nName: disk image (Apple_HFS : 3)\nEncrypted: false\n";
+        assert!(gptk_imageinfo_looks_like_expected_container(info, dmg));
+        assert!(!gptk_imageinfo_looks_like_expected_container(
+            "Format: UDZO\nName: gptk-3.dmg\nEncrypted: false\n",
+            dmg
+        ));
     }
 
     #[test]
