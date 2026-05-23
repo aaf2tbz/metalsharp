@@ -1461,7 +1461,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "Game Installer",
             BottleArch::Wow64,
             true,
-            &["vcrun2019", "directx_jun2010", "corefonts"][..],
+            &["vcrun2019", "vcrun2013", "directx_jun2010", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::M9 => (
@@ -1732,6 +1732,9 @@ fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<Ru
             "vcredist" => {
                 ids.insert("vcrun2019".to_string());
             },
+            "vcredist_2013" => {
+                ids.insert("vcrun2013".to_string());
+            },
             "directx" => {
                 ids.insert("directx_jun2010".to_string());
             },
@@ -1782,6 +1785,7 @@ fn components_from_installscript(path: &Path) -> Vec<String> {
         }
     };
     maybe_add("vcrun2019", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
+    maybe_add("vcrun2013", &["vcredist_2013", "msvcr120", "msvcp120", "visual c++ 2013"]);
     maybe_add("directx_jun2010", &["directx", "dxsetup", "d3dx9_43", "xinput1_3"]);
     maybe_add("dotnet48", &["dotnet", ".net framework", "ndp48", "ndp472", "ndp462", "ndp452"]);
     maybe_add("webview2", &["webview2", "edgewebview"]);
@@ -1860,7 +1864,22 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2019" => {
-            if system32.join("vcruntime140.dll").exists() || syswow64.join("vcruntime140.dll").exists() {
+            if system32.join("vcruntime140.dll").exists()
+                || syswow64.join("vcruntime140.dll").exists()
+                || system32.join("vcruntime140_1.dll").exists()
+                || system32.join("msvcp140.dll").exists()
+            {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "vcrun2013" => {
+            if system32.join("msvcr120.dll").exists()
+                || syswow64.join("msvcr120.dll").exists()
+                || system32.join("msvcp120.dll").exists()
+                || syswow64.join("msvcp120.dll").exists()
+            {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -2127,6 +2146,13 @@ fn resolve_component_installer_from_roots(
                 local_redist.join(filename),
             ])
         },
+        "vcrun2013" => {
+            let filename = match arch {
+                BottleArch::Win32 => "vcredist_x86.exe",
+                BottleArch::Win64 | BottleArch::Wow64 => "vcredist_x64.exe",
+            };
+            first_existing(&[redist_root.join("vcredist").join("2013").join(filename), local_redist.join(filename)])
+        },
         "dotnet48" => first_existing(&[
             redist_root.join("DotNet").join("4.8").join("ndp48-x86-x64-allos-enu.exe"),
             redist_root.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe"),
@@ -2173,7 +2199,7 @@ fn resolve_component_installer_from_roots(
     }?;
 
     let args = match component_id {
-        "vcrun2019" => vec!["/quiet".to_string(), "/norestart".to_string()],
+        "vcrun2019" | "vcrun2013" => vec!["/quiet".to_string(), "/norestart".to_string()],
         "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
@@ -2551,6 +2577,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
@@ -2575,6 +2602,7 @@ fn component_action_detail(id: &str) -> String {
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
+        "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
@@ -2743,7 +2771,7 @@ fn compatibility_matrix() -> Vec<CompatibilityCase> {
         ),
         compatibility_case(
             "vc-redists",
-            "VC Runtime Redistributables",
+            "VC Runtime Redistributables (2015-2022 + 2013)",
             "runtime installer",
             RuntimeProfile::Plain,
             "supported",
@@ -2917,14 +2945,25 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
         },
         RedistSourceGuide {
             id: "vcrun2019".to_string(),
-            name: "Latest Microsoft Visual C++ Redistributable".to_string(),
+            name: "Latest Microsoft Visual C++ Redistributable (2015-2022)".to_string(),
             source_url: "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist".to_string(),
             local_targets: vec![
                 redist.join("VC_redist.x64.exe").to_string_lossy().to_string(),
                 redist.join("VC_redist.x86.exe").to_string_lossy().to_string(),
             ],
             policy: "official_download_or_steam_commonredist".to_string(),
-            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links.".to_string(),
+            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links. Installs vcruntime140, vcruntime140_1, msvcp140 family, concrt140, vcomp140.".to_string(),
+        },
+        RedistSourceGuide {
+            id: "vcrun2013".to_string(),
+            name: "Microsoft Visual C++ 2013 Redistributable (12.0)".to_string(),
+            source_url: "https://support.microsoft.com/en-us/topic/update-for-visual-c-2013-redistributable-package-d8ccd6a4-4a90-bdbd-a060-8276036c0738".to_string(),
+            local_targets: vec![
+                redist.join("vcredist_x64.exe").to_string_lossy().to_string(),
+                redist.join("vcredist_x86.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_steam_commonredist".to_string(),
+            notes: "Installs msvcr120.dll and msvcp120.dll. Required by some older titles.".to_string(),
         },
         RedistSourceGuide {
             id: "directx_jun2010".to_string(),
@@ -3925,5 +3964,88 @@ mod tests {
         data[0x94..0x96].copy_from_slice(&(0xf0_u16).to_le_bytes());
         data[0x98..0x9a].copy_from_slice(&optional_magic.to_le_bytes());
         data
+    }
+
+    #[test]
+    fn vcrun2019_detected_by_any_v14_dll() {
+        let dir = test_dir("vcrun2019-detect");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2013_detected_by_msvcr120() {
+        let dir = test_dir("vcrun2013-detect");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Missing);
+
+        fs::write(system32.join("msvcr120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2019_extended_detection_covers_msvcp140() {
+        let dir = test_dir("vcrun2019-extended");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vcrun2013_detected_by_msvcp120_in_syswow64() {
+        let dir = test_dir("vcrun2013-syswow64");
+        let system32 = dir.join("drive_c").join("windows").join("system32");
+        let syswow64 = dir.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+
+        fs::write(syswow64.join("msvcp120.dll"), b"dll").expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2013", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn game_install_profile_includes_vcrun2013() {
+        let components = default_components_for(RuntimeProfile::GameInstall);
+        let ids = components.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
+        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"vcrun2013"));
+        assert!(ids.contains(&"directx_jun2010"));
+    }
+
+    #[test]
+    fn redist_source_guides_cover_vcrun2013() {
+        let guides = redist_source_guides();
+        assert!(guides.iter().any(|g| g.id == "vcrun2013"));
+        assert!(guides.iter().any(|g| g.id == "vcrun2019"));
+    }
+
+    #[test]
+    fn installscript_heuristic_detects_vcrun2013() {
+        let dir = test_dir("installscript-vcrun2013");
+        fs::create_dir_all(&dir).expect("create dir");
+        let script = dir.join("installscript.vdf");
+        fs::write(&script, br#""vcredist_2013/x64/vcredist_x64.exe""#).expect("write script");
+        let components = components_from_installscript(&script);
+        assert!(components.iter().any(|c| c == "vcrun2013"));
+        let _ = fs::remove_dir_all(dir);
     }
 }
