@@ -648,7 +648,8 @@ fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
 
 fn gptk_runtime_ready(gptk_dir: &Path, framework: &Path) -> bool {
     let pe_dir = gptk_dir.join("x86_64-windows");
-    let required_pe = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "atidxx64.dll"];
+    let required_pe =
+        ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll", "atidxx64.dll"];
     required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
         && file_nonempty(&framework.join("Versions").join("A").join("D3DMetal"))
         && framework_has_resource_dylib(framework)
@@ -1202,7 +1203,9 @@ mod tests {
         let resources = framework.join("Versions").join("A").join("Resources");
         fs::create_dir_all(&pe_dir).expect("create GPTK PE dir");
         fs::create_dir_all(&resources).expect("create framework resources");
-        for dll in ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "atidxx64.dll"] {
+        for dll in
+            ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll", "atidxx64.dll"]
+        {
             fs::write(pe_dir.join(dll), b"dll").expect("write GPTK DLL");
         }
 
@@ -1212,7 +1215,7 @@ mod tests {
         fs::write(resources.join("libD3DMetalHelper.dylib"), b"dylib").expect("write framework resource dylib");
 
         assert!(gptk_runtime_ready(&gptk_dir, &framework));
-        fs::remove_file(pe_dir.join("nvngx.dll")).expect("remove nvngx");
+        fs::remove_file(pe_dir.join("nvngx-on-metalfx.dll")).expect("remove MetalFX NVNGX bridge");
         assert!(!gptk_runtime_ready(&gptk_dir, &framework));
         let _ = fs::remove_dir_all(home);
     }

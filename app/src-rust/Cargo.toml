@@ -1,6 +1,6 @@
 [package]
 name = "metalsharp-backend"
-version = "0.33.36"
+version = "0.33.37"
 edition = "2021"
 
 [dependencies]
