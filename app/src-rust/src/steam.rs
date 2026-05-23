@@ -179,26 +179,54 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
 
 fn read_gptk_steam_install_progress() -> Value {
     let path = gptk_steam_install_progress_path();
+    let installing = is_installing_gptk_setup();
+    let toolkit_installed = gptk_installed();
+    let steam_installed = gptk_steam_installed();
     if path.exists() {
         if let Ok(contents) = std::fs::read_to_string(path) {
-            if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+            if let Ok(mut value) = serde_json::from_str::<Value>(&contents) {
+                let phase = value.get("phase").and_then(|v| v.as_str()).unwrap_or("idle");
+                let stale_in_progress = !installing
+                    && !steam_installed
+                    && matches!(
+                        phase,
+                        "starting"
+                            | "checking_toolkit"
+                            | "downloading_steam"
+                            | "preparing_prefix"
+                            | "running_installer"
+                            | "waiting_for_steam"
+                            | "deploying_wrapper"
+                    );
+                if stale_in_progress {
+                    value["phase"] = json!("idle");
+                    value["message"] = json!("GPTK Steam is not installed");
+                    value["error"] = Value::Null;
+                } else if steam_installed {
+                    value["phase"] = json!("ready");
+                    value["message"] = json!("GPTK Steam is installed");
+                    value["error"] = Value::Null;
+                }
+                value["installing"] = json!(installing);
+                value["toolkit_installed"] = json!(toolkit_installed);
+                value["steam_installed"] = json!(steam_installed);
                 return value;
             }
         }
     }
 
     json!({
-        "phase": if gptk_steam_installed() { "ready" } else { "idle" },
-        "message": if gptk_steam_installed() {
+        "phase": if steam_installed { "ready" } else { "idle" },
+        "message": if steam_installed {
             "GPTK Steam is installed"
         } else {
             "GPTK Steam is not installed"
         },
         "error": null,
         "warning": GPTK_UNSIGNED_CONTAINER_WARNING,
-        "installing": is_installing_gptk_setup(),
-        "toolkit_installed": gptk_installed(),
-        "steam_installed": gptk_steam_installed(),
+        "installing": installing,
+        "toolkit_installed": toolkit_installed,
+        "steam_installed": steam_installed,
     })
 }
 
@@ -1380,7 +1408,7 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     apply_gptk_env(&mut install_cmd);
-    let _child = install_cmd.spawn()?;
+    let mut child = install_cmd.spawn()?;
 
     write_gptk_steam_install_progress(
         "waiting_for_steam",
@@ -1393,6 +1421,15 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
     for _ in 0..180 {
         if steam_exe.exists() && steam_ui_dll.exists() {
             break;
+        }
+        if let Some(status) = child.try_wait()? {
+            if !steam_exe.exists() || !steam_ui_dll.exists() {
+                return Err(format!(
+                    "SteamSetup.exe exited before GPTK Steam finished installing (status: {}).",
+                    status
+                )
+                .into());
+            }
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
@@ -2207,8 +2244,7 @@ pub fn library() -> Value {
             } else {
                 resolved
             };
-            let bottle =
-                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok();
+            let bottle = load_library_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id);
             games.push(steam_library_card(SteamLibraryCardData {
                 appid: *appid,
                 name,
@@ -2226,13 +2262,8 @@ pub fn library() -> Value {
 
         if gptk_steam_appids.contains(appid) {
             let gptk_game_dir = resolve_game_dir_in_steamapps(*appid, crate::scan::gptk_steam_library_paths());
-            let bottle = crate::bottles::ensure_steam_game_bottle(
-                *appid,
-                name,
-                gptk_game_dir.as_deref(),
-                crate::mtsp::engine::PipelineId::M13,
-            )
-            .ok();
+            let bottle =
+                load_library_bottle(*appid, name, gptk_game_dir.as_deref(), crate::mtsp::engine::PipelineId::M13);
             games.push(steam_library_card(SteamLibraryCardData {
                 appid: *appid,
                 name,
@@ -2277,6 +2308,18 @@ pub fn library() -> Value {
         "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
         "games": games,
     })
+}
+
+fn load_library_bottle(
+    appid: u32,
+    name: &str,
+    game_dir: Option<&Path>,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Option<crate::bottles::BottleManifest> {
+    let bottle_id = crate::bottles::steam_game_bottle_id_for_pipeline(appid, pipeline);
+    crate::bottles::load_bottle(&bottle_id)
+        .ok()
+        .or_else(|| crate::bottles::ensure_steam_game_bottle(appid, name, game_dir, pipeline).ok())
 }
 
 struct SteamLibraryCardData<'a> {
@@ -2708,6 +2751,9 @@ pub fn watch_steamapps() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    static HOME_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn parses_acf_quoted_fields() {
@@ -2908,6 +2954,35 @@ mod tests {
         assert_eq!(card.get("library_source").and_then(Value::as_str), Some("gptk"));
         assert_eq!(card.get("can_uninstall").and_then(Value::as_bool), Some(false));
         assert_eq!(card.get("launch_method").and_then(Value::as_str), Some("d3dmetal"));
+    }
+
+    #[test]
+    fn stale_gptk_install_progress_reconciles_to_idle() {
+        let _guard = HOME_ENV_LOCK.lock().expect("home env lock");
+        let temp_home = unique_temp_dir("gptk-progress-home");
+        let _ = std::fs::remove_dir_all(&temp_home);
+        std::fs::create_dir_all(temp_home.join(".metalsharp")).expect("create temp home");
+        let progress_path = temp_home.join(".metalsharp").join("gptk_steam_install_progress.json");
+        std::fs::write(
+            &progress_path,
+            r#"{"phase":"waiting_for_steam","message":"Waiting for Steam installer...","error":"still waiting"}"#,
+        )
+        .expect("write progress");
+
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &temp_home);
+        let progress = read_gptk_steam_install_progress();
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        assert_eq!(progress.get("phase").and_then(Value::as_str), Some("idle"));
+        assert_eq!(progress.get("message").and_then(Value::as_str), Some("GPTK Steam is not installed"));
+        assert_eq!(progress.get("error"), Some(&Value::Null));
+        assert_eq!(progress.get("installing").and_then(Value::as_bool), Some(false));
+
+        let _ = std::fs::remove_dir_all(temp_home);
     }
 
     #[test]

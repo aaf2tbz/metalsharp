@@ -437,6 +437,19 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     ));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
+                            if let Some(explicit_pipeline) = mtsp::engine::PipelineId::from_str_flexible(launch_method)
+                            {
+                                if explicit_pipeline == pipeline {
+                                    let node = mtsp::engine::get_pipeline(pipeline);
+                                    if let Err(e) = mtsp::recipe::validate_explicit_pipeline_selection(
+                                        id,
+                                        node,
+                                        source_game_dir.as_deref(),
+                                    ) {
+                                        return resp(400, json!({"ok": false, "error": e.to_string()}));
+                                    }
+                                }
+                            }
                             let bottle = match bottles::prepare_steam_game_launch_with_game_dir(
                                 id,
                                 pipeline,

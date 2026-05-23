@@ -301,7 +301,9 @@ function pollGptkSteamInstall() {
       toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
     } else if (attempts > 180) {
       clearInterval(poll);
+      gptkSteamInstalling.value = false;
       toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
+      reloadLibrary();
     }
   }, 2000);
 }
@@ -579,21 +581,23 @@ watch([library, search, filter], applyFilter);
 }
 
 .library-controls {
-  display: grid;
-  grid-template-columns: minmax(260px, auto) minmax(280px, 1fr) auto;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   min-width: 0;
 }
 .library-launch-actions {
   display: flex;
   align-items: center;
+  flex: 0 1 auto;
   gap: 10px;
   min-width: 0;
 }
 .library-controls-center {
+  flex: 1 1 420px;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(360px, auto);
+  grid-template-columns: minmax(150px, 1fr) minmax(170px, 220px);
   gap: 10px;
   min-width: 0;
 }
@@ -621,6 +625,9 @@ watch([library, search, filter], applyFilter);
   flex: 0 1 auto;
   min-width: 0;
 }
+.refresh-button {
+  margin-left: auto;
+}
 .control-icon {
   flex: 0 0 15px;
 }
@@ -630,11 +637,8 @@ watch([library, search, filter], applyFilter);
 }
 
 @media (max-width: 1040px) {
-  .library-controls {
-    grid-template-columns: 1fr;
-  }
   .refresh-button {
-    justify-self: start;
+    margin-left: 0;
   }
 }
 
