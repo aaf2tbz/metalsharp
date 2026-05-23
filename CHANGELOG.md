@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.33.34 - 2026-05-22
+
+Steam route authority and GPTK install-state fixes.
+
+### Fixed
+
+- **Steam bottle state** - stops `GET /steam/library` and Steam bottle sync from rewriting shared MetalSharp Steam bottles back to the auto-resolved lane, so manual route selection no longer drifts underneath games like Subnautica 2.
+- **Explicit route selection** - validates the selected executable's imported D3D API before launch and returns a direct incompatibility error when a manual route like `M11` does not match a `D3D12` shipping binary.
+- **GPTK Steam setup** - fails fast when `SteamSetup.exe` exits before writing GPTK Steam files, reconciles stale persisted setup progress back to real backend state, and clears stuck installing indicators across Library, Settings, and setup wizard flows.
+- **Library controls** - keeps the source filter and refresh button on-screen by letting the header controls wrap cleanly instead of pushing refresh off-canvas.
+
 ## v0.33.33 - 2026-05-22
 
 GPTK DMG signature hotfix.
