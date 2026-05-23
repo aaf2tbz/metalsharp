@@ -1576,12 +1576,12 @@ pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Valu
         return json!({"ok": true, "appid": appid, "installed": [], "message": "all recipe dependencies satisfied"});
     }
 
-    let mut installed = Vec::new();
+    let mut reports = Vec::new();
     let mut errors = Vec::new();
     for component_id in &missing {
         match repair_component(&manifest.id, component_id, false) {
             Ok(report) => {
-                installed.push(report);
+                reports.push(report);
             },
             Err(e) => {
                 errors.push(format!("{}: {}", component_id, e));
@@ -1589,10 +1589,22 @@ pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Valu
         }
     }
 
-    if errors.is_empty() {
-        json!({"ok": true, "appid": appid, "installed": installed, "message": format!("installed {} components", missing.len())})
+    let mut manifest = match load_bottle(&manifest.id) {
+        Ok(m) => m,
+        Err(_) => return json!({"ok": false, "appid": appid, "installed": reports, "errors": errors}),
+    };
+    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    let _ = save_bottle(&manifest);
+
+    let still_missing = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
+    let actually_installed = missing.iter().filter(|c| !still_missing.contains(c)).count();
+
+    if errors.is_empty() && still_missing.is_empty() {
+        json!({"ok": true, "appid": appid, "installed": reports, "actually_installed": actually_installed, "message": format!("installed {} components", actually_installed)})
+    } else if errors.is_empty() {
+        json!({"ok": false, "appid": appid, "installed": reports, "actually_installed": actually_installed, "still_missing": still_missing, "message": format!("{} of {} components installed, {} still missing", actually_installed, missing.len(), still_missing.len())})
     } else {
-        json!({"ok": false, "appid": appid, "installed": installed, "errors": errors})
+        json!({"ok": false, "appid": appid, "installed": reports, "actually_installed": actually_installed, "still_missing": still_missing, "errors": errors})
     }
 }
 
