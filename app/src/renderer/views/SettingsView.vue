@@ -188,6 +188,7 @@ async function pollGptkSteamInstall() {
       toast.show(status.gptk_install_progress.error ?? status.gptk_install_progress.message, "error");
     } else if (attempts > 180) {
       clearInterval(poll);
+      gptkSteamInstalling.value = false;
       toast.show("GPTK Steam setup is still running. Check the Steam installer window.", "error");
     }
   }, 2000);
