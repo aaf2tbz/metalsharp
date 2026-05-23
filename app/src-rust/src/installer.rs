@@ -7,6 +7,33 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
+const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
+    "metalsharp_bundle.tar.zst",
+    "metalsharp_bundle2.tar.zst",
+    "dxmt.tar.zst",
+    "gptk.tar.zst",
+    "dxvk.tar.zst",
+    "mono-x86.tar.zst",
+    "mono-arm64.tar.zst",
+    "goldberg.tar.zst",
+    "eac-toggle.tar.zst",
+    "SteamSetup.exe",
+    "steamwebhelper.exe",
+    "steamwebhelper-wrapper.c",
+];
+
+const LINUX_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
+    "metalsharp_bundle.tar.zst",
+    "metalsharp_bundle2.tar.zst",
+    "dxvk.tar.zst",
+    "mono-x86.tar.zst",
+    "goldberg.tar.zst",
+    "eac-toggle.tar.zst",
+    "SteamSetup.exe",
+    "steamwebhelper.exe",
+    "steamwebhelper-wrapper.c",
+];
+
 fn progress_path() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("install_progress.json")
 }
@@ -76,6 +103,7 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> =
         if crate::platform::current() == crate::platform::HostPlatform::Linux {
             vec![
+                ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXVK Runtime", Box::new(install_dxvk_fallback)),
@@ -88,6 +116,7 @@ fn run_install_all() {
             vec![
                 ("Rosetta 2", Box::new(|_| install_rosetta())),
                 ("System Tools", Box::new(|_| install_xcode_cli())),
+                ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
@@ -160,6 +189,51 @@ fn run_install_all() {
     }
 
     write_progress(total, total, "Complete", "complete", "All assets installed!", None);
+}
+
+fn runtime_bundle_assets_for_host() -> &'static [&'static str] {
+    if crate::platform::current() == crate::platform::HostPlatform::Linux {
+        LINUX_RUNTIME_BUNDLE_ASSETS
+    } else {
+        MAC_RUNTIME_BUNDLE_ASSETS
+    }
+}
+
+fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
+    let mut downloaded = false;
+    let mut missing = Vec::new();
+
+    for asset in runtime_bundle_assets_for_host() {
+        let had_local = bundled_file_exists(asset);
+        match find_bundled_file(asset) {
+            Some(path) if file_nonempty(&path) => {
+                downloaded |= !had_local;
+            },
+            _ => missing.push(*asset),
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(downloaded)
+    } else {
+        Err(format!("Missing required runtime bundle asset(s): {}", missing.join(", ")))
+    }
+}
+
+fn bundled_file_exists(name: &str) -> bool {
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        if file_nonempty(&resources.join(format!("bundles/{}", name))) {
+            return true;
+        }
+    }
+
+    if file_nonempty(&PathBuf::from(format!("app/bundles/{}", name))) {
+        return true;
+    }
+
+    dirs::home_dir()
+        .map(|home| file_nonempty(&home.join(".metalsharp").join("cache").join("bundles").join(name)))
+        .unwrap_or(false)
 }
 
 fn install_rosetta() -> Result<bool, String> {
@@ -444,10 +518,8 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
 
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
-    let unix_so = dxmt_dir.join("x86_64-unix").join("winemetal.so");
-    let pe_dll = dxmt_dir.join("x86_64-windows").join("d3d11.dll");
 
-    if unix_so.exists() && pe_dll.exists() {
+    if dxmt_runtime_ready(&dxmt_dir) {
         return Ok(false);
     }
 
@@ -496,13 +568,19 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    if dxmt_dir.join("x86_64-unix").join("winemetal.so").exists()
-        && dxmt_dir.join("x86_64-windows").join("d3d11.dll").exists()
-    {
+    if dxmt_runtime_ready(&dxmt_dir) {
         Ok(true)
     } else {
         Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
     }
+}
+
+fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
+    let pe_dir = dxmt_dir.join("x86_64-windows");
+    let required_pe =
+        ["d3d10core.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"];
+    file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
+        && required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
 }
 
 fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -997,25 +1075,32 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
     let cache_dir = dirs::home_dir()?.join(".metalsharp").join("cache").join("bundles");
     let _ = fs::create_dir_all(&cache_dir);
     let cached = cache_dir.join(filename);
+    let tmp = cache_dir.join(format!("{}.download", filename));
 
-    if cached.exists() {
-        let size = fs::metadata(&cached).ok().map(|m| m.len()).unwrap_or(0);
-        if size > 0 {
-            return Some(cached);
-        }
+    if file_nonempty(&cached) {
+        return Some(cached);
     }
 
     let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
 
-    let output = Command::new("curl").args(["-sL", "--progress-bar", "-o"]).arg(&cached).arg(&url).output().ok()?;
+    let _ = fs::remove_file(&tmp);
+    let output = Command::new("curl")
+        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "--connect-timeout", "20", "-o"])
+        .arg(&tmp)
+        .arg(&url)
+        .output()
+        .ok()?;
 
-    if output.status.success() && cached.exists() {
-        let size = fs::metadata(&cached).ok().map(|m| m.len()).unwrap_or(0);
-        if size > 0 {
-            return Some(cached);
-        }
+    if output.status.success()
+        && file_nonempty(&tmp)
+        && fs::rename(&tmp, &cached).or_else(|_| fs::copy(&tmp, &cached).map(|_| ())).is_ok()
+        && file_nonempty(&cached)
+    {
+        let _ = fs::remove_file(&tmp);
+        return Some(cached);
     }
 
+    let _ = fs::remove_file(&tmp);
     let _ = fs::remove_file(&cached);
     None
 }
@@ -1130,6 +1215,39 @@ mod tests {
         fs::remove_file(pe_dir.join("nvngx.dll")).expect("remove nvngx");
         assert!(!gptk_runtime_ready(&gptk_dir, &framework));
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn runtime_bundle_preflight_knows_beta7_assets() {
+        let mac_assets = MAC_RUNTIME_BUNDLE_ASSETS;
+        for expected in [
+            "metalsharp_bundle.tar.zst",
+            "metalsharp_bundle2.tar.zst",
+            "dxmt.tar.zst",
+            "gptk.tar.zst",
+            "mono-x86.tar.zst",
+            "mono-arm64.tar.zst",
+            "goldberg.tar.zst",
+            "eac-toggle.tar.zst",
+            "SteamSetup.exe",
+            "steamwebhelper.exe",
+        ] {
+            assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
+        }
+
+        let linux_assets = LINUX_RUNTIME_BUNDLE_ASSETS;
+        for expected in [
+            "metalsharp_bundle.tar.zst",
+            "metalsharp_bundle2.tar.zst",
+            "dxvk.tar.zst",
+            "mono-x86.tar.zst",
+            "goldberg.tar.zst",
+            "eac-toggle.tar.zst",
+            "SteamSetup.exe",
+            "steamwebhelper.exe",
+        ] {
+            assert!(linux_assets.contains(&expected), "missing linux bundle asset {}", expected);
+        }
     }
 
     #[test]
