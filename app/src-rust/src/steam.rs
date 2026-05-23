@@ -1,19 +1,14 @@
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
-static TEMP_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
     crate::platform::runtime_wine_binary(&ms_root)
-}
-
-fn ms_wine_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine")
 }
 
 fn steam_prefix() -> PathBuf {
@@ -22,73 +17,6 @@ fn steam_prefix() -> PathBuf {
 
 fn steam_exe_path() -> PathBuf {
     steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
-}
-
-fn metalsharp_wine_runtime_available() -> bool {
-    ms_wine().exists() && ms_wine_root().join("bin").join("wineserver").exists()
-}
-
-fn metalsharp_home() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp")
-}
-
-fn current_timestamp_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0)
-}
-
-fn unique_operation_suffix() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let counter = TEMP_NAME_COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("{}-{}-{}", std::process::id(), nanos, counter)
-}
-
-fn current_account_name() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .ok()
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| "metalsharp".to_string())
-}
-
-fn steam_dir_for_prefix(prefix: &Path) -> PathBuf {
-    prefix.join("drive_c").join("Program Files (x86)").join("Steam")
-}
-
-fn windows_user_dir(prefix: &Path) -> PathBuf {
-    prefix.join("drive_c").join("users").join(current_account_name())
-}
-
-fn prefix_contains_crossover_identity(prefix: &Path) -> bool {
-    ["user.reg", "system.reg"]
-        .iter()
-        .map(|name| prefix.join(name))
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .any(|contents| {
-            let lower = contents.to_lowercase();
-            lower.contains("c:\\\\users\\\\crossover")
-                || lower.contains(r#"username"="crossover""#)
-                || lower.contains(r#"profileimagepath"="c:\\users\\crossover""#)
-        })
-}
-
-fn prefix_profile_matches_user(prefix: &Path, username: &str) -> bool {
-    let user_reg = prefix.join("user.reg");
-    let system_reg = prefix.join("system.reg");
-    if !user_reg.exists() || !system_reg.exists() {
-        return false;
-    }
-
-    let user = std::fs::read_to_string(user_reg).unwrap_or_default().to_lowercase();
-    let system = std::fs::read_to_string(system_reg).unwrap_or_default().to_lowercase();
-    let username = username.to_lowercase();
-    let profile = format!("c:\\\\users\\\\{}", username);
-
-    user.contains(&format!(r#""username"="{}""#, username))
-        || user.contains(&format!(r#""userprofile"="{}""#, profile))
-        || system.contains(&format!(r#""profileimagepath"="{}""#, profile))
 }
 
 fn macos_steam_app() -> Option<PathBuf> {
@@ -125,7 +53,7 @@ pub fn status() -> Value {
     let mac_running = is_macos_steam_running();
 
     let running = is_wine_steam_running();
-    let ms_available = metalsharp_wine_runtime_available();
+    let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
 
     json!({
@@ -171,6 +99,7 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
+
     let prefix = steam_prefix().to_string_lossy().to_string();
     let exe = steam_exe_path().to_string_lossy().to_string();
     let lower = command.to_lowercase();
@@ -193,6 +122,7 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
+
     let prefix = steam_prefix().to_string_lossy().to_string();
     let lower = command.to_lowercase();
 
@@ -272,14 +202,6 @@ pub fn is_installing_steam() -> bool {
 }
 
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
-    ensure_steam_launch_ready_with_wrapper(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
-}
-
-fn ensure_steam_launch_ready_with_wrapper(
-    steam_dir: &PathBuf,
-    wrapper_finder: fn() -> Option<PathBuf>,
-    marker_name: &str,
-) {
     let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
     let wrapper = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
@@ -292,31 +214,12 @@ fn ensure_steam_launch_ready_with_wrapper(
     let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
     if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
-        deploy_steamwebhelper_wrapper_with(steam_dir, wrapper_finder, marker_name);
+        deploy_steamwebhelper_wrapper(steam_dir);
     }
 }
 
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     spawn_wine_steam_with_env(args, &[])
-}
-
-fn apply_wine_wrapper_env(cmd: &mut Command, ms_root: &Path) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let lib = ms_root.join("lib");
-    let unix_lib = lib.join("wine").join("x86_64-unix");
-    cmd.env("MS_ROOT", ms_root)
-        .env("CX_ROOT", ms_root)
-        .env("WINEDATADIR", ms_root.join("share"))
-        .env("DYLD_FALLBACK_LIBRARY_PATH", format!("{}:{}", lib.display(), unix_lib.display()))
-        .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env("MVK_PRESENT_MODE", "1")
-        .env("DXVK_STATE_CACHE_PATH", home.join(".metalsharp").join("dxvk-cache"))
-        .env("DXVK_LOG_PATH", home.join(".metalsharp").join("dxvk-logs"));
-
-    let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
-    if moltenvk_icd.exists() {
-        cmd.env("VK_ICD_FILENAMES", moltenvk_icd);
-    }
 }
 
 fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> Result<u32, Box<dyn std::error::Error>> {
@@ -353,7 +256,6 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    apply_wine_wrapper_env(&mut cmd, &ms_root);
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 
     for (key, val) in extra_env {
@@ -402,7 +304,7 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
         extra_env,
     )?;
 
-    Ok(json!({"ok": true, "pid": pid, "running": true}))
+    Ok(json!({"ok": true, "pid": pid}))
 }
 
 pub fn launch_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
@@ -616,14 +518,10 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
 }
 
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
-    installed_games_in_steamapps(crate::scan::wine_steam_library_paths(), true)
-}
-
-fn installed_games_in_steamapps(paths: Vec<PathBuf>, skip_macos: bool) -> Vec<u32> {
     let mut appids = Vec::new();
 
-    for steamapps in paths {
-        if skip_macos && is_macos_steamapps_path(&steamapps) {
+    for steamapps in crate::scan::wine_steam_library_paths() {
+        if is_macos_steamapps_path(&steamapps) {
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&steamapps) {
@@ -645,51 +543,13 @@ fn installed_games_in_steamapps(paths: Vec<PathBuf>, skip_macos: bool) -> Vec<u3
     appids
 }
 
-fn resolve_game_dir_in_steamapps(appid: u32, paths: Vec<PathBuf>) -> Option<PathBuf> {
-    let manifest_name = format!("appmanifest_{}.acf", appid);
-    for steamapps in paths {
-        let manifest_path = steamapps.join(&manifest_name);
-        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-            if let Some(dir_name) = crate::scan::parse_installdir_from_acf(&contents) {
-                let dir = steamapps.join("common").join(dir_name);
-                if dir.exists() {
-                    return Some(dir);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn get_game_name_from_manifest_in_paths(appid: u32, paths: Vec<PathBuf>) -> Option<String> {
-    let manifest_name = format!("appmanifest_{}.acf", appid);
-
-    for steamapps in paths {
-        if is_macos_steamapps_path(&steamapps) {
-            continue;
-        }
-        let manifest_path = steamapps.join(&manifest_name);
-        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
-            if let Some(name) = parse_acf_field(&contents, "name") {
-                return Some(name);
-            }
-        }
-    }
-
-    None
-}
-
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
-    deploy_steamwebhelper_wrapper_with(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
-}
-
-fn deploy_steamwebhelper_wrapper_with(steam_dir: &PathBuf, wrapper_finder: fn() -> Option<PathBuf>, marker_name: &str) {
     let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
     let original = cef_dir.join("steamwebhelper.exe");
     let real = cef_dir.join("steamwebhelper_real.exe");
-    let wrapper_marker = cef_dir.join(marker_name);
+    let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
 
-    let wrapper = match wrapper_finder() {
+    let wrapper = match find_bundled_steamwebhelper_wrapper() {
         Some(wrapper) => wrapper,
         None => return,
     };
@@ -976,7 +836,7 @@ pub fn library() -> Value {
     };
 
     let owned_appids: Vec<u32> = owned.iter().map(|(id, _)| *id).collect();
-    let mut all_games = owned.clone();
+    let mut all_games = owned;
     for &appid in &wine_steam_appids {
         if !owned_appids.contains(&appid) {
             let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
@@ -989,121 +849,61 @@ pub fn library() -> Value {
         }
     }
 
-    let mut games: Vec<Value> = Vec::new();
-    for (appid, name) in &all_games {
-        let dual = crate::scan::resolve_dual_game_dir(*appid);
-        let has_metalsharp_install = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
-        let has_any_install = installed_appids.contains(appid) || has_metalsharp_install;
-
-        if has_metalsharp_install {
-            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
-            let pipeline_id = resolved;
-            let bottle = load_library_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id);
-            games.push(steam_library_card(SteamLibraryCardData {
-                appid: *appid,
-                name,
-                source: "metalsharp",
-                source_label: "MetalSharp",
-                installed: true,
-                can_uninstall: downloaded_appids.contains(appid) || wine_steam_appids.contains(appid),
-                pipeline_id,
-                has_native_build: dual.has_native_build,
-                native_app_path: dual.macos_app.as_ref(),
-                wine_game_path: dual.wine_dir.as_ref(),
-                bottle: bottle.as_ref(),
-            }));
-        }
-
-        if !has_metalsharp_install {
-            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
-            let pipeline_id = resolved;
-            games.push(steam_library_card(SteamLibraryCardData {
-                appid: *appid,
-                name,
-                source: "steam",
-                source_label: "Steam",
-                installed: has_any_install,
-                can_uninstall: false,
-                pipeline_id,
-                has_native_build: dual.has_native_build,
-                native_app_path: dual.macos_app.as_ref(),
-                wine_game_path: dual.wine_dir.as_ref(),
-                bottle: None,
-            }));
-        }
-    }
+    let games: Vec<Value> = all_games
+        .iter()
+        .map(|(appid, name)| {
+            let is_installed = installed_appids.contains(appid)
+                || downloaded_appids.contains(appid)
+                || wine_steam_appids.contains(appid);
+            let can_uninstall = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
+            let dual = crate::scan::resolve_dual_game_dir(*appid);
+            let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
+            let bottle = if is_installed {
+                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+            } else {
+                None
+            };
+            let recommended = pipeline_id.to_legacy_method();
+            let node = crate::mtsp::engine::get_pipeline(pipeline_id);
+            let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
+                "id": node.id,
+                "name": node.name,
+                "recommended": true,
+            }))
+            .chain(node.alternatives.iter().map(|alt| {
+                let alt_node = crate::mtsp::engine::get_pipeline(*alt);
+                serde_json::json!({
+                    "id": alt_node.id,
+                    "name": alt_node.name,
+                    "recommended": false,
+                })
+            }))
+            .collect();
+            json!({
+                "appid": appid,
+                "name": name,
+                "installed": is_installed,
+                "state": if is_installed { "installed" } else { "not_installed" },
+                "can_uninstall": can_uninstall,
+                "launch_method": recommended,
+                "available_pipelines": available_pipelines,
+                "has_native_build": dual.has_native_build,
+                "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
+                "wine_game_path": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
+                "bottle_id": bottle.as_ref().map(|b| b.id.clone()),
+                "bottle_health": bottle.as_ref().map(|b| json!(b.health)),
+                "bottle_runtime_assets": bottle.as_ref().map(|b| b.runtime_assets.len()).unwrap_or(0),
+                "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
+                "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
+            })
+        })
+        .collect();
 
     json!({
         "ok": true,
         "total": games.len(),
         "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
         "games": games,
-    })
-}
-
-fn load_library_bottle(
-    appid: u32,
-    name: &str,
-    game_dir: Option<&Path>,
-    pipeline: crate::mtsp::engine::PipelineId,
-) -> Option<crate::bottles::BottleManifest> {
-    let bottle_id = crate::bottles::steam_game_bottle_id_for_pipeline(appid, pipeline);
-    crate::bottles::load_bottle(&bottle_id)
-        .ok()
-        .or_else(|| crate::bottles::ensure_steam_game_bottle(appid, name, game_dir, pipeline).ok())
-}
-
-struct SteamLibraryCardData<'a> {
-    appid: u32,
-    name: &'a str,
-    source: &'a str,
-    source_label: &'a str,
-    installed: bool,
-    can_uninstall: bool,
-    pipeline_id: crate::mtsp::engine::PipelineId,
-    has_native_build: bool,
-    native_app_path: Option<&'a PathBuf>,
-    wine_game_path: Option<&'a PathBuf>,
-    bottle: Option<&'a crate::bottles::BottleManifest>,
-}
-
-fn steam_library_card(card: SteamLibraryCardData<'_>) -> Value {
-    let node = crate::mtsp::engine::get_pipeline(card.pipeline_id);
-    let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
-        "id": node.id,
-        "name": node.name,
-        "recommended": true,
-    }))
-    .chain(node.alternatives.iter().map(|alt| {
-        let alt_node = crate::mtsp::engine::get_pipeline(*alt);
-        serde_json::json!({
-            "id": alt_node.id,
-            "name": alt_node.name,
-            "recommended": false,
-        })
-    }))
-    .collect();
-    let launch_method = card.pipeline_id.to_legacy_method();
-
-    json!({
-        "library_id": format!("{}:{}", card.source, card.appid),
-        "library_source": card.source,
-        "library_source_label": card.source_label,
-        "appid": card.appid,
-        "name": card.name,
-        "installed": card.installed,
-        "state": if card.installed { "installed" } else { "not_installed" },
-        "can_uninstall": card.can_uninstall,
-        "launch_method": launch_method,
-        "available_pipelines": available_pipelines,
-        "has_native_build": card.has_native_build,
-        "native_app_path": card.native_app_path.map(|p| p.to_string_lossy().to_string()),
-        "wine_game_path": card.wine_game_path.map(|p| p.to_string_lossy().to_string()),
-        "bottle_id": card.bottle.map(|b| b.id.clone()),
-        "bottle_health": card.bottle.map(|b| json!(b.health)),
-        "bottle_runtime_assets": card.bottle.map(|b| b.runtime_assets.len()).unwrap_or(0),
-        "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", card.appid),
-        "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", card.appid),
     })
 }
 
@@ -1334,7 +1134,32 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let _ = std::fs::remove_dir_all(steam_prefix());
 
-    let installer = prepare_steam_installer(&metalsharp_dir)?;
+    let installer = metalsharp_dir.join("SteamSetup.exe");
+    let _ = std::fs::remove_file(&installer);
+
+    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
+    let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
+    if !output.success() {
+        let mut found = false;
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
+                let bundled = resources.join("bundles").join("SteamSetup.exe");
+                if bundled.exists() {
+                    let _ = std::fs::copy(&bundled, &installer);
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
+            if bundled.exists() {
+                let _ = std::fs::copy(&bundled, &installer);
+            }
+        }
+    }
+    if !installer.exists() {
+        return Err("Failed to download Steam installer".into());
+    }
 
     let wine = ms_wine();
     if !wine.exists() {
@@ -1404,38 +1229,6 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     Ok("Steam install thread complete".into())
 }
 
-fn prepare_steam_installer(metalsharp_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(metalsharp_dir)?;
-    let installer = metalsharp_dir.join("SteamSetup.exe");
-    let _ = std::fs::remove_file(&installer);
-
-    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
-    let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
-    if !output.success() {
-        let mut found = false;
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
-                let bundled = resources.join("bundles").join("SteamSetup.exe");
-                if bundled.exists() {
-                    let _ = std::fs::copy(&bundled, &installer);
-                    found = true;
-                }
-            }
-        }
-        if !found {
-            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
-            if bundled.exists() {
-                let _ = std::fs::copy(&bundled, &installer);
-            }
-        }
-    }
-    if !installer.exists() {
-        return Err("Failed to download Steam installer".into());
-    }
-
-    Ok(installer)
-}
-
 pub fn watch_steamapps() -> Option<String> {
     let steamapps = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
 
@@ -1474,9 +1267,6 @@ pub fn watch_steamapps() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{LazyLock, Mutex};
-
-    static HOME_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn parses_acf_quoted_fields() {

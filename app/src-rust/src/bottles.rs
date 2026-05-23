@@ -314,11 +314,6 @@ fn steam_launch_prefix() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
 }
 
-fn steam_launch_prefix_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> PathBuf {
-    let _ = pipeline;
-    steam_launch_prefix()
-}
-
 pub fn bottle_dir(id: &str) -> PathBuf {
     bottles_root().join(id)
 }
@@ -417,7 +412,7 @@ fn steam_compatdata_record(
         bottle_id: manifest.id.clone(),
         compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
         prefix_path: manifest.prefix_path.clone(),
-        steam_prefix_path: steam_launch_prefix_for_pipeline(pipeline).to_string_lossy().to_string(),
+        steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline.to_legacy_method().to_string(),
@@ -539,71 +534,21 @@ pub fn steam_game_bottle_id(appid: u32) -> String {
     format!("steam_{}", appid)
 }
 
-pub fn steam_game_bottle_id_for_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> String {
-    let _ = pipeline;
-    steam_game_bottle_id(appid)
-}
-
-fn apply_steam_game_bottle_metadata(
-    manifest: &mut BottleManifest,
-    appid: u32,
-    name: &str,
-    game_dir: Option<&Path>,
-    pipeline: crate::mtsp::engine::PipelineId,
-) {
-    let runtime_profile = runtime_profile_for_pipeline(pipeline);
-    let launch_prefix = steam_launch_prefix_for_pipeline(pipeline);
-
-    manifest.name = name.to_string();
-    manifest.bottle_type = BottleType::Steam;
-    manifest.steam_app_id = Some(appid);
-    manifest.prefix_path = launch_prefix.to_string_lossy().to_string();
-    manifest.arch = runtime_profile_definition(runtime_profile).arch;
-    manifest.runtime_profile = runtime_profile;
-    manifest.installed_components =
-        merge_components(manifest.installed_components.clone(), default_components_for(runtime_profile));
-    manifest.game_install_path = game_dir.map(normalized_existing_path_string);
-    manifest.runtime_assets = game_dir.map(detect_game_runtime_assets).unwrap_or_default();
-    manifest.installed_components = merge_components(
-        manifest.installed_components.clone(),
-        infer_components_from_runtime_assets(&manifest.runtime_assets),
-    );
-    manifest.installed_app_detections = game_dir.map(detect_apps_in_game_dir).unwrap_or_default();
-    manifest.health =
-        if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
-}
-
-fn refresh_existing_steam_game_bottle(
-    mut manifest: BottleManifest,
-    appid: u32,
-    name: &str,
-    game_dir: Option<&Path>,
-) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    let pipeline = runtime_profile_definition(manifest.runtime_profile).launch_pipeline;
-    let now = timestamp_secs();
-    apply_steam_game_bottle_metadata(&mut manifest, appid, name, game_dir, pipeline);
-    manifest.updated_at = now;
-    save_bottle(&manifest)?;
-    let _ = save_steam_compatdata(&manifest, pipeline);
-    Ok(manifest)
-}
-
 pub fn ensure_steam_game_bottle(
     appid: u32,
     name: &str,
     game_dir: Option<&Path>,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    let id = steam_game_bottle_id_for_pipeline(appid, pipeline);
+    let id = steam_game_bottle_id(appid);
     let now = timestamp_secs();
     let runtime_profile = runtime_profile_for_pipeline(pipeline);
-    let launch_prefix = steam_launch_prefix_for_pipeline(pipeline);
     let mut manifest = load_bottle(&id).unwrap_or_else(|_| BottleManifest {
         id: id.clone(),
         name: name.to_string(),
         bottle_type: BottleType::Steam,
         steam_app_id: Some(appid),
-        prefix_path: launch_prefix.to_string_lossy().to_string(),
+        prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         arch: BottleArch::Wow64,
         runtime_profile,
         installed_components: default_components_for(runtime_profile),
@@ -621,7 +566,20 @@ pub fn ensure_steam_game_bottle(
         updated_at: now.clone(),
     });
 
-    apply_steam_game_bottle_metadata(&mut manifest, appid, name, game_dir, pipeline);
+    manifest.name = name.to_string();
+    manifest.bottle_type = BottleType::Steam;
+    manifest.steam_app_id = Some(appid);
+    manifest.prefix_path = steam_launch_prefix().to_string_lossy().to_string();
+    manifest.runtime_profile = runtime_profile;
+    manifest.installed_components =
+        merge_components(manifest.installed_components, default_components_for(runtime_profile));
+    manifest.game_install_path = game_dir.map(normalized_existing_path_string);
+    manifest.runtime_assets = game_dir.map(detect_game_runtime_assets).unwrap_or_default();
+    manifest.installed_components =
+        merge_components(manifest.installed_components, infer_components_from_runtime_assets(&manifest.runtime_assets));
+    manifest.installed_app_detections = game_dir.map(detect_apps_in_game_dir).unwrap_or_default();
+    manifest.health =
+        if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
     manifest.updated_at = now;
     save_bottle(&manifest)?;
     let _ = save_steam_compatdata(&manifest, pipeline);
@@ -633,16 +591,8 @@ pub fn prepare_steam_game_launch(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let dual = crate::scan::resolve_dual_game_dir(appid);
-    prepare_steam_game_launch_with_game_dir(appid, pipeline, dual.wine_dir.as_deref())
-}
-
-pub fn prepare_steam_game_launch_with_game_dir(
-    appid: u32,
-    pipeline: crate::mtsp::engine::PipelineId,
-    game_dir: Option<&Path>,
-) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
-    let mut manifest = ensure_steam_game_bottle(appid, &name, game_dir, pipeline)?;
+    let mut manifest = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?;
     let prefix = PathBuf::from(&manifest.prefix_path);
     fs::create_dir_all(&prefix)?;
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
@@ -659,12 +609,7 @@ pub fn sync_steam_game_bottles() -> Result<Vec<BottleManifest>, Box<dyn std::err
         let dual = crate::scan::resolve_dual_game_dir(appid);
         let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
         let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
-        let id = steam_game_bottle_id_for_pipeline(appid, pipeline);
-        let bottle = match load_bottle(&id) {
-            Ok(manifest) => refresh_existing_steam_game_bottle(manifest, appid, &name, dual.wine_dir.as_deref())?,
-            Err(_) => ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?,
-        };
-        bottles.push(bottle);
+        bottles.push(ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?);
     }
     Ok(bottles)
 }
@@ -1426,10 +1371,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let bottle = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
-    let prefix = bottle
-        .as_ref()
-        .map(|b| PathBuf::from(&b.prefix_path))
-        .unwrap_or_else(|| steam_launch_prefix_for_pipeline(pipeline));
+    let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
     let components = inspect_components(&prefix, &default_components_for(profile));
     let actions = component_actions(&components);
     let compatdata = load_steam_compatdata(appid).ok();
@@ -3834,7 +3776,6 @@ mod tests {
     fn steam_bottle_ids_are_appid_scoped() {
         assert_eq!(steam_game_bottle_id(620), "steam_620");
         assert_ne!(steam_game_bottle_id(620), steam_game_bottle_id(504230));
-        assert_eq!(steam_game_bottle_id_for_pipeline(620, crate::mtsp::engine::PipelineId::M12), "steam_620");
     }
 
     #[test]
@@ -3904,8 +3845,6 @@ mod tests {
         assert_eq!(record.launch_pipeline, "d3d9_metal");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");
-        assert_eq!(record.prefix_path, manifest.prefix_path);
-        assert_eq!(record.steam_prefix_path, steam_launch_prefix().to_string_lossy().to_string());
         assert!(record.launch_command_template.contains("/steam/launch-game"));
         assert!(record.launch_command_template.contains("620"));
         assert_eq!(record.runtime_assets.len(), 1);

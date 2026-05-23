@@ -14,9 +14,6 @@ import { getAPI, api } from "./composables/useApi";
 import type { AppConfig, UpdateStatus, SteamStatus } from "./api-types";
 
 interface SteamGame {
-  library_id?: string;
-  library_source?: "steam" | "metalsharp" | "gptk";
-  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
@@ -41,10 +38,6 @@ const backendConnected = ref(false);
 const backendVersion = ref<string | null>(null);
 const wineSteamInstalled = ref(false);
 const wineSteamRunning = ref(false);
-const gptkToolkitInstalled = ref(false);
-const gptkSteamInstalled = ref(false);
-const gptkSteamInstalling = ref(false);
-const gptkSteamRunning = ref(false);
 const macSteamInstalled = ref(false);
 const macSteamRunning = ref(false);
 const library = ref<SteamLibrary | null>(null);
@@ -73,10 +66,6 @@ provide("library", library);
 provide("config", config);
 provide("wineSteamInstalled", wineSteamInstalled);
 provide("wineSteamRunning", wineSteamRunning);
-provide("gptkToolkitInstalled", gptkToolkitInstalled);
-provide("gptkSteamInstalled", gptkSteamInstalled);
-provide("gptkSteamInstalling", gptkSteamInstalling);
-provide("gptkSteamRunning", gptkSteamRunning);
 provide("macSteamInstalled", macSteamInstalled);
 provide("macSteamRunning", macSteamRunning);
 provide("backendConnected", backendConnected);
@@ -96,14 +85,6 @@ async function refreshSteamStatus() {
   const steamStatus = await api<{
     installed: boolean;
     running: boolean;
-    gptk_installed: boolean;
-    gptk_toolkit_installed?: boolean;
-    gptk_toolkit_downloaded?: string | null;
-    gptk_runtime_path?: string;
-    gptk_steam_installed?: boolean;
-    gptk_installing?: boolean;
-    gptk_running: boolean;
-    gptk_synced: boolean;
     mac_installed: boolean;
     mac_running: boolean;
     metalsharp_wine_available: boolean;
@@ -111,10 +92,6 @@ async function refreshSteamStatus() {
   if (steamStatus) {
     wineSteamInstalled.value = steamStatus.installed;
     wineSteamRunning.value = steamStatus.running;
-    gptkToolkitInstalled.value = steamStatus.gptk_toolkit_installed ?? steamStatus.gptk_installed;
-    gptkSteamInstalled.value = steamStatus.gptk_steam_installed ?? steamStatus.gptk_synced;
-    gptkSteamInstalling.value = steamStatus.gptk_installing ?? false;
-    gptkSteamRunning.value = steamStatus.gptk_running;
     macSteamInstalled.value = steamStatus.mac_installed;
     macSteamRunning.value = steamStatus.mac_running;
   }

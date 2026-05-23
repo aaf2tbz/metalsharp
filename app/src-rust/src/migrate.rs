@@ -1,13 +1,11 @@
 use serde_json::json;
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 3;
+const MIGRATE_SCHEMA_VERSION: u64 = 2;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
@@ -332,7 +330,7 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp = migration_preserve_tmp_dir(ms_dir);
+    let tmp = std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
@@ -391,12 +389,6 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         bottles_tmp,
         compatdata_tmp,
     }
-}
-
-fn migration_preserve_tmp_dir(ms_dir: &Path) -> PathBuf {
-    let mut hasher = DefaultHasher::new();
-    ms_dir.hash(&mut hasher);
-    std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{:016x}", std::process::id(), hasher.finish()))
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
@@ -470,7 +462,18 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         }
         copy_dir_recursive(&preserved.prefix_steam_tmp, &dst);
 
-        ensure_prefix_dosdevices(&dst);
+        let dosdevices = dst.join("dosdevices");
+        if !dosdevices.exists() {
+            let _ = fs::create_dir_all(&dosdevices);
+        }
+        let c_link = dosdevices.join("c:");
+        if !c_link.exists() {
+            let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
+        }
+        let z_link = dosdevices.join("z:");
+        if !z_link.exists() {
+            let _ = std::os::unix::fs::symlink("/", &z_link);
+        }
     }
 
     if preserved.games_tmp.exists() {
@@ -513,21 +516,6 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         let cache_dir = ms_dir.join("cache");
         let _ = fs::create_dir_all(&cache_dir);
         let _ = fs::write(cache_dir.join("steam_config.json"), data);
-    }
-}
-
-fn ensure_prefix_dosdevices(prefix: &Path) {
-    let dosdevices = prefix.join("dosdevices");
-    if !dosdevices.exists() {
-        let _ = fs::create_dir_all(&dosdevices);
-    }
-    let c_link = dosdevices.join("c:");
-    if !c_link.exists() {
-        let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
-    }
-    let z_link = dosdevices.join("z:");
-    if !z_link.exists() {
-        let _ = std::os::unix::fs::symlink("/", &z_link);
     }
 }
 

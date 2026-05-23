@@ -364,18 +364,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
                         None => Some(mtsp::rules::resolve_pipeline(id)),
                     };
-                    app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method,));
+                    app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
-                            if let Some(explicit_pipeline) = mtsp::engine::PipelineId::from_str_flexible(launch_method)
-                            {
-                                if explicit_pipeline == pipeline {
-                                    let node = mtsp::engine::get_pipeline(pipeline);
-                                    if let Err(e) = mtsp::recipe::validate_explicit_pipeline_selection(id, node, None) {
-                                        return resp(400, json!({"ok": false, "error": e.to_string()}));
-                                    }
-                                }
-                            }
                             let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
@@ -402,7 +393,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "appid": id,
                                         "gameType": game_type,
                                         "bottle_id": bottle.id,
-                                        "bottle_prefix": bottle_prefix.to_string_lossy().to_string(),
+                                        "bottle_prefix": bottle.prefix_path,
                                         "launch_log": log_path.to_string_lossy().to_string(),
                                         "compatdata": compatdata,
                                         "pipeline": pipeline,

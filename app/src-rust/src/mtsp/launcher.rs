@@ -40,7 +40,6 @@ struct LaunchLogContext<'a> {
 pub struct CustomLaunchOptions {
     pub prefix_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
-    pub extra_env: Vec<(String, String)>,
 }
 
 pub fn bridge_is_running() -> bool {
@@ -147,47 +146,19 @@ pub fn launch_steam_bottle_with_pipeline(
     prefix_path: &Path,
     extra_env: &[(String, String)],
 ) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
-    launch_steam_bottle_with_pipeline_from_game_dir(appid, pipeline_id, prefix_path, extra_env, None)
-}
-
-pub fn launch_steam_bottle_with_pipeline_from_game_dir(
-    appid: u32,
-    pipeline_id: PipelineId,
-    prefix_path: &Path,
-    extra_env: &[(String, String)],
-    game_dir_override: Option<&Path>,
-) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
-    let result = if let Some(game_dir) = game_dir_override {
-        let recipe = super::recipe::build_custom_launch_recipe(appid, node, game_dir, None)?;
-        let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?.clone();
-        launch_custom_with_options(
-            appid,
-            game_dir,
-            &exe_path,
-            pipeline_id,
-            &[],
-            CustomLaunchOptions {
-                prefix_path: Some(prefix_path.to_path_buf()),
-                log_path: Some(log_path.clone()),
-                extra_env: extra_env.to_vec(),
-            },
-        )
-        .map(|(pid, game_type, _)| (pid, game_type))
-    } else {
-        match pipeline_id {
-            PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-                launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-            },
-            PipelineId::M32 | PipelineId::WineBare => {
-                launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-            },
-            PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-                Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
-            },
-        }
+    let result = match pipeline_id {
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+        },
+        PipelineId::M32 | PipelineId::WineBare => {
+            launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+        },
+        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+            Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
+        },
     }?;
 
     Ok((result.0, result.1, log_path))
@@ -233,13 +204,13 @@ pub fn prepare_steam_pipeline_env(
         },
     }
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
     if !recipe.dlls.is_empty() {
         deploy_recipe_dlls(&recipe)?;
     }
 
+    let home = dirs::home_dir().ok_or("no home dir")?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
@@ -346,7 +317,7 @@ pub fn launch_custom_with_options(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix = options.prefix_path.unwrap_or_else(|| default_prefix_for_node(&home, node));
+    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -356,9 +327,12 @@ pub fn launch_custom_with_options(
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
     let cache_paths = build_cache_paths(&home, node, launch_id);
-    let mut cmd = wine_command_for_node(node, &wine, &dyld_path)?;
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
-    cmd.env(runtime_lib_key, &dyld_path);
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -370,11 +344,7 @@ pub fn launch_custom_with_options(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
-    for (key, value) in &options.extra_env {
-        cmd.env(key, value);
-    }
 
-    apply_steam_identity_env(&mut cmd, launch_id);
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
     if let Some(log_path) = options.log_path {
@@ -441,15 +411,6 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
 
-fn default_prefix_for_node(home: &Path, _node: &PipelineNode) -> PathBuf {
-    home.join(".metalsharp").join("prefix-steam")
-}
-
-fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
-    let appid = appid.to_string();
-    cmd.env("SteamAppId", &appid).env("SteamGameId", &appid).env("SteamOverlayGameId", &appid);
-}
-
 fn launch_dxmt_metal_with_context(
     appid: u32,
     node: &PipelineNode,
@@ -469,7 +430,8 @@ fn launch_dxmt_metal_with_context(
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix = prefix_override.map(Path::to_path_buf).unwrap_or_else(|| default_prefix_for_node(&home, node));
+    let prefix =
+        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -482,9 +444,12 @@ fn launch_dxmt_metal_with_context(
     let cache_paths = build_cache_paths(&home, node, appid);
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
-    let mut cmd = wine_command_for_node(node, &wine, &dyld_path)?;
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
-    cmd.env(runtime_lib_key, &dyld_path);
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -500,7 +465,6 @@ fn launch_dxmt_metal_with_context(
         cmd.env(key, value);
     }
 
-    apply_steam_identity_env(&mut cmd, appid);
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
     attach_launch_log(
@@ -522,14 +486,6 @@ fn launch_dxmt_metal_with_context(
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     launch_wine_bare_with_context(appid, node, None, &[], None)
-}
-
-fn wine_command_for_node(
-    _node: &PipelineNode,
-    default_wine: &Path,
-    _dyld_path: &str,
-) -> Result<Command, Box<dyn std::error::Error>> {
-    Ok(Command::new(default_wine))
 }
 
 fn launch_wine_bare_with_context(
@@ -579,7 +535,6 @@ fn launch_wine_bare_with_context(
         cmd.env(key, value);
     }
 
-    apply_steam_identity_env(&mut cmd, appid);
     cmd.arg(&exe_name);
     cmd.args(&node.launch_args);
     attach_launch_log(
