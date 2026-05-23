@@ -702,6 +702,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, bottles::handle_apply_font_substitutions(&body))
         },
+        (Method::Post, "/bottles/seed-post-wineboot") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_seed_post_wineboot(&body))
+        },
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))

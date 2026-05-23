@@ -1351,6 +1351,23 @@ pub fn handle_apply_font_substitutions(body: &serde_json::Map<String, Value>) ->
     }
 }
 
+pub fn handle_seed_post_wineboot(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let log_path = bottle_logs_dir(id).join("post-wineboot.log");
+    match seed_post_wineboot_config(&prefix, &log_path) {
+        Ok(pid) => json!({"ok": true, "pid": pid, "id": id}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_compatibility_matrix() -> Value {
     json!({
         "ok": true,
@@ -2570,6 +2587,56 @@ fn build_font_substitution_reg() -> String {
         reg.push_str(&format!("\"{}\"=\"{}\"\r\n", name, value));
     }
     reg
+}
+
+const POST_WINEBOOT_DLL_OVERRIDES: &[(&str, &str)] = &[
+    ("atl", "native,builtin"),
+    ("msvcirt", "native,builtin"),
+    ("msvcrt40", "native,builtin"),
+    ("msvcrtd", "native,builtin"),
+    ("msxml3", "native,builtin"),
+    ("vcruntime140", "native,builtin"),
+    ("vcruntime140_1", "native,builtin"),
+    ("msvcp140", "native,builtin"),
+];
+
+pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut reg = build_font_substitution_reg();
+    reg.push_str("\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
+    for (dll, mode) in POST_WINEBOOT_DLL_OVERRIDES {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", dll, mode));
+    }
+
+    let reg_file = prefix.join("drive_c").join("metalsharp-post-wineboot.reg");
+    fs::write(&reg_file, &reg)?;
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "post_wineboot_config_seed")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    let stdout = log.try_clone()?;
+
+    let reg_file_win = wine_z_drive_path(&reg_file);
+    let mut cmd = Command::new(&wine);
+    cmd.arg("regedit")
+        .arg(&reg_file_win)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
 }
 
 fn wine_z_drive_path(path: &Path) -> String {
