@@ -222,12 +222,7 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let mut env = steam_pipeline_env_pairs(&home, node, appid);
-    if node.uses_winedllpath_routing() {
-        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
-        env.push(("WINEDLLPATH".to_string(), winedllpath));
-    }
+    let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
 
@@ -748,12 +743,19 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
         for dll in dlls {
             if let Some(backup) = dll.get("backup_path").and_then(|b| b.as_str()) {
                 let backup_path = PathBuf::from(backup);
-                if backup_path.exists() {
-                    if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
-                        let dest_path = PathBuf::from(dest);
-                        let _ = std::fs::copy(&backup_path, &dest_path);
-                        let _ = std::fs::remove_file(&backup_path);
+                if !backup_path.starts_with(game_dir) {
+                    continue;
+                }
+                if !backup_path.exists() {
+                    continue;
+                }
+                if let Some(dest) = dll.get("dest_path").and_then(|d| d.as_str()) {
+                    let dest_path = PathBuf::from(dest);
+                    if !dest_path.starts_with(game_dir) {
+                        continue;
                     }
+                    let _ = std::fs::copy(&backup_path, &dest_path);
+                    let _ = std::fs::remove_file(&backup_path);
                 }
             }
         }
@@ -789,6 +791,9 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     if let Some(overrides) = node.wine_overrides {
         env.push(("WINEDLLOVERRIDES".to_string(), overrides.to_string()));
+    }
+    if node.uses_winedllpath_routing() {
+        env.push(("WINEDLLPATH".to_string(), build_winedllpath(&ms_root, &node.winedllpath_dirs)));
     }
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
@@ -1363,6 +1368,106 @@ mod tests {
         assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_pipelines_use_winedllpath_routing() {
+        for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let node = get_pipeline(pipeline_id);
+            assert!(node.uses_winedllpath_routing(), "{:?} should use WINEDLLPATH routing", pipeline_id);
+        }
+    }
+
+    #[test]
+    fn non_dxmt_pipelines_do_not_use_winedllpath_routing() {
+        for pipeline_id in
+            [PipelineId::M32, PipelineId::FnaArm64, PipelineId::Steam, PipelineId::MacSteam, PipelineId::WineBare]
+        {
+            let node = get_pipeline(pipeline_id);
+            assert!(!node.uses_winedllpath_routing(), "{:?} should not use WINEDLLPATH routing", pipeline_id);
+        }
+    }
+
+    #[test]
+    fn steam_pipeline_env_includes_winedllpath_for_dxmt_pipelines() {
+        for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let home = test_dir(&format!("winedllpath-env-{:?}", pipeline_id));
+            let node = get_pipeline(pipeline_id);
+            let env = steam_pipeline_env_pairs(&home, node, 42);
+            let winedllpath = env.iter().find(|(key, _)| key == "WINEDLLPATH");
+            assert!(winedllpath.is_some(), "{:?} missing WINEDLLPATH in env pairs", pipeline_id);
+            let path = winedllpath.unwrap().1.as_str();
+            assert!(!path.is_empty(), "{:?} WINEDLLPATH is empty", pipeline_id);
+            assert!(path.contains("x86_64-windows"), "{:?} WINEDLLPATH missing windows dir: {}", pipeline_id, path);
+            let _ = std::fs::remove_dir_all(&home);
+        }
+    }
+
+    #[test]
+    fn steam_pipeline_env_has_no_winedllpath_for_non_dxmt_pipelines() {
+        let home = test_dir("no-winedllpath");
+        let node = get_pipeline(PipelineId::WineBare);
+        let env = steam_pipeline_env_pairs(&home, node, 1);
+        assert!(!env.iter().any(|(key, _)| key == "WINEDLLPATH"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cleanup_legacy_injections_restores_backups_within_game_dir() {
+        let game_dir = test_dir("cleanup-restore");
+        let injection_dir = game_dir.join(".metalsharp");
+        let originals_dir = injection_dir.join("originals");
+        std::fs::create_dir_all(&originals_dir).unwrap();
+
+        let original_dll = game_dir.join("d3d12.dll");
+        let backup_dll = originals_dir.join("d3d12.dll");
+        std::fs::write(&backup_dll, b"original-d3d12-content").unwrap();
+
+        let manifest = serde_json::json!({
+            "appid": 1234,
+            "dlls": [{
+                "filename": "d3d12.dll",
+                "dest_path": original_dll.to_string_lossy().to_string(),
+                "backup_path": backup_dll.to_string_lossy().to_string(),
+            }]
+        });
+        std::fs::write(injection_dir.join("injections.json"), serde_json::to_string_pretty(&manifest).unwrap())
+            .unwrap();
+
+        cleanup_legacy_injections(&game_dir).unwrap();
+
+        assert!(original_dll.exists());
+        assert_eq!(std::fs::read(&original_dll).unwrap(), b"original-d3d12-content");
+        assert!(!injection_dir.exists());
+        let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
+    fn cleanup_legacy_injections_ignores_paths_outside_game_dir() {
+        let game_dir = test_dir("cleanup-traversal");
+        let injection_dir = game_dir.join(".metalsharp");
+        let originals_dir = injection_dir.join("originals");
+        std::fs::create_dir_all(&originals_dir).unwrap();
+
+        let outside_path = std::env::temp_dir().join("metalsharp-traversal-test-target.dll");
+        let _ = std::fs::remove_file(&outside_path);
+
+        let manifest = serde_json::json!({
+            "appid": 1234,
+            "dlls": [{
+                "filename": "evil.dll",
+                "dest_path": outside_path.to_string_lossy().to_string(),
+                "backup_path": originals_dir.join("evil.dll").to_string_lossy().to_string(),
+            }]
+        });
+        std::fs::write(injection_dir.join("injections.json"), serde_json::to_string_pretty(&manifest).unwrap())
+            .unwrap();
+
+        cleanup_legacy_injections(&game_dir).unwrap();
+
+        assert!(!outside_path.exists());
+        assert!(!injection_dir.exists());
+        let _ = std::fs::remove_dir_all(&game_dir);
     }
 
     #[test]
