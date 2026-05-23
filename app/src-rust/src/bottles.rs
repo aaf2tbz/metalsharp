@@ -2611,6 +2611,14 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
         fs::create_dir_all(parent)?;
     }
 
+    let dosdevices = prefix.join("dosdevices");
+    if dosdevices.exists() {
+        let y_link = dosdevices.join("y:");
+        if !y_link.exists() {
+            let _ = std::os::unix::fs::symlink(&home, &y_link);
+        }
+    }
+
     let mut reg = build_font_substitution_reg();
     reg.push_str("\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
     for (dll, mode) in POST_WINEBOOT_DLL_OVERRIDES {
