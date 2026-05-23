@@ -91,6 +91,7 @@ fn run_install_all() {
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+                ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
                 ("Offline EAC Mode", Box::new(install_eac_toggle)),
                 ("Pipeline Rules", Box::new(install_mtsp_rules)),
@@ -445,8 +446,9 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
     let unix_so = dxmt_dir.join("x86_64-unix").join("winemetal.so");
     let pe_dll = dxmt_dir.join("x86_64-windows").join("d3d11.dll");
+    let nvapi = dxmt_dir.join("x86_64-windows").join("nvapi64.dll");
 
-    if unix_so.exists() && pe_dll.exists() {
+    if unix_so.exists() && pe_dll.exists() && nvapi.exists() {
         return Ok(false);
     }
 
@@ -501,6 +503,65 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
+    }
+}
+
+fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
+    let gptk_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("gptk");
+    let ext_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("external");
+    let framework = ext_dir.join("D3DMetal.framework");
+
+    if gptk_dir.join("x86_64-windows").join("d3d11.dll").exists() && framework.exists() {
+        return Ok(false);
+    }
+
+    let _ = fs::create_dir_all(gptk_dir.join("x86_64-windows"));
+    let _ = fs::create_dir_all(gptk_dir.join("x86_64-unix"));
+    let _ = fs::create_dir_all(&ext_dir);
+
+    let bundled = find_bundled_archive("gptk");
+    if let Some(archive) = bundled {
+        let tmp = std::env::temp_dir().join("metalsharp-gptk-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        extract_zst(&archive, &tmp, "gptk")?;
+
+        let src_x64_windows = tmp.join("x86_64-windows");
+        let src_x64_unix = tmp.join("x86_64-unix");
+        let src_external = tmp.join("external");
+
+        if src_x64_windows.exists() {
+            for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), gptk_dir.join("x86_64-windows").join(entry.file_name()));
+            }
+        }
+        if src_x64_unix.exists() {
+            for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read x86_64-unix: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), gptk_dir.join("x86_64-unix").join(entry.file_name()));
+            }
+        }
+        if src_external.exists() {
+            for entry in fs::read_dir(&src_external).map_err(|e| format!("read external: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let dst = ext_dir.join(entry.file_name());
+                if entry.path().is_dir() {
+                    let _ = fs::create_dir_all(&dst);
+                    copy_dir_recursive(&entry.path(), &dst);
+                } else {
+                    let _ = fs::copy(entry.path(), &dst);
+                }
+            }
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    if gptk_dir.join("x86_64-windows").join("d3d11.dll").exists() && framework.exists() {
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 
