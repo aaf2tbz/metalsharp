@@ -411,10 +411,27 @@ pub fn status() -> Value {
 }
 
 pub fn is_wine_steam_running() -> bool {
-    process_lines()
+    let lines = process_lines();
+    let gptk_owner_pid = lines
         .iter()
         .filter_map(|line| parse_process_line(line))
-        .any(|(_, command)| is_wine_steam_owner_command(command))
+        .find(|(_, cmd)| is_gptk_steam_owner_command(cmd))
+        .map(|(pid, _)| pid);
+
+    let has_wine_prefix_process = lines.iter().filter_map(|line| parse_process_line(line)).any(|(_, cmd)| {
+        let prefix = steam_prefix().to_string_lossy().to_string();
+        let exe = steam_exe_path().to_string_lossy().to_string();
+        cmd.contains(&exe) || (cmd.contains(&prefix) && (cmd.contains("Steam.exe") || cmd.contains("steam.exe")))
+    });
+
+    if !has_wine_prefix_process {
+        return false;
+    }
+
+    lines
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .any(|(_, command)| is_wine_steam_owner_command(command, gptk_owner_pid.is_some()))
 }
 
 pub fn is_gptk_steam_running() -> bool {
@@ -436,10 +453,12 @@ fn process_lines() -> Vec<String> {
 }
 
 fn is_wine_steam_process_line(line: &str) -> bool {
-    parse_process_line(line).map(|(_, command)| is_wine_steam_owner_command(command)).unwrap_or(false)
+    let gptk_active =
+        process_lines().iter().filter_map(|l| parse_process_line(l)).any(|(_, cmd)| is_gptk_steam_owner_command(cmd));
+    parse_process_line(line).map(|(_, command)| is_wine_steam_owner_command(command, gptk_active)).unwrap_or(false)
 }
 
-fn is_wine_steam_owner_command(command: &str) -> bool {
+fn is_wine_steam_owner_command(command: &str, gptk_active: bool) -> bool {
     if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
         return false;
     }
@@ -454,18 +473,17 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
     let exe = steam_exe_path().to_string_lossy().to_string();
     let lower = command.to_lowercase();
 
-    command.contains(&exe)
-        || (command.contains(&prefix) && (command.contains("Steam.exe") || command.contains("steam.exe")))
-        || (lower.contains("c:\\program files (x86)\\steam")
-            && (lower.contains("steam.exe")
-                || lower.contains("steamservice.exe")
-                || lower.contains("steamerrorreporter")))
+    let prefix_match = command.contains(&exe)
+        || (command.contains(&prefix) && (command.contains("Steam.exe") || command.contains("steam.exe")));
+
+    let generic_windows_match = !gptk_active
+        && lower.contains("c:\\program files (x86)\\steam")
+        && (lower.contains("steam.exe") || lower.contains("steamservice.exe") || lower.contains("steamerrorreporter"));
+
+    prefix_match || generic_windows_match
 }
 
-fn is_wine_steam_cleanup_command(command: &str) -> bool {
-    if is_wine_steam_owner_command(command) {
-        return true;
-    }
+fn is_wine_steam_cleanup_command(command: &str, gptk_active: bool) -> bool {
     if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
         return false;
     }
@@ -479,10 +497,14 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
     let prefix = steam_prefix().to_string_lossy().to_string();
     let lower = command.to_lowercase();
 
-    command.contains(&prefix)
-        || lower.contains("c:\\program files (x86)\\steam")
-        || lower.contains("steamwebhelper.exe")
-        || lower.contains("steamwebhelper_real.exe")
+    let prefix_match = command.contains(&prefix);
+    let generic_match = !gptk_active
+        && (lower.contains("c:\\program files (x86)\\steam")
+            || lower.contains("steamwebhelper.exe")
+            || lower.contains("steamwebhelper_real.exe"));
+
+    prefix_match
+        || generic_match
         || lower.contains("winedevice.exe")
         || lower.contains("wineserver")
         || lower.contains("wineloader")
@@ -490,6 +512,7 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
 
 fn is_gptk_runtime_command(command: &str) -> bool {
     command.contains("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/")
+        || command.contains(&gptk_local_root().to_string_lossy().to_string())
 }
 
 fn is_gptk_steam_prefix_command(command: &str) -> bool {
@@ -544,10 +567,13 @@ fn gptk_steam_cleanup_pids() -> Vec<u32> {
 
 fn wine_steam_cleanup_pids() -> Vec<u32> {
     let this_pid = std::process::id();
+    let gptk_active = is_gptk_steam_running();
     process_lines()
         .iter()
         .filter_map(|line| parse_process_line(line))
-        .filter_map(|(pid, command)| (pid != this_pid && is_wine_steam_cleanup_command(command)).then_some(pid))
+        .filter_map(|(pid, command)| {
+            (pid != this_pid && is_wine_steam_cleanup_command(command, gptk_active)).then_some(pid)
+        })
         .collect()
 }
 
@@ -762,9 +788,51 @@ fn spawn_gptk_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     ensure_gptk_steam_launch_ready(&steam_dir);
 
     let prefix_str = gptk_steam_prefix().to_string_lossy().to_string();
+
+    let app_root = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine");
+    let app_wine = app_root.join("bin").join("wine64");
+
+    if app_wine.exists() {
+        let mut cmd = Command::new("arch");
+        cmd.arg("-x86_64")
+            .arg(&app_wine)
+            .arg(&exe)
+            .args(args)
+            .current_dir(&steam_dir)
+            .env("WINEPREFIX", &prefix_str)
+            .env("WINEDEBUG", "-all")
+            .env("STEAM_RUNTIME", "0")
+            .env("MS_FWD_COMPAT_GL_CTX", "1")
+            .env(
+                "WINEDLLPATH",
+                format!(
+                    "{}:{}",
+                    app_root.join("lib").join("wine").join("x86_64-windows").display(),
+                    app_root.join("lib").join("wine").join("i386-windows").display()
+                ),
+            )
+            .env(
+                "DYLD_FALLBACK_LIBRARY_PATH",
+                format!(
+                    "{}:{}:{}",
+                    app_root.join("lib").join("wine").join("x86_64-unix").display(),
+                    app_root.join("lib").join("external").display(),
+                    app_root.join("lib").display(),
+                ),
+            )
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        apply_gptk_prefix_user_env(&mut cmd);
+        let child = cmd.spawn()?;
+        return Ok(child.id());
+    }
+
+    let ms_root = ms_wine_root();
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let gptk_redist = gptk_local_root();
     let mut cmd = Command::new("arch");
     cmd.arg("-x86_64")
-        .arg(gptk_wine_path())
+        .arg(&wine)
         .arg(&exe)
         .args(args)
         .current_dir(&steam_dir)
@@ -772,14 +840,26 @@ fn spawn_gptk_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
         .env("WINEDEBUG", "-all")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("MS_ROOT", &ms_root)
+        .env("CX_ROOT", &ms_root)
+        .env("WINEDATADIR", ms_root.join("share"))
         .env(
-            "WINEDLLOVERRIDES",
-            "dxgi,d3d11,d3d10core,d3d12=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
+            "WINEDLLPATH",
+            format!("{}:{}", gptk_redist.join("x86_64-windows").display(), gptk_redist.join("i386-windows").display()),
+        )
+        .env(
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            format!(
+                "{}:{}:{}:{}",
+                gptk_redist.join("x86_64-unix").display(),
+                gptk_redist.join("external").display(),
+                ms_root.join("lib").display(),
+                ms_root.join("lib").join("wine").join("x86_64-unix").display(),
+            ),
         )
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    apply_gptk_env(&mut cmd);
-
+    apply_gptk_prefix_user_env(&mut cmd);
     let child = cmd.spawn()?;
     Ok(child.id())
 }
@@ -909,14 +989,48 @@ fn gptk_attach_args(dmg: &Path, mountpoint: &Path) -> Vec<String> {
     ]
 }
 
-fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn existing_mount_for_dmg(dmg: &Path) -> Option<PathBuf> {
+    let dmg_canonical = std::fs::canonicalize(dmg).ok()?;
+    let dmg_str = dmg_canonical.to_string_lossy().to_string();
+    let output = Command::new("hdiutil").arg("info").output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut current_image = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("image-path") {
+            current_image = trimmed.split(':').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
+        }
+        if !current_image.is_empty() && trimmed.contains("Apple_HFS") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if let Some(mount) = parts.last() {
+                let mount_path = PathBuf::from(*mount);
+                if mount_path.exists() {
+                    let canonical_image =
+                        std::fs::canonicalize(&current_image).unwrap_or_else(|_| PathBuf::from(&current_image));
+                    if canonical_image == dmg_canonical {
+                        return Some(mount_path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(existing) = existing_mount_for_dmg(dmg) {
+        return Ok(existing);
+    }
     std::fs::create_dir_all(mountpoint)?;
     let args = gptk_attach_args(dmg, mountpoint);
     let output = Command::new("hdiutil").args(&args).output()?;
     if output.status.success() {
-        Ok(())
+        Ok(mountpoint.to_path_buf())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(existing) = existing_mount_for_dmg(dmg) {
+            return Ok(existing);
+        }
         let detail = if stderr.is_empty() { String::new() } else { format!(": {}", stderr) };
         Err(format!("Could not mount {}{}", dmg.display(), detail).into())
     }
@@ -930,6 +1044,12 @@ fn detach_dmg(mountpoint: &Path) {
         .stderr(std::process::Stdio::null())
         .status();
     let _ = std::fs::remove_dir_all(mountpoint);
+}
+
+fn detach_if_owned(mountpoint: &Path, owned_mountpoint: &Path) {
+    if mountpoint == owned_mountpoint {
+        detach_dmg(mountpoint);
+    }
 }
 
 fn find_child_by_name_contains(root: &Path, needle: &str, extension: Option<&str>) -> Option<PathBuf> {
@@ -1083,10 +1203,10 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
         None,
     );
     validate_user_gptk_dmg_candidate(dmg)?;
-    let outer_mount = unique_temp_dir("gptk-outer");
-    let inner_mount = unique_temp_dir("gptk-inner");
+    let outer_owned = unique_temp_dir("gptk-outer");
+    let inner_owned = unique_temp_dir("gptk-inner");
     write_gptk_toolkit_progress("installing_toolkit", "Mounting GPTK disk image...", None);
-    attach_dmg(dmg, &outer_mount)?;
+    let outer_mount = attach_dmg(dmg, &outer_owned)?;
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let inner_dmg =
             find_child_by_name_contains(&outer_mount, "evaluation environment for windows games", Some("dmg")).ok_or(
@@ -1094,7 +1214,7 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
             )?;
         validate_nested_gptk_dmg_candidate(&inner_dmg, &outer_mount)?;
         write_gptk_toolkit_progress("installing_toolkit", "Mounting GPTK runtime image...", None);
-        attach_dmg(&inner_dmg, &inner_mount)?;
+        let inner_mount = attach_dmg(&inner_dmg, &inner_owned)?;
         let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let redist = inner_mount.join("redist").join("lib");
             if !redist.exists() {
@@ -1106,10 +1226,10 @@ fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Er
             install_gptk_redist_atomically(&redist)?;
             Ok(())
         })();
-        detach_dmg(&inner_mount);
+        detach_if_owned(&inner_mount, &inner_owned);
         inner_result
     })();
-    detach_dmg(&outer_mount);
+    detach_if_owned(&outer_mount, &outer_owned);
     result
 }
 
@@ -1331,7 +1451,7 @@ fn ensure_clean_gptk_prefix(prefix: &Path) -> Result<(), Box<dyn std::error::Err
             .arg("--init")
             .env("WINEPREFIX", &prefix_str)
             .env("WINEDEBUG", "-all")
-            .env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d")
+            .env("WINEDLLOVERRIDES", "mscoree=b;mshtml=b")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         apply_gptk_env(&mut cmd);
@@ -1452,6 +1572,8 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     write_gptk_steam_install_progress("running_installer", "Running SteamSetup.exe inside the GPTK prefix...", None);
     let prefix_str = prefix.to_string_lossy().to_string();
+    let install_log = metalsharp_dir.join("gptk_steam_setup.log");
+    let install_log_path = install_log.display().to_string();
     let mut install_cmd = Command::new("arch");
     install_cmd
         .arg("-x86_64")
@@ -1459,9 +1581,9 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         .arg(&installer)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d")
+        .env("WINEDLLOVERRIDES", "mscoree=b;mshtml=b")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::fs::File::create(&install_log)?);
     apply_gptk_env(&mut install_cmd);
     let mut child = install_cmd.spawn()?;
 
@@ -1479,9 +1601,20 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
         }
         if let Some(status) = child.try_wait()? {
             if !steam_exe.exists() || !steam_ui_dll.exists() {
+                let log_tail = std::fs::read_to_string(&install_log)
+                    .unwrap_or_default()
+                    .lines()
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let detail = if log_tail.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nWine log ({}):\n{}", install_log_path, log_tail)
+                };
                 return Err(format!(
-                    "SteamSetup.exe exited before GPTK Steam finished installing (status: {}).",
-                    status
+                    "SteamSetup.exe exited before GPTK Steam finished installing (status: {}).{}",
+                    status, detail
                 )
                 .into());
             }
@@ -1490,7 +1623,13 @@ fn run_install_gptk_steam() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     if !steam_exe.exists() || !steam_ui_dll.exists() {
-        return Err("SteamSetup.exe did not finish writing Steam.exe and steamui.dll into the GPTK prefix".into());
+        let log_tail =
+            std::fs::read_to_string(&install_log).unwrap_or_default().lines().take(10).collect::<Vec<_>>().join("\n");
+        return Err(format!(
+            "SteamSetup.exe did not finish writing Steam.exe and steamui.dll into the GPTK prefix.\nWine log: {}",
+            if log_tail.is_empty() { install_log_path.clone() } else { format!("{}\n{}", install_log_path, log_tail) }
+        )
+        .into());
     }
 
     stop_gptk_prefix_wineserver(&prefix);
@@ -2857,7 +2996,7 @@ mod tests {
             format!("arch -x86_64 {} {} -no-cef-sandbox", gptk_wine_path().display(), gptk_steam_exe_path().display());
 
         assert!(is_gptk_steam_owner_command(&command));
-        assert!(!is_wine_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command, true));
     }
 
     #[test]
@@ -2865,7 +3004,7 @@ mod tests {
         let command = format!("{} C:\\Program Files (x86)\\Steam\\steam.exe -silent", gptk_app_wine_path().display());
 
         assert!(is_gptk_steam_owner_command(&command));
-        assert!(!is_wine_steam_owner_command(&command));
+        assert!(!is_wine_steam_owner_command(&command, true));
     }
 
     #[test]
@@ -2987,9 +3126,9 @@ mod tests {
         assert!(!is_gptk_steam_cleanup_command(&prefixed_game_command));
         assert!(!is_gptk_steam_cleanup_command(&local_redist_game_command));
         assert!(!is_gptk_steam_owner_command(&prefixed_game_command));
-        assert!(!is_wine_steam_cleanup_command(&prefixed_game_command));
+        assert!(!is_wine_steam_cleanup_command(&prefixed_game_command, false));
         assert!(!is_gptk_runtime_command(&prefixed_game_command));
-        assert!(!is_gptk_runtime_command(&local_redist_game_command));
+        assert!(is_gptk_runtime_command(&local_redist_game_command));
         assert!(is_gptk_steam_cleanup_command(&helper_command));
     }
 

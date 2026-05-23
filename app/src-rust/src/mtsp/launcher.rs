@@ -558,33 +558,63 @@ fn wine_command_for_node(
         return Ok(Command::new(default_wine));
     }
 
-    let gptk_root = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine");
-    let gptk_wine = gptk_root.join("bin").join("wine64");
-    let gptk_server = gptk_root.join("bin").join("wineserver");
-    if !gptk_wine.exists() || !gptk_server.exists() {
-        return Err("Game Porting Toolkit Wine is missing - install GPTK to use M13".into());
+    let app_root = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine");
+    let app_wine = app_root.join("bin").join("wine64");
+    let app_server = app_root.join("bin").join("wineserver");
+
+    if app_wine.exists() && app_server.exists() {
+        let gptk_dyld = format!(
+            "{}:{}:{}:{}",
+            app_root.join("lib").join("wine").join("x86_64-unix").display(),
+            app_root.join("lib").join("external").display(),
+            app_root.join("lib").display(),
+            dyld_path
+        );
+        let mut cmd = Command::new("arch");
+        cmd.arg("-x86_64")
+            .arg(&app_wine)
+            .env("WINESERVER", &app_server)
+            .env("WINELOADER", &app_wine)
+            .env(
+                "WINEDLLPATH",
+                format!(
+                    "{}:{}",
+                    app_root.join("lib").join("wine").join("x86_64-windows").display(),
+                    app_root.join("lib").join("wine").join("i386-windows").display()
+                ),
+            )
+            .env("DYLD_FALLBACK_LIBRARY_PATH", gptk_dyld);
+        return Ok(cmd);
+    }
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let gptk_redist = ms_root.join("lib").join("gptk");
+    let local_wine = crate::platform::runtime_wine_binary(&ms_root);
+    let local_server = ms_root.join("bin").join("wineserver");
+
+    if !local_wine.exists() || !local_server.exists() {
+        return Err("Game Porting Toolkit Wine is not installed — install GPTK runtime first".into());
+    }
+    if !gptk_redist.join("x86_64-windows").exists() {
+        return Err("Game Porting Toolkit D3DMetal runtime is missing — install GPTK runtime first".into());
     }
 
     let gptk_dyld = format!(
         "{}:{}:{}:{}",
-        gptk_root.join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_root.join("lib").join("external").display(),
-        gptk_root.join("lib").display(),
+        gptk_redist.join("x86_64-unix").display(),
+        gptk_redist.join("external").display(),
+        gptk_redist.display(),
         dyld_path
     );
-
     let mut cmd = Command::new("arch");
     cmd.arg("-x86_64")
-        .arg(&gptk_wine)
-        .env("WINESERVER", gptk_server)
-        .env("WINELOADER", gptk_wine)
+        .arg(&local_wine)
+        .env("WINESERVER", &local_server)
+        .env("WINELOADER", &local_wine)
         .env(
             "WINEDLLPATH",
-            format!(
-                "{}:{}",
-                gptk_root.join("lib").join("wine").join("x86_64-windows").display(),
-                gptk_root.join("lib").join("wine").join("i386-windows").display()
-            ),
+            format!("{}:{}", gptk_redist.join("x86_64-windows").display(), gptk_redist.join("i386-windows").display()),
         )
         .env("DYLD_FALLBACK_LIBRARY_PATH", gptk_dyld);
     Ok(cmd)
