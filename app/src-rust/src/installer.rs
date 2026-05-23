@@ -673,10 +673,6 @@ fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
 
 fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
-    if dest.exists() {
-        return Ok(false);
-    }
-
     let mut candidates = vec![
         PathBuf::from("configs/mtsp-rules.toml"),
         home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
@@ -698,11 +694,19 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     for src in &candidates {
         if src.exists() {
             if let Ok(contents) = fs::read_to_string(src) {
-                let _ = fs::create_dir_all(dest.parent().unwrap());
-                let _ = fs::write(&dest, &contents);
-                if dest.exists() {
+                if let Ok(existing) = fs::read_to_string(&dest) {
+                    if existing == contents {
+                        return Ok(false);
+                    }
+                    let backup = dest.with_extension("toml.bak");
+                    let _ = fs::write(&backup, existing);
+                }
+                fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("create MTSP config dir: {}", e))?;
+                fs::write(&dest, &contents).map_err(|e| format!("write mtsp-rules.toml: {}", e))?;
+                if fs::read_to_string(&dest).ok().as_deref() == Some(contents.as_str()) {
                     return Ok(true);
                 }
+                return Err("mtsp-rules.toml was written but could not be verified".into());
             }
         }
     }
@@ -1123,6 +1127,32 @@ mod tests {
         fs::write(resources.join("libD3DMetalHelper.dylib"), b"dylib").expect("write framework resource dylib");
 
         assert!(gptk_runtime_ready(&gptk_dir, &framework));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_mtsp_rules_refreshes_stale_installed_copy() {
+        let cwd = std::env::current_dir().expect("current dir");
+        let repo = test_home("mtsp-rules-source");
+        let home = test_home("mtsp-rules-home");
+        let source_dir = repo.join("configs");
+        let dest_dir = home.join(".metalsharp").join("configs");
+        fs::create_dir_all(&source_dir).expect("create source config dir");
+        fs::create_dir_all(&dest_dir).expect("create dest config dir");
+        fs::write(source_dir.join("mtsp-rules.toml"), "# new rules\n[overrides]\n").expect("write source rules");
+        fs::write(dest_dir.join("mtsp-rules.toml"), "# stale rules\n").expect("write stale rules");
+
+        std::env::set_current_dir(&repo).expect("enter source repo");
+        let result = install_mtsp_rules(&home);
+        std::env::set_current_dir(cwd).expect("restore cwd");
+
+        assert_eq!(result, Ok(true));
+        assert_eq!(
+            fs::read_to_string(dest_dir.join("mtsp-rules.toml")).expect("read rules"),
+            "# new rules\n[overrides]\n"
+        );
+        assert_eq!(fs::read_to_string(dest_dir.join("mtsp-rules.toml.bak")).expect("read backup"), "# stale rules\n");
+        let _ = fs::remove_dir_all(repo);
         let _ = fs::remove_dir_all(home);
     }
 
