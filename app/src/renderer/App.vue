@@ -14,6 +14,9 @@ import { getAPI, api } from "./composables/useApi";
 import type { AppConfig, UpdateStatus, SteamStatus } from "./api-types";
 
 interface SteamGame {
+  library_id?: string;
+  library_source?: "steam" | "metalsharp" | "gptk";
+  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
@@ -95,6 +98,8 @@ async function refreshSteamStatus() {
     running: boolean;
     gptk_installed: boolean;
     gptk_toolkit_installed?: boolean;
+    gptk_toolkit_downloaded?: string | null;
+    gptk_runtime_path?: string;
     gptk_steam_installed?: boolean;
     gptk_installing?: boolean;
     gptk_running: boolean;

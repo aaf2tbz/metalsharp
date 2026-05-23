@@ -15,7 +15,9 @@ interface SteamStatus {
   login_state?: LoginState;
   gptk_installed?: boolean;
   gptk_toolkit_installed?: boolean;
+  gptk_toolkit_downloaded?: string | null;
   gptk_toolkit_url?: string;
+  gptk_runtime_path?: string;
   gptk_steam_installed?: boolean;
   gptk_installing?: boolean;
   gptk_install_progress?: {

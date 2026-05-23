@@ -1,10 +1,12 @@
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 static GPTK_STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
+static GPTK_TOOLKIT_INSTALLING: AtomicBool = AtomicBool::new(false);
+static TEMP_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const GPTK_TOOLKIT_URL: &str = "https://developer.apple.com/games/game-porting-toolkit/";
 
@@ -37,16 +39,88 @@ fn gptk_root() -> PathBuf {
     PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine")
 }
 
-fn gptk_wine_path() -> PathBuf {
+fn gptk_app_wine_path() -> PathBuf {
     gptk_root().join("bin").join("wine64")
 }
 
-fn gptk_wineserver_path() -> PathBuf {
+fn gptk_app_wineserver_path() -> PathBuf {
     gptk_root().join("bin").join("wineserver")
 }
 
+fn gptk_local_root() -> PathBuf {
+    ms_wine_root().join("lib").join("gptk")
+}
+
+fn gptk_wine_path() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_app_wine_path()
+    } else {
+        ms_wine()
+    }
+}
+
+fn gptk_wineserver_path() -> PathBuf {
+    if gptk_app_wineserver_path().exists() {
+        gptk_app_wineserver_path()
+    } else {
+        ms_wine_root().join("bin").join("wineserver")
+    }
+}
+
 fn gptk_installed() -> bool {
-    gptk_wine_path().exists() && gptk_wineserver_path().exists()
+    (gptk_app_wine_path().exists() && gptk_app_wineserver_path().exists()) || gptk_local_redist_installed()
+}
+
+fn gptk_local_redist_installed() -> bool {
+    let root = gptk_local_root();
+    ms_wine().exists() && ms_wine_root().join("bin").join("wineserver").exists() && gptk_redist_payload_complete(&root)
+}
+
+fn gptk_redist_payload_complete(root: &Path) -> bool {
+    root.join("x86_64-windows").join("d3d12.dll").exists()
+        && root.join("x86_64-windows").join("dxgi.dll").exists()
+        && root.join("x86_64-unix").exists()
+        && root.join("external").join("D3DMetal.framework").exists()
+}
+
+fn gptk_runtime_windows_dir(arch: &str) -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root().join("lib").join("wine").join(arch)
+    } else {
+        gptk_local_root().join(arch)
+    }
+}
+
+fn gptk_runtime_unix_dir() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root().join("lib").join("wine").join("x86_64-unix")
+    } else {
+        gptk_local_root().join("x86_64-unix")
+    }
+}
+
+fn gptk_runtime_external_dir() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root().join("lib").join("external")
+    } else {
+        gptk_local_root().join("external")
+    }
+}
+
+fn gptk_runtime_status_path() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root()
+    } else {
+        gptk_local_root()
+    }
+}
+
+fn gptk_winedata_dir() -> PathBuf {
+    if gptk_app_wine_path().exists() {
+        gptk_root().join("share")
+    } else {
+        ms_wine_root().join("share")
+    }
 }
 
 fn gptk_steam_install_progress_path() -> PathBuf {
@@ -58,7 +132,7 @@ fn write_gptk_steam_install_progress(phase: &str, message: &str, error: Option<&
         "phase": phase,
         "message": message,
         "error": error,
-        "installing": is_installing_gptk_steam(),
+        "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     });
@@ -87,10 +161,26 @@ fn read_gptk_steam_install_progress() -> Value {
             "GPTK Steam is not installed"
         },
         "error": null,
-        "installing": is_installing_gptk_steam(),
+        "installing": is_installing_gptk_setup(),
         "toolkit_installed": gptk_installed(),
         "steam_installed": gptk_steam_installed(),
     })
+}
+
+fn write_gptk_toolkit_progress(phase: &str, message: &str, error: Option<&str>) {
+    let progress = json!({
+        "phase": phase,
+        "message": message,
+        "error": error,
+        "installing": is_installing_gptk_setup(),
+        "toolkit_installed": gptk_installed(),
+        "steam_installed": gptk_steam_installed(),
+    });
+    let path = gptk_steam_install_progress_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, serde_json::to_string_pretty(&progress).unwrap_or_default());
 }
 
 fn gptk_steam_installed() -> bool {
@@ -106,6 +196,15 @@ fn metalsharp_home() -> PathBuf {
 
 fn current_timestamp_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0)
+}
+
+fn unique_operation_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let counter = TEMP_NAME_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{}-{}-{}", std::process::id(), nanos, counter)
 }
 
 fn current_account_name() -> String {
@@ -209,7 +308,7 @@ pub fn status() -> Value {
     let gptk_identity = gptk_prefix_identity();
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
-    let gptk_installing = is_installing_gptk_steam();
+    let gptk_installing = is_installing_gptk_setup();
 
     json!({
         "installed": windows_installed,
@@ -222,6 +321,8 @@ pub fn status() -> Value {
         "gptk_installed": gptk_installed(),
         "gptk_toolkit_installed": gptk_installed(),
         "gptk_toolkit_url": GPTK_TOOLKIT_URL,
+        "gptk_toolkit_downloaded": downloaded_gptk_dmgs().first().map(|p| p.to_string_lossy().to_string()),
+        "gptk_runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
         "gptk_steam_installed": gptk_steam_installed,
         "gptk_path": gptk_steam_dir.to_string_lossy().to_string(),
         "gptk_prefix": gptk_steam_prefix().to_string_lossy().to_string(),
@@ -272,7 +373,7 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
-    if is_gptk_runtime_command(command) {
+    if is_gptk_runtime_command(command) || is_gptk_steam_prefix_command(command) {
         return false;
     }
 
@@ -298,7 +399,7 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
         return false;
     }
-    if is_gptk_runtime_command(command) {
+    if is_gptk_runtime_command(command) || is_gptk_steam_prefix_command(command) {
         return false;
     }
 
@@ -316,6 +417,10 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
 
 fn is_gptk_runtime_command(command: &str) -> bool {
     command.contains("/Applications/Game Porting Toolkit.app/Contents/Resources/wine/")
+}
+
+fn is_gptk_steam_prefix_command(command: &str) -> bool {
+    command.to_lowercase().contains(&gptk_steam_prefix().to_string_lossy().to_lowercase())
 }
 
 fn is_gptk_steam_owner_command(command: &str) -> bool {
@@ -434,6 +539,14 @@ pub fn is_installing_gptk_steam() -> bool {
     GPTK_STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
+pub fn is_installing_gptk_toolkit() -> bool {
+    GPTK_TOOLKIT_INSTALLING.load(Ordering::SeqCst)
+}
+
+fn is_installing_gptk_setup() -> bool {
+    is_installing_gptk_toolkit() || is_installing_gptk_steam()
+}
+
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     ensure_steam_launch_ready_with_wrapper(steam_dir, find_bundled_steamwebhelper_wrapper, ".ms_wrapper_deployed");
 }
@@ -510,13 +623,14 @@ fn apply_gptk_prefix_user_env(cmd: &mut Command) {
 
 fn apply_gptk_env(cmd: &mut Command) {
     let home = dirs::home_dir().unwrap_or_default();
-    let root = gptk_root();
     let ms_root = ms_wine_root();
     let base_dyld =
         format!("{}:{}", ms_root.join("lib").display(), ms_root.join("lib").join("wine").join("x86_64-unix").display());
+    let gptk_unix = gptk_runtime_unix_dir();
+    let gptk_external = gptk_runtime_external_dir();
     cmd.env("WINESERVER", gptk_wineserver_path())
         .env("WINELOADER", gptk_wine_path())
-        .env("WINEDATADIR", root.join("share"))
+        .env("WINEDATADIR", gptk_winedata_dir())
         .env("MS_FWD_COMPAT_GL_CTX", "1")
         .env("MVK_PRESENT_MODE", "1")
         .env("DXVK_STATE_CACHE_PATH", home.join(".metalsharp").join("dxvk-cache-gptk"))
@@ -525,17 +639,17 @@ fn apply_gptk_env(cmd: &mut Command) {
             "WINEDLLPATH",
             format!(
                 "{}:{}",
-                root.join("lib").join("wine").join("x86_64-windows").display(),
-                root.join("lib").join("wine").join("i386-windows").display()
+                gptk_runtime_windows_dir("x86_64-windows").display(),
+                gptk_runtime_windows_dir("i386-windows").display()
             ),
         )
         .env(
             "DYLD_FALLBACK_LIBRARY_PATH",
             format!(
                 "{}:{}:{}:{}",
-                root.join("lib").join("wine").join("x86_64-unix").display(),
-                root.join("lib").join("external").display(),
-                root.join("lib").display(),
+                gptk_unix.display(),
+                gptk_external.display(),
+                gptk_local_root().display(),
                 base_dyld
             ),
         );
@@ -601,7 +715,318 @@ pub fn sync_gptk_steam_prefix() -> Result<Value, Box<dyn std::error::Error>> {
     install_gptk_steam()
 }
 
+fn downloaded_gptk_dmgs() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut candidates = Vec::new();
+    for dir in [home.join("Downloads"), home.join("Desktop")] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+                if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("dmg")).unwrap_or(false)
+                    && (name.contains("game_porting_toolkit")
+                        || name.contains("game porting toolkit")
+                        || name.contains("gptk"))
+                {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        let a_time = std::fs::metadata(a).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        let b_time = std::fs::metadata(b).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        b_time.cmp(&a_time)
+    });
+    candidates
+}
+
+fn unique_temp_dir(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("metalsharp-{}-{}", name, unique_operation_suffix()))
+}
+
+fn attach_dmg(dmg: &Path, mountpoint: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(mountpoint)?;
+    let status = Command::new("hdiutil")
+        .arg("attach")
+        .arg(dmg)
+        .arg("-readonly")
+        .arg("-nobrowse")
+        .arg("-mountpoint")
+        .arg(mountpoint)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Could not mount {}", dmg.display()).into())
+    }
+}
+
+fn detach_dmg(mountpoint: &Path) {
+    let _ = Command::new("hdiutil")
+        .arg("detach")
+        .arg(mountpoint)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = std::fs::remove_dir_all(mountpoint);
+}
+
+fn find_child_by_name_contains(root: &Path, needle: &str, extension: Option<&str>) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+        let extension_ok = extension
+            .map(|ext| path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case(ext)).unwrap_or(false))
+            .unwrap_or(true);
+        if name.contains(needle) && extension_ok {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn ditto_copy(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !src.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let status = Command::new("ditto").arg(src).arg(dst).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Could not copy {} to {}", src.display(), dst.display()).into())
+    }
+}
+
+fn command_output_text(mut command: Command) -> Result<(bool, String), Box<dyn std::error::Error>> {
+    let output = command.output()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok((output.status.success(), text))
+}
+
+fn apple_signature_output_is_accepted(text: &str) -> bool {
+    let accepted = text.lines().any(|line| {
+        let trimmed = line.trim().to_ascii_lowercase();
+        trimmed == "accepted" || trimmed.ends_with(": accepted")
+    });
+    let apple_source = text.lines().any(|line| {
+        let trimmed = line.trim().to_ascii_lowercase();
+        trimmed == "source=apple" || trimmed.starts_with("source=apple ")
+    });
+    accepted && apple_source
+}
+
+fn codesign_output_has_apple_authority(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "Authority=Software Signing"
+            || trimmed == "Authority=Apple Code Signing Certification Authority"
+            || trimmed == "TeamIdentifier=59GAB85EFG"
+    })
+}
+
+fn verify_signed_disk_image(dmg: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut command = Command::new("spctl");
+    command.arg("-a").arg("-t").arg("open").arg("--context").arg("context:primary-signature").arg("-v").arg(dmg);
+    let (success, output) = command_output_text(command)?;
+    if success && apple_signature_output_is_accepted(&output) {
+        Ok(())
+    } else {
+        Err(format!("Refusing to install GPTK runtime: {} is not an accepted Apple-signed disk image", label).into())
+    }
+}
+
+fn verify_gptk_redist_identity(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    for relative in [
+        Path::new("wine").join("x86_64-windows").join("d3d12.dll"),
+        Path::new("wine").join("x86_64-windows").join("dxgi.dll"),
+        Path::new("wine").join("x86_64-unix"),
+        Path::new("external").join("D3DMetal.framework"),
+    ] {
+        let candidate = redist.join(relative);
+        if !candidate.exists() {
+            return Err(format!(
+                "Refusing to install GPTK runtime: expected signed redist component is missing at {}",
+                candidate.display()
+            )
+            .into());
+        }
+    }
+
+    let framework = redist.join("external").join("D3DMetal.framework");
+    let mut verify = Command::new("codesign");
+    verify.arg("--verify").arg("--deep").arg("--strict").arg(&framework);
+    let (verified, verify_output) = command_output_text(verify)?;
+    if !verified {
+        return Err(format!(
+            "Refusing to install GPTK runtime: D3DMetal.framework failed code signature verification ({})",
+            verify_output.trim()
+        )
+        .into());
+    }
+
+    let mut describe = Command::new("codesign");
+    describe.arg("-dv").arg("--verbose=4").arg(&framework);
+    let (described, describe_output) = command_output_text(describe)?;
+    if !described || !codesign_output_has_apple_authority(&describe_output) {
+        return Err(
+            "Refusing to install GPTK runtime: D3DMetal.framework is not signed by an Apple-controlled identity".into(),
+        );
+    }
+
+    Ok(())
+}
+
+fn copy_gptk_redist_to_payload_root(redist: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    ditto_copy(&redist.join("wine").join("x86_64-windows"), &target.join("x86_64-windows"))?;
+    ditto_copy(&redist.join("wine").join("x86_64-unix"), &target.join("x86_64-unix"))?;
+    ditto_copy(&redist.join("wine").join("i386-windows"), &target.join("i386-windows"))?;
+    ditto_copy(&redist.join("external"), &target.join("external"))?;
+    if gptk_redist_payload_complete(target) {
+        Ok(())
+    } else {
+        Err(format!("Staged Game Porting Toolkit runtime is incomplete at {}", target.display()).into())
+    }
+}
+
+fn install_gptk_redist_atomically(redist: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let target = gptk_local_root();
+    let parent = target.parent().ok_or("Game Porting Toolkit runtime target does not have a parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    let suffix = unique_operation_suffix();
+    let staging = parent.join(format!(".gptk-redist-stage-{}", suffix));
+    let backup = parent.join(format!(".gptk-redist-backup-{}", suffix));
+
+    let _ = std::fs::remove_dir_all(&staging);
+    if let Err(err) = copy_gptk_redist_to_payload_root(redist, &staging) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    let mut target_moved = false;
+    let swap_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        if target.exists() {
+            std::fs::rename(&target, &backup)?;
+            target_moved = true;
+        }
+        std::fs::rename(&staging, &target)?;
+        Ok(())
+    })();
+
+    match swap_result {
+        Ok(()) => {
+            if backup.exists() {
+                let archive = metalsharp_home().join("backups").join(format!("gptk-redist-{}", suffix));
+                if let Some(parent) = archive.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let _ = std::fs::rename(&backup, archive);
+            }
+            Ok(())
+        },
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            if target_moved && backup.exists() && !target.exists() {
+                let _ = std::fs::rename(&backup, &target);
+            }
+            Err(err)
+        },
+    }
+}
+
+fn install_gptk_redist_from_dmg(dmg: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let outer_mount = unique_temp_dir("gptk-outer");
+    let inner_mount = unique_temp_dir("gptk-inner");
+    verify_signed_disk_image(dmg, "outer Game Porting Toolkit DMG")?;
+    attach_dmg(dmg, &outer_mount)?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let inner_dmg =
+            find_child_by_name_contains(&outer_mount, "evaluation environment for windows games", Some("dmg")).ok_or(
+                "Downloaded Game Porting Toolkit DMG did not contain the Windows games evaluation environment DMG",
+            )?;
+        verify_signed_disk_image(&inner_dmg, "inner Game Porting Toolkit DMG")?;
+        attach_dmg(&inner_dmg, &inner_mount)?;
+        let inner_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let redist = inner_mount.join("redist").join("lib");
+            if !redist.exists() {
+                return Err("Mounted Game Porting Toolkit image did not contain redist/lib".into());
+            }
+            verify_gptk_redist_identity(&redist)?;
+            install_gptk_redist_atomically(&redist)?;
+            Ok(())
+        })();
+        detach_dmg(&inner_mount);
+        inner_result
+    })();
+    detach_dmg(&outer_mount);
+    result
+}
+
+fn ensure_gptk_toolkit_installed_from_download() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if gptk_installed() {
+        return Ok(None);
+    }
+    if GPTK_TOOLKIT_INSTALLING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        write_gptk_toolkit_progress(
+            "installing_toolkit",
+            "Game Porting Toolkit runtime installation is already in progress.",
+            None,
+        );
+        return Err("Game Porting Toolkit runtime installation is already in progress".into());
+    }
+
+    let result = ensure_gptk_toolkit_installed_from_download_locked();
+    GPTK_TOOLKIT_INSTALLING.store(false, Ordering::SeqCst);
+    result
+}
+
+fn ensure_gptk_toolkit_installed_from_download_locked() -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if gptk_installed() {
+        return Ok(None);
+    }
+    let dmg = downloaded_gptk_dmgs().into_iter().next();
+    if let Some(dmg) = dmg {
+        write_gptk_toolkit_progress(
+            "installing_toolkit",
+            &format!("Installing Game Porting Toolkit runtime from {}...", dmg.display()),
+            None,
+        );
+        install_gptk_redist_from_dmg(&dmg)?;
+        if gptk_installed() {
+            write_gptk_toolkit_progress("toolkit_ready", "Game Porting Toolkit runtime is installed.", None);
+            return Ok(Some(dmg));
+        }
+        return Err("Game Porting Toolkit files were copied, but the runtime was not detected".into());
+    }
+    Ok(None)
+}
+
 pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>> {
+    if let Some(dmg) = ensure_gptk_toolkit_installed_from_download()? {
+        return Ok(json!({
+            "ok": true,
+            "installed": true,
+            "source": dmg.to_string_lossy().to_string(),
+            "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+    if gptk_installed() {
+        return Ok(json!({
+            "ok": true,
+            "installed": true,
+            "runtime_path": gptk_runtime_status_path().to_string_lossy().to_string(),
+            "progress": read_gptk_steam_install_progress()
+        }));
+    }
+
     let child = Command::new("open")
         .arg(GPTK_TOOLKIT_URL)
         .stdout(std::process::Stdio::null())
@@ -610,6 +1035,8 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
 
     Ok(json!({
         "ok": true,
+        "installed": false,
+        "download_required": true,
         "pid": child.id(),
         "url": GPTK_TOOLKIT_URL
     }))
@@ -617,14 +1044,18 @@ pub fn open_gptk_toolkit_download() -> Result<Value, Box<dyn std::error::Error>>
 
 pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if !gptk_installed() {
+        let _ = ensure_gptk_toolkit_installed_from_download()?;
+    }
+
+    if !gptk_installed() {
         write_gptk_steam_install_progress(
             "toolkit_missing",
-            "Game Porting Toolkit is not installed. Install it before setting up GPTK Steam.",
-            Some("Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app"),
+            "Game Porting Toolkit is not installed. Download it, then press Install GPTK Steam again.",
+            Some("Game Porting Toolkit was not found in /Applications or Downloads"),
         );
         return Ok(json!({
             "ok": false,
-            "error": "Game Porting Toolkit is not installed at /Applications/Game Porting Toolkit.app",
+            "error": "Game Porting Toolkit was not found in /Applications or Downloads",
             "toolkit_url": GPTK_TOOLKIT_URL,
             "progress": read_gptk_steam_install_progress()
         }));
@@ -1234,10 +1665,18 @@ pub fn view_game_in_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error
 }
 
 pub fn get_wine_steam_installed_games() -> Vec<u32> {
+    installed_games_in_steamapps(crate::scan::wine_steam_library_paths(), true)
+}
+
+pub fn get_gptk_steam_installed_games() -> Vec<u32> {
+    installed_games_in_steamapps(crate::scan::gptk_steam_library_paths(), false)
+}
+
+fn installed_games_in_steamapps(paths: Vec<PathBuf>, skip_macos: bool) -> Vec<u32> {
     let mut appids = Vec::new();
 
-    for steamapps in crate::scan::wine_steam_library_paths() {
-        if is_macos_steamapps_path(&steamapps) {
+    for steamapps in paths {
+        if skip_macos && is_macos_steamapps_path(&steamapps) {
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&steamapps) {
@@ -1257,6 +1696,44 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
     }
 
     appids
+}
+
+fn resolve_game_dir_in_steamapps(appid: u32, paths: Vec<PathBuf>) -> Option<PathBuf> {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+    for steamapps in paths {
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Some(dir_name) = crate::scan::parse_installdir_from_acf(&contents) {
+                let dir = steamapps.join("common").join(dir_name);
+                if dir.exists() {
+                    return Some(dir);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn resolve_gptk_game_dir(appid: u32) -> Option<PathBuf> {
+    resolve_game_dir_in_steamapps(appid, crate::scan::gptk_steam_library_paths())
+}
+
+fn get_game_name_from_manifest_in_paths(appid: u32, paths: Vec<PathBuf>) -> Option<String> {
+    let manifest_name = format!("appmanifest_{}.acf", appid);
+
+    for steamapps in paths {
+        if is_macos_steamapps_path(&steamapps) {
+            continue;
+        }
+        let manifest_path = steamapps.join(&manifest_name);
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Some(name) = parse_acf_field(&contents, "name") {
+                return Some(name);
+            }
+        }
+    }
+
+    None
 }
 
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
@@ -1553,6 +2030,7 @@ pub fn library() -> Value {
     let installed_appids = get_installed_appids();
     let downloaded_appids = get_downloaded_appids();
     let wine_steam_appids = get_wine_steam_installed_games();
+    let gptk_steam_appids = get_gptk_steam_installed_games();
 
     let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
         Ok(games) if !games.is_empty() => games,
@@ -1567,12 +2045,19 @@ pub fn library() -> Value {
                     fallback.push((appid, format!("Game {}", appid)));
                 }
             }
+            for &appid in &gptk_steam_appids {
+                if !fallback.iter().any(|(id, _)| *id == appid) {
+                    let name = get_game_name_from_manifest_in_paths(appid, crate::scan::gptk_steam_library_paths())
+                        .unwrap_or_else(|| format!("Game {}", appid));
+                    fallback.push((appid, name));
+                }
+            }
             fallback
         },
     };
 
     let owned_appids: Vec<u32> = owned.iter().map(|(id, _)| *id).collect();
-    let mut all_games = owned;
+    let mut all_games = owned.clone();
     for &appid in &wine_steam_appids {
         if !owned_appids.contains(&appid) {
             let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
@@ -1584,62 +2069,159 @@ pub fn library() -> Value {
             all_games.push((appid, format!("Game {}", appid)));
         }
     }
+    for &appid in &gptk_steam_appids {
+        if !all_games.iter().any(|(id, _)| *id == appid) {
+            let name = get_game_name_from_manifest_in_paths(appid, crate::scan::gptk_steam_library_paths())
+                .unwrap_or_else(|| format!("Game {}", appid));
+            all_games.push((appid, name));
+        }
+    }
 
-    let games: Vec<Value> = all_games
-        .iter()
-        .map(|(appid, name)| {
-            let is_installed = installed_appids.contains(appid)
-                || downloaded_appids.contains(appid)
-                || wine_steam_appids.contains(appid);
-            let can_uninstall = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
-            let dual = crate::scan::resolve_dual_game_dir(*appid);
-            let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
-            let bottle = if is_installed {
-                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+    let mut games: Vec<Value> = Vec::new();
+    for (appid, name) in &all_games {
+        let dual = crate::scan::resolve_dual_game_dir(*appid);
+        let has_metalsharp_install = downloaded_appids.contains(appid) || wine_steam_appids.contains(appid);
+        let has_any_install =
+            installed_appids.contains(appid) || has_metalsharp_install || gptk_steam_appids.contains(appid);
+
+        if has_metalsharp_install {
+            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
+            let pipeline_id = if matches!(resolved, crate::mtsp::engine::PipelineId::M13) {
+                crate::mtsp::engine::PipelineId::M12
             } else {
-                None
+                resolved
             };
-            let recommended = pipeline_id.to_legacy_method();
-            let node = crate::mtsp::engine::get_pipeline(pipeline_id);
-            let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
-                "id": node.id,
-                "name": node.name,
-                "recommended": true,
-            }))
-            .chain(node.alternatives.iter().map(|alt| {
-                let alt_node = crate::mtsp::engine::get_pipeline(*alt);
-                serde_json::json!({
-                    "id": alt_node.id,
-                    "name": alt_node.name,
-                    "recommended": false,
-                })
-            }))
-            .collect();
-            json!({
-                "appid": appid,
-                "name": name,
-                "installed": is_installed,
-                "state": if is_installed { "installed" } else { "not_installed" },
-                "can_uninstall": can_uninstall,
-                "launch_method": recommended,
-                "available_pipelines": available_pipelines,
-                "has_native_build": dual.has_native_build,
-                "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),
-                "wine_game_path": dual.wine_dir.map(|p| p.to_string_lossy().to_string()),
-                "bottle_id": bottle.as_ref().map(|b| b.id.clone()),
-                "bottle_health": bottle.as_ref().map(|b| json!(b.health)),
-                "bottle_runtime_assets": bottle.as_ref().map(|b| b.runtime_assets.len()).unwrap_or(0),
-                "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", appid),
-                "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", appid),
-            })
-        })
-        .collect();
+            let bottle =
+                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok();
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "metalsharp",
+                source_label: "MetalSharp",
+                installed: true,
+                can_uninstall: downloaded_appids.contains(appid) || wine_steam_appids.contains(appid),
+                pipeline_id,
+                has_native_build: dual.has_native_build,
+                native_app_path: dual.macos_app.as_ref(),
+                wine_game_path: dual.wine_dir.as_ref(),
+                bottle: bottle.as_ref(),
+            }));
+        }
+
+        if gptk_steam_appids.contains(appid) {
+            let gptk_game_dir = resolve_game_dir_in_steamapps(*appid, crate::scan::gptk_steam_library_paths());
+            let bottle = crate::bottles::ensure_steam_game_bottle(
+                *appid,
+                name,
+                gptk_game_dir.as_deref(),
+                crate::mtsp::engine::PipelineId::M13,
+            )
+            .ok();
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "gptk",
+                source_label: "GPTK",
+                installed: true,
+                can_uninstall: false,
+                pipeline_id: crate::mtsp::engine::PipelineId::M13,
+                has_native_build: false,
+                native_app_path: None,
+                wine_game_path: gptk_game_dir.as_ref(),
+                bottle: bottle.as_ref(),
+            }));
+        }
+
+        if !has_metalsharp_install && !gptk_steam_appids.contains(appid) {
+            let resolved = crate::mtsp::rules::resolve_pipeline(*appid);
+            let pipeline_id = if matches!(resolved, crate::mtsp::engine::PipelineId::M13) {
+                crate::mtsp::engine::PipelineId::M12
+            } else {
+                resolved
+            };
+            games.push(steam_library_card(SteamLibraryCardData {
+                appid: *appid,
+                name,
+                source: "steam",
+                source_label: "Steam",
+                installed: has_any_install,
+                can_uninstall: false,
+                pipeline_id,
+                has_native_build: dual.has_native_build,
+                native_app_path: dual.macos_app.as_ref(),
+                wine_game_path: dual.wine_dir.as_ref(),
+                bottle: None,
+            }));
+        }
+    }
 
     json!({
         "ok": true,
         "total": games.len(),
         "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
         "games": games,
+    })
+}
+
+struct SteamLibraryCardData<'a> {
+    appid: u32,
+    name: &'a str,
+    source: &'a str,
+    source_label: &'a str,
+    installed: bool,
+    can_uninstall: bool,
+    pipeline_id: crate::mtsp::engine::PipelineId,
+    has_native_build: bool,
+    native_app_path: Option<&'a PathBuf>,
+    wine_game_path: Option<&'a PathBuf>,
+    bottle: Option<&'a crate::bottles::BottleManifest>,
+}
+
+fn steam_library_card(card: SteamLibraryCardData<'_>) -> Value {
+    let available_pipelines: Vec<serde_json::Value> = if card.source == "gptk" {
+        vec![serde_json::json!({
+            "id": "d3dmetal",
+            "name": "D3DMetal",
+            "recommended": true,
+        })]
+    } else {
+        let node = crate::mtsp::engine::get_pipeline(card.pipeline_id);
+        std::iter::once(serde_json::json!({
+            "id": node.id,
+            "name": node.name,
+            "recommended": true,
+        }))
+        .chain(node.alternatives.iter().filter(|alt| !matches!(alt, crate::mtsp::engine::PipelineId::M13)).map(|alt| {
+            let alt_node = crate::mtsp::engine::get_pipeline(*alt);
+            serde_json::json!({
+                "id": alt_node.id,
+                "name": alt_node.name,
+                "recommended": false,
+            })
+        }))
+        .collect()
+    };
+    let launch_method = if card.source == "gptk" { "d3dmetal" } else { card.pipeline_id.to_legacy_method() };
+
+    json!({
+        "library_id": format!("{}:{}", card.source, card.appid),
+        "library_source": card.source,
+        "library_source_label": card.source_label,
+        "appid": card.appid,
+        "name": card.name,
+        "installed": card.installed,
+        "state": if card.installed { "installed" } else { "not_installed" },
+        "can_uninstall": card.can_uninstall,
+        "launch_method": launch_method,
+        "available_pipelines": available_pipelines,
+        "has_native_build": card.has_native_build,
+        "native_app_path": card.native_app_path.map(|p| p.to_string_lossy().to_string()),
+        "wine_game_path": card.wine_game_path.map(|p| p.to_string_lossy().to_string()),
+        "bottle_id": card.bottle.map(|b| b.id.clone()),
+        "bottle_health": card.bottle.map(|b| json!(b.health)),
+        "bottle_runtime_assets": card.bottle.map(|b| b.runtime_assets.len()).unwrap_or(0),
+        "cover_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/library_600x900.jpg", card.appid),
+        "header_url": format!("https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg", card.appid),
     })
 }
 
@@ -2060,10 +2642,62 @@ mod tests {
 
     #[test]
     fn detects_gptk_steam_windows_path_command() {
-        let command = format!("{} C:\\Program Files (x86)\\Steam\\steam.exe -silent", gptk_wine_path().display());
+        let command = format!("{} C:\\Program Files (x86)\\Steam\\steam.exe -silent", gptk_app_wine_path().display());
 
         assert!(is_gptk_steam_owner_command(&command));
         assert!(!is_wine_steam_owner_command(&command));
+    }
+
+    #[test]
+    fn detects_downloaded_gptk_dmg_names() {
+        assert!("Game_Porting_Toolkit_3.0.dmg".to_lowercase().contains("game_porting_toolkit"));
+        assert!("Game Porting Toolkit 3.0.dmg".to_lowercase().contains("game porting toolkit"));
+    }
+
+    #[test]
+    fn gptk_disk_image_signature_requires_apple_acceptance() {
+        assert!(apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: accepted\nsource=Apple System"
+        ));
+        assert!(!apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/gptk.dmg: accepted\nsource=Notarized Developer ID"
+        ));
+        assert!(!apple_signature_output_is_accepted(
+            "/Users/alex/Downloads/Game_Porting_Toolkit.dmg: rejected\nsource=Apple System"
+        ));
+    }
+
+    #[test]
+    fn gptk_codesign_identity_requires_apple_controlled_authority() {
+        assert!(codesign_output_has_apple_authority(
+            "Authority=Software Signing\nAuthority=Apple Code Signing Certification Authority\nAuthority=Apple Root CA"
+        ));
+        assert!(codesign_output_has_apple_authority("TeamIdentifier=59GAB85EFG"));
+        assert!(!codesign_output_has_apple_authority(
+            "Authority=Developer ID Application: Example Corp\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA"
+        ));
+    }
+
+    #[test]
+    fn gptk_redist_payload_requires_required_runtime_components() {
+        let root = std::env::temp_dir().join(format!("metalsharp-gptk-payload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("x86_64-windows")).expect("create windows payload dir");
+        std::fs::create_dir_all(root.join("x86_64-unix")).expect("create unix payload dir");
+        std::fs::create_dir_all(root.join("external").join("D3DMetal.framework")).expect("create framework dir");
+        std::fs::write(root.join("x86_64-windows").join("d3d12.dll"), b"d3d12").expect("write d3d12");
+
+        assert!(!gptk_redist_payload_complete(&root));
+        std::fs::write(root.join("x86_64-windows").join("dxgi.dll"), b"dxgi").expect("write dxgi");
+        assert!(gptk_redist_payload_complete(&root));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gptk_temp_paths_do_not_collide_within_one_process() {
+        let first = unique_temp_dir("gptk-outer");
+        let second = unique_temp_dir("gptk-outer");
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -2077,6 +2711,16 @@ mod tests {
     fn gptk_steam_cleanup_stays_scoped_to_steam_prefix() {
         let game_command =
             format!("arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe", gptk_wine_path().display());
+        let prefixed_game_command = format!(
+            "arch -x86_64 {} {}/steamapps/common/ELDEN RING/Game/eldenring.exe",
+            gptk_wine_path().display(),
+            gptk_steam_prefix().display()
+        );
+        let local_redist_game_command = format!(
+            "arch -x86_64 {} /Volumes/Games/EldenRing/Game/eldenring.exe {}",
+            gptk_wine_path().display(),
+            gptk_local_root().display()
+        );
         let helper_command = format!(
             "{} {}/drive_c/Program Files (x86)/Steam/bin/cef/cef.win64/steamwebhelper.exe",
             gptk_wine_path().display(),
@@ -2084,7 +2728,34 @@ mod tests {
         );
 
         assert!(!is_gptk_steam_cleanup_command(&game_command));
+        assert!(!is_gptk_steam_cleanup_command(&prefixed_game_command));
+        assert!(!is_gptk_steam_cleanup_command(&local_redist_game_command));
+        assert!(!is_gptk_steam_owner_command(&prefixed_game_command));
+        assert!(!is_wine_steam_cleanup_command(&prefixed_game_command));
+        assert!(!is_gptk_runtime_command(&prefixed_game_command));
+        assert!(!is_gptk_runtime_command(&local_redist_game_command));
         assert!(is_gptk_steam_cleanup_command(&helper_command));
+    }
+
+    #[test]
+    fn gptk_library_cards_do_not_advertise_appid_only_uninstall() {
+        let card = steam_library_card(SteamLibraryCardData {
+            appid: 1245620,
+            name: "ELDEN RING",
+            source: "gptk",
+            source_label: "GPTK",
+            installed: true,
+            can_uninstall: false,
+            pipeline_id: crate::mtsp::engine::PipelineId::M13,
+            has_native_build: false,
+            native_app_path: None,
+            wine_game_path: None,
+            bottle: None,
+        });
+
+        assert_eq!(card.get("library_source").and_then(Value::as_str), Some("gptk"));
+        assert_eq!(card.get("can_uninstall").and_then(Value::as_bool), Some(false));
+        assert_eq!(card.get("launch_method").and_then(Value::as_str), Some("d3dmetal"));
     }
 
     #[test]

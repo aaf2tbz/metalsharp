@@ -120,8 +120,8 @@ async function toggleSteam() {
 
 async function installGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    await openGptkToolkitDownload();
-    return;
+    const installed = await openGptkToolkitDownload();
+    if (!installed) return;
   }
   if (gptkSteamInstalling.value) {
     toast.show("GPTK Steam setup is already running", "success");
@@ -145,12 +145,21 @@ async function installGptkSteam() {
 }
 
 async function openGptkToolkitDownload() {
-  const result = await api<{ ok: boolean; url?: string; error?: string }>("POST", "/steam/gptk-toolkit-install");
-  if (result?.ok) {
+  const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; url?: string; error?: string }>(
+    "POST",
+    "/steam/gptk-toolkit-install",
+  );
+  if (result?.ok && result.installed) {
+    gptkToolkitInstalled.value = true;
+    gptkInstallMessage.value = "Game Porting Toolkit runtime is installed";
+    toast.show("Game Porting Toolkit runtime installed", "success");
+    return true;
+  } else if (result?.ok) {
     toast.show("Game Porting Toolkit download page opened", "success");
   } else {
-    toast.show(result?.error ?? "Could not open Game Porting Toolkit download", "error");
+    toast.show(result?.error ?? "Could not set up Game Porting Toolkit runtime", "error");
   }
+  return false;
 }
 
 async function pollGptkSteamInstall() {
@@ -394,7 +403,7 @@ function cacheStatusText(cache: CacheSummary | null): string {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">GPTK Steam (M-Anticheat)</div>
+          <div class="settings-label">GPTK Steam (D3DMetal)</div>
           <div class="settings-desc">Separate Windows Steam install inside Game Porting Toolkit Wine</div>
           <div v-if="gptkInstallMessage" class="settings-desc">{{ gptkInstallMessage }}</div>
         </div>

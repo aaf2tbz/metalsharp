@@ -4,6 +4,9 @@ import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 
 interface SteamGame {
+  library_id?: string;
+  library_source?: "steam" | "metalsharp" | "gptk";
+  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
@@ -93,9 +96,12 @@ const doctorReport = ref<LaunchDoctorReport | null>(null);
 const runtimeOpen = ref(false);
 const runtimeLoading = ref(false);
 const runtimeReport = ref<SteamRuntimeReport | null>(null);
-const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
+const isGptkCard = computed(() => props.game.library_source === "gptk");
+const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.library_id ?? props.game.appid}`);
 
 const launchModeOptions = computed(() => {
+  if (isGptkCard.value) return [{ id: "d3dmetal", name: "D3DMetal", recommended: true }];
+
   const byId = new Map<string, PipelineOption>();
   byId.set("auto", { id: "auto", name: `Auto${pipelineName.value !== "Auto" ? ` (${pipelineName.value})` : ""}` });
   for (const option of pipelineOptions.value) {
@@ -110,22 +116,23 @@ const launchModeOptions = computed(() => {
   return [...byId.values()];
 });
 
-const hasAnticheatLaunch = computed(() =>
-  launchModeOptions.value.some((option) => option.id === "m13" || option.id === "gptk"),
-);
-
 function normalizePipelineOption(option: PipelineOption): PipelineOption {
-  if (option.id === "m13" || option.id === "gptk") {
-    return { ...option, name: "M-Anticheat" };
+  if (option.id === "m13" || option.id === "gptk" || option.id === "d3dmetal") {
+    return { ...option, id: "d3dmetal", name: "D3DMetal" };
   }
   return option;
 }
 
 onMounted(async () => {
   const savedLaunchMode = localStorage.getItem(launchModeStorageKey.value);
-  if (savedLaunchMode) selectedLaunchMode.value = savedLaunchMode;
+  if (isGptkCard.value) {
+    selectedLaunchMode.value = "d3dmetal";
+    pipelineName.value = "D3DMetal";
+    pipelineOptions.value = [{ id: "d3dmetal", name: "D3DMetal", recommended: true }];
+  }
+  else if (savedLaunchMode) selectedLaunchMode.value = savedLaunchMode;
 
-  if (props.game.installed) {
+  if (props.game.installed && !isGptkCard.value) {
     const gp = await api<{ ok: boolean; recommended: string; recommended_name: string; pipelines: PipelineOption[] }>(
       "GET",
       `/mtsp/pipelines?appid=${props.game.appid}`,
@@ -268,6 +275,7 @@ function formatBytes(bytes: number): string {
       </div>
       <div class="game-card-meta">
         <span v-if="game.installed" class="route-chip">{{ pipelineName }}</span>
+        <span v-if="game.library_source_label" class="route-chip source-chip">{{ game.library_source_label }}</span>
         <span v-if="game.bottle_id" class="route-chip bottle-chip">{{ game.bottle_id }}</span>
         <span v-if="game.bottle_runtime_assets" class="game-card-size">{{ game.bottle_runtime_assets }} assets</span>
         <span v-if="game.size_bytes" class="game-card-size">{{ formatBytes(game.size_bytes) }}</span>
@@ -284,14 +292,6 @@ function formatBytes(bytes: number): string {
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="primary-action-row">
             <button class="btn btn-play" @click="emit('play', selectedLaunchMode)">Play</button>
-            <button
-              v-if="hasAnticheatLaunch"
-              class="btn btn-secondary anticheat-play-button"
-              title="Launch through M-Anticheat"
-              @click="emit('play', 'm13')"
-            >
-              M-Anti
-            </button>
             <select v-model="selectedLaunchMode" class="launch-mode-select" title="Launch mode">
               <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
                 {{ option.name }}
@@ -580,6 +580,10 @@ function formatBytes(bytes: number): string {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
 }
+.source-chip {
+  background: color-mix(in srgb, var(--info, var(--accent)) 14%, transparent);
+  color: var(--info, var(--accent));
+}
 
 .game-card-actions {
   min-height: 38px;
@@ -597,12 +601,6 @@ function formatBytes(bytes: number): string {
 }
 .primary-action-row .btn-play {
   flex: 0 0 76px;
-}
-.anticheat-play-button {
-  flex: 0 0 68px;
-  min-width: 0;
-  padding-left: 8px;
-  padding-right: 8px;
 }
 .wide-action {
   width: 100%;

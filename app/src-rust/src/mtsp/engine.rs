@@ -86,7 +86,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             },
             PipelineNode {
                 id: PipelineId::M13,
-                name: "M-Anticheat",
+                name: "D3DMetal",
                 description: "Anticheat/offline D3D12 lane via GPTK D3DMetal",
                 backend: "gptk",
                 experimental: false,
@@ -325,7 +325,7 @@ impl PipelineId {
             PipelineId::M10 => "d3d10_metal",
             PipelineId::M11 => "dxmt_metal",
             PipelineId::M12 => "dxmt_metal12",
-            PipelineId::M13 => "gptk",
+            PipelineId::M13 => "d3dmetal",
             PipelineId::M32 => "wined3d_32",
             PipelineId::FnaArm64 => "xna_fna_arm64",
             PipelineId::Steam => "steam",

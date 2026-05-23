@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.33.32 - 2026-05-22
+
+Downloaded GPTK runtime release hardening.
+
+### Fixed
+
+- **GPTK Steam launch identity** - preserves GPTK library-card source through `/steam/launch-game`, forcing GPTK cards onto the D3DMetal route with GPTK Steam library paths and `gptk_steam_<appid>` bottle state.
+- **GPTK library cards** - keeps GPTK-installed cards separate from MetalSharp-installed cards, disables appid-only uninstall for GPTK cards until a GPTK-aware uninstall path exists, and keeps D3DMetal as the only GPTK card launch option.
+- **GPTK runtime setup** - validates downloaded Apple GPTK DMGs, stages runtime replacement atomically, serializes toolkit installs, and keeps toolkit/Steam setup progress state consistent.
+
+## v0.33.31 - 2026-05-22
+
+Downloaded GPTK runtime setup.
+
+### Fixed
+
+- **GPTK download detection** - detects downloaded Game Porting Toolkit DMGs from Downloads/Desktop instead of only checking for `/Applications/Game Porting Toolkit.app`.
+- **GPTK runtime install** - mounts Apple’s GPTK DMG, installs the nested Windows games evaluation redist into `~/.metalsharp/runtime/wine/lib/gptk`, and exposes the runtime path in Steam status.
+- **GPTK Steam setup flow** - the Library, Settings, and setup wizard GPTK buttons can install the downloaded GPTK runtime first, then continue into the dedicated GPTK Steam prefix setup.
+
 ## v0.33.30 - 2026-05-22
 
 GPTK Steam prefix readiness hotfix.

@@ -122,17 +122,27 @@ async function installSteam() {
 }
 
 async function openGptkToolkitDownload() {
-  const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
+  const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+    "POST",
+    "/steam/gptk-toolkit-install",
+  );
+  if (result?.ok && result.installed) {
+    gptkToolkitInstalled.value = true;
+    gptkSteamMessage.value = "Game Porting Toolkit runtime is installed";
+    toast.show("Game Porting Toolkit runtime installed", "success");
+    return true;
+  }
   toast.show(
-    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"),
+    result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not set up GPTK runtime"),
     result?.ok ? "success" : "error",
   );
+  return false;
 }
 
 async function installGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    await openGptkToolkitDownload();
-    return;
+    const installed = await openGptkToolkitDownload();
+    if (!installed) return;
   }
   gptkSteamInstalling.value = true;
   gptkSteamMessage.value = "Starting GPTK Steam setup...";
@@ -302,7 +312,7 @@ async function goToStep2() {
 
         <div class="setup-steam-section">
           <h2>GPTK Steam</h2>
-          <p>Separate Steam install for M-Anticheat routes and anti-cheat compatible games.</p>
+          <p>Separate Steam install for D3DMetal routes and anti-cheat compatible games.</p>
           <span v-if="!gptkToolkitInstalled" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">GPTK missing</span>
           <span v-else-if="gptkSteamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">GPTK Steam installed</span>
           <span v-else-if="gptkSteamInstalling" class="badge badge-warn" style="font-size:13px;padding:10px 20px;">Installing</span>

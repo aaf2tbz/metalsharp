@@ -1,5 +1,7 @@
 use serde_json::json;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -332,7 +334,7 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp = std::env::temp_dir().join("metalsharp-migration-preserve");
+    let tmp = migration_preserve_tmp_dir(ms_dir);
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
@@ -406,6 +408,12 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         bottles_tmp,
         compatdata_tmp,
     }
+}
+
+fn migration_preserve_tmp_dir(ms_dir: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    ms_dir.hash(&mut hasher);
+    std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{:016x}", std::process::id(), hasher.finish()))
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {

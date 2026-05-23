@@ -5,6 +5,9 @@ import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
 
 interface SteamGame {
+  library_id?: string;
+  library_source?: "steam" | "metalsharp" | "gptk";
+  library_source_label?: string;
   appid: number;
   name: string;
   installed: boolean;
@@ -43,11 +46,11 @@ const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
 
 const toast = useToast();
 const search = ref("");
-const filter = ref<"all" | "installed" | "not_installed">("all");
+const filter = ref<"all" | "metalsharp_installed" | "gptk_installed" | "not_installed">("all");
 
-const runningAppId = ref<number | null>(null);
+const runningLibraryId = ref<string | null>(null);
 const runningPid = ref<number | null>(null);
-const launchingAppId = ref<number | null>(null);
+const launchingLibraryId = ref<string | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -84,11 +87,27 @@ function isWineSteamRouteId(launchMethod: string) {
   ].includes(method);
 }
 
+function isGptkSteamRouteId(launchMethod: string) {
+  const method = launchMethod.toLowerCase();
+  return method === "m13" || method === "gptk" || method === "d3dmetal" || method === "steam_d3dmetal_gptk";
+}
+
 function recommendedLaunchMethod(game: SteamGame) {
   return game.launch_method ?? game.available_pipelines?.find((pipeline) => pipeline.recommended)?.id;
 }
 
+function isGptkSteamRouteLaunch(game: SteamGame, launchMethod: string) {
+  if (game.library_source === "gptk") return true;
+  const method = launchMethod.toLowerCase();
+  if (method === "auto") {
+    const recommended = recommendedLaunchMethod(game);
+    return recommended ? isGptkSteamRouteId(recommended) : false;
+  }
+  return isGptkSteamRouteId(method);
+}
+
 function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
+  if (game.library_source === "gptk") return true;
   const method = launchMethod.toLowerCase();
   if (method === "auto") {
     const recommended = recommendedLaunchMethod(game);
@@ -97,13 +116,18 @@ function isWineSteamRouteLaunch(game: SteamGame, launchMethod: string) {
   return isWineSteamRouteId(method);
 }
 
+function launchMethodForRequest(game: SteamGame, launchMethod: string) {
+  return game.library_source === "gptk" ? "d3dmetal" : launchMethod;
+}
+
 function applyFilter() {
   if (!library.value) {
     filteredGames.value = [];
     return;
   }
   let games = library.value.games;
-  if (filter.value === "installed") games = games.filter((g) => g.installed);
+  if (filter.value === "metalsharp_installed") games = games.filter((g) => g.installed && g.library_source === "metalsharp");
+  if (filter.value === "gptk_installed") games = games.filter((g) => g.installed && g.library_source === "gptk");
   if (filter.value === "not_installed") games = games.filter((g) => !g.installed);
   if (search.value) {
     const q = search.value.toLowerCase();
@@ -184,9 +208,22 @@ async function toggleMacSteam() {
 
 async function toggleGptkSteam() {
   if (!gptkToolkitInstalled.value) {
-    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-toolkit-install");
-    toast.show(result?.ok ? "Game Porting Toolkit download page opened" : (result?.error ?? "Could not open GPTK download"), result?.ok ? "success" : "error");
-    return;
+    const result = await api<{ ok: boolean; installed?: boolean; download_required?: boolean; error?: string }>(
+      "POST",
+      "/steam/gptk-toolkit-install",
+    );
+    if (result?.ok && result.installed) {
+      gptkToolkitInstalled.value = true;
+      toast.show("Game Porting Toolkit runtime installed", "success");
+    } else {
+      toast.show(
+        result?.ok && result.download_required
+          ? "Game Porting Toolkit download page opened"
+          : (result?.error ?? "Could not set up GPTK runtime"),
+        result?.ok ? "success" : "error",
+      );
+      return;
+    }
   }
   if (gptkSteamInstalling.value) {
     toast.show("GPTK Steam setup is already running", "success");
@@ -270,7 +307,11 @@ function pollGptkSteamInstall() {
 }
 
 async function launchGame(game: SteamGame, launchMethod = "auto") {
-  if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
+  const libraryId = game.library_id ?? String(game.appid);
+  const requestLaunchMethod = launchMethodForRequest(game, launchMethod);
+  const useGptkSteamRoute = isGptkSteamRouteLaunch(game, requestLaunchMethod);
+  const useWineSteamRoute = isWineSteamRouteLaunch(game, requestLaunchMethod);
+  if (isMacSteamLaunch(requestLaunchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
     const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
     if (!stopResult?.ok || stopResult.running !== false) {
@@ -279,10 +320,27 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
       return;
     }
     wineSteamRunning.value = false;
+  } else if (useGptkSteamRoute && wineSteamRunning.value) {
+    if (!confirm(`Stop Wine Steam and launch ${game.name} through GPTK Steam?`)) return;
+    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/stop");
+    if (!stopResult?.ok || stopResult.running !== false) {
+      wineSteamRunning.value = stopResult?.running ?? true;
+      toast.show(stopResult?.error ?? "Wine Steam is still running", "error");
+      return;
+    }
+    wineSteamRunning.value = false;
+  } else if (useWineSteamRoute && !useGptkSteamRoute && gptkSteamRunning.value) {
+    if (!confirm(`Stop GPTK Steam and launch ${game.name} through Wine Steam?`)) return;
+    const stopResult = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+    if (!stopResult?.ok || stopResult.running !== false) {
+      gptkSteamRunning.value = stopResult?.running ?? true;
+      toast.show(stopResult?.error ?? "GPTK Steam is still running", "error");
+      return;
+    }
+    gptkSteamRunning.value = false;
   }
 
-  launchingAppId.value = game.appid;
-  const useWineSteamRoute = isWineSteamRouteLaunch(game, launchMethod);
+  launchingLibraryId.value = libraryId;
   const launchEndpoint = useWineSteamRoute ? "/steam/launch-game" : "/game/launch-auto";
   const launchResult = await api<{
     ok: boolean;
@@ -293,21 +351,28 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     steam_runtime?: string;
   }>("POST", launchEndpoint, {
     appid: game.appid,
-    launchMethod,
+    launchMethod: requestLaunchMethod,
+    library_id: game.library_id,
+    library_source: game.library_source,
   });
 
-  launchingAppId.value = null;
+  launchingLibraryId.value = null;
 
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
-    runningAppId.value = game.appid;
-    if (launchResult.steam_runtime === "offline_gptk" || launchMethod.toLowerCase() === "m13" || launchMethod.toLowerCase() === "gptk") {
+    runningLibraryId.value = libraryId;
+    if (
+      launchResult.steam_runtime === "offline_gptk" ||
+      requestLaunchMethod.toLowerCase() === "m13" ||
+      requestLaunchMethod.toLowerCase() === "gptk" ||
+      requestLaunchMethod.toLowerCase() === "d3dmetal"
+    ) {
       gptkSteamRunning.value = true;
       wineSteamRunning.value = false;
     } else if (useWineSteamRoute) {
       wineSteamRunning.value = true;
     }
-    if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
+    if (isMacSteamLaunch(requestLaunchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
@@ -317,7 +382,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
 async function stopGame(game: SteamGame) {
   await api("POST", "/kill", { pid: runningPid.value, appid: game.appid });
   runningPid.value = null;
-  runningAppId.value = null;
+  runningLibraryId.value = null;
   toast.show(`Stopped ${game.name}`);
 }
 
@@ -336,7 +401,14 @@ async function installGame(game: SteamGame) {
 
 async function uninstallGame(game: SteamGame) {
   if (game.can_uninstall === false) {
-    toast.show(`${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`, "error");
+    const source = game.library_source;
+    let message = `${game.name} cannot be uninstalled from this library card.`;
+    if (source === "gptk") {
+      message = `${game.name} is installed in GPTK Steam. Uninstall it from GPTK Steam.`;
+    } else if (source === "steam") {
+      message = `${game.name} is only installed in macOS Steam. Uninstall it from macOS Steam.`;
+    }
+    toast.show(message, "error");
     return;
   }
   if (!confirm(`Uninstall ${game.name}? Game files will be deleted.`)) return;
@@ -425,11 +497,33 @@ watch([library, search, filter], applyFilter);
             type="text"
             placeholder="Search games..."
           />
-          <select v-model="filter" class="control-input">
-            <option value="all">All Games</option>
-            <option value="installed">Installed</option>
-            <option value="not_installed">Not Installed</option>
-          </select>
+          <div class="library-tabs" role="tablist" aria-label="Library filters">
+            <button class="library-tab" :class="{ active: filter === 'all' }" type="button" @click="filter = 'all'">All</button>
+            <button
+              class="library-tab"
+              :class="{ active: filter === 'metalsharp_installed' }"
+              type="button"
+              @click="filter = 'metalsharp_installed'"
+            >
+              MetalSharp Installed
+            </button>
+            <button
+              class="library-tab"
+              :class="{ active: filter === 'gptk_installed' }"
+              type="button"
+              @click="filter = 'gptk_installed'"
+            >
+              GPTK Installed
+            </button>
+            <button
+              class="library-tab"
+              :class="{ active: filter === 'not_installed' }"
+              type="button"
+              @click="filter = 'not_installed'"
+            >
+              Not Installed
+            </button>
+          </div>
         </div>
         <button class="btn btn-secondary library-control-button refresh-button" title="Refresh" @click="reloadLibrary()">
           <svg class="control-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -451,10 +545,10 @@ watch([library, search, filter], applyFilter);
     <div v-else class="game-grid">
       <GameCard
         v-for="game in filteredGames"
-        :key="game.appid"
+        :key="game.library_id ?? game.appid"
         :game="game"
-        :running="runningAppId === game.appid"
-        :launching="launchingAppId === game.appid"
+        :running="runningLibraryId === (game.library_id ?? String(game.appid))"
+        :launching="launchingLibraryId === (game.library_id ?? String(game.appid))"
         :steam-installed="wineSteamInstalled"
         @play="launchGame(game, $event)"
         @stop="stopGame(game)"
@@ -520,7 +614,7 @@ watch([library, search, filter], applyFilter);
 }
 .library-controls-center {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 148px;
+  grid-template-columns: minmax(150px, 1fr) minmax(360px, auto);
   gap: 10px;
   min-width: 0;
 }
@@ -529,6 +623,38 @@ watch([library, search, filter], applyFilter);
 }
 .library-controls-center select {
   min-width: 0;
+}
+.library-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, auto));
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.library-tab {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.library-tab.active {
+  background: var(--accent);
+  color: var(--bg-deep);
+}
+.library-tab:hover:not(.active) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
 }
 .library-control-button {
   flex: 0 1 auto;
@@ -572,6 +698,9 @@ watch([library, search, filter], applyFilter);
   }
   .library-controls-center {
     grid-template-columns: 1fr;
+  }
+  .library-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
