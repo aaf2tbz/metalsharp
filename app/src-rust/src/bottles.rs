@@ -277,6 +277,10 @@ pub struct SteamRuntimeDiagnostic {
     pub recipe_missing_components: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipe_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recipe_missing_dlls: Vec<String>,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub recipe_env: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -1184,8 +1188,9 @@ pub fn repair_component(
             } else {
                 continue;
             };
-            let _ = fs::copy(&src, &dst);
-            copied += 1;
+            if fs::copy(&src, &dst).is_ok() {
+                copied += 1;
+            }
         }
 
         let installed = copied == stub_files.len();
@@ -1501,6 +1506,19 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let compatdata = load_steam_compatdata(appid).ok();
     let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
     let recipe = crate::mtsp::rules::get_game_recipe(appid);
+    let missing_check_dlls = recipe
+        .as_ref()
+        .map(|r| {
+            let system32 = prefix.join("drive_c/windows/system32");
+            let syswow64 = prefix.join("drive_c/windows/syswow64");
+            r.check_dlls
+                .iter()
+                .filter(|dll| !system32.join(dll).exists() && !syswow64.join(dll).exists())
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let recipe_env = recipe.as_ref().map(|r| r.env.clone()).unwrap_or_default();
     let report = SteamRuntimeDiagnostic {
         appid: Some(appid),
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
@@ -1514,6 +1532,8 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         compatdata,
         recipe_missing_components: recipe_deps,
         recipe_name: recipe.map(|r| r.name),
+        recipe_missing_dlls: missing_check_dlls,
+        recipe_env,
     };
     json!({"ok": true, "report": report})
 }
@@ -2204,8 +2224,11 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "gpu_vendor_stubs" => {
-            if system32.join("nvapi64.dll").exists() || system32.join("nvngx.dll").exists() {
+            let has = |dll: &str| -> bool { system32.join(dll).exists() };
+            if has("nvapi64.dll") && has("nvngx.dll") {
                 ComponentState::Installed
+            } else if has("nvapi64.dll") || has("nvngx.dll") {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }

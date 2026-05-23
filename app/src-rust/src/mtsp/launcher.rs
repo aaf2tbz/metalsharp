@@ -811,6 +811,11 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
+    if let Some(recipe) = super::rules::get_game_recipe(appid) {
+        for (key, value) in recipe.env {
+            env.push((key, value));
+        }
+    }
     env
 }
 
