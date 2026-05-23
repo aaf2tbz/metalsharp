@@ -324,9 +324,7 @@ fn run_pkill(args: &[&str]) {
 struct PreservedData {
     setup_json: Option<Vec<u8>>,
     steam_config_json: Option<Vec<u8>>,
-    gptk_steam_install_progress_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
-    prefix_gptk_steam_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
@@ -343,10 +341,6 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     let steam_config_path = ms_dir.join("cache").join("steam_config.json");
     let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
 
-    let gptk_steam_install_progress_path = ms_dir.join("gptk_steam_install_progress.json");
-    let gptk_steam_install_progress_json =
-        gptk_steam_install_progress_path.exists().then(|| fs::read(&gptk_steam_install_progress_path).ok()).flatten();
-
     write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
     let prefix_steam = ms_dir.join("prefix-steam");
@@ -354,15 +348,6 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
         let skip = ["dosdevices", "windows", "ProgramData"];
         preserve_selective(&prefix_steam, &prefix_steam_tmp, &skip);
-    }
-
-    write_migrate_progress("running", 2, 5, "Preserving user data (GPTK Steam prefix)...", None);
-    let prefix_gptk_steam_tmp = tmp.join("prefix-gptk-steam");
-    let prefix_gptk_steam = ms_dir.join("prefix-gptk-steam");
-    if prefix_gptk_steam.exists() {
-        let _ = fs::create_dir_all(&prefix_gptk_steam_tmp);
-        let skip = ["dosdevices", "windows", "ProgramData"];
-        preserve_selective(&prefix_gptk_steam, &prefix_gptk_steam_tmp, &skip);
     }
 
     write_migrate_progress("running", 2, 5, "Preserving user data (games)...", None);
@@ -400,9 +385,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     PreservedData {
         setup_json,
         steam_config_json,
-        gptk_steam_install_progress_json,
         prefix_steam_tmp,
-        prefix_gptk_steam_tmp,
         games_tmp,
         sharp_library_tmp,
         bottles_tmp,
@@ -490,16 +473,6 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         ensure_prefix_dosdevices(&dst);
     }
 
-    if preserved.prefix_gptk_steam_tmp.exists() {
-        let dst = ms_dir.join("prefix-gptk-steam");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.prefix_gptk_steam_tmp, &dst);
-
-        ensure_prefix_dosdevices(&dst);
-    }
-
     if preserved.games_tmp.exists() {
         let dst = ms_dir.join("games");
         if !dst.exists() {
@@ -540,10 +513,6 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         let cache_dir = ms_dir.join("cache");
         let _ = fs::create_dir_all(&cache_dir);
         let _ = fs::write(cache_dir.join("steam_config.json"), data);
-    }
-
-    if let Some(ref data) = preserved.gptk_steam_install_progress_json {
-        let _ = fs::write(ms_dir.join("gptk_steam_install_progress.json"), data);
     }
 }
 
@@ -691,37 +660,6 @@ mod tests {
             fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
             r#"{"appid":620}"#
         );
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_preserves_gptk_steam_prefix_and_install_progress() {
-        let home = test_dir("preserve-gptk-steam");
-        let ms_dir = home.join(".metalsharp");
-        let gptk_login = ms_dir
-            .join("prefix-gptk-steam")
-            .join("drive_c")
-            .join("Program Files (x86)")
-            .join("Steam")
-            .join("config")
-            .join("loginusers.vdf");
-        fs::create_dir_all(gptk_login.parent().unwrap()).expect("create gptk steam config dir");
-        fs::write(&gptk_login, b"gptk-user").expect("write gptk login");
-        fs::write(ms_dir.join("gptk_steam_install_progress.json"), br#"{"phase":"ready"}"#)
-            .expect("write gptk install progress");
-
-        let preserved = preserve_user_data(&ms_dir);
-        fs::remove_dir_all(ms_dir.join("prefix-gptk-steam")).expect("remove live gptk prefix");
-        fs::remove_file(ms_dir.join("gptk_steam_install_progress.json")).expect("remove live gptk progress");
-        remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
-
-        assert_eq!(fs::read_to_string(&gptk_login).unwrap(), "gptk-user");
-        assert_eq!(
-            fs::read_to_string(ms_dir.join("gptk_steam_install_progress.json")).unwrap(),
-            r#"{"phase":"ready"}"#
-        );
-        assert!(ms_dir.join("prefix-gptk-steam").join("dosdevices").join("c:").exists());
         let _ = fs::remove_dir_all(home);
     }
 

@@ -132,9 +132,7 @@ pub fn launch_with_pipeline(
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
-            launch_dxmt_metal(appid, node)
-        },
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam => launch_steam(appid),
@@ -180,7 +178,7 @@ pub fn launch_steam_bottle_with_pipeline_from_game_dir(
         .map(|(pid, game_type, _)| (pid, game_type))
     } else {
         match pipeline_id {
-            PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
+            PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
                 launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
             },
             PipelineId::M32 | PipelineId::WineBare => {
@@ -203,10 +201,6 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
-    if node.backend == "gptk" {
-        let home = dirs::home_dir().ok_or("no home dir")?;
-        ensure_gptk_unix_links(&home.join(".metalsharp").join("runtime").join("wine"))?;
-    }
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
     deploy_recipe_dlls(&recipe)?;
@@ -232,7 +226,6 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
@@ -241,9 +234,6 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    if node.backend == "gptk" {
-        ensure_gptk_unix_links(&home.join(".metalsharp").join("runtime").join("wine"))?;
-    }
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
     if !recipe.dlls.is_empty() {
@@ -334,7 +324,6 @@ pub fn launch_custom_with_options(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
@@ -349,9 +338,6 @@ pub fn launch_custom_with_options(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    if node.backend == "gptk" {
-        ensure_gptk_unix_links(&ms_root)?;
-    }
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
     if node.deploy_dlls.is_empty() {
@@ -372,9 +358,7 @@ pub fn launch_custom_with_options(
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = wine_command_for_node(node, &wine, &dyld_path)?;
     cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
-    if node.backend != "gptk" {
-        cmd.env(runtime_lib_key, &dyld_path);
-    }
+    cmd.env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -457,12 +441,8 @@ fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static s
     launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
 
-fn default_prefix_for_node(home: &Path, node: &PipelineNode) -> PathBuf {
-    if node.backend == "gptk" {
-        crate::steam::gptk_steam_prefix()
-    } else {
-        home.join(".metalsharp").join("prefix-steam")
-    }
+fn default_prefix_for_node(home: &Path, _node: &PipelineNode) -> PathBuf {
+    home.join(".metalsharp").join("prefix-steam")
 }
 
 fn apply_steam_identity_env(cmd: &mut Command, appid: u32) {
@@ -485,9 +465,6 @@ fn launch_dxmt_metal_with_context(
         return Err("MetalSharp Wine not found — run setup first".into());
     }
 
-    if node.backend == "gptk" {
-        ensure_gptk_unix_links(&ms_root)?;
-    }
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
@@ -507,9 +484,7 @@ fn launch_dxmt_metal_with_context(
 
     let mut cmd = wine_command_for_node(node, &wine, &dyld_path)?;
     cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
-    if node.backend != "gptk" {
-        cmd.env(runtime_lib_key, &dyld_path);
-    }
+    cmd.env(runtime_lib_key, &dyld_path);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -550,70 +525,11 @@ fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static st
 }
 
 fn wine_command_for_node(
-    node: &PipelineNode,
+    _node: &PipelineNode,
     default_wine: &Path,
-    dyld_path: &str,
+    _dyld_path: &str,
 ) -> Result<Command, Box<dyn std::error::Error>> {
-    if node.backend != "gptk" {
-        return Ok(Command::new(default_wine));
-    }
-
-    let gptk_root = PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine");
-    let gptk_wine = gptk_root.join("bin").join("wine64");
-    let gptk_server = gptk_root.join("bin").join("wineserver");
-    if !gptk_wine.exists() || !gptk_server.exists() {
-        return Err("Game Porting Toolkit Wine is missing - install GPTK to use M13".into());
-    }
-
-    let gptk_dyld = format!(
-        "{}:{}:{}:{}",
-        gptk_root.join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_root.join("lib").join("external").display(),
-        gptk_root.join("lib").display(),
-        dyld_path
-    );
-
-    let mut cmd = Command::new("arch");
-    cmd.arg("-x86_64")
-        .arg(&gptk_wine)
-        .env("WINESERVER", gptk_server)
-        .env("WINELOADER", gptk_wine)
-        .env(
-            "WINEDLLPATH",
-            format!(
-                "{}:{}",
-                gptk_root.join("lib").join("wine").join("x86_64-windows").display(),
-                gptk_root.join("lib").join("wine").join("i386-windows").display()
-            ),
-        )
-        .env("DYLD_FALLBACK_LIBRARY_PATH", gptk_dyld);
-    Ok(cmd)
-}
-
-fn ensure_gptk_unix_links(ms_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let gptk_root = ms_root.join("lib").join("gptk");
-    let shared = gptk_root.join("external").join("libd3dshared.dylib");
-    if !shared.exists() {
-        return Err(format!("GPTK shared library is missing: {}", shared.display()).into());
-    }
-    let link_dirs = [
-        (gptk_root.join("x86_64-unix"), "../external/libd3dshared.dylib"),
-        (ms_root.join("lib").join("wine").join("x86_64-unix"), "../../gptk/external/libd3dshared.dylib"),
-    ];
-    for (dir, target) in link_dirs {
-        std::fs::create_dir_all(&dir)?;
-        for name in ["d3d12.so", "dxgi.so"] {
-            let link = dir.join(name);
-            if link.exists() {
-                continue;
-            }
-            if std::fs::symlink_metadata(&link).is_ok() {
-                std::fs::remove_file(&link)?;
-            }
-            std::os::unix::fs::symlink(target, &link)?;
-        }
-    }
-    Ok(())
+    Ok(Command::new(default_wine))
 }
 
 fn launch_wine_bare_with_context(
@@ -841,7 +757,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     let appid_string = appid.to_string();
     let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
 
-    if node.backend != "gptk" && !node.dyld_paths.is_empty() {
+    if !node.dyld_paths.is_empty() {
         let runtime_lib_key =
             crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
         env.push((runtime_lib_key.to_string(), build_dyld(&ms_root, &node.dyld_paths)));
@@ -1339,16 +1255,6 @@ mod tests {
         assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
         assert!(!keys.contains("DXVK_LOG_PATH"));
         assert!(!keys.contains("VK_ICD_FILENAMES"));
-    }
-
-    #[test]
-    fn m13_defaults_to_gptk_steam_prefix() {
-        let home = test_dir("m13-prefix");
-        let m13 = get_pipeline(PipelineId::M13);
-        let m12 = get_pipeline(PipelineId::M12);
-
-        assert_eq!(default_prefix_for_node(&home, m13), crate::steam::gptk_steam_prefix());
-        assert_eq!(default_prefix_for_node(&home, m12), home.join(".metalsharp").join("prefix-steam"));
     }
 
     #[test]

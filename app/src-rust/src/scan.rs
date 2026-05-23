@@ -266,29 +266,6 @@ pub fn wine_steam_library_paths() -> Vec<PathBuf> {
     paths
 }
 
-pub fn gptk_steam_library_paths() -> Vec<PathBuf> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return Vec::new(),
-    };
-
-    let gptk_steamapps = home
-        .join(".metalsharp")
-        .join("prefix-gptk-steam")
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
-
-    if !gptk_steamapps.exists() {
-        return Vec::new();
-    }
-
-    let mut paths = vec![gptk_steamapps.clone()];
-    paths.extend(parse_library_folders(&gptk_steamapps));
-    paths
-}
-
 pub fn scan_non_steam_shortcuts() -> Vec<NonSteamShortcut> {
     let mut shortcuts = Vec::new();
     let mut seen = HashSet::new();

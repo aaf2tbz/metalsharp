@@ -315,11 +315,8 @@ fn steam_launch_prefix() -> PathBuf {
 }
 
 fn steam_launch_prefix_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> PathBuf {
-    if matches!(pipeline, crate::mtsp::engine::PipelineId::M13) {
-        crate::steam::gptk_steam_prefix()
-    } else {
-        steam_launch_prefix()
-    }
+    let _ = pipeline;
+    steam_launch_prefix()
 }
 
 pub fn bottle_dir(id: &str) -> PathBuf {
@@ -543,11 +540,8 @@ pub fn steam_game_bottle_id(appid: u32) -> String {
 }
 
 pub fn steam_game_bottle_id_for_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> String {
-    if matches!(pipeline, crate::mtsp::engine::PipelineId::M13) {
-        format!("gptk_steam_{}", appid)
-    } else {
-        steam_game_bottle_id(appid)
-    }
+    let _ = pipeline;
+    steam_game_bottle_id(appid)
 }
 
 fn apply_steam_game_bottle_metadata(
@@ -3841,7 +3835,6 @@ mod tests {
         assert_eq!(steam_game_bottle_id(620), "steam_620");
         assert_ne!(steam_game_bottle_id(620), steam_game_bottle_id(504230));
         assert_eq!(steam_game_bottle_id_for_pipeline(620, crate::mtsp::engine::PipelineId::M12), "steam_620");
-        assert_eq!(steam_game_bottle_id_for_pipeline(620, crate::mtsp::engine::PipelineId::M13), "gptk_steam_620");
     }
 
     #[test]
@@ -3871,23 +3864,6 @@ mod tests {
 
         assert_eq!(PathBuf::from(&manifest.prefix_path), steam_launch_prefix());
         assert!(!should_wait_for_prefix_idle(&manifest));
-    }
-
-    #[test]
-    fn m13_steam_game_bottles_bind_to_gptk_steam_prefix() {
-        assert_eq!(
-            steam_launch_prefix_for_pipeline(crate::mtsp::engine::PipelineId::M13),
-            crate::steam::gptk_steam_prefix()
-        );
-        assert_eq!(steam_launch_prefix_for_pipeline(crate::mtsp::engine::PipelineId::M12), steam_launch_prefix());
-    }
-
-    #[test]
-    fn m13_steam_game_bottle_identity_stays_separate_from_wine_steam() {
-        assert_ne!(
-            steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M13),
-            steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M12)
-        );
     }
 
     #[test]
@@ -3936,39 +3912,6 @@ mod tests {
         assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
         assert_eq!(record.last_launch_pid, Some(1234));
         assert_eq!(record.last_launch_status.as_deref(), Some("running"));
-    }
-
-    #[test]
-    fn m13_compatdata_reports_gptk_steam_prefix() {
-        let manifest = BottleManifest {
-            id: steam_game_bottle_id_for_pipeline(1245620, crate::mtsp::engine::PipelineId::M13),
-            name: "ELDEN RING".into(),
-            bottle_type: BottleType::Steam,
-            steam_app_id: Some(1245620),
-            prefix_path: crate::steam::gptk_steam_prefix().to_string_lossy().to_string(),
-            arch: BottleArch::Wow64,
-            runtime_profile: runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M13),
-            installed_components: default_components_for(RuntimeProfile::Plain),
-            source_installer_path: None,
-            installer_kind: None,
-            game_install_path: Some("/games/ELDEN RING".into()),
-            runtime_assets: Vec::new(),
-            installed_app_detections: Vec::new(),
-            health: BottleHealth::Ready,
-            last_launch_log: None,
-            last_launch_pid: None,
-            last_launch_status: None,
-            last_launch_finished_at: None,
-            created_at: timestamp_secs(),
-            updated_at: timestamp_secs(),
-        };
-
-        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::M13);
-
-        assert_eq!(record.bottle_id, "gptk_steam_1245620");
-        assert_eq!(record.prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
-        assert_eq!(record.steam_prefix_path, crate::steam::gptk_steam_prefix().to_string_lossy().to_string());
-        assert_eq!(record.launch_pipeline, "d3dmetal");
     }
 
     #[test]

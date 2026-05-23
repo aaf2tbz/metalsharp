@@ -88,7 +88,6 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
@@ -154,7 +153,6 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
@@ -308,13 +306,7 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     let mut warnings = recipe.warnings.clone();
     let direct_wine_pipeline = matches!(
         recipe.pipeline,
-        PipelineId::M9
-            | PipelineId::M10
-            | PipelineId::M11
-            | PipelineId::M12
-            | PipelineId::M13
-            | PipelineId::M32
-            | PipelineId::WineBare
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 | PipelineId::WineBare
     );
     let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
 
@@ -470,7 +462,7 @@ fn compatible_route_hint(api: super::pe::D3dApi) -> &'static str {
         super::pe::D3dApi::D3D9 => "M9",
         super::pe::D3dApi::D3D10 => "M10",
         super::pe::D3dApi::D3D11 => "M11",
-        super::pe::D3dApi::D3D12 => "M12 or D3DMetal",
+        super::pe::D3dApi::D3D12 => "M12",
         super::pe::D3dApi::Unknown => "Auto",
     }
 }
@@ -563,8 +555,7 @@ fn inspect_exe_route_compatibility(
     let api = d3d_api_label(pe.detected_api);
     let detail = format!("{} executable, imports {}", arch, api);
 
-    if !pe.is_64_bit && matches!(recipe.pipeline, PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13)
-    {
+    if !pe.is_64_bit && matches!(recipe.pipeline, PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
         let message = format!(
             "{} route requires a 64-bit Windows executable, but {} is 32-bit",
             recipe.pipeline_name,
@@ -613,7 +604,6 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M10, super::pe::D3dApi::D3D10)
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
-            | (PipelineId::M13, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }
@@ -754,13 +744,6 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     for path in &node.dyld_paths {
         let p = ms_root.join(path);
         assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
-    }
-
-    if node.backend == "gptk" {
-        for path in ["lib/gptk/x86_64-unix/d3d12.so", "lib/gptk/x86_64-unix/dxgi.so"] {
-            let p = ms_root.join(path);
-            assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
-        }
     }
 
     if node.backend == "dxmt" {
@@ -1106,7 +1089,7 @@ mod tests {
         assert!(message.contains("Selected route M11"));
         assert!(message.contains("Subnautica2.exe"));
         assert!(message.contains("D3D12"));
-        assert!(message.contains("M12 or D3DMetal"));
+        assert!(message.contains("M12"));
     }
 
     #[test]

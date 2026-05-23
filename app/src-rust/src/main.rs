@@ -282,56 +282,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
             }
         },
-        (Method::Post, "/steam/gptk-launch") => {
-            app_log("Launching GPTK Wine Steam...");
-            match steam::launch_gptk_steam() {
-                Ok(v) => resp(200, v),
-                Err(e) => {
-                    app_issue_log("steam-launch", "gptk-steam", &e.to_string(), &[]);
-                    resp(500, json!({"ok": false, "error": e.to_string()}))
-                },
-            }
-        },
-        (Method::Post, "/steam/gptk-install") => {
-            app_log("Installing GPTK Wine Steam...");
-            match steam::install_gptk_steam() {
-                Ok(v) => resp(200, v),
-                Err(e) => {
-                    app_issue_log("steam-install", "gptk-steam", &e.to_string(), &[]);
-                    resp(500, json!({"ok": false, "error": e.to_string()}))
-                },
-            }
-        },
-        (Method::Post, "/steam/gptk-toolkit-install") => {
-            app_log("Opening Game Porting Toolkit download...");
-            match steam::open_gptk_toolkit_download() {
-                Ok(v) => resp(200, v),
-                Err(e) => {
-                    app_issue_log("steam-install", "gptk-toolkit", &e.to_string(), &[]);
-                    resp(500, json!({"ok": false, "error": e.to_string()}))
-                },
-            }
-        },
-        (Method::Post, "/steam/gptk-sync") => {
-            app_log("Installing GPTK Wine Steam...");
-            match steam::sync_gptk_steam_prefix() {
-                Ok(v) => resp(200, v),
-                Err(e) => {
-                    app_issue_log("steam-install", "gptk-steam", &e.to_string(), &[]);
-                    resp(500, json!({"ok": false, "error": e.to_string()}))
-                },
-            }
-        },
-        (Method::Post, "/steam/gptk-stop") => {
-            app_log("Stopping GPTK Wine Steam...");
-            match steam::stop_gptk_steam() {
-                Ok(v) => resp(200, v),
-                Err(e) => {
-                    app_issue_log("steam-stop", "gptk-steam", &e.to_string(), &[]);
-                    resp(500, json!({"ok": false, "error": e.to_string()}))
-                },
-            }
-        },
         (Method::Post, "/steam/mac-launch") => {
             app_log("Launching macOS Steam...");
             match steam::launch_macos_steam() {
@@ -407,54 +357,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             match parse_request_appid(&body) {
                 Ok(id) => {
-                    let source_is_gptk = request_library_source_is_gptk(&body);
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
-                        _ if source_is_gptk => Some(mtsp::engine::PipelineId::M13),
                         Some(mtsp::engine::PipelineId::Steam) => None,
                         Some(pipeline) => Some(pipeline),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
                         None => Some(mtsp::rules::resolve_pipeline(id)),
                     };
-                    let source_game_dir = if source_is_gptk {
-                        match steam::resolve_gptk_game_dir(id) {
-                            Some(dir) => Some(dir),
-                            None => {
-                                return resp(
-                                    404,
-                                    json!({"ok": false, "error": "GPTK Steam install not found for this appid"}),
-                                )
-                            },
-                        }
-                    } else {
-                        None
-                    };
-                    app_log(&format!(
-                        "Launching game via Wine Steam: appid {}, route {}, source {}",
-                        id,
-                        launch_method,
-                        if source_is_gptk { "gptk" } else { "default" }
-                    ));
+                    app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method,));
                     let launch_result = match route_pipeline {
                         Some(pipeline) => {
                             if let Some(explicit_pipeline) = mtsp::engine::PipelineId::from_str_flexible(launch_method)
                             {
                                 if explicit_pipeline == pipeline {
                                     let node = mtsp::engine::get_pipeline(pipeline);
-                                    if let Err(e) = mtsp::recipe::validate_explicit_pipeline_selection(
-                                        id,
-                                        node,
-                                        source_game_dir.as_deref(),
-                                    ) {
+                                    if let Err(e) = mtsp::recipe::validate_explicit_pipeline_selection(id, node, None) {
                                         return resp(400, json!({"ok": false, "error": e.to_string()}));
                                     }
                                 }
                             }
-                            let bottle = match bottles::prepare_steam_game_launch_with_game_dir(
-                                id,
-                                pipeline,
-                                source_game_dir.as_deref(),
-                            ) {
+                            let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
@@ -463,51 +385,35 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let compatdata = bottles::load_steam_compatdata(id).ok();
-                            let steam_started = if matches!(pipeline, mtsp::engine::PipelineId::M13) {
-                                match steam::ensure_gptk_steam_ready_for_game_launch() {
-                                    Ok(started) => started,
-                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
-                                }
-                            } else {
-                                match steam::ensure_wine_steam_ready_for_game_launch() {
-                                    Ok(started) => started,
-                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
-                                }
+                            let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
+                                Ok(started) => started,
+                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
-                            mtsp::launcher::launch_steam_bottle_with_pipeline_from_game_dir(
-                                id,
-                                pipeline,
-                                &bottle_prefix,
-                                &env,
-                                source_game_dir.as_deref(),
+                            mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(
+                                |(pid, game_type, log_path)| {
+                                    let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
+                                        .ok()
+                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
+                                        .or(compatdata);
+                                    json!({
+                                        "ok": true,
+                                        "pid": pid,
+                                        "appid": id,
+                                        "gameType": game_type,
+                                        "bottle_id": bottle.id,
+                                        "bottle_prefix": bottle_prefix.to_string_lossy().to_string(),
+                                        "launch_log": log_path.to_string_lossy().to_string(),
+                                        "compatdata": compatdata,
+                                        "pipeline": pipeline,
+                                        "recipe": recipe,
+                                        "steam_started": steam_started,
+                                        "steam_runtime": "background",
+                                        "env_applied_to": "game_process",
+                                        "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                                    })
+                                },
                             )
-                            .map(|(pid, game_type, log_path)| {
-                                let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
-                                    .ok()
-                                    .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
-                                    .or(compatdata);
-                                json!({
-                                    "ok": true,
-                                    "pid": pid,
-                                    "appid": id,
-                                    "gameType": game_type,
-                                    "bottle_id": bottle.id,
-                                    "bottle_prefix": bottle_prefix.to_string_lossy().to_string(),
-                                    "launch_log": log_path.to_string_lossy().to_string(),
-                                    "compatdata": compatdata,
-                                    "pipeline": pipeline,
-                                    "recipe": recipe,
-                                    "steam_started": steam_started,
-                                    "steam_runtime": if matches!(pipeline, mtsp::engine::PipelineId::M13) {
-                                        "offline_gptk"
-                                    } else {
-                                        "background"
-                                    },
-                                    "env_applied_to": "game_process",
-                                    "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-                                })
-                            })
                         },
                         None => {
                             let pipeline = mtsp::rules::resolve_pipeline(id);
@@ -1400,14 +1306,6 @@ fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Res
     Ok(appid)
 }
 
-fn request_library_source_is_gptk(body: &serde_json::Map<String, serde_json::Value>) -> bool {
-    let source =
-        body.get("library_source").or_else(|| body.get("librarySource")).and_then(|v| v.as_str()).unwrap_or_default();
-    let library_id =
-        body.get("library_id").or_else(|| body.get("libraryId")).and_then(|v| v.as_str()).unwrap_or_default();
-    source.eq_ignore_ascii_case("gptk") || library_id.to_ascii_lowercase().starts_with("gptk:")
-}
-
 fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1490,21 +1388,5 @@ mod tests {
         body.insert("appid".into(), json!(620));
 
         assert_eq!(parse_request_appid(&body), Ok(620));
-    }
-
-    #[test]
-    fn launch_source_preserves_gptk_card_identity() {
-        let mut by_source = serde_json::Map::new();
-        by_source.insert("library_source".into(), json!("gptk"));
-        assert!(request_library_source_is_gptk(&by_source));
-
-        let mut by_library_id = serde_json::Map::new();
-        by_library_id.insert("library_id".into(), json!("gptk:1245620"));
-        assert!(request_library_source_is_gptk(&by_library_id));
-
-        let mut metalsharp = serde_json::Map::new();
-        metalsharp.insert("library_source".into(), json!("metalsharp"));
-        metalsharp.insert("library_id".into(), json!("metalsharp:1245620"));
-        assert!(!request_library_source_is_gptk(&metalsharp));
     }
 }
