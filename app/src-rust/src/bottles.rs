@@ -1489,7 +1489,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019"][..],
+            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::Dotnet => (
@@ -1936,6 +1936,13 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 || syswow64.join("PhysXLoader.dll").exists()
                 || drive_c.join("Program Files (x86)").join("NVIDIA Corporation").join("PhysX").exists()
             {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gpu_vendor_stubs" => {
+            if system32.join("nvapi64.dll").exists() || system32.join("nvngx.dll").exists() {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -2578,6 +2585,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
+            "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist DirectX June 2010 payload",
@@ -2603,6 +2611,7 @@ fn component_action_detail(id: &str) -> String {
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
         "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
+        "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
