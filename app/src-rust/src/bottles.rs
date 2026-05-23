@@ -49,6 +49,7 @@ pub enum RuntimeProfile {
     M10,
     M11,
     M12,
+    M13,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -695,6 +696,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
+            crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -1433,6 +1435,7 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::M10,
         RuntimeProfile::M11,
         RuntimeProfile::M12,
+        RuntimeProfile::M13,
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
@@ -1491,6 +1494,13 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             true,
             &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs"][..],
             crate::mtsp::engine::PipelineId::M12,
+        ),
+        RuntimeProfile::M13 => (
+            "GPTK D3DMetal",
+            BottleArch::Win64,
+            true,
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs"][..],
+            crate::mtsp::engine::PipelineId::M13,
         ),
         RuntimeProfile::Dotnet => (
             ".NET",
@@ -1585,6 +1595,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
+        crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -1599,6 +1610,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
+        "m13" | "gptk" | "d3dmetal" => Some(RuntimeProfile::M13),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),

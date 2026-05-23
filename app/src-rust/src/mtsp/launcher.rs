@@ -132,6 +132,7 @@ pub fn launch_with_pipeline(
 
     match pipeline_id {
         PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
+        PipelineId::M13 => launch_dxmt_metal(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam => launch_steam(appid),
@@ -150,7 +151,7 @@ pub fn launch_steam_bottle_with_pipeline(
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
     let result = match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
@@ -206,6 +207,7 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
@@ -306,10 +308,11 @@ pub fn launch_custom_with_options(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, or M32".into());
+            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, M13, or M32".into());
         },
     }
 
