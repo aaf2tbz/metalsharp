@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MetalSharp CompatDB Rules",
+  "description": "Rules for mscompatdb.so v2 DLL routing interception layer",
+  "type": "object",
+  "required": ["version", "generated_at", "backends", "game_rules", "default_backend"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 2,
+      "description": "Schema version"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "Unix epoch timestamp when rules were generated"
+    },
+    "backends": {
+      "type": "object",
+      "description": "Available graphics backends and their DLL directories",
+      "additionalProperties": {
+        "type": "string",
+        "description": "Relative path to the backend's PE DLL directory"
+      }
+    },
+    "game_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["appid", "graphics_backend", "dll_redirects"],
+        "properties": {
+          "appid": {
+            "type": "integer",
+            "description": "Steam application ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable game name"
+          },
+          "process_patterns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Process name patterns to match (e.g. eldenring.exe)"
+          },
+          "graphics_backend": {
+            "type": "string",
+            "enum": ["dxmt", "gptk", "wine", "native"],
+            "description": "Selected graphics backend for this game"
+          },
+          "dll_redirects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["dll", "backend", "source_dir"],
+              "properties": {
+                "dll": { "type": "string" },
+                "backend": { "type": "string" },
+                "source_dir": { "type": "string" }
+              }
+            }
+          },
+          "offline_capable": {
+            "type": "boolean",
+            "description": "Whether offline mode is supported"
+          },
+          "anticheat": {
+            "type": ["string", "null"],
+            "description": "Anti-cheat system identifier (e.g. eac_eos, battleye)"
+          }
+        }
+      }
+    },
+    "default_backend": {
+      "type": "string",
+      "description": "Default graphics backend when no game rule matches"
+    }
+  }
+}
