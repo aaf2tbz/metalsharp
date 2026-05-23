@@ -698,6 +698,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, sharp_library::handle_relaunch_bottle_installer(&body))
         },
+        (Method::Post, "/bottles/apply-font-subs") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_apply_font_substitutions(&body))
+        },
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))

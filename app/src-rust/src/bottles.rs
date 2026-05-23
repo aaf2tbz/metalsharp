@@ -1334,6 +1334,23 @@ pub fn handle_set_windows_version(body: &serde_json::Map<String, Value>) -> Valu
     }
 }
 
+pub fn handle_apply_font_substitutions(body: &serde_json::Map<String, Value>) -> Value {
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return json!({"ok": false, "error": "id required"});
+    }
+    let manifest = match load_bottle(id) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    let log_path = bottle_logs_dir(id).join("font-subs.log");
+    match apply_font_substitutions(&prefix, &log_path) {
+        Ok(pid) => json!({"ok": true, "pid": pid, "id": id}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 pub fn handle_compatibility_matrix() -> Value {
     json!({
         "ok": true,
@@ -2468,6 +2485,91 @@ fn run_wine_reg_set_windows_version(
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
     let child = cmd.spawn()?;
     Ok(child.id())
+}
+
+const FONT_SUBSTITUTIONS: &[(&str, &str)] = &[
+    ("Helvetica", "Arial"),
+    ("Times", "Times New Roman"),
+    ("Helv", "MS Sans Serif"),
+    ("Tms Rmn", "Times New Roman"),
+    ("MS Shell Dlg", "Tahoma"),
+    ("MS Shell Dlg 2", "Tahoma"),
+    ("Arial Baltic,186", "Arial,186"),
+    ("Arial CE,238", "Arial,238"),
+    ("Arial CYR,204", "Arial,204"),
+    ("Arial Greek,161", "Arial,161"),
+    ("Arial TUR,162", "Arial,162"),
+    ("Courier New Baltic,186", "Courier New,186"),
+    ("Courier New CE,238", "Courier New,238"),
+    ("Courier New CYR,204", "Courier New,204"),
+    ("Courier New Greek,161", "Courier New,161"),
+    ("Courier New TUR,162", "Courier New,162"),
+    ("Times New Roman Baltic,186", "Times New Roman,186"),
+    ("Times New Roman CE,238", "Times New Roman,238"),
+    ("Times New Roman CYR,204", "Times New Roman,204"),
+    ("Times New Roman Greek,161", "Times New Roman,161"),
+    ("Times New Roman TUR,162", "Times New Roman,162"),
+];
+
+const WINE_FONT_REPLACEMENTS: &[(&str, &str)] = &[
+    ("Arial", "Helvetica Neue"),
+    ("MS Gothic", "Hiragino Sans"),
+    ("MS PGothic", "Hiragino Sans"),
+    ("SimSun", "STSong"),
+    ("NSimSun", "STSong"),
+    ("MingLiU", "LiSong Pro"),
+    ("PMingLiU", "LiSong Pro"),
+    ("Microsoft Himalaya", "Kailasa"),
+    ("Euphemia", "Euphemia UCAS"),
+    ("Gulim", "Apple SD Gothic Neo"),
+];
+
+pub fn apply_font_substitutions(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let reg_content = build_font_substitution_reg();
+    let reg_file = prefix.join("drive_c").join("metalsharp-fontsubs.reg");
+    fs::write(&reg_file, &reg_content)?;
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "font_substitutions_applied")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    let stdout = log.try_clone()?;
+
+    let reg_file_win = wine_z_drive_path(&reg_file);
+    let mut cmd = Command::new(&wine);
+    cmd.arg("regedit")
+        .arg(&reg_file_win)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
+fn build_font_substitution_reg() -> String {
+    let mut reg = String::from("REGEDIT4\r\n\r\n");
+    reg.push_str("[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes]\r\n");
+    for (name, value) in FONT_SUBSTITUTIONS {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", name, value));
+    }
+    reg.push_str("\r\n");
+    reg.push_str("[HKEY_CURRENT_USER\\Software\\Wine\\Fonts\\Replacements]\r\n");
+    for (name, value) in WINE_FONT_REPLACEMENTS {
+        reg.push_str(&format!("\"{}\"=\"{}\"\r\n", name, value));
+    }
+    reg
 }
 
 fn wine_z_drive_path(path: &Path) -> String {
@@ -4068,5 +4170,25 @@ mod tests {
         let components = components_from_installscript(&script);
         assert!(components.iter().any(|c| c == "vcrun2013"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn font_substitution_reg_includes_core_entries() {
+        let reg = build_font_substitution_reg();
+        assert!(reg.contains("REGEDIT4"));
+        assert!(reg.contains("FontSubstitutes"));
+        assert!(reg.contains("Helvetica"));
+        assert!(reg.contains("MS Shell Dlg"));
+        assert!(reg.contains("Fonts\\Replacements"));
+        assert!(reg.contains("SimSun"));
+        assert!(reg.contains("Arial Baltic,186"));
+    }
+
+    #[test]
+    fn wine_font_replacements_map_to_macos_fonts() {
+        let reg = build_font_substitution_reg();
+        assert!(reg.contains("Hiragino"));
+        assert!(reg.contains("STSong"));
+        assert!(reg.contains("LiSong Pro"));
     }
 }
