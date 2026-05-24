@@ -19,6 +19,7 @@
 
 mod anticheat;
 mod bottles;
+mod d3d12_runtime_doctor;
 mod installer;
 mod launch;
 mod launcher_evidence;
@@ -717,6 +718,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))
+        },
+        (Method::Post, "/steam/d3d12-runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, d3d12_runtime_doctor::handle_steam_d3d12_runtime_doctor(&body))
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);

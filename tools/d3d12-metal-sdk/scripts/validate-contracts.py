@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+ROOT_DIR = Path(__file__).resolve().parents[3]
+DEFAULT_CONTRACT_ROOT = ROOT_DIR / "tools" / "d3d12-metal-sdk" / "contracts"
+
 
 REQUIRED_CONTRACTS = [
     "d3d12-metal-contract.json",
@@ -118,7 +121,7 @@ def validate_contracts(root: Path) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path("tools/d3d12-metal-sdk/contracts"))
+    parser.add_argument("--root", type=Path, default=DEFAULT_CONTRACT_ROOT)
     args = parser.parse_args()
 
     errors = validate_contracts(args.root)

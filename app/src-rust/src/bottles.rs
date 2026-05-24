@@ -281,6 +281,8 @@ pub struct SteamRuntimeDiagnostic {
     pub recipe_missing_dlls: Vec<String>,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub recipe_env: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d3d12_sdk: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -1546,6 +1548,16 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         recipe_name: recipe.map(|r| r.name),
         recipe_missing_dlls: missing_check_dlls,
         recipe_env,
+        d3d12_sdk: if pipeline == crate::mtsp::engine::PipelineId::M12 {
+            Some(crate::d3d12_runtime_doctor::latest_cached_report(appid).unwrap_or_else(|| {
+                json!({
+                    "sdkAvailability": crate::d3d12_runtime_doctor::sdk_availability(),
+                    "summary": "No cached D3D12 SDK runtime doctor report for this appid yet.",
+                })
+            }))
+        } else {
+            None
+        },
     };
     json!({"ok": true, "report": report})
 }
