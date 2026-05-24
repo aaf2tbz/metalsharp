@@ -16,6 +16,7 @@ REQUIRED_CONTRACTS = [
     "dxgi-contract.json",
     "unsupported-api-ledger.json",
     "risky-stub-ledger.json",
+    "contract-waivers.json",
 ]
 
 
@@ -53,6 +54,31 @@ def validate_ledgers(path: Path, data: dict[str, Any], errors: list[str]) -> Non
                 require(bool(entry.get("reason") or entry.get("risk")), f"{path}: entries[{i}] missing reason/risk", errors)
 
 
+def validate_waivers(path: Path, data: dict[str, Any], errors: list[str]) -> None:
+    waivers = data.get("waivers")
+    require(isinstance(waivers, list) and len(waivers) > 0, f"{path}: waivers must be non-empty", errors)
+    if isinstance(waivers, list):
+        for i, waiver in enumerate(waivers):
+            require(isinstance(waiver, dict), f"{path}: waivers[{i}] must be object", errors)
+            if isinstance(waiver, dict):
+                require(bool(waiver.get("id")), f"{path}: waivers[{i}] missing id", errors)
+                require(bool(waiver.get("kind")), f"{path}: waivers[{i}] missing kind", errors)
+                require(bool(waiver.get("target")), f"{path}: waivers[{i}] missing target", errors)
+                require(bool(waiver.get("status")), f"{path}: waivers[{i}] missing status", errors)
+                require(
+                    bool(waiver.get("justification")),
+                    f"{path}: waivers[{i}] missing justification",
+                    errors,
+                )
+                require(bool(waiver.get("expires_when")), f"{path}: waivers[{i}] missing expires_when", errors)
+                evidence = waiver.get("evidence")
+                require(
+                    isinstance(evidence, list) and len(evidence) > 0,
+                    f"{path}: waivers[{i}] evidence must be non-empty",
+                    errors,
+                )
+
+
 def validate_reference_contract(path: Path, data: dict[str, Any], errors: list[str]) -> None:
     validate_evidence(path, data, errors)
     require(isinstance(data.get("summary"), dict), f"{path}: missing summary", errors)
@@ -83,6 +109,8 @@ def validate_contracts(root: Path) -> list[str]:
             validate_reference_contract(path, data, errors)
         elif name in {"unsupported-api-ledger.json", "risky-stub-ledger.json"}:
             validate_ledgers(path, data, errors)
+        elif name == "contract-waivers.json":
+            validate_waivers(path, data, errors)
         else:
             validate_evidence(path, data, errors)
     return errors
