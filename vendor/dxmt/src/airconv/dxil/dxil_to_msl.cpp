@@ -193,6 +193,17 @@ static bool parseUnsignedLiteral(const std::string &text, uint32_t &value) {
   return true;
 }
 
+static bool parseSignedLiteral(const std::string &text, int64_t &value) {
+  if (text.empty())
+    return false;
+  char *end = nullptr;
+  long long parsed = std::strtoll(text.c_str(), &end, 10);
+  if (!end || *end != '\0')
+    return false;
+  value = (int64_t)parsed;
+  return true;
+}
+
 static std::string componentAccessor(const std::string &index) {
   uint32_t component = 0;
   if (parseUnsignedLiteral(index, component))
@@ -200,8 +211,175 @@ static std::string componentAccessor(const std::string &index) {
   return "[" + index + "]";
 }
 
+static std::string asUIntExpr(const std::string &expr) {
+  return "(uint)(" + expr + ")";
+}
+
 static bool startsWith(const std::string &text, const char *prefix) {
   return text.rfind(prefix, 0) == 0;
+}
+
+static uint32_t inferDXIntrinsicIdFromName(const std::string &name) {
+  if (!startsWith(name, "dx.op."))
+    return 0;
+  if (name.find("createHandleFromBinding") != std::string::npos)
+    return DXOP_CreateHandleFromBinding;
+  if (name.find("createHandleFromHeap") != std::string::npos)
+    return DXOP_CreateHandleFromHeap;
+  if (name.find("createHandleForLib") != std::string::npos)
+    return DXOP_CreateHandleForLib;
+  if (name.find("createHandle") != std::string::npos)
+    return DXOP_CreateHandle;
+  if (name.find("annotateHandle") != std::string::npos)
+    return DXOP_AnnotateHandle;
+  if (name.find("cbufferLoadLegacy") != std::string::npos)
+    return DXOP_CBufferLoadLegacy;
+  if (name.find("cbufferLoad") != std::string::npos)
+    return DXOP_CBufferLoad;
+  if (name.find("threadIdInGroup") != std::string::npos)
+    return DXOP_ThreadIDInGroup;
+  if (name.find("flattenedThreadIdInGroup") != std::string::npos)
+    return DXOP_FlattenedThreadIDInGroup;
+  if (name.find("threadId") != std::string::npos)
+    return DXOP_ThreadId;
+  if (name.find("groupId") != std::string::npos)
+    return DXOP_GroupId;
+  if (name.find("sampleLevel") != std::string::npos)
+    return DXOP_TextureSampleLevel;
+  if (name.find("sampleCmpLevel") != std::string::npos)
+    return DXOP_TextureSampleCmpLevel;
+  if (name.find("sampleCmp") != std::string::npos)
+    return DXOP_TextureSampleCmp;
+  if (name.find("sampleGrad") != std::string::npos)
+    return DXOP_TextureSampleGrad;
+  if (name.find("sampleBias") != std::string::npos)
+    return DXOP_TextureSampleBias;
+  if (name.find("sample") != std::string::npos)
+    return DXOP_TextureSample;
+  if (name.find("textureStoreSample") != std::string::npos)
+    return DXOP_TextureStoreSample;
+  if (name.find("textureStore") != std::string::npos)
+    return DXOP_TextureStore;
+  if (name.find("textureLoad") != std::string::npos)
+    return DXOP_TextureLoad;
+  if (name.find("bufferStore") != std::string::npos)
+    return DXOP_BufferStore;
+  if (name.find("rawBufferStore") != std::string::npos)
+    return DXOP_RawBufferStore;
+  if (name.find("rawBufferLoad") != std::string::npos)
+    return DXOP_RawBufferLoad;
+  if (name.find("bufferLoad") != std::string::npos)
+    return DXOP_BufferLoad;
+  if (name.find("unary") != std::string::npos)
+    return DXOP_Unary;
+  if (name.find("binary") != std::string::npos)
+    return DXOP_Binary;
+  if (name.find("tertiary") != std::string::npos)
+    return DXOP_Tertiary;
+  if (name.find("dot2") != std::string::npos)
+    return DXOP_Dot2;
+  if (name.find("dot3") != std::string::npos)
+    return DXOP_Dot3;
+  if (name.find("dot4") != std::string::npos)
+    return DXOP_Dot4;
+  if (name.find("barrier") != std::string::npos)
+    return DXOP_Barrier;
+  return 0;
+}
+
+static std::string findDeclaredDXOpNameForType(const LLVMModule &mod,
+                                               uint32_t type_id) {
+  std::string match;
+  for (const auto &fn : mod.functions) {
+    if (!fn.is_declaration || fn.type_id != type_id || !startsWith(fn.name, "dx.op."))
+      continue;
+    if (!match.empty())
+      return "";
+    match = fn.name;
+  }
+  return match;
+}
+
+static uint32_t findFunctionTypeForValue(const LLVMModule &mod, uint32_t value_id) {
+  for (const auto &fn : mod.functions) {
+    if (fn.value_id == value_id)
+      return fn.type_id;
+  }
+  return 0;
+}
+
+static bool isFunctionLikeSymbol(const std::string &text) {
+  return startsWith(text, "dx.op.") || text == "cs_main" || text == "vs_main" ||
+         text == "ps_main" || text.find("MainCS") != std::string::npos;
+}
+
+static bool tryFoldIntegerBinary(LLVMInstruction::Opcode opcode,
+                                 const std::string &lhs_text,
+                                 const std::string &rhs_text,
+                                 std::string &result_text) {
+  int64_t lhs = 0;
+  int64_t rhs = 0;
+  if (!parseSignedLiteral(lhs_text, lhs) || !parseSignedLiteral(rhs_text, rhs))
+    return false;
+
+  switch (opcode) {
+  case LLVMInstruction::Add:
+    result_text = std::to_string(lhs + rhs);
+    return true;
+  case LLVMInstruction::Sub:
+    result_text = std::to_string(lhs - rhs);
+    return true;
+  case LLVMInstruction::Mul:
+    result_text = std::to_string(lhs * rhs);
+    return true;
+  case LLVMInstruction::And:
+    result_text = std::to_string(lhs & rhs);
+    return true;
+  case LLVMInstruction::Or:
+    result_text = std::to_string(lhs | rhs);
+    return true;
+  case LLVMInstruction::Xor:
+    result_text = std::to_string(lhs ^ rhs);
+    return true;
+  case LLVMInstruction::Shl:
+    result_text = std::to_string(lhs << rhs);
+    return true;
+  case LLVMInstruction::LShr:
+    result_text = std::to_string((uint64_t)lhs >> rhs);
+    return true;
+  case LLVMInstruction::AShr:
+    result_text = std::to_string(lhs >> rhs);
+    return true;
+  default:
+    return false;
+  }
+}
+
+static bool isBoolTypeId(uint32_t type_id, const LLVMModule &mod) {
+  return type_id < mod.types.size() &&
+         mod.types[type_id].kind == LLVMType::Integer &&
+         mod.types[type_id].bit_width == 1;
+}
+
+static bool isIntegerLikeTypeId(uint32_t type_id, const LLVMModule &mod) {
+  return type_id < mod.types.size() &&
+         mod.types[type_id].kind == LLVMType::Integer;
+}
+
+static bool isSideEffectOnlyIntrinsic(uint32_t intrinsic_id) {
+  switch (intrinsic_id) {
+  case DXOP_BufferStore:
+  case DXOP_RawBufferStore:
+  case DXOP_RawBufferVectorStore:
+  case DXOP_RawBufferStoreLegacy:
+  case DXOP_TextureStore:
+  case DXOP_TextureStoreSample:
+  case DXOP_StoreOutput:
+  case DXOP_Barrier:
+    return true;
+  default:
+    return false;
+  }
 }
 
 static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
@@ -809,7 +987,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
     auto coord_x = valueArg(2, "0");
     auto coord_y = valueArg(3, "0");
-    auto coord = "uint2(" + coord_x + ", " + coord_y + ")";
+    auto coord = "uint2(" + asUIntExpr(coord_x) + ", " + asUIntExpr(coord_y) + ")";
     return handle + ".read(" + coord + ")";
   }
 
@@ -828,8 +1006,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       recordDiagnostic(ctx, "DXIL TextureStoreSample lowered without explicit sample index");
     }
     return handle + ".write(float4(" + value_x + ", " + value_y + ", " +
-           value_z + ", " + value_w + "), uint2(" + coord_x + ", " +
-           coord_y + "))";
+           value_z + ", " + value_w + "), uint2(" + asUIntExpr(coord_x) + ", " +
+           asUIntExpr(coord_y) + "))";
   }
 
   case DXOP_TextureSample:
@@ -850,7 +1028,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       recordDiagnostic(ctx, "DXIL SampleBias lowered without explicit bias");
     }
     (void)sampler;
-    return handle + ".read(uint2(" + coord_x + ", " + coord_y + "))";
+    return handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
+           asUIntExpr(coord_y) + "))";
   }
 
   case DXOP_TextureGather:
@@ -868,7 +1047,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       recordDiagnostic(ctx, "DXIL TextureGatherRaw lowered through typed gather");
     }
     (void)sampler;
-    return "float4(" + handle + ".read(uint2(" + coord_x + ", " + coord_y +
+    return "float4(" + handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
+           asUIntExpr(coord_y) +
            "))." + componentName(channel) + ")";
   }
 
@@ -882,7 +1062,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto coord_y = valueArg(3, "0.0");
     auto compare = valueArg(4, "0.0");
     (void)sampler;
-    auto sample = handle + ".read(uint2(" + coord_x + ", " + coord_y + ")).r";
+    auto sample = handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
+                  asUIntExpr(coord_y) + ")).r";
     return "((" + sample + ") < (" + compare + ") ? 1.0 : 0.0)";
   }
 
@@ -1117,11 +1298,21 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   value_counter = result_slot;
   std::string result = emitValue(result_slot);
 
-  auto getValue = [&](uint32_t idx) -> std::string {
+  auto rawValue = [&](uint32_t idx) -> std::string {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
       return ctx.value_table[idx];
     recordDiagnostic(ctx, "DXIL missing SSA value: v%u", idx);
     return "0";
+  };
+
+  auto getValue = [&](uint32_t idx) -> std::string {
+    std::string value = rawValue(idx);
+    if (isFunctionLikeSymbol(value)) {
+      recordDiagnostic(ctx, "DXIL function symbol used as SSA value: %s",
+                       value.c_str());
+      return "0";
+    }
+    return value;
   };
 
   auto ensureValueTable = [&](uint32_t needed) {
@@ -1168,6 +1359,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (inst.operands.empty())
       break;
     uint32_t callee = inst.operands[0];
+    uint32_t function_type_id = inst.operands.size() > 1 ? inst.operands[1] : 0;
 
     std::vector<uint32_t> call_args;
     for (size_t i = 2; i < inst.operands.size(); i++)
@@ -1176,25 +1368,69 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     uint32_t intrinsic_id = 0;
     bool has_intrinsic_literal = false;
     if (call_args.size() > 0) {
-      std::string id_str = getValue(call_args[0]);
+      std::string id_str = rawValue(call_args[0]);
       has_intrinsic_literal = parseUnsignedLiteral(id_str, intrinsic_id);
     }
 
-    bool named_dxop = callee < ctx.value_table.size() && ctx.value_table[callee].substr(0, 5) == "dx.op";
+    std::string callee_name =
+        callee < ctx.value_table.size() ? rawValue(callee) : "";
+    uint32_t callee_type_id = findFunctionTypeForValue(ctx.mod, callee);
+    std::string type_callee_name =
+        findDeclaredDXOpNameForType(ctx.mod, function_type_id);
+    bool callee_matches_type =
+        !type_callee_name.empty() && callee_type_id == function_type_id &&
+        callee_name == type_callee_name;
+    std::string effective_callee_name = callee_name;
+    if (!type_callee_name.empty() &&
+        (!startsWith(callee_name, "dx.op") || !callee_matches_type)) {
+      effective_callee_name = type_callee_name;
+    }
+    bool named_dxop = startsWith(effective_callee_name, "dx.op");
+    bool leading_arg_is_dxop_symbol = false;
+    std::string leading_arg_symbol;
+    if (!named_dxop && !call_args.empty()) {
+      leading_arg_symbol = rawValue(call_args[0]);
+      if (startsWith(leading_arg_symbol, "dx.op.")) {
+        effective_callee_name = leading_arg_symbol;
+        leading_arg_is_dxop_symbol = true;
+        named_dxop = true;
+      }
+    }
+    uint32_t inferred_intrinsic_id =
+        inferDXIntrinsicIdFromName(effective_callee_name);
+    if (named_dxop && inferred_intrinsic_id &&
+        (!has_intrinsic_literal || intrinsic_id != inferred_intrinsic_id)) {
+      intrinsic_id = inferred_intrinsic_id;
+      has_intrinsic_literal = true;
+    }
     if (named_dxop && !has_intrinsic_literal) {
       ctx.unsupported_intrinsics++;
-      std::string id_str = call_args.empty() ? "<missing>" : getValue(call_args[0]);
+      std::string id_str = call_args.empty() ? "<missing>" : rawValue(call_args[0]);
       recordDiagnostic(ctx, "DXIL intrinsic id is not a literal: %s", id_str.c_str());
       os << "  // dx.op call without literal intrinsic id\n";
       publishResult();
     } else if (has_intrinsic_literal && (named_dxop || isKnownDXIntrinsic(intrinsic_id))) {
-      std::vector<uint32_t> remaining_args(call_args.begin() + 1, call_args.end());
+      size_t intrinsic_arg_index = leading_arg_is_dxop_symbol ? 1 : 0;
+      if (intrinsic_arg_index >= call_args.size()) {
+        ctx.unsupported_intrinsics++;
+        recordDiagnostic(ctx, "DXIL intrinsic %u missing opcode operand after recovered callee %s",
+                         intrinsic_id, effective_callee_name.c_str());
+        publishResult();
+        break;
+      }
+      std::vector<uint32_t> remaining_args(call_args.begin() + intrinsic_arg_index + 1,
+                                           call_args.end());
 
       std::string translated = translateDXIntrinsic(ctx, intrinsic_id, remaining_args);
 
       if (inst.type_id == 0) {
         if (!translated.empty())
           os << "  " << translated << ";\n";
+      } else if (isSideEffectOnlyIntrinsic(intrinsic_id)) {
+        if (!translated.empty())
+          os << "  " << translated << ";\n";
+        ensureValueTable(result_slot);
+        ctx.value_table[result_slot] = defaultValueForTypeId(inst.type_id, ctx.mod);
       } else if (isHandleIntrinsic(intrinsic_id)) {
         ensureValueTable(result_slot);
         ctx.value_table[result_slot] = translated.empty() ? "0" : translated;
@@ -1215,10 +1451,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         ctx.value_table[result_slot] = result;
       }
     } else {
-      os << "  auto " << result << " = 0; // call " << getValue(callee) << "(";
+      std::string fallback_callee =
+          effective_callee_name.empty() ? rawValue(callee) : effective_callee_name;
+      os << "  auto " << result << " = 0; // call " << fallback_callee << "(";
       for (size_t i = 0; i < call_args.size(); i++) {
         if (i) os << ", ";
-        os << getValue(call_args[i]);
+        os << rawValue(call_args[i]);
       }
       os << ")\n";
       ensureValueTable(result_slot);
@@ -1235,8 +1473,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer add fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " + " << rhs << ";\n";
+      }
     }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
@@ -1250,8 +1494,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer sub fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " - " << rhs << ";\n";
+      }
     }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
@@ -1265,8 +1515,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer mul fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " * " << rhs << ";\n";
+      }
     }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
@@ -1321,8 +1577,19 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer and fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " & "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
+        os << "  bool " << result << " = (" << lhs << ") && (" << rhs << ");\n";
+      } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
+        os << "  auto " << result << " = (uint)(" << lhs << ") & (uint)(" << rhs
+           << ");\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " & " << rhs << ";\n";
+      }
     }
     publishResult();
     break;
@@ -1334,8 +1601,19 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer or fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " | "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
+        os << "  bool " << result << " = (" << lhs << ") || (" << rhs << ");\n";
+      } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
+        os << "  auto " << result << " = (uint)(" << lhs << ") | (uint)(" << rhs
+           << ");\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " | " << rhs << ";\n";
+      }
     }
     publishResult();
     break;
@@ -1347,8 +1625,19 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer xor fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ^ "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
+        os << "  bool " << result << " = (" << lhs << ") != (" << rhs << ");\n";
+      } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
+        os << "  auto " << result << " = (uint)(" << lhs << ") ^ (uint)(" << rhs
+           << ");\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " ^ " << rhs << ";\n";
+      }
     }
     publishResult();
     break;
@@ -1360,8 +1649,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer shl fallback\n";
     } else {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " << "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " << " << rhs << ";\n";
+      }
     }
     publishResult();
     break;
@@ -1373,8 +1668,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer lshr fallback\n";
     } else {
-      os << "  auto " << result << " = (uint)(" << getValue(inst.operands[0]) << ") >> "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = (uint)(" << lhs << ") >> " << rhs
+           << ";\n";
+      }
     }
     publishResult();
     break;
@@ -1386,8 +1688,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
          << "; // pointer ashr fallback\n";
     } else {
-      os << "  auto " << result << " = (int)(" << getValue(inst.operands[0]) << ") >> "
-         << getValue(inst.operands[1]) << ";\n";
+      auto lhs = getValue(inst.operands[0]);
+      auto rhs = getValue(inst.operands[1]);
+      std::string folded;
+      if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
+        os << "  auto " << result << " = " << folded << ";\n";
+      } else {
+        os << "  auto " << result << " = (int)(" << lhs << ") >> " << rhs
+           << ";\n";
+      }
     }
     publishResult();
     break;

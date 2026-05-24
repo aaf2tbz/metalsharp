@@ -863,6 +863,21 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     return slot < record.size() ? value(record[slot++]) : 0;
   };
 
+  auto getContainedTypeId = [&](uint32_t type_id, uint32_t index) -> uint32_t {
+    if (type_id >= ctx.module.types.size())
+      return 0;
+    const auto &type = ctx.module.types[type_id];
+    switch (type.kind) {
+    case LLVMType::Struct:
+      return index < type.type_refs.size() ? type.type_refs[index] : 0;
+    case LLVMType::Array:
+    case LLVMType::Vector:
+      return !type.type_refs.empty() ? type.type_refs[0] : 0;
+    default:
+      return 0;
+    }
+  };
+
   auto noteResult = [&]() {
     next_value++;
   };
@@ -952,11 +967,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
 
         uint32_t callee_type_id = 0;
         uint32_t callee = 0;
-        if (function_type_id) {
-          callee = popValue(ops, slot);
-        } else {
-          callee = valueTypePair(ops, slot, callee_type_id);
-        }
+        callee = valueTypePair(ops, slot, callee_type_id);
 
         uint32_t return_type_id = 0;
         size_t fixed_arg_count = 0;
@@ -1169,20 +1180,34 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                           : rec_code == kFuncCode_InstInsertVal
                                 ? LLVMInstruction::InsertValue
                                 : LLVMInstruction::PHI;
-        if (ops.size() > 1) inst.type_id = (uint32_t)ops[1];
         if (rec_code == kFuncCode_InstExtractVal) {
-          if (ops.size() > 2)
-            inst.operands.push_back(value(ops[2]));
-          for (size_t i = 3; i < ops.size(); i++)
-            inst.operands.push_back((uint32_t)ops[i]);
+          size_t slot = 1;
+          uint32_t agg_type_id = 0;
+          uint32_t agg = valueTypePair(ops, slot, agg_type_id);
+          inst.type_id = agg_type_id;
+          inst.operands.push_back(agg);
+          for (; slot < ops.size(); slot++) {
+            uint32_t index = (uint32_t)ops[slot];
+            inst.operands.push_back(index);
+            uint32_t contained_type_id = getContainedTypeId(inst.type_id, index);
+            if (contained_type_id)
+              inst.type_id = contained_type_id;
+          }
         } else if (rec_code == kFuncCode_InstInsertVal) {
-          if (ops.size() > 2)
-            inst.operands.push_back(value(ops[2]));
-          if (ops.size() > 4)
-            inst.operands.push_back(value(ops[4]));
-          for (size_t i = 5; i < ops.size(); i++)
-            inst.operands.push_back((uint32_t)ops[i]);
+          size_t slot = 1;
+          uint32_t agg_type_id = 0;
+          uint32_t agg = valueTypePair(ops, slot, agg_type_id);
+          uint32_t value_type_id = 0;
+          uint32_t inserted = valueTypePair(ops, slot, value_type_id);
+          (void)value_type_id;
+          inst.type_id = agg_type_id;
+          inst.operands.push_back(agg);
+          inst.operands.push_back(inserted);
+          for (; slot < ops.size(); slot++)
+            inst.operands.push_back((uint32_t)ops[slot]);
         } else {
+          if (ops.size() > 1)
+            inst.type_id = (uint32_t)ops[1];
           for (size_t i = 2; i < ops.size(); i += 2)
             inst.operands.push_back(value(ops[i]));
         }
