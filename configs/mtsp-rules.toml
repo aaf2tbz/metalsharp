@@ -50,6 +50,11 @@ components = ["vcrun2019", "directx_jun2010"]
 [overrides.848450.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll"]
 
+[overrides.1962700]
+pipeline = "m12"
+name = "Subnautica 2"
+offline_capable = true
+
 [overrides.3164500]
 pipeline = "m11"
 name = "Schedule I"
