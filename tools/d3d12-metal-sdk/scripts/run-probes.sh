@@ -11,6 +11,7 @@ RESULTS_DIR="$SDK_DIR/results"
 RUN_LOADER=1
 RUN_AGILITY=1
 RUN_CAPS=1
+RUN_DXGI=1
 
 usage() {
   cat <<'USAGE'
@@ -26,6 +27,7 @@ Options:
   --no-loader           Skip probe_loader.
   --no-agility          Skip probe_agility_ue5.
   --no-caps             Skip probe_device_caps.
+  --no-dxgi             Skip probe_dxgi_factory.
   -h, --help            Show this help.
 
 Examples:
@@ -72,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       RUN_CAPS=0
       shift
       ;;
+    --no-dxgi)
+      RUN_DXGI=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -108,6 +114,7 @@ UNIX_DIR="$DXMT_RUNTIME/x86_64-unix"
 PROBE_EXE="$SDK_DIR/out/bin/probe_loader.exe"
 AGILITY_PROBE_EXE="$SDK_DIR/out/bin/probe_agility_ue5.exe"
 CAPS_PROBE_EXE="$SDK_DIR/out/bin/probe_device_caps.exe"
+DXGI_PROBE_EXE="$SDK_DIR/out/bin/probe_dxgi_factory.exe"
 
 if [[ ! -x "$WINE_BIN" ]]; then
   echo "Wine binary is not executable: $WINE_BIN" >&2
@@ -136,7 +143,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
   exit 2
 fi
 
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
   "$SDK_DIR/scripts/build-probes.sh" >/dev/null
 fi
 
@@ -144,6 +151,7 @@ mkdir -p "$RESULTS_DIR"
 RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
 CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
+DXGI_RESULT_FILE="$RESULTS_DIR/probe-dxgi-factory-${PROFILE}.json"
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
@@ -202,4 +210,17 @@ if [[ "$RUN_CAPS" == "1" ]]; then
     "$WINE_BIN" "$CAPS_PROBE_EXE" > "$CAPS_RESULT_FILE"
   )
   echo "$CAPS_RESULT_FILE"
+fi
+
+if [[ "$RUN_DXGI" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+    DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$DXGI_PROBE_EXE" > "$DXGI_RESULT_FILE"
+  )
+  echo "$DXGI_RESULT_FILE"
 fi

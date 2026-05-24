@@ -64,6 +64,8 @@ The Agility probe exports `D3D12SDKVersion=619` and `D3D12SDKPath=".\\D3D12\\"`,
 
 The device capability probe uses the same Agility export pattern and records UE5-relevant `CheckFeatureSupport` results: feature levels, shader model, resource binding tier, wave ops, atomic64, raytracing, mesh shader, sampler feedback, and other advanced feature gates.
 
+The DXGI factory probe records factory creation, `IDXGIFactory*` QueryInterface behavior through `IDXGIFactory7`, adapter enumeration, GPU-preference enumeration when available, LUID lookup, output enumeration, and stable adapter description fields.
+
 ## Contract Commands
 
 Generate the first-class contract files from the current external source maps:
