@@ -27,4 +27,3 @@ Each phase should:
 3. Commit to the draft PR branch.
 4. Update the PR summary.
 5. Run a hardening pass before starting the next phase.
-

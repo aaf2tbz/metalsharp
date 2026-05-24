@@ -175,4 +175,3 @@ Interpretation:
 ## Phase 0 Decision
 
 PR #119 currently vendors DXMT source. Phase 0 does not remove or restructure that vendor tree. The safer next step is to build SDK contracts and probes around the current PR state, then decide whether the final PR should keep the vendor tree, use a pinned DXMT source revision, or move to a runtime artifact contract.
-
