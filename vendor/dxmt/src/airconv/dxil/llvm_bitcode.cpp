@@ -1171,15 +1171,15 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                                 : LLVMInstruction::PHI;
         if (ops.size() > 1) inst.type_id = (uint32_t)ops[1];
         if (rec_code == kFuncCode_InstExtractVal) {
-          if (ops.size() > 1)
-            inst.operands.push_back(value(ops[1]));
+          if (ops.size() > 2)
+            inst.operands.push_back(value(ops[2]));
           for (size_t i = 3; i < ops.size(); i++)
             inst.operands.push_back((uint32_t)ops[i]);
         } else if (rec_code == kFuncCode_InstInsertVal) {
-          if (ops.size() > 1)
-            inst.operands.push_back(value(ops[1]));
-          if (ops.size() > 3)
-            inst.operands.push_back(value(ops[3]));
+          if (ops.size() > 2)
+            inst.operands.push_back(value(ops[2]));
+          if (ops.size() > 4)
+            inst.operands.push_back(value(ops[4]));
           for (size_t i = 5; i < ops.size(); i++)
             inst.operands.push_back((uint32_t)ops[i]);
         } else {
@@ -1262,7 +1262,6 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
   std::vector<FunctionNameRef> function_name_refs;
   size_t next_function_body = 0;
   uint32_t next_module_value_id = 0;
-  uint32_t next_function_value_id = 0;
   bool use_strtab_names = false;
 
   ParseContext ctx{reader, module, {}, {}};
@@ -1311,7 +1310,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
           fn.type_id = pending.type_id;
           fn.param_count = pending.param_count;
           fn.name = pending.name;
-          fn.instruction_start_value = next_function_value_id + fn.param_count;
+          fn.instruction_start_value = next_module_value_id + fn.param_count;
           fn.is_declaration = false;
           ParseContext func_ctx{reader, module,
                                 getBlockAbbrevs(ctx, header.block_id),
@@ -1378,22 +1377,30 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
                                 ? ops[record_base + 2] != 0
                                 : true;
       PendingFunction pending;
-      pending.value_id = next_function_value_id++;
-      if (next_module_value_id < next_function_value_id)
-        next_module_value_id = next_function_value_id;
+      pending.value_id = next_module_value_id++;
       pending.type_id = fn_type;
       pending.param_count = getFunctionParamCount(module, fn_type);
       if (use_strtab_names && record_base == 3 && ops.size() > 2) {
         function_name_refs.push_back(
             {pending.value_id, (uint32_t)ops[1], (uint32_t)ops[2]});
       }
-      if (!is_declaration)
+      if (!is_declaration) {
         pending_functions.push_back(pending);
+      } else {
+        LLVMFunction fn;
+        fn.value_id = pending.value_id;
+        fn.type_id = pending.type_id;
+        fn.param_count = pending.param_count;
+        fn.name = pending.name;
+        fn.is_declaration = true;
+        module.functions.push_back(fn);
+        if (!fn.name.empty())
+          module.function_map[fn.name] = module.functions.size() - 1;
+      }
       DXTRACE("DXIL module function: value=%u type=%u params=%u decl=%u pending=%zu",
               pending.value_id, pending.type_id, pending.param_count,
               is_declaration ? 1 : 0, pending_functions.size());
     } else if (rec_code == kModuleCode_GlobalVar) {
-      next_function_value_id++;
       next_module_value_id++;
     }
   }
@@ -1431,7 +1438,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
       fn.type_id = pending.type_id;
       fn.param_count = pending.param_count;
       fn.name = pending.name;
-      fn.instruction_start_value = next_function_value_id + fn.param_count;
+      fn.instruction_start_value = next_module_value_id + fn.param_count;
       fn.is_declaration = false;
       ParseContext func_ctx{reader, module,
                             getBlockAbbrevs(ctx, header.block_id),

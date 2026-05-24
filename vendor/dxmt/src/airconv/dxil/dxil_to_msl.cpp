@@ -1821,6 +1821,13 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     }
   }
 
+  for (const auto &fn_value : module.functions) {
+    if (fn_value.value_id >= ctx.value_table.size())
+      ctx.value_table.resize(fn_value.value_id + 1);
+    if (!fn_value.name.empty())
+      ctx.value_table[fn_value.value_id] = fn_value.name;
+  }
+
   DXTRACE("DXILToMSL: entry function has %zu blocks", fn.blocks.size());
 
   uint32_t value_counter = fn.instruction_start_value;
