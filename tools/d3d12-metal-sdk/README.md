@@ -53,6 +53,15 @@ x86_64-unix/
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 
+`build-probes.sh` copies the Agility SDK 1.619.3 DLLs into `out/bin/D3D12/` before building `probe_agility_ue5.exe`. Override `AGILITY_BIN` when testing a different extracted SDK:
+
+```bash
+AGILITY_BIN=/path/to/agility/build/native/bin/x64 \
+  tools/d3d12-metal-sdk/scripts/build-probes.sh
+```
+
+The Agility probe exports `D3D12SDKVersion=619` and `D3D12SDKPath=".\\D3D12\\"`, then records app-local Agility DLL discovery, D3D12 device creation, and modern `ID3D12Device*` QueryInterface behavior as JSON.
+
 ## Contract Commands
 
 Generate the first-class contract files from the current external source maps:
