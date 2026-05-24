@@ -3,7 +3,14 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 
-#define FTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a"); if (_tf) { fprintf(_tf, "Fence::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define FTRACE(fmt, ...)                                                       \
+  do {                                                                         \
+    FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");                    \
+    if (_tf) {                                                                 \
+      fprintf(_tf, "Fence::" fmt "\n", ##__VA_ARGS__);                         \
+      fclose(_tf);                                                             \
+    }                                                                          \
+  } while (0)
 
 namespace dxmt {
 
@@ -22,8 +29,8 @@ MTLD3D12Fence::~MTLD3D12Fence() {
   m_device->Release();
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Fence::QueryInterface(REFIID riid, void **ppvObject) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::QueryInterface(REFIID riid,
+                                                        void **ppvObject) {
   if (!ppvObject)
     return E_POINTER;
   *ppvObject = nullptr;
@@ -47,15 +54,16 @@ ULONG STDMETHODCALLTYPE MTLD3D12Fence::Release() {
   return rc;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Fence::GetPrivateData(REFGUID guid, UINT *data_size, void *data) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::GetPrivateData(REFGUID guid,
+                                                        UINT *data_size,
+                                                        void *data) {
   FTRACE("GetPrivateData E_NOTIMPL");
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Fence::SetPrivateData(REFGUID guid, UINT data_size,
-                              const void *data) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetPrivateData(REFGUID guid,
+                                                        UINT data_size,
+                                                        const void *data) {
   return S_OK;
 }
 
@@ -64,43 +72,44 @@ MTLD3D12Fence::SetPrivateDataInterface(REFGUID guid, const IUnknown *data) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetName(LPCWSTR name) {
-  return S_OK;
-}
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetName(LPCWSTR name) { return S_OK; }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Fence::GetDevice(REFIID riid, void **device) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::GetDevice(REFIID riid, void **device) {
   return m_device->QueryInterface(riid, device);
 }
 
 uint64_t STDMETHODCALLTYPE MTLD3D12Fence::GetCompletedValue() {
-  FTRACE("GetCompletedValue -> %llu", (unsigned long long)m_value.load(std::memory_order_acquire));
-  return m_value.load(std::memory_order_acquire);
+  uint64_t current = m_value.load(std::memory_order_acquire);
+  if (m_shared_event.handle) {
+    uint64_t shared_value = m_shared_event.signaledValue();
+    if (shared_value > current) {
+      m_value.store(shared_value, std::memory_order_release);
+      current = shared_value;
+    }
+  }
+  FTRACE("GetCompletedValue -> %llu", (unsigned long long)current);
+  return current;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Fence::SetEventOnCompletion(uint64_t value, HANDLE event) {
-  FTRACE("SetEventOnCompletion value=%llu current=%llu this=%p event=%p", (unsigned long long)value, (unsigned long long)m_value.load(), (void *)this, (void *)(uintptr_t)event);
-  if (m_value.load(std::memory_order_acquire) >= value) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetEventOnCompletion(uint64_t value,
+                                                              HANDLE event) {
+  uint64_t current = GetCompletedValue();
+  FTRACE("SetEventOnCompletion value=%llu current=%llu this=%p event=%p",
+         (unsigned long long)value, (unsigned long long)current, (void *)this,
+         (void *)(uintptr_t)event);
+  if (current >= value) {
     if (event)
       SetEvent(event);
     return S_OK;
   }
-  if (!event) {
-    if (m_value.load(std::memory_order_acquire) < value) {
-      FTRACE("SetEventOnCompletion: null event, auto-signaling fence %p from %llu to %llu (sync replay already done)",
-        (void *)this, (unsigned long long)m_value.load(), (unsigned long long)value);
-      m_value.store(value, std::memory_order_release);
-      if (m_shared_event.handle) {
-        m_shared_event.signalValue(value);
-      }
-    }
-    return S_OK;
-  }
   if (m_shared_event.handle) {
     m_shared_event.waitUntilSignaledValue(value, UINT64_MAX);
+    uint64_t shared_value = m_shared_event.signaledValue();
+    if (shared_value > m_value.load(std::memory_order_acquire))
+      m_value.store(shared_value, std::memory_order_release);
   }
-  SetEvent(event);
+  if (event)
+    SetEvent(event);
   return S_OK;
 }
 

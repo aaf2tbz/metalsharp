@@ -2,6 +2,7 @@
 #include "d3d12_command_list.hpp"
 #include "d3d12_descriptor_heap.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_fence.hpp"
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_query_heap.hpp"
 #include "d3d12_resource.hpp"
@@ -3437,11 +3438,18 @@ MTLD3D12CommandQueue::Signal(ID3D12Fence *fence, UINT64 value) {
   QTRACE("CmdQueue::Signal value=%llu fence_iface=%p", (unsigned long long)value, (void *)fence);
   if (!fence)
     return E_POINTER;
+  auto dxmt_fence = static_cast<MTLD3D12Fence *>(fence);
+  auto shared_event = dxmt_fence->GetMTLSharedEvent();
+  if (!shared_event.handle)
+    return E_FAIL;
   {
     FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
     if (f) { fprintf(f, "CmdQueue::Signal value=%llu fence=%p\n", (unsigned long long)value, (void *)fence); fclose(f); }
   }
-  return fence->Signal(value);
+  auto cmdbuf = m_wmt_queue.commandBuffer();
+  cmdbuf.encodeSignalEvent(shared_event, value);
+  cmdbuf.commit();
+  return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -3450,7 +3458,14 @@ MTLD3D12CommandQueue::Wait(ID3D12Fence *fence, UINT64 value) {
          (void *)fence, (unsigned long long)value);
   if (!fence)
     return E_POINTER;
-  return fence->SetEventOnCompletion(value, nullptr);
+  auto dxmt_fence = static_cast<MTLD3D12Fence *>(fence);
+  auto shared_event = dxmt_fence->GetMTLSharedEvent();
+  if (!shared_event.handle)
+    return E_FAIL;
+  auto cmdbuf = m_wmt_queue.commandBuffer();
+  cmdbuf.encodeWaitForEvent(shared_event, value);
+  cmdbuf.commit();
+  return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
