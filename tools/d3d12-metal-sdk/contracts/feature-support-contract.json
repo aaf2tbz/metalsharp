@@ -1,0 +1,63 @@
+{
+  "evidence": [
+    {
+      "kind": "source",
+      "note": "MTLD3D12Device::CheckFeatureSupport is the current runtime implementation.",
+      "path": "vendor/dxmt/src/d3d12/d3d12_device.cpp"
+    },
+    {
+      "kind": "probe_todo",
+      "note": "Phase 4 will prove these reports without launching a game.",
+      "path": "tools/d3d12-metal-sdk/probes/probe_device_caps"
+    }
+  ],
+  "features": {
+    "D3D12_FEATURE_D3D12_OPTIONS": {
+      "required_fields": [
+        "ResourceBindingTier",
+        "ROVsSupported",
+        "ConservativeRasterizationTier"
+      ],
+      "risk": "Over-reporting can push games into unimplemented render paths.",
+      "state": "stub_risky"
+    },
+    "D3D12_FEATURE_D3D12_OPTIONS1": {
+      "required_fields": [
+        "WaveOps",
+        "WaveLaneCountMin",
+        "WaveLaneCountMax",
+        "Int64ShaderOps"
+      ],
+      "risk": "Current Subnautica evidence reports wave ops but atomic64 remains unsupported.",
+      "state": "stub_risky"
+    },
+    "D3D12_FEATURE_D3D12_OPTIONS11": {
+      "required_fields": [
+        "AtomicInt64OnDescriptorHeapResourceSupported"
+      ],
+      "risk": "Should stay conservative unless descriptor-heap atomic64 is implemented.",
+      "state": "stub_safe"
+    },
+    "D3D12_FEATURE_D3D12_OPTIONS9": {
+      "required_fields": [
+        "AtomicInt64OnTypedResourceSupported",
+        "AtomicInt64OnGroupSharedSupported"
+      ],
+      "risk": "Should stay conservative unless atomic64 is actually implemented.",
+      "state": "stub_safe"
+    },
+    "D3D12_FEATURE_FEATURE_LEVELS": {
+      "current_target": "12_1",
+      "expected_minimum": "12_0",
+      "risk": "UE5 may reject the adapter if this disagrees with shader model or options queries.",
+      "state": "stub_risky"
+    },
+    "D3D12_FEATURE_SHADER_MODEL": {
+      "current_target": "6_6",
+      "risk": "Must be backed by actual DXIL/SM6 shader path probes before treated as native.",
+      "state": "stub_risky"
+    }
+  },
+  "purpose": "Keep D3D12 feature reports aligned with executable implementation reality.",
+  "schema": "metalsharp.d3d12-metal.feature-support.v1"
+}

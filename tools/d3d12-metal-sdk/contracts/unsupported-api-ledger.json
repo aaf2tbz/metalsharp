@@ -1,0 +1,30 @@
+{
+  "entries": [
+    {
+      "api": "D3D12 ray tracing tiers",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/feature-support-contract.json"
+      ],
+      "reason": "No DXR-to-Metal acceleration structure or shader table implementation is proven.",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 mesh shader tiers",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/feature-support-contract.json"
+      ],
+      "reason": "No mesh/amplification shader translation path is proven.",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 sampler feedback tier",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/feature-support-contract.json"
+      ],
+      "reason": "No sampler feedback emulation or Metal-backed equivalent is proven.",
+      "state": "unsupported"
+    }
+  ],
+  "purpose": "Track explicit unsupported APIs so games are not misled by optimistic success returns.",
+  "schema": "metalsharp.d3d12-metal.unsupported-ledger.v1"
+}

@@ -18,6 +18,29 @@ The SDK exists to make D3D12 changes evidence-driven before game-specific debugg
 - Prove resources, descriptors, shaders, queues, fences, and rendering paths through headless probes.
 - Keep future D3D12 work accurate, repeatable, and reviewable.
 
+## Contract Commands
+
+Generate the first-class contract files from the current external source maps:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/generate-contracts.py
+```
+
+Validate all required contract files:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
+```
+
+Phase 1 imports:
+
+- `contracts/d3d12-metal-contract.json` from `/Volumes/AverySSD/metalsharp/metal-api-table/final/d3d12_to_metal_map.json`
+- `contracts/agility-1.619.3-contract.json` from `/Volumes/AverySSD/metalsharp/metal-api-table/final/agility_sdk_d3d12_to_metal_map.json`
+- `contracts/feature-support-contract.json`
+- `contracts/dxgi-contract.json`
+- `contracts/unsupported-api-ledger.json`
+- `contracts/risky-stub-ledger.json`
+
 ## Phase Discipline
 
 Each phase should:
