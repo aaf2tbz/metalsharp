@@ -254,6 +254,47 @@ static UINT FormatBytesPerTexel(DXGI_FORMAT format) {
   }
 }
 
+static UINT64 ResourcePlacementAlignment(const D3D12_RESOURCE_DESC &desc) {
+  if (desc.Alignment)
+    return desc.Alignment;
+  if (desc.SampleDesc.Count > 1)
+    return D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+  return D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+}
+
+static UINT64 EstimateResourceAllocationSize(const D3D12_RESOURCE_DESC &desc) {
+  if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+    return AlignTo(std::max<UINT64>(desc.Width, 1), ResourcePlacementAlignment(desc));
+
+  UINT mip_levels = std::max<UINT>(desc.MipLevels, 1);
+  UINT array_size = std::max<UINT>(desc.DepthOrArraySize, 1);
+  UINT bytes_per_texel = FormatBytesPerTexel(desc.Format);
+  UINT block_size = FormatBlockSize(desc.Format);
+  if (!bytes_per_texel)
+    bytes_per_texel = 4;
+
+  UINT64 total = 0;
+  for (UINT array_or_plane = 0; array_or_plane < array_size; array_or_plane++) {
+    (void)array_or_plane;
+    for (UINT mip = 0; mip < mip_levels; mip++) {
+      UINT64 width = std::max<UINT64>(1, desc.Width >> mip);
+      UINT64 height = std::max<UINT64>(1, desc.Height >> mip);
+      UINT64 depth = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+                         ? std::max<UINT64>(1, desc.DepthOrArraySize >> mip)
+                         : 1;
+      UINT64 width_blocks = std::max<UINT64>(1, AlignTo(width, block_size) / block_size);
+      UINT64 rows = std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
+      UINT64 row_pitch = AlignTo(width_blocks * bytes_per_texel,
+                                 D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+      total += AlignTo(row_pitch * rows * depth,
+                       D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+    }
+  }
+
+  return AlignTo(std::max<UINT64>(total, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT),
+                 ResourcePlacementAlignment(desc));
+}
+
 }
 
 class MTLD3D12InfoQueue : public ID3D12InfoQueue {
@@ -1482,6 +1523,12 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
                                                   desc->GS.BytecodeLength)
             : 0ull,
         desc->InputLayout.NumElements);
+  DXMTD3D12ScopedTimer create_timer("Device", "CreateGraphicsPSO");
+  create_timer.SetDetail("vs=%zu ps=%zu ds=%zu hs=%zu gs=%zu rt=%u il=%u",
+                         desc->VS.BytecodeLength, desc->PS.BytecodeLength,
+                         desc->DS.BytecodeLength, desc->HS.BytecodeLength,
+                         desc->GS.BytecodeLength, desc->NumRenderTargets,
+                         desc->InputLayout.NumElements);
 
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);
@@ -1510,6 +1557,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
 
   auto pso = new MTLD3D12PipelineState(this, true);
   pso->SetComputeDesc(*desc);
+  DXMTD3D12ScopedTimer create_timer("Device", "CreateComputePSO");
+  create_timer.SetDetail("cs=%zu root=%p", desc->CS.BytecodeLength,
+                         (void *)desc->pRootSignature);
   TRACE("CreateComputePSO ENTER: CS=%p(%zu) CS_HASH=0x%llx root=%p",
         desc->CS.pShaderBytecode, desc->CS.BytecodeLength,
         desc->CS.pShaderBytecode
@@ -2532,17 +2582,31 @@ MTLD3D12Device::GetResourceAllocationInfo(
   TRACE("GetResourceAllocationInfo visible=0x%x count=%u descs=%p ret=%p",
         visible_mask, resource_desc_count, (void *)resource_descs,
         (void *)__ret);
+  if (!__ret)
+    return nullptr;
+
   __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   __ret->SizeInBytes = 0;
+  if (!resource_descs || !resource_desc_count)
+    return __ret;
+
+  UINT64 cursor = 0;
   for (UINT i = 0; i < resource_desc_count; i++) {
-    if (resource_descs[i].Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
-      __ret->SizeInBytes += resource_descs[i].Width;
-    } else {
-      __ret->SizeInBytes +=
-          resource_descs[i].Width * resource_descs[i].Height *
-          resource_descs[i].DepthOrArraySize;
-    }
+    UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
+    UINT64 size = EstimateResourceAllocationSize(resource_descs[i]);
+    __ret->Alignment = std::max<UINT64>(__ret->Alignment, alignment);
+    cursor = AlignTo(cursor, alignment);
+    TRACE("GetResourceAllocationInfo[%u] dim=%u fmt=%u %llux%u size=%llu align=%llu offset=%llu",
+          i, resource_descs[i].Dimension, resource_descs[i].Format,
+          (unsigned long long)resource_descs[i].Width, resource_descs[i].Height,
+          (unsigned long long)size, (unsigned long long)alignment,
+          (unsigned long long)cursor);
+    cursor += size;
   }
+  __ret->SizeInBytes = AlignTo(cursor, __ret->Alignment);
+  TRACE("GetResourceAllocationInfo -> size=%llu align=%llu",
+        (unsigned long long)__ret->SizeInBytes,
+        (unsigned long long)__ret->Alignment);
   return __ret;
 }
 
@@ -2595,8 +2659,17 @@ MTLD3D12Device::CreateHeap(const D3D12_HEAP_DESC *desc, REFIID riid,
     return E_POINTER;
   InitReturnPtr(heap);
 
-  auto h = new MTLD3D12Heap(this, *desc);
+  D3D12_HEAP_DESC normalized = *desc;
+  if (!normalized.Alignment)
+    normalized.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+  normalized.SizeInBytes = AlignTo(std::max<UINT64>(normalized.SizeInBytes, 1),
+                                   normalized.Alignment);
+
+  auto h = new MTLD3D12Heap(this, normalized);
   HRESULT hr = h->QueryInterface(riid, heap);
+  TRACE("CreateHeap normalized size=%llu alignment=%llu out=%p hr=0x%lx",
+        (unsigned long long)normalized.SizeInBytes,
+        (unsigned long long)normalized.Alignment, heap ? *heap : nullptr, hr);
   if (FAILED(hr))
     h->Release();
   return hr;
@@ -2619,11 +2692,27 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
   heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
   auto mt_heap = static_cast<MTLD3D12Heap *>(heap);
   if (mt_heap) {
-    heap_props = mt_heap->GetHeapDesc().Properties;
+    const auto &heap_desc = mt_heap->GetHeapDesc();
+    heap_props = heap_desc.Properties;
+    D3D12_RESOURCE_ALLOCATION_INFO info = {};
+    GetResourceAllocationInfo(&info, 0, 1, desc);
+    if (heap_offset % info.Alignment) {
+      TRACE("CreatePlacedResource misaligned offset=%llu align=%llu",
+            (unsigned long long)heap_offset,
+            (unsigned long long)info.Alignment);
+    }
+    if (heap_offset + info.SizeInBytes > heap_desc.SizeInBytes) {
+      TRACE("CreatePlacedResource out of heap bounds offset=%llu size=%llu heap_size=%llu",
+            (unsigned long long)heap_offset,
+            (unsigned long long)info.SizeInBytes,
+            (unsigned long long)heap_desc.SizeInBytes);
+    }
   }
 
   auto res = new MTLD3D12Resource(this, *desc, initial_state, heap_props);
   HRESULT hr = res->QueryInterface(riid, resource);
+  TRACE("CreatePlacedResource out=%p hr=0x%lx", resource ? *resource : nullptr,
+        hr);
   if (FAILED(hr))
     res->Release();
   return hr;

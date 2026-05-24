@@ -5,6 +5,7 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
+#include <chrono>
 
 #define SCTRACE(fmt, ...) DXMTD3D12Trace("SwapChain", fmt, ##__VA_ARGS__)
 
@@ -441,7 +442,16 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     present_wait_seq -= 1;
   if (present_wait_seq > m_last_present_wait_seq) {
     SCTRACE("Present waiting for render seq=%llu", (unsigned long long)present_wait_seq);
+    auto wait_begin = std::chrono::steady_clock::now();
     dxmt_queue.WaitCPUFence(present_wait_seq);
+    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - wait_begin)
+                       .count();
+    if (wait_ms >= DXMTD3D12TimingMinMs()) {
+      SCTRACE("Present wait_cpu_fence_ms=%lld seq=%llu buffer=%u",
+              (long long)wait_ms, (unsigned long long)present_wait_seq,
+              m_current_buffer);
+    }
     m_last_present_wait_seq = present_wait_seq;
   }
 

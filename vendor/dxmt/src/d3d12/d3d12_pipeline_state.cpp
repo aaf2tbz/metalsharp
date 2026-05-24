@@ -206,6 +206,25 @@ bool ParseAttributeRegisterName(std::string_view name, uint32_t &out_register) {
   return true;
 }
 
+bool StageInSemanticMatchesInputElement(
+    const StageInVertexAttributeInfo &stage_in_attr,
+    const D3D12_INPUT_ELEMENT_DESC &element) {
+  if (!element.SemanticName || stage_in_attr.semantic_name.empty())
+    return false;
+
+  if (strcasecmp(element.SemanticName,
+                 stage_in_attr.semantic_name.c_str()) == 0)
+    return true;
+
+  uint32_t reflected_semantic_index = 0;
+  if (!ParseAttributeRegisterName(stage_in_attr.semantic_name,
+                                  reflected_semantic_index))
+    return false;
+
+  return strcasecmp(element.SemanticName, "ATTRIBUTE") == 0 &&
+         element.SemanticIndex == reflected_semantic_index;
+}
+
 WMTAttributeFormat ReflectionElementTypeToFormat(std::string_view element_type,
                                                  uint32_t column_count) {
   switch (column_count) {
@@ -401,6 +420,7 @@ ParseVertexInputReflection(std::string_view text) {
       if (ParseAttributeRegisterName(name, register_index)) {
         StageInVertexAttributeInfo reflected = {};
         reflected.register_index = register_index;
+        reflected.semantic_name = name;
 
         size_t index_pos = object.find("\"index\"");
         if (index_pos != std::string_view::npos) {
@@ -735,6 +755,7 @@ bool MTLD3D12PipelineState::CompileShader(
     const void *bytecode, SIZE_T size, ShaderType type, const char *func_name,
     WMT::Reference<WMT::Function> &out_func, sm50_shader_t *out_shader_handle,
     MTL_SHADER_REFLECTION *out_reflection) {
+  DXMTD3D12ScopedTimer shader_timer("PSO", "CompileShader");
   if (type == ShaderType::Vertex)
     m_vs_stage_in_register_map.clear();
   if (type == ShaderType::Vertex)
@@ -763,8 +784,14 @@ bool MTLD3D12PipelineState::CompileShader(
       }
     }
   }
+  shader_timer.SetDetail("func=%s type=%u size=%zu blob=%s hash=0x%zx",
+                         func_name, (unsigned)type, size,
+                         DescribeShaderBlobMagic(bytecode, size), hash);
   {
+    DXMTD3D12ScopedTimer shader_cache_lock_timer("PSO", "ShaderCacheLockWait");
+    shader_cache_lock_timer.SetDetail("func=%s hash=0x%zx", func_name, hash);
     std::lock_guard<std::mutex> lock(s_shader_mutex);
+    shader_cache_lock_timer.TraceNow();
     PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu",
             func_name, hash, size, s_shader_cache.size());
     auto it = s_shader_cache.find(hash);
@@ -1414,6 +1441,11 @@ bool MTLD3D12PipelineState::Compile() {
   if (m_compiled)
     return true;
   ClearCompileFailure();
+  DXMTD3D12ScopedTimer compile_timer("PSO", "CompilePipelineState");
+  compile_timer.SetDetail("this=%p compute=%d root=%p vs=%zu ps=%zu cs=%zu il=%u",
+                          (void *)this, m_is_compute, (void *)m_root_sig,
+                          m_vs.size(), m_ps.size(), m_cs.size(),
+                          m_input_layout.NumElements);
 
   auto wmt_device = m_device->GetDXMTDevice().device();
   WMT::Reference<WMT::Error> err;
@@ -1434,6 +1466,13 @@ bool MTLD3D12PipelineState::Compile() {
     WMT::InitializeComputePipelineInfo(info);
     info.compute_function = cs_func.handle;
 
+    DXMTD3D12ScopedTimer metal_compute_timer("PSO", "CreateMetalComputePSO");
+    metal_compute_timer.SetDetail("this=%p func=%llu threads=%ux%ux%u",
+                                  (void *)this,
+                                  (unsigned long long)cs_func.handle,
+                                  (unsigned)m_threadgroup_size.width,
+                                  (unsigned)m_threadgroup_size.height,
+                                  (unsigned)m_threadgroup_size.depth);
     m_compute_pso = wmt_device.newComputePipelineState(info, err);
     if (!m_compute_pso.handle) {
       auto err_desc_string =
@@ -1670,6 +1709,15 @@ bool MTLD3D12PipelineState::Compile() {
     bool slot_per_vertex[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t attribute_count = 0;
     uint32_t next_attribute = 0;
+    bool attribute_present[WMT_MAX_VERTEX_ATTRIBUTES] = {};
+    struct InputLayoutSource {
+      UINT desc_index = 0;
+      const D3D12_INPUT_ELEMENT_DESC *element = nullptr;
+      MTL_DXGI_FORMAT_DESC metal_format = {};
+      uint32_t aligned_offset = 0;
+      uint32_t end = 0;
+    };
+    std::vector<InputLayoutSource> input_sources;
     const microsoft::D3D11_SIGNATURE_PARAMETER *input_sig_params = nullptr;
     uint32_t input_sig_count = 0;
     microsoft::CSignatureParser input_sig_parser;
@@ -1719,13 +1767,24 @@ bool MTLD3D12PipelineState::Compile() {
 
       uint32_t attr_index = next_attribute;
       const StageInVertexAttributeInfo *stage_in_attr = nullptr;
-      if (m_vs_uses_stage_in && i < m_vs_stage_in_attribute_order.size()) {
-        stage_in_attr = &m_vs_stage_in_attribute_order[i];
-        attr_index = stage_in_attr->attribute_index;
-        PSTRACE("D3D12 PSO input-layout desc[%u]: stage_in reflection order "
-                "maps to attribute %u",
-                i, attr_index);
-      } else if (has_input_signature && input_sig_params) {
+      if (m_vs_uses_stage_in && el.SemanticName) {
+        auto semantic_match = std::find_if(
+            m_vs_stage_in_attribute_order.begin(),
+            m_vs_stage_in_attribute_order.end(),
+            [&](const StageInVertexAttributeInfo &attr) {
+              return StageInSemanticMatchesInputElement(attr, el);
+            });
+        if (semantic_match != m_vs_stage_in_attribute_order.end()) {
+          stage_in_attr = &*semantic_match;
+          attr_index = stage_in_attr->attribute_index;
+          PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u matched "
+                  "DXIL reflection name %s -> metal attribute %u",
+                  i, el.SemanticName ? el.SemanticName : "?",
+                  el.SemanticIndex, stage_in_attr->semantic_name.c_str(),
+                  attr_index);
+        }
+      }
+      if (has_input_signature && input_sig_params) {
         auto *sig = std::find_if(
             input_sig_params, input_sig_params + input_sig_count,
             [&](const microsoft::D3D11_SIGNATURE_PARAMETER &input_sig) {
@@ -1736,8 +1795,9 @@ bool MTLD3D12PipelineState::Compile() {
                      strcasecmp(el.SemanticName, input_sig.SemanticName) == 0;
             });
         if (sig != input_sig_params + input_sig_count) {
-          attr_index = sig->Register;
-          if (m_vs_uses_stage_in) {
+          if (!stage_in_attr)
+            attr_index = sig->Register;
+          if (m_vs_uses_stage_in && !stage_in_attr) {
             auto remap = m_vs_stage_in_register_map.find(sig->Register);
             if (remap != m_vs_stage_in_register_map.end()) {
               stage_in_attr = &remap->second;
@@ -1759,6 +1819,14 @@ bool MTLD3D12PipelineState::Compile() {
                   i, el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
                   attr_index);
         }
+      }
+      if (!stage_in_attr && m_vs_uses_stage_in &&
+          i < m_vs_stage_in_attribute_order.size()) {
+        stage_in_attr = &m_vs_stage_in_attribute_order[i];
+        attr_index = stage_in_attr->attribute_index;
+        PSTRACE("D3D12 PSO input-layout desc[%u]: fallback stage_in order maps "
+                "to attribute %u",
+                i, attr_index);
       }
 
       if (attr_index >= WMT_MAX_VERTEX_ATTRIBUTES) {
@@ -1783,6 +1851,19 @@ bool MTLD3D12PipelineState::Compile() {
       slot_per_vertex[el.InputSlot] =
           (el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA);
 
+      input_sources.push_back({i, &el, metal_format, aligned_offset, end});
+
+      if (attribute_present[attr_index]) {
+        const auto &existing_attr = vtx_desc.attributes[attr_index];
+        PSTRACE("D3D12 PSO input-layout desc[%u]: mapped attribute %u already "
+                "bound as fmt=%u slot=%u offset=%u; keeping first binding "
+                "and leaving duplicate semantic=%s%u as fallback source",
+                i, attr_index, (unsigned)existing_attr.format,
+                existing_attr.buffer_index, existing_attr.offset,
+                el.SemanticName ? el.SemanticName : "?", el.SemanticIndex);
+        continue;
+      }
+
       auto &attr = vtx_desc.attributes[attr_index];
       attr.format =
           stage_in_attr && stage_in_attr->format != WMTAttributeFormatInvalid
@@ -1790,16 +1871,73 @@ bool MTLD3D12PipelineState::Compile() {
               : metal_format.AttributeFormat;
       attr.offset = aligned_offset;
       attr.buffer_index = el.InputSlot;
+      attribute_present[attr_index] = true;
       attribute_count = std::max(attribute_count, attr_index + 1);
 
       PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: semantic=%s%u fmt=%u "
-              "mtl_fmt=%u slot=%u offset=%u stride_end=%u class=%u step=%u",
+              "mtl_fmt=%u chosen_fmt=%u slot=%u offset=%u stride_end=%u "
+              "class=%u step=%u",
               attr_index, i, el.SemanticName ? el.SemanticName : "?",
               el.SemanticIndex, (unsigned)el.Format,
-              (unsigned)metal_format.AttributeFormat, el.InputSlot,
-              aligned_offset, end, (unsigned)el.InputSlotClass,
+              (unsigned)metal_format.AttributeFormat, (unsigned)attr.format,
+              el.InputSlot, aligned_offset, end, (unsigned)el.InputSlotClass,
               el.InstanceDataStepRate);
     }
+
+    if (m_vs_uses_stage_in && !input_sources.empty()) {
+      auto find_source_for_stage_in =
+          [&](const StageInVertexAttributeInfo &stage_in_attr,
+              size_t order_index) -> const InputLayoutSource * {
+        for (const auto &source : input_sources) {
+          const auto &el = *source.element;
+          if (!el.SemanticName)
+            continue;
+          if (StageInSemanticMatchesInputElement(stage_in_attr, el)) {
+            return &source;
+          }
+          if (strcasecmp(el.SemanticName, "ATTRIBUTE") == 0 &&
+              el.SemanticIndex == stage_in_attr.register_index) {
+            return &source;
+          }
+        }
+        if (order_index < input_sources.size())
+          return &input_sources[order_index];
+        return &input_sources.back();
+      };
+
+      for (size_t order_i = 0; order_i < m_vs_stage_in_attribute_order.size();
+           order_i++) {
+        const auto &stage_in_attr = m_vs_stage_in_attribute_order[order_i];
+        const uint32_t attr_index = stage_in_attr.attribute_index;
+        if (attr_index >= WMT_MAX_VERTEX_ATTRIBUTES)
+          continue;
+        if (attribute_present[attr_index])
+          continue;
+
+        const InputLayoutSource *source =
+            find_source_for_stage_in(stage_in_attr, order_i);
+        if (!source || !source->element)
+          continue;
+
+        const auto &el = *source->element;
+        auto &attr = vtx_desc.attributes[attr_index];
+        attr.format = stage_in_attr.format != WMTAttributeFormatInvalid
+                          ? stage_in_attr.format
+                          : source->metal_format.AttributeFormat;
+        attr.offset = source->aligned_offset;
+        attr.buffer_index = el.InputSlot;
+        attribute_present[attr_index] = true;
+        attribute_count = std::max(attribute_count, attr_index + 1);
+
+        PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: filled missing "
+                "DXIL stage_in register=%u semantic=%s%u chosen_fmt=%u "
+                "slot=%u offset=%u",
+                attr_index, source->desc_index, stage_in_attr.register_index,
+                el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
+                (unsigned)attr.format, el.InputSlot, source->aligned_offset);
+      }
+    }
+
     vtx_desc.attribute_count = attribute_count;
     vtx_desc.layout_count = max_slot;
     bool slot_used_by_attribute[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
@@ -1873,6 +2011,13 @@ bool MTLD3D12PipelineState::Compile() {
       (unsigned)m_rasterizer_desc.FrontCounterClockwise,
       (unsigned)m_rasterizer_desc.DepthClipEnable);
 
+  DXMTD3D12ScopedTimer metal_render_timer("PSO", "CreateMetalRenderPSO");
+  metal_render_timer.SetDetail(
+      "this=%p rts=%u dsv=%u depth=%u stencil=%u stage_in=%u il=%u",
+      (void *)this, m_num_render_targets, (unsigned)m_dsv_format,
+      (unsigned)m_depth_stencil_desc.DepthEnable,
+      (unsigned)m_depth_stencil_desc.StencilEnable,
+      dxil_uses_stage_in ? 1u : 0u, m_input_layout.NumElements);
   m_render_pso = wmt_device.newRenderPipelineState(info, err);
   if (!m_render_pso.handle) {
     auto err_desc_string =

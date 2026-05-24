@@ -2146,6 +2146,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
   QTRACE("ExecuteCommandLists count=%u", command_list_count);
 
   for (UINT li = 0; li < command_list_count; li++) {
+    DXMTD3D12ScopedTimer list_timer("Queue", "ExecuteCommandList");
     QTRACE("ECL: processing list %u", li);
     auto *list = static_cast<MTLD3D12GraphicsCommandList *>(command_lists[li]);
     if (!list) {
@@ -2164,6 +2165,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     const auto cmds = list->GetCommands();
     QTRACE("ExecuteCommandLists: cmds.size=%zu empty=%d", cmds.size(),
            cmds.empty());
+    list_timer.SetDetail("index=%u queue_type=%u cmds=%zu", li, m_desc.Type,
+                         cmds.size());
     if (cmds.empty()) {
       QTRACE("ExecuteCommandLists: empty cmdlist, committing");
       cmdbuf.commit();
@@ -2175,6 +2178,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     st.cmdbuf = cmdbuf;
 
     QTRACE("ExecuteCommandLists: cmd_size=%zu", cmds.size());
+    auto replay_begin = std::chrono::steady_clock::now();
     size_t offset = 0;
     size_t cmd_count = 0;
     uint32_t type_counts[40] = {};
@@ -3605,6 +3609,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
       offset += header->size;
     }
+    auto replay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - replay_begin)
+                         .count();
+    if (replay_ms >= DXMTD3D12TimingMinMs()) {
+      QTRACE("ExecuteCommandLists replay_ms=%lld queue_type=%u cmds=%zu list=%u",
+             (long long)replay_ms, m_desc.Type, cmd_count, li);
+    }
 
     QTRACE("ECL: replayed %zu cmds, types:", cmd_count);
     for (int i = 0; i < 30; i++)
@@ -3620,6 +3631,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - wait_begin)
                        .count();
+    list_timer.SetDetail(
+        "index=%u queue_type=%u cmds=%zu replay_ms=%lld wait_ms=%lld", li,
+        m_desc.Type, cmd_count, (long long)replay_ms, (long long)wait_ms);
 
     auto status = cmdbuf.status();
     QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld queue_type=%u",
@@ -3670,6 +3684,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Signal(ID3D12Fence *fence,
   }
   auto cmdbuf = m_wmt_queue.commandBuffer();
   cmdbuf.encodeSignalEvent(shared_event, value);
+  DXMTD3D12ScopedTimer signal_timer("Queue", "SignalFence");
+  signal_timer.SetDetail("queue_type=%u value=%llu fence=%p", m_desc.Type,
+                         (unsigned long long)value, (void *)fence);
   auto wait_begin = std::chrono::steady_clock::now();
   cmdbuf.commit();
   cmdbuf.waitUntilCompleted();
@@ -3703,6 +3720,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Wait(ID3D12Fence *fence,
     return E_FAIL;
   auto cmdbuf = m_wmt_queue.commandBuffer();
   cmdbuf.encodeWaitForEvent(shared_event, value);
+  DXMTD3D12ScopedTimer wait_timer("Queue", "WaitFence");
+  wait_timer.SetDetail("queue_type=%u value=%llu fence=%p", m_desc.Type,
+                       (unsigned long long)value, (void *)fence);
   auto wait_begin = std::chrono::steady_clock::now();
   cmdbuf.commit();
   cmdbuf.waitUntilCompleted();
