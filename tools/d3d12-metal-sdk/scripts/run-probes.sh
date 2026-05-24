@@ -10,6 +10,7 @@ DXMT_RUNTIME="${DXMT_RUNTIME:-}"
 RESULTS_DIR="$SDK_DIR/results"
 RUN_LOADER=1
 RUN_AGILITY=1
+RUN_CAPS=1
 
 usage() {
   cat <<'USAGE'
@@ -24,6 +25,7 @@ Options:
   --results-dir PATH    Result output directory.
   --no-loader           Skip probe_loader.
   --no-agility          Skip probe_agility_ue5.
+  --no-caps             Skip probe_device_caps.
   -h, --help            Show this help.
 
 Examples:
@@ -66,6 +68,10 @@ while [[ $# -gt 0 ]]; do
       RUN_AGILITY=0
       shift
       ;;
+    --no-caps)
+      RUN_CAPS=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -101,6 +107,7 @@ WINDOWS_DIR="$DXMT_RUNTIME/x86_64-windows"
 UNIX_DIR="$DXMT_RUNTIME/x86_64-unix"
 PROBE_EXE="$SDK_DIR/out/bin/probe_loader.exe"
 AGILITY_PROBE_EXE="$SDK_DIR/out/bin/probe_agility_ue5.exe"
+CAPS_PROBE_EXE="$SDK_DIR/out/bin/probe_device_caps.exe"
 
 if [[ ! -x "$WINE_BIN" ]]; then
   echo "Wine binary is not executable: $WINE_BIN" >&2
@@ -129,13 +136,14 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
   exit 2
 fi
 
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
   "$SDK_DIR/scripts/build-probes.sh" >/dev/null
 fi
 
 mkdir -p "$RESULTS_DIR"
 RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
+CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
@@ -180,4 +188,18 @@ if [[ "$RUN_AGILITY" == "1" ]]; then
     "$WINE_BIN" "$AGILITY_PROBE_EXE" > "$AGILITY_RESULT_FILE"
   )
   echo "$AGILITY_RESULT_FILE"
+fi
+
+if [[ "$RUN_CAPS" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+    DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
+    "$WINE_BIN" "$CAPS_PROBE_EXE" > "$CAPS_RESULT_FILE"
+  )
+  echo "$CAPS_RESULT_FILE"
 fi

@@ -42,5 +42,18 @@ done
   "$SDK_DIR/probes/probe_agility_ue5/probe_agility_ue5.cpp" \
   -o "$OUT_DIR/probe_agility_ue5.exe"
 
+"$CXX" \
+  -std=c++17 \
+  -O2 \
+  -static \
+  -static-libgcc \
+  -static-libstdc++ \
+  -Wall \
+  -Wextra \
+  -Werror \
+  "$SDK_DIR/probes/probe_device_caps/probe_device_caps.cpp" \
+  -o "$OUT_DIR/probe_device_caps.exe"
+
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
+echo "$OUT_DIR/probe_device_caps.exe"
