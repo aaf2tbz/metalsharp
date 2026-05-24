@@ -6,9 +6,22 @@ SDK_DIR="$ROOT_DIR/tools/d3d12-metal-sdk"
 OUT_DIR="$SDK_DIR/out/bin"
 CXX="${CXX:-x86_64-w64-mingw32-g++}"
 AGILITY_BIN="${AGILITY_BIN:-/Volumes/AverySSD/metalsharp/metal-api-table/agility-sdk/extracted/build/native/bin/x64}"
+DXC_BIN_DIR="${DXC_BIN_DIR:-}"
 
 mkdir -p "$OUT_DIR"
 mkdir -p "$OUT_DIR/D3D12"
+
+if [[ -z "$DXC_BIN_DIR" ]]; then
+  DXC_BIN_DIR="$("$SDK_DIR/scripts/fetch-dxc.sh")"
+fi
+
+for dll in dxc.exe dxcompiler.dll dxil.dll; do
+  if [[ ! -f "$DXC_BIN_DIR/$dll" ]]; then
+    echo "Missing DXC file: $DXC_BIN_DIR/$dll" >&2
+    exit 2
+  fi
+  cp "$DXC_BIN_DIR/$dll" "$OUT_DIR/$dll"
+done
 
 "$CXX" \
   -std=c++17 \

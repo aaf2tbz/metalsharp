@@ -12,7 +12,8 @@
 #define STATUS_BUFFER_OVERFLOW ((NTSTATUS)0x80000005)
 #endif
 
-static NTSTATUS load_unixlib_from_env(void) {
+static NTSTATUS
+load_unixlib_from_env(void) {
   const char *path = getenv("DXMT_WINEMETAL_UNIXLIB");
   WCHAR wide_path[MAX_PATH * 4];
   UNICODE_STRING name;
@@ -35,36 +36,37 @@ static NTSTATUS load_unixlib_from_env(void) {
   return __wine_load_unix_lib(&name, &module, &__wine_unixlib_handle);
 }
 
-static int winemetal_debug_enabled(void) {
+static int
+winemetal_debug_enabled(void) {
   const char *value = getenv("DXMT_WINEMETAL_DEBUG");
   return value && value[0] && strcmp(value, "0") != 0;
 }
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+BOOL WINAPI
+DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   NTSTATUS status;
-  NTSTATUS fallback_status = STATUS_SUCCESS;
   FILE *log;
 
   if (reason != DLL_PROCESS_ATTACH)
     return TRUE;
 
   DisableThreadLibraryCalls(instance);
-  status = __wine_init_unix_call();
+  status = load_unixlib_from_env();
   if ((DWORD)status == STATUS_DLL_NOT_FOUND)
-    fallback_status = load_unixlib_from_env();
+    status = __wine_init_unix_call();
   if (winemetal_debug_enabled()) {
     log = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
     if (log) {
-      fprintf(log,
-              "DllMain PROCESS_ATTACH __wine_init_unix_call status=0x%08lx "
-              "fallback=0x%08lx unixlib=%s\n",
-              (unsigned long)status, (unsigned long)fallback_status,
-              getenv("DXMT_WINEMETAL_UNIXLIB") ? getenv("DXMT_WINEMETAL_UNIXLIB") : "<unset>");
+      fprintf(
+          log,
+          "DllMain PROCESS_ATTACH unix_call_init status=0x%08lx "
+          "unixlib=%s\n",
+          (unsigned long)status, getenv("DXMT_WINEMETAL_UNIXLIB") ? getenv("DXMT_WINEMETAL_UNIXLIB") : "<unset>"
+      );
       fclose(log);
     }
   }
-  return !status || !fallback_status;
+  return !status;
 }
 
-extern BOOL WINAPI DllMainCRTStartup(HANDLE hDllHandle, DWORD dwReason,
-                                       LPVOID lpreserved);
+extern BOOL WINAPI DllMainCRTStartup(HANDLE hDllHandle, DWORD dwReason, LPVOID lpreserved);

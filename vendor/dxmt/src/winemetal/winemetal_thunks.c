@@ -31,7 +31,8 @@ winemetal_log_unix_status(unsigned int code, NTSTATUS status) {
 
 #define PtrToUInt64(v) ((uint64_t)(uintptr_t)(v))
 
-static int winemetal_debug_enabled(void) {
+static int
+winemetal_debug_enabled(void) {
   const char *value = getenv("DXMT_WINEMETAL_DEBUG");
   return value && value[0] && strcmp(value, "0") != 0;
 }
@@ -269,9 +270,7 @@ MTLDevice_minimumLinearTextureAlignmentForPixelFormat(obj_handle_t device, enum 
 }
 
 WINEMETAL_API obj_handle_t
-MTLDevice_newLibrary(
-    obj_handle_t device, obj_handle_t data, obj_handle_t *err_out
-) {
+MTLDevice_newLibrary(obj_handle_t device, obj_handle_t data, obj_handle_t *err_out) {
   struct unixcall_mtldevice_newlibrary params;
   params.device = device;
   params.data = data;
@@ -284,25 +283,25 @@ MTLDevice_newLibrary(
 }
 
 WINEMETAL_API obj_handle_t
-MTLDevice_newLibraryWithSource(
-    obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out
-) {
+MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out) {
   struct unixcall_mtldevice_newlibrary_source params;
   params.device = device;
   params.source.ptr = source;
   params.source_length = source_length;
   params.ret_error = 0;
   params.ret_library = 0;
-  NTSTATUS st = WINE_UNIX_CALL(133, &params);
+  NTSTATUS st = WINE_UNIX_CALL(132, &params);
 #ifndef NDEBUG
   assert(!st && "unix call failed");
 #endif
   if (winemetal_debug_enabled()) {
     FILE *dl = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
     if (dl) {
-      fprintf(dl, "PE: newLibraryWithSource dev=%llu src_len=%llu unix_status=%ld ret_lib=%llu ret_err=%llu\n",
-        (unsigned long long)device, (unsigned long long)source_length, (long)st,
-        (unsigned long long)params.ret_library, (unsigned long long)params.ret_error);
+      fprintf(
+          dl, "PE: newLibraryWithSource dev=%llu src_len=%llu unix_status=%ld ret_lib=%llu ret_err=%llu\n",
+          (unsigned long long)device, (unsigned long long)source_length, (long)st,
+          (unsigned long long)params.ret_library, (unsigned long long)params.ret_error
+      );
       fclose(dl);
     }
   }
@@ -1073,9 +1072,7 @@ CacheWriter_alloc_init(const char *path, uint64_t version) {
 }
 
 WINEMETAL_API void
-CacheWriter_set(
-    obj_handle_t writer, const void *key, uint64_t key_length, obj_handle_t value
-) {
+CacheWriter_set(obj_handle_t writer, const void *key, uint64_t key_length, obj_handle_t value) {
   struct unixcall_cache_set params;
   params.cache = writer;
   WMT_MEMPTR_SET(params.key, key);
@@ -1189,7 +1186,8 @@ MTLCounterSampleBuffer_resolveCounterRange(
 WINEMETAL_API obj_handle_t
 MTLCommandBuffer_blitCommandEncoderWithSampleBuffers(
     obj_handle_t cmdbuf, struct WMTSampleBufferAttachmentInfo *sample_buffer_attachments,
-    uint64_t num_sample_buffer_attachments) {
+    uint64_t num_sample_buffer_attachments
+) {
   struct unixcall_mtlcommandbuffer_blitcommandencoderwithsamplebuffers params;
   params.cmdbuf = cmdbuf;
   WMT_MEMPTR_SET(params.attachments, sample_buffer_attachments);

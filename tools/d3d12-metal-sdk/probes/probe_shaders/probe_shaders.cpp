@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,37 @@ static std::string read_text_file(const char* path) {
     return out;
 }
 
+static std::vector<uint8_t> read_binary_file(const char* path) {
+    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return {};
+
+    LARGE_INTEGER size = {};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > 16 * 1024 * 1024) {
+        CloseHandle(file);
+        return {};
+    }
+
+    std::vector<uint8_t> out(static_cast<size_t>(size.QuadPart));
+    DWORD read = 0;
+    ReadFile(file, out.data(), static_cast<DWORD>(out.size()), &read, nullptr);
+    out.resize(read);
+    CloseHandle(file);
+    return out;
+}
+
+static bool write_text_file(const char* path, const char* text) {
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    DWORD written = 0;
+    DWORD size = static_cast<DWORD>(strlen(text));
+    bool ok = WriteFile(file, text, size, &written, nullptr) && written == size;
+    CloseHandle(file);
+    return ok;
+}
+
 static bool file_nonzero(const char* path, unsigned long long* size_out = nullptr) {
     WIN32_FILE_ATTRIBUTE_DATA data = {};
     if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data))
@@ -83,6 +115,25 @@ static bool file_nonzero(const char* path, unsigned long long* size_out = nullpt
     if (size_out)
         *size_out = size;
     return size > 0;
+}
+
+static DWORD run_process_wait(std::string command_line) {
+    STARTUPINFOA startup = {};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process = {};
+    std::vector<char> mutable_command(command_line.begin(), command_line.end());
+    mutable_command.push_back('\0');
+    BOOL created = CreateProcessA(nullptr, mutable_command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                                  nullptr, &startup, &process);
+    if (!created)
+        return 0xffffffffu;
+
+    WaitForSingleObject(process.hProcess, 30000);
+    DWORD exit_code = 0xffffffffu;
+    GetExitCodeProcess(process.hProcess, &exit_code);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return exit_code;
 }
 
 static bool contains(const std::string& haystack, const char* needle) {
@@ -206,20 +257,29 @@ int main() {
     const char* shader_trace_path = "Z:\\tmp\\dxmt_d3d12_trace.log";
     const char* dxil_trace_path = "Z:\\tmp\\dxmt_dxil_trace.log";
     const char* shader_args_path = "Z:\\tmp\\dxmt_ps_args_debug.log";
+    const char* dxc_hlsl_path = "Z:\\tmp\\dxmt_dxc_sm6_compute.hlsl";
+    const char* dxc_dxil_path = "Z:\\tmp\\dxmt_dxc_sm6_compute.dxil";
+    const char* dxc_errors_path = "Z:\\tmp\\dxmt_dxc_sm6_errors.txt";
     const char* vs_metallib_path = "Z:\\tmp\\dxmt_sm50_vs_main.metallib";
     const char* ps_metallib_path = "Z:\\tmp\\dxmt_sm50_ps_main.metallib";
     const char* cs_metallib_path = "Z:\\tmp\\dxmt_sm50_cs_main.metallib";
     DeleteFileA(shader_trace_path);
     DeleteFileA(dxil_trace_path);
     DeleteFileA(shader_args_path);
+    DeleteFileA(dxc_hlsl_path);
+    DeleteFileA(dxc_dxil_path);
+    DeleteFileA(dxc_errors_path);
     DeleteFileA(vs_metallib_path);
     DeleteFileA(ps_metallib_path);
     DeleteFileA(cs_metallib_path);
 
     std::string profile = getenv_string("D3D12_METAL_SDK_PROFILE");
+    std::string expect_dxc = getenv_string("D3D12_METAL_SDK_EXPECT_DXC");
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     HMODULE d3dcompiler = LoadLibraryA("d3dcompiler_47.dll");
+    HMODULE dxcompiler = LoadLibraryA("dxcompiler.dll");
+    HMODULE dxil = LoadLibraryA("dxil.dll");
     using CreateDeviceFn = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
     auto create_device = reinterpret_cast<CreateDeviceFn>(
         reinterpret_cast<void*>(d3d12 ? GetProcAddress(d3d12, "D3D12CreateDevice") : nullptr));
@@ -269,6 +329,16 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
 }
 )";
 
+    const char* dxc_compute_hlsl = R"(
+[numthreads(1, 1, 1)]
+void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
+  uint keep_alive = dispatch_id.x;
+  if (keep_alive == 0xffffffffu) {
+    return;
+  }
+}
+)";
+
     ID3DBlob* vs_blob = nullptr;
     ID3DBlob* ps_blob = nullptr;
     ID3DBlob* cs_blob = nullptr;
@@ -281,6 +351,12 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     HRESULT ps_compile_hr = compile_shader(compile, graphics_hlsl, "ps_main", "ps_5_0", &ps_blob, &ps_errors);
     HRESULT cs_compile_hr = compile_shader(compile, compute_hlsl, "cs_main", "cs_5_0", &cs_blob, &cs_errors);
     HRESULT sm6_compile_hr = compile_shader(compile, sm6_probe_hlsl, "ps_main", "ps_6_0", &sm6_blob, &sm6_errors);
+
+    bool dxc_hlsl_written = write_text_file(dxc_hlsl_path, dxc_compute_hlsl);
+    std::string dxc_command = "dxc.exe -T cs_6_0 -E cs_main -HV 2021 -Od -Fo Z:\\tmp\\dxmt_dxc_sm6_compute.dxil "
+                              "-Fe Z:\\tmp\\dxmt_dxc_sm6_errors.txt Z:\\tmp\\dxmt_dxc_sm6_compute.hlsl";
+    DWORD dxc_exit_code = dxc_hlsl_written ? run_process_wait(dxc_command) : 0xffffffffu;
+    std::vector<uint8_t> dxc_dxil_blob = read_binary_file(dxc_dxil_path);
 
     ID3DBlob* root_blob = nullptr;
     HRESULT serialize_root_hr = serialize_empty_root_signature(d3d12, &root_blob);
@@ -322,9 +398,19 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     HRESULT bad_compute_pso_hr =
         device ? device->CreateComputePipelineState(&bad_compute_desc, IID_PPV_ARGS(&bad_compute_pso)) : E_FAIL;
 
+    D3D12_COMPUTE_PIPELINE_STATE_DESC dxc_compute_desc = {};
+    dxc_compute_desc.pRootSignature = root_signature;
+    dxc_compute_desc.CS = {dxc_dxil_blob.empty() ? nullptr : dxc_dxil_blob.data(), dxc_dxil_blob.size()};
+    ID3D12PipelineState* dxc_compute_pso = nullptr;
+    HRESULT dxc_compute_pso_hr =
+        (device && !dxc_dxil_blob.empty())
+            ? device->CreateComputePipelineState(&dxc_compute_desc, IID_PPV_ARGS(&dxc_compute_pso))
+            : E_FAIL;
+
     std::string trace = read_text_file(shader_trace_path);
     std::string dxil_trace = read_text_file(dxil_trace_path);
     std::string args_trace = read_text_file(shader_args_path);
+    std::string dxc_errors = read_text_file(dxc_errors_path);
     unsigned long long vs_metallib_size = 0;
     unsigned long long ps_metallib_size = 0;
     unsigned long long cs_metallib_size = 0;
@@ -338,19 +424,29 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
                             contains(trace, "shader/bitcode_parse") || contains(trace, "BitcodeReader::parse FAILED") ||
                             contains(trace, "pso/compute_no_cs");
     bool dxil_container_trace_ok = contains(dxil_trace, "DXILContainer") || contains(trace, "DXIL container parsed");
+    bool dxc_available = dxcompiler && dxil && dxc_exit_code == 0 && !dxc_dxil_blob.empty();
+    bool dxc_dxil_container_ok =
+        dxc_available && contains(trace, "DXIL container parsed") && contains(dxil_trace, "DXILContainer");
+    bool dxc_dxil_to_msl_ok =
+        dxc_available && (contains(trace, "DXILToMSL: generated") || contains(trace, "MSL generated")) &&
+        (contains(trace, "DXIL shader compiled OK") || contains(trace, "DXIL loaded from cache OK"));
     bool sm6_probe_explicit = FAILED(sm6_compile_hr);
-    bool bindless_explicit = true; // D3DCompile cannot emit SM6 bindless DXIL here; this remains explicitly unsupported
-                                   // until DXC is bundled.
+    bool bindless_explicit = dxc_available;
 
-    bool entrypoints_valid = d3d12 && d3dcompiler && create_device && compile;
+    bool dxc_required = expect_dxc.empty() || expect_dxc != "0";
+    bool entrypoints_valid =
+        d3d12 && d3dcompiler && create_device && compile && (!dxc_required || (dxcompiler && dxil));
     bool compile_valid = SUCCEEDED(vs_compile_hr) && SUCCEEDED(ps_compile_hr) && SUCCEEDED(cs_compile_hr);
     bool pso_valid = SUCCEEDED(create_root_hr) && SUCCEEDED(graphics_pso_hr) && graphics_pso &&
                      SUCCEEDED(compute_pso_hr) && compute_pso;
     bool cache_valid = vs_metallib && ps_metallib && cs_metallib;
     bool diagnostics_valid =
         SUCCEEDED(bad_compute_pso_hr) && bad_compute_pso && failure_trace_ok && dxil_container_trace_ok;
+    bool dxc_valid = !dxc_required || (dxc_available && SUCCEEDED(dxc_compute_pso_hr) && dxc_compute_pso &&
+                                       dxc_dxil_container_ok && dxc_dxil_to_msl_ok);
     bool pass = entrypoints_valid && SUCCEEDED(create_hr) && compile_valid && pso_valid && cache_valid &&
-                graphics_trace_ok && compute_trace_ok && diagnostics_valid && sm6_probe_explicit && bindless_explicit;
+                graphics_trace_ok && compute_trace_ok && diagnostics_valid && sm6_probe_explicit && bindless_explicit &&
+                dxc_valid;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-shaders.v1\",\n");
@@ -359,6 +455,8 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     std::printf("  \"entrypoints\": {\n");
     std::printf("    \"d3d12_loaded\": %s,\n", d3d12 ? "true" : "false");
     std::printf("    \"d3dcompiler_47_loaded\": %s,\n", d3dcompiler ? "true" : "false");
+    std::printf("    \"dxcompiler_loaded\": %s,\n", dxcompiler ? "true" : "false");
+    std::printf("    \"dxil_loaded\": %s,\n", dxil ? "true" : "false");
     std::printf("    \"D3D12CreateDevice\": %s,\n", create_device ? "true" : "false");
     std::printf("    \"D3DCompile\": %s\n", compile ? "true" : "false");
     std::printf("  },\n");
@@ -370,8 +468,10 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     print_hr("ps_5_0", ps_compile_hr);
     print_hr("cs_5_0", cs_compile_hr);
     print_hr("ps_6_0_wave_probe", sm6_compile_hr);
+    std::printf("    \"dxc_exit_code\": %lu,\n", static_cast<unsigned long>(dxc_exit_code));
+    std::printf("    \"dxc_dxil_size\": %zu,\n", dxc_dxil_blob.size());
     std::printf("    \"sm6_probe_decision\": \"%s\"\n",
-                sm6_probe_explicit ? "explicitly_unsupported_without_dxc_dxil_compiler" : "unexpectedly_compiled");
+                sm6_probe_explicit ? "d3dcompiler_47_rejected_sm6_dxc_used_for_dxil" : "unexpectedly_compiled");
     std::printf("  },\n");
     std::printf("  \"root_signature\": {\n");
     print_hr("serialize_empty", serialize_root_hr);
@@ -381,6 +481,7 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     print_hr("graphics_pso", graphics_pso_hr);
     print_hr("compute_pso", compute_pso_hr);
     print_hr("bad_compute_pso", bad_compute_pso_hr);
+    print_hr("dxc_compute_pso", dxc_compute_pso_hr);
     std::printf("    \"bad_compute_returns_object_but_logs_failure\": %s\n", diagnostics_valid ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"dxmt_shader_paths\": {\n");
@@ -390,9 +491,20 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     std::printf("    \"dxil_container_parse\": \"%s\",\n",
                 dxil_container_trace_ok ? "synthetic_sm6_container_parse_exercised" : "not_observed");
     std::printf("    \"dxil_to_msl\": \"%s\",\n",
-                sm6_probe_explicit ? "not_exercised_no_dxc_dxil_compiler_available" : "unexpected_compile");
+                dxc_dxil_to_msl_ok ? "proven_with_pinned_dxc_sm6_compute" : "not_proven");
     std::printf("    \"bindless_descriptor_indexing\": \"%s\"\n",
-                bindless_explicit ? "explicitly_unsupported_until_dxc_sm6_probe_is_bundled" : "unknown");
+                bindless_explicit ? "dxc_available_descriptor_indexing_probe_ready_for_next_shader_case" : "unknown");
+    std::printf("  },\n");
+    std::printf("  \"dxc\": {\n");
+    std::printf("    \"required\": %s,\n", dxc_required ? "true" : "false");
+    std::printf("    \"hlsl_written\": %s,\n", dxc_hlsl_written ? "true" : "false");
+    std::printf("    \"dxcompiler_dll\": %s,\n", dxcompiler ? "true" : "false");
+    std::printf("    \"dxil_dll\": %s,\n", dxil ? "true" : "false");
+    std::printf("    \"dxc_exe_exit_code\": %lu,\n", static_cast<unsigned long>(dxc_exit_code));
+    std::printf("    \"dxil_blob_size\": %zu,\n", dxc_dxil_blob.size());
+    std::printf("    \"dxil_container\": %s,\n", dxc_dxil_container_ok ? "true" : "false");
+    std::printf("    \"dxil_to_msl\": %s,\n", dxc_dxil_to_msl_ok ? "true" : "false");
+    std::printf("    \"errors\": \"%s\"\n", json_escape(dxc_errors).c_str());
     std::printf("  },\n");
     std::printf("  \"shader_cache\": {\n");
     std::printf("    \"vs_metallib\": %s,\n", vs_metallib ? "true" : "false");
@@ -406,12 +518,16 @@ float4 ps_main(float4 pos : SV_POSITION) : SV_Target {
     std::printf("    \"trace_file_read\": %s,\n", trace.empty() ? "false" : "true");
     std::printf("    \"dxil_trace_file_read\": %s,\n", dxil_trace.empty() ? "false" : "true");
     std::printf("    \"dxil_container_trace_ok\": %s,\n", dxil_container_trace_ok ? "true" : "false");
+    std::printf("    \"dxc_dxil_container_trace_ok\": %s,\n", dxc_dxil_container_ok ? "true" : "false");
+    std::printf("    \"dxc_dxil_to_msl_trace_ok\": %s,\n", dxc_dxil_to_msl_ok ? "true" : "false");
     std::printf("    \"failure_trace_ok\": %s,\n", failure_trace_ok ? "true" : "false");
     std::printf("    \"trace_excerpt_has_stage\": %s\n",
                 contains(trace, "cs_main") || contains(trace, "pso/") ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");
 
+    if (dxc_compute_pso)
+        dxc_compute_pso->Release();
     if (bad_compute_pso)
         bad_compute_pso->Release();
     if (compute_pso)
