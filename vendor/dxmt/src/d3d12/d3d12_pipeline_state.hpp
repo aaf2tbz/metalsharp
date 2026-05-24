@@ -5,6 +5,7 @@
 #include "Metal.hpp"
 #include "airconv_public.h"
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -18,6 +19,7 @@ struct StageInVertexAttributeInfo {
   uint32_t register_index = 0;
   uint32_t attribute_index = 0;
   WMTAttributeFormat format = WMTAttributeFormatInvalid;
+  std::string semantic_name;
 };
 
 struct CompiledShader {
@@ -49,21 +51,20 @@ public:
   void SetGraphicsDesc(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc);
   void SetComputeDesc(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc);
 
+  bool RequestCompile(bool allow_async);
   bool Compile();
 
   bool EnsureCompiled() {
-    if (!m_compiled) Compile();
-    return m_compiled;
+    if (!IsCompiled())
+      Compile();
+    return IsCompiled();
   }
 
   bool IsCompute() const { return m_is_compute; }
-  bool IsCompiled() const { return m_compiled; }
-  const char *GetCompileFailureStage() const {
-    return m_compile_failure_stage.empty() ? "none" : m_compile_failure_stage.c_str();
-  }
-  const char *GetCompileFailureDetail() const {
-    return m_compile_failure_detail.empty() ? "" : m_compile_failure_detail.c_str();
-  }
+  bool IsCompiled() const;
+  bool IsCompilePending() const;
+  std::string GetCompileFailureStage() const;
+  std::string GetCompileFailureDetail() const;
 
   WMT::Reference<WMT::RenderPipelineState> GetRenderPSO() const {
     return m_render_pso;
@@ -106,6 +107,16 @@ public:
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
 
 private:
+  enum class CompileState : uint8_t {
+    NotStarted = 0,
+    Pending,
+    Compiling,
+    Compiled,
+    Failed,
+  };
+
+  bool CompileImpl();
+  void RunAsyncCompile();
   bool CompileShader(const void *bytecode, SIZE_T size, ShaderType type,
                      const char *func_name, WMT::Reference<WMT::Function> &out_func,
                      sm50_shader_t *out_shader_handle = nullptr,
@@ -121,7 +132,9 @@ private:
 
   MTLD3D12Device *m_device;
   bool m_is_compute;
-  bool m_compiled = false;
+  std::atomic<CompileState> m_compile_state = {CompileState::NotStarted};
+  mutable std::mutex m_compile_mutex;
+  std::condition_variable m_compile_cv;
   std::string m_compile_failure_stage;
   std::string m_compile_failure_detail;
   ID3D12RootSignature *m_root_sig = nullptr;

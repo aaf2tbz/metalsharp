@@ -23,7 +23,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <condition_variable>
+#include <deque>
 #include <map>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 #include <process.h>
@@ -36,6 +39,80 @@ namespace dxmt {
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
 constexpr uint32_t kMetalShaderConverterStageInAttributeBase = 11;
+
+bool DXMTD3D12AsyncPipelineCompileEnabled() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_ASYNC_PIPELINE_COMPILE");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
+unsigned DXMTD3D12AsyncPipelineWorkerCount() {
+  static unsigned worker_count = []() {
+    const char *value = std::getenv("DXMT_D3D12_PSO_WORKERS");
+    if (value && value[0]) {
+      long parsed = std::strtol(value, nullptr, 10);
+      if (parsed <= 0)
+        return 0u;
+      return (unsigned)parsed;
+    }
+
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0)
+      hw = 4;
+    if (hw <= 2)
+      return 1u;
+    return std::min<unsigned>(8u, hw - 2);
+  }();
+  return worker_count;
+}
+
+class PipelineCompileScheduler {
+public:
+  PipelineCompileScheduler() {
+    unsigned worker_count = DXMTD3D12AsyncPipelineWorkerCount();
+    workers_.reserve(worker_count);
+    for (unsigned i = 0; i < worker_count; i++) {
+      workers_.emplace_back([this]() { WorkerMain(); });
+    }
+  }
+
+  ~PipelineCompileScheduler() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stop_ = true;
+    }
+    cv_.notify_all();
+    for (auto &worker : workers_) {
+      if (worker.joinable())
+        worker.join();
+    }
+  }
+
+  bool Enqueue(MTLD3D12PipelineState *pso) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stop_ || workers_.empty())
+      return false;
+    queue_.push_back(pso);
+    cv_.notify_one();
+    return true;
+  }
+
+private:
+  void WorkerMain();
+
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::deque<MTLD3D12PipelineState *> queue_;
+  bool stop_ = false;
+  std::vector<std::thread> workers_;
+};
+
+PipelineCompileScheduler &GetPipelineCompileScheduler() {
+  static PipelineCompileScheduler scheduler;
+  return scheduler;
+}
 
 const char *DescribeShaderBlobMagic(const void *bytecode, SIZE_T size) {
   if (!bytecode || size < 4)
@@ -651,6 +728,26 @@ std::mutex MTLD3D12PipelineState::s_shader_mutex;
 std::unordered_map<size_t, WMT::Reference<WMT::Function>>
     MTLD3D12PipelineState::s_shader_cache;
 
+void PipelineCompileScheduler::WorkerMain() {
+  while (true) {
+    MTLD3D12PipelineState *pso = nullptr;
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      cv_.wait(lock, [this]() { return stop_ || !queue_.empty(); });
+      if (stop_ && queue_.empty())
+        return;
+      pso = queue_.front();
+      queue_.pop_front();
+    }
+
+    if (!pso)
+      continue;
+
+    pso->RunAsyncCompile();
+    pso->Release();
+  }
+}
+
 MTLD3D12PipelineState::MTLD3D12PipelineState(MTLD3D12Device *device,
                                              bool is_compute)
     : m_device(device), m_is_compute(is_compute) {
@@ -666,18 +763,40 @@ MTLD3D12PipelineState::~MTLD3D12PipelineState() {
 }
 
 void MTLD3D12PipelineState::ClearCompileFailure() {
+  std::lock_guard<std::mutex> lock(m_compile_mutex);
   m_compile_failure_stage.clear();
   m_compile_failure_detail.clear();
 }
 
 bool MTLD3D12PipelineState::RecordCompileFailure(const char *stage,
                                                  const std::string &detail) {
+  std::lock_guard<std::mutex> lock(m_compile_mutex);
   m_compile_failure_stage = stage ? stage : "unknown";
   m_compile_failure_detail = detail;
   PSTRACE("PSO COMPILE FAILURE: this=%p compute=%d stage=%s detail=%s",
           (void *)this, m_is_compute, m_compile_failure_stage.c_str(),
           m_compile_failure_detail.c_str());
   return false;
+}
+
+bool MTLD3D12PipelineState::IsCompiled() const {
+  return m_compile_state.load(std::memory_order_acquire) ==
+         CompileState::Compiled;
+}
+
+bool MTLD3D12PipelineState::IsCompilePending() const {
+  auto state = m_compile_state.load(std::memory_order_acquire);
+  return state == CompileState::Pending || state == CompileState::Compiling;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureStage() const {
+  std::lock_guard<std::mutex> lock(m_compile_mutex);
+  return m_compile_failure_stage.empty() ? "none" : m_compile_failure_stage;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
+  std::lock_guard<std::mutex> lock(m_compile_mutex);
+  return m_compile_failure_detail;
 }
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
@@ -1435,11 +1554,88 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
   }
 }
 
+bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
+  if (allow_async && DXMTD3D12AsyncPipelineCompileEnabled()) {
+    {
+      std::unique_lock<std::mutex> lock(m_compile_mutex);
+      auto state = m_compile_state.load(std::memory_order_acquire);
+      if (state == CompileState::Compiled)
+        return true;
+      if (state == CompileState::Failed)
+        return false;
+      if (state == CompileState::Pending || state == CompileState::Compiling)
+        return false;
+      m_compile_state.store(CompileState::Pending, std::memory_order_release);
+    }
+
+    AddRef();
+    if (!GetPipelineCompileScheduler().Enqueue(this)) {
+      Release();
+      std::lock_guard<std::mutex> lock(m_compile_mutex);
+      m_compile_state.store(CompileState::NotStarted, std::memory_order_release);
+      return Compile();
+    }
+
+    PSTRACE("Queued async PSO compile this=%p compute=%d", (void *)this,
+            m_is_compute);
+    return false;
+  }
+
+  return Compile();
+}
+
 bool MTLD3D12PipelineState::Compile() {
-  PTRACE("Compile() called compiled=%d is_compute=%d", m_compiled,
+  {
+    std::unique_lock<std::mutex> lock(m_compile_mutex);
+    auto state = m_compile_state.load(std::memory_order_acquire);
+    if (state == CompileState::Compiled)
+      return true;
+    if (state == CompileState::Failed)
+      return false;
+    if (state == CompileState::Pending || state == CompileState::Compiling) {
+      m_compile_cv.wait(lock, [this]() {
+        auto current = m_compile_state.load(std::memory_order_acquire);
+        return current != CompileState::Pending &&
+               current != CompileState::Compiling;
+      });
+      return m_compile_state.load(std::memory_order_acquire) ==
+             CompileState::Compiled;
+    }
+    m_compile_state.store(CompileState::Compiling, std::memory_order_release);
+  }
+
+  bool compiled = CompileImpl();
+  {
+    std::lock_guard<std::mutex> lock(m_compile_mutex);
+    m_compile_state.store(compiled ? CompileState::Compiled : CompileState::Failed,
+                          std::memory_order_release);
+  }
+  m_compile_cv.notify_all();
+  return compiled;
+}
+
+void MTLD3D12PipelineState::RunAsyncCompile() {
+  {
+    std::lock_guard<std::mutex> lock(m_compile_mutex);
+    auto state = m_compile_state.load(std::memory_order_acquire);
+    if (state != CompileState::Pending)
+      return;
+    m_compile_state.store(CompileState::Compiling, std::memory_order_release);
+  }
+
+  bool compiled = CompileImpl();
+  {
+    std::lock_guard<std::mutex> lock(m_compile_mutex);
+    m_compile_state.store(compiled ? CompileState::Compiled : CompileState::Failed,
+                          std::memory_order_release);
+  }
+  m_compile_cv.notify_all();
+}
+
+bool MTLD3D12PipelineState::CompileImpl() {
+  PTRACE("Compile() called state=%u is_compute=%d",
+         (unsigned)m_compile_state.load(std::memory_order_acquire),
          m_is_compute);
-  if (m_compiled)
-    return true;
   ClearCompileFailure();
   DXMTD3D12ScopedTimer compile_timer("PSO", "CompilePipelineState");
   compile_timer.SetDetail("this=%p compute=%d root=%p vs=%zu ps=%zu cs=%zu il=%u",
@@ -1523,7 +1719,6 @@ bool MTLD3D12PipelineState::Compile() {
       m_cs_shader = nullptr;
     }
 
-    m_compiled = true;
     Logger::info("Compute PSO compiled successfully");
     return true;
   }
@@ -2140,7 +2335,6 @@ bool MTLD3D12PipelineState::Compile() {
     }
   }
 
-  m_compiled = true;
   Logger::info(str::format("Graphics PSO compiled: RTs=", m_num_render_targets,
                            " DSV=", (int)m_dsv_format,
                            " samples=", m_sample_count));

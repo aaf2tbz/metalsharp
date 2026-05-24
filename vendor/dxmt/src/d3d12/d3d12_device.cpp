@@ -1532,14 +1532,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
 
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);
-  bool compiled = pso->Compile();
-  TRACE("CreateGraphicsPSO: compile=%d VS=%p PS=%p stage=%s detail=%s",
-        compiled, desc->VS.pShaderBytecode, desc->PS.pShaderBytecode,
-        pso->GetCompileFailureStage(), pso->GetCompileFailureDetail());
-  if (!compiled) {
+  bool compiled = pso->RequestCompile(true);
+  auto failure_stage = pso->GetCompileFailureStage();
+  auto failure_detail = pso->GetCompileFailureDetail();
+  TRACE("CreateGraphicsPSO: compile=%d pending=%d VS=%p PS=%p stage=%s detail=%s",
+        compiled, pso->IsCompilePending(), desc->VS.pShaderBytecode,
+        desc->PS.pShaderBytecode, failure_stage.c_str(),
+        failure_detail.c_str());
+  if (!compiled && !pso->IsCompilePending()) {
     Logger::warn(str::format("CreateGraphicsPipelineState: shader compilation deferred/failed at ",
-                             pso->GetCompileFailureStage(), ": ",
-                             pso->GetCompileFailureDetail()));
+                             failure_stage, ": ", failure_detail));
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
   if (FAILED(hr))
@@ -1567,14 +1569,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
                                                   desc->CS.BytecodeLength)
             : 0ull,
         (void *)desc->pRootSignature);
-  bool compiled = pso->Compile();
-  TRACE("CreateComputePSO: compile=%d CS=%p stage=%s detail=%s",
-        compiled, desc->CS.pShaderBytecode,
-        pso->GetCompileFailureStage(), pso->GetCompileFailureDetail());
-  if (!compiled) {
+  bool compiled = pso->RequestCompile(true);
+  auto failure_stage = pso->GetCompileFailureStage();
+  auto failure_detail = pso->GetCompileFailureDetail();
+  TRACE("CreateComputePSO: compile=%d pending=%d CS=%p stage=%s detail=%s",
+        compiled, pso->IsCompilePending(), desc->CS.pShaderBytecode,
+        failure_stage.c_str(), failure_detail.c_str());
+  if (!compiled && !pso->IsCompilePending()) {
     Logger::warn(str::format("CreateComputePipelineState: shader compilation deferred/failed at ",
-                             pso->GetCompileFailureStage(), ": ",
-                             pso->GetCompileFailureDetail()));
+                             failure_stage, ": ", failure_detail));
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
   if (FAILED(hr))
