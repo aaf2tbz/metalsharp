@@ -14,6 +14,7 @@ RUN_CAPS=1
 RUN_DXGI=1
 RUN_RESOURCES=1
 RUN_DESCRIPTORS=1
+RUN_SHADERS=1
 
 usage() {
   cat <<'USAGE'
@@ -32,6 +33,7 @@ Options:
   --no-dxgi             Skip probe_dxgi_factory.
   --no-resources        Skip probe_resources.
   --no-descriptors      Skip probe_descriptors.
+  --no-shaders          Skip probe_shaders.
   -h, --help            Show this help.
 
 Examples:
@@ -90,6 +92,10 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       shift
       ;;
+    --no-shaders)
+      RUN_SHADERS=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -129,6 +135,7 @@ CAPS_PROBE_EXE="$SDK_DIR/out/bin/probe_device_caps.exe"
 DXGI_PROBE_EXE="$SDK_DIR/out/bin/probe_dxgi_factory.exe"
 RESOURCES_PROBE_EXE="$SDK_DIR/out/bin/probe_resources.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
+SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 
 if [[ ! -x "$WINE_BIN" ]]; then
   echo "Wine binary is not executable: $WINE_BIN" >&2
@@ -157,7 +164,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
   exit 2
 fi
 
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
   "$SDK_DIR/scripts/build-probes.sh" >/dev/null
 fi
 
@@ -168,6 +175,7 @@ CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
 DXGI_RESULT_FILE="$RESULTS_DIR/probe-dxgi-factory-${PROFILE}.json"
 RESOURCES_RESULT_FILE="$RESULTS_DIR/probe-resources-${PROFILE}.json"
 DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
+SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
@@ -266,4 +274,17 @@ if [[ "$RUN_DESCRIPTORS" == "1" ]]; then
     "$WINE_BIN" "$DESCRIPTORS_PROBE_EXE" > "$DESCRIPTORS_RESULT_FILE"
   )
   echo "$DESCRIPTORS_RESULT_FILE"
+fi
+
+if [[ "$RUN_SHADERS" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$SHADERS_PROBE_EXE" > "$SHADERS_RESULT_FILE"
+  )
+  echo "$SHADERS_RESULT_FILE"
 fi

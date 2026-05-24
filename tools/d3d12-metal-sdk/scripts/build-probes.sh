@@ -90,9 +90,22 @@ done
   "$SDK_DIR/probes/probe_descriptors/probe_descriptors.cpp" \
   -o "$OUT_DIR/probe_descriptors.exe"
 
+"$CXX" \
+  -std=c++17 \
+  -O2 \
+  -static \
+  -static-libgcc \
+  -static-libstdc++ \
+  -Wall \
+  -Wextra \
+  -Werror \
+  "$SDK_DIR/probes/probe_shaders/probe_shaders.cpp" \
+  -o "$OUT_DIR/probe_shaders.exe"
+
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
 echo "$OUT_DIR/probe_device_caps.exe"
 echo "$OUT_DIR/probe_dxgi_factory.exe"
 echo "$OUT_DIR/probe_resources.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
+echo "$OUT_DIR/probe_shaders.exe"
