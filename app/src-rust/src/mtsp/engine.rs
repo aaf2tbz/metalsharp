@@ -54,6 +54,7 @@ impl PipelineNode {
 
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
 const DXMT_70_PERCENT_UPSCALE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
+const DXMT_M12_SAFE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=24";
 
 pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
@@ -82,9 +83,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_SPATIAL", value: "1" },
                     EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
-                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
+                    EnvVar { key: "DXMT_D3D12_PSO_WORKERS", value: "6" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_M12_SAFE_CONFIG },
                 ],
-                launch_args: vec![],
+                launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes", "-NOSPLASH"],
                 alternatives: vec![
                     PipelineId::M11,
                     PipelineId::M10,
@@ -366,7 +368,7 @@ mod tests {
         let m12 = get_pipeline(PipelineId::M12);
         assert!(!m12.experimental);
         assert_eq!(m12.backend, "dxmt");
-        assert!(m12.launch_args.is_empty());
+        assert!(m12.launch_args.contains(&"-windowed"));
         assert!(m12.deploy_dlls.iter().any(|dll| dll.filename == "d3d12.dll"));
         assert_eq!(m12.shader_cache_subdir, Some("m12"));
     }
@@ -386,9 +388,18 @@ mod tests {
 
         let m12_env: std::collections::HashSet<_> = m12.env_vars.iter().map(|env| env.key).collect();
         assert!(m12_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
+        assert!(m12_env.contains("DXMT_D3D12_PSO_WORKERS"));
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL"));
         assert!(m12_env.contains("DXMT_METALFX_TEMPORAL"));
+        let m12_env_values: std::collections::HashMap<_, _> =
+            m12.env_vars.iter().map(|env| (env.key, env.value)).collect();
+        assert_eq!(m12_env_values.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"));
+        assert_eq!(m12_env_values.get("DXMT_D3D12_PSO_WORKERS"), Some(&"6"));
+        assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some(&"1"));
+        assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL"), Some(&"1"));
+        assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));
+        assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
         assert_eq!(
             m12.wine_overrides,
