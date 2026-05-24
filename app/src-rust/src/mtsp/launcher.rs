@@ -346,7 +346,7 @@ pub fn launch_custom_with_options(
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
-    let cache_paths = build_cache_paths(&home, node, launch_id);
+    let cache_paths = build_cache_paths(&home, node, launch_id, Some(game_dir));
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
         .env("WINEPREFIX", &prefix_str)
@@ -471,10 +471,10 @@ fn launch_dxmt_metal_with_context(
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
     if node.id == PipelineId::M12 {
-        spawn_metalshaderconverter_sidecar(appid, &home);
+        spawn_metalshaderconverter_sidecar(appid, &home, cache_paths.as_ref());
     }
 
     let mut cmd = Command::new(&wine);
@@ -524,7 +524,7 @@ fn launch_dxmt_metal_with_context(
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
-fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path) {
+fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
     let tool_candidates = [
         PathBuf::from("/usr/local/bin/metal-shaderconverter"),
         PathBuf::from("/opt/homebrew/bin/metal-shaderconverter"),
@@ -534,13 +534,17 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path) {
         return;
     };
 
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.pipeline))
+        .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
+    let cache_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.shader))
+        .unwrap_or_else(|| PathBuf::from("/tmp/dxmt_shader_cache"));
 
     std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(180);
-        let cache_dir = PathBuf::from("/tmp/dxmt_shader_cache");
         let launch_start = SystemTime::now();
         let max_active_compiles = 4usize;
 
@@ -703,7 +707,7 @@ fn launch_wine_bare_with_context(
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     for (key, value) in extra_env {
         cmd.env(key, value);
@@ -834,7 +838,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         .env("MONO_ENV_OPTIONS", "--runtime=v4.0")
         .env("MONO_PATH", dir.to_string_lossy().to_string());
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(dir));
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &home.join(".metalsharp").join("runtime").join("wine"));
 
     for ev in &node.env_vars {
@@ -939,10 +943,27 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
+fn path_looks_external_volume(path: &Path) -> bool {
+    path.starts_with(Path::new("/Volumes"))
+}
+
+fn preferred_cache_root(home: &Path, game_dir: Option<&Path>) -> PathBuf {
+    if let Some(game_dir) = game_dir {
+        if path_looks_external_volume(game_dir) {
+            let root = game_dir.join(".metalsharp-cache");
+            if std::fs::create_dir_all(&root).is_ok() {
+                return root;
+            }
+        }
+    }
+    home.join(".metalsharp")
+}
+
+fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32, game_dir: Option<&Path>) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
-    let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
-    let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
+    let cache_root = preferred_cache_root(home, game_dir);
+    let shader_base = cache_root.join("shader-cache").join(subdir).join(appid.to_string());
+    let pipeline_base = cache_root.join("pipeline-cache").join(subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
@@ -954,7 +975,8 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
 
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let cache_paths = build_cache_paths(home, node, appid);
+    let game_dir = crate::setup::resolve_game_dir(appid);
+    let cache_paths = build_cache_paths(home, node, appid, game_dir.as_deref());
     let appid_string = appid.to_string();
     let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
 
@@ -1467,6 +1489,23 @@ mod tests {
     }
 
     #[test]
+    fn external_volume_detection_matches_volumes_prefix_only() {
+        assert!(path_looks_external_volume(Path::new("/Volumes/AverySSD/Subnautica2")));
+        assert!(!path_looks_external_volume(Path::new("/Users/alexmondello/Dev/metalsharp")));
+        assert!(!path_looks_external_volume(Path::new("/tmp/Subnautica2")));
+    }
+
+    #[test]
+    fn preferred_cache_root_falls_back_to_home_for_non_external_paths() {
+        let home = test_dir("cache-root-home");
+        let game_dir = home.join("Games").join("Subnautica2");
+
+        let root = preferred_cache_root(&home, Some(&game_dir));
+
+        assert_eq!(root, home.join(".metalsharp"));
+    }
+
+    #[test]
     fn dxmt_family_env_uses_seventy_percent_upscale_and_cache_paths() {
         for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
             let home = test_dir(&format!("dxmt-env-{:?}", pipeline_id));
@@ -1478,7 +1517,10 @@ mod tests {
                 env.iter().find(|(key, _)| key == "METALSHARP_CACHE_SUMMARY").map(|(_, value)| value.as_str());
 
             assert!(config.unwrap_or_default().contains("d3d11.metalSpatialUpscaleFactor=1.43"));
-            assert!(config.unwrap_or_default().contains("d3d11.preferredMaxFrameRate=60"));
+            let expected_frame_rate = if pipeline_id == PipelineId::M12 { "24" } else { "60" };
+            assert!(config
+                .unwrap_or_default()
+                .contains(&format!("d3d11.preferredMaxFrameRate={}", expected_frame_rate)));
             assert!(summary.unwrap_or_default().contains("/shader-cache/"));
             assert!(summary.unwrap_or_default().contains("/pipeline-cache/"));
             assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
