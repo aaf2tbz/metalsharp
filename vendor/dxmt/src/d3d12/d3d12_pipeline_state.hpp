@@ -14,6 +14,12 @@ namespace dxmt {
 
 class MTLD3D12Device;
 
+struct StageInVertexAttributeInfo {
+  uint32_t register_index = 0;
+  uint32_t attribute_index = 0;
+  WMTAttributeFormat format = WMTAttributeFormatInvalid;
+};
+
 struct CompiledShader {
   sm50_shader_t handle = nullptr;
   MTL_SHADER_REFLECTION reflection = {};
@@ -128,6 +134,7 @@ private:
   std::vector<std::string> m_input_semantic_names;
   bool m_has_stream_output = false;
   bool m_vs_uses_stage_in = false;
+  uint32_t m_gs_passthrough = ~0u;
   D3D12_INDEX_BUFFER_STRIP_CUT_VALUE m_strip_cut_value = {};
   D3D12_PRIMITIVE_TOPOLOGY_TYPE m_topology = {};
   UINT m_num_render_targets = 0;
@@ -154,6 +161,8 @@ private:
   std::vector<MTL_SM50_SHADER_ARGUMENT> m_ps_cb_args;
   sm50_shader_t m_ps_shader = nullptr;
   uint32_t m_ia_slot_mask = 0;
+  std::unordered_map<uint32_t, StageInVertexAttributeInfo> m_vs_stage_in_register_map;
+  std::vector<StageInVertexAttributeInfo> m_vs_stage_in_attribute_order;
 
   std::atomic<uint32_t> m_refCount = {1ul};
 };

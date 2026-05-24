@@ -2,6 +2,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -9,15 +10,19 @@
 
 #include <d3d12.h>
 
-extern "C" __declspec(dllexport) const UINT D3D12SDKVersion = 619;
-extern "C" __declspec(dllexport) const char D3D12SDKPath[] = ".\\D3D12\\";
+extern "C" {
+__declspec(dllexport) UINT D3D12SDKVersion = 619;
+__declspec(dllexport) char D3D12SDKPath[260] = ".\\D3D12\\";
+}
 
 struct ModuleInfo {
-    const char* name;
+    std::string name;
     HMODULE handle = nullptr;
     std::string path;
     bool loaded = false;
     bool has_required_symbol = false;
+    uint32_t exported_sdk_version = 0;
+    bool has_exported_sdk_version = false;
 };
 
 struct InterfaceProbe {
@@ -89,6 +94,36 @@ static std::string getenv_string(const char* key) {
     return value;
 }
 
+static void configure_exported_sdk() {
+    std::string version_text = getenv_string("D3D12_METAL_SDK_AGILITY_VERSION");
+    if (!version_text.empty()) {
+        D3D12SDKVersion = static_cast<UINT>(std::strtoul(version_text.c_str(), nullptr, 10));
+    }
+
+    std::string sdk_path = getenv_string("D3D12_METAL_SDK_AGILITY_PATH");
+    if (!sdk_path.empty()) {
+        std::snprintf(D3D12SDKPath, sizeof(D3D12SDKPath), "%s", sdk_path.c_str());
+    }
+}
+
+static std::string normalize_windows_path(std::string value) {
+    for (char& ch : value) {
+        if (ch == '/')
+            ch = '\\';
+    }
+    return value;
+}
+
+static std::string join_windows_path(const std::string& base, const std::string& child) {
+    if (base.empty())
+        return child;
+    if (child.empty())
+        return base;
+    if (base.back() == '\\' || base.back() == '/')
+        return base + child;
+    return base + "\\" + child;
+}
+
 static std::string module_path(HMODULE module) {
     char buffer[4096];
     DWORD written = GetModuleFileNameA(module, buffer, sizeof(buffer));
@@ -133,7 +168,7 @@ static uint64_t fnv1a_file_hash(const std::string& path) {
 }
 
 static void inspect_module(ModuleInfo& module, const char* required_symbol = nullptr) {
-    module.handle = LoadLibraryA(module.name);
+    module.handle = LoadLibraryA(module.name.c_str());
     module.loaded = module.handle != nullptr;
     if (!module.loaded)
         return;
@@ -141,6 +176,11 @@ static void inspect_module(ModuleInfo& module, const char* required_symbol = nul
     module.path = module_path(module.handle);
     module.has_required_symbol =
         required_symbol == nullptr || GetProcAddress(module.handle, required_symbol) != nullptr;
+    auto sdk_version = reinterpret_cast<const uint32_t*>(GetProcAddress(module.handle, "D3D12SDKVersion"));
+    if (sdk_version) {
+        module.exported_sdk_version = *sdk_version;
+        module.has_exported_sdk_version = true;
+    }
 }
 
 static void print_module_json(const ModuleInfo& module, bool last) {
@@ -149,7 +189,9 @@ static void print_module_json(const ModuleInfo& module, bool last) {
     std::printf("      \"loaded\": %s,\n", module.loaded ? "true" : "false");
     std::printf("      \"path\": \"%s\",\n", json_escape(module.path).c_str());
     std::printf("      \"fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(hash));
-    std::printf("      \"has_required_symbol\": %s\n", module.has_required_symbol ? "true" : "false");
+    std::printf("      \"has_required_symbol\": %s,\n", module.has_required_symbol ? "true" : "false");
+    std::printf("      \"has_exported_sdk_version\": %s,\n", module.has_exported_sdk_version ? "true" : "false");
+    std::printf("      \"exported_sdk_version\": %u\n", module.exported_sdk_version);
     std::printf("    }%s\n", last ? "" : ",");
 }
 
@@ -163,23 +205,27 @@ static void print_interface_json(const InterfaceProbe& probe, bool last) {
 }
 
 int main() {
+    configure_exported_sdk();
     std::string profile = getenv_string("D3D12_METAL_SDK_PROFILE");
     std::string expected_windows = getenv_string("D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR");
+    std::string sdk_module_dir = normalize_windows_path(D3D12SDKPath);
 
     std::vector<ModuleInfo> modules = {
-        {"D3D12\\D3D12Core.dll", nullptr, "", false, false},
-        {"D3D12\\d3d12SDKLayers.dll", nullptr, "", false, false},
-        {"D3D12\\D3D12StateObjectCompiler.dll", nullptr, "", false, false},
-        {"d3d12.dll", nullptr, "", false, false},
+        {join_windows_path(sdk_module_dir, "D3D12Core.dll"), nullptr, "", false, false, 0, false},
+        {join_windows_path(sdk_module_dir, "d3d12SDKLayers.dll"), nullptr, "", false, false, 0, false},
+        {join_windows_path(sdk_module_dir, "D3D12StateObjectCompiler.dll"), nullptr, "", false, false, 0, false},
+        {join_windows_path(sdk_module_dir, "dxil.dll"), nullptr, "", false, false, 0, false},
+        {"d3d12.dll", nullptr, "", false, false, 0, false},
     };
 
     inspect_module(modules[0]);
     inspect_module(modules[1]);
     inspect_module(modules[2]);
-    inspect_module(modules[3], "D3D12CreateDevice");
+    inspect_module(modules[3]);
+    inspect_module(modules[4], "D3D12CreateDevice");
 
     using CreateDeviceFn = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
-    FARPROC create_device_proc = modules[3].loaded ? GetProcAddress(modules[3].handle, "D3D12CreateDevice") : nullptr;
+    FARPROC create_device_proc = modules[4].loaded ? GetProcAddress(modules[4].handle, "D3D12CreateDevice") : nullptr;
     auto create_device = reinterpret_cast<CreateDeviceFn>(reinterpret_cast<void*>(create_device_proc));
 
     IUnknown* device = nullptr;
@@ -209,9 +255,13 @@ int main() {
         }
     }
 
-    bool d3d12_expected_path = expected_windows.empty() || contains_ascii_ci(modules[3].path, expected_windows);
-    bool pass = modules[0].loaded && modules[1].loaded && modules[3].loaded && modules[3].has_required_symbol &&
-                d3d12_expected_path && SUCCEEDED(create_hr) && device != nullptr && interfaces[0].supported;
+    bool d3d12_expected_path = expected_windows.empty() || contains_ascii_ci(modules[4].path, expected_windows);
+    bool payload_version_matches =
+        (modules[0].loaded && modules[0].has_exported_sdk_version && modules[0].exported_sdk_version == D3D12SDKVersion) ||
+        (modules[1].loaded && modules[1].has_exported_sdk_version && modules[1].exported_sdk_version == D3D12SDKVersion);
+    bool pass = modules[0].loaded && modules[1].loaded && modules[4].loaded && modules[4].has_required_symbol &&
+                payload_version_matches && d3d12_expected_path && SUCCEEDED(create_hr) && device != nullptr &&
+                interfaces[0].supported;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-agility-ue5.v1\",\n");
@@ -220,6 +270,12 @@ int main() {
     std::printf("  \"sdk\": {\n");
     std::printf("    \"D3D12SDKVersion\": %u,\n", D3D12SDKVersion);
     std::printf("    \"D3D12SDKPath\": \"%s\"\n", json_escape(D3D12SDKPath).c_str());
+    std::printf("  },\n");
+    std::printf("  \"agility_match\": {\n");
+    std::printf("    \"d3d12core_loaded\": %s,\n", modules[0].loaded ? "true" : "false");
+    std::printf("    \"d3d12core_exported_sdk_version\": %u,\n", modules[0].exported_sdk_version);
+    std::printf("    \"sdk_layers_exported_sdk_version\": %u,\n", modules[1].exported_sdk_version);
+    std::printf("    \"payload_version_matches_probe\": %s\n", payload_version_matches ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"device_create\": {\n");
     std::printf("    \"minimum_feature_level\": \"11_0\",\n");

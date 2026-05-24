@@ -405,7 +405,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
         312520 | 375520 => "dxmt_metal",
-        2050650 | 3164500 | 848450 => "dxmt_metal12",
+        1962700 | 2050650 | 3164500 | 848450 => "dxmt_metal12",
         535520 => "wined3d_32",
         945360 | 1139900 => "steam",
         620 | 265930 => "d3d9_metal",
@@ -427,7 +427,7 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         105600 => prepare_terrarria(&game_dir, &home)?,
         504230 => prepare_celeste(&game_dir, &home)?,
         312520 | 375520 => prepare_rain_world(&game_dir, &home)?,
-        2050650 | 3164500 | 848450 => prepare_dxmt_metal12(&game_dir, &home)?,
+        1962700 | 2050650 | 3164500 | 848450 => prepare_dxmt_metal12(appid, &game_dir, &home)?,
         535520 => prepare_nidhogg_2(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 | 265930 => prepare_goldberg_game(&game_dir, &home, appid)?,
@@ -618,12 +618,490 @@ fn prepare_rain_world(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn
     Ok(())
 }
 
-fn prepare_dxmt_metal12(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare_dxmt_metal12(appid: u32, game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let marker = game_dir.join(".metalsharp_prepared");
+    stage_packaged_steam_runtime_for_game(appid, game_dir)?;
+    stage_agility_sdk_for_game(appid, game_dir, home)?;
     if !marker.exists() {
         let _ = std::fs::write(&marker, "dxmt_metal12");
     }
     Ok(())
+}
+
+fn stage_packaged_steam_runtime_for_game(appid: u32, game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, &game_dir.to_path_buf())?;
+    let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
+    let appid_text = appid.to_string();
+
+    stage_text_file_if_needed(&game_dir.join("steam_appid.txt"), &appid_text)?;
+    stage_text_file_if_needed(&exe_dir.join("steam_appid.txt"), &appid_text)?;
+
+    if let Some(steam_api64) = find_packaged_steam_api64(game_dir) {
+        let dest = exe_dir.join("steam_api64.dll");
+        if !dest.exists() || !same_file_contents(&steam_api64, &dest) {
+            stage_sdk_file(&steam_api64, &dest)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn stage_text_file_if_needed(dest: &Path, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::read_to_string(dest).ok().as_deref() == Some(contents) {
+        return Ok(());
+    }
+    std::fs::write(dest, contents)?;
+    Ok(())
+}
+
+fn find_packaged_steam_api64(game_dir: &Path) -> Option<PathBuf> {
+    let candidates = [
+        game_dir
+            .join("Engine")
+            .join("Binaries")
+            .join("ThirdParty")
+            .join("Steamworks")
+            .join("Steamv157")
+            .join("Win64")
+            .join("steam_api64.dll"),
+        game_dir.join("steam_api64.dll"),
+    ];
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+#[derive(Debug, Clone)]
+struct AgilitySdkRequirement {
+    sdk_version: Option<u32>,
+    sdk_path: String,
+}
+
+fn stage_agility_sdk_for_game(appid: u32, game_dir: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
+    let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
+    let requirement = read_game_agility_requirement(&exe_path);
+    let agility_bin = ensure_agility_sdk_bin(home, requirement.sdk_version).ok_or_else(|| {
+        let version = requirement.sdk_version.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string());
+        format!("Agility SDK x64 payload not found for version {}", version)
+    })?;
+    let dxil_dll = ensure_dxil_dll(home);
+
+    let targets = resolve_agility_target_dirs(exe_dir, &requirement.sdk_path);
+
+    for target_dir in targets {
+        std::fs::create_dir_all(&target_dir)?;
+        for dll in ["D3D12Core.dll", "d3d12SDKLayers.dll"] {
+            let source = agility_bin.join(dll);
+            if !source.exists() {
+                return Err(format!("Missing Agility SDK DLL: {}", source.display()).into());
+            }
+            stage_sdk_file(&source, &target_dir.join(dll))?;
+        }
+
+        for optional in ["D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
+            let source = agility_bin.join(optional);
+            if source.exists() {
+                stage_sdk_file(&source, &target_dir.join(optional))?;
+            }
+        }
+
+        if let Some(source) = &dxil_dll {
+            stage_sdk_file(source, &target_dir.join("dxil.dll"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn stage_sdk_file(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let backup =
+        dest.with_file_name(format!("{}.orig", dest.file_name().and_then(|name| name.to_str()).unwrap_or("sdk-file")));
+    if dest.exists() && !same_file_contents(source, dest) && !backup.exists() {
+        std::fs::copy(dest, &backup)?;
+    }
+    std::fs::copy(source, dest)?;
+    Ok(())
+}
+
+fn read_game_agility_requirement(exe_path: &Path) -> AgilitySdkRequirement {
+    if let Some(exports) = crate::mtsp::pe::read_agility_exports(exe_path) {
+        return AgilitySdkRequirement {
+            sdk_version: Some(exports.sdk_version),
+            sdk_path: if exports.sdk_path.is_empty() { ".\\D3D12\\".to_string() } else { exports.sdk_path },
+        };
+    }
+
+    AgilitySdkRequirement {
+        sdk_version: crate::mtsp::pe::read_export_u32(exe_path, "D3D12SDKVersion"),
+        sdk_path: read_game_agility_path_hint(exe_path).unwrap_or_else(|| ".\\D3D12\\".to_string()),
+    }
+}
+
+fn read_game_agility_path_hint(exe_path: &Path) -> Option<String> {
+    let data = std::fs::read(exe_path).ok()?;
+    for needle in [b".\\D3D12\\x64\\".as_slice(), b".\\D3D12\\".as_slice()] {
+        if let Some(offset) = find_bytes(&data, needle) {
+            return String::from_utf8(data[offset..offset + needle.len()].to_vec()).ok();
+        }
+    }
+    None
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+fn ensure_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<PathBuf> {
+    if let Some(found) = find_agility_sdk_bin(home, required_version) {
+        return Some(found);
+    }
+
+    let package_version = required_version.and_then(agility_package_version)?;
+    fetch_agility_sdk_bin(home, package_version, required_version)?;
+    find_agility_sdk_bin(home, required_version)
+}
+
+fn find_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("METALSHARP_AGILITY_BIN") {
+        candidates.push(PathBuf::from(path));
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        push_agility_candidates(&mut candidates, &cwd);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_agility_candidates(&mut candidates, dir);
+        }
+    }
+
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        push_agility_candidates(&mut candidates, &resources);
+    }
+
+    if let Some(package_version) = required_version.and_then(agility_package_version) {
+        push_cached_agility_package_candidates(&mut candidates, home, package_version);
+    }
+
+    candidates
+        .push(PathBuf::from("/Volumes/AverySSD/metalsharp/metal-api-table/agility-sdk/extracted/build/native/bin/x64"));
+    candidates.push(
+        home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("D3D12"),
+    );
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp-pr119-sdk")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("bin")
+            .join("D3D12"),
+    );
+    candidates.push(
+        home.join("repos")
+            .join("metalsharp")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("bin")
+            .join("D3D12"),
+    );
+
+    candidates.into_iter().find(|dir| agility_bin_matches(dir, required_version))
+}
+
+fn agility_bin_matches(dir: &Path, required_version: Option<u32>) -> bool {
+    let core = dir.join("D3D12Core.dll");
+    let layers = dir.join("d3d12SDKLayers.dll");
+    if !core.exists() || !layers.exists() {
+        return false;
+    }
+    match required_version {
+        Some(version) => crate::mtsp::pe::read_export_u32(&core, "D3D12SDKVersion") == Some(version),
+        None => true,
+    }
+}
+
+fn fetch_agility_sdk_bin(home: &Path, package_version: &str, required_version: Option<u32>) -> Option<PathBuf> {
+    let script = find_agility_fetch_script(home)?;
+    let output = std::process::Command::new("bash").arg(&script).arg("--version").arg(package_version).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .map(PathBuf::from)?;
+    if agility_bin_matches(&path, required_version) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn find_agility_fetch_script(home: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        push_agility_script_candidates(&mut candidates, &cwd);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_agility_script_candidates(&mut candidates, dir);
+        }
+    }
+
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        push_agility_script_candidates(&mut candidates, &resources);
+    }
+
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp-pr119-sdk")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("scripts")
+            .join("fetch-agility.sh"),
+    );
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("scripts")
+            .join("fetch-agility.sh"),
+    );
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn push_agility_script_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
+    let mut current = Some(start);
+    for _ in 0..8 {
+        let Some(dir) = current else {
+            break;
+        };
+        candidates.push(dir.join("tools").join("d3d12-metal-sdk").join("scripts").join("fetch-agility.sh"));
+        current = dir.parent();
+    }
+}
+
+fn push_cached_agility_package_candidates(candidates: &mut Vec<PathBuf>, home: &Path, package_version: &str) {
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp-pr119-sdk")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("agility")
+            .join(package_version)
+            .join("build")
+            .join("native")
+            .join("bin")
+            .join("x64"),
+    );
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("agility")
+            .join(package_version)
+            .join("build")
+            .join("native")
+            .join("bin")
+            .join("x64"),
+    );
+}
+
+fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
+    match sdk_version {
+        614 => Some("1.614.1"),
+        619 => Some("1.619.3"),
+        _ => None,
+    }
+}
+
+fn resolve_agility_target_dirs(exe_dir: &Path, sdk_path: &str) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+    let root_target = exe_dir.join("D3D12");
+    let resolved = resolve_relative_windows_path(exe_dir, sdk_path);
+    targets.push(resolved.clone());
+    targets.push(root_target.clone());
+    if resolved.file_name().and_then(|name| name.to_str()) == Some("x64") {
+        if let Some(parent) = resolved.parent() {
+            targets.push(parent.to_path_buf());
+        }
+    } else {
+        targets.push(root_target.join("x64"));
+    }
+
+    let mut deduped = Vec::new();
+    for path in targets {
+        if !deduped.contains(&path) {
+            deduped.push(path);
+        }
+    }
+    deduped
+}
+
+fn resolve_relative_windows_path(base_dir: &Path, sdk_path: &str) -> PathBuf {
+    let trimmed = sdk_path.trim().trim_matches('\0');
+    let mut relative = trimmed.replace('/', "\\");
+    while let Some(rest) = relative.strip_prefix(".\\") {
+        relative = rest.to_string();
+    }
+    let mut resolved = base_dir.to_path_buf();
+    for component in relative.split('\\').filter(|part| !part.is_empty() && *part != ".") {
+        resolved.push(component);
+    }
+    resolved
+}
+
+fn ensure_dxil_dll(home: &Path) -> Option<PathBuf> {
+    find_dxil_dll(home).or_else(|| fetch_dxil_dll(home))
+}
+
+fn find_dxil_dll(home: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("METALSHARP_DXIL_DLL") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        push_dxil_candidates(&mut candidates, &cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_dxil_candidates(&mut candidates, dir);
+        }
+    }
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        push_dxil_candidates(&mut candidates, &resources);
+    }
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp-pr119-sdk")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("bin")
+            .join("dxil.dll"),
+    );
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("bin")
+            .join("dxil.dll"),
+    );
+    candidates.push(
+        home.join("repos")
+            .join("metalsharp")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("out")
+            .join("bin")
+            .join("dxil.dll"),
+    );
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn fetch_dxil_dll(home: &Path) -> Option<PathBuf> {
+    let script = find_dxc_fetch_script(home)?;
+    let output = std::process::Command::new("bash").arg(&script).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let dir = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .map(PathBuf::from)?;
+    let path = dir.join("dxil.dll");
+    path.exists().then_some(path)
+}
+
+fn find_dxc_fetch_script(home: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        push_dxc_script_candidates(&mut candidates, &cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_dxc_script_candidates(&mut candidates, dir);
+        }
+    }
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        push_dxc_script_candidates(&mut candidates, &resources);
+    }
+    candidates.push(
+        home.join("Dev")
+            .join("metalsharp-pr119-sdk")
+            .join("tools")
+            .join("d3d12-metal-sdk")
+            .join("scripts")
+            .join("fetch-dxc.sh"),
+    );
+    candidates.push(
+        home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("scripts").join("fetch-dxc.sh"),
+    );
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn push_dxc_script_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
+    let mut current = Some(start);
+    for _ in 0..8 {
+        let Some(dir) = current else {
+            break;
+        };
+        candidates.push(dir.join("tools").join("d3d12-metal-sdk").join("scripts").join("fetch-dxc.sh"));
+        current = dir.parent();
+    }
+}
+
+fn push_dxil_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
+    let mut current = Some(start);
+    for _ in 0..8 {
+        let Some(dir) = current else {
+            break;
+        };
+        candidates.push(dir.join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("dxil.dll"));
+        current = dir.parent();
+    }
+}
+
+fn push_agility_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
+    let mut current = Some(start);
+    for _ in 0..8 {
+        let Some(dir) = current else {
+            break;
+        };
+        candidates.push(dir.join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("D3D12"));
+        current = dir.parent();
+    }
+}
+
+fn same_file_contents(left: &Path, right: &Path) -> bool {
+    match (std::fs::read(left), std::fs::read(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 fn prepare_nidhogg_2(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {

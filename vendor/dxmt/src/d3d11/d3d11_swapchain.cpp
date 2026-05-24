@@ -131,20 +131,11 @@ public:
       monitor_(wsi::getWindowMonitor(hWnd)),
       hud(WMT::DeveloperHUDProperties::instance()) {
 
-    native_view_ = WMT::CreateMetalViewFromHWND((intptr_t)hWnd, pDevice->GetMTLDevice(), layer_weak_);
-
-    if (!native_view_) {
-      ERR("Failed to create metal view, it seems like your Wine has no exported symbols needed by DXMT.");
-      abort();
-    }
-
     if constexpr (EnableMetalFX) {
       scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
     }
 
-    presenter = Rc(new Presenter(pDevice->GetMTLDevice(), layer_weak_,
-                                 pDevice->GetDXMTDevice().queue().cmd_library,
-                                 scale_factor, desc_.SampleDesc.Count));
+    EnsureMetalView();
 
     frame_latency = kSwapchainLatency;
     present_semaphore_ = CreateSemaphore(nullptr, frame_latency,
@@ -363,7 +354,8 @@ public:
       return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
     }
     
-    presenter->changeGammaRamp(nullptr);
+    if (presenter)
+      presenter->changeGammaRamp(nullptr);
 
     return S_OK;
   }
@@ -574,6 +566,8 @@ public:
   };
 
   void ApplyLayerProps() {
+    if (!EnsureMetalView())
+      return;
     auto target_color_space =
         ConvertColorSpace(desc_.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
                               ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
@@ -752,6 +746,13 @@ public:
 
     std::unique_lock<d3d11_device_mutex> lock(device_->mutex);
 
+    if (!EnsureMetalView()) {
+      device_context_->PrepareFlush();
+      device_context_->Commit();
+      ERR("DXGI: Present failed because Metal view/layer is unavailable");
+      return DXGI_STATUS_OCCLUDED;
+    }
+
     device_context_->PrepareFlush();
     if (hr == DXGI_STATUS_OCCLUDED) {
       // flush commands without presenting
@@ -768,9 +769,14 @@ public:
     auto &cmd_queue = device_->GetDXMTDevice().queue();
     auto chunk = cmd_queue.CurrentChunk();
     chunk->signal_frame_latency_fence_ = cmd_queue.CurrentFrameSeq();
-    if (target_) {
+    if (target_ && presenter) {
       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
       presenter->changeGammaRamp(output->GetGammaRamp());
+    }
+    if (!presenter) {
+      device_context_->Commit();
+      lock.unlock();
+      return DXGI_STATUS_OCCLUDED;
     }
     if constexpr (EnableMetalFX) {
       chunk->emitcc([
@@ -1023,7 +1029,7 @@ public:
   HRESULT STDMETHODCALLTYPE
   SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) override {
     auto target_color_space = ConvertColorSpace(ColorSpace, LayerSupportEDR());
-    if (presenter->changeLayerColorSpace(target_color_space))
+    if (presenter && presenter->changeLayerColorSpace(target_color_space))
       device_context_->WaitUntilGPUIdle();
     colorspace_ = ColorSpace;
     return S_OK;
@@ -1034,13 +1040,15 @@ public:
                                            void *pMetaData) override {
                                             return S_OK;
     if (Type == DXGI_HDR_METADATA_TYPE_NONE) {
-      presenter->changeHDRMetadata(nullptr);
+      if (presenter)
+        presenter->changeHDRMetadata(nullptr);
       return S_OK;
     }
     if (Type == DXGI_HDR_METADATA_TYPE_HDR10) {
       if (Size != sizeof(WMTHDRMetadata))
         return E_INVALIDARG;
-      presenter->changeHDRMetadata(reinterpret_cast<const WMTHDRMetadata *>(pMetaData));
+      if (presenter)
+        presenter->changeHDRMetadata(reinterpret_cast<const WMTHDRMetadata *>(pMetaData));
       return S_OK;
     }
     return DXGI_ERROR_UNSUPPORTED;
@@ -1048,9 +1056,35 @@ public:
 
 private:
   bool LayerSupportEDR() {
+    if (!layer_weak_.handle)
+      return false;
     WMTEDRValue edr_value;
     MetalLayer_getEDRValue(layer_weak_, &edr_value);
     return edr_value.maximum_potential_edr_color_component_value > 1.0f;
+  };
+
+  bool EnsureMetalView() {
+    if (native_view_ && layer_weak_.handle && presenter)
+      return true;
+
+    if (native_view_) {
+      WMT::ReleaseMetalView(native_view_);
+      native_view_ = {};
+    }
+    layer_weak_ = {};
+
+    native_view_ = WMT::CreateMetalViewFromHWND((intptr_t)hWnd, device_->GetMTLDevice(), layer_weak_);
+    if (!native_view_ || !layer_weak_.handle) {
+      WARN("DXGI: failed to create metal view/layer for hwnd ", hWnd,
+           ", will retry later");
+      presenter = nullptr;
+      return false;
+    }
+
+    presenter = Rc(new Presenter(device_->GetMTLDevice(), layer_weak_,
+                                 device_->GetDXMTDevice().queue().cmd_library,
+                                 scale_factor, desc_.SampleDesc.Count));
+    return presenter != nullptr;
   };
 
   Com<IDXGIFactory1> factory_;

@@ -220,6 +220,26 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
   return values;
 }
 
+static std::string normalizeFloatSuffixLiteral(const std::string &text) {
+  if (text.size() < 2 || text.back() != 'f')
+    return text;
+  std::string body = text.substr(0, text.size() - 1);
+  if (body.find_first_not_of("+-0123456789") != std::string::npos)
+    return text;
+  return body + ".0f";
+}
+
+static std::string defaultValueForTypeId(uint32_t type_id, const LLVMModule &mod);
+
+static std::string normalizeConstantData(const std::string &text, uint32_t type_id,
+                                         const LLVMModule &mod) {
+  if (text.empty())
+    return defaultValueForTypeId(type_id, mod);
+  if (startsWith(text, "agg("))
+    return defaultValueForTypeId(type_id, mod);
+  return normalizeFloatSuffixLiteral(text);
+}
+
 static bool isZeroLiteral(const std::string &text) {
   return text == "0" || text == "0.0" || text == "0.0f" || text == "false";
 }
@@ -246,7 +266,23 @@ static std::string resolveBindingName(const std::string &handle, const char *tar
       return std::string(target_prefix) + suffix;
     }
   }
-  return handle;
+  uint32_t literal_index = 0;
+  if (parseUnsignedLiteral(handle, literal_index))
+    return std::string(target_prefix) + std::to_string(literal_index);
+  return std::string(target_prefix) + "0";
+}
+
+static bool isHandleIntrinsic(uint32_t intrinsic_id) {
+  switch (intrinsic_id) {
+  case DXOP_CreateHandle:
+  case DXOP_CreateHandleForLib:
+  case DXOP_AnnotateHandle:
+  case DXOP_CreateHandleFromBinding:
+  case DXOP_CreateHandleFromHeap:
+    return true;
+  default:
+    return false;
+  }
 }
 
 static bool isKnownDXIntrinsic(uint32_t intrinsic_id) {
@@ -415,6 +451,48 @@ std::string DXILToMSL::emitConstant(const std::vector<uint64_t> &ops, uint32_t t
   }
 }
 
+static std::string defaultValueForType(const LLVMType &t, const LLVMModule &mod) {
+  switch (t.kind) {
+  case LLVMType::Float:
+  case LLVMType::Double:
+    return "0.0f";
+  case LLVMType::Integer:
+    if (t.bit_width == 1)
+      return "false";
+    return "0";
+  case LLVMType::Pointer:
+    return "0";
+  case LLVMType::Vector: {
+    std::string type_name = "int";
+    if (!t.subtypes.empty()) {
+      const auto &elem = t.subtypes[0];
+      if (elem.kind == LLVMType::Float || elem.kind == LLVMType::Double)
+        type_name = "float";
+      else if (elem.kind == LLVMType::Integer && elem.bit_width == 1)
+        type_name = "bool";
+      else if (elem.kind == LLVMType::Integer)
+        type_name = "int";
+    }
+    type_name += std::to_string(t.subtypes.size());
+    if (type_name == "float2" || type_name == "float3" || type_name == "float4")
+      return type_name + "(0.0f)";
+    if (type_name == "int2" || type_name == "int3" || type_name == "int4")
+      return type_name + "(0)";
+    if (type_name == "uint2" || type_name == "uint3" || type_name == "uint4")
+      return type_name + "(0u)";
+    return type_name + "(0)";
+  }
+  default:
+    return "0";
+  }
+}
+
+static std::string defaultValueForTypeId(uint32_t type_id, const LLVMModule &mod) {
+  if (type_id < mod.types.size())
+    return defaultValueForType(mod.types[type_id], mod);
+  return "0";
+}
+
 void DXILToMSL::emitBindings(EmitContext &ctx) {
   auto &os = ctx.os;
 
@@ -566,21 +644,19 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     bool non_uniform = literalArg(3, 0, "non-uniform index") != 0;
     (void)non_uniform;
     ctx.next_binding++;
-    std::string res_name =
-        std::string(bindingPrefixForClass(resource_class)) +
-        std::to_string(range_id);
+    std::string res_name = std::to_string(range_id);
     DXTRACE("DXIL CreateHandle: class=%u range=%u index=%u -> %s", resource_class, range_id, index, res_name.c_str());
     return res_name;
   }
 
   case DXOP_CreateHandleForLib: {
-    auto handle = valueArg(0, "srv0");
+    auto handle = valueArg(0, "0");
     DXTRACE("DXIL CreateHandleForLib: %s", handle.c_str());
     return handle;
   }
 
   case DXOP_AnnotateHandle: {
-    auto handle = valueArg(0, "srv0");
+    auto handle = valueArg(0, "0");
     DXTRACE("DXIL AnnotateHandle: %s", handle.c_str());
     return handle;
   }
@@ -601,9 +677,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
                        literalArg(2, 0, "binding non-uniform index") != 0;
     (void)non_uniform;
     uint32_t binding_index = lower_bound + index;
-    std::string res_name =
-        std::string(bindingPrefixForClass(resource_class)) +
-        std::to_string(binding_index);
+    std::string res_name = std::to_string(binding_index);
     DXTRACE("DXIL CreateHandleFromBinding: binding=%s lower=%u class=%u index=%u -> %s",
             binding.empty() ? "<missing>" : binding.c_str(), lower_bound,
             resource_class, index, res_name.c_str());
@@ -617,8 +691,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     bool non_uniform = args.size() >= 3 &&
                        literalArg(2, 0, "heap non-uniform index") != 0;
     (void)non_uniform;
-    std::string res_name = std::string(sampler_heap ? "samp" : "srv") +
-                           std::to_string(heap_index);
+    std::string res_name = std::to_string(heap_index);
     DXTRACE("DXIL CreateHandleFromHeap: heap_index=%u sampler=%d -> %s",
             heap_index, sampler_heap, res_name.c_str());
     return res_name;
@@ -772,7 +845,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     } else if (intrinsic_id == DXOP_TextureSampleBias) {
       recordDiagnostic(ctx, "DXIL SampleBias lowered without explicit bias");
     }
-    return handle + ".sample(" + sampler + ", " + coord + ")";
+    (void)sampler;
+    return handle + ".read(uint2(" + coord_x + ", " + coord_y + "))";
   }
 
   case DXOP_TextureGather:
@@ -789,8 +863,9 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     } else if (intrinsic_id == DXOP_TextureGatherRaw) {
       recordDiagnostic(ctx, "DXIL TextureGatherRaw lowered through typed gather");
     }
-    return handle + ".gather(" + sampler + ", float2(" + coord_x + ", " +
-           coord_y + "), component::" + componentName(channel) + ")";
+    (void)sampler;
+    return "float4(" + handle + ".read(uint2(" + coord_x + ", " + coord_y +
+           "))." + componentName(channel) + ")";
   }
 
   case DXOP_TextureSampleCmp:
@@ -802,8 +877,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto coord_x = valueArg(2, "0.0");
     auto coord_y = valueArg(3, "0.0");
     auto compare = valueArg(4, "0.0");
-    auto sample = handle + ".sample(" + sampler + ", float2(" + coord_x +
-                  ", " + coord_y + ")).r";
+    (void)sampler;
+    auto sample = handle + ".read(uint2(" + coord_x + ", " + coord_y + ")).r";
     return "((" + sample + ") < (" + compare + ") ? 1.0 : 0.0)";
   }
 
@@ -1034,17 +1109,26 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
 void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, uint32_t &value_counter) {
   auto &os = ctx.os;
-  std::string result = emitValue(value_counter);
+  uint32_t result_slot = inst.result_id ? inst.result_id : value_counter;
+  value_counter = result_slot;
+  std::string result = emitValue(result_slot);
 
   auto getValue = [&](uint32_t idx) -> std::string {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
       return ctx.value_table[idx];
-    return emitValue(idx);
+    recordDiagnostic(ctx, "DXIL missing SSA value: v%u", idx);
+    return "0";
   };
 
   auto ensureValueTable = [&](uint32_t needed) {
     if (ctx.value_table.size() <= needed)
       ctx.value_table.resize(needed + 1);
+  };
+
+  auto publishResult = [&]() {
+    ensureValueTable(result_slot);
+    ctx.value_table[result_slot] = result;
+    value_counter = std::max(value_counter + 1, result_slot + 1);
   };
 
   switch (inst.opcode) {
@@ -1080,8 +1164,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       std::string id_str = call_args.empty() ? "<missing>" : getValue(call_args[0]);
       recordDiagnostic(ctx, "DXIL intrinsic id is not a literal: %s", id_str.c_str());
       os << "  // dx.op call without literal intrinsic id\n";
-      ensureValueTable(value_counter);
-      ctx.value_table[value_counter] = result;
+      publishResult();
     } else if (has_intrinsic_literal && (named_dxop || isKnownDXIntrinsic(intrinsic_id))) {
       std::vector<uint32_t> remaining_args(call_args.begin() + 1, call_args.end());
 
@@ -1090,11 +1173,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (inst.type_id == 0) {
         if (!translated.empty())
           os << "  " << translated << ";\n";
+      } else if (isHandleIntrinsic(intrinsic_id)) {
+        ensureValueTable(result_slot);
+        ctx.value_table[result_slot] = translated.empty() ? "0" : translated;
       } else if (translated.find('=') == std::string::npos) {
-        ensureValueTable(value_counter);
+        ensureValueTable(result_slot);
         if (!translated.empty() && translated[0] != ' ') {
           os << "  auto " << result << " = " << translated << ";\n";
-          ctx.value_table[value_counter] = result;
+          ctx.value_table[result_slot] = result;
         } else if (!translated.empty()) {
           os << "  " << translated << ";\n";
         }
@@ -1102,253 +1188,202 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         os << "  " << translated << ";\n";
       }
     } else {
-      os << "  // call " << getValue(callee) << "(";
+      os << "  auto " << result << " = 0; // call " << getValue(callee) << "(";
       for (size_t i = 0; i < call_args.size(); i++) {
         if (i) os << ", ";
         os << getValue(call_args[i]);
       }
       os << ")\n";
-      ensureValueTable(value_counter);
-      ctx.value_table[value_counter] = result;
+      ensureValueTable(result_slot);
+      ctx.value_table[result_slot] = result;
     }
-    value_counter++;
+    value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
   }
 
   case LLVMInstruction::Add: {
-    ensureValueTable(value_counter);
+    ensureValueTable(result_slot);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    ctx.value_table[result_slot] = result;
+    value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
   }
 
   case LLVMInstruction::Sub: {
-    ensureValueTable(value_counter);
+    ensureValueTable(result_slot);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    ctx.value_table[result_slot] = result;
+    value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
   }
 
   case LLVMInstruction::Mul: {
-    ensureValueTable(value_counter);
+    ensureValueTable(result_slot);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    ctx.value_table[result_slot] = result;
+    value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
   }
 
   case LLVMInstruction::UDiv: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = (" << getValue(inst.operands[0]) << ") / (" << getValue(inst.operands[1]) << ");\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::SDiv: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = (" << getValue(inst.operands[0]) << ") / (" << getValue(inst.operands[1]) << ");\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FAdd: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FSub: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FMul: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FDiv: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " / " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FRem: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = fmod(" << getValue(inst.operands[0]) << ", " << getValue(inst.operands[1]) << ");\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::And: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " & " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Or: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " | " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Xor: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ^ " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Shl: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " << " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::LShr: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = (uint)(" << getValue(inst.operands[0]) << ") >> " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::AShr: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = (int)(" << getValue(inst.operands[0]) << ") >> " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::BitCast: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // bitcast\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::ZExt: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // zext\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::SExt: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // sext\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Trunc: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // trunc\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FPToUI: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptoui\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FPToSI: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptosi\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::UIToFP: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // uitofp\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::SIToFP: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // sitofp\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FPTrunc: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptrunc\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FPExt: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fpext\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::PtrToInt: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = reinterpret_cast<uintptr_t>(" << getValue(inst.operands[0]) << ");\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::IntToPtr: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = reinterpret_cast<device char*>(static_cast<uintptr_t>(" << getValue(inst.operands[0]) << "));\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::ICmp: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 3) {
       auto pred = inst.operands[0];
       auto lhs = getValue(inst.operands[1]);
@@ -1364,14 +1399,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       default: op = "=="; break;
       }
       os << "  bool " << result << " = " << lhs << " " << op << " " << rhs << ";\n";
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::FCmp: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 3) {
       auto pred = inst.operands[0];
       auto lhs = getValue(inst.operands[1]);
@@ -1389,24 +1422,20 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       case 8: os << "  bool " << result << " = (" << lhs << " <= " << rhs << ");\n"; break;
       default: os << "  bool " << result << " = false;\n"; break;
       }
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Select: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 3) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ? " << getValue(inst.operands[1]) << " : " << getValue(inst.operands[2]) << ";\n";
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Load: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       auto ptr = getValue(inst.operands[0]);
       auto stored = ctx.local_values.find(ptr);
@@ -1418,8 +1447,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         os << "  auto " << result << " = 0; // load from " << ptr << "\n";
       }
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
@@ -1435,7 +1463,6 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::GEP:
   case LLVMInstruction::GetElementPtr: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 2) {
       auto base = getValue(inst.operands[0]);
       std::string offset = "0";
@@ -1450,32 +1477,27 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         if (stored != ctx.local_values.end())
           ctx.local_values[result] = stored->second;
       }
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::Alloca: {
-    ensureValueTable(value_counter);
     os << "  thread char " << result << "_storage[256] = {};\n";
     os << "  thread char* " << result << " = " << result << "_storage;\n";
     ctx.local_values[result] = "0";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::PHI: {
-    ensureValueTable(value_counter);
     if (!inst.operands.empty()) {
       os << "  auto " << result << " = " << getValue(inst.operands[0])
          << "; // phi first incoming\n";
     } else {
       os << "  auto " << result << " = 0; // empty phi\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
@@ -1495,7 +1517,6 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::ExtractValue: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 2) {
       auto agg = getValue(inst.operands[0]);
       auto idx = inst.operands[1];
@@ -1506,14 +1527,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         os << "  auto " << result << " = (" << agg
            << "); // extractvalue idx=" << idx << "\n";
       }
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::InsertValue: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = "
        << (inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)")
        << "; // insertvalue\n";
@@ -1521,25 +1540,21 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  " << result << componentSuffix(inst.operands[2])
          << " = " << getValue(inst.operands[1]) << ";\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::ExtractElement: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 2) {
       auto idx = getValue(inst.operands[1]);
       os << "  auto " << result << " = " << getValue(inst.operands[0])
          << componentAccessor(idx) << ";\n";
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::InsertElement: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 3) {
       auto vec = getValue(inst.operands[0]);
       auto elem = getValue(inst.operands[1]);
@@ -1551,13 +1566,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
          << (inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)")
          << "; // insertelement fallback\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::ShuffleVector: {
-    ensureValueTable(value_counter);
     auto lhs = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
     auto rhs = inst.operands.size() >= 2 ? getValue(inst.operands[1]) : "float4(0)";
     auto mask = inst.operands.size() >= 3 ? getValue(inst.operands[2]) : "";
@@ -1601,8 +1614,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       recordDiagnostic(ctx, "DXIL shufflevector fallback: mask=%s", mask.c_str());
       os << "  auto " << result << " = " << lhs << "; // shufflevector fallback\n";
     }
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
@@ -1611,21 +1623,17 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
 
   case LLVMInstruction::FNeg: {
-    ensureValueTable(value_counter);
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = -(" << getValue(inst.operands[0]) << ");\n";
-      ctx.value_table[value_counter] = result;
     }
-    value_counter++;
+    publishResult();
     break;
   }
 
   case LLVMInstruction::URem:
   case LLVMInstruction::SRem: {
-    ensureValueTable(value_counter);
     os << "  auto " << result << " = " << getValue(inst.operands[0]) << " % " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 
@@ -1639,9 +1647,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     recordDiagnostic(ctx, "DXIL unhandled opcode: %d type=%u operands=%zu", (int)inst.opcode,
                      inst.type_id, inst.operands.size());
     os << "  // unhandled opcode " << (int)inst.opcode << "\n";
-    ensureValueTable(value_counter);
-    ctx.value_table[value_counter] = result;
-    value_counter++;
+    publishResult();
     break;
   }
 }
@@ -1693,9 +1699,8 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     if (ctx.value_table.size() <= val_idx)
       ctx.value_table.resize(val_idx + 1);
     if (val_idx < ctx.value_table.size()) {
-      ctx.value_table[val_idx] = module.constants[i].constant_data.empty()
-        ? "const_" + std::to_string(i)
-        : module.constants[i].constant_data;
+      ctx.value_table[val_idx] = normalizeConstantData(
+          module.constants[i].constant_data, module.constants[i].type_id, module);
     }
   }
 

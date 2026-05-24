@@ -2,14 +2,17 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include <d3d12.h>
 
-extern "C" __declspec(dllexport) const UINT D3D12SDKVersion = 619;
-extern "C" __declspec(dllexport) const char D3D12SDKPath[] = ".\\D3D12\\";
+extern "C" {
+__declspec(dllexport) UINT D3D12SDKVersion = 619;
+__declspec(dllexport) char D3D12SDKPath[260] = ".\\D3D12\\";
+}
 
 static const GUID IID_D3D12DeviceProbe = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 
@@ -59,6 +62,18 @@ static std::string getenv_string(const char* key) {
     return value;
 }
 
+static void configure_exported_sdk() {
+    std::string version_text = getenv_string("D3D12_METAL_SDK_AGILITY_VERSION");
+    if (!version_text.empty()) {
+        D3D12SDKVersion = static_cast<UINT>(std::strtoul(version_text.c_str(), nullptr, 10));
+    }
+
+    std::string sdk_path = getenv_string("D3D12_METAL_SDK_AGILITY_PATH");
+    if (!sdk_path.empty()) {
+        std::snprintf(D3D12SDKPath, sizeof(D3D12SDKPath), "%s", sdk_path.c_str());
+    }
+}
+
 static std::string feature_level_name(D3D_FEATURE_LEVEL level) {
     switch (level) {
     case D3D_FEATURE_LEVEL_12_2:
@@ -106,6 +121,7 @@ static void print_hr(const char* key, HRESULT hr) {
 }
 
 int main() {
+    configure_exported_sdk();
     std::string profile = getenv_string("D3D12_METAL_SDK_PROFILE");
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");

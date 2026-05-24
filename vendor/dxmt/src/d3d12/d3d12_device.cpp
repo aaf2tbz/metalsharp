@@ -118,6 +118,35 @@ static UINT64 AlignTo(UINT64 value, UINT64 alignment) {
   return alignment ? ((value + alignment - 1) & ~(alignment - 1)) : value;
 }
 
+static UINT FormatBlockSize(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_BC1_TYPELESS:
+  case DXGI_FORMAT_BC1_UNORM:
+  case DXGI_FORMAT_BC1_UNORM_SRGB:
+  case DXGI_FORMAT_BC2_TYPELESS:
+  case DXGI_FORMAT_BC2_UNORM:
+  case DXGI_FORMAT_BC2_UNORM_SRGB:
+  case DXGI_FORMAT_BC3_TYPELESS:
+  case DXGI_FORMAT_BC3_UNORM:
+  case DXGI_FORMAT_BC3_UNORM_SRGB:
+  case DXGI_FORMAT_BC4_TYPELESS:
+  case DXGI_FORMAT_BC4_UNORM:
+  case DXGI_FORMAT_BC4_SNORM:
+  case DXGI_FORMAT_BC5_TYPELESS:
+  case DXGI_FORMAT_BC5_UNORM:
+  case DXGI_FORMAT_BC5_SNORM:
+  case DXGI_FORMAT_BC6H_TYPELESS:
+  case DXGI_FORMAT_BC6H_UF16:
+  case DXGI_FORMAT_BC6H_SF16:
+  case DXGI_FORMAT_BC7_TYPELESS:
+  case DXGI_FORMAT_BC7_UNORM:
+  case DXGI_FORMAT_BC7_UNORM_SRGB:
+    return 4;
+  default:
+    return 1;
+  }
+}
+
 static UINT FormatBytesPerTexel(DXGI_FORMAT format) {
   switch (format) {
   case DXGI_FORMAT_R32G32B32A32_TYPELESS:
@@ -197,6 +226,29 @@ static UINT FormatBytesPerTexel(DXGI_FORMAT format) {
   case DXGI_FORMAT_R8_SINT:
   case DXGI_FORMAT_A8_UNORM:
     return 1;
+  case DXGI_FORMAT_BC1_TYPELESS:
+  case DXGI_FORMAT_BC1_UNORM:
+  case DXGI_FORMAT_BC1_UNORM_SRGB:
+  case DXGI_FORMAT_BC4_TYPELESS:
+  case DXGI_FORMAT_BC4_UNORM:
+  case DXGI_FORMAT_BC4_SNORM:
+    return 8;
+  case DXGI_FORMAT_BC2_TYPELESS:
+  case DXGI_FORMAT_BC2_UNORM:
+  case DXGI_FORMAT_BC2_UNORM_SRGB:
+  case DXGI_FORMAT_BC3_TYPELESS:
+  case DXGI_FORMAT_BC3_UNORM:
+  case DXGI_FORMAT_BC3_UNORM_SRGB:
+  case DXGI_FORMAT_BC5_TYPELESS:
+  case DXGI_FORMAT_BC5_UNORM:
+  case DXGI_FORMAT_BC5_SNORM:
+  case DXGI_FORMAT_BC6H_TYPELESS:
+  case DXGI_FORMAT_BC6H_UF16:
+  case DXGI_FORMAT_BC6H_SF16:
+  case DXGI_FORMAT_BC7_TYPELESS:
+  case DXGI_FORMAT_BC7_UNORM:
+  case DXGI_FORMAT_BC7_UNORM_SRGB:
+    return 16;
   default:
     return 0;
   }
@@ -1289,16 +1341,11 @@ MTLD3D12Device::QueryInterface(REFIID riid, void **ppvObject) {
       riid == IID_ID3D12Device4 || riid == IID_ID3D12Device5 ||
       riid == IID_ID3D12Device6 || riid == IID_ID3D12Device7 ||
       riid == IID_ID3D12Device8 || riid == IID_ID3D12Device9 ||
-      riid == IID_ID3D12Device10) {
+      riid == IID_ID3D12Device10 || riid == IID_ID3D12Device11_ ||
+      riid == IID_ID3D12Device12_) {
     *ppvObject = ref(this);
     TRACE("D3D12Device::QI(%s) -> S_OK (device)", str::format(riid).c_str());
     return S_OK;
-  }
-
-  if (riid == IID_ID3D12Device11_ || riid == IID_ID3D12Device12_) {
-    TRACE("D3D12Device::QI(%s) -> E_NOINTERFACE (no ID3D12Device11/12 vtable)",
-          str::format(riid).c_str());
-    return E_NOINTERFACE;
   }
 
   if (riid == IID_ID3D12InfoQueue) {
@@ -1757,9 +1804,11 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
     o->WaveOps = TRUE;
-    o->WaveLaneCountMin = 4;
+    // Advertise a fixed wave32 profile to match the current
+    // metal-shaderconverter/DXIL compute path expectations.
+    o->WaveLaneCountMin = 32;
     o->WaveLaneCountMax = 32;
-    o->TotalLaneCount = 64;
+    o->TotalLaneCount = 32;
     o->ExpandedComputeResourceStates = TRUE;
     o->Int64ShaderOps = TRUE;
     return S_OK;
@@ -1874,9 +1923,14 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
       return E_INVALIDARG;
     o->MeshShaderPipelineStatsSupported = FALSE;
     o->MeshShaderSupportsFullRangeRenderTargetArrayIndex = FALSE;
-    o->AtomicInt64OnTypedResourceSupported = FALSE;
-    o->AtomicInt64OnGroupSharedSupported = FALSE;
+    o->AtomicInt64OnTypedResourceSupported = TRUE;
+    o->AtomicInt64OnGroupSharedSupported = TRUE;
     o->DerivativesInMeshAndAmplificationShadersSupported = FALSE;
+    TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d Atomic64GroupShared=%d",
+          o->MeshShaderPipelineStatsSupported,
+          o->MeshShaderSupportsFullRangeRenderTargetArrayIndex,
+          o->AtomicInt64OnTypedResourceSupported,
+          o->AtomicInt64OnGroupSharedSupported);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS10: {
@@ -1891,7 +1945,9 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS11 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->AtomicInt64OnDescriptorHeapResourceSupported = FALSE;
+    o->AtomicInt64OnDescriptorHeapResourceSupported = TRUE;
+    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d",
+          o->AtomicInt64OnDescriptorHeapResourceSupported);
     return S_OK;
   }
   case 41: { // D3D12_FEATURE_D3D12_OPTIONS12
@@ -2657,7 +2713,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
   for (UINT i = 0; i < sub_resource_count; i++) {
     UINT subresource = first_sub_resource + i;
     UINT mip_levels = std::max<UINT>(desc ? desc->MipLevels : 1, 1);
+    UINT array_size = std::max<UINT>(desc ? desc->DepthOrArraySize : 1, 1);
     UINT mip = mip_levels ? (subresource % mip_levels) : 0;
+    UINT plane_slice = (subresource / mip_levels) / array_size;
+    (void)plane_slice;
 
     UINT64 width = desc ? desc->Width : 0;
     UINT height = desc ? desc->Height : 0;
@@ -2680,18 +2739,34 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
     UINT bytes_per_texel = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
                                ? 1
                                : FormatBytesPerTexel(format);
-    UINT64 unaligned_row_size = width * bytes_per_texel;
+    UINT block_size = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                          ? 1
+                          : FormatBlockSize(format);
+    UINT64 width_blocks =
+        desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+            ? width
+            : std::max<UINT64>(1, AlignTo(width, block_size) / block_size);
+    UINT64 rows = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                      ? 1
+                      : std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
+    UINT64 unaligned_row_size = width_blocks * bytes_per_texel;
     UINT64 aligned_row_pitch =
         AlignTo(unaligned_row_size, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
-    UINT64 rows = height;
     UINT64 subresource_bytes = aligned_row_pitch * rows * depth;
     UINT64 offset = AlignTo(cursor, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
 
     if (layouts) {
       layouts[i].Offset = offset;
       layouts[i].Footprint.Format = format;
-      layouts[i].Footprint.Width = static_cast<UINT>(std::min<UINT64>(width, UINT32_MAX));
-      layouts[i].Footprint.Height = height;
+      layouts[i].Footprint.Width =
+          static_cast<UINT>(std::min<UINT64>(desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                                                 ? width
+                                                 : width_blocks * block_size,
+                                             UINT32_MAX));
+      layouts[i].Footprint.Height = static_cast<UINT>(
+          desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+              ? height
+              : std::min<UINT64>(rows * block_size, UINT32_MAX));
       layouts[i].Footprint.Depth = depth;
       layouts[i].Footprint.RowPitch = static_cast<UINT>(aligned_row_pitch);
     }
@@ -2832,15 +2907,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
 
   if (flags == D3D12_MULTIPLE_FENCE_WAIT_FLAG_ALL) {
     for (UINT i = 0; i < fence_count; i++) {
-      fences[i]->SetEventOnCompletion(values[i], nullptr);
+      HRESULT hr = fences[i]->SetEventOnCompletion(values[i], event);
+      if (FAILED(hr))
+        return hr;
     }
-    SetEvent(event);
   } else {
     for (UINT i = 0; i < fence_count; i++) {
       if (fences[i]->GetCompletedValue() < values[i]) {
-        fences[i]->SetEventOnCompletion(values[i], nullptr);
-        SetEvent(event);
-        break;
+        return fences[i]->SetEventOnCompletion(values[i], event);
       }
     }
   }
@@ -3523,6 +3597,52 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource2(
   return CreateReservedResource(desc,
       (D3D12_RESOURCE_STATES)initial_layout, optimized_clear_value,
       riid, resource);
+}
+
+/*** ID3D12Device11Compat ***/
+void STDMETHODCALLTYPE MTLD3D12Device::CreateSampler2(
+    const D3D12SamplerDesc2Compat *desc,
+    D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
+  if (!desc) {
+    TRACE("ID3D12Device11::CreateSampler2 -> ignored null desc");
+    return;
+  }
+
+  D3D12_SAMPLER_DESC compat = {};
+  compat.Filter = desc->Filter;
+  compat.AddressU = desc->AddressU;
+  compat.AddressV = desc->AddressV;
+  compat.AddressW = desc->AddressW;
+  compat.MipLODBias = desc->MipLODBias;
+  compat.MaxAnisotropy = desc->MaxAnisotropy;
+  compat.ComparisonFunc = desc->ComparisonFunc;
+  compat.MinLOD = desc->MinLOD;
+  compat.MaxLOD = desc->MaxLOD;
+  for (int i = 0; i < 4; i++) {
+    compat.BorderColor[i] =
+        (desc->Flags & D3D12SamplerFlagUintBorderColorCompat)
+            ? static_cast<FLOAT>(desc->UintBorderColor[i])
+            : desc->FloatBorderColor[i];
+  }
+
+  TRACE("ID3D12Device11::CreateSampler2 flags=0x%x -> delegating to CreateSampler",
+        (unsigned)desc->Flags);
+  CreateSampler(&compat, descriptor);
+}
+
+/*** ID3D12Device12Compat ***/
+D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
+MTLD3D12Device::GetResourceAllocationInfo3(
+    D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
+    UINT resource_descs_count, const D3D12_RESOURCE_DESC1 *resource_descs,
+    const UINT32 *num_castable_formats,
+    const DXGI_FORMAT *const *castable_formats,
+    D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
+  TRACE("ID3D12Device12::GetResourceAllocationInfo3 count=%u castable_counts=%p castable_formats=%p -> delegating",
+        resource_descs_count, num_castable_formats, castable_formats);
+  return GetResourceAllocationInfo2(__ret, visible_mask, resource_descs_count,
+                                    resource_descs,
+                                    resource_allocation_info1);
 }
 
 } // namespace dxmt

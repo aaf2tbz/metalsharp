@@ -83,6 +83,7 @@ public:
 
 private:
   bool EnsureMetalView();
+  bool AttachMetalViewForHWND(HWND hwnd);
   void ConfigureLayer();
 
   std::atomic<uint32_t> m_refCount = {1ul};
@@ -94,6 +95,9 @@ private:
   WMT::Object m_native_view;
   DXGI_SWAP_CHAIN_DESC1 m_desc = {};
   DXGI_SWAP_CHAIN_FULLSCREEN_DESC m_fs_desc = {};
+  UINT m_source_width = 0;
+  UINT m_source_height = 0;
+  UINT m_frame_latency = 1;
   uint64_t m_present_count = 0;
 
   std::array<Com<MTLD3D12Resource>, 4> m_backbuffers;
@@ -101,6 +105,7 @@ private:
   WMT::Reference<WMT::CommandQueue> m_present_queue;
   std::unique_ptr<InternalCommandLibrary> m_present_library;
   Rc<Presenter> m_presenter;
+  uint64_t m_last_present_wait_seq = 0;
 };
 
 HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,

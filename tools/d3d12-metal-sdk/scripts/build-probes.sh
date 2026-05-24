@@ -5,11 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SDK_DIR="$ROOT_DIR/tools/d3d12-metal-sdk"
 OUT_DIR="$SDK_DIR/out/bin"
 CXX="${CXX:-x86_64-w64-mingw32-g++}"
-AGILITY_BIN="${AGILITY_BIN:-/Volumes/AverySSD/metalsharp/metal-api-table/agility-sdk/extracted/build/native/bin/x64}"
+AGILITY_VERSION="${AGILITY_VERSION:-1.619.3}"
+AGILITY_BIN="${AGILITY_BIN:-}"
 DXC_BIN_DIR="${DXC_BIN_DIR:-}"
 
 mkdir -p "$OUT_DIR"
 mkdir -p "$OUT_DIR/D3D12"
+mkdir -p "$OUT_DIR/D3D12/x64"
+
+if [[ -z "$AGILITY_BIN" ]]; then
+  AGILITY_BIN="$("$SDK_DIR/scripts/fetch-agility.sh" --version "$AGILITY_VERSION")"
+fi
 
 if [[ -z "$DXC_BIN_DIR" ]]; then
   DXC_BIN_DIR="$("$SDK_DIR/scripts/fetch-dxc.sh")"
@@ -23,6 +29,9 @@ for dll in dxc.exe dxcompiler.dll dxil.dll; do
   cp "$DXC_BIN_DIR/$dll" "$OUT_DIR/$dll"
 done
 
+cp "$DXC_BIN_DIR/dxil.dll" "$OUT_DIR/D3D12/dxil.dll"
+cp "$DXC_BIN_DIR/dxil.dll" "$OUT_DIR/D3D12/x64/dxil.dll"
+
 "$CXX" \
   -std=c++17 \
   -O2 \
@@ -35,12 +44,23 @@ done
   "$SDK_DIR/probes/probe_loader/probe_loader.cpp" \
   -o "$OUT_DIR/probe_loader.exe"
 
-for dll in D3D12Core.dll d3d12SDKLayers.dll D3D12StateObjectCompiler.dll; do
+for dll in D3D12Core.dll d3d12SDKLayers.dll; do
   if [[ ! -f "$AGILITY_BIN/$dll" ]]; then
     echo "Missing Agility SDK DLL: $AGILITY_BIN/$dll" >&2
     exit 2
   fi
   cp "$AGILITY_BIN/$dll" "$OUT_DIR/D3D12/$dll"
+  cp "$AGILITY_BIN/$dll" "$OUT_DIR/D3D12/x64/$dll"
+done
+
+for optional in D3D12StateObjectCompiler.dll d3dconfig.exe; do
+  if [[ -f "$AGILITY_BIN/$optional" ]]; then
+    cp "$AGILITY_BIN/$optional" "$OUT_DIR/D3D12/$optional"
+    cp "$AGILITY_BIN/$optional" "$OUT_DIR/D3D12/x64/$optional"
+  else
+    rm -f "$OUT_DIR/D3D12/$optional"
+    rm -f "$OUT_DIR/D3D12/x64/$optional"
+  fi
 done
 
 "$CXX" \

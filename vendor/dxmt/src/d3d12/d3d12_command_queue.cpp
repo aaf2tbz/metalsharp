@@ -12,6 +12,7 @@
 #include "util_string.hpp"
 #include "Metal.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <vector>
 
@@ -2704,7 +2705,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy_d = cmd->src_box.back - cmd->src_box.front;
         } else {
           D3D12_RESOURCE_DESC tex_desc;
-          if (!dst_is_buffer && dst_tex.handle) {
+          if (src_is_buffer && cmd->src_footprint_width && cmd->src_footprint_height) {
+            copy_w = cmd->src_footprint_width;
+            copy_h = cmd->src_footprint_height;
+            copy_d = cmd->src_footprint_depth ? cmd->src_footprint_depth : 1;
+          } else if (dst_is_buffer && cmd->dst_footprint_width &&
+                     cmd->dst_footprint_height) {
+            copy_w = cmd->dst_footprint_width;
+            copy_h = cmd->dst_footprint_height;
+            copy_d = cmd->dst_footprint_depth ? cmd->dst_footprint_depth : 1;
+          } else if (!dst_is_buffer && dst_tex.handle) {
             dst_res->GetDesc(&tex_desc);
             copy_w = tex_desc.Width;
             copy_h = tex_desc.Height;
@@ -3604,11 +3614,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     st.CloseRenderEncoder();
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
+    auto wait_begin = std::chrono::steady_clock::now();
     cmdbuf.commit();
     cmdbuf.waitUntilCompleted();
+    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - wait_begin)
+                       .count();
 
     auto status = cmdbuf.status();
-    QTRACE("ExecuteCommandLists: cmdbuf status=%d", (int)status);
+    QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld queue_type=%u",
+           (int)status, (long long)wait_ms, m_desc.Type);
     if (status != WMTCommandBufferStatusCompleted) {
       auto err = cmdbuf.error();
       Logger::err(str::format("ExecuteCommandLists: cmdbuf status=", status,
@@ -3655,7 +3670,24 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Signal(ID3D12Fence *fence,
   }
   auto cmdbuf = m_wmt_queue.commandBuffer();
   cmdbuf.encodeSignalEvent(shared_event, value);
+  auto wait_begin = std::chrono::steady_clock::now();
   cmdbuf.commit();
+  cmdbuf.waitUntilCompleted();
+  auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - wait_begin)
+                     .count();
+  auto status = cmdbuf.status();
+  QTRACE("CmdQueue::Signal completed status=%d wait_ms=%lld queue_type=%u",
+         (int)status, (long long)wait_ms, m_desc.Type);
+  if (status != WMTCommandBufferStatusCompleted) {
+    auto err = cmdbuf.error();
+    Logger::err(str::format("CmdQueue::Signal: cmdbuf status=", status,
+                            " error=",
+                            err.handle ? err.description().getUTF8String()
+                                       : std::string("none")));
+    return E_FAIL;
+  }
+  dxmt_fence->Signal(value);
   return S_OK;
 }
 
@@ -3671,7 +3703,23 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Wait(ID3D12Fence *fence,
     return E_FAIL;
   auto cmdbuf = m_wmt_queue.commandBuffer();
   cmdbuf.encodeWaitForEvent(shared_event, value);
+  auto wait_begin = std::chrono::steady_clock::now();
   cmdbuf.commit();
+  cmdbuf.waitUntilCompleted();
+  auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - wait_begin)
+                     .count();
+  auto status = cmdbuf.status();
+  QTRACE("CmdQueue::Wait completed status=%d wait_ms=%lld queue_type=%u",
+         (int)status, (long long)wait_ms, m_desc.Type);
+  if (status != WMTCommandBufferStatusCompleted) {
+    auto err = cmdbuf.error();
+    Logger::err(str::format("CmdQueue::Wait: cmdbuf status=", status,
+                            " error=",
+                            err.handle ? err.description().getUTF8String()
+                                       : std::string("none")));
+    return E_FAIL;
+  }
   return S_OK;
 }
 

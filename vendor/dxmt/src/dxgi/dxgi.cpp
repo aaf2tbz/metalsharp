@@ -73,6 +73,15 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason,
 
   DisableThreadLibraryCalls(instance);
 
+  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+  if (f) {
+    char exe[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    fprintf(f, "=== dxgi.dll DllMain PROCESS_ATTACH pid=%lu exe=[%s] ===\n",
+            GetCurrentProcessId(), exe);
+    fclose(f);
+  }
+
   InitializeMetalCachePath();
   std::call_once(nvext_init, InitializeVendorExtensionNV);
 

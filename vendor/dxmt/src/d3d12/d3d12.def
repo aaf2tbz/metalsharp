@@ -8,3 +8,4 @@ EXPORTS
     D3D12SerializeVersionedRootSignature @100
     D3D12CreateDevice @101
     D3D12GetDebugInterface @102
+    D3D12SDKVersion DATA

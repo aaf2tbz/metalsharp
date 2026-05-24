@@ -14,6 +14,7 @@
 #include <vector>
 #include <cstring>
 #include <map>
+#include <mutex>
 
 namespace {
 
@@ -113,17 +114,18 @@ enum D3D12DeviceFactoryFlagsCompat : UINT {
 struct ID3D12DeviceFactoryCompat : public IUnknown {
   virtual HRESULT STDMETHODCALLTYPE InitializeFromGlobalState() = 0;
   virtual HRESULT STDMETHODCALLTYPE ApplyToGlobalState() = 0;
-  virtual HRESULT STDMETHODCALLTYPE SetFlags(D3D12DeviceFactoryFlagsCompat flags) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  SetFlags(D3D12DeviceFactoryFlagsCompat flags) = 0;
   virtual D3D12DeviceFactoryFlagsCompat STDMETHODCALLTYPE GetFlags() = 0;
-  virtual HRESULT STDMETHODCALLTYPE GetConfigurationInterface(
-      REFCLSID clsid, REFIID iid, void **ppv) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GetConfigurationInterface(REFCLSID clsid,
+                                                              REFIID iid,
+                                                              void **ppv) = 0;
   virtual HRESULT STDMETHODCALLTYPE EnableExperimentalFeatures(
       UINT num_features, const IID *iids, void *configuration_structs,
       UINT *configuration_struct_sizes) = 0;
-  virtual HRESULT STDMETHODCALLTYPE CreateDevice(IUnknown *adapter,
-                                                D3D_FEATURE_LEVEL feature_level,
-                                                REFIID riid,
-                                                void **device) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  CreateDevice(IUnknown *adapter, D3D_FEATURE_LEVEL feature_level, REFIID riid,
+               void **device) = 0;
 };
 
 enum D3D12DeviceFlagsCompat : UINT {
@@ -149,10 +151,10 @@ struct D3D12DeviceConfigurationDescCompat {
 };
 
 struct ID3D12DeviceConfigurationCompat : public IUnknown {
-  virtual D3D12DeviceConfigurationDescCompat *STDMETHODCALLTYPE GetDesc(
-      D3D12DeviceConfigurationDescCompat *ret) = 0;
-  virtual HRESULT STDMETHODCALLTYPE GetEnabledExperimentalFeatures(
-      GUID *guids, UINT num_guids) = 0;
+  virtual D3D12DeviceConfigurationDescCompat *STDMETHODCALLTYPE
+  GetDesc(D3D12DeviceConfigurationDescCompat *ret) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  GetEnabledExperimentalFeatures(GUID *guids, UINT num_guids) = 0;
   virtual HRESULT STDMETHODCALLTYPE SerializeVersionedRootSignature(
       const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc, ID3DBlob **result,
       ID3DBlob **error) = 0;
@@ -162,15 +164,18 @@ struct ID3D12DeviceConfigurationCompat : public IUnknown {
 
 struct ID3D12DeviceConfiguration1Compat
     : public ID3D12DeviceConfigurationCompat {
-  virtual HRESULT STDMETHODCALLTYPE CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary(
-      const void *library_blob, SIZE_T size, LPCWSTR root_signature_subobject_name,
-      REFIID riid, void **deserializer) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary(
+      const void *library_blob, SIZE_T size,
+      LPCWSTR root_signature_subobject_name, REFIID riid,
+      void **deserializer) = 0;
 };
 
 struct ID3D12RuntimeValidationControlCompat : public IUnknown {
-  virtual HRESULT STDMETHODCALLTYPE DisableFailuresFromStricterValidationInAppLocalRuntime(
-      BOOL disable) = 0;
-  virtual BOOL STDMETHODCALLTYPE FailuresFromStricterValidationInAppLocalRuntimeDisabled() = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  DisableFailuresFromStricterValidationInAppLocalRuntime(BOOL disable) = 0;
+  virtual BOOL STDMETHODCALLTYPE
+  FailuresFromStricterValidationInAppLocalRuntimeDisabled() = 0;
 };
 
 union D3D12VersionNumberCompat {
@@ -207,23 +212,23 @@ enum D3D12StateObjectDatabaseFlagsCompat : UINT {
 };
 
 struct ID3D12StateObjectDatabaseCompat : public IUnknown {
-  virtual HRESULT STDMETHODCALLTYPE SetApplicationDesc(
-      const D3D12ApplicationDescCompat *application_desc) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  SetApplicationDesc(const D3D12ApplicationDescCompat *application_desc) = 0;
   virtual HRESULT STDMETHODCALLTYPE GetApplicationDesc(
       D3D12ApplicationDescFuncCompat callback, void *context) = 0;
-  virtual HRESULT STDMETHODCALLTYPE StorePipelineStateDesc(
-      const void *key, UINT key_size, UINT version,
-      const D3D12_PIPELINE_STATE_STREAM_DESC *desc) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  StorePipelineStateDesc(const void *key, UINT key_size, UINT version,
+                         const D3D12_PIPELINE_STATE_STREAM_DESC *desc) = 0;
   virtual HRESULT STDMETHODCALLTYPE FindPipelineStateDesc(
       const void *key, UINT key_size, D3D12PipelineStateFuncCompat callback,
       void *context) = 0;
-  virtual HRESULT STDMETHODCALLTYPE StoreStateObjectDesc(
-      const void *key, UINT key_size, UINT version,
-      const D3D12_STATE_OBJECT_DESC *desc, const void *parent_key,
-      UINT parent_key_size) = 0;
-  virtual HRESULT STDMETHODCALLTYPE FindStateObjectDesc(
-      const void *key, UINT key_size, D3D12StateObjectFuncCompat callback,
-      void *context) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  StoreStateObjectDesc(const void *key, UINT key_size, UINT version,
+                       const D3D12_STATE_OBJECT_DESC *desc,
+                       const void *parent_key, UINT parent_key_size) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  FindStateObjectDesc(const void *key, UINT key_size,
+                      D3D12StateObjectFuncCompat callback, void *context) = 0;
   virtual HRESULT STDMETHODCALLTYPE FindObjectVersion(const void *key,
                                                       UINT key_size,
                                                       UINT *version) = 0;
@@ -246,6 +251,141 @@ static void TraceAgility(const char *fmt, ...) {
   va_end(args);
   fprintf(f, "\n");
   fclose(f);
+}
+
+struct AppLocalAgilityRuntimeState {
+  bool checked = false;
+  bool exe_exports_present = false;
+  UINT sdk_version = 0;
+  std::string sdk_path;
+  std::string resolved_dir;
+  HMODULE d3d12core = nullptr;
+  HMODULE sdk_layers = nullptr;
+  HMODULE state_object_compiler = nullptr;
+};
+
+static AppLocalAgilityRuntimeState &GetAppLocalAgilityRuntimeState() {
+  static AppLocalAgilityRuntimeState state;
+  return state;
+}
+
+static std::string NormalizeWindowsPath(std::string path) {
+  for (char &ch : path) {
+    if (ch == '/')
+      ch = '\\';
+  }
+  return path;
+}
+
+static std::string WindowsParentPath(const std::string &path) {
+  size_t pos = path.find_last_of("\\/");
+  if (pos == std::string::npos)
+    return std::string();
+  return path.substr(0, pos);
+}
+
+static std::string JoinWindowsPath(const std::string &base,
+                                   const std::string &child) {
+  if (base.empty())
+    return child;
+  if (child.empty())
+    return base;
+  if (base.back() == '\\' || base.back() == '/')
+    return base + child;
+  return base + "\\" + child;
+}
+
+static std::string ResolveAppLocalSdkDir(const std::string &exe_path,
+                                         std::string sdk_path) {
+  sdk_path = NormalizeWindowsPath(std::move(sdk_path));
+  while (sdk_path.rfind(".\\", 0) == 0) {
+    sdk_path.erase(0, 2);
+  }
+  if (sdk_path.size() >= 2 && sdk_path[1] == ':')
+    return sdk_path;
+  return JoinWindowsPath(WindowsParentPath(exe_path), sdk_path);
+}
+
+static bool LooksLikeRelativeWindowsSdkPath(const char *path) {
+  if (!path || !path[0])
+    return false;
+  return (path[0] == '.' && (path[1] == '\\' || path[1] == '/')) ||
+         (std::strlen(path) > 2 && path[1] == ':');
+}
+
+static const char *ResolveSdkPathExportValue(FARPROC export_value) {
+  if (!export_value)
+    return nullptr;
+
+  const char *direct = reinterpret_cast<const char *>(export_value);
+  if (LooksLikeRelativeWindowsSdkPath(direct))
+    return direct;
+
+  const char *const *indirect =
+      reinterpret_cast<const char *const *>(export_value);
+  if (indirect && LooksLikeRelativeWindowsSdkPath(*indirect))
+    return *indirect;
+
+  return nullptr;
+}
+
+static void TryLoadAppLocalAgilityModule(const std::string &directory,
+                                         const char *filename, HMODULE *out) {
+  if (!out)
+    return;
+  const std::string path = JoinWindowsPath(directory, filename);
+  SetLastError(ERROR_SUCCESS);
+  *out = LoadLibraryA(path.c_str());
+  TraceAgility("AppLocalAgility LoadLibrary path=%s -> handle=%p error=%lu",
+               path.c_str(), *out, GetLastError());
+}
+
+static void EnsureAppLocalAgilityRuntimeLoaded() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    auto &state = GetAppLocalAgilityRuntimeState();
+    state.checked = true;
+
+    char exe_path[MAX_PATH] = {};
+    if (!GetModuleFileNameA(nullptr, exe_path, MAX_PATH)) {
+      TraceAgility("AppLocalAgility failed to resolve current exe path");
+      return;
+    }
+
+    HMODULE exe_module = GetModuleHandleA(nullptr);
+    if (!exe_module) {
+      TraceAgility("AppLocalAgility current exe module handle is null");
+      return;
+    }
+
+    auto *sdk_version =
+        reinterpret_cast<UINT *>(GetProcAddress(exe_module, "D3D12SDKVersion"));
+    FARPROC sdk_path_export = GetProcAddress(exe_module, "D3D12SDKPath");
+    const char *sdk_path = ResolveSdkPathExportValue(sdk_path_export);
+    if (!sdk_version || !sdk_path || !sdk_path[0]) {
+      TraceAgility("AppLocalAgility exports absent version_ptr=%p "
+                   "path_export=%p resolved_path=%p exe=%s",
+                   sdk_version, sdk_path_export, sdk_path, exe_path);
+      return;
+    }
+
+    state.exe_exports_present = true;
+    state.sdk_version = *sdk_version;
+    state.sdk_path = sdk_path;
+    state.resolved_dir = ResolveAppLocalSdkDir(exe_path, state.sdk_path);
+
+    TraceAgility("AppLocalAgility exports version=%u path=%s resolved_dir=%s",
+                 state.sdk_version, state.sdk_path.c_str(),
+                 state.resolved_dir.c_str());
+
+    TryLoadAppLocalAgilityModule(state.resolved_dir, "D3D12Core.dll",
+                                 &state.d3d12core);
+    TryLoadAppLocalAgilityModule(state.resolved_dir, "d3d12SDKLayers.dll",
+                                 &state.sdk_layers);
+    TryLoadAppLocalAgilityModule(state.resolved_dir,
+                                 "D3D12StateObjectCompiler.dll",
+                                 &state.state_object_compiler);
+  });
 }
 
 class MTLD3D12SDKConfiguration final : public ID3D12SDKConfiguration1 {
@@ -327,7 +467,8 @@ public:
     return S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE SetFlags(D3D12DeviceFactoryFlagsCompat flags) override {
+  HRESULT STDMETHODCALLTYPE
+  SetFlags(D3D12DeviceFactoryFlagsCompat flags) override {
     m_flags = flags;
     TraceAgility("DeviceFactory::SetFlags flags=0x%x", flags);
     return S_OK;
@@ -338,8 +479,9 @@ public:
     return m_flags;
   }
 
-  HRESULT STDMETHODCALLTYPE GetConfigurationInterface(
-      REFCLSID clsid, REFIID iid, void **ppv) override {
+  HRESULT STDMETHODCALLTYPE GetConfigurationInterface(REFCLSID clsid,
+                                                      REFIID iid,
+                                                      void **ppv) override {
     if (!ppv)
       return E_POINTER;
     TraceAgility("DeviceFactory::GetConfigurationInterface clsid=%s iid=%s",
@@ -353,15 +495,15 @@ public:
     return D3D12GetInterface(clsid, iid, ppv);
   }
 
-  HRESULT STDMETHODCALLTYPE EnableExperimentalFeatures(
-      UINT num_features, const IID *iids, void *, UINT *) override {
+  HRESULT STDMETHODCALLTYPE EnableExperimentalFeatures(UINT num_features,
+                                                       const IID *iids, void *,
+                                                       UINT *) override {
     if (num_features && !iids)
       return E_INVALIDARG;
     TraceAgility("DeviceFactory::EnableExperimentalFeatures count=%u",
                  num_features);
     for (UINT i = 0; i < num_features; i++) {
-      TraceAgility("  feature[%u]=%s", i,
-                   dxmt::str::format(iids[i]).c_str());
+      TraceAgility("  feature[%u]=%s", i, dxmt::str::format(iids[i]).c_str());
     }
     return S_OK;
   }
@@ -404,8 +546,8 @@ public:
     return ref;
   }
 
-  D3D12DeviceConfigurationDescCompat *STDMETHODCALLTYPE GetDesc(
-      D3D12DeviceConfigurationDescCompat *ret) override {
+  D3D12DeviceConfigurationDescCompat *STDMETHODCALLTYPE
+  GetDesc(D3D12DeviceConfigurationDescCompat *ret) override {
     if (!ret)
       return nullptr;
     ret->Flags = D3D12DeviceFlagNone;
@@ -417,43 +559,49 @@ public:
     return ret;
   }
 
-  HRESULT STDMETHODCALLTYPE GetEnabledExperimentalFeatures(
-      GUID *guids, UINT num_guids) override {
+  HRESULT STDMETHODCALLTYPE
+  GetEnabledExperimentalFeatures(GUID *guids, UINT num_guids) override {
     if (num_guids && !guids)
       return E_POINTER;
-    TraceAgility("DeviceConfiguration::GetEnabledExperimentalFeatures count=%u -> S_OK",
-                 num_guids);
+    TraceAgility(
+        "DeviceConfiguration::GetEnabledExperimentalFeatures count=%u -> S_OK",
+        num_guids);
     return S_OK;
   }
 
   HRESULT STDMETHODCALLTYPE SerializeVersionedRootSignature(
       const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc, ID3DBlob **result,
       ID3DBlob **error) override {
-    TraceAgility("DeviceConfiguration::SerializeVersionedRootSignature version=%u",
-                 desc ? desc->Version : 0);
+    TraceAgility(
+        "DeviceConfiguration::SerializeVersionedRootSignature version=%u",
+        desc ? desc->Version : 0);
     return D3D12SerializeVersionedRootSignature(desc, result, error);
   }
 
   HRESULT STDMETHODCALLTYPE CreateVersionedRootSignatureDeserializer(
       const void *blob, SIZE_T size, REFIID riid,
       void **deserializer) override {
-    TraceAgility("DeviceConfiguration::CreateVersionedRootSignatureDeserializer size=%zu riid=%s",
+    TraceAgility("DeviceConfiguration::"
+                 "CreateVersionedRootSignatureDeserializer size=%zu riid=%s",
                  size, dxmt::str::format(riid).c_str());
     return D3D12CreateVersionedRootSignatureDeserializer(blob, size, riid,
                                                          deserializer);
   }
 
-  HRESULT STDMETHODCALLTYPE CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary(
+  HRESULT STDMETHODCALLTYPE
+  CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary(
       const void *library_blob, SIZE_T size,
       LPCWSTR root_signature_subobject_name, REFIID riid,
       void **deserializer) override {
-    TraceAgility("DeviceConfiguration::CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary size=%zu subobject=%ls riid=%s",
+    TraceAgility("DeviceConfiguration::"
+                 "CreateVersionedRootSignatureDeserializerFromSubobjectInLibrar"
+                 "y size=%zu subobject=%ls riid=%s",
                  size,
                  root_signature_subobject_name ? root_signature_subobject_name
                                                : L"(null)",
                  dxmt::str::format(riid).c_str());
-    return D3D12CreateVersionedRootSignatureDeserializer(
-        library_blob, size, riid, deserializer);
+    return D3D12CreateVersionedRootSignatureDeserializer(library_blob, size,
+                                                         riid, deserializer);
   }
 
 private:
@@ -520,10 +668,10 @@ public:
     m_application_desc = *application_desc;
     m_has_application_desc = true;
     TraceAgility("StateObjectDatabase::SetApplicationDesc name=%ls engine=%ls",
-                 m_application_desc.pName ? m_application_desc.pName : L"(null)",
-                 m_application_desc.pEngineName
-                     ? m_application_desc.pEngineName
-                     : L"(null)");
+                 m_application_desc.pName ? m_application_desc.pName
+                                          : L"(null)",
+                 m_application_desc.pEngineName ? m_application_desc.pEngineName
+                                                : L"(null)");
     return S_OK;
   }
 
@@ -543,14 +691,18 @@ public:
     if (!key || !key_size || !desc)
       return E_INVALIDARG;
     m_pipeline_versions[MakeKey(key, key_size)] = version;
-    TraceAgility("StateObjectDatabase::StorePipelineStateDesc key_size=%u version=%u bytes=%zu",
+    TraceAgility("StateObjectDatabase::StorePipelineStateDesc key_size=%u "
+                 "version=%u bytes=%zu",
                  key_size, version, desc->SizeInBytes);
     return S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE FindPipelineStateDesc(
-      const void *key, UINT key_size, D3D12PipelineStateFuncCompat, void *) override {
-    TraceAgility("StateObjectDatabase::FindPipelineStateDesc key_size=%u -> not materialized",
+  HRESULT STDMETHODCALLTYPE FindPipelineStateDesc(const void *key,
+                                                  UINT key_size,
+                                                  D3D12PipelineStateFuncCompat,
+                                                  void *) override {
+    TraceAgility("StateObjectDatabase::FindPipelineStateDesc key_size=%u -> "
+                 "not materialized",
                  key_size);
     if (!key || !key_size)
       return E_INVALIDARG;
@@ -563,14 +715,17 @@ public:
     if (!key || !key_size || !desc)
       return E_INVALIDARG;
     m_state_object_versions[MakeKey(key, key_size)] = version;
-    TraceAgility("StateObjectDatabase::StoreStateObjectDesc key_size=%u version=%u subobjects=%u",
+    TraceAgility("StateObjectDatabase::StoreStateObjectDesc key_size=%u "
+                 "version=%u subobjects=%u",
                  key_size, version, desc->NumSubobjects);
     return S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE FindStateObjectDesc(
-      const void *key, UINT key_size, D3D12StateObjectFuncCompat, void *) override {
-    TraceAgility("StateObjectDatabase::FindStateObjectDesc key_size=%u -> not materialized",
+  HRESULT STDMETHODCALLTYPE FindStateObjectDesc(const void *key, UINT key_size,
+                                                D3D12StateObjectFuncCompat,
+                                                void *) override {
+    TraceAgility("StateObjectDatabase::FindStateObjectDesc key_size=%u -> not "
+                 "materialized",
                  key_size);
     if (!key || !key_size)
       return E_INVALIDARG;
@@ -638,9 +793,11 @@ public:
     if (!state_object_database)
       return E_POINTER;
     *state_object_database = nullptr;
-    TraceAgility("StateObjectDatabaseFactory::CreateStateObjectDatabaseFromFile file=%ls flags=0x%x riid=%s",
-                 database_file ? database_file : L"(null)", flags,
-                 dxmt::str::format(riid).c_str());
+    TraceAgility(
+        "StateObjectDatabaseFactory::CreateStateObjectDatabaseFromFile "
+        "file=%ls flags=0x%x riid=%s",
+        database_file ? database_file : L"(null)", flags,
+        dxmt::str::format(riid).c_str());
     auto *database = new MTLD3D12StateObjectDatabase();
     HRESULT hr = database->QueryInterface(riid, state_object_database);
     database->Release();
@@ -675,17 +832,23 @@ public:
     return ref;
   }
 
-  HRESULT STDMETHODCALLTYPE DisableFailuresFromStricterValidationInAppLocalRuntime(
+  HRESULT STDMETHODCALLTYPE
+  DisableFailuresFromStricterValidationInAppLocalRuntime(
       BOOL disable) override {
     m_disabled = disable;
-    TraceAgility("RuntimeValidationControl::DisableFailuresFromStricterValidationInAppLocalRuntime disabled=%d",
-                 disable);
+    TraceAgility(
+        "RuntimeValidationControl::"
+        "DisableFailuresFromStricterValidationInAppLocalRuntime disabled=%d",
+        disable);
     return S_OK;
   }
 
-  BOOL STDMETHODCALLTYPE FailuresFromStricterValidationInAppLocalRuntimeDisabled() override {
-    TraceAgility("RuntimeValidationControl::FailuresFromStricterValidationInAppLocalRuntimeDisabled -> %d",
-                 m_disabled);
+  BOOL STDMETHODCALLTYPE
+  FailuresFromStricterValidationInAppLocalRuntimeDisabled() override {
+    TraceAgility(
+        "RuntimeValidationControl::"
+        "FailuresFromStricterValidationInAppLocalRuntimeDisabled -> %d",
+        m_disabled);
     return m_disabled;
   }
 
@@ -722,7 +885,8 @@ public:
       const D3D12ApplicationDescCompat *desc, REFGUID app_id) override {
     if (!desc)
       return E_INVALIDARG;
-    TraceAgility("ApplicationIdentity::SetApplicationIdentity name=%ls engine=%ls app_id=%s",
+    TraceAgility("ApplicationIdentity::SetApplicationIdentity name=%ls "
+                 "engine=%ls app_id=%s",
                  desc->pName ? desc->pName : L"(null)",
                  desc->pEngineName ? desc->pEngineName : L"(null)",
                  dxmt::str::format(app_id).c_str());
@@ -1442,9 +1606,9 @@ using namespace dxmt;
 extern "C" HRESULT WINAPI
 D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
                   REFIID riid, void **ppDevice) {
+  EnsureAppLocalAgilityRuntimeLoaded();
   {
-    DXMTD3D12Trace("Entry",
-                   "D3D12CreateDevice CALLED FL=%d adapter=%p riid=%s",
+    DXMTD3D12Trace("Entry", "D3D12CreateDevice CALLED FL=%d adapter=%p riid=%s",
                    MinimumFeatureLevel, pAdapter, str::format(riid).c_str());
   }
   const bool support_probe = ppDevice == nullptr;
@@ -1459,8 +1623,52 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
                    "D3D12CreateDevice adapter QI IMTLDXGIAdapter hr=0x%lx",
                    adapter_hr);
     if (FAILED(adapter_hr)) {
-      ERR("D3D12CreateDevice: adapter is not a DXMT adapter");
-      return E_INVALIDARG;
+      Com<IDXGIAdapter1> generic_adapter;
+      HRESULT generic_hr =
+          pAdapter->QueryInterface(IID_PPV_ARGS(&generic_adapter));
+      DXMTD3D12Trace(
+          "Entry",
+          "D3D12CreateDevice adapter fallback QI IDXGIAdapter1 hr=0x%lx",
+          generic_hr);
+      if (SUCCEEDED(generic_hr)) {
+        DXGI_ADAPTER_DESC1 desc = {};
+        HRESULT desc_hr = generic_adapter->GetDesc1(&desc);
+        DXMTD3D12Trace("Entry",
+                       "D3D12CreateDevice adapter fallback GetDesc1 hr=0x%lx "
+                       "luid=%08lx:%08lx vendor=0x%x device=0x%x",
+                       desc_hr, desc.AdapterLuid.HighPart,
+                       desc.AdapterLuid.LowPart, desc.VendorId, desc.DeviceId);
+        if (SUCCEEDED(desc_hr)) {
+          Com<IDXGIFactory6> factory;
+          HRESULT factory_hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+          DXMTD3D12Trace(
+              "Entry",
+              "D3D12CreateDevice adapter fallback CreateDXGIFactory1 hr=0x%lx",
+              factory_hr);
+          if (SUCCEEDED(factory_hr)) {
+            Com<IDXGIAdapter1> resolved_adapter;
+            HRESULT enum_hr = factory->EnumAdapterByLuid(
+                desc.AdapterLuid, IID_PPV_ARGS(&resolved_adapter));
+            DXMTD3D12Trace("Entry",
+                           "D3D12CreateDevice adapter fallback "
+                           "EnumAdapterByLuid hr=0x%lx adapter=%p",
+                           enum_hr, resolved_adapter.ptr());
+            if (SUCCEEDED(enum_hr) && resolved_adapter) {
+              adapter_hr =
+                  resolved_adapter->QueryInterface(IID_PPV_ARGS(&dxgi_adapter));
+              DXMTD3D12Trace("Entry",
+                             "D3D12CreateDevice adapter fallback resolved "
+                             "IMTLDXGIAdapter hr=0x%lx",
+                             adapter_hr);
+            }
+          }
+        }
+      }
+
+      if (FAILED(adapter_hr)) {
+        WARN("D3D12CreateDevice: adapter is not a DXMT adapter, falling back "
+             "to default adapter");
+      }
     }
   } else {
     Com<IDXGIFactory1> factory;
@@ -1481,18 +1689,50 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
       return E_FAIL;
     }
     HRESULT adapter_hr = adapter->QueryInterface(IID_PPV_ARGS(&dxgi_adapter));
-    DXMTD3D12Trace("Entry",
-                   "D3D12CreateDevice default adapter QI IMTLDXGIAdapter hr=0x%lx",
-                   adapter_hr);
+    DXMTD3D12Trace(
+        "Entry",
+        "D3D12CreateDevice default adapter QI IMTLDXGIAdapter hr=0x%lx",
+        adapter_hr);
     if (FAILED(adapter_hr)) {
       ERR("D3D12CreateDevice: default adapter is not DXMT");
       return E_FAIL;
     }
   }
 
-  if (support_probe) {
+  if (!dxgi_adapter) {
+    Com<IDXGIFactory1> factory;
+    HRESULT factory_hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    DXMTD3D12Trace(
+        "Entry",
+        "D3D12CreateDevice fallback-to-default CreateDXGIFactory1 hr=0x%lx",
+        factory_hr);
+    if (FAILED(factory_hr)) {
+      ERR("D3D12CreateDevice: failed to create DXGI factory for fallback");
+      return E_FAIL;
+    }
+    Com<IDXGIAdapter> adapter;
+    HRESULT enum_hr = factory->EnumAdapters(0, &adapter);
     DXMTD3D12Trace("Entry",
-                   "D3D12CreateDevice SUPPORT PROBE SUCCESS FL=%d",
+                   "D3D12CreateDevice fallback-to-default EnumAdapters "
+                   "hr=0x%lx adapter=%p",
+                   enum_hr, adapter.ptr());
+    if (FAILED(enum_hr)) {
+      ERR("D3D12CreateDevice: no adapters available for fallback");
+      return E_FAIL;
+    }
+    HRESULT adapter_hr = adapter->QueryInterface(IID_PPV_ARGS(&dxgi_adapter));
+    DXMTD3D12Trace("Entry",
+                   "D3D12CreateDevice fallback-to-default adapter QI "
+                   "IMTLDXGIAdapter hr=0x%lx",
+                   adapter_hr);
+    if (FAILED(adapter_hr)) {
+      ERR("D3D12CreateDevice: fallback default adapter is not DXMT");
+      return E_FAIL;
+    }
+  }
+
+  if (support_probe) {
+    DXMTD3D12Trace("Entry", "D3D12CreateDevice SUPPORT PROBE SUCCESS FL=%d",
                    MinimumFeatureLevel);
     return S_FALSE;
   }
@@ -1538,8 +1778,8 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
   } catch (const std::exception &e) {
     Logger::err(str::format("D3D12CreateDevice: exception: ", e.what()));
     {
-      DXMTD3D12Trace("Entry", "D3D12CreateDevice EXCEPTION: %s FL=%d",
-                     e.what(), MinimumFeatureLevel);
+      DXMTD3D12Trace("Entry", "D3D12CreateDevice EXCEPTION: %s FL=%d", e.what(),
+                     MinimumFeatureLevel);
     }
     return E_FAIL;
   }
@@ -1655,6 +1895,7 @@ extern "C" HRESULT WINAPI D3D12CreateVersionedRootSignatureDeserializer(
 }
 
 extern "C" HRESULT WINAPI D3D12GetDebugInterface(REFIID riid, void **ppDebug) {
+  EnsureAppLocalAgilityRuntimeLoaded();
   TraceAgility("D3D12GetDebugInterface riid=%s out=%p -> E_NOINTERFACE",
                str::format(riid).c_str(), ppDebug);
   if (ppDebug)
@@ -1667,6 +1908,7 @@ extern "C" UINT D3D12SDKVersion = kD3D12AgilitySDKVersion;
 extern "C" HRESULT WINAPI D3D12EnableExperimentalFeatures(
     UINT feature_count, const IID *iids, void *configurations,
     UINT *configuration_sizes) {
+  EnsureAppLocalAgilityRuntimeLoaded();
   if (feature_count && !iids)
     return E_INVALIDARG;
 
@@ -1680,6 +1922,7 @@ extern "C" HRESULT WINAPI D3D12EnableExperimentalFeatures(
 
 extern "C" HRESULT WINAPI D3D12GetInterface(REFCLSID clsid, REFIID riid,
                                             void **ppv) {
+  EnsureAppLocalAgilityRuntimeLoaded();
   TraceAgility("D3D12GetInterface ENTER clsid=%s riid=%s out=%p",
                str::format(clsid).c_str(), str::format(riid).c_str(), ppv);
   if (!ppv)
@@ -1693,8 +1936,7 @@ extern "C" HRESULT WINAPI D3D12GetInterface(REFCLSID clsid, REFIID riid,
                  str::format(riid).c_str(), hr, ppv ? *ppv : nullptr);
     return hr;
   }
-  if (clsid == kCLSID_D3D12DeviceFactory ||
-      clsid == kIID_ID3D12DeviceFactory) {
+  if (clsid == kCLSID_D3D12DeviceFactory || clsid == kIID_ID3D12DeviceFactory) {
     auto *factory = new MTLD3D12DeviceFactory();
     HRESULT hr = factory->QueryInterface(riid, ppv);
     factory->Release();
@@ -1719,16 +1961,18 @@ extern "C" HRESULT WINAPI D3D12GetInterface(REFCLSID clsid, REFIID riid,
     auto *control = new MTLD3D12RuntimeValidationControl();
     HRESULT hr = control->QueryInterface(riid, ppv);
     control->Release();
-    TraceAgility("D3D12GetInterface RuntimeValidationControl riid=%s -> 0x%lx out=%p",
-                 str::format(riid).c_str(), hr, ppv ? *ppv : nullptr);
+    TraceAgility(
+        "D3D12GetInterface RuntimeValidationControl riid=%s -> 0x%lx out=%p",
+        str::format(riid).c_str(), hr, ppv ? *ppv : nullptr);
     return hr;
   }
   if (clsid == kCLSID_D3D12ApplicationIdentity) {
     auto *identity = new MTLD3D12ApplicationIdentity();
     HRESULT hr = identity->QueryInterface(riid, ppv);
     identity->Release();
-    TraceAgility("D3D12GetInterface ApplicationIdentity riid=%s -> 0x%lx out=%p",
-                 str::format(riid).c_str(), hr, ppv ? *ppv : nullptr);
+    TraceAgility(
+        "D3D12GetInterface ApplicationIdentity riid=%s -> 0x%lx out=%p",
+        str::format(riid).c_str(), hr, ppv ? *ppv : nullptr);
     return hr;
   }
 
@@ -1749,8 +1993,20 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     if (f) {
       char exe[MAX_PATH];
       GetModuleFileNameA(NULL, exe, MAX_PATH);
+      HMODULE exe_module = GetModuleHandleA(nullptr);
+      auto *sdk_version = exe_module ? reinterpret_cast<UINT *>(GetProcAddress(
+                                           exe_module, "D3D12SDKVersion"))
+                                     : nullptr;
+      FARPROC sdk_path_export =
+          exe_module ? GetProcAddress(exe_module, "D3D12SDKPath") : nullptr;
+      const char *sdk_path = ResolveSdkPathExportValue(sdk_path_export);
       fprintf(f, "=== d3d12.dll DllMain PROCESS_ATTACH pid=%lu exe=[%s] ===\n",
               GetCurrentProcessId(), exe);
+      fprintf(f,
+              "=== d3d12.dll DllMain exports exe_module=%p version_ptr=%p "
+              "version=%u path_export=%p resolved_path=%p path=[%s] ===\n",
+              exe_module, sdk_version, sdk_version ? *sdk_version : 0,
+              sdk_path_export, sdk_path, sdk_path ? sdk_path : "");
       fclose(f);
     }
   } else if (reason == DLL_PROCESS_DETACH) {

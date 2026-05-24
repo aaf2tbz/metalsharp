@@ -2,6 +2,7 @@
 #include "d3d12_device.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
+#include <thread>
 
 #define FTRACE(fmt, ...)                                                       \
   do {                                                                         \
@@ -102,14 +103,33 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetEventOnCompletion(uint64_t value,
       SetEvent(event);
     return S_OK;
   }
-  if (m_shared_event.handle) {
-    m_shared_event.waitUntilSignaledValue(value, UINT64_MAX);
-    uint64_t shared_value = m_shared_event.signaledValue();
-    if (shared_value > m_value.load(std::memory_order_acquire))
-      m_value.store(shared_value, std::memory_order_release);
+
+  if (!m_shared_event.handle) {
+    FTRACE("SetEventOnCompletion no shared event this=%p", (void *)this);
+    return E_FAIL;
   }
-  if (event)
-    SetEvent(event);
+
+  AddRef();
+  auto shared_event = m_shared_event;
+  auto wait_value = value;
+  auto wait_event = event;
+  auto *self = this;
+  std::thread([self, shared_event, wait_value, wait_event]() mutable {
+    FTRACE("SetEventOnCompletion async wait begin value=%llu this=%p event=%p",
+           (unsigned long long)wait_value, (void *)self,
+           (void *)(uintptr_t)wait_event);
+    shared_event.waitUntilSignaledValue(wait_value, UINT64_MAX);
+    uint64_t shared_value = shared_event.signaledValue();
+    if (shared_value > self->m_value.load(std::memory_order_acquire))
+      self->m_value.store(shared_value, std::memory_order_release);
+    FTRACE("SetEventOnCompletion async wait end value=%llu shared=%llu this=%p",
+           (unsigned long long)wait_value, (unsigned long long)shared_value,
+           (void *)self);
+    if (wait_event)
+      SetEvent(wait_event);
+    self->Release();
+  }).detach();
+
   return S_OK;
 }
 

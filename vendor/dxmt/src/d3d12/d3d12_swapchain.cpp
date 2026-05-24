@@ -44,6 +44,8 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
     m_fs_desc = {};
     m_fs_desc.Windowed = true;
   }
+  m_source_width = m_desc.Width;
+  m_source_height = m_desc.Height;
 
   auto wmt_dev = dxgi_device->GetMTLDevice();
   m_present_queue = wmt_dev.newCommandQueue(1);
@@ -88,15 +90,33 @@ bool MTLD3D12SwapChain::EnsureMetalView() {
     WMT::ReleaseMetalView(m_native_view);
     m_native_view = {};
   }
+  m_layer = {};
 
-  m_native_view = WMT::CreateMetalViewFromHWND(
-      (intptr_t)m_hwnd, m_dxgi_device->GetMTLDevice(), m_layer);
-  SCTRACE("EnsureMetalView result native_view=%llu layer=%llu",
-          (unsigned long long)m_native_view.handle,
-          (unsigned long long)m_layer.handle);
+  HWND candidates[5] = {
+      m_hwnd,
+      GetAncestor(m_hwnd, GA_ROOT),
+      GetAncestor(m_hwnd, GA_ROOTOWNER),
+      ::GetParent(m_hwnd),
+      GetForegroundWindow(),
+  };
+  for (HWND candidate : candidates) {
+    if (!candidate)
+      continue;
+    if (AttachMetalViewForHWND(candidate)) {
+      if (candidate != m_hwnd) {
+        SCTRACE("EnsureMetalView attached via fallback hwnd=%p original=%p",
+                (void *)candidate, (void *)m_hwnd);
+      }
+      break;
+    }
+  }
 
-  if (!m_layer.handle)
+  if (!m_layer.handle) {
+    SCTRACE("EnsureMetalView FAILED hwnd=%p native_view=%llu layer=%llu",
+            (void *)m_hwnd, (unsigned long long)m_native_view.handle,
+            (unsigned long long)m_layer.handle);
     return false;
+  }
 
   if (!m_present_library)
     m_present_library =
@@ -107,13 +127,38 @@ bool MTLD3D12SwapChain::EnsureMetalView() {
   return true;
 }
 
+bool MTLD3D12SwapChain::AttachMetalViewForHWND(HWND hwnd) {
+  DWORD candidate_pid = 0;
+  DWORD candidate_tid = GetWindowThreadProcessId(hwnd, &candidate_pid);
+  RECT rect = {};
+  WINBOOL has_rect = GetClientRect(hwnd, &rect);
+  SCTRACE("AttachMetalView hwnd=%p is_window=%d tid=%lu pid=%lu rect=%ld,%ld %ldx%ld",
+          (void *)hwnd, (int)IsWindow(hwnd), (unsigned long)candidate_tid,
+          (unsigned long)candidate_pid, has_rect ? rect.left : 0,
+          has_rect ? rect.top : 0, has_rect ? rect.right - rect.left : 0,
+          has_rect ? rect.bottom - rect.top : 0);
+
+  WMT::MetalLayer candidate_layer = {};
+  auto candidate_view = WMT::CreateMetalViewFromHWND(
+      (intptr_t)hwnd, m_dxgi_device->GetMTLDevice(), candidate_layer);
+  SCTRACE("AttachMetalView result hwnd=%p native_view=%llu layer=%llu",
+          (void *)hwnd, (unsigned long long)candidate_view.handle,
+          (unsigned long long)candidate_layer.handle);
+  if (!candidate_view.handle || !candidate_layer.handle)
+    return false;
+
+  m_native_view = candidate_view;
+  m_layer = candidate_layer;
+  return true;
+}
+
 void MTLD3D12SwapChain::ConfigureLayer() {
   if (!m_layer.handle)
     return;
 
   auto format = DXGIToMTL(m_desc.Format);
-  auto width = m_desc.Width ? m_desc.Width : 1;
-  auto height = m_desc.Height ? m_desc.Height : 1;
+  auto width = m_source_width ? m_source_width : (m_desc.Width ? m_desc.Width : 1);
+  auto height = m_source_height ? m_source_height : (m_desc.Height ? m_desc.Height : 1);
   auto sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
 
   if (m_presenter) {
@@ -270,6 +315,10 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
   }
   m_desc.Width = width;
   m_desc.Height = height;
+  if (m_source_width == 0)
+    m_source_width = width;
+  if (m_source_height == 0)
+    m_source_height = height;
   ConfigureLayer();
 
   D3D12_RESOURCE_DESC res_desc = {};
@@ -379,7 +428,22 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
 
   auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
-  EnsureMetalView();
+  if (!EnsureMetalView()) {
+    Logger::err("D3D12SwapChain::Present: failed to create Metal view/layer");
+    SCTRACE("SwapChain::Present sync=%u flags=0x%x NO METAL VIEW", sync_interval,
+            flags);
+    return DXGI_STATUS_OCCLUDED;
+  }
+
+  auto &dxmt_queue = m_device->GetDXMTDevice().queue();
+  uint64_t present_wait_seq = dxmt_queue.CurrentSeqId();
+  if (present_wait_seq > 0)
+    present_wait_seq -= 1;
+  if (present_wait_seq > m_last_present_wait_seq) {
+    SCTRACE("Present waiting for render seq=%llu", (unsigned long long)present_wait_seq);
+    dxmt_queue.WaitCPUFence(present_wait_seq);
+    m_last_present_wait_seq = present_wait_seq;
+  }
 
   if (m_presenter && src_texture.handle) {
     auto state = m_presenter->synchronizeLayerProperties();
@@ -389,8 +453,9 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
         [](WMT::RenderCommandEncoder) {});
     if (!drawable.handle) {
       SCTRACE("SwapChain::Present presenter sync=%u flags=0x%x NO DRAWABLE", sync_interval, flags);
+      Logger::err("D3D12SwapChain::Present: presenter returned no drawable");
       cmdbuf.commit();
-      return S_OK;
+      return DXGI_STATUS_OCCLUDED;
     }
 
     SCTRACE("Present presenter: idx=%u res=%p src=%llu drawable=%llu w=%u h=%u",
@@ -405,8 +470,9 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     auto drawable = m_layer.nextDrawable();
     if (!drawable.handle) {
       SCTRACE("SwapChain::Present sync=%u flags=0x%x NO DRAWABLE", sync_interval, flags);
+      Logger::err("D3D12SwapChain::Present: layer returned no drawable");
       cmdbuf.commit();
-      return S_OK;
+      return DXGI_STATUS_OCCLUDED;
     }
 
     auto dst_texture = drawable.texture();
@@ -473,17 +539,44 @@ MTLD3D12SwapChain::GetRotation(DXGI_MODE_ROTATION *rotation) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetSourceSize(UINT Width, UINT Height) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetSourceSize(UINT *pWidth, UINT *pHeight) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetMaximumFrameLatency(UINT MaxLatency) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetMaximumFrameLatency(UINT *pMaxLatency) { if (pMaxLatency) *pMaxLatency = 1; return S_OK; }
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetSourceSize(UINT Width, UINT Height) {
+  if (Width == 0 || Height == 0)
+    return E_INVALIDARG;
+  m_source_width = Width;
+  m_source_height = Height;
+  ConfigureLayer();
+  SCTRACE("SetSourceSize w=%u h=%u", Width, Height);
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetSourceSize(UINT *pWidth, UINT *pHeight) {
+  if (pWidth)
+    *pWidth = m_source_width ? m_source_width : m_desc.Width;
+  if (pHeight)
+    *pHeight = m_source_height ? m_source_height : m_desc.Height;
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetMaximumFrameLatency(UINT MaxLatency) {
+  if (MaxLatency == 0 || MaxLatency > DXGI_MAX_SWAP_CHAIN_BUFFERS)
+    return E_INVALIDARG;
+  m_frame_latency = MaxLatency;
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetMaximumFrameLatency(UINT *pMaxLatency) {
+  if (pMaxLatency)
+    *pMaxLatency = m_frame_latency;
+  return S_OK;
+}
 HANDLE STDMETHODCALLTYPE MTLD3D12SwapChain::GetFrameLatencyWaitableObject() { return nullptr; }
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) { return S_OK; }
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) { return S_OK; }
 UINT STDMETHODCALLTYPE MTLD3D12SwapChain::GetCurrentBackBufferIndex() { return m_current_buffer; }
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE ColorSpace, UINT *pSupport) { if (pSupport) *pSupport = 0; return S_OK; }
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers1(UINT, UINT, UINT, DXGI_FORMAT, UINT, const UINT *, IUnknown *const *) { return S_OK; }
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers1(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT *, IUnknown *const *) {
+  SCTRACE("ResizeBuffers1 count=%u w=%u h=%u fmt=%u flags=0x%x",
+          BufferCount, Width, Height, (unsigned)Format, SwapChainFlags);
+  return ResizeBuffers(BufferCount, Width, Height, Format, SwapChainFlags);
+}
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE, UINT, void *) { return S_OK; }
 
 HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,

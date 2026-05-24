@@ -14,10 +14,49 @@ namespace dxmt {
 
 class MTLD3D12Resource;
 
+enum D3D12SamplerFlagsCompat : UINT {
+  D3D12SamplerFlagNoneCompat = 0x0,
+  D3D12SamplerFlagUintBorderColorCompat = 0x01,
+  D3D12SamplerFlagNonNormalizedCoordinatesCompat = 0x02,
+};
+
+struct D3D12SamplerDesc2Compat {
+  D3D12_FILTER Filter;
+  D3D12_TEXTURE_ADDRESS_MODE AddressU;
+  D3D12_TEXTURE_ADDRESS_MODE AddressV;
+  D3D12_TEXTURE_ADDRESS_MODE AddressW;
+  FLOAT MipLODBias;
+  UINT MaxAnisotropy;
+  D3D12_COMPARISON_FUNC ComparisonFunc;
+  union {
+    FLOAT FloatBorderColor[4];
+    UINT UintBorderColor[4];
+  };
+  FLOAT MinLOD;
+  FLOAT MaxLOD;
+  D3D12SamplerFlagsCompat Flags;
+};
+
+struct ID3D12Device11Compat : public ID3D12Device10 {
+  virtual void STDMETHODCALLTYPE CreateSampler2(
+      const D3D12SamplerDesc2Compat *desc,
+      D3D12_CPU_DESCRIPTOR_HANDLE descriptor) = 0;
+};
+
+struct ID3D12Device12Compat : public ID3D12Device11Compat {
+  virtual D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
+  GetResourceAllocationInfo3(
+      D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
+      UINT resource_descs_count, const D3D12_RESOURCE_DESC1 *resource_descs,
+      const UINT32 *num_castable_formats,
+      const DXGI_FORMAT *const *castable_formats,
+      D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) = 0;
+};
+
 const D3D12_COMMAND_SIGNATURE_DESC *
 GetD3D12CommandSignatureDesc(ID3D12CommandSignature *signature);
 
-class MTLD3D12Device : public ID3D12Device10 {
+class MTLD3D12Device : public ID3D12Device12Compat {
 public:
   MTLD3D12Device(std::unique_ptr<Device> &&device,
                    IMTLDXGIAdapter *pAdapter);
@@ -379,6 +418,19 @@ public:
       UINT32 castable_formats_count,
       DXGI_FORMAT *castable_formats,
       REFIID riid, void **resource) override;
+
+  /*** ID3D12Device11Compat ***/
+  void STDMETHODCALLTYPE CreateSampler2(
+      const D3D12SamplerDesc2Compat *desc,
+      D3D12_CPU_DESCRIPTOR_HANDLE descriptor) override;
+
+  /*** ID3D12Device12Compat ***/
+  D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE GetResourceAllocationInfo3(
+      D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
+      UINT resource_descs_count, const D3D12_RESOURCE_DESC1 *resource_descs,
+      const UINT32 *num_castable_formats,
+      const DXGI_FORMAT *const *castable_formats,
+      D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) override;
 
 private:
   std::unique_ptr<Device> m_device;

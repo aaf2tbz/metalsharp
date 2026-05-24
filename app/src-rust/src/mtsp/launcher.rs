@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
 
@@ -473,6 +473,9 @@ fn launch_dxmt_metal_with_context(
 
     let cache_paths = build_cache_paths(&home, node, appid);
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+    if node.id == PipelineId::M12 {
+        spawn_metalshaderconverter_sidecar(appid, &home);
+    }
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -519,6 +522,140 @@ fn launch_dxmt_metal_with_context(
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
+}
+
+fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path) {
+    let tool_candidates = [
+        PathBuf::from("/usr/local/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/homebrew/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/metal-shaderconverter/bin/metal-shaderconverter"),
+    ];
+    let Some(tool_path) = tool_candidates.into_iter().find(|path| path.exists()) else {
+        return;
+    };
+
+    let log_dir = home.join(".metalsharp").join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
+
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let cache_dir = PathBuf::from("/tmp/dxmt_shader_cache");
+        let launch_start = SystemTime::now();
+        let max_active_compiles = 4usize;
+
+        while Instant::now() < deadline {
+            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                let mut pending = Vec::new();
+                let mut active_locks = 0usize;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|ext| ext.to_str()) == Some("lock")
+                        && path.file_name().and_then(|name| name.to_str()).map(|name| name.ends_with(".msc.lock"))
+                            == Some(true)
+                    {
+                        active_locks += 1;
+                    }
+                    if path.extension().and_then(|ext| ext.to_str()) != Some("dxbc") {
+                        continue;
+                    }
+                    let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+                        continue;
+                    };
+                    if modified + Duration::from_secs(2) < launch_start {
+                        continue;
+                    }
+                    pending.push((modified, path));
+                }
+
+                pending.sort_by(|left, right| right.0.cmp(&left.0));
+
+                for (_modified, path) in pending {
+                    if active_locks >= max_active_compiles {
+                        break;
+                    }
+                    let metallib_path = path.with_extension("metallib");
+                    let reflection_path = path.with_extension("json");
+                    let fail_path = path.with_extension("msc.fail");
+                    if metallib_path.exists() && reflection_path.exists() {
+                        continue;
+                    }
+                    if fail_path.exists() {
+                        continue;
+                    }
+
+                    let lock_path = path.with_extension("msc.lock");
+                    let lock_file = OpenOptions::new().write(true).create_new(true).open(&lock_path);
+                    let Ok(_lock_guard) = lock_file else {
+                        continue;
+                    };
+                    active_locks += 1;
+
+                    let tool_path = tool_path.clone();
+                    let log_path = log_path.clone();
+                    std::thread::spawn(move || {
+                        let mut log = OpenOptions::new().create(true).append(true).open(&log_path).ok();
+                        if let Some(log) = log.as_mut() {
+                            let _ = writeln!(log, "compile_start dxbc={}", path.display());
+                        }
+
+                        let output = Command::new(&tool_path)
+                            .arg("-o")
+                            .arg(&metallib_path)
+                            .arg(&path)
+                            .arg(format!("--output-reflection-file={}", reflection_path.display()))
+                            .output();
+
+                        match output {
+                            Ok(result) => {
+                                let stdout_text = String::from_utf8_lossy(&result.stdout);
+                                let stderr_text = String::from_utf8_lossy(&result.stderr);
+                                if result.status.success() {
+                                    let _ = std::fs::remove_file(&fail_path);
+                                } else {
+                                    let failure_summary = if stderr_text.trim().is_empty() {
+                                        format!("metal-shaderconverter failed with {}", result.status)
+                                    } else {
+                                        stderr_text.trim().to_string()
+                                    };
+                                    let _ = std::fs::write(&fail_path, failure_summary);
+                                }
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(
+                                        log,
+                                        "compile_end dxbc={} status={} metallib={} reflection={}",
+                                        path.display(),
+                                        result.status,
+                                        metallib_path.exists(),
+                                        reflection_path.exists()
+                                    );
+                                    if !stdout_text.is_empty() {
+                                        let _ = log.write_all(stdout_text.as_bytes());
+                                    }
+                                    if !stderr_text.is_empty() {
+                                        let _ = log.write_all(stderr_text.as_bytes());
+                                    }
+                                }
+                            },
+                            Err(err) => {
+                                let _ = std::fs::write(
+                                    &fail_path,
+                                    format!("metal-shaderconverter invocation failed: {}", err),
+                                );
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(log, "compile_error dxbc={} err={}", path.display(), err);
+                                }
+                            },
+                        }
+
+                        let _ = std::fs::remove_file(&lock_path);
+                    });
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {

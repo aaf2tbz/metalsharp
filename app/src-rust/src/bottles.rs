@@ -601,6 +601,9 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+        let _ = crate::setup::prepare_game(appid)?;
+    }
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let mut manifest = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?;

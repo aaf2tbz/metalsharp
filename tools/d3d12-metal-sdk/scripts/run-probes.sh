@@ -8,6 +8,8 @@ WINE_BIN="${WINE_BIN:-wine}"
 WINE_PREFIX="${WINEPREFIX:-}"
 DXMT_RUNTIME="${DXMT_RUNTIME:-}"
 RESULTS_DIR="$SDK_DIR/results"
+AGILITY_SDK_VERSION="${AGILITY_SDK_VERSION:-}"
+AGILITY_SDK_PATH="${AGILITY_SDK_PATH:-}"
 RUN_LOADER=1
 RUN_AGILITY=1
 RUN_CAPS=1
@@ -30,6 +32,10 @@ Options:
   --prefix PATH         WINEPREFIX path.
   --dxmt-runtime PATH   Runtime root containing x86_64-windows/ and x86_64-unix/.
   --results-dir PATH    Result output directory.
+  --agility-sdk-version N
+                        Override exported D3D12SDKVersion for Agility-sensitive probes.
+  --agility-sdk-path REL
+                        Override exported D3D12SDKPath for Agility-sensitive probes.
   --no-loader           Skip probe_loader.
   --no-agility          Skip probe_agility_ue5.
   --no-caps             Skip probe_device_caps.
@@ -73,6 +79,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --results-dir)
       RESULTS_DIR="$2"
+      shift 2
+      ;;
+    --agility-sdk-version)
+      AGILITY_SDK_VERSION="$2"
+      shift 2
+      ;;
+    --agility-sdk-path)
+      AGILITY_SDK_PATH="$2"
       shift 2
       ;;
     --no-loader)
@@ -249,6 +263,8 @@ if [[ "$RUN_AGILITY" == "1" ]]; then
     DXMT_WINEMETAL_UNIXLIB="$UNIX_DIR/winemetal.so" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
+    D3D12_METAL_SDK_AGILITY_VERSION="$AGILITY_SDK_VERSION" \
+    D3D12_METAL_SDK_AGILITY_PATH="$AGILITY_SDK_PATH" \
     "$WINE_BIN" "$AGILITY_PROBE_EXE" > "$AGILITY_RESULT_FILE"
   )
   echo "$AGILITY_RESULT_FILE"
@@ -264,6 +280,8 @@ if [[ "$RUN_CAPS" == "1" ]]; then
     DXMT_WINEMETAL_UNIXLIB="$UNIX_DIR/winemetal.so" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
+    D3D12_METAL_SDK_AGILITY_VERSION="$AGILITY_SDK_VERSION" \
+    D3D12_METAL_SDK_AGILITY_PATH="$AGILITY_SDK_PATH" \
     "$WINE_BIN" "$CAPS_PROBE_EXE" > "$CAPS_RESULT_FILE"
   )
   echo "$CAPS_RESULT_FILE"

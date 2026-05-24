@@ -1929,6 +1929,7 @@ _CreateMetalViewFromHWND(void *obj) {
 
   struct macdrv_win_data *(*pfn_get_win_data)(HWND hwnd) = NULL;
   void (*pfn_release_win_data)(struct macdrv_win_data *data) = NULL;
+  macdrv_window (*pfn_macdrv_get_cocoa_window)(HWND hwnd, BOOL require_on_screen) = NULL;
   macdrv_client_surface (*pfn_macdrv_client_surface_create)(HWND hwnd) = NULL;
   macdrv_metal_view (*pfn_macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d) = NULL;
   macdrv_metal_layer (*pfn_macdrv_view_get_metal_layer)(macdrv_metal_view v) = NULL;
@@ -1937,6 +1938,7 @@ _CreateMetalViewFromHWND(void *obj) {
   if ((macdrv_functions = dlsym(RTLD_DEFAULT, "macdrv_functions"))) {
     pfn_get_win_data = macdrv_functions->get_win_data;
     pfn_release_win_data = macdrv_functions->release_win_data;
+    pfn_macdrv_get_cocoa_window = macdrv_functions->macdrv_get_cocoa_window;
     pfn_macdrv_client_surface_create = dlsym(RTLD_DEFAULT, "macdrv_client_surface_create");
     pfn_macdrv_view_create_metal_view = macdrv_functions->macdrv_view_create_metal_view;
     pfn_macdrv_view_get_metal_layer = macdrv_functions->macdrv_view_get_metal_layer;
@@ -1949,6 +1951,7 @@ _CreateMetalViewFromHWND(void *obj) {
   } else {
     pfn_get_win_data = dlsym(RTLD_DEFAULT, "get_win_data");
     pfn_release_win_data = dlsym(RTLD_DEFAULT, "release_win_data");
+    pfn_macdrv_get_cocoa_window = dlsym(RTLD_DEFAULT, "macdrv_get_cocoa_window");
     pfn_macdrv_client_surface_create = dlsym(RTLD_DEFAULT, "macdrv_client_surface_create");
     pfn_macdrv_view_create_metal_view = dlsym(RTLD_DEFAULT, "macdrv_view_create_metal_view");
     pfn_macdrv_view_get_metal_layer = dlsym(RTLD_DEFAULT, "macdrv_view_get_metal_layer");
@@ -1976,22 +1979,32 @@ _CreateMetalViewFromHWND(void *obj) {
   }
 
   struct macdrv_win_data *win_data = pfn_get_win_data((HWND)params->hwnd);
-  if (!win_data) {
+  macdrv_window fallback_cocoa_window = NULL;
+  if (!win_data && pfn_macdrv_get_cocoa_window) {
+    fallback_cocoa_window = pfn_macdrv_get_cocoa_window((HWND)params->hwnd, TRUE);
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data returned NULL\n");
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data NULL, direct cocoa_window=%p\n",
+              fallback_cocoa_window);
+    }
+  }
+  if (!win_data && !fallback_cocoa_window) {
+    if (!dl)
+      dl = winemetal_critical_log();
+    if (dl) {
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data returned NULL and no cocoa fallback\n");
       fclose(dl);
     }
     return STATUS_SUCCESS;
   }
 
-  if (dl) {
+  if (dl && win_data) {
     fprintf(
         dl, "[winemetal] CreateMetalViewFromHWND win_data=%p cocoa_window=%p client_view=%p\n", win_data,
         win_data->cocoa_window, win_data->client_view
     );
   }
 
-  if (!win_data->client_view && pfn_macdrv_client_surface_create) {
+  if (win_data && !win_data->client_view && pfn_macdrv_client_surface_create) {
     pfn_release_win_data(win_data);
     win_data = NULL;
     macdrv_client_surface surface = pfn_macdrv_client_surface_create((HWND)params->hwnd);
@@ -2011,9 +2024,17 @@ _CreateMetalViewFromHWND(void *obj) {
     }
   }
 
-  macdrv_view target_view = win_data->client_view;
-  if (!target_view && win_data->cocoa_window) {
-    id cocoa_window = (__bridge id)win_data->cocoa_window;
+  macdrv_window cocoa_window_handle = win_data ? win_data->cocoa_window : fallback_cocoa_window;
+  if (!cocoa_window_handle && pfn_macdrv_get_cocoa_window) {
+    cocoa_window_handle = pfn_macdrv_get_cocoa_window((HWND)params->hwnd, TRUE);
+    if (dl) {
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND late cocoa fallback=%p\n", cocoa_window_handle);
+    }
+  }
+
+  macdrv_view target_view = win_data ? win_data->client_view : NULL;
+  if (!target_view && cocoa_window_handle) {
+    id cocoa_window = (__bridge id)cocoa_window_handle;
     if ([cocoa_window respondsToSelector:@selector(contentView)]) {
       id content_view = [cocoa_window contentView];
       if (content_view) {
@@ -2033,9 +2054,21 @@ _CreateMetalViewFromHWND(void *obj) {
     }
     if (dl) {
       fprintf(dl, "[winemetal] CreateMetalViewFromHWND view=%p layer=%p\n", view, (void *)params->ret_layer);
+    } else {
+      if (!dl)
+        dl = winemetal_critical_log();
+      if (dl) {
+        fprintf(dl, "[winemetal] CreateMetalViewFromHWND create_metal_view failed for target_view=%p cocoa_window=%p\n",
+                target_view, cocoa_window_handle);
+      }
     }
-  } else if (dl) {
-    fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view is NULL\n");
+  } else {
+    if (!dl)
+      dl = winemetal_critical_log();
+    if (dl) {
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view/contentView unavailable cocoa_window=%p\n",
+              cocoa_window_handle);
+    }
   }
 
   if (win_data)
