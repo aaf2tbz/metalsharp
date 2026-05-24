@@ -7,6 +7,7 @@
 #include <optional>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace dxmt::dxil {
 
@@ -43,6 +44,7 @@ private:
     const DxilParsedShader &shader;
     std::vector<std::string> value_table;
     std::unordered_map<std::string, std::string> local_values;
+    std::unordered_set<uint32_t> pointer_slots;
     std::vector<ResourceBinding> resource_bindings;
     std::vector<std::string> diagnostics;
     uint32_t next_binding = 0;

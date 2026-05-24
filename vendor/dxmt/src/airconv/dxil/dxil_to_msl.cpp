@@ -493,6 +493,10 @@ static std::string defaultValueForTypeId(uint32_t type_id, const LLVMModule &mod
   return "0";
 }
 
+static bool isPointerTypeId(uint32_t type_id, const LLVMModule &mod) {
+  return type_id < mod.types.size() && mod.types[type_id].kind == LLVMType::Pointer;
+}
+
 void DXILToMSL::emitBindings(EmitContext &ctx) {
   auto &os = ctx.os;
 
@@ -1131,6 +1135,24 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     value_counter = std::max(value_counter + 1, result_slot + 1);
   };
 
+  auto usesPointerOperand = [&]() -> bool {
+    for (auto operand : inst.operands) {
+      if (ctx.pointer_slots.find(operand) != ctx.pointer_slots.end())
+        return true;
+      if (operand < ctx.value_table.size()) {
+        const auto &value = ctx.value_table[operand];
+        if (startsWith(value, "buf") || value.find("_storage") != std::string::npos)
+          return true;
+      }
+    }
+    return false;
+  };
+
+  auto publishPointerResult = [&]() {
+    publishResult();
+    ctx.pointer_slots.insert(result_slot);
+  };
+
   switch (inst.opcode) {
   case LLVMInstruction::Ret:
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
@@ -1186,6 +1208,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         }
       } else {
         os << "  " << translated << ";\n";
+        ensureValueTable(result_slot);
+        os << "  auto " << result << " = "
+           << defaultValueForTypeId(inst.type_id, ctx.mod)
+           << "; // fallback result after side-effect call\n";
+        ctx.value_table[result_slot] = result;
       }
     } else {
       os << "  auto " << result << " = 0; // call " << getValue(callee) << "(";
@@ -1203,7 +1230,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Add: {
     ensureValueTable(result_slot);
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand() && !isPointerTypeId(inst.type_id, ctx.mod)) {
+      recordDiagnostic(ctx, "DXIL pointer add fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer add fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
@@ -1211,7 +1245,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Sub: {
     ensureValueTable(result_slot);
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand() && !isPointerTypeId(inst.type_id, ctx.mod)) {
+      recordDiagnostic(ctx, "DXIL pointer sub fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer sub fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
@@ -1219,7 +1260,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Mul: {
     ensureValueTable(result_slot);
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer mul fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer mul fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     ctx.value_table[result_slot] = result;
     value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
@@ -1268,37 +1316,79 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::And: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " & " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer and fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer and fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " & "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::Or: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " | " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer or fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer or fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " | "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::Xor: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ^ " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer xor fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer xor fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ^ "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::Shl: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " << " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer shl fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer shl fallback\n";
+    } else {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " << "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::LShr: {
-    os << "  auto " << result << " = (uint)(" << getValue(inst.operands[0]) << ") >> " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer lshr fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer lshr fallback\n";
+    } else {
+      os << "  auto " << result << " = (uint)(" << getValue(inst.operands[0]) << ") >> "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::AShr: {
-    os << "  auto " << result << " = (int)(" << getValue(inst.operands[0]) << ") >> " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer ashr fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer ashr fallback\n";
+    } else {
+      os << "  auto " << result << " = (int)(" << getValue(inst.operands[0]) << ") >> "
+         << getValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
@@ -1307,7 +1397,10 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (inst.operands.size() >= 1) {
       os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // bitcast\n";
     }
-    publishResult();
+    if (isPointerTypeId(inst.type_id, ctx.mod))
+      publishPointerResult();
+    else
+      publishResult();
     break;
   }
 
@@ -1372,14 +1465,20 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::PtrToInt: {
-    os << "  auto " << result << " = reinterpret_cast<uintptr_t>(" << getValue(inst.operands[0]) << ");\n";
+    recordDiagnostic(ctx, "DXIL ptrtoint fallback: result=v%u", result_slot);
+    os << "  auto " << result << " = 0; // ptrtoint fallback\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::IntToPtr: {
-    os << "  auto " << result << " = reinterpret_cast<device char*>(static_cast<uintptr_t>(" << getValue(inst.operands[0]) << "));\n";
-    publishResult();
+    if (inst.operands.size() >= 1) {
+      os << "  auto " << result << " = " << getValue(inst.operands[0])
+         << "; // inttoptr fallback\n";
+    } else {
+      os << "  auto " << result << " = 0; // inttoptr fallback\n";
+    }
+    publishPointerResult();
     break;
   }
 
@@ -1471,14 +1570,32 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       for (size_t i = 2; i < inst.operands.size(); i++) {
         offset = "(" + offset + " + " + getValue(inst.operands[i]) + ")";
       }
-      os << "  auto* " << result << " = (" << base << " + (" << offset << "));\n";
+      bool base_is_pointer = ctx.pointer_slots.find(inst.operands[0]) != ctx.pointer_slots.end()
+        || startsWith(base, "buf") || base.find("_storage") != std::string::npos;
+      bool offset_is_pointer = false;
+      for (size_t i = 1; i < inst.operands.size(); i++) {
+        if (ctx.pointer_slots.find(inst.operands[i]) != ctx.pointer_slots.end()) {
+          offset_is_pointer = true;
+          break;
+        }
+      }
+      if (base_is_pointer && !offset_is_pointer) {
+        os << "  auto " << result << " = " << base << " + (long)(" << offset
+           << ");\n";
+      } else if (!base_is_pointer && !offset_is_pointer) {
+        os << "  auto " << result << " = " << offset
+           << "; // gep integer fallback\n";
+      } else {
+        recordDiagnostic(ctx, "DXIL gep pointer fallback: result=v%u", result_slot);
+        os << "  auto " << result << " = " << base << "; // gep pointer fallback\n";
+      }
       if (isZeroLiteral(offset)) {
         auto stored = ctx.local_values.find(base);
         if (stored != ctx.local_values.end())
           ctx.local_values[result] = stored->second;
       }
     }
-    publishResult();
+    publishPointerResult();
     break;
   }
 
@@ -1486,7 +1603,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     os << "  thread char " << result << "_storage[256] = {};\n";
     os << "  thread char* " << result << " = " << result << "_storage;\n";
     ctx.local_values[result] = "0";
-    publishResult();
+    publishPointerResult();
     break;
   }
 
@@ -1659,8 +1776,8 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
           module.functions.size(), module.types.size());
 
   std::ostringstream os;
-  EmitContext ctx{os, module, shader, {}, {}, {}, {}, 0, 0, 0, false, false,
-                  false, false};
+  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, 0, 0, 0, false,
+                  false, false, false};
 
   if (module.functions.empty()) {
     DXTRACE("DXILToMSL: refusing to emit default shader for module with no functions");
