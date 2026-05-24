@@ -1431,9 +1431,9 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     opts->ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3;
     opts->PSSpecifiedStencilRefSupported = TRUE;
     opts->TypedUAVLoadAdditionalFormats = TRUE;
-    opts->ROVsSupported = FALSE;
+    opts->ROVsSupported = TRUE;
     opts->ConservativeRasterizationTier =
-        D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED;
+        D3D12_CONSERVATIVE_RASTERIZATION_TIER_1;
     opts->MaxGPUVirtualAddressBitsPerResource = 40;
     opts->StandardSwizzle64KBSupported = FALSE;
     opts->CrossNodeSharingTier = D3D12_CROSS_NODE_SHARING_TIER_NOT_SUPPORTED;
@@ -1654,8 +1654,8 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     auto *sm = (D3D12_FEATURE_DATA_SHADER_MODEL *)feature_data;
     if (feature_data_size < sizeof(*sm))
       return E_INVALIDARG;
-    if (sm->HighestShaderModel == 0 || sm->HighestShaderModel > D3D_SHADER_MODEL_6_0)
-      sm->HighestShaderModel = D3D_SHADER_MODEL_6_0;
+    if (sm->HighestShaderModel == 0 || sm->HighestShaderModel > 0x66)
+      sm->HighestShaderModel = 0x66;
     TRACE("  SHADER_MODEL: HighestSM=%u", (unsigned)sm->HighestShaderModel);
     return S_OK;
   }
@@ -1663,12 +1663,12 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS1 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->WaveOps = FALSE;
-    o->WaveLaneCountMin = 0;
-    o->WaveLaneCountMax = 0;
-    o->TotalLaneCount = 0;
-    o->ExpandedComputeResourceStates = FALSE;
-    o->Int64ShaderOps = FALSE;
+    o->WaveOps = TRUE;
+    o->WaveLaneCountMin = 4;
+    o->WaveLaneCountMax = 32;
+    o->TotalLaneCount = 64;
+    o->ExpandedComputeResourceStates = TRUE;
+    o->Int64ShaderOps = TRUE;
     return S_OK;
   }
   case D3D12_FEATURE_ROOT_SIGNATURE: {
