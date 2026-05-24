@@ -17,6 +17,7 @@ RUN_QUEUES=1
 RUN_DESCRIPTORS=1
 RUN_SHADERS=1
 RUN_RENDER_HEADLESS=1
+RUN_PRESENT_WINDOWED=0
 
 usage() {
   cat <<'USAGE'
@@ -38,6 +39,8 @@ Options:
   --no-descriptors      Skip probe_descriptors.
   --no-shaders          Skip probe_shaders.
   --no-render-headless  Skip probe_render_headless.
+  --windowed-present    Run the optional probe_present_windowed window/swapchain proof.
+  --no-windowed-present Skip probe_present_windowed.
   -h, --help            Show this help.
 
 Examples:
@@ -108,6 +111,14 @@ while [[ $# -gt 0 ]]; do
       RUN_RENDER_HEADLESS=0
       shift
       ;;
+    --windowed-present)
+      RUN_PRESENT_WINDOWED=1
+      shift
+      ;;
+    --no-windowed-present)
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -150,6 +161,7 @@ QUEUES_PROBE_EXE="$SDK_DIR/out/bin/probe_queues.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
 SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 RENDER_HEADLESS_PROBE_EXE="$SDK_DIR/out/bin/probe_render_headless.exe"
+PRESENT_WINDOWED_PROBE_EXE="$SDK_DIR/out/bin/probe_present_windowed.exe"
 
 if [[ ! -x "$WINE_BIN" ]]; then
   echo "Wine binary is not executable: $WINE_BIN" >&2
@@ -178,7 +190,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
   exit 2
 fi
 
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   "$SDK_DIR/scripts/build-probes.sh" >/dev/null
 fi
 
@@ -192,6 +204,7 @@ QUEUES_RESULT_FILE="$RESULTS_DIR/probe-queues-${PROFILE}.json"
 DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
 SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
+PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
@@ -339,4 +352,18 @@ if [[ "$RUN_RENDER_HEADLESS" == "1" ]]; then
     "$WINE_BIN" "$RENDER_HEADLESS_PROBE_EXE" > "$RENDER_HEADLESS_RESULT_FILE"
   )
   echo "$RENDER_HEADLESS_RESULT_FILE"
+fi
+
+if [[ "$RUN_PRESENT_WINDOWED" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
+    DXMT_WINEMETAL_UNIXLIB="$UNIX_DIR/winemetal.so" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$PRESENT_WINDOWED_PROBE_EXE" > "$PRESENT_WINDOWED_RESULT_FILE"
+  )
+  echo "$PRESENT_WINDOWED_RESULT_FILE"
 fi

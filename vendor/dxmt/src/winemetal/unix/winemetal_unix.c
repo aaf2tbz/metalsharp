@@ -125,7 +125,9 @@ winemetal_render_command_name(uint16_t type) {
 }
 
 static void
-winemetal_log_render_command(FILE *dl, size_t index, id<MTLRenderCommandEncoder> encoder, const struct wmtcmd_base *cmd) {
+winemetal_log_render_command(
+    FILE *dl, size_t index, id<MTLRenderCommandEncoder> encoder, const struct wmtcmd_base *cmd
+) {
   if (!dl || !cmd) {
     return;
   }
@@ -410,7 +412,8 @@ _MTLDevice_newDepthStencilState(void *obj) {
   return STATUS_SUCCESS;
 }
 
-MTLPixelFormat to_metal_pixel_format(enum WMTPixelFormat format) {
+MTLPixelFormat
+to_metal_pixel_format(enum WMTPixelFormat format) {
   return (MTLPixelFormat)ORIGINAL_FORMAT(format);
 }
 
@@ -511,12 +514,11 @@ _MTLTexture_newTextureView(void *obj) {
   struct unixcall_mtltexture_newtextureview *params = obj;
   id<MTLTexture> texture = (id<MTLTexture>)params->texture;
 
-  id<MTLTexture> ret = [texture
-      newTextureViewWithPixelFormat:to_metal_pixel_format(params->format)
-                        textureType:(MTLTextureType)params->texture_type
-                             levels:NSMakeRange(params->level_start, params->level_count)
-                             slices:NSMakeRange(params->slice_start, params->slice_count)
-                            swizzle:to_metal_swizzle(params->swizzle, params->format)];
+  id<MTLTexture> ret = [texture newTextureViewWithPixelFormat:to_metal_pixel_format(params->format)
+                                                  textureType:(MTLTextureType)params->texture_type
+                                                       levels:NSMakeRange(params->level_start, params->level_count)
+                                                       slices:NSMakeRange(params->slice_start, params->slice_count)
+                                                      swizzle:to_metal_swizzle(params->swizzle, params->format)];
   params->ret = (obj_handle_t)ret;
   params->gpu_resource_id = [ret gpuResourceID]._impl;
   return STATUS_SUCCESS;
@@ -525,7 +527,8 @@ _MTLTexture_newTextureView(void *obj) {
 static NTSTATUS
 _MTLDevice_minimumLinearTextureAlignmentForPixelFormat(void *obj) {
   struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
-  params->ret = [(id<MTLDevice>)params->handle minimumLinearTextureAlignmentForPixelFormat:to_metal_pixel_format(params->arg)];
+  params->ret =
+      [(id<MTLDevice>)params->handle minimumLinearTextureAlignmentForPixelFormat:to_metal_pixel_format(params->arg)];
   return STATUS_SUCCESS;
 }
 
@@ -544,12 +547,17 @@ _MTLDevice_newLibraryWithSource(void *obj) {
   struct unixcall_mtldevice_newlibrary_source *params = obj;
   id<MTLDevice> device = (id<MTLDevice>)params->device;
   NSError *err = NULL;
-  NSString *source = [[NSString alloc] initWithBytes:params->source.ptr
-                                              length:params->source_length
-                                            encoding:NSUTF8StringEncoding];
+  NSString *source =
+      [[NSString alloc] initWithBytes:params->source.ptr length:params->source_length encoding:NSUTF8StringEncoding];
   FILE *dl = winemetal_debug_log();
   if (!source) {
-    if (dl) { fprintf(dl, "[winemetal] newLibraryWithSource: NSString creation FAILED for %llu bytes\n", (unsigned long long)params->source_length); fclose(dl); }
+    if (dl) {
+      fprintf(
+          dl, "[winemetal] newLibraryWithSource: NSString creation FAILED for %llu bytes\n",
+          (unsigned long long)params->source_length
+      );
+      fclose(dl);
+    }
     params->ret_library = 0;
     params->ret_error = 0;
     return STATUS_SUCCESS;
@@ -559,8 +567,10 @@ _MTLDevice_newLibraryWithSource(void *obj) {
   params->ret_library = (obj_handle_t)[device newLibraryWithSource:source options:options error:&err];
   params->ret_error = (obj_handle_t)err;
   if (dl) {
-    fprintf(dl, "[winemetal] newLibraryWithSource: lib=%p err=%p source_len=%llu\n",
-      (void*)params->ret_library, (void*)params->ret_error, (unsigned long long)params->source_length);
+    fprintf(
+        dl, "[winemetal] newLibraryWithSource: lib=%p err=%p source_len=%llu\n", (void *)params->ret_library,
+        (void *)params->ret_error, (unsigned long long)params->source_length
+    );
     if (err) {
       fprintf(dl, "[winemetal] compile error: %s\n", [[err localizedDescription] UTF8String]);
     }
@@ -577,7 +587,10 @@ _MTLLibrary_newFunction(void *obj) {
   id<MTLLibrary> library = (id<MTLLibrary>)params->handle;
   FILE *dl = winemetal_debug_log();
   if (!library) {
-    if (dl) { fprintf(dl, "[winemetal] newFunction called with NULL library!\n"); fclose(dl); }
+    if (dl) {
+      fprintf(dl, "[winemetal] newFunction called with NULL library!\n");
+      fclose(dl);
+    }
     params->ret = 0;
     return STATUS_SUCCESS;
   }
@@ -586,15 +599,21 @@ _MTLLibrary_newFunction(void *obj) {
   if (!params->ret) {
     NSArray<NSString *> *names = [library functionNames];
     if (dl) {
-      fprintf(dl, "[winemetal] newFunction(%s) returned NULL, library has %lu functions:\n", (char *)params->arg, (unsigned long)names.count);
+      fprintf(
+          dl, "[winemetal] newFunction(%s) returned NULL, library has %lu functions:\n", (char *)params->arg,
+          (unsigned long)names.count
+      );
       for (NSString *n in names) {
         fprintf(dl, "[winemetal]   - %s\n", [n UTF8String]);
       }
     }
   } else {
-    if (dl) { fprintf(dl, "[winemetal] newFunction(%s) -> %p OK\n", (char *)params->arg, (void*)params->ret); }
+    if (dl) {
+      fprintf(dl, "[winemetal] newFunction(%s) -> %p OK\n", (char *)params->arg, (void *)params->ret);
+    }
   }
-  if (dl) fclose(dl);
+  if (dl)
+    fclose(dl);
   [name release];
   return STATUS_SUCCESS;
 }
@@ -744,16 +763,14 @@ typedef NS_ENUM(NSUInteger, MTLLogicOperation) {
   MTLLogicOperationOrInverted,
 };
 
-@interface
-MTLRenderPipelineDescriptor ()
+@interface MTLRenderPipelineDescriptor ()
 
 - (void)setLogicOperationEnabled:(BOOL)enable;
 - (void)setLogicOperation:(MTLLogicOperation)op;
 
 @end
 
-@interface
-MTLMeshRenderPipelineDescriptor ()
+@interface MTLMeshRenderPipelineDescriptor ()
 
 - (void)setLogicOperationEnabled:(BOOL)enable;
 - (void)setLogicOperation:(MTLLogicOperation)op;
@@ -807,7 +824,8 @@ _MTLDevice_newRenderPipelineState(void *obj) {
   descriptor.vertexFunction = (id<MTLFunction>)info->vertex_function;
   descriptor.fragmentFunction = (id<MTLFunction>)info->fragment_function;
 
-  if (info->vertex_descriptor && (info->vertex_descriptor->attribute_count > 0 || info->vertex_descriptor->layout_count > 0)) {
+  if (info->vertex_descriptor &&
+      (info->vertex_descriptor->attribute_count > 0 || info->vertex_descriptor->layout_count > 0)) {
     MTLVertexDescriptor *vd = [[MTLVertexDescriptor alloc] init];
     for (uint32_t i = 0; i < info->vertex_descriptor->layout_count && i < WMT_MAX_VERTEX_BUFFER_LAYOUTS; i++) {
       struct WMTVertexBufferLayoutDesc l = info->vertex_descriptor->layouts[i];
@@ -1137,9 +1155,8 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
     winemetal_log_render_command(dl, command_index, encoder, next);
 
     @try {
-    switch ((enum WMTRenderCommandType)next->type) {
-    default:
-      {
+      switch ((enum WMTRenderCommandType)next->type) {
+      default: {
         FILE *el = winemetal_critical_log();
         if (el) {
           fprintf(
@@ -1153,312 +1170,323 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
         }
         return STATUS_UNSUCCESSFUL;
       }
-    case WMTRenderCommandNop:
-      break;
-    case WMTRenderCommandUseResource: {
-      struct wmtcmd_render_useresource *body = (struct wmtcmd_render_useresource *)next;
-      [encoder useResource:(id<MTLResource>)body->resource
-                     usage:(MTLResourceUsage)body->usage
-                    stages:(MTLRenderStages)body->stages];
-      break;
-    }
-    case WMTRenderCommandSetVertexBuffer: {
-      struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
-      [encoder setVertexBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetVertexBufferOffset: {
-      struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
-      [encoder setVertexBufferOffset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetFragmentBuffer: {
-      struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
-      [encoder setFragmentBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetFragmentBufferOffset: {
-      struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
-      [encoder setFragmentBufferOffset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetMeshBuffer: {
-      struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
-      [encoder setMeshBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetMeshBufferOffset: {
-      struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
-      [encoder setMeshBufferOffset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetObjectBuffer: {
-      struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetObjectBufferOffset: {
-      struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
-      [encoder setObjectBufferOffset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetFragmentBytes: {
-      struct wmtcmd_render_setbytes *body = (struct wmtcmd_render_setbytes *)next;
-      [encoder setFragmentBytes:body->bytes.ptr length:body->length atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetFragmentTexture: {
-      struct wmtcmd_render_settexture *body = (struct wmtcmd_render_settexture *)next;
-      [encoder setFragmentTexture:(id<MTLTexture>)body->texture atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetFragmentSamplerState: {
-      struct wmtcmd_render_setsamplerstate *body = (struct wmtcmd_render_setsamplerstate *)next;
-      [encoder setFragmentSamplerState:(id<MTLSamplerState>)body->sampler atIndex:body->index];
-      break;
-    }
-    case WMTRenderCommandSetRasterizerState: {
-      struct wmtcmd_render_setrasterizerstate *body = (struct wmtcmd_render_setrasterizerstate *)next;
-      [encoder setTriangleFillMode:(MTLTriangleFillMode)body->fill_mode];
-      [encoder setCullMode:(MTLCullMode)body->cull_mode];
-      [encoder setDepthClipMode:(MTLDepthClipMode)body->depth_clip_mode];
-      [encoder setDepthBias:body->depth_bias slopeScale:body->scole_scale clamp:body->depth_bias_clamp];
-      [encoder setFrontFacingWinding:(MTLWinding)body->winding];
-      break;
-    }
-    case WMTRenderCommandSetViewports: {
-      struct wmtcmd_render_setviewports *body = (struct wmtcmd_render_setviewports *)next;
-      [encoder setViewports:(const MTLViewport *)body->viewports.ptr count:body->viewport_count];
-      break;
-    }
-    case WMTRenderCommandSetScissorRects: {
-      struct wmtcmd_render_setscissorrects *body = (struct wmtcmd_render_setscissorrects *)next;
-      [encoder setScissorRects:(const MTLScissorRect *)body->scissor_rects.ptr count:body->rect_count];
-      break;
-    }
-    case WMTRenderCommandSetPSO: {
-      struct wmtcmd_render_setpso *body = (struct wmtcmd_render_setpso *)next;
-      [encoder setRenderPipelineState:(id<MTLRenderPipelineState>)body->pso];
-      break;
-    }
-    case WMTRenderCommandSetDSSO: {
-      struct wmtcmd_render_setdsso *body = (struct wmtcmd_render_setdsso *)next;
-      [encoder setDepthStencilState:(id<MTLDepthStencilState>)body->dsso];
-      [encoder setStencilReferenceValue:body->stencil_ref];
-      break;
-    }
-    case WMTRenderCommandSetBlendFactorAndStencilRef: {
-      struct wmtcmd_render_setblendcolor *body = (struct wmtcmd_render_setblendcolor *)next;
-      [encoder setBlendColorRed:body->red green:body->green blue:body->blue alpha:body->alpha];
-      [encoder setStencilReferenceValue:body->stencil_ref];
-      break;
-    }
-    case WMTRenderCommandSetVisibilityMode: {
-      struct wmtcmd_render_setvisibilitymode *body = (struct wmtcmd_render_setvisibilitymode *)next;
-      [encoder setVisibilityResultMode:(MTLVisibilityResultMode)body->mode offset:body->offset];
-      break;
-    }
-    case WMTRenderCommandDraw: {
-      struct wmtcmd_render_draw *body = (struct wmtcmd_render_draw *)next;
-      [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
-                  vertexStart:body->vertex_start
-                  vertexCount:body->vertex_count
-                instanceCount:body->instance_count
-                 baseInstance:body->base_instance];
-      break;
-    }
-    case WMTRenderCommandDrawIndexed: {
-      struct wmtcmd_render_draw_indexed *body = (struct wmtcmd_render_draw_indexed *)next;
-      [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
-                          indexCount:body->index_count
-                           indexType:(MTLIndexType)body->index_type
-                         indexBuffer:(id<MTLBuffer>)body->index_buffer
-                   indexBufferOffset:body->index_buffer_offset
-                       instanceCount:body->instance_count
-                          baseVertex:body->base_vertex
-                        baseInstance:body->base_instance];
-      break;
-    }
-    case WMTRenderCommandDrawIndirect: {
-      struct wmtcmd_render_draw_indirect *body = (struct wmtcmd_render_draw_indirect *)next;
-      [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
-                indirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
-          indirectBufferOffset:body->indirect_args_offset];
-      break;
-    }
-    case WMTRenderCommandDrawIndexedIndirect: {
-      struct wmtcmd_render_draw_indexed_indirect *body = (struct wmtcmd_render_draw_indexed_indirect *)next;
-      [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
-                           indexType:(MTLIndexType)body->index_type
-                         indexBuffer:(id<MTLBuffer>)body->index_buffer
-                   indexBufferOffset:body->index_buffer_offset
-                      indirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
-                indirectBufferOffset:body->indirect_args_offset];
-      break;
-    }
-    case WMTRenderCommandDrawMeshThreadgroups: {
-      struct wmtcmd_render_draw_meshthreadgroups *body = (struct wmtcmd_render_draw_meshthreadgroups *)next;
-      [encoder drawMeshThreadgroups:MTLSizeMake(
-                                        body->threadgroup_per_grid.width, body->threadgroup_per_grid.height,
-                                        body->threadgroup_per_grid.depth
-                                    )
-          threadsPerObjectThreadgroup:MTLSizeMake(
-                                          body->object_threadgroup_size.width, body->object_threadgroup_size.height,
-                                          body->object_threadgroup_size.depth
+      case WMTRenderCommandNop:
+        break;
+      case WMTRenderCommandUseResource: {
+        struct wmtcmd_render_useresource *body = (struct wmtcmd_render_useresource *)next;
+        [encoder useResource:(id<MTLResource>)body->resource
+                       usage:(MTLResourceUsage)body->usage
+                      stages:(MTLRenderStages)body->stages];
+        break;
+      }
+      case WMTRenderCommandSetVertexBuffer: {
+        struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
+        [encoder setVertexBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetVertexBufferOffset: {
+        struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
+        [encoder setVertexBufferOffset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetFragmentBuffer: {
+        struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
+        [encoder setFragmentBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetFragmentBufferOffset: {
+        struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
+        [encoder setFragmentBufferOffset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetMeshBuffer: {
+        struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
+        [encoder setMeshBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetMeshBufferOffset: {
+        struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
+        [encoder setMeshBufferOffset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetObjectBuffer: {
+        struct wmtcmd_render_setbuffer *body = (struct wmtcmd_render_setbuffer *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetObjectBufferOffset: {
+        struct wmtcmd_render_setbufferoffset *body = (struct wmtcmd_render_setbufferoffset *)next;
+        [encoder setObjectBufferOffset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetFragmentBytes: {
+        struct wmtcmd_render_setbytes *body = (struct wmtcmd_render_setbytes *)next;
+        [encoder setFragmentBytes:body->bytes.ptr length:body->length atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetFragmentTexture: {
+        struct wmtcmd_render_settexture *body = (struct wmtcmd_render_settexture *)next;
+        [encoder setFragmentTexture:(id<MTLTexture>)body->texture atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetFragmentSamplerState: {
+        struct wmtcmd_render_setsamplerstate *body = (struct wmtcmd_render_setsamplerstate *)next;
+        [encoder setFragmentSamplerState:(id<MTLSamplerState>)body->sampler atIndex:body->index];
+        break;
+      }
+      case WMTRenderCommandSetRasterizerState: {
+        struct wmtcmd_render_setrasterizerstate *body = (struct wmtcmd_render_setrasterizerstate *)next;
+        [encoder setTriangleFillMode:(MTLTriangleFillMode)body->fill_mode];
+        [encoder setCullMode:(MTLCullMode)body->cull_mode];
+        [encoder setDepthClipMode:(MTLDepthClipMode)body->depth_clip_mode];
+        [encoder setDepthBias:body->depth_bias slopeScale:body->scole_scale clamp:body->depth_bias_clamp];
+        [encoder setFrontFacingWinding:(MTLWinding)body->winding];
+        break;
+      }
+      case WMTRenderCommandSetViewports: {
+        struct wmtcmd_render_setviewports *body = (struct wmtcmd_render_setviewports *)next;
+        [encoder setViewports:(const MTLViewport *)body->viewports.ptr count:body->viewport_count];
+        break;
+      }
+      case WMTRenderCommandSetScissorRects: {
+        struct wmtcmd_render_setscissorrects *body = (struct wmtcmd_render_setscissorrects *)next;
+        [encoder setScissorRects:(const MTLScissorRect *)body->scissor_rects.ptr count:body->rect_count];
+        break;
+      }
+      case WMTRenderCommandSetPSO: {
+        struct wmtcmd_render_setpso *body = (struct wmtcmd_render_setpso *)next;
+        [encoder setRenderPipelineState:(id<MTLRenderPipelineState>)body->pso];
+        break;
+      }
+      case WMTRenderCommandSetDSSO: {
+        struct wmtcmd_render_setdsso *body = (struct wmtcmd_render_setdsso *)next;
+        [encoder setDepthStencilState:(id<MTLDepthStencilState>)body->dsso];
+        [encoder setStencilReferenceValue:body->stencil_ref];
+        break;
+      }
+      case WMTRenderCommandSetBlendFactorAndStencilRef: {
+        struct wmtcmd_render_setblendcolor *body = (struct wmtcmd_render_setblendcolor *)next;
+        [encoder setBlendColorRed:body->red green:body->green blue:body->blue alpha:body->alpha];
+        [encoder setStencilReferenceValue:body->stencil_ref];
+        break;
+      }
+      case WMTRenderCommandSetVisibilityMode: {
+        struct wmtcmd_render_setvisibilitymode *body = (struct wmtcmd_render_setvisibilitymode *)next;
+        [encoder setVisibilityResultMode:(MTLVisibilityResultMode)body->mode offset:body->offset];
+        break;
+      }
+      case WMTRenderCommandDraw: {
+        struct wmtcmd_render_draw *body = (struct wmtcmd_render_draw *)next;
+        [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
+                    vertexStart:body->vertex_start
+                    vertexCount:body->vertex_count
+                  instanceCount:body->instance_count
+                   baseInstance:body->base_instance];
+        break;
+      }
+      case WMTRenderCommandDrawIndexed: {
+        struct wmtcmd_render_draw_indexed *body = (struct wmtcmd_render_draw_indexed *)next;
+        [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
+                            indexCount:body->index_count
+                             indexType:(MTLIndexType)body->index_type
+                           indexBuffer:(id<MTLBuffer>)body->index_buffer
+                     indexBufferOffset:body->index_buffer_offset
+                         instanceCount:body->instance_count
+                            baseVertex:body->base_vertex
+                          baseInstance:body->base_instance];
+        break;
+      }
+      case WMTRenderCommandDrawIndirect: {
+        struct wmtcmd_render_draw_indirect *body = (struct wmtcmd_render_draw_indirect *)next;
+        [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
+                  indirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+            indirectBufferOffset:body->indirect_args_offset];
+        break;
+      }
+      case WMTRenderCommandDrawIndexedIndirect: {
+        struct wmtcmd_render_draw_indexed_indirect *body = (struct wmtcmd_render_draw_indexed_indirect *)next;
+        [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
+                             indexType:(MTLIndexType)body->index_type
+                           indexBuffer:(id<MTLBuffer>)body->index_buffer
+                     indexBufferOffset:body->index_buffer_offset
+                        indirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                  indirectBufferOffset:body->indirect_args_offset];
+        break;
+      }
+      case WMTRenderCommandDrawMeshThreadgroups: {
+        struct wmtcmd_render_draw_meshthreadgroups *body = (struct wmtcmd_render_draw_meshthreadgroups *)next;
+        [encoder drawMeshThreadgroups:MTLSizeMake(
+                                          body->threadgroup_per_grid.width, body->threadgroup_per_grid.height,
+                                          body->threadgroup_per_grid.depth
                                       )
-            threadsPerMeshThreadgroup:MTLSizeMake(
-                                          body->mesh_threadgroup_size.width, body->mesh_threadgroup_size.height,
-                                          body->mesh_threadgroup_size.depth
-                                      )];
-      break;
-    }
-    case WMTRenderCommandDrawMeshThreadgroupsIndirect: {
-      struct wmtcmd_render_draw_meshthreadgroups_indirect *body =
-          (struct wmtcmd_render_draw_meshthreadgroups_indirect *)next;
-      [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
-                                 indirectBufferOffset:body->indirect_args_offset
-                          threadsPerObjectThreadgroup:MTLSizeMake(
-                                                          body->object_threadgroup_size.width,
-                                                          body->object_threadgroup_size.height,
-                                                          body->object_threadgroup_size.depth
-                                                      )
-                            threadsPerMeshThreadgroup:MTLSizeMake(
-                                                          body->mesh_threadgroup_size.width,
-                                                          body->mesh_threadgroup_size.height,
-                                                          body->mesh_threadgroup_size.depth
-                                                      )];
-      break;
-    }
-    case WMTRenderCommandMemoryBarrier: {
-      struct wmtcmd_render_memory_barrier *body = (struct wmtcmd_render_memory_barrier *)next;
-      [encoder memoryBarrierWithScope:(MTLBarrierScope)body->scope
-                          afterStages:(MTLRenderStages)body->stages_after
-                         beforeStages:(MTLRenderStages)body->stages_before];
-      break;
-    }
-    case WMTRenderCommandDXMTGeometryDraw: {
-      struct wmtcmd_render_dxmt_geometry_draw *body = (struct wmtcmd_render_dxmt_geometry_draw *)next;
-      [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
-      [encoder drawMeshThreadgroups:MTLSizeMake(body->warp_count, body->instance_count, 1)
-          threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
-            threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
-      break;
-    }
-    case WMTRenderCommandDXMTGeometryDrawIndexed: {
-      struct wmtcmd_render_dxmt_geometry_draw_indexed *body = (struct wmtcmd_render_dxmt_geometry_draw_indexed *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
-      [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
-      [encoder drawMeshThreadgroups:MTLSizeMake(body->warp_count, body->instance_count, 1)
-          threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
-            threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
-      break;
-    }
-    case WMTRenderCommandDXMTGeometryDrawIndirect: {
-      struct wmtcmd_render_dxmt_geometry_draw_indirect *body = (struct wmtcmd_render_dxmt_geometry_draw_indirect *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer offset:body->indirect_args_offset atIndex:21];
-      [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
-                                 indirectBufferOffset:body->dispatch_args_offset
-                          threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
-                            threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
-      break;
-    }
-    case WMTRenderCommandDXMTGeometryDrawIndexedIndirect: {
-      struct wmtcmd_render_dxmt_geometry_draw_indexed_indirect *body =
-          (struct wmtcmd_render_dxmt_geometry_draw_indexed_indirect *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer offset:body->indirect_args_offset atIndex:21];
-      [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
-                                 indirectBufferOffset:body->dispatch_args_offset
-                          threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
-                            threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
-      break;
-    }
-    case WMTRenderCommandDXMTTessellationMeshDraw: {
-      struct wmtcmd_render_dxmt_tessellation_mesh_draw *body = (struct wmtcmd_render_dxmt_tessellation_mesh_draw *)next;
-      [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
-      [encoder drawMeshThreadgroups:MTLSizeMake(body->patch_per_mesh_instance, body->instance_count, 1)
-          threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
-            threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
-      break;
-    }
-    case WMTRenderCommandDXMTTessellationMeshDrawIndexed: {
-      struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed *body = (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
-      [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
-      [encoder drawMeshThreadgroups:MTLSizeMake(body->patch_per_mesh_instance, body->instance_count, 1)
-          threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
-            threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
-      break;
-    }
+            threadsPerObjectThreadgroup:MTLSizeMake(
+                                            body->object_threadgroup_size.width, body->object_threadgroup_size.height,
+                                            body->object_threadgroup_size.depth
+                                        )
+              threadsPerMeshThreadgroup:MTLSizeMake(
+                                            body->mesh_threadgroup_size.width, body->mesh_threadgroup_size.height,
+                                            body->mesh_threadgroup_size.depth
+                                        )];
+        break;
+      }
+      case WMTRenderCommandDrawMeshThreadgroupsIndirect: {
+        struct wmtcmd_render_draw_meshthreadgroups_indirect *body =
+            (struct wmtcmd_render_draw_meshthreadgroups_indirect *)next;
+        [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                                   indirectBufferOffset:body->indirect_args_offset
+                            threadsPerObjectThreadgroup:MTLSizeMake(
+                                                            body->object_threadgroup_size.width,
+                                                            body->object_threadgroup_size.height,
+                                                            body->object_threadgroup_size.depth
+                                                        )
+                              threadsPerMeshThreadgroup:MTLSizeMake(
+                                                            body->mesh_threadgroup_size.width,
+                                                            body->mesh_threadgroup_size.height,
+                                                            body->mesh_threadgroup_size.depth
+                                                        )];
+        break;
+      }
+      case WMTRenderCommandMemoryBarrier: {
+        struct wmtcmd_render_memory_barrier *body = (struct wmtcmd_render_memory_barrier *)next;
+        [encoder memoryBarrierWithScope:(MTLBarrierScope)body->scope
+                            afterStages:(MTLRenderStages)body->stages_after
+                           beforeStages:(MTLRenderStages)body->stages_before];
+        break;
+      }
+      case WMTRenderCommandDXMTGeometryDraw: {
+        struct wmtcmd_render_dxmt_geometry_draw *body = (struct wmtcmd_render_dxmt_geometry_draw *)next;
+        [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
+        [encoder drawMeshThreadgroups:MTLSizeMake(body->warp_count, body->instance_count, 1)
+            threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
+              threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
+        break;
+      }
+      case WMTRenderCommandDXMTGeometryDrawIndexed: {
+        struct wmtcmd_render_dxmt_geometry_draw_indexed *body = (struct wmtcmd_render_dxmt_geometry_draw_indexed *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
+        [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
+        [encoder drawMeshThreadgroups:MTLSizeMake(body->warp_count, body->instance_count, 1)
+            threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
+              threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
+        break;
+      }
+      case WMTRenderCommandDXMTGeometryDrawIndirect: {
+        struct wmtcmd_render_dxmt_geometry_draw_indirect *body =
+            (struct wmtcmd_render_dxmt_geometry_draw_indirect *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                          offset:body->indirect_args_offset
+                         atIndex:21];
+        [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
+                                   indirectBufferOffset:body->dispatch_args_offset
+                            threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
+                              threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
+        break;
+      }
+      case WMTRenderCommandDXMTGeometryDrawIndexedIndirect: {
+        struct wmtcmd_render_dxmt_geometry_draw_indexed_indirect *body =
+            (struct wmtcmd_render_dxmt_geometry_draw_indexed_indirect *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                          offset:body->indirect_args_offset
+                         atIndex:21];
+        [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
+                                   indirectBufferOffset:body->dispatch_args_offset
+                            threadsPerObjectThreadgroup:MTLSizeMake(body->vertex_per_warp, 1, 1)
+                              threadsPerMeshThreadgroup:MTLSizeMake(1, 1, 1)];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
+        break;
+      }
+      case WMTRenderCommandDXMTTessellationMeshDraw: {
+        struct wmtcmd_render_dxmt_tessellation_mesh_draw *body =
+            (struct wmtcmd_render_dxmt_tessellation_mesh_draw *)next;
+        [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
+        [encoder drawMeshThreadgroups:MTLSizeMake(body->patch_per_mesh_instance, body->instance_count, 1)
+            threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
+              threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
+        break;
+      }
+      case WMTRenderCommandDXMTTessellationMeshDrawIndexed: {
+        struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed *body =
+            (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
+        [encoder setObjectBufferOffset:body->draw_arguments_offset atIndex:21];
+        [encoder drawMeshThreadgroups:MTLSizeMake(body->patch_per_mesh_instance, body->instance_count, 1)
+            threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
+              threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
+        break;
+      }
 
-    case WMTRenderCommandDXMTTessellationMeshDrawIndirect: {
-      struct wmtcmd_render_dxmt_tessellation_mesh_draw_indirect *body = (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indirect *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer offset:body->indirect_args_offset atIndex:21];
-      [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
-                                 indirectBufferOffset:body->dispatch_args_offset
-                          threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
-                            threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
-      break;
-    }
-    case WMTRenderCommandDXMTTessellationMeshDrawIndexedIndirect: {
-      struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed_indirect *body =
-          (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed_indirect *)next;
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer offset:body->indirect_args_offset atIndex:21];
-      [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
-                                 indirectBufferOffset:body->dispatch_args_offset
-                          threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
-                            threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
-      [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
-      break;
-    }
-    case WMTRenderCommandUpdateFence: {
-      struct wmtcmd_render_fence_op *body = (struct wmtcmd_render_fence_op *)next;
-      [encoder updateFence:(id<MTLFence>)body->fence afterStages:(MTLRenderStages)body->stages];
-      break;
-    }
-    case WMTRenderCommandWaitForFence: {
-      struct wmtcmd_render_fence_op *body = (struct wmtcmd_render_fence_op *)next;
-      [encoder waitForFence:(id<MTLFence>)body->fence beforeStages:(MTLRenderStages)body->stages];
-      break;
-    }
-    case WMTRenderCommandSetViewport: {
-      struct wmtcmd_render_setviewport *body = (struct wmtcmd_render_setviewport *)next;
-      union {
-        struct WMTViewport src;
-        MTLViewport dst;
-      } u = {.src = body->viewport};
-      [encoder setViewport:u.dst];
-      break;
-    }
-    case WMTRenderCommandSetScissorRect: {
-      struct wmtcmd_render_setscissorrect *body = (struct wmtcmd_render_setscissorrect *)next;
-      union {
-        struct WMTScissorRect src;
-        MTLScissorRect dst;
-      } u = {.src = body->scissor_rect};
-      [encoder setScissorRect:u.dst];
-      break;
-    }
-    case WMTRenderCommandDispatchThreadsPerTile: {
-      struct wmtcmd_render_dispatch_threads_per_tile *body = (struct wmtcmd_render_dispatch_threads_per_tile *)next;
-      [encoder dispatchThreadsPerTile:MTLSizeMake(body->width, body->height, 1)];
-      break;
-    }
-    }
-    } @catch (NSException *exception) {
+      case WMTRenderCommandDXMTTessellationMeshDrawIndirect: {
+        struct wmtcmd_render_dxmt_tessellation_mesh_draw_indirect *body =
+            (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indirect *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                          offset:body->indirect_args_offset
+                         atIndex:21];
+        [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
+                                   indirectBufferOffset:body->dispatch_args_offset
+                            threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
+                              threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
+        break;
+      }
+      case WMTRenderCommandDXMTTessellationMeshDrawIndexedIndirect: {
+        struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed_indirect *body =
+            (struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed_indirect *)next;
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->index_buffer offset:body->index_buffer_offset atIndex:20];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                          offset:body->indirect_args_offset
+                         atIndex:21];
+        [encoder drawMeshThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->dispatch_args_buffer
+                                   indirectBufferOffset:body->dispatch_args_offset
+                            threadsPerObjectThreadgroup:MTLSizeMake(body->threads_per_patch, body->patch_per_group, 1)
+                              threadsPerMeshThreadgroup:MTLSizeMake(32, 1, 1)];
+        [encoder setObjectBuffer:(id<MTLBuffer>)body->imm_draw_arguments offset:0 atIndex:21];
+        break;
+      }
+      case WMTRenderCommandUpdateFence: {
+        struct wmtcmd_render_fence_op *body = (struct wmtcmd_render_fence_op *)next;
+        [encoder updateFence:(id<MTLFence>)body->fence afterStages:(MTLRenderStages)body->stages];
+        break;
+      }
+      case WMTRenderCommandWaitForFence: {
+        struct wmtcmd_render_fence_op *body = (struct wmtcmd_render_fence_op *)next;
+        [encoder waitForFence:(id<MTLFence>)body->fence beforeStages:(MTLRenderStages)body->stages];
+        break;
+      }
+      case WMTRenderCommandSetViewport: {
+        struct wmtcmd_render_setviewport *body = (struct wmtcmd_render_setviewport *)next;
+        union {
+          struct WMTViewport src;
+          MTLViewport dst;
+        } u = {.src = body->viewport};
+        [encoder setViewport:u.dst];
+        break;
+      }
+      case WMTRenderCommandSetScissorRect: {
+        struct wmtcmd_render_setscissorrect *body = (struct wmtcmd_render_setscissorrect *)next;
+        union {
+          struct WMTScissorRect src;
+          MTLScissorRect dst;
+        } u = {.src = body->scissor_rect};
+        [encoder setScissorRect:u.dst];
+        break;
+      }
+      case WMTRenderCommandDispatchThreadsPerTile: {
+        struct wmtcmd_render_dispatch_threads_per_tile *body = (struct wmtcmd_render_dispatch_threads_per_tile *)next;
+        [encoder dispatchThreadsPerTile:MTLSizeMake(body->width, body->height, 1)];
+        break;
+      }
+      }
+    } @catch(NSException * exception) {
       FILE *el = winemetal_critical_log();
       if (el) {
         const char *name = [[exception name] UTF8String];
         const char *reason = [[exception reason] UTF8String];
         fprintf(
-            el,
-            "render_cmd_exception index=%zu encoder=%p cmd=%p type=%u(%s) exception=%s reason=%s next=%p\n",
-            command_index, encoder, next, next->type, winemetal_render_command_name(next->type),
-            name ? name : "(null)", reason ? reason : "(null)", next->next.ptr
+            el, "render_cmd_exception index=%zu encoder=%p cmd=%p type=%u(%s) exception=%s reason=%s next=%p\n",
+            command_index, encoder, next, next->type, winemetal_render_command_name(next->type), name ? name : "(null)",
+            reason ? reason : "(null)", next->next.ptr
         );
         fclose(el);
       }
@@ -1674,15 +1702,16 @@ _MTLDevice_newTemporalScaler(void *obj) {
   desc.inputContentMaxScale = info->input_content_max_scale;
   desc.inputContentMinScale = info->input_content_min_scale;
   desc.inputContentPropertiesEnabled = info->input_content_properties_enabled;
-  #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
     desc.requiresSynchronousInitialization = info->requires_synchronous_initialization;
   }
-  #endif
+#endif
   desc.autoExposureEnabled = info->auto_exposure;
 
   struct sigaction old_action[sizeof(SIGNALS) / sizeof(int)], new_action;
-  if (@available(macOS 16, *)) {} else {
+  if (@available(macOS 16, *)) {
+  } else {
     new_action.sa_handler = temp_handler;
     sigemptyset(&new_action.sa_mask);
     new_action.sa_flags = 0;
@@ -1692,7 +1721,8 @@ _MTLDevice_newTemporalScaler(void *obj) {
 
   params->ret = (obj_handle_t)[desc newTemporalScalerWithDevice:(id<MTLDevice>)params->device];
 
-  if (@available(macOS 16, *)) {} else {
+  if (@available(macOS 16, *)) {
+  } else {
     for (unsigned int i = 0; i < sizeof(SIGNALS) / sizeof(int); i++)
       sigaction(SIGNALS[i], &old_action[i], NULL);
   }
@@ -1774,23 +1804,25 @@ static NTSTATUS
 _DeveloperHUDProperties_instance(void *obj) {
   struct unixcall_generic_obj_ret *params = obj;
   params->ret =
-      (obj_handle_t)((id(*)(id, SEL))objc_msgSend)(objc_lookUpClass("_CADeveloperHUDProperties"), @selector(instance));
+      (obj_handle_t)((id (*)(id, SEL))objc_msgSend)(objc_lookUpClass("_CADeveloperHUDProperties"), @selector(instance));
   return STATUS_SUCCESS;
 }
 
 static NTSTATUS
 _DeveloperHUDProperties_addLabel(void *obj) {
   struct unixcall_generic_obj_obj_obj_uint64_ret *params = obj;
-  params->ret = ((bool (*)(id, SEL, id, id)
-  )objc_msgSend)((id)params->handle, @selector(addLabel:after:), (id)params->arg0, (id)params->arg1);
+  params->ret = ((bool (*)(id, SEL, id, id))objc_msgSend)(
+      (id)params->handle, @selector(addLabel:after:), (id)params->arg0, (id)params->arg1
+  );
   return STATUS_SUCCESS;
 }
 
 static NTSTATUS
 _DeveloperHUDProperties_updateLabel(void *obj) {
   struct unixcall_generic_obj_obj_obj_noret *params = obj;
-  ((void (*)(id, SEL, id, id)
-  )objc_msgSend)((id)params->handle, @selector(updateLabel:value:), (id)params->arg0, (id)params->arg1);
+  ((void (*)(id, SEL, id, id))objc_msgSend)(
+      (id)params->handle, @selector(updateLabel:value:), (id)params->arg0, (id)params->arg1
+  );
   return STATUS_SUCCESS;
 }
 
@@ -1909,8 +1941,10 @@ _CreateMetalViewFromHWND(void *obj) {
     pfn_macdrv_view_create_metal_view = macdrv_functions->macdrv_view_create_metal_view;
     pfn_macdrv_view_get_metal_layer = macdrv_functions->macdrv_view_get_metal_layer;
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via macdrv_functions=%p\n",
-          (void *)params->hwnd, (void *)params->device, macdrv_functions);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via macdrv_functions=%p\n", (void *)params->hwnd,
+          (void *)params->device, macdrv_functions
+      );
     }
   } else {
     pfn_get_win_data = dlsym(RTLD_DEFAULT, "get_win_data");
@@ -1919,8 +1953,10 @@ _CreateMetalViewFromHWND(void *obj) {
     pfn_macdrv_view_create_metal_view = dlsym(RTLD_DEFAULT, "macdrv_view_create_metal_view");
     pfn_macdrv_view_get_metal_layer = dlsym(RTLD_DEFAULT, "macdrv_view_get_metal_layer");
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via RTLD_DEFAULT symbols\n",
-          (void *)params->hwnd, (void *)params->device);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND hwnd=%p device=%p via RTLD_DEFAULT symbols\n", (void *)params->hwnd,
+          (void *)params->device
+      );
     }
   }
 
@@ -1930,10 +1966,10 @@ _CreateMetalViewFromHWND(void *obj) {
   if (!pfn_get_win_data || !pfn_release_win_data || !pfn_macdrv_view_create_metal_view ||
       !pfn_macdrv_view_get_metal_layer) {
     if (dl) {
-      fprintf(dl,
-          "[winemetal] CreateMetalViewFromHWND missing bridge get=%p release=%p create=%p layer=%p\n",
-          pfn_get_win_data, pfn_release_win_data, pfn_macdrv_view_create_metal_view,
-          pfn_macdrv_view_get_metal_layer);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND missing bridge get=%p release=%p create=%p layer=%p\n",
+          pfn_get_win_data, pfn_release_win_data, pfn_macdrv_view_create_metal_view, pfn_macdrv_view_get_metal_layer
+      );
       fclose(dl);
     }
     return STATUS_SUCCESS;
@@ -1949,9 +1985,10 @@ _CreateMetalViewFromHWND(void *obj) {
   }
 
   if (dl) {
-    fprintf(dl,
-        "[winemetal] CreateMetalViewFromHWND win_data=%p cocoa_window=%p client_view=%p\n",
-        win_data, win_data->cocoa_window, win_data->client_view);
+    fprintf(
+        dl, "[winemetal] CreateMetalViewFromHWND win_data=%p cocoa_window=%p client_view=%p\n", win_data,
+        win_data->cocoa_window, win_data->client_view
+    );
   }
 
   if (!win_data->client_view && pfn_macdrv_client_surface_create) {
@@ -1970,21 +2007,32 @@ _CreateMetalViewFromHWND(void *obj) {
       return STATUS_SUCCESS;
     }
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND after client surface client_view=%p\n",
-          win_data->client_view);
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND after client surface client_view=%p\n", win_data->client_view);
     }
   }
 
-  if (win_data->client_view) {
-    macdrv_metal_view view =
-        pfn_macdrv_view_create_metal_view(win_data->client_view, (macdrv_metal_device)params->device);
+  macdrv_view target_view = win_data->client_view;
+  if (!target_view && win_data->cocoa_window) {
+    id cocoa_window = (__bridge id)win_data->cocoa_window;
+    if ([cocoa_window respondsToSelector:@selector(contentView)]) {
+      id content_view = [cocoa_window contentView];
+      if (content_view) {
+        target_view = (macdrv_view)(__bridge void *)content_view;
+        if (dl) {
+          fprintf(dl, "[winemetal] CreateMetalViewFromHWND using cocoa contentView=%p fallback\n", target_view);
+        }
+      }
+    }
+  }
+
+  if (target_view) {
+    macdrv_metal_view view = pfn_macdrv_view_create_metal_view(target_view, (macdrv_metal_device)params->device);
     params->ret_view = (obj_handle_t)view;
     if (view) {
       params->ret_layer = (obj_handle_t)pfn_macdrv_view_get_metal_layer(view);
     }
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND view=%p layer=%p\n", view,
-          (void *)params->ret_layer);
+      fprintf(dl, "[winemetal] CreateMetalViewFromHWND view=%p layer=%p\n", view, (void *)params->ret_layer);
     }
   } else if (dl) {
     fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view is NULL\n");
@@ -3038,12 +3086,12 @@ _MTLSharedEvent_createMachPort(void *obj) {
   id<MTLSharedEvent> event = (id<MTLSharedEvent>)params->event;
   MTLSharedEventHandle *handle = [event newSharedEventHandle];
   mach_port_t port = [handle eventPort];
-  
+
   // The eventPort method returns a send right that's owned by the handle.
   // We need to add our own send right since we're keeping the port but releasing the handle.
   // This increments the send right count so the port remains valid.
   mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1);
-  
+
   params->ret_mach_port = port;
   [handle release];
   return STATUS_SUCCESS;
@@ -3172,7 +3220,6 @@ _MTLDevice_newTileRenderPipelineState(void *obj) {
 
   descriptor.rasterSampleCount = info->raster_sample_count;
   descriptor.threadgroupSizeMatchesTileSize = info->tgsize_matches_tile_size;
-
 
   descriptor.tileFunction = (id<MTLFunction>)info->tile_function;
 

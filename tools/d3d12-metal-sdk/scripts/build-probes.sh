@@ -139,6 +139,21 @@ done
   "$SDK_DIR/probes/probe_render_headless/probe_render_headless.cpp" \
   -o "$OUT_DIR/probe_render_headless.exe"
 
+"$CXX" \
+  -std=c++17 \
+  -O2 \
+  -static \
+  -static-libgcc \
+  -static-libstdc++ \
+  -Wall \
+  -Wextra \
+  -Werror \
+  "$SDK_DIR/probes/probe_present_windowed/probe_present_windowed.cpp" \
+  -lole32 \
+  -luuid \
+  -lgdi32 \
+  -o "$OUT_DIR/probe_present_windowed.exe"
+
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
 echo "$OUT_DIR/probe_device_caps.exe"
@@ -148,3 +163,4 @@ echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
+echo "$OUT_DIR/probe_present_windowed.exe"
