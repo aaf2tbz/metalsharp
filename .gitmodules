@@ -1,7 +1,3 @@
 [submodule "src/wine/mojoshader"]
 	path = src/wine/mojoshader
 	url = https://github.com/icculus/mojoshader.git
-[submodule "vendor/dxmt"]
-	path = vendor/dxmt
-	url = https://github.com/aaf2tbz/dxmt.git
-	branch = codex/d3d12-ordinal-compat
