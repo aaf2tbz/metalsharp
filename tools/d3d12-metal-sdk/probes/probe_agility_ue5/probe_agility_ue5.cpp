@@ -2,8 +2,8 @@
 #include <windows.h>
 
 #include <cstdint>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -256,9 +256,10 @@ int main() {
     }
 
     bool d3d12_expected_path = expected_windows.empty() || contains_ascii_ci(modules[4].path, expected_windows);
-    bool payload_version_matches =
-        (modules[0].loaded && modules[0].has_exported_sdk_version && modules[0].exported_sdk_version == D3D12SDKVersion) ||
-        (modules[1].loaded && modules[1].has_exported_sdk_version && modules[1].exported_sdk_version == D3D12SDKVersion);
+    bool payload_version_matches = (modules[0].loaded && modules[0].has_exported_sdk_version &&
+                                    modules[0].exported_sdk_version == D3D12SDKVersion) ||
+                                   (modules[1].loaded && modules[1].has_exported_sdk_version &&
+                                    modules[1].exported_sdk_version == D3D12SDKVersion);
     bool pass = modules[0].loaded && modules[1].loaded && modules[4].loaded && modules[4].has_required_symbol &&
                 payload_version_matches && d3d12_expected_path && SUCCEEDED(create_hr) && device != nullptr &&
                 interfaces[0].supported;

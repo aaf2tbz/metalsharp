@@ -572,7 +572,7 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                     pending.push((modified, path));
                 }
 
-                pending.sort_by(|left, right| right.0.cmp(&left.0));
+                pending.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
                 for (_modified, path) in pending {
                     if active_locks >= max_active_compiles {

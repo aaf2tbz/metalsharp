@@ -643,6 +643,7 @@ fn hr_is_ok(value: Value) -> bool {
     value.as_str() == Some("0x00000000")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_log_file(
     appid: u32,
     name: &str,

@@ -629,7 +629,7 @@ fn prepare_dxmt_metal12(appid: u32, game_dir: &PathBuf, home: &PathBuf) -> Resul
 }
 
 fn stage_packaged_steam_runtime_for_game(appid: u32, game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, &game_dir.to_path_buf())?;
+    let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
     let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
     let appid_text = appid.to_string();
 
@@ -839,8 +839,7 @@ fn fetch_agility_sdk_bin(home: &Path, package_version: &str, required_version: O
     let path = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
+        .rfind(|line| !line.is_empty())
         .map(PathBuf::from)?;
     if agility_bin_matches(&path, required_version) {
         Some(path)
@@ -1030,8 +1029,7 @@ fn fetch_dxil_dll(home: &Path) -> Option<PathBuf> {
     let dir = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
+        .rfind(|line| !line.is_empty())
         .map(PathBuf::from)?;
     let path = dir.join("dxil.dll");
     path.exists().then_some(path)
