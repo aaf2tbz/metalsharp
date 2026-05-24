@@ -18,6 +18,7 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "d3d12_resource.hpp"
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -110,6 +111,98 @@ static const GUID IID_ID3D12PipelineLibrary_ = {0xc64226a8, 0x9201, 0x46af, {0xb
 static const GUID IID_ID3D12PipelineLibrary1_ = {0x80eabf42, 0x2568, 0x4e5e, {0xbd, 0x82, 0xc3, 0x7f, 0x86, 0x96, 0x1d, 0xc3}};
 static const GUID IID_ID3D12StateObjectProperties1_ = {0x460caac7, 0x1d24, 0x446a, {0xa1, 0x84, 0xca, 0x67, 0xdb, 0x49, 0x41, 0x38}};
 static const GUID IID_ID3D12StateObjectProperties2_ = {0xd5e82917, 0xf0f1, 0x44cf, {0xae, 0x5e, 0xce, 0x22, 0x2d, 0xd0, 0xb8, 0x84}};
+
+namespace {
+
+static UINT64 AlignTo(UINT64 value, UINT64 alignment) {
+  return alignment ? ((value + alignment - 1) & ~(alignment - 1)) : value;
+}
+
+static UINT FormatBytesPerTexel(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32A32_FLOAT:
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+    return 16;
+  case DXGI_FORMAT_R32G32B32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32_FLOAT:
+  case DXGI_FORMAT_R32G32B32_UINT:
+  case DXGI_FORMAT_R32G32B32_SINT:
+    return 12;
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+  case DXGI_FORMAT_R32G32_TYPELESS:
+  case DXGI_FORMAT_R32G32_FLOAT:
+  case DXGI_FORMAT_R32G32_UINT:
+  case DXGI_FORMAT_R32G32_SINT:
+  case DXGI_FORMAT_R32G8X24_TYPELESS:
+  case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+  case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+  case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+    return 8;
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+  case DXGI_FORMAT_R11G11B10_FLOAT:
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_R16G16_TYPELESS:
+  case DXGI_FORMAT_R16G16_FLOAT:
+  case DXGI_FORMAT_R16G16_UNORM:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R16G16_SNORM:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R32_TYPELESS:
+  case DXGI_FORMAT_D32_FLOAT:
+  case DXGI_FORMAT_R32_FLOAT:
+  case DXGI_FORMAT_R32_UINT:
+  case DXGI_FORMAT_R32_SINT:
+  case DXGI_FORMAT_R24G8_TYPELESS:
+  case DXGI_FORMAT_D24_UNORM_S8_UINT:
+  case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+  case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    return 4;
+  case DXGI_FORMAT_R8G8_TYPELESS:
+  case DXGI_FORMAT_R8G8_UNORM:
+  case DXGI_FORMAT_R8G8_UINT:
+  case DXGI_FORMAT_R8G8_SNORM:
+  case DXGI_FORMAT_R8G8_SINT:
+  case DXGI_FORMAT_R16_TYPELESS:
+  case DXGI_FORMAT_R16_FLOAT:
+  case DXGI_FORMAT_D16_UNORM:
+  case DXGI_FORMAT_R16_UNORM:
+  case DXGI_FORMAT_R16_UINT:
+  case DXGI_FORMAT_R16_SNORM:
+  case DXGI_FORMAT_R16_SINT:
+    return 2;
+  case DXGI_FORMAT_R8_TYPELESS:
+  case DXGI_FORMAT_R8_UNORM:
+  case DXGI_FORMAT_R8_UINT:
+  case DXGI_FORMAT_R8_SNORM:
+  case DXGI_FORMAT_R8_SINT:
+  case DXGI_FORMAT_A8_UNORM:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+}
 
 class MTLD3D12InfoQueue : public ID3D12InfoQueue {
 public:
@@ -2557,8 +2650,62 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
         (void *)desc, first_sub_resource, sub_resource_count,
         (unsigned long long)base_offset, (void *)layouts, (void *)row_count,
         (void *)row_size, (void *)total_bytes);
+
+  UINT64 cursor = base_offset;
+  UINT64 last_end = base_offset;
+
+  for (UINT i = 0; i < sub_resource_count; i++) {
+    UINT subresource = first_sub_resource + i;
+    UINT mip_levels = std::max<UINT>(desc ? desc->MipLevels : 1, 1);
+    UINT mip = mip_levels ? (subresource % mip_levels) : 0;
+
+    UINT64 width = desc ? desc->Width : 0;
+    UINT height = desc ? desc->Height : 0;
+    UINT depth = desc ? desc->DepthOrArraySize : 0;
+    DXGI_FORMAT format = desc ? desc->Format : DXGI_FORMAT_UNKNOWN;
+
+    if (desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+      height = 1;
+      depth = 1;
+      format = DXGI_FORMAT_UNKNOWN;
+    } else {
+      width = std::max<UINT64>(1, width >> mip);
+      height = std::max<UINT>(1, height >> mip);
+      if (desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+        depth = std::max<UINT>(1, depth >> mip);
+      else
+        depth = 1;
+    }
+
+    UINT bytes_per_texel = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                               ? 1
+                               : FormatBytesPerTexel(format);
+    UINT64 unaligned_row_size = width * bytes_per_texel;
+    UINT64 aligned_row_pitch =
+        AlignTo(unaligned_row_size, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+    UINT64 rows = height;
+    UINT64 subresource_bytes = aligned_row_pitch * rows * depth;
+    UINT64 offset = AlignTo(cursor, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+
+    if (layouts) {
+      layouts[i].Offset = offset;
+      layouts[i].Footprint.Format = format;
+      layouts[i].Footprint.Width = static_cast<UINT>(std::min<UINT64>(width, UINT32_MAX));
+      layouts[i].Footprint.Height = height;
+      layouts[i].Footprint.Depth = depth;
+      layouts[i].Footprint.RowPitch = static_cast<UINT>(aligned_row_pitch);
+    }
+    if (row_count)
+      row_count[i] = static_cast<UINT>(rows);
+    if (row_size)
+      row_size[i] = unaligned_row_size;
+
+    last_end = offset + subresource_bytes;
+    cursor = last_end;
+  }
+
   if (total_bytes)
-    *total_bytes = 0;
+    *total_bytes = last_end - base_offset;
 }
 
 HRESULT STDMETHODCALLTYPE

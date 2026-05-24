@@ -66,7 +66,20 @@ done
   "$SDK_DIR/probes/probe_dxgi_factory/probe_dxgi_factory.cpp" \
   -o "$OUT_DIR/probe_dxgi_factory.exe"
 
+"$CXX" \
+  -std=c++17 \
+  -O2 \
+  -static \
+  -static-libgcc \
+  -static-libstdc++ \
+  -Wall \
+  -Wextra \
+  -Werror \
+  "$SDK_DIR/probes/probe_resources/probe_resources.cpp" \
+  -o "$OUT_DIR/probe_resources.exe"
+
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
 echo "$OUT_DIR/probe_device_caps.exe"
 echo "$OUT_DIR/probe_dxgi_factory.exe"
+echo "$OUT_DIR/probe_resources.exe"

@@ -12,6 +12,7 @@ RUN_LOADER=1
 RUN_AGILITY=1
 RUN_CAPS=1
 RUN_DXGI=1
+RUN_RESOURCES=1
 
 usage() {
   cat <<'USAGE'
@@ -28,6 +29,7 @@ Options:
   --no-agility          Skip probe_agility_ue5.
   --no-caps             Skip probe_device_caps.
   --no-dxgi             Skip probe_dxgi_factory.
+  --no-resources        Skip probe_resources.
   -h, --help            Show this help.
 
 Examples:
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       RUN_DXGI=0
       shift
       ;;
+    --no-resources)
+      RUN_RESOURCES=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -115,6 +121,7 @@ PROBE_EXE="$SDK_DIR/out/bin/probe_loader.exe"
 AGILITY_PROBE_EXE="$SDK_DIR/out/bin/probe_agility_ue5.exe"
 CAPS_PROBE_EXE="$SDK_DIR/out/bin/probe_device_caps.exe"
 DXGI_PROBE_EXE="$SDK_DIR/out/bin/probe_dxgi_factory.exe"
+RESOURCES_PROBE_EXE="$SDK_DIR/out/bin/probe_resources.exe"
 
 if [[ ! -x "$WINE_BIN" ]]; then
   echo "Wine binary is not executable: $WINE_BIN" >&2
@@ -143,7 +150,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
   exit 2
 fi
 
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" ]]; then
   "$SDK_DIR/scripts/build-probes.sh" >/dev/null
 fi
 
@@ -152,6 +159,7 @@ RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
 CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
 DXGI_RESULT_FILE="$RESULTS_DIR/probe-dxgi-factory-${PROFILE}.json"
+RESOURCES_RESULT_FILE="$RESULTS_DIR/probe-resources-${PROFILE}.json"
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
@@ -174,9 +182,10 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 EOF
 
 if [[ "$RUN_LOADER" == "1" ]]; then
+  # DXMT is shipped as PE DLLs; native-first avoids Wine resolving stale builtin shims.
   WINEPREFIX="$WINE_PREFIX" \
   WINEDLLPATH="$WINDOWS_DIR" \
-  WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+  WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
   DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
   D3D12_METAL_SDK_PROFILE="$PROFILE" \
   D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
@@ -189,7 +198,7 @@ if [[ "$RUN_AGILITY" == "1" ]]; then
     cd "$SDK_DIR/out/bin"
     WINEPREFIX="$WINE_PREFIX" \
     WINEDLLPATH="$WINDOWS_DIR" \
-    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
@@ -203,7 +212,7 @@ if [[ "$RUN_CAPS" == "1" ]]; then
     cd "$SDK_DIR/out/bin"
     WINEPREFIX="$WINE_PREFIX" \
     WINEDLLPATH="$WINDOWS_DIR" \
-    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
@@ -217,10 +226,23 @@ if [[ "$RUN_DXGI" == "1" ]]; then
     cd "$SDK_DIR/out/bin"
     WINEPREFIX="$WINE_PREFIX" \
     WINEDLLPATH="$WINDOWS_DIR" \
-    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=b,n" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     "$WINE_BIN" "$DXGI_PROBE_EXE" > "$DXGI_RESULT_FILE"
   )
   echo "$DXGI_RESULT_FILE"
+fi
+
+if [[ "$RUN_RESOURCES" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$UNIX_DIR:${DYLD_LIBRARY_PATH:-}" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$RESOURCES_PROBE_EXE" > "$RESOURCES_RESULT_FILE"
+  )
+  echo "$RESOURCES_RESULT_FILE"
 fi
