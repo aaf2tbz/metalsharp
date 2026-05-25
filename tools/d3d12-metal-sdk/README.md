@@ -29,6 +29,34 @@ Run the SDK against the local MetalSharp runtime:
 tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
 ```
 
+For fast one-behavior-at-a-time D3D12 validation without launching Steam or a
+game, run the headless mini-app suite:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --mini-only
+```
+
+This builds normal Windows EXEs and runs each under Wine with the DXMT M12
+runtime. Each result is written to `results/probe-mini-*-metalsharp.json`.
+The current mini suite isolates:
+
+- `create_device`
+- `command_queue`
+- `swapchain_present`
+- `rtv_clear`
+- `compute_dispatch`
+- `root_signature`
+- `descriptors`
+- `graphics_pso`
+- `geometry_shader_pso`
+- `mesh_object_shader_pso`
+- `texture_sample`
+
+`mesh_object_shader_pso` is intentionally a tracked gap until the SDK has a
+real mesh/object pipeline-state-stream probe. Keeping it as a runnable mini-app
+prevents future UE5/Nanite work from being described as supported without a
+repeatable proof.
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash

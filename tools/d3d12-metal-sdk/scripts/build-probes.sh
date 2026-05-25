@@ -13,6 +13,31 @@ mkdir -p "$OUT_DIR"
 mkdir -p "$OUT_DIR/D3D12"
 mkdir -p "$OUT_DIR/D3D12/x64"
 
+build_probe() {
+  "$CXX" \
+    -std=c++17 \
+    -O2 \
+    -static \
+    -static-libgcc \
+    -static-libstdc++ \
+    -Wall \
+    -Wextra \
+    -Werror \
+    "$@"
+}
+
+build_mini_probe() {
+  local case_id="$1"
+  local probe_name="$2"
+  shift 2
+  build_probe \
+    "-DMINI_PROBE_CASE=$case_id" \
+    "-DMINI_PROBE_NAME=\"$probe_name\"" \
+    "$SDK_DIR/probes/probe_mini_suite/probe_mini_suite.cpp" \
+    "$@" \
+    -o "$OUT_DIR/probe_mini_$probe_name.exe"
+}
+
 if [[ -z "$AGILITY_BIN" ]]; then
   AGILITY_BIN="$("$SDK_DIR/scripts/fetch-agility.sh" --version "$AGILITY_VERSION")"
 fi
@@ -32,15 +57,7 @@ done
 cp "$DXC_BIN_DIR/dxil.dll" "$OUT_DIR/D3D12/dxil.dll"
 cp "$DXC_BIN_DIR/dxil.dll" "$OUT_DIR/D3D12/x64/dxil.dll"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_loader/probe_loader.cpp" \
   -o "$OUT_DIR/probe_loader.exe"
 
@@ -63,116 +80,56 @@ for optional in D3D12StateObjectCompiler.dll d3dconfig.exe; do
   fi
 done
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_agility_ue5/probe_agility_ue5.cpp" \
   -o "$OUT_DIR/probe_agility_ue5.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_device_caps/probe_device_caps.cpp" \
   -o "$OUT_DIR/probe_device_caps.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_dxgi_factory/probe_dxgi_factory.cpp" \
   -o "$OUT_DIR/probe_dxgi_factory.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_resources/probe_resources.cpp" \
   -o "$OUT_DIR/probe_resources.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_queues/probe_queues.cpp" \
   -o "$OUT_DIR/probe_queues.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_descriptors/probe_descriptors.cpp" \
   -o "$OUT_DIR/probe_descriptors.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_shaders/probe_shaders.cpp" \
   -o "$OUT_DIR/probe_shaders.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_render_headless/probe_render_headless.cpp" \
   -o "$OUT_DIR/probe_render_headless.exe"
 
-"$CXX" \
-  -std=c++17 \
-  -O2 \
-  -static \
-  -static-libgcc \
-  -static-libstdc++ \
-  -Wall \
-  -Wextra \
-  -Werror \
+build_probe \
   "$SDK_DIR/probes/probe_present_windowed/probe_present_windowed.cpp" \
   -lole32 \
   -luuid \
   -lgdi32 \
   -o "$OUT_DIR/probe_present_windowed.exe"
+
+build_mini_probe 1 create_device
+build_mini_probe 2 command_queue
+build_mini_probe 3 swapchain_present -lole32 -luuid -lgdi32
+build_mini_probe 4 rtv_clear
+build_mini_probe 5 compute_dispatch
+build_mini_probe 6 root_signature
+build_mini_probe 7 descriptors
+build_mini_probe 8 graphics_pso
+build_mini_probe 9 geometry_shader_pso
+build_mini_probe 10 mesh_object_shader_pso
+build_mini_probe 11 texture_sample
 
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
@@ -184,3 +141,14 @@ echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
+echo "$OUT_DIR/probe_mini_create_device.exe"
+echo "$OUT_DIR/probe_mini_command_queue.exe"
+echo "$OUT_DIR/probe_mini_swapchain_present.exe"
+echo "$OUT_DIR/probe_mini_rtv_clear.exe"
+echo "$OUT_DIR/probe_mini_compute_dispatch.exe"
+echo "$OUT_DIR/probe_mini_root_signature.exe"
+echo "$OUT_DIR/probe_mini_descriptors.exe"
+echo "$OUT_DIR/probe_mini_graphics_pso.exe"
+echo "$OUT_DIR/probe_mini_geometry_shader_pso.exe"
+echo "$OUT_DIR/probe_mini_mesh_object_shader_pso.exe"
+echo "$OUT_DIR/probe_mini_texture_sample.exe"
