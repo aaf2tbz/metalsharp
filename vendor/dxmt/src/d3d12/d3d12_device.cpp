@@ -295,6 +295,221 @@ static UINT64 EstimateResourceAllocationSize(const D3D12_RESOURCE_DESC &desc) {
                  ResourcePlacementAlignment(desc));
 }
 
+static WMTTextureType TextureTypeForSrvView(
+    const D3D12_SHADER_RESOURCE_VIEW_DESC &desc,
+    const D3D12_RESOURCE_DESC &resource_desc) {
+  switch (desc.ViewDimension) {
+  case D3D12_SRV_DIMENSION_TEXTURE1D:
+    return WMTTextureType1D;
+  case D3D12_SRV_DIMENSION_TEXTURE1DARRAY:
+    return WMTTextureType1DArray;
+  case D3D12_SRV_DIMENSION_TEXTURE2D:
+    return resource_desc.SampleDesc.Count > 1 ? WMTTextureType2DMultisample
+                                              : WMTTextureType2D;
+  case D3D12_SRV_DIMENSION_TEXTURE2DARRAY:
+    return resource_desc.SampleDesc.Count > 1
+               ? WMTTextureType2DMultisampleArray
+               : WMTTextureType2DArray;
+  case D3D12_SRV_DIMENSION_TEXTURECUBE:
+    return WMTTextureTypeCube;
+  case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY:
+    return WMTTextureTypeCubeArray;
+  case D3D12_SRV_DIMENSION_TEXTURE3D:
+    return WMTTextureType3D;
+  default:
+    return resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+               ? WMTTextureType3D
+               : (resource_desc.DepthOrArraySize > 1 ? WMTTextureType2DArray
+                                                     : WMTTextureType2D);
+  }
+}
+
+static WMTTextureType TextureTypeForUavView(
+    const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
+    const D3D12_RESOURCE_DESC &resource_desc) {
+  switch (desc.ViewDimension) {
+  case D3D12_UAV_DIMENSION_TEXTURE1D:
+    return WMTTextureType1D;
+  case D3D12_UAV_DIMENSION_TEXTURE1DARRAY:
+    return WMTTextureType1DArray;
+  case D3D12_UAV_DIMENSION_TEXTURE2D:
+    return WMTTextureType2D;
+  case D3D12_UAV_DIMENSION_TEXTURE2DARRAY:
+    return WMTTextureType2DArray;
+  case D3D12_UAV_DIMENSION_TEXTURE3D:
+    return WMTTextureType3D;
+  default:
+    return resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+               ? WMTTextureType3D
+               : (resource_desc.DepthOrArraySize > 1 ? WMTTextureType2DArray
+                                                     : WMTTextureType2D);
+  }
+}
+
+static void SrvViewRange(const D3D12_SHADER_RESOURCE_VIEW_DESC &desc,
+                         const D3D12_RESOURCE_DESC &resource_desc,
+                         uint16_t &mip_start, uint16_t &mip_count,
+                         uint16_t &slice_start, uint16_t &slice_count) {
+  uint32_t total_mips = resource_desc.MipLevels ? resource_desc.MipLevels : 1;
+  uint32_t total_slices =
+      resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+          ? 1
+          : std::max<UINT>(resource_desc.DepthOrArraySize, 1);
+  mip_start = 0;
+  mip_count = static_cast<uint16_t>(total_mips);
+  slice_start = 0;
+  slice_count = static_cast<uint16_t>(total_slices);
+  switch (desc.ViewDimension) {
+  case D3D12_SRV_DIMENSION_TEXTURE1D:
+    mip_start = desc.Texture1D.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.Texture1D.MipLevels == UINT32_MAX ? total_mips - mip_start
+                                               : desc.Texture1D.MipLevels);
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURE1DARRAY:
+    mip_start = desc.Texture1DArray.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.Texture1DArray.MipLevels == UINT32_MAX
+            ? total_mips - mip_start
+            : desc.Texture1DArray.MipLevels);
+    slice_start = desc.Texture1DArray.FirstArraySlice;
+    slice_count = desc.Texture1DArray.ArraySize;
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURE2D:
+    mip_start = desc.Texture2D.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.Texture2D.MipLevels == UINT32_MAX ? total_mips - mip_start
+                                               : desc.Texture2D.MipLevels);
+    slice_count = 1;
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURE2DARRAY:
+    mip_start = desc.Texture2DArray.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.Texture2DArray.MipLevels == UINT32_MAX
+            ? total_mips - mip_start
+            : desc.Texture2DArray.MipLevels);
+    slice_start = desc.Texture2DArray.FirstArraySlice;
+    slice_count = desc.Texture2DArray.ArraySize;
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURECUBE:
+    mip_start = desc.TextureCube.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.TextureCube.MipLevels == UINT32_MAX ? total_mips - mip_start
+                                                 : desc.TextureCube.MipLevels);
+    slice_count = std::min<uint16_t>(6, total_slices);
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY:
+    mip_start = desc.TextureCubeArray.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.TextureCubeArray.MipLevels == UINT32_MAX
+            ? total_mips - mip_start
+            : desc.TextureCubeArray.MipLevels);
+    slice_start = desc.TextureCubeArray.First2DArrayFace;
+    slice_count = desc.TextureCubeArray.NumCubes * 6;
+    break;
+  case D3D12_SRV_DIMENSION_TEXTURE3D:
+    mip_start = desc.Texture3D.MostDetailedMip;
+    mip_count = static_cast<uint16_t>(
+        desc.Texture3D.MipLevels == UINT32_MAX ? total_mips - mip_start
+                                               : desc.Texture3D.MipLevels);
+    slice_count = 1;
+    break;
+  default:
+    break;
+  }
+  mip_count = std::max<uint16_t>(1, mip_count);
+  slice_count = std::max<uint16_t>(1, slice_count);
+}
+
+static void UavViewRange(const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
+                         const D3D12_RESOURCE_DESC &resource_desc,
+                         uint16_t &mip_start, uint16_t &mip_count,
+                         uint16_t &slice_start, uint16_t &slice_count) {
+  uint32_t total_slices =
+      resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+          ? 1
+          : std::max<UINT>(resource_desc.DepthOrArraySize, 1);
+  mip_start = 0;
+  mip_count = 1;
+  slice_start = 0;
+  slice_count = static_cast<uint16_t>(total_slices);
+  switch (desc.ViewDimension) {
+  case D3D12_UAV_DIMENSION_TEXTURE1D:
+    mip_start = desc.Texture1D.MipSlice;
+    slice_count = 1;
+    break;
+  case D3D12_UAV_DIMENSION_TEXTURE1DARRAY:
+    mip_start = desc.Texture1DArray.MipSlice;
+    slice_start = desc.Texture1DArray.FirstArraySlice;
+    slice_count = desc.Texture1DArray.ArraySize;
+    break;
+  case D3D12_UAV_DIMENSION_TEXTURE2D:
+    mip_start = desc.Texture2D.MipSlice;
+    slice_count = 1;
+    break;
+  case D3D12_UAV_DIMENSION_TEXTURE2DARRAY:
+    mip_start = desc.Texture2DArray.MipSlice;
+    slice_start = desc.Texture2DArray.FirstArraySlice;
+    slice_count = desc.Texture2DArray.ArraySize;
+    break;
+  case D3D12_UAV_DIMENSION_TEXTURE3D:
+    mip_start = desc.Texture3D.MipSlice;
+    slice_start = desc.Texture3D.FirstWSlice;
+    slice_count = desc.Texture3D.WSize == UINT32_MAX ? 1 : desc.Texture3D.WSize;
+    break;
+  default:
+    break;
+  }
+  slice_count = std::max<uint16_t>(1, slice_count);
+}
+
+static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
+                                        MTLD3D12Resource *resource,
+                                        DXGI_FORMAT format,
+                                        WMTTextureType type,
+                                        uint16_t mip_start,
+                                        uint16_t mip_count,
+                                        uint16_t slice_start,
+                                        uint16_t slice_count) {
+  if (!descriptor || !resource || resource->IsBuffer())
+    return;
+  D3D12_RESOURCE_DESC resource_desc = {};
+  resource->GetDesc(&resource_desc);
+  if (format == DXGI_FORMAT_UNKNOWN)
+    format = resource_desc.Format;
+  WMTPixelFormat metal_format =
+      MTLD3D12PipelineState::DXGIToMTLPixelFormat(format);
+  if (metal_format == WMTPixelFormatInvalid)
+    return;
+  auto base = resource->GetMTLTexture();
+  if (!base.handle)
+    return;
+  uint32_t total_mips = resource_desc.MipLevels ? resource_desc.MipLevels : 1;
+  uint32_t total_slices =
+      resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+          ? 1
+          : std::max<UINT>(resource_desc.DepthOrArraySize, 1);
+  mip_start = std::min<uint16_t>(mip_start, total_mips - 1);
+  mip_count = std::min<uint16_t>(std::max<uint16_t>(1, mip_count),
+                                 total_mips - mip_start);
+  slice_start = std::min<uint16_t>(slice_start, total_slices - 1);
+  slice_count = std::min<uint16_t>(std::max<uint16_t>(1, slice_count),
+                                   total_slices - slice_start);
+  uint64_t gpu_id = 0;
+  descriptor->metal_texture_view = base.newTextureView(
+      metal_format, type, mip_start, mip_count, slice_start, slice_count,
+      {WMTTextureSwizzleRed, WMTTextureSwizzleGreen, WMTTextureSwizzleBlue,
+       WMTTextureSwizzleAlpha},
+      gpu_id);
+  descriptor->metal_texture_gpu_id = gpu_id;
+  TRACE("CreateDescriptorTextureView desc=%p res=%p view=%llu gpu=0x%llx "
+        "fmt=%u type=%u mip=%u+%u slice=%u+%u",
+        (void *)descriptor, (void *)resource,
+        (unsigned long long)descriptor->metal_texture_view.handle,
+        (unsigned long long)gpu_id, (unsigned)format, (unsigned)type,
+        mip_start, mip_count, slice_start, slice_count);
+}
+
 }
 
 class MTLD3D12InfoQueue : public ID3D12InfoQueue {
@@ -2363,8 +2578,22 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateShaderResourceView(
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
   if (d) {
     d->resource = resource;
-    if (desc)
+    d->metal_texture_view = {};
+    d->metal_texture_gpu_id = 0;
+    if (desc) {
       d->srv = *desc;
+      auto *dxmt_res = static_cast<MTLD3D12Resource *>(resource);
+      if (dxmt_res && !dxmt_res->IsBuffer()) {
+        D3D12_RESOURCE_DESC resource_desc = {};
+        dxmt_res->GetDesc(&resource_desc);
+        uint16_t mip_start = 0, mip_count = 1, slice_start = 0, slice_count = 1;
+        SrvViewRange(*desc, resource_desc, mip_start, mip_count, slice_start,
+                     slice_count);
+        CreateDescriptorTextureView(
+            d, dxmt_res, desc->Format, TextureTypeForSrvView(*desc, resource_desc),
+            mip_start, mip_count, slice_start, slice_count);
+      }
+    }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   }
 }
@@ -2382,8 +2611,22 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateUnorderedAccessView(
   if (d) {
     d->resource = resource;
     d->resource_uav_counter = counter_resource;
-    if (desc)
+    d->metal_texture_view = {};
+    d->metal_texture_gpu_id = 0;
+    if (desc) {
       d->uav = *desc;
+      auto *dxmt_res = static_cast<MTLD3D12Resource *>(resource);
+      if (dxmt_res && !dxmt_res->IsBuffer()) {
+        D3D12_RESOURCE_DESC resource_desc = {};
+        dxmt_res->GetDesc(&resource_desc);
+        uint16_t mip_start = 0, mip_count = 1, slice_start = 0, slice_count = 1;
+        UavViewRange(*desc, resource_desc, mip_start, mip_count, slice_start,
+                     slice_count);
+        CreateDescriptorTextureView(
+            d, dxmt_res, desc->Format, TextureTypeForUavView(*desc, resource_desc),
+            mip_start, mip_count, slice_start, slice_count);
+      }
+    }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   }
 }

@@ -265,6 +265,20 @@ static uint32_t UAVTextureArrayLength(const D3D12Descriptor *desc,
   }
 }
 
+static WMT::Reference<WMT::Texture>
+DescriptorTexture(const D3D12Descriptor *desc, MTLD3D12Resource *res) {
+  if (desc && desc->metal_texture_view.handle)
+    return desc->metal_texture_view;
+  return res ? res->GetMTLTexture() : WMT::Reference<WMT::Texture>();
+}
+
+static uint64_t DescriptorTextureGPUResourceID(const D3D12Descriptor *desc,
+                                               const MTLD3D12Resource *res) {
+  if (desc && desc->metal_texture_gpu_id)
+    return desc->metal_texture_gpu_id;
+  return res ? res->GetTextureGPUResourceID() : 0;
+}
+
 static bool FormatHasStencil(DXGI_FORMAT format) {
   return format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
          format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
@@ -639,23 +653,25 @@ struct ReplayState {
             }
           } else if (desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            if (res->GetMTLTexture().handle) {
-              uint64_t gpu_id = res->GetTextureGPUResourceID();
-              QTRACE("BuildArgBuf: SRV tex_handle=%llu gpu_id=0x%llx",
-                     (unsigned long long)res->GetMTLTexture().handle,
-                     (unsigned long long)gpu_id);
+            auto tex = DescriptorTexture(desc, res);
+            if (tex.handle) {
+              uint64_t gpu_id = DescriptorTextureGPUResourceID(desc, res);
+              QTRACE("BuildArgBuf: SRV tex_handle=%llu gpu_id=0x%llx view=%d",
+                     (unsigned long long)tex.handle,
+                     (unsigned long long)gpu_id,
+                     desc->metal_texture_view.handle ? 1 : 0);
               arg_buf_data[arg.StructurePtrOffset] = gpu_id;
               arg_buf_data[arg.StructurePtrOffset + 1] =
                   TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open) {
                 render_enc.useResource(
-                    res->GetMTLTexture(),
+                    tex,
                     (WMTResourceUsage)(WMTResourceUsageSample |
                                        WMTResourceUsageRead),
                     (WMTRenderStages)(WMTRenderStageVertex |
                                       WMTRenderStageFragment));
                 QTRACE("BuildArgBuf: useResource texture handle=%llu",
-                       (unsigned long long)res->GetMTLTexture().handle);
+                       (unsigned long long)tex.handle);
               }
             } else if (res->GetMTLBuffer().handle) {
               arg_buf_data[arg.StructurePtrOffset] =
@@ -705,14 +721,14 @@ struct ReplayState {
                     (WMTRenderStages)(WMTRenderStageVertex |
                                       WMTRenderStageFragment));
               }
-            } else if (res->GetMTLTexture().handle) {
+            } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
               arg_buf_data[arg.StructurePtrOffset] =
-                  res->GetTextureGPUResourceID();
+                  DescriptorTextureGPUResourceID(desc, res);
               arg_buf_data[arg.StructurePtrOffset + 1] =
                   TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open) {
                 render_enc.useResource(
-                    res->GetMTLTexture(),
+                    tex,
                     (WMTResourceUsage)(WMTResourceUsageRead |
                                        WMTResourceUsageWrite),
                     (WMTRenderStages)(WMTRenderStageVertex |
@@ -1079,14 +1095,14 @@ struct ReplayState {
                 render_enc.useResource(res->GetMTLBuffer(),
                                        WMTResourceUsageRead,
                                        WMTRenderStageVertex);
-            } else if (res->GetMTLTexture().handle) {
+            } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
               vs_arg_buf_data[arg.StructurePtrOffset] =
-                  res->GetTextureGPUResourceID();
+                  DescriptorTextureGPUResourceID(desc, res);
               vs_arg_buf_data[arg.StructurePtrOffset + 1] =
                   TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open)
                 render_enc.useResource(
-                    res->GetMTLTexture(),
+                    tex,
                     (WMTResourceUsage)(WMTResourceUsageSample |
                                        WMTResourceUsageRead),
                     WMTRenderStageVertex);
@@ -1133,13 +1149,13 @@ struct ReplayState {
                                      (WMTResourceUsage)(WMTResourceUsageRead |
                                                         WMTResourceUsageWrite),
                                      WMTRenderStageVertex);
-          } else if (res->GetMTLTexture().handle) {
+          } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
             vs_arg_buf_data[arg.StructurePtrOffset] =
-                res->GetTextureGPUResourceID();
+                DescriptorTextureGPUResourceID(desc, res);
             vs_arg_buf_data[arg.StructurePtrOffset + 1] =
                 TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
             if (render_enc_open)
-              render_enc.useResource(res->GetMTLTexture(),
+              render_enc.useResource(tex,
                                      (WMTResourceUsage)(WMTResourceUsageRead |
                                                         WMTResourceUsageWrite),
                                      WMTRenderStageVertex);
@@ -1425,9 +1441,9 @@ struct ReplayState {
             comp_arg_buf_data[arg.StructurePtrOffset + 1] =
                 SRVBufferByteLength(desc, res);
           }
-        } else if (res->GetMTLTexture().handle) {
+        } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
           comp_arg_buf_data[arg.StructurePtrOffset] =
-              res->GetTextureGPUResourceID();
+              DescriptorTextureGPUResourceID(desc, res);
           comp_arg_buf_data[arg.StructurePtrOffset + 1] =
               arg.Type == SM50BindingType::UAV
                   ? TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f)
@@ -1727,9 +1743,10 @@ struct ReplayState {
               (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment));
           QTRACE("ApplyRootBindings: table buffer reg=%u type=%u off=%llu",
                  shader_register, range_type, (unsigned long long)off);
-        } else if (res->GetMTLTexture().handle &&
+        } else if (auto tex = DescriptorTexture(desc, res);
+                   tex.handle &&
                    range_type != D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
-          render_enc.setFragmentTexture(res->GetMTLTexture(), shader_register);
+          render_enc.setFragmentTexture(tex, shader_register);
           WMTResourceUsage usage =
               range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV
                   ? (WMTResourceUsage)(WMTResourceUsageRead |
@@ -1737,11 +1754,11 @@ struct ReplayState {
                   : (WMTResourceUsage)(WMTResourceUsageRead |
                                        WMTResourceUsageSample);
           render_enc.useResource(
-              res->GetMTLTexture(), usage,
+              tex, usage,
               (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment));
           QTRACE("ApplyRootBindings: table texture reg=%u type=%u tex=%llu",
                  shader_register, range_type,
-                 (unsigned long long)res->GetMTLTexture().handle);
+                 (unsigned long long)tex.handle);
         }
       };
 
@@ -2288,16 +2305,16 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
               (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite);
           append_cmd(&use, sizeof(use));
         }
-      } else if (res->GetMTLTexture().handle) {
+      } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
         struct wmtcmd_compute_settexture stex = {};
         stex.type = WMTComputeCommandSetTexture;
-        stex.texture = res->GetMTLTexture().handle;
+        stex.texture = tex.handle;
         stex.index = shader_register;
         append_cmd(&stex, sizeof(stex));
         if (writable) {
           struct wmtcmd_compute_useresource use = {};
           use.type = WMTComputeCommandUseResource;
-          use.resource = res->GetMTLTexture().handle;
+          use.resource = tex.handle;
           use.usage =
               (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite);
           append_cmd(&use, sizeof(use));
@@ -2356,18 +2373,18 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
                                                WMTResourceUsageWrite);
                 append_cmd(&use, sizeof(use));
               }
-            } else if (res->GetMTLTexture().handle) {
+            } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
               struct wmtcmd_compute_settexture stex = {};
               stex.type = WMTComputeCommandSetTexture;
-              stex.texture = res->GetMTLTexture().handle;
+              stex.texture = tex.handle;
               stex.index = i;
               append_cmd(&stex, sizeof(stex));
               if (is_uav_slot[i]) {
                 QTRACE("  UAV UseResource tex slot=%u handle=%llu", i,
-                       (unsigned long long)res->GetMTLTexture().handle);
+                       (unsigned long long)tex.handle);
                 struct wmtcmd_compute_useresource use = {};
                 use.type = WMTComputeCommandUseResource;
-                use.resource = res->GetMTLTexture().handle;
+                use.resource = tex.handle;
                 use.usage = (WMTResourceUsage)(WMTResourceUsageRead |
                                                WMTResourceUsageWrite);
                 append_cmd(&use, sizeof(use));

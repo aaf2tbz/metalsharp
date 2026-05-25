@@ -118,7 +118,8 @@ void MTLD3D12Resource::InitializeResource(
     }
     tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget |
                                       WMTTextureUsageShaderRead |
-                                      WMTTextureUsageShaderWrite);
+                                      WMTTextureUsageShaderWrite |
+                                      WMTTextureUsagePixelFormatView);
     tex_info.options = cpu_accessible ? WMTResourceStorageModeShared : WMTResourceStorageModePrivate;
     tex_info.pixel_format = MTLD3D12PipelineState::DXGIToMTLPixelFormat(static_cast<DXGI_FORMAT>(m_desc.Format));
     if (tex_info.pixel_format == WMTPixelFormatInvalid)
@@ -176,7 +177,7 @@ WMT::Reference<WMT::Texture> MTLD3D12Resource::GetMTLTexture() {
       tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
       break;
     }
-    tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget | WMTTextureUsageShaderRead | WMTTextureUsageShaderWrite);
+    tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget | WMTTextureUsageShaderRead | WMTTextureUsageShaderWrite | WMTTextureUsagePixelFormatView);
     tex_info.options = cpu_accessible ? WMTResourceStorageModeShared : WMTResourceStorageModePrivate;
     tex_info.pixel_format = MTLD3D12PipelineState::DXGIToMTLPixelFormat(static_cast<DXGI_FORMAT>(m_desc.Format));
     if (tex_info.pixel_format == WMTPixelFormatInvalid)

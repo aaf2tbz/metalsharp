@@ -22,8 +22,10 @@ struct D3D12Descriptor {
   };
   WMT::Reference<WMT::SamplerState> metal_sampler;
   WMT::Reference<WMT::SamplerState> metal_sampler_cube;
+  WMT::Reference<WMT::Texture> metal_texture_view;
   uint64_t metal_sampler_gpu_id = 0;
   uint64_t metal_sampler_cube_gpu_id = 0;
+  uint64_t metal_texture_gpu_id = 0;
   ID3D12Resource *resource = nullptr;
   ID3D12Resource *resource_uav_counter = nullptr;
 };
