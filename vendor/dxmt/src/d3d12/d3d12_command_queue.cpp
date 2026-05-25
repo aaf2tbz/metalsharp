@@ -7,12 +7,14 @@
 #include "d3d12_query_heap.hpp"
 #include "d3d12_resource.hpp"
 #include "d3d12_root_signature.hpp"
+#include "d3d12_swapchain.hpp"
 #include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -37,6 +39,14 @@ static uint64_t g_enc_id = 0;
 namespace dxmt {
 
 namespace {
+
+bool DXMTD3D12AutopresentSwapchain() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
 
 const char *TraceCompileFailureStage(MTLD3D12PipelineState *pso) {
   static thread_local std::string stage;
@@ -411,14 +421,28 @@ struct ReplayState {
   }
 
   bool HasSwapchainRenderTarget() const {
+    return SwapchainRenderTargetResource() != nullptr;
+  }
+
+  MTLD3D12Resource *SwapchainRenderTargetResource() const {
     for (uint32_t i = 0; i < rt_count && i < 8; i++) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
       auto *res = desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
       if (res && res->IsSwapchainBackBuffer())
-        return true;
+        return res;
     }
-    return false;
+    return nullptr;
   }
+
+  void MarkSwapchainWorkEncoded() {
+    if (!swapchain_rt_for_present)
+      swapchain_rt_for_present = SwapchainRenderTargetResource();
+    if (swapchain_rt_for_present)
+      swapchain_work_encoded = true;
+  }
+
+  bool swapchain_work_encoded = false;
+  MTLD3D12Resource *swapchain_rt_for_present = nullptr;
 
   void EnsureSwapchainRenderPSOReady() {
     if (!HasSwapchainRenderTarget() || !pso || pso->IsCompiled())
@@ -3117,6 +3141,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             st.EncodeGeometryDraw(m_device, cmd->vertex_count,
                                   cmd->instance_count, cmd->start_vertex,
                                   cmd->start_instance)) {
+          st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format("M12 swapchain GeometryDraw encoded v=",
@@ -3136,6 +3161,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           draw.instance_count = cmd->instance_count;
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+          st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format("M12 swapchain DrawInstanced encoded v=",
@@ -3189,6 +3215,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                          cmd->instance_count,
                                          cmd->start_index, cmd->base_vertex,
                                          cmd->start_instance)) {
+          st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format(
@@ -3242,6 +3269,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           draw.base_instance = cmd->start_instance;
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+          st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format("M12 swapchain DrawIndexedInstanced encoded idx=",
@@ -4198,6 +4226,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               rp.colors[0].store_action = WMTStoreActionStore;
               rp.colors[0].clear_color = {cmd->color[0], cmd->color[1],
                                           cmd->color[2], cmd->color[3]};
+              if (res->IsSwapchainBackBuffer())
+                st.MarkSwapchainWorkEncoded();
               if (res->IsSwapchainBackBuffer() &&
                   TakeLogBudget(&g_swapchain_clear_logs, 24)) {
                 Logger::info(str::format("M12 swapchain ClearRTV backbuffer=",
@@ -4736,6 +4766,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       auto err = cmdbuf.error();
       Logger::err(str::format("ExecuteCommandLists: cmdbuf status=", status,
                               " error_handle=", err.handle));
+    } else if (DXMTD3D12AutopresentSwapchain() &&
+               st.swapchain_work_encoded && st.swapchain_rt_for_present &&
+               st.swapchain_rt_for_present->OwningSwapchain()) {
+      auto *swapchain = st.swapchain_rt_for_present->OwningSwapchain();
+      HRESULT hr = swapchain->PresentBackBufferFromQueue(
+          st.swapchain_rt_for_present);
+      if (FAILED(hr)) {
+        Logger::err(str::format("M12 autopresent failed hr=",
+                                (unsigned)hr));
+      }
     }
   }
 }

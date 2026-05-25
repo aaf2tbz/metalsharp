@@ -81,6 +81,8 @@ public:
   /*** IDXGISwapChain4 ***/
   HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size, void *pMetaData) override;
 
+  HRESULT PresentBackBufferFromQueue(MTLD3D12Resource *resource);
+
 private:
   bool EnsureMetalView();
   bool AttachMetalViewForHWND(HWND hwnd);

@@ -1757,6 +1757,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
   if (!compiled && !pso->IsCompilePending()) {
     Logger::warn(str::format("CreateGraphicsPipelineState: shader compilation deferred/failed at ",
                              failure_stage, ": ", failure_detail));
+    char strict_fail[8] = {};
+    if (GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
+                                sizeof(strict_fail)) > 0 &&
+        strict_fail[0] && strict_fail[0] != '0') {
+      Logger::warn("CreateGraphicsPipelineState: failing PSO creation because "
+                   "DXMT_D3D12_FAIL_DEFERRED_PSO is enabled");
+      pso->Release();
+      return E_FAIL;
+    }
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
   if (FAILED(hr))

@@ -361,7 +361,7 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
                                              heap_props);
     auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[i].ptr());
     if (res)
-      res->MarkSwapchainBackBuffer(i);
+      res->MarkSwapchainBackBuffer(i, this);
     SCTRACE("ResizeBuffers backbuffer[%u] res=%p tex=%llu w=%u h=%u fmt=%u",
       i, (void*)res,
       res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
@@ -567,6 +567,21 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
   m_current_buffer = (m_current_buffer + 1) % (m_desc.BufferCount ? m_desc.BufferCount : 2);
 
   return S_OK;
+}
+
+HRESULT MTLD3D12SwapChain::PresentBackBufferFromQueue(
+    MTLD3D12Resource *resource) {
+  if (!resource || !resource->IsSwapchainBackBuffer())
+    return DXGI_ERROR_INVALID_CALL;
+
+  uint32_t buffer = resource->SwapchainBackBufferIndex();
+  if (buffer >= m_backbuffers.size() || !m_backbuffers[buffer])
+    return DXGI_ERROR_INVALID_CALL;
+
+  Logger::info(str::format("M12 autopresent swapchain backbuffer=", buffer,
+                           " res=", (void *)resource));
+  m_current_buffer = buffer;
+  return Present1(0, 0, nullptr);
 }
 
 WINBOOL STDMETHODCALLTYPE MTLD3D12SwapChain::IsTemporaryMonoSupported() {

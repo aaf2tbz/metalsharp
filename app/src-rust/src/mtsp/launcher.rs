@@ -810,8 +810,12 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                     let reflection_path = path.with_extension("json");
                     let vertex_layout_path = path.with_extension("vertex-layout.json");
                     let use_gs_ts_emulation = vertex_layout_path.exists();
+                    let stage_in_path = path.with_extension("stageIn.metallib");
                     let fail_path = path.with_extension("msc.fail");
-                    if metallib_path.exists() && reflection_path.exists() {
+                    if metallib_path.exists()
+                        && reflection_path.exists()
+                        && (!use_gs_ts_emulation || stage_in_path.exists())
+                    {
                         continue;
                     }
                     if fail_path.exists() {
@@ -844,6 +848,7 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                         if use_gs_ts_emulation {
                             command
                                 .arg("--enable-gs-ts-emulation")
+                                .arg("--vertex-stage-in")
                                 .arg(format!("--vertex-input-layout-file={}", vertex_layout_path.display()));
                         }
                         let output = command.output();
@@ -1261,6 +1266,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
+            ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
             ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()),
             ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),

@@ -27,17 +27,19 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
     metallib = dxbc.with_suffix(".metallib")
     reflection = dxbc.with_suffix(".json")
     layout = dxbc.with_suffix(".vertex-layout.json")
+    stage_in = dxbc.with_suffix(".stageIn.metallib")
     fail_marker = dxbc.with_suffix(".msc.fail")
 
     if fail_marker.exists() and force:
         fail_marker.unlink()
 
-    if metallib.exists() and reflection.exists() and not force:
+    if metallib.exists() and reflection.exists() and (not layout.exists() or stage_in.exists()) and not force:
         return {
             "dxbc": str(dxbc),
             "status": "cached",
             "metallib": str(metallib),
             "reflection": str(reflection),
+            "stage_in": str(stage_in) if layout.exists() else "",
             "uses_gs_ts_emulation": layout.exists(),
         }
 
@@ -51,7 +53,7 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         "--minimum-os-build-version=15.0.0",
     ]
     if layout.exists():
-        command.extend(["--enable-gs-ts-emulation", f"--vertex-input-layout-file={layout}"])
+        command.extend(["--enable-gs-ts-emulation", "--vertex-stage-in", f"--vertex-input-layout-file={layout}"])
 
     completed = subprocess.run(
         command,
@@ -59,7 +61,9 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    ok = completed.returncode == 0 and metallib.exists() and reflection.exists()
+    ok = completed.returncode == 0 and metallib.exists() and reflection.exists() and (
+        not layout.exists() or stage_in.exists()
+    )
     if not ok:
         fail_marker.write_text(
             f"command={' '.join(command)}\n"
@@ -75,6 +79,8 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         "metallib_exists": metallib.exists(),
         "reflection": str(reflection),
         "reflection_exists": reflection.exists(),
+        "stage_in": str(stage_in) if layout.exists() else "",
+        "stage_in_exists": stage_in.exists() if layout.exists() else False,
         "fail_marker": str(fail_marker) if not ok else "",
         "uses_gs_ts_emulation": layout.exists(),
         "stdout_tail": completed.stdout[-1000:],

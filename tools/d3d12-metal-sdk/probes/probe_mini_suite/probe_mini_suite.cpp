@@ -97,6 +97,33 @@ static std::string getenv_string(const char* key) {
     return value;
 }
 
+static bool read_binary_file(const std::string& path, std::vector<uint8_t>& out) {
+    FILE* file = std::fopen(path.c_str(), "rb");
+    if (!file)
+        return false;
+    if (std::fseek(file, 0, SEEK_END) != 0) {
+        std::fclose(file);
+        return false;
+    }
+    long size = std::ftell(file);
+    if (size <= 0) {
+        std::fclose(file);
+        return false;
+    }
+    if (std::fseek(file, 0, SEEK_SET) != 0) {
+        std::fclose(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t read = std::fread(out.data(), 1, out.size(), file);
+    std::fclose(file);
+    if (read != out.size()) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 static std::string hr_hex(HRESULT hr) {
     char buffer[16] = {};
     std::snprintf(buffer, sizeof(buffer), "0x%08lx", static_cast<unsigned long>(static_cast<uint32_t>(hr)));
@@ -154,11 +181,41 @@ static bool wait_for_fence(ID3D12Fence* fence, UINT64 value, HANDLE event_handle
     return WaitForSingleObject(event_handle, 5000) == WAIT_OBJECT_0;
 }
 
+static std::string module_path(HMODULE module) {
+    char buffer[4096];
+    DWORD written = module ? GetModuleFileNameA(module, buffer, sizeof(buffer)) : 0;
+    if (written == 0)
+        return "";
+    if (written >= sizeof(buffer))
+        written = sizeof(buffer) - 1;
+    return std::string(buffer, written);
+}
+
+static std::string g_d3d12_load_source;
+static std::string g_d3d12_loaded_path;
+static DWORD g_d3d12_load_error = 0;
+static DWORD g_d3d12_proc_error = 0;
+
 static HRESULT create_device(ID3D12Device** device) {
-    HMODULE d3d12 = LoadLibraryA("d3d12.dll");
+    g_d3d12_load_source = getenv_string("D3D12_METAL_SDK_D3D12_DLL");
+    if (g_d3d12_load_source.empty())
+        g_d3d12_load_source = "d3d12.dll";
+    g_d3d12_loaded_path.clear();
+    g_d3d12_load_error = 0;
+    g_d3d12_proc_error = 0;
+
+    HMODULE d3d12 = LoadLibraryA(g_d3d12_load_source.c_str());
+    if (!d3d12) {
+        g_d3d12_load_error = GetLastError();
+        return HRESULT_FROM_WIN32(g_d3d12_load_error);
+    }
+    g_d3d12_loaded_path = module_path(d3d12);
     D3D12CreateDeviceFn create = load_proc<D3D12CreateDeviceFn>(d3d12, "D3D12CreateDevice");
-    return create ? create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe, reinterpret_cast<void**>(device))
-                  : HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+    if (!create) {
+        g_d3d12_proc_error = GetLastError();
+        return HRESULT_FROM_WIN32(g_d3d12_proc_error ? g_d3d12_proc_error : ERROR_PROC_NOT_FOUND);
+    }
+    return create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe, reinterpret_cast<void**>(device));
 }
 
 static HRESULT create_queue(ID3D12Device* device, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandQueue** queue) {
@@ -682,6 +739,118 @@ static ProbeResult probe_geometry_shader_pso() {
     return {SUCCEEDED(hr), hr, SUCCEEDED(hr) ? "geometry shader graphics PSO created" : detail, ""};
 }
 
+static ProbeResult probe_subnautica_geometry_dxil_replay() {
+    const std::string corpus_dir_env = getenv_string("D3D12_METAL_SDK_GEOMETRY_CORPUS_DIR");
+    std::string corpus_dir = corpus_dir_env.empty() ? "Z:/tmp/dxmt_shader_cache" : corpus_dir_env;
+    while (!corpus_dir.empty() && (corpus_dir.back() == '/' || corpus_dir.back() == '\\'))
+        corpus_dir.pop_back();
+
+    ID3D12Device* device = nullptr;
+    HRESULT hr = create_device(&device);
+    if (FAILED(hr)) {
+        std::string extra = "\"corpus_dir\":\"" + json_escape(corpus_dir) + "\",\"d3d12_load_source\":\"" +
+                            json_escape(g_d3d12_load_source) + "\",\"d3d12_loaded_path\":\"" +
+                            json_escape(g_d3d12_loaded_path) + "\",\"d3d12_load_error\":" +
+                            std::to_string(g_d3d12_load_error) + ",\"d3d12_proc_error\":" +
+                            std::to_string(g_d3d12_proc_error);
+        return {false, hr, "device creation failed", extra};
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    std::string detail;
+    hr = serialize_root_signature(root_desc, &root_blob, detail);
+    ID3D12RootSignature* root = nullptr;
+    if (SUCCEEDED(hr))
+        hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                         IID_PPV_ARGS(&root));
+    safe_release(root_blob);
+    if (FAILED(hr)) {
+        safe_release(device);
+        return {false, hr, detail.empty() ? "root signature creation failed" : detail,
+                "\"corpus_dir\":\"" + json_escape(corpus_dir) + "\""};
+    }
+
+    const D3D12_INPUT_ELEMENT_DESC layout_attribute0_attribute13[] = {
+        {"ATTRIBUTE", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"ATTRIBUTE", 13, DXGI_FORMAT_R32_UINT, 1, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
+    };
+    const D3D12_INPUT_ELEMENT_DESC layout_attribute0_vec2[] = {
+        {"ATTRIBUTE", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    };
+    struct ReplayCase {
+        const char* hash;
+        const D3D12_INPUT_ELEMENT_DESC* layout;
+        UINT layout_count;
+    };
+    const ReplayCase cases[] = {
+        {"414b1f3b4509d720", layout_attribute0_attribute13, 2},
+        {"8b12f030dd908c1b", layout_attribute0_attribute13, 2},
+        {"8c4a1c6f7f8e81fc", layout_attribute0_vec2, 1},
+        {"a0df6264a1b2037c", layout_attribute0_vec2, 1},
+    };
+
+    UINT attempted = 0;
+    UINT passed = 0;
+    std::string first_failure;
+    HRESULT first_hr = S_OK;
+    for (const ReplayCase& replay : cases) {
+        const std::string base = corpus_dir + "/" + replay.hash + ".geom";
+        std::vector<uint8_t> vs;
+        std::vector<uint8_t> gs;
+        if (!read_binary_file(base + ".gsvs.dxbc", vs) || !read_binary_file(base + ".gsmesh.dxbc", gs)) {
+            if (first_failure.empty()) {
+                first_failure = std::string("missing captured DXIL blobs for ") + replay.hash;
+                first_hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+            }
+            continue;
+        }
+        attempted++;
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+        desc.pRootSignature = root;
+        desc.VS.pShaderBytecode = vs.data();
+        desc.VS.BytecodeLength = vs.size();
+        desc.GS.pShaderBytecode = gs.data();
+        desc.GS.BytecodeLength = gs.size();
+        desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        desc.SampleMask = UINT_MAX;
+        desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        desc.RasterizerState.DepthClipEnable = TRUE;
+        desc.DepthStencilState.DepthEnable = FALSE;
+        desc.DepthStencilState.StencilEnable = FALSE;
+        desc.InputLayout.pInputElementDescs = replay.layout;
+        desc.InputLayout.NumElements = replay.layout_count;
+        desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        desc.NumRenderTargets = 1;
+        desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+
+        ID3D12PipelineState* pso = nullptr;
+        HRESULT pso_hr = device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));
+        if (SUCCEEDED(pso_hr)) {
+            passed++;
+        } else if (first_failure.empty()) {
+            first_failure = std::string("captured Subnautica geometry DXIL PSO failed for ") + replay.hash;
+            first_hr = pso_hr;
+        }
+        safe_release(pso);
+    }
+
+    safe_release(root);
+    safe_release(device);
+    const bool ok = attempted == static_cast<UINT>(std::size(cases)) && passed == attempted;
+    std::string extra = "\"corpus_dir\":\"" + json_escape(corpus_dir) + "\",\"attempted\":" +
+                        std::to_string(attempted) + ",\"passed\":" + std::to_string(passed) +
+                        ",\"total\":" + std::to_string(static_cast<UINT>(std::size(cases)));
+    return {ok, ok ? S_OK : first_hr,
+            ok ? "captured Subnautica geometry DXIL PSOs replayed through CreateGraphicsPipelineState"
+               : first_failure,
+            extra};
+}
+
 static ProbeResult probe_texture_sample() {
     ID3D12Device* device = nullptr;
     HRESULT hr = create_device(&device);
@@ -972,6 +1141,8 @@ static ProbeResult run_probe() {
         return probe_mesh_shader_pso();
     case 11:
         return probe_texture_sample();
+    case 12:
+        return probe_subnautica_geometry_dxil_replay();
     default:
         return {false, E_INVALIDARG, "unknown mini probe case", ""};
     }

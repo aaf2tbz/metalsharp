@@ -170,6 +170,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         .join(",");
         launch_args.push(format!("-dpcvars={}", dpcvars));
         launch_args.push("-NoNanite".into());
+        launch_args.push("-NoStartupMovies".into());
         launch_args.push(
             "-ExecCmds=r.Nanite 0;r.Nanite.ProjectEnabled 0;r.Nanite.Tessellation 0;r.GeometryCollection.Nanite 0"
                 .into(),
@@ -865,6 +866,14 @@ mod tests {
     fn launcher_names_are_classified_as_launchers() {
         assert!(is_likely_launcher_exe(Path::new("DOOM-Eternal Launcher.exe")));
         assert!(!is_likely_launcher_exe(Path::new("DOOMEternalx64vk.exe")));
+    }
+
+    #[test]
+    fn subnautica_m12_bypasses_startup_movies() {
+        let args = effective_launch_args(1962700, super::super::engine::get_pipeline(PipelineId::M12));
+
+        assert!(args.iter().any(|arg| arg == "-NoStartupMovies"));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-NOSPLASH")));
     }
 
     #[test]

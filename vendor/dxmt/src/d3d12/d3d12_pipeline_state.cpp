@@ -2579,6 +2579,8 @@ bool MTLD3D12PipelineState::CompileImpl() {
           const std::string vs_layout_path = base + ".gsvs.vertex-layout.json";
           const std::string gs_layout_path = base + ".gsmesh.vertex-layout.json";
           const std::string vs_metallib_path = base + ".gsvs.metallib";
+          const std::string vs_stage_in_metallib_path =
+              base + ".gsvs.stageIn.metallib";
           const std::string gs_metallib_path = base + ".gsmesh.metallib";
           const std::string vs_reflection_path = base + ".gsvs.json";
           const std::string gs_reflection_path = base + ".gsmesh.json";
@@ -2629,16 +2631,39 @@ bool MTLD3D12PipelineState::CompileImpl() {
                     metallib_path.c_str());
             return false;
           };
+          auto file_exists = [](const char *path) -> bool {
+            FILE *file = fopen(path, "rb");
+            if (!file)
+              return false;
+            fclose(file);
+            return true;
+          };
+          auto wait_for_file = [&](const std::string &path,
+                                   const char *stage) -> bool {
+            for (uint32_t attempt = 0; attempt < 250; attempt++) {
+              if (file_exists(path.c_str())) {
+                PSTRACE("DXIL geometry MSC %s ready after %u waits", stage,
+                        attempt + 1);
+                return true;
+              }
+              Sleep(20);
+            }
+            PSTRACE("DXIL geometry MSC %s timed out waiting for %s", stage,
+                    path.c_str());
+            return false;
+          };
 
           if (!wait_for_msc_output(vs_metallib_path, vs_reflection_path,
                                    vs_fail_path, "object") ||
+              !wait_for_file(vs_stage_in_metallib_path, "stage-in") ||
               !wait_for_msc_output(gs_metallib_path, gs_reflection_path,
                                    gs_fail_path, "mesh")) {
             return RecordCompileFailure(
                 "pso/geometry_msc_compile",
                 str::format("MetalShaderConverter did not produce DXIL "
                             "geometry object/mesh metallibs; VS=",
-                            vs_dxbc_path, " GS=", gs_dxbc_path));
+                            vs_dxbc_path, " stageIn=",
+                            vs_stage_in_metallib_path, " GS=", gs_dxbc_path));
           }
 
           auto read_binary = [](const std::string &path,
@@ -2737,7 +2762,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
 
           auto load_msc_plain_function =
               [&](const std::string &metallib_path, const char *function_name,
-                  const char *stage,
+                  const char *stage, bool required,
                   WMT::Reference<WMT::Function> &out_func) -> bool {
             std::vector<uint8_t> lib_data;
             if (!read_binary(metallib_path, lib_data))
@@ -2759,12 +2784,21 @@ bool MTLD3D12PipelineState::CompileImpl() {
             }
 
             WMT::Reference<WMT::Error> fn_err;
-            out_func = library.newFunctionWithDescriptor(
-                function_name, nullptr, constants, std::size(constants),
-                WMTFunctionOptionCompileToBinary, fn_err);
+            out_func = library.newFunction(function_name);
             std::string fn_error_desc =
-                fn_err.handle ? fn_err.description().getUTF8String()
-                              : std::string();
+                fn_err.handle ? fn_err.description().getUTF8String() : std::string();
+            if (!out_func.handle) {
+              std::string visible_ref_name =
+                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
+              out_func = library.newFunction(visible_ref_name.c_str());
+            }
+            if (!out_func.handle) {
+              out_func = library.newFunctionWithDescriptor(
+                  function_name, nullptr, constants, std::size(constants),
+                  WMTFunctionOptionCompileToBinary, fn_err);
+              if (!out_func.handle && fn_err.handle)
+                fn_error_desc = fn_err.description().getUTF8String();
+            }
             if (!out_func.handle) {
               std::string visible_ref_name =
                   std::string(function_name) + ".MTL_VISIBLE_FN_REF";
@@ -2776,7 +2810,28 @@ bool MTLD3D12PipelineState::CompileImpl() {
               if (!out_func.handle && visible_fn_err.handle)
                 fn_error_desc = visible_fn_err.description().getUTF8String();
             }
-            if (!out_func.handle)
+            if (!out_func.handle) {
+              WMT::Reference<WMT::Error> plain_descriptor_err;
+              out_func = library.newFunctionWithDescriptor(
+                  function_name, nullptr, nullptr, 0,
+                  WMTFunctionOptionCompileToBinary, plain_descriptor_err);
+              if (!out_func.handle && plain_descriptor_err.handle)
+                fn_error_desc =
+                    plain_descriptor_err.description().getUTF8String();
+            }
+            if (!out_func.handle) {
+              std::string visible_ref_name =
+                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
+              WMT::Reference<WMT::Error> plain_visible_descriptor_err;
+              out_func = library.newFunctionWithDescriptor(
+                  visible_ref_name.c_str(), nullptr, nullptr, 0,
+                  WMTFunctionOptionCompileToBinary,
+                  plain_visible_descriptor_err);
+              if (!out_func.handle && plain_visible_descriptor_err.handle)
+                fn_error_desc =
+                    plain_visible_descriptor_err.description().getUTF8String();
+            }
+            if (!out_func.handle && required)
               return RecordCompileFailure(
                   stage, str::format("MSC geometry linked function lookup "
                                      "failed for ",
@@ -2785,22 +2840,54 @@ bool MTLD3D12PipelineState::CompileImpl() {
                                          ? "unknown"
                                          : fn_error_desc,
                                      "; metallib ", metallib_path));
+            if (!out_func.handle)
+              PSTRACE("MSC geometry optional linked function missing: %s in %s",
+                      function_name, metallib_path.c_str());
             return true;
           };
 
           WMT::Reference<WMT::Function> geometry_vs_func;
           WMT::Reference<WMT::Function> geometry_gs_func;
-          WMT::Reference<WMT::Function> stage_in_linked_func;
           if (!load_msc_function(vs_metallib_path, object_entry.c_str(),
                                  "shader/geometry_msc_object_function",
                                  geometry_vs_func) ||
               !load_msc_function(gs_metallib_path, gs_entry.c_str(),
                                  "shader/geometry_msc_mesh_function",
-                                 geometry_gs_func) ||
-              !load_msc_plain_function(
-                  vs_metallib_path, "irconverter_stage_in_shader",
-                  "shader/geometry_msc_stage_in_function",
-                  stage_in_linked_func)) {
+                                 geometry_gs_func)) {
+            return false;
+          }
+
+          std::vector<WMT::Reference<WMT::Function>> object_linked_refs;
+          std::vector<WMT::Reference<WMT::Function>> mesh_linked_refs;
+          auto append_linked_function =
+              [&](const std::string &metallib_path, const char *function_name,
+                  const char *stage, bool required,
+                  std::vector<WMT::Reference<WMT::Function>> &refs) -> bool {
+            WMT::Reference<WMT::Function> func;
+            if (!load_msc_plain_function(metallib_path, function_name, stage,
+                                         required, func))
+              return false;
+            if (func.handle)
+              refs.push_back(func);
+            return true;
+          };
+
+          if (!append_linked_function(
+                  vs_stage_in_metallib_path, "irconverter_stage_in_shader",
+                  "shader/geometry_msc_stage_in_function", true,
+                  object_linked_refs) ||
+              !append_linked_function(
+                  vs_metallib_path, "irconverter_hull_shader",
+                  "shader/geometry_msc_hull_function", false,
+                  object_linked_refs) ||
+              !append_linked_function(
+                  gs_metallib_path, "irconverter_dxil_domain_shader",
+                  "shader/geometry_msc_domain_function", false,
+                  mesh_linked_refs) ||
+              !append_linked_function(
+                  gs_metallib_path, "irconverter_tessellator",
+                  "shader/geometry_msc_tessellator_function", false,
+                  mesh_linked_refs)) {
             return false;
           }
 
@@ -2831,22 +2918,35 @@ bool MTLD3D12PipelineState::CompileImpl() {
           mesh_info.mesh_function = geometry_gs_func.handle;
           if (geometry_ps_func.handle)
             mesh_info.fragment_function = geometry_ps_func.handle;
-          obj_handle_t mesh_linked_functions[] = {stage_in_linked_func.handle};
-          mesh_info.object_linked_functions.set(mesh_linked_functions);
-          mesh_info.num_object_linked_functions =
-              std::size(mesh_linked_functions);
-          mesh_info.mesh_linked_functions.set(mesh_linked_functions);
-          mesh_info.num_mesh_linked_functions = std::size(mesh_linked_functions);
+          std::vector<obj_handle_t> object_linked_handles;
+          std::vector<obj_handle_t> mesh_linked_handles;
+          for (auto &func : object_linked_refs)
+            object_linked_handles.push_back(func.handle);
+          for (auto &func : mesh_linked_refs)
+            mesh_linked_handles.push_back(func.handle);
+          if (!object_linked_handles.empty()) {
+            mesh_info.object_linked_functions.set(object_linked_handles.data());
+            mesh_info.num_object_linked_functions =
+                (uint8_t)object_linked_handles.size();
+          }
+          if (!mesh_linked_handles.empty()) {
+            mesh_info.mesh_linked_functions.set(mesh_linked_handles.data());
+            mesh_info.num_mesh_linked_functions =
+                (uint8_t)mesh_linked_handles.size();
+          }
           mesh_info.payload_memory_length = payload_size;
           mesh_info.immutable_object_buffers =
               (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
           mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
           mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
           mesh_info.rasterization_enabled =
+              geometry_ps_func.handle &&
               (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
           mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
           for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+            if (!geometry_ps_func.handle)
+              break;
             auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
             if (fmt != WMTPixelFormatInvalid)
               mesh_info.colors[i].pixel_format = fmt;
@@ -2937,8 +3037,10 @@ bool MTLD3D12PipelineState::CompileImpl() {
           Logger::info(str::format(
               "Graphics DXIL geometry MSC mesh PSO compiled: object=",
               object_entry, " mesh=", gs_entry, " payload=", payload_size,
-              " vertex_output=", vertex_output_size, " RTs=",
-              m_num_render_targets, " DSV=", (int)m_dsv_format));
+              " vertex_output=", vertex_output_size, " object_linked=",
+              object_linked_handles.size(), " mesh_linked=",
+              mesh_linked_handles.size(), " RTs=", m_num_render_targets,
+              " DSV=", (int)m_dsv_format));
           return true;
         }
 
@@ -3114,10 +3216,13 @@ bool MTLD3D12PipelineState::CompileImpl() {
         mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
         mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
         mesh_info.rasterization_enabled =
+            geometry_ps_func.handle &&
             (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
         mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
         for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+          if (!geometry_ps_func.handle)
+            break;
           auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
           if (fmt != WMTPixelFormatInvalid)
             mesh_info.colors[i].pixel_format = fmt;

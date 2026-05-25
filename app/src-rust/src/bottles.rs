@@ -1715,7 +1715,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs"][..],
+            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
@@ -4568,6 +4568,7 @@ mod tests {
         let m12 = default_components_for(RuntimeProfile::M12);
         let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m12_ids.contains(&"gpu_vendor_stubs"));
+        assert!(m12_ids.contains(&"corefonts"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);

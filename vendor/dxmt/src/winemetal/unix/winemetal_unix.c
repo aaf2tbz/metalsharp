@@ -37,6 +37,11 @@ winemetal_critical_log(void) {
 }
 
 static const char *
+winemetal_nsstring_utf8(NSString *value) {
+  return value ? [value UTF8String] : "<nil>";
+}
+
+static const char *
 winemetal_render_command_name(uint16_t type) {
   switch ((enum WMTRenderCommandType)type) {
   case WMTRenderCommandNop:
@@ -914,22 +919,22 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   if (@available(macOS 13, *)) {
     if (info->num_object_linked_functions && info->object_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
-      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->object_linked_functions.ptr
-                                                    count:info->num_object_linked_functions];
+      linked.functions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->object_linked_functions.ptr
+                                             count:info->num_object_linked_functions];
       descriptor.objectLinkedFunctions = linked;
       [linked release];
     }
     if (info->num_mesh_linked_functions && info->mesh_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
-      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->mesh_linked_functions.ptr
-                                                    count:info->num_mesh_linked_functions];
+      linked.functions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->mesh_linked_functions.ptr
+                                             count:info->num_mesh_linked_functions];
       descriptor.meshLinkedFunctions = linked;
       [linked release];
     }
     if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
-      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->fragment_linked_functions.ptr
-                                                    count:info->num_fragment_linked_functions];
+      linked.functions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->fragment_linked_functions.ptr
+                                             count:info->num_fragment_linked_functions];
       descriptor.fragmentLinkedFunctions = linked;
       [linked release];
     }
@@ -949,11 +954,53 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   }
 #endif
   NSError *err = NULL;
-  params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device newRenderPipelineStateWithMeshDescriptor:descriptor
-                                                                                                  options:options
-                                                                                               reflection:nil
-                                                                                                    error:&err];
+  @try {
+    params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device
+        newRenderPipelineStateWithMeshDescriptor:descriptor
+                                         options:options
+                                      reflection:nil
+                                           error:&err];
+  } @catch (NSException *exception) {
+    params->ret_pso = 0;
+    FILE *dl = winemetal_critical_log();
+    if (dl) {
+      fprintf(dl, "[winemetal] mesh PSO ObjC exception: %s reason=%s\n",
+              winemetal_nsstring_utf8([exception name]),
+              winemetal_nsstring_utf8([exception reason]));
+      fclose(dl);
+    }
+  }
   params->ret_error = (obj_handle_t)err;
+  if (!params->ret_pso) {
+    FILE *dl = winemetal_critical_log();
+    if (dl) {
+      fprintf(dl,
+              "[winemetal] mesh PSO failed: err=%s object=%s mesh=%s fragment=%s "
+              "payload=%u rt0=%u depth=%u stencil=%u samples=%u raster=%d "
+              "obj_linked=%u mesh_linked=%u frag_linked=%u "
+              "obj_mut=0x%08x mesh_mut=0x%08x frag_mut=0x%08x\n",
+              err ? winemetal_nsstring_utf8([err localizedDescription]) : "<nil>",
+              winemetal_nsstring_utf8([descriptor.objectFunction name]),
+              winemetal_nsstring_utf8([descriptor.meshFunction name]),
+              winemetal_nsstring_utf8([descriptor.fragmentFunction name]),
+              info->payload_memory_length,
+              info->colors[0].pixel_format,
+              info->depth_pixel_format,
+              info->stencil_pixel_format,
+              info->raster_sample_count,
+              info->rasterization_enabled ? 1 : 0,
+              info->num_object_linked_functions,
+              info->num_mesh_linked_functions,
+              info->num_fragment_linked_functions,
+              info->immutable_object_buffers,
+              info->immutable_mesh_buffers,
+              info->immutable_fragment_buffers);
+      if (err)
+        fprintf(dl, "[winemetal] mesh PSO userInfo: %s\n",
+                winemetal_nsstring_utf8([[err userInfo] description]));
+      fclose(dl);
+    }
+  }
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
     if (!err && info->binary_archive_for_serialization) {

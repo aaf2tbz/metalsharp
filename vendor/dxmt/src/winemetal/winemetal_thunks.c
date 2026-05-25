@@ -902,7 +902,7 @@ MTLLibrary_newFunctionWithDescriptor(
   params.options = options;
   params.ret = 0;
   params.ret_error = 0;
-  UNIX_CALL(132, &params);
+  UNIX_CALL(133, &params);
   if (err_out)
     *err_out = params.ret_error;
   return params.ret;

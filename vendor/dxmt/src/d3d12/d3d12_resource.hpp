@@ -9,6 +9,7 @@
 namespace dxmt {
 
 class MTLD3D12Device;
+class MTLD3D12SwapChain;
 
 class MTLD3D12Resource : public ID3D12Resource {
 public:
@@ -69,12 +70,14 @@ public:
   uint32_t GetTextureArrayLength() const;
   uint64_t GetBufferByteLength() const;
 
-  void MarkSwapchainBackBuffer(uint32_t index) {
+  void MarkSwapchainBackBuffer(uint32_t index, MTLD3D12SwapChain *swapchain) {
     m_is_swapchain_backbuffer = true;
     m_swapchain_buffer_index = index;
+    m_swapchain = swapchain;
   }
   bool IsSwapchainBackBuffer() const { return m_is_swapchain_backbuffer; }
   uint32_t SwapchainBackBufferIndex() const { return m_swapchain_buffer_index; }
+  MTLD3D12SwapChain *OwningSwapchain() const { return m_swapchain; }
 
 private:
   void InitializeResource(WMT::Reference<WMT::Buffer> backing_buffer,
@@ -94,6 +97,7 @@ private:
   uint64_t m_backing_offset = 0;
   bool m_is_swapchain_backbuffer = false;
   uint32_t m_swapchain_buffer_index = 0;
+  MTLD3D12SwapChain *m_swapchain = nullptr;
 
   void *m_cpu_addr = nullptr;
   uint64_t m_gpu_addr = 0;
