@@ -106,6 +106,7 @@ struct CmdCopyTextureRegion {
   D3D12_TEXTURE_COPY_TYPE dst_type;
   UINT dst_subresource;
   UINT64 dst_offset;
+  DXGI_FORMAT dst_footprint_format;
   UINT dst_footprint_width;
   UINT dst_footprint_height;
   UINT dst_footprint_depth;
@@ -115,6 +116,7 @@ struct CmdCopyTextureRegion {
   D3D12_TEXTURE_COPY_TYPE src_type;
   UINT src_subresource;
   UINT64 src_offset;
+  DXGI_FORMAT src_footprint_format;
   UINT src_footprint_width;
   UINT src_footprint_height;
   UINT src_footprint_depth;

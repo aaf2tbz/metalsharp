@@ -189,6 +189,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::CopyTextureRegion(
     cmd.dst_subresource = dst->SubresourceIndex;
   } else {
     cmd.dst_offset = dst->PlacedFootprint.Offset;
+    cmd.dst_footprint_format = dst->PlacedFootprint.Footprint.Format;
     cmd.dst_footprint_width = dst->PlacedFootprint.Footprint.Width;
     cmd.dst_footprint_height = dst->PlacedFootprint.Footprint.Height;
     cmd.dst_footprint_depth = dst->PlacedFootprint.Footprint.Depth;
@@ -200,6 +201,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::CopyTextureRegion(
     cmd.src_subresource = src->SubresourceIndex;
   } else {
     cmd.src_offset = src->PlacedFootprint.Offset;
+    cmd.src_footprint_format = src->PlacedFootprint.Footprint.Format;
     cmd.src_footprint_width = src->PlacedFootprint.Footprint.Width;
     cmd.src_footprint_height = src->PlacedFootprint.Footprint.Height;
     cmd.src_footprint_depth = src->PlacedFootprint.Footprint.Depth;

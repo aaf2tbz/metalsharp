@@ -1889,6 +1889,160 @@ static uint32_t MipSize(uint64_t base, uint32_t mip) {
   return (uint32_t)(size ? size : 1);
 }
 
+static uint32_t FormatBlockExtent(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_BC1_TYPELESS:
+  case DXGI_FORMAT_BC1_UNORM:
+  case DXGI_FORMAT_BC1_UNORM_SRGB:
+  case DXGI_FORMAT_BC2_TYPELESS:
+  case DXGI_FORMAT_BC2_UNORM:
+  case DXGI_FORMAT_BC2_UNORM_SRGB:
+  case DXGI_FORMAT_BC3_TYPELESS:
+  case DXGI_FORMAT_BC3_UNORM:
+  case DXGI_FORMAT_BC3_UNORM_SRGB:
+  case DXGI_FORMAT_BC4_TYPELESS:
+  case DXGI_FORMAT_BC4_UNORM:
+  case DXGI_FORMAT_BC4_SNORM:
+  case DXGI_FORMAT_BC5_TYPELESS:
+  case DXGI_FORMAT_BC5_UNORM:
+  case DXGI_FORMAT_BC5_SNORM:
+  case DXGI_FORMAT_BC6H_TYPELESS:
+  case DXGI_FORMAT_BC6H_UF16:
+  case DXGI_FORMAT_BC6H_SF16:
+  case DXGI_FORMAT_BC7_TYPELESS:
+  case DXGI_FORMAT_BC7_UNORM:
+  case DXGI_FORMAT_BC7_UNORM_SRGB:
+    return 4;
+  default:
+    return 1;
+  }
+}
+
+static uint32_t FormatBytesPerBlock(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32A32_FLOAT:
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+    return 16;
+  case DXGI_FORMAT_R32G32B32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32_FLOAT:
+  case DXGI_FORMAT_R32G32B32_UINT:
+  case DXGI_FORMAT_R32G32B32_SINT:
+    return 12;
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+  case DXGI_FORMAT_R32G32_TYPELESS:
+  case DXGI_FORMAT_R32G32_FLOAT:
+  case DXGI_FORMAT_R32G32_UINT:
+  case DXGI_FORMAT_R32G32_SINT:
+  case DXGI_FORMAT_R32G8X24_TYPELESS:
+  case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+  case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+  case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+    return 8;
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+  case DXGI_FORMAT_R11G11B10_FLOAT:
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_R16G16_TYPELESS:
+  case DXGI_FORMAT_R16G16_FLOAT:
+  case DXGI_FORMAT_R16G16_UNORM:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R16G16_SNORM:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R32_TYPELESS:
+  case DXGI_FORMAT_D32_FLOAT:
+  case DXGI_FORMAT_R32_FLOAT:
+  case DXGI_FORMAT_R32_UINT:
+  case DXGI_FORMAT_R32_SINT:
+  case DXGI_FORMAT_R24G8_TYPELESS:
+  case DXGI_FORMAT_D24_UNORM_S8_UINT:
+  case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+  case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    return 4;
+  case DXGI_FORMAT_R8G8_TYPELESS:
+  case DXGI_FORMAT_R8G8_UNORM:
+  case DXGI_FORMAT_R8G8_UINT:
+  case DXGI_FORMAT_R8G8_SNORM:
+  case DXGI_FORMAT_R8G8_SINT:
+  case DXGI_FORMAT_R16_TYPELESS:
+  case DXGI_FORMAT_R16_FLOAT:
+  case DXGI_FORMAT_D16_UNORM:
+  case DXGI_FORMAT_R16_UNORM:
+  case DXGI_FORMAT_R16_UINT:
+  case DXGI_FORMAT_R16_SNORM:
+  case DXGI_FORMAT_R16_SINT:
+    return 2;
+  case DXGI_FORMAT_R8_TYPELESS:
+  case DXGI_FORMAT_R8_UNORM:
+  case DXGI_FORMAT_R8_UINT:
+  case DXGI_FORMAT_R8_SNORM:
+  case DXGI_FORMAT_R8_SINT:
+  case DXGI_FORMAT_A8_UNORM:
+    return 1;
+  case DXGI_FORMAT_BC1_TYPELESS:
+  case DXGI_FORMAT_BC1_UNORM:
+  case DXGI_FORMAT_BC1_UNORM_SRGB:
+  case DXGI_FORMAT_BC4_TYPELESS:
+  case DXGI_FORMAT_BC4_UNORM:
+  case DXGI_FORMAT_BC4_SNORM:
+    return 8;
+  case DXGI_FORMAT_BC2_TYPELESS:
+  case DXGI_FORMAT_BC2_UNORM:
+  case DXGI_FORMAT_BC2_UNORM_SRGB:
+  case DXGI_FORMAT_BC3_TYPELESS:
+  case DXGI_FORMAT_BC3_UNORM:
+  case DXGI_FORMAT_BC3_UNORM_SRGB:
+  case DXGI_FORMAT_BC5_TYPELESS:
+  case DXGI_FORMAT_BC5_UNORM:
+  case DXGI_FORMAT_BC5_SNORM:
+  case DXGI_FORMAT_BC6H_TYPELESS:
+  case DXGI_FORMAT_BC6H_UF16:
+  case DXGI_FORMAT_BC6H_SF16:
+  case DXGI_FORMAT_BC7_TYPELESS:
+  case DXGI_FORMAT_BC7_UNORM:
+  case DXGI_FORMAT_BC7_UNORM_SRGB:
+    return 16;
+  default:
+    return 4;
+  }
+}
+
+static uint64_t FootprintRows(uint32_t height, DXGI_FORMAT format) {
+  uint32_t block = FormatBlockExtent(format);
+  return std::max<uint32_t>(1, (height + block - 1) / block);
+}
+
+static uint64_t FootprintOffset(uint64_t base_offset, uint32_t row_pitch,
+                                uint32_t footprint_height,
+                                DXGI_FORMAT format, uint32_t x, uint32_t y,
+                                uint32_t z) {
+  uint32_t block = FormatBlockExtent(format);
+  uint32_t bytes_per_block = FormatBytesPerBlock(format);
+  uint64_t rows_per_image = FootprintRows(footprint_height ? footprint_height : 1,
+                                          format);
+  return base_offset + uint64_t(z) * uint64_t(row_pitch) * rows_per_image +
+         uint64_t(y / block) * uint64_t(row_pitch) +
+         uint64_t(x / block) * uint64_t(bytes_per_block);
+}
+
 static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
                                   WMT::CommandBuffer cmdbuf, uint32_t x,
                                   uint32_t y, uint32_t z,
@@ -3071,24 +3225,58 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           UINT row_pitch = cmd->src_footprint_row_pitch;
           if (row_pitch == 0)
             row_pitch = copy_w * 4;
+          DXGI_FORMAT src_format =
+              cmd->src_footprint_format != DXGI_FORMAT_UNKNOWN
+                  ? cmd->src_footprint_format
+                  : dst_desc.Format;
+          UINT src_x = cmd->has_src_box ? cmd->src_box.left : 0;
+          UINT src_y = cmd->has_src_box ? cmd->src_box.top : 0;
+          UINT src_z = cmd->has_src_box ? cmd->src_box.front : 0;
+          uint64_t src_offset = FootprintOffset(
+              cmd->src_offset, row_pitch, cmd->src_footprint_height,
+              src_format, src_x, src_y, src_z);
+          uint64_t rows_per_image =
+              FootprintRows(cmd->src_footprint_height
+                                ? cmd->src_footprint_height
+                                : copy_h,
+                            src_format);
           struct wmtcmd_blit_copy_from_buffer_to_texture copy = {};
           copy.type = WMTBlitCommandCopyFromBufferToTexture;
           copy.next.set(nullptr);
           copy.src = src_buf.handle;
-          copy.src_offset = cmd->src_offset;
+          copy.src_offset = src_offset;
           copy.bytes_per_row = row_pitch;
-          copy.bytes_per_image = row_pitch * copy_h;
+          copy.bytes_per_image = row_pitch * rows_per_image;
           copy.size = {copy_w, copy_h, copy_d};
           copy.dst = dst_tex.handle;
           copy.slice = dst_slice;
           copy.level = dst_level;
           copy.origin = {cmd->dst_x, cmd->dst_y, cmd->dst_z};
           QTRACE("CopyTextureRegion buffer->texture dst_level=%u dst_slice=%u "
-                 "offset=%llu row_pitch=%u size=%ux%ux%u",
-                 dst_level, dst_slice, (unsigned long long)cmd->src_offset,
-                 row_pitch, copy_w, copy_h, copy_d);
+                 "offset=%llu base=%llu row_pitch=%u image_pitch=%llu "
+                 "format=%u box_origin=%ux%ux%u size=%ux%ux%u",
+                 dst_level, dst_slice, (unsigned long long)src_offset,
+                 (unsigned long long)cmd->src_offset, row_pitch,
+                 (unsigned long long)copy.bytes_per_image,
+                 (unsigned)src_format, src_x, src_y, src_z, copy_w, copy_h,
+                 copy_d);
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
         } else if (!src_is_buffer && dst_is_buffer && src_tex.handle) {
+          UINT row_pitch = cmd->dst_footprint_row_pitch;
+          if (row_pitch == 0)
+            row_pitch = copy_w * 4;
+          DXGI_FORMAT dst_format =
+              cmd->dst_footprint_format != DXGI_FORMAT_UNKNOWN
+                  ? cmd->dst_footprint_format
+                  : src_desc.Format;
+          uint64_t dst_offset = FootprintOffset(
+              cmd->dst_offset, row_pitch, cmd->dst_footprint_height,
+              dst_format, cmd->dst_x, cmd->dst_y, cmd->dst_z);
+          uint64_t rows_per_image =
+              FootprintRows(cmd->dst_footprint_height
+                                ? cmd->dst_footprint_height
+                                : copy_h,
+                            dst_format);
           struct wmtcmd_blit_copy_from_texture_to_buffer copy = {};
           copy.type = WMTBlitCommandCopyFromTextureToBuffer;
           copy.next.set(nullptr);
@@ -3101,16 +3289,17 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy.origin = {src_x, src_y, src_z};
           copy.size = {copy_w, copy_h, copy_d};
           copy.dst = dst_buf.handle;
-          copy.offset = cmd->dst_offset;
-          UINT row_pitch = cmd->dst_footprint_row_pitch;
-          if (row_pitch == 0)
-            row_pitch = copy_w * 4;
+          copy.offset = dst_offset;
           copy.bytes_per_row = row_pitch;
-          copy.bytes_per_image = row_pitch * copy_h;
+          copy.bytes_per_image = row_pitch * rows_per_image;
           QTRACE("CopyTextureRegion texture->buffer src_level=%u src_slice=%u "
-                 "offset=%llu row_pitch=%u size=%ux%ux%u",
-                 src_level, src_slice, (unsigned long long)cmd->dst_offset,
-                 row_pitch, copy_w, copy_h, copy_d);
+                 "offset=%llu base=%llu row_pitch=%u image_pitch=%llu "
+                 "format=%u dst_origin=%ux%ux%u size=%ux%ux%u",
+                 src_level, src_slice, (unsigned long long)dst_offset,
+                 (unsigned long long)cmd->dst_offset, row_pitch,
+                 (unsigned long long)copy.bytes_per_image,
+                 (unsigned)dst_format, cmd->dst_x, cmd->dst_y, cmd->dst_z,
+                 copy_w, copy_h, copy_d);
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
         } else if (!src_is_buffer && !dst_is_buffer && src_tex.handle &&
                    dst_tex.handle) {
