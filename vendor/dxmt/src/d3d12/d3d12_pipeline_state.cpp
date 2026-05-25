@@ -259,9 +259,16 @@ bool ShouldFallbackFromMetalShaderConverter(std::string_view fail_text,
 
 const std::string &GetShaderCacheRoot() {
   static const std::string root = []() {
-    // Keep live DXIL/MSL dump artifacts under /tmp for the PE-side runtime.
-    // This is the path that reliably works under Wine today and is what the
-    // metal-shaderconverter sidecar consumes during live launches.
+    const char *dxmt_cache = std::getenv("DXMT_SHADER_CACHE_PATH");
+    if (dxmt_cache && dxmt_cache[0])
+      return std::string(dxmt_cache);
+
+    const char *metalsharp_cache = std::getenv("METALSHARP_SHADER_CACHE_PATH");
+    if (metalsharp_cache && metalsharp_cache[0])
+      return std::string(metalsharp_cache);
+
+    // Fallback for older launch environments. New SDK preflights expect this
+    // to be overridden so dumped DXBC blobs land in the per-game corpus.
     return std::string("/tmp/dxmt_shader_cache");
   }();
   return root;

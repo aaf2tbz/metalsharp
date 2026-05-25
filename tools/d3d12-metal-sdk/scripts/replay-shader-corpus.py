@@ -11,6 +11,7 @@ def default_corpus_roots() -> list[Path]:
     roots = [
         Path.home() / ".metalsharp" / "shader-cache",
         Path("/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/.metalsharp-cache/shader-cache"),
+        Path("/tmp/dxmt_shader_cache"),
     ]
     return [root for root in roots if root.exists()]
 

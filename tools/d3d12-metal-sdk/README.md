@@ -59,6 +59,22 @@ python3 tools/d3d12-metal-sdk/scripts/replay-shader-corpus.py \
   --corpus "/path/to/shader-cache/m12/1962700"
 ```
 
+If no corpus exists yet, use the bounded capture runner instead of a blind
+interactive launch:
+
+```bash
+tools/d3d12-metal-sdk/scripts/capture-game-shader-corpus.sh \
+  --profile subnautica2 \
+  --seconds 20
+```
+
+The capture runner preflights the runtime layout, launches through the backend
+for a fixed short window, kills the target, and writes
+`results/shader-corpus-capture-subnautica2.json` with the newly captured `.dxbc`
+files. Re-run `preflight-before-game.sh` afterward without
+`--allow-empty-corpus` to prove MetalShaderConverter can replay the captured
+corpus.
+
 Run the SDK against an arbitrary Wine/DXMT runtime:
 
 ```bash
