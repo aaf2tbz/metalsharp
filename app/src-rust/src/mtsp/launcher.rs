@@ -174,16 +174,21 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
-    let deployed_sources: Vec<String> = if node.uses_winedllpath_routing() {
+    let deployed_sources: Vec<String> = if !recipe.dlls.is_empty() {
+        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+        if node.uses_winedllpath_routing() {
+            if let Some(game_dir) = recipe.game_dir.as_ref() {
+                cleanup_legacy_injections(game_dir)?;
+            }
+        }
+        deploy_recipe_dlls(&recipe)?;
+        sources
+    } else {
         validate_recipe_runtime(&recipe)?;
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_legacy_injections(game_dir)?;
         }
         node.winedllpath_dirs.iter().map(|d| d.to_string()).collect()
-    } else {
-        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
-        deploy_recipe_dlls(&recipe)?;
-        sources
     };
 
     Ok(serde_json::json!({
@@ -217,7 +222,12 @@ pub fn prepare_steam_pipeline_env(
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
-    if !node.uses_winedllpath_routing() && !recipe.dlls.is_empty() {
+    if !recipe.dlls.is_empty() {
+        if node.uses_winedllpath_routing() {
+            if let Some(game_dir) = recipe.game_dir.as_ref() {
+                cleanup_legacy_injections(game_dir)?;
+            }
+        }
         deploy_recipe_dlls(&recipe)?;
     } else if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
@@ -432,9 +442,12 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
-    if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
+    if recipe.dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
+        if node.uses_winedllpath_routing() {
+            cleanup_legacy_injections(game_dir)?;
+        }
         deploy_recipe_dlls(&recipe)?;
     }
 
@@ -563,8 +576,10 @@ fn launch_dxmt_metal_with_context(
     stage_app_compat_config(appid, node.id, &prefix)?;
 
     if node.uses_winedllpath_routing() {
-        validate_recipe_runtime(&recipe)?;
         cleanup_legacy_injections(game_dir)?;
+    }
+    if recipe.dlls.is_empty() {
+        validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
     }

@@ -1988,14 +1988,16 @@ bool MTLD3D12PipelineState::CompileImpl() {
               gs_hash, gs_reason.c_str());
     }
     if (m_gs_passthrough == ~0u) {
-      Logger::warn(str::format(
+      std::string detail = str::format(
           "CreateGraphicsPipelineState: dropping unsupported GS bytes=",
           m_gs.size(), " hash=0x", str::format("%016zx", gs_hash), " magic=",
           DescribeShaderBlobMagic(m_gs.data(), m_gs.size()), " reason=",
           gs_reason.empty() ? "unknown" : gs_reason, " dumped=",
-          gs_dump_path));
+          gs_dump_path);
+      Logger::warn(detail);
       PSTRACE("Graphics PSO GS dropped hash=0x%016zx detail=%s", gs_hash,
               gs_reason.c_str());
+      return RecordCompileFailure("pso/unsupported_geometry_shader", detail);
     }
   }
 
