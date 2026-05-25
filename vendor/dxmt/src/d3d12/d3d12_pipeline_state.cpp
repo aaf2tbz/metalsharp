@@ -921,6 +921,294 @@ std::string HexHash(size_t hash) {
   return text;
 }
 
+size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
+                                   ShaderType type,
+                                   const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = 0;
+  hash = hash * 131 + (size_t)type;
+  if (bytecode && size > 0) {
+    const uint8_t *p = (const uint8_t *)bytecode;
+    for (SIZE_T i = 0; i < size; i++)
+      hash = hash * 131 + p[i];
+  }
+  if (type == ShaderType::Vertex && input_layout) {
+    hash = hash * 131 + input_layout->NumElements;
+    for (UINT i = 0; i < input_layout->NumElements; i++) {
+      const auto &el = input_layout->pInputElementDescs[i];
+      hash = hash * 131 + el.SemanticIndex;
+      hash = hash * 131 + el.Format;
+      hash = hash * 131 + el.InputSlot;
+      hash = hash * 131 + el.AlignedByteOffset;
+      hash = hash * 131 + el.InputSlotClass;
+      hash = hash * 131 + el.InstanceDataStepRate;
+      if (el.SemanticName) {
+        for (const char *s = el.SemanticName; *s; s++)
+          hash = hash * 131 + (unsigned char)*s;
+      }
+    }
+  }
+  return hash;
+}
+
+bool FileExistsNonEmpty(const std::string &path) {
+  FILE *file = fopen(path.c_str(), "rb");
+  if (!file)
+    return false;
+  fseek(file, 0, SEEK_END);
+  long size = ftell(file);
+  fclose(file);
+  return size > 0;
+}
+
+const char *OfflineMetalPixelFormatName(WMTPixelFormat format) {
+  switch (format) {
+  case WMTPixelFormatR8Unorm:
+    return "r8unorm";
+  case WMTPixelFormatRG8Unorm:
+    return "rg8unorm";
+  case WMTPixelFormatR16Unorm:
+    return "r16unorm";
+  case WMTPixelFormatR16Float:
+    return "r16float";
+  case WMTPixelFormatRG16Unorm:
+    return "rg16unorm";
+  case WMTPixelFormatRG16Float:
+    return "rg16float";
+  case WMTPixelFormatRGBA8Unorm:
+    return "rgba8unorm";
+  case WMTPixelFormatRGBA8Unorm_sRGB:
+    return "rgba8unorm_srgb";
+  case WMTPixelFormatBGRA8Unorm:
+    return "bgra8unorm";
+  case WMTPixelFormatBGRA8Unorm_sRGB:
+    return "bgra8unorm_srgb";
+  case WMTPixelFormatRGB10A2Unorm:
+    return "rgb10a2unorm";
+  case WMTPixelFormatRG11B10Float:
+    return "rg11b10float";
+  case WMTPixelFormatRGBA16Unorm:
+    return "rgba16unorm";
+  case WMTPixelFormatRGBA16Float:
+    return "rgba16float";
+  case WMTPixelFormatRGBA32Float:
+    return "rgba32float";
+  case WMTPixelFormatR32Float:
+    return "r32float";
+  case WMTPixelFormatR32Uint:
+    return "r32uint";
+  case WMTPixelFormatDepth32Float:
+    return "depth32float";
+  case WMTPixelFormatDepth24Unorm_Stencil8:
+    return "depth24unorm_stencil8";
+  case WMTPixelFormatDepth32Float_Stencil8:
+    return "depth32float_stencil8";
+  default:
+    return "invalid";
+  }
+}
+
+std::string OfflineShaderMetallibPath(const void *bytecode, SIZE_T size,
+                                      ShaderType type,
+                                      const char *sm50_function_name,
+                                      const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
+  auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
+  auto dxil_metallib = cache_path + ".metallib";
+  if (FileExistsNonEmpty(dxil_metallib))
+    return dxil_metallib;
+  return BuildShaderCachePath(
+      str::format("dxmt_sm50_", sm50_function_name, ".metallib").c_str());
+}
+
+std::string OfflineShaderReflectionPath(const void *bytecode, SIZE_T size,
+                                        ShaderType type,
+                                        const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
+  auto reflection = BuildShaderCachePath((HexHash(hash) + ".json").c_str());
+  return FileExistsNonEmpty(reflection) ? reflection : std::string();
+}
+
+std::string OfflineShaderFunctionName(const void *bytecode, SIZE_T size,
+                                      ShaderType type,
+                                      const char *fallback_function_name,
+                                      const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  auto reflection = OfflineShaderReflectionPath(bytecode, size, type, input_layout);
+  if (!reflection.empty()) {
+    auto reflection_text = ReadTextFile(reflection.c_str());
+    std::string entry;
+    if (ExtractJsonStringValue(reflection_text, "EntryPoint", entry) &&
+        !entry.empty())
+      return entry;
+  }
+  return fallback_function_name ? fallback_function_name : "main";
+}
+
+std::string ShaderBytecodeDigest(const std::vector<uint8_t> &shader,
+                                 ShaderType type,
+                                 const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  if (shader.empty())
+    return "0";
+  return HexHash(ComputeD3D12ShaderCacheHash(shader.data(), shader.size(), type,
+                                            input_layout));
+}
+
+std::string OfflinePsoManifestPath(const std::string &name) {
+  return BuildShaderCachePath(("pso-" + name + ".json").c_str());
+}
+
+void EmitOfflineComputePsoManifest(const std::vector<uint8_t> &cs,
+                                   const WMTComputePipelineInfo &info,
+                                   const WMTSize &threadgroup_size) {
+  if (cs.empty())
+    return;
+  EnsureShaderCacheDir();
+  const std::string cs_hash =
+      ShaderBytecodeDigest(cs, ShaderType::Compute, nullptr);
+  const std::string manifest =
+      OfflinePsoManifestPath("compute-" + cs_hash);
+  FILE *file = fopen(manifest.c_str(), "w");
+  if (!file)
+    return;
+
+  const std::string metallib = OfflineShaderMetallibPath(
+      cs.data(), cs.size(), ShaderType::Compute, "cs_main", nullptr);
+  const std::string reflection =
+      OfflineShaderReflectionPath(cs.data(), cs.size(), ShaderType::Compute,
+                                  nullptr);
+  const std::string function = OfflineShaderFunctionName(
+      cs.data(), cs.size(), ShaderType::Compute, "cs_main", nullptr);
+
+  fprintf(file,
+          "{\n"
+          "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n"
+          "  \"source\": \"dxmt-d3d12-capture\",\n"
+          "  \"pipelines\": [\n"
+          "    {\n"
+          "      \"name\": \"compute-%s\",\n"
+          "      \"type\": \"compute\",\n"
+          "      \"shader\": {\"metallib\": \"%s\", \"function\": \"%s\", "
+          "\"reflection\": \"%s\"},\n"
+          "      \"d3d12\": {\"cs_hash\": \"%s\", \"cs_bytes\": %zu},\n"
+          "      \"metal\": {\"compute_function\": %llu},\n"
+          "      \"threadgroup_size\": [%llu, %llu, %llu]\n"
+          "    }\n"
+          "  ]\n"
+          "}\n",
+          cs_hash.c_str(), EscapeJsonString(metallib).c_str(),
+          EscapeJsonString(function).c_str(),
+          EscapeJsonString(reflection).c_str(), cs_hash.c_str(), cs.size(),
+          (unsigned long long)info.compute_function,
+          (unsigned long long)threadgroup_size.width,
+          (unsigned long long)threadgroup_size.height,
+          (unsigned long long)threadgroup_size.depth);
+  fclose(file);
+  PSTRACE("offline PSO manifest wrote %s", manifest.c_str());
+}
+
+void EmitOfflineRenderPsoManifest(
+    const std::vector<uint8_t> &vs, const std::vector<uint8_t> &ps,
+    const std::vector<uint8_t> &gs, const WMTRenderPipelineInfo &info,
+    const D3D12_INPUT_LAYOUT_DESC &input_layout, UINT num_render_targets,
+    DXGI_FORMAT dsv_format, UINT sample_count, bool uses_stage_in,
+    bool uses_geometry_mesh) {
+  if (vs.empty())
+    return;
+  EnsureShaderCacheDir();
+  const std::string vs_hash =
+      ShaderBytecodeDigest(vs, ShaderType::Vertex, &input_layout);
+  const std::string ps_hash =
+      ShaderBytecodeDigest(ps, ShaderType::Pixel, nullptr);
+  const std::string gs_hash =
+      ShaderBytecodeDigest(gs, ShaderType::Geometry, nullptr);
+  std::string pso_name =
+      "render-" + vs_hash + "-" + (ps.empty() ? std::string("nopixel") : ps_hash);
+  const std::string manifest = OfflinePsoManifestPath(pso_name);
+  FILE *file = fopen(manifest.c_str(), "w");
+  if (!file)
+    return;
+
+  const std::string vs_metallib = OfflineShaderMetallibPath(
+      vs.data(), vs.size(), ShaderType::Vertex, "vs_main", &input_layout);
+  const std::string vs_reflection = OfflineShaderReflectionPath(
+      vs.data(), vs.size(), ShaderType::Vertex, &input_layout);
+  const std::string vs_function = OfflineShaderFunctionName(
+      vs.data(), vs.size(), ShaderType::Vertex, "vs_main", &input_layout);
+
+  std::string ps_metallib;
+  std::string ps_reflection;
+  std::string ps_function = "ps_main";
+  if (!ps.empty()) {
+    ps_metallib = OfflineShaderMetallibPath(
+        ps.data(), ps.size(), ShaderType::Pixel, "ps_main", nullptr);
+    ps_reflection = OfflineShaderReflectionPath(
+        ps.data(), ps.size(), ShaderType::Pixel, nullptr);
+    ps_function = OfflineShaderFunctionName(
+        ps.data(), ps.size(), ShaderType::Pixel, "ps_main", nullptr);
+  }
+
+  fprintf(file,
+          "{\n"
+          "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n"
+          "  \"source\": \"dxmt-d3d12-capture\",\n"
+          "  \"pipelines\": [\n"
+          "    {\n"
+          "      \"name\": \"%s\",\n"
+          "      \"type\": \"render\",\n"
+          "      \"vertex\": {\"metallib\": \"%s\", \"function\": \"%s\", "
+          "\"reflection\": \"%s\"},\n",
+          pso_name.c_str(), EscapeJsonString(vs_metallib).c_str(),
+          EscapeJsonString(vs_function).c_str(),
+          EscapeJsonString(vs_reflection).c_str());
+  if (!ps.empty()) {
+    fprintf(file,
+            "      \"fragment\": {\"metallib\": \"%s\", \"function\": \"%s\", "
+            "\"reflection\": \"%s\"},\n",
+            EscapeJsonString(ps_metallib).c_str(),
+            EscapeJsonString(ps_function).c_str(),
+            EscapeJsonString(ps_reflection).c_str());
+  }
+  fprintf(file, "      \"color_formats\": [");
+  bool wrote_color = false;
+  for (UINT i = 0; i < num_render_targets && i < 8; i++) {
+    if (info.colors[i].pixel_format == WMTPixelFormatInvalid)
+      continue;
+    if (wrote_color)
+      fprintf(file, ", ");
+    wrote_color = true;
+    fprintf(file, "\"%s\"",
+            OfflineMetalPixelFormatName(info.colors[i].pixel_format));
+  }
+  if (!wrote_color)
+    fprintf(file, "\"invalid\"");
+  fprintf(file,
+          "],\n"
+          "      \"depth_format\": \"%s\",\n"
+          "      \"stencil_format\": \"%s\",\n"
+          "      \"sample_count\": %u,\n"
+          "      \"d3d12\": {\"vs_hash\": \"%s\", \"ps_hash\": \"%s\", "
+          "\"gs_hash\": \"%s\", \"vs_bytes\": %zu, \"ps_bytes\": %zu, "
+          "\"gs_bytes\": %zu, \"num_render_targets\": %u, "
+          "\"dsv_format\": %u, \"input_elements\": %u},\n"
+          "      \"metal\": {\"vertex_function\": %llu, "
+          "\"fragment_function\": %llu, \"rasterization_enabled\": %s, "
+          "\"uses_stage_in\": %s, \"uses_geometry_mesh\": %s}\n"
+          "    }\n"
+          "  ]\n"
+          "}\n",
+          OfflineMetalPixelFormatName(info.depth_pixel_format),
+          OfflineMetalPixelFormatName(info.stencil_pixel_format),
+          sample_count ? sample_count : 1, vs_hash.c_str(), ps_hash.c_str(),
+          gs_hash.c_str(), vs.size(), ps.size(), gs.size(), num_render_targets,
+          (unsigned)dsv_format, input_layout.NumElements,
+          (unsigned long long)info.vertex_function,
+          (unsigned long long)info.fragment_function,
+          info.rasterization_enabled ? "true" : "false",
+          uses_stage_in ? "true" : "false",
+          uses_geometry_mesh ? "true" : "false");
+  fclose(file);
+  PSTRACE("offline PSO manifest wrote %s", manifest.c_str());
+}
+
 bool WriteMetalShaderConverterVertexLayout(
     MTLD3D12Device *device, const D3D12_INPUT_LAYOUT_DESC &input_layout,
     const char *path) {
@@ -1319,29 +1607,9 @@ bool MTLD3D12PipelineState::CompileShader(
   if (type == ShaderType::Vertex)
     m_vs_stage_in_attribute_order.clear();
 
-  size_t hash = 0;
-  hash = hash * 131 + (size_t)type;
-  if (bytecode && size > 0) {
-    const uint8_t *p = (const uint8_t *)bytecode;
-    for (SIZE_T i = 0; i < size; i++)
-      hash = hash * 131 + p[i];
-  }
-  if (type == ShaderType::Vertex) {
-    hash = hash * 131 + m_input_layout.NumElements;
-    for (UINT i = 0; i < m_input_layout.NumElements; i++) {
-      const auto &el = m_input_layout.pInputElementDescs[i];
-      hash = hash * 131 + el.SemanticIndex;
-      hash = hash * 131 + el.Format;
-      hash = hash * 131 + el.InputSlot;
-      hash = hash * 131 + el.AlignedByteOffset;
-      hash = hash * 131 + el.InputSlotClass;
-      hash = hash * 131 + el.InstanceDataStepRate;
-      if (el.SemanticName) {
-        for (const char *s = el.SemanticName; *s; s++)
-          hash = hash * 131 + (unsigned char)*s;
-      }
-    }
-  }
+  size_t hash = ComputeD3D12ShaderCacheHash(
+      bytecode, size, type,
+      type == ShaderType::Vertex ? &m_input_layout : nullptr);
   shader_timer.SetDetail("func=%s type=%u size=%zu blob=%s hash=0x%zx",
                          func_name, (unsigned)type, size,
                          DescribeShaderBlobMagic(bytecode, size), hash);
@@ -2143,6 +2411,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
     WMTComputePipelineInfo info = {};
     WMT::InitializeComputePipelineInfo(info);
     info.compute_function = cs_func.handle;
+    EmitOfflineComputePsoManifest(m_cs, info, GetThreadgroupSize());
 
     DXMTD3D12ScopedTimer metal_compute_timer("PSO", "CreateMetalComputePSO");
     metal_compute_timer.SetDetail("this=%p func=%llu threads=%ux%ux%u",
@@ -3452,6 +3721,10 @@ bool MTLD3D12PipelineState::CompileImpl() {
       (unsigned)m_depth_stencil_desc.DepthEnable,
       (unsigned)m_depth_stencil_desc.StencilEnable,
       m_vs_uses_stage_in ? 1u : 0u, m_input_layout.NumElements);
+  EmitOfflineRenderPsoManifest(m_vs, m_ps, m_gs, info, m_input_layout,
+                               m_num_render_targets, m_dsv_format,
+                               m_sample_count, m_vs_uses_stage_in,
+                               m_uses_geometry_mesh_pipeline);
   m_render_pso = wmt_device.newRenderPipelineState(info, err);
   if (!m_render_pso.handle) {
     auto err_desc_string =

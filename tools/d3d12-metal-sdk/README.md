@@ -140,6 +140,20 @@ Failures are captured in `results/offline-pso-factory-*.json` with the exact
 Metal error string from `newRenderPipelineStateWithDescriptor` or
 `newComputePipelineStateWithFunction`.
 
+DXMT now also writes captured manifests beside the shader cache as
+`pso-*.json` during D3D12 PSO creation. When those files exist,
+`offline-pso-factory.py` automatically prefers them over shader-only discovery:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/offline-pso-factory.py \
+  --profile subnautica2 \
+  --corpus "/path/to/shader-cache/m12/1962700"
+```
+
+This is the preferred no-game proof for Subnautica-class failures: the game
+captures the D3D12 descriptor once, then the SDK replays Metal PSO creation
+offline until the exact descriptor succeeds or reports a stable Metal error.
+
 If no corpus exists yet, use the bounded capture runner instead of a blind
 interactive launch:
 

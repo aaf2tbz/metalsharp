@@ -29,12 +29,22 @@ static MTLPixelFormat pixelFormat(NSString *name) {
   if ([n isEqualToString:@"rgba8unorm_srgb"] || [n isEqualToString:@"r8g8b8a8_unorm_srgb"]) return MTLPixelFormatRGBA8Unorm_sRGB;
   if ([n isEqualToString:@"bgra8unorm"] || [n isEqualToString:@"b8g8r8a8_unorm"]) return MTLPixelFormatBGRA8Unorm;
   if ([n isEqualToString:@"bgra8unorm_srgb"] || [n isEqualToString:@"b8g8r8a8_unorm_srgb"]) return MTLPixelFormatBGRA8Unorm_sRGB;
+  if ([n isEqualToString:@"r8unorm"] || [n isEqualToString:@"r8_unorm"]) return MTLPixelFormatR8Unorm;
+  if ([n isEqualToString:@"rg8unorm"] || [n isEqualToString:@"r8g8_unorm"]) return MTLPixelFormatRG8Unorm;
+  if ([n isEqualToString:@"r16float"] || [n isEqualToString:@"r16_float"]) return MTLPixelFormatR16Float;
+  if ([n isEqualToString:@"r16unorm"] || [n isEqualToString:@"r16_unorm"]) return MTLPixelFormatR16Unorm;
+  if ([n isEqualToString:@"rg16float"] || [n isEqualToString:@"r16g16_float"]) return MTLPixelFormatRG16Float;
+  if ([n isEqualToString:@"rg16unorm"] || [n isEqualToString:@"r16g16_unorm"]) return MTLPixelFormatRG16Unorm;
   if ([n isEqualToString:@"rgba16float"] || [n isEqualToString:@"r16g16b16a16_float"]) return MTLPixelFormatRGBA16Float;
+  if ([n isEqualToString:@"rgba16unorm"] || [n isEqualToString:@"r16g16b16a16_unorm"]) return MTLPixelFormatRGBA16Unorm;
+  if ([n isEqualToString:@"rg11b10float"] || [n isEqualToString:@"r11g11b10_float"]) return MTLPixelFormatRG11B10Float;
+  if ([n isEqualToString:@"rgb10a2unorm"] || [n isEqualToString:@"r10g10b10a2_unorm"]) return MTLPixelFormatRGB10A2Unorm;
   if ([n isEqualToString:@"rgba32float"] || [n isEqualToString:@"r32g32b32a32_float"]) return MTLPixelFormatRGBA32Float;
   if ([n isEqualToString:@"r32float"] || [n isEqualToString:@"r32_float"]) return MTLPixelFormatR32Float;
   if ([n isEqualToString:@"r32uint"] || [n isEqualToString:@"r32_uint"]) return MTLPixelFormatR32Uint;
   if ([n isEqualToString:@"depth32float"] || [n isEqualToString:@"d32_float"]) return MTLPixelFormatDepth32Float;
   if ([n isEqualToString:@"depth24unorm_stencil8"] || [n isEqualToString:@"d24_unorm_s8_uint"]) return MTLPixelFormatDepth24Unorm_Stencil8;
+  if ([n isEqualToString:@"depth32float_stencil8"] || [n isEqualToString:@"d32_float_s8x24_uint"]) return MTLPixelFormatDepth32Float_Stencil8;
   return MTLPixelFormatInvalid;
 }
 
@@ -150,11 +160,15 @@ int main(int argc, const char **argv) {
           [results addObject:failResult(pipeline, @"vertex_function_failed", errorText)];
           continue;
         }
-        id<MTLFunction> fragment = loadFunction(device, pipeline[@"fragment"], &errorText);
-        if (!fragment) {
-          failures += 1;
-          [results addObject:failResult(pipeline, @"fragment_function_failed", errorText)];
-          continue;
+        id<MTLFunction> fragment = nil;
+        id fragmentShader = pipeline[@"fragment"];
+        if ([fragmentShader isKindOfClass:[NSDictionary class]]) {
+          fragment = loadFunction(device, fragmentShader, &errorText);
+          if (!fragment) {
+            failures += 1;
+            [results addObject:failResult(pipeline, @"fragment_function_failed", errorText)];
+            continue;
+          }
         }
         MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
         desc.vertexFunction = vertex;
@@ -224,6 +238,41 @@ def discover_reflections(roots: list[Path]) -> list[Path]:
     for root in roots:
         reflections.extend(root.rglob("*.json"))
     return sorted(set(path for path in reflections if path.with_suffix(".metallib").exists()))
+
+
+def discover_pso_manifests(roots: list[Path]) -> list[Path]:
+    manifests: list[Path] = []
+    for root in roots:
+        manifests.extend(root.rglob("pso-*.json"))
+    return sorted(set(manifests))
+
+
+def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
+    pipelines: list[dict] = []
+    source_manifests: list[str] = []
+    for manifest_path in discover_pso_manifests(roots):
+        manifest = load_json(manifest_path)
+        if not manifest or not isinstance(manifest.get("pipelines"), list):
+            continue
+        source_manifests.append(str(manifest_path))
+        for pipeline in manifest["pipelines"]:
+            if isinstance(pipeline, dict):
+                copy = dict(pipeline)
+                copy.setdefault("captured_manifest", str(manifest_path))
+                pipelines.append(copy)
+                if limit > 0 and len(pipelines) >= limit:
+                    break
+        if limit > 0 and len(pipelines) >= limit:
+            break
+    if not pipelines:
+        return None
+    return {
+        "schema": "metalsharp.d3d12-metal.offline-pso-manifest.v1",
+        "mode": "captured-pso-manifests",
+        "roots": [str(root) for root in roots],
+        "source_manifests": source_manifests,
+        "pipelines": pipelines,
+    }
 
 
 def auto_manifest(roots: list[Path], limit: int) -> dict:
@@ -299,8 +348,10 @@ def main() -> int:
             return 2
     else:
         roots = [Path(path) for path in args.corpus] if args.corpus else default_corpus_roots()
-        manifest = auto_manifest(roots, args.limit)
-        manifest["roots"] = [str(root) for root in roots]
+        manifest = merged_pso_manifest(roots, args.limit)
+        if manifest is None:
+            manifest = auto_manifest(roots, args.limit)
+            manifest["roots"] = [str(root) for root in roots]
 
     pipelines = manifest.get("pipelines", [])
     if not pipelines:
