@@ -275,7 +275,10 @@ MTLD3D12SwapChain::GetBuffer(UINT buffer_idx, REFIID riid, void **surface) {
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
+  SCTRACE("SetFullscreenState fullscreen=%u target=%p hwnd=%p",
+          fullscreen ? 1 : 0, target, m_hwnd);
   m_fs_desc.Windowed = !fullscreen;
+  m_fullscreen_target = target;
   return S_OK;
 }
 
@@ -284,12 +287,17 @@ MTLD3D12SwapChain::GetFullscreenState(BOOL *fullscreen, IDXGIOutput **target) {
   if (fullscreen)
     *fullscreen = !m_fs_desc.Windowed;
   if (target)
-    *target = nullptr;
+    *target = m_fullscreen_target.ref();
+  SCTRACE("GetFullscreenState fullscreen=%u target=%p hwnd=%p",
+          m_fs_desc.Windowed ? 0 : 1,
+          target ? *target : nullptr, m_hwnd);
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC *desc) {
+  if (!desc)
+    return E_INVALIDARG;
   desc->BufferDesc.Width = m_desc.Width;
   desc->BufferDesc.Height = m_desc.Height;
   desc->BufferDesc.RefreshRate = m_fs_desc.RefreshRate;
@@ -303,6 +311,9 @@ MTLD3D12SwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC *desc) {
   desc->Windowed = m_fs_desc.Windowed;
   desc->SwapEffect = m_desc.SwapEffect;
   desc->Flags = m_desc.Flags;
+  SCTRACE("GetDesc hwnd=%p w=%u h=%u fmt=%u buffers=%u windowed=%u",
+          m_hwnd, m_desc.Width, m_desc.Height, (unsigned)m_desc.Format,
+          m_desc.BufferCount, m_fs_desc.Windowed ? 1 : 0);
   return S_OK;
 }
 
@@ -376,7 +387,30 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
-  SCTRACE("ResizeTarget w=%u h=%u", new_target_params ? new_target_params->Width : 0, new_target_params ? new_target_params->Height : 0);
+  SCTRACE("ResizeTarget hwnd=%p w=%u h=%u fmt=%u", m_hwnd,
+          new_target_params ? new_target_params->Width : 0,
+          new_target_params ? new_target_params->Height : 0,
+          new_target_params ? (unsigned)new_target_params->Format : 0);
+  if (!new_target_params)
+    return DXGI_ERROR_INVALID_CALL;
+  if (!m_hwnd || !IsWindow(m_hwnd))
+    return DXGI_ERROR_INVALID_CALL;
+
+  if (new_target_params->RefreshRate.Numerator)
+    m_fs_desc.RefreshRate = new_target_params->RefreshRate;
+  m_fs_desc.ScanlineOrdering = new_target_params->ScanlineOrdering;
+  m_fs_desc.Scaling = new_target_params->Scaling;
+
+  if (m_fs_desc.Windowed && new_target_params->Width && new_target_params->Height) {
+    RECT client = {0, 0, static_cast<LONG>(new_target_params->Width),
+                   static_cast<LONG>(new_target_params->Height)};
+    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
+    DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
+    AdjustWindowRectEx(&client, style, FALSE, ex_style);
+    SetWindowPos(m_hwnd, nullptr, 0, 0, client.right - client.left,
+                 client.bottom - client.top, SWP_NOMOVE | SWP_NOZORDER |
+                                             SWP_NOACTIVATE);
+  }
   return S_OK;
 }
 
@@ -395,34 +429,45 @@ MTLD3D12SwapChain::GetContainingOutput(IDXGIOutput **output) {
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetFrameStatistics(DXGI_FRAME_STATISTICS *stats) {
-  if (stats)
-    memset(stats, 0, sizeof(*stats));
+  if (!stats)
+    return DXGI_ERROR_INVALID_CALL;
+  memset(stats, 0, sizeof(*stats));
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetLastPresentCount(UINT *last_present_count) {
-  if (last_present_count)
-    *last_present_count = (UINT)m_present_count;
+  if (!last_present_count)
+    return DXGI_ERROR_INVALID_CALL;
+  *last_present_count = (UINT)m_present_count;
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1 *desc) {
+  if (!desc)
+    return E_INVALIDARG;
   *desc = m_desc;
+  SCTRACE("GetDesc1 hwnd=%p w=%u h=%u fmt=%u buffers=%u",
+          m_hwnd, m_desc.Width, m_desc.Height, (unsigned)m_desc.Format,
+          m_desc.BufferCount);
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC *desc) {
+  if (!desc)
+    return E_INVALIDARG;
   *desc = m_fs_desc;
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetHwnd(HWND *hWnd) {
-  if (hWnd)
-    *hWnd = m_hwnd;
+  if (!hWnd)
+    return E_INVALIDARG;
+  *hWnd = m_hwnd;
+  SCTRACE("GetHwnd -> %p", m_hwnd);
   return S_OK;
 }
 

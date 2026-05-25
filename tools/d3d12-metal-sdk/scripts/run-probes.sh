@@ -231,6 +231,10 @@ for dll in d3d12.dll dxgi.dll d3d11.dll d3d10core.dll winemetal.dll; do
     echo "Missing DXMT Windows runtime DLL: $WINDOWS_DIR/$dll" >&2
     exit 2
   fi
+  # Wine resolves native PE DLLs from the application directory before
+  # WINEDLLPATH. Keep the probe bin dir pinned to the selected runtime so
+  # stale local DLLs cannot make the SDK report false results.
+  cp "$WINDOWS_DIR/$dll" "$SDK_DIR/out/bin/$dll"
 done
 
 if [[ ! -f "$UNIX_DIR/winemetal.so" ]]; then

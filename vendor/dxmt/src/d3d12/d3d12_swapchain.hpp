@@ -97,6 +97,7 @@ private:
   WMT::Object m_native_view;
   DXGI_SWAP_CHAIN_DESC1 m_desc = {};
   DXGI_SWAP_CHAIN_FULLSCREEN_DESC m_fs_desc = {};
+  Com<IDXGIOutput> m_fullscreen_target;
   UINT m_source_width = 0;
   UINT m_source_height = 0;
   UINT m_frame_latency = 1;

@@ -109,8 +109,14 @@ public:
       IUnknown *pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1 *pDesc,
       const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc,
       IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) final {
-    DGTRACE("CreateSwapChainForHwnd called");
+    DGTRACE("CreateSwapChainForHwnd called hwnd=%p desc=%p fullscreen=%p assoc=%p flags=0x%x",
+            hWnd, pDesc, pFullscreenDesc, associated_window_, window_assoc_flags_);
     InitReturnPtr(ppSwapChain);
+
+    if (!hWnd && associated_window_) {
+      DGTRACE("CreateSwapChainForHwnd using associated hwnd=%p", associated_window_);
+      hWnd = associated_window_;
+    }
 
     if (!ppSwapChain || !pDesc || !hWnd || !pDevice) {
       DGTRACE("CreateSwapChainForHwnd -> DXGI_ERROR_INVALID_CALL (null args)");
@@ -127,6 +133,15 @@ public:
 
     // Make sure the back buffer size is not zero
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+
+    bool valid_window = wsi::isWindow(hWnd);
+    DGTRACE("CreateSwapChainForHwnd hwnd=%p valid=%u requested=%ux%u fmt=%u buffers=%u swapEffect=%u flags=0x%x",
+            hWnd, valid_window ? 1 : 0, desc.Width, desc.Height,
+            (unsigned)desc.Format, desc.BufferCount, (unsigned)desc.SwapEffect,
+            desc.Flags);
+
+    if (!valid_window)
+      return DXGI_ERROR_INVALID_CALL;
 
     wsi::getWindowSize(hWnd, desc.Width ? nullptr : &desc.Width,
                        desc.Height ? nullptr : &desc.Height);
@@ -229,6 +244,8 @@ public:
       return DXGI_ERROR_INVALID_CALL;
 
     *pWindowHandle = associated_window_;
+    DGTRACE("GetWindowAssociation -> hwnd=%p flags=0x%x",
+            associated_window_, window_assoc_flags_);
     return S_OK;
   }
 
@@ -240,10 +257,10 @@ public:
 
   HRESULT STDMETHODCALLTYPE MakeWindowAssociation(HWND WindowHandle,
                                                   UINT Flags) final {
-    if (Flags) {
-      WARN("MakeWindowAssociation: Ignoring flags ", Flags);
-    }
     associated_window_ = WindowHandle;
+    window_assoc_flags_ = Flags;
+    DGTRACE("MakeWindowAssociation hwnd=%p flags=0x%x valid=%u", WindowHandle,
+            Flags, WindowHandle ? (wsi::isWindow(WindowHandle) ? 1 : 0) : 0);
     return S_OK;
   }
 
@@ -251,35 +268,50 @@ public:
 
   HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusWindow(
       HWND WindowHandle, UINT wMsg, DWORD *pdwCookie) final {
-    ERR("Not implemented");
-    return E_NOTIMPL;
+    if (!pdwCookie)
+      return DXGI_ERROR_INVALID_CALL;
+    *pdwCookie = next_status_cookie_++;
+    DGTRACE("RegisterOcclusionStatusWindow hwnd=%p msg=%u cookie=%u",
+            WindowHandle, wMsg, *pdwCookie);
+    return S_OK;
   }
 
   HRESULT STDMETHODCALLTYPE RegisterStereoStatusEvent(HANDLE hEvent,
                                                       DWORD *pdwCookie) final {
-    ERR("Not implemented");
-    return E_NOTIMPL;
+    if (!pdwCookie)
+      return DXGI_ERROR_INVALID_CALL;
+    *pdwCookie = next_status_cookie_++;
+    DGTRACE("RegisterStereoStatusEvent event=%p cookie=%u", hEvent, *pdwCookie);
+    return S_OK;
   }
 
   HRESULT STDMETHODCALLTYPE RegisterStereoStatusWindow(HWND WindowHandle,
                                                        UINT wMsg,
                                                        DWORD *pdwCookie) final {
-    ERR("Not implemented");
-    return E_NOTIMPL;
+    if (!pdwCookie)
+      return DXGI_ERROR_INVALID_CALL;
+    *pdwCookie = next_status_cookie_++;
+    DGTRACE("RegisterStereoStatusWindow hwnd=%p msg=%u cookie=%u",
+            WindowHandle, wMsg, *pdwCookie);
+    return S_OK;
   }
 
   HRESULT STDMETHODCALLTYPE
   RegisterOcclusionStatusEvent(HANDLE hEvent, DWORD *pdwCookie) final {
-    ERR("Not implemented");
-    return E_NOTIMPL;
+    if (!pdwCookie)
+      return DXGI_ERROR_INVALID_CALL;
+    *pdwCookie = next_status_cookie_++;
+    DGTRACE("RegisterOcclusionStatusEvent event=%p cookie=%u", hEvent,
+            *pdwCookie);
+    return S_OK;
   }
 
   void STDMETHODCALLTYPE UnregisterStereoStatus(DWORD dwCookie) final {
-    ERR("Not implemented");
+    DGTRACE("UnregisterStereoStatus cookie=%u", dwCookie);
   }
 
   void STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD dwCookie) final {
-    ERR("Not implemented");
+    DGTRACE("UnregisterOcclusionStatus cookie=%u", dwCookie);
   }
 
   UINT STDMETHODCALLTYPE GetCreationFlags() override { return flags_; }
@@ -378,6 +410,8 @@ private:
   UINT flags_;
 
   HWND associated_window_ = nullptr;
+  UINT window_assoc_flags_ = 0;
+  DWORD next_status_cookie_ = 1;
 };
 
 extern "C" HRESULT __stdcall CreateDXGIFactory2(UINT Flags, REFIID riid,

@@ -2108,7 +2108,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     }
   };
 
-  auto publishResult = [&](uint8_t vector_lanes_override = 0,
+  auto publishResult = [&](uint8_t vector_lanes_override = UINT8_MAX,
                            std::string expr_override = std::string()) {
     ensureValueTable(result_slot);
     ctx.value_table[result_slot] = result;
@@ -2116,8 +2116,9 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     ctx.value_expr_table[result_slot] = std::move(expr_override);
     ctx.value_types[result_slot] = inst.type_id;
     ctx.value_vector_lanes[result_slot] =
-        vector_lanes_override ? vector_lanes_override
-                              : vectorLaneCountForTypeId(inst.type_id, ctx.mod);
+        vector_lanes_override != UINT8_MAX
+            ? (vector_lanes_override ? vector_lanes_override : 1)
+            : vectorLaneCountForTypeId(inst.type_id, ctx.mod);
     value_counter = std::max(value_counter + 1, result_slot + 1);
   };
 

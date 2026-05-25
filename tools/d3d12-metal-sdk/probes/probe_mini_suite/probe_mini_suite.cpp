@@ -1063,8 +1063,24 @@ static ProbeResult probe_swapchain_present() {
 
     ID3D12CommandQueue* queue = nullptr;
     IDXGISwapChain1* swapchain1 = nullptr;
+    HRESULT make_assoc_hr = E_FAIL;
+    HRESULT get_assoc_hr = E_FAIL;
+    HRESULT get_hwnd_hr = E_FAIL;
+    HRESULT get_desc_hr = E_FAIL;
+    HRESULT register_occ_hr = E_FAIL;
+    HWND associated_hwnd = nullptr;
+    HWND swapchain_hwnd = nullptr;
+    DXGI_SWAP_CHAIN_DESC swapchain_desc = {};
+    DWORD occ_cookie = 0;
     if (SUCCEEDED(hr))
         hr = create_queue(device, D3D12_COMMAND_LIST_TYPE_DIRECT, &queue);
+    if (SUCCEEDED(hr)) {
+        make_assoc_hr = factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+        get_assoc_hr = factory->GetWindowAssociation(&associated_hwnd);
+        register_occ_hr = factory->RegisterOcclusionStatusWindow(hwnd, WM_USER + 17, &occ_cookie);
+        if (occ_cookie)
+            factory->UnregisterOcclusionStatus(occ_cookie);
+    }
     if (SUCCEEDED(hr)) {
         DXGI_SWAP_CHAIN_DESC1 desc = {};
         desc.Width = 64;
@@ -1076,12 +1092,27 @@ static ProbeResult probe_swapchain_present() {
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         hr = factory->CreateSwapChainForHwnd(queue, hwnd, &desc, nullptr, nullptr, &swapchain1);
     }
+    if (SUCCEEDED(hr)) {
+        get_hwnd_hr = swapchain1->GetHwnd(&swapchain_hwnd);
+        get_desc_hr = swapchain1->GetDesc(&swapchain_desc);
+    }
     HRESULT present_hr = E_FAIL;
     if (SUCCEEDED(hr))
         present_hr = swapchain1->Present(0, 0);
 
-    bool ok = SUCCEEDED(hr) && SUCCEEDED(present_hr);
-    std::string extra = "\"create_swapchain_hr\":\"" + hr_hex(hr) + "\",\"present_hr\":\"" + hr_hex(present_hr) + "\"";
+    bool ok = SUCCEEDED(hr) && SUCCEEDED(present_hr) && SUCCEEDED(make_assoc_hr) && SUCCEEDED(get_assoc_hr) &&
+              SUCCEEDED(get_hwnd_hr) && SUCCEEDED(get_desc_hr) && SUCCEEDED(register_occ_hr) &&
+              associated_hwnd == hwnd && swapchain_hwnd == hwnd && swapchain_desc.OutputWindow == hwnd;
+    std::string extra = "\"make_window_association_hr\":\"" + hr_hex(make_assoc_hr) +
+                        "\",\"get_window_association_hr\":\"" + hr_hex(get_assoc_hr) +
+                        "\",\"register_occlusion_status_window_hr\":\"" + hr_hex(register_occ_hr) +
+                        "\",\"create_swapchain_hr\":\"" + hr_hex(hr) + "\",\"get_hwnd_hr\":\"" +
+                        hr_hex(get_hwnd_hr) + "\",\"get_desc_hr\":\"" + hr_hex(get_desc_hr) +
+                        "\",\"present_hr\":\"" + hr_hex(present_hr) +
+                        "\",\"associated_matches\":" + (associated_hwnd == hwnd ? "true" : "false") +
+                        ",\"swapchain_hwnd_matches\":" + (swapchain_hwnd == hwnd ? "true" : "false") +
+                        ",\"desc_output_window_matches\":" +
+                        (swapchain_desc.OutputWindow == hwnd ? "true" : "false");
     safe_release(swapchain1);
     safe_release(queue);
     if (hwnd)
