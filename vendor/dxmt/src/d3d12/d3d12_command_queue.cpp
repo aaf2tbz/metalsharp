@@ -3016,13 +3016,25 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                (unsigned long long)dst_buf.handle, src_is_buffer,
                dst_is_buffer);
 
+        D3D12_RESOURCE_DESC src_desc = {};
+        D3D12_RESOURCE_DESC dst_desc = {};
+        src_res->GetDesc(&src_desc);
+        dst_res->GetDesc(&dst_desc);
+        UINT src_level =
+            src_is_buffer ? 0 : SubresourceMipLevel(src_desc, cmd->src_subresource);
+        UINT src_slice =
+            src_is_buffer ? 0 : SubresourceArraySlice(src_desc, cmd->src_subresource);
+        UINT dst_level =
+            dst_is_buffer ? 0 : SubresourceMipLevel(dst_desc, cmd->dst_subresource);
+        UINT dst_slice =
+            dst_is_buffer ? 0 : SubresourceArraySlice(dst_desc, cmd->dst_subresource);
+
         UINT copy_w, copy_h, copy_d;
         if (cmd->has_src_box) {
           copy_w = cmd->src_box.right - cmd->src_box.left;
           copy_h = cmd->src_box.bottom - cmd->src_box.top;
           copy_d = cmd->src_box.back - cmd->src_box.front;
         } else {
-          D3D12_RESOURCE_DESC tex_desc;
           if (src_is_buffer && cmd->src_footprint_width && cmd->src_footprint_height) {
             copy_w = cmd->src_footprint_width;
             copy_h = cmd->src_footprint_height;
@@ -3033,15 +3045,17 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             copy_h = cmd->dst_footprint_height;
             copy_d = cmd->dst_footprint_depth ? cmd->dst_footprint_depth : 1;
           } else if (!dst_is_buffer && dst_tex.handle) {
-            dst_res->GetDesc(&tex_desc);
-            copy_w = tex_desc.Width;
-            copy_h = tex_desc.Height;
-            copy_d = 1;
+            copy_w = MipSize(dst_desc.Width, dst_level);
+            copy_h = MipSize(dst_desc.Height, dst_level);
+            copy_d = dst_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+                         ? MipSize(dst_desc.DepthOrArraySize, dst_level)
+                         : 1;
           } else if (!src_is_buffer && src_tex.handle) {
-            src_res->GetDesc(&tex_desc);
-            copy_w = tex_desc.Width;
-            copy_h = tex_desc.Height;
-            copy_d = 1;
+            copy_w = MipSize(src_desc.Width, src_level);
+            copy_h = MipSize(src_desc.Height, src_level);
+            copy_d = src_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
+                         ? MipSize(src_desc.DepthOrArraySize, src_level)
+                         : 1;
           } else {
             copy_w = 1;
             copy_h = 1;
@@ -3066,17 +3080,21 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy.bytes_per_image = row_pitch * copy_h;
           copy.size = {copy_w, copy_h, copy_d};
           copy.dst = dst_tex.handle;
-          copy.slice = 0;
-          copy.level = 0;
+          copy.slice = dst_slice;
+          copy.level = dst_level;
           copy.origin = {cmd->dst_x, cmd->dst_y, cmd->dst_z};
+          QTRACE("CopyTextureRegion buffer->texture dst_level=%u dst_slice=%u "
+                 "offset=%llu row_pitch=%u size=%ux%ux%u",
+                 dst_level, dst_slice, (unsigned long long)cmd->src_offset,
+                 row_pitch, copy_w, copy_h, copy_d);
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
         } else if (!src_is_buffer && dst_is_buffer && src_tex.handle) {
           struct wmtcmd_blit_copy_from_texture_to_buffer copy = {};
           copy.type = WMTBlitCommandCopyFromTextureToBuffer;
           copy.next.set(nullptr);
           copy.src = src_tex.handle;
-          copy.slice = 0;
-          copy.level = 0;
+          copy.slice = src_slice;
+          copy.level = src_level;
           UINT src_x = cmd->has_src_box ? cmd->src_box.left : 0;
           UINT src_y = cmd->has_src_box ? cmd->src_box.top : 0;
           UINT src_z = cmd->has_src_box ? cmd->src_box.front : 0;
@@ -3084,8 +3102,15 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy.size = {copy_w, copy_h, copy_d};
           copy.dst = dst_buf.handle;
           copy.offset = cmd->dst_offset;
-          copy.bytes_per_row = cmd->dst_footprint_row_pitch;
-          copy.bytes_per_image = cmd->dst_footprint_row_pitch * copy_h;
+          UINT row_pitch = cmd->dst_footprint_row_pitch;
+          if (row_pitch == 0)
+            row_pitch = copy_w * 4;
+          copy.bytes_per_row = row_pitch;
+          copy.bytes_per_image = row_pitch * copy_h;
+          QTRACE("CopyTextureRegion texture->buffer src_level=%u src_slice=%u "
+                 "offset=%llu row_pitch=%u size=%ux%ux%u",
+                 src_level, src_slice, (unsigned long long)cmd->dst_offset,
+                 row_pitch, copy_w, copy_h, copy_d);
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
         } else if (!src_is_buffer && !dst_is_buffer && src_tex.handle &&
                    dst_tex.handle) {
@@ -3093,17 +3118,21 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy.type = WMTBlitCommandCopyFromTextureToTexture;
           copy.next.set(nullptr);
           copy.src = src_tex.handle;
-          copy.src_slice = 0;
-          copy.src_level = 0;
+          copy.src_slice = src_slice;
+          copy.src_level = src_level;
           UINT src_x = cmd->has_src_box ? cmd->src_box.left : 0;
           UINT src_y = cmd->has_src_box ? cmd->src_box.top : 0;
           UINT src_z = cmd->has_src_box ? cmd->src_box.front : 0;
           copy.src_origin = {src_x, src_y, src_z};
           copy.src_size = {copy_w, copy_h, copy_d};
           copy.dst = dst_tex.handle;
-          copy.dst_slice = 0;
-          copy.dst_level = 0;
+          copy.dst_slice = dst_slice;
+          copy.dst_level = dst_level;
           copy.dst_origin = {cmd->dst_x, cmd->dst_y, cmd->dst_z};
+          QTRACE("CopyTextureRegion texture->texture src_level=%u src_slice=%u "
+                 "dst_level=%u dst_slice=%u size=%ux%ux%u",
+                 src_level, src_slice, dst_level, dst_slice, copy_w, copy_h,
+                 copy_d);
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
         } else {
           QTRACE("CopyTextureRegion: unhandled buffer-to-buffer or null "
