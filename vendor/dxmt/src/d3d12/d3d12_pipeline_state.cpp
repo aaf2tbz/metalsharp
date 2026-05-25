@@ -2793,6 +2793,24 @@ bool MTLD3D12PipelineState::CompileImpl() {
               out_func = library.newFunction(visible_ref_name.c_str());
             }
             if (!out_func.handle) {
+              WMT::Reference<WMT::Error> plain_link_err;
+              out_func = library.newFunctionWithDescriptor(
+                  function_name, nullptr, nullptr, 0, WMTFunctionOptionNone,
+                  plain_link_err);
+              if (!out_func.handle && plain_link_err.handle)
+                fn_error_desc = plain_link_err.description().getUTF8String();
+            }
+            if (!out_func.handle) {
+              std::string visible_ref_name =
+                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
+              WMT::Reference<WMT::Error> visible_link_err;
+              out_func = library.newFunctionWithDescriptor(
+                  visible_ref_name.c_str(), nullptr, nullptr, 0,
+                  WMTFunctionOptionNone, visible_link_err);
+              if (!out_func.handle && visible_link_err.handle)
+                fn_error_desc = visible_link_err.description().getUTF8String();
+            }
+            if (!out_func.handle) {
               out_func = library.newFunctionWithDescriptor(
                   function_name, nullptr, constants, std::size(constants),
                   WMTFunctionOptionCompileToBinary, fn_err);

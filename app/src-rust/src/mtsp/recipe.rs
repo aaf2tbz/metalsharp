@@ -277,23 +277,36 @@ pub fn selected_deploy_dlls_for_pipeline(
     ms_root: &Path,
 ) -> Vec<RecipeDll> {
     let d3d9_subpath = if node.id == PipelineId::M9 { m9_d3d9_source_subpath(game_dir, exe_path) } else { "" };
-    let target_dir = exe_path.and_then(Path::parent).unwrap_or(game_dir);
+    let target_dirs = deploy_target_dirs_for_pipeline(game_dir, exe_path, node);
 
     node.deploy_dlls
         .iter()
         .filter(|dll| node.id != PipelineId::M9 || dll.source_subpath == d3d9_subpath)
-        .map(|dll| {
+        .flat_map(|dll| {
             let source_path = ms_root.join(dll.source_subpath).join(dll.filename);
-            let dest_path = target_dir.join(dll.filename);
-            RecipeDll {
+            target_dirs.iter().map(move |target_dir| RecipeDll {
                 source_subpath: dll.source_subpath.to_string(),
                 filename: dll.filename.to_string(),
                 source_present: source_path.exists(),
-                source_path,
-                dest_path,
-            }
+                source_path: source_path.clone(),
+                dest_path: target_dir.join(dll.filename),
+            })
         })
         .collect()
+}
+
+fn deploy_target_dirs_for_pipeline(game_dir: &Path, exe_path: Option<&Path>, node: &PipelineNode) -> Vec<PathBuf> {
+    let primary = exe_path.and_then(Path::parent).unwrap_or(game_dir).to_path_buf();
+    let mut dirs = vec![primary.clone()];
+
+    if node.id == PipelineId::M12 {
+        let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
+        if engine_bin.is_dir() && engine_bin != primary {
+            dirs.push(engine_bin);
+        }
+    }
+
+    dirs
 }
 
 pub fn is_likely_launcher_exe(path: &Path) -> bool {
@@ -892,6 +905,35 @@ mod tests {
         );
 
         assert!(dlls.iter().all(|dll| dll.dest_path.parent() == Some(exe_dir.as_path())));
+        let _ = std::fs::remove_dir_all(game_dir);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn m12_deploys_dlls_to_unreal_engine_binary_dir_too() {
+        let game_dir = test_dir("m12-ue-dll-dest");
+        let exe_dir = game_dir.join("Subnautica2").join("Binaries").join("Win64");
+        let engine_dir = game_dir.join("Engine").join("Binaries").join("Win64");
+        let runtime = test_dir("runtime-m12-ue");
+        std::fs::create_dir_all(&exe_dir).expect("create exe dir");
+        std::fs::create_dir_all(&engine_dir).expect("create engine dir");
+        let exe = exe_dir.join("Subnautica2-Win64-Shipping.exe");
+        std::fs::write(&exe, b"not pe").expect("write exe");
+
+        let dlls = selected_deploy_dlls_for_pipeline(
+            &game_dir,
+            Some(&exe),
+            super::super::engine::get_pipeline(PipelineId::M12),
+            &runtime,
+        );
+
+        let dxgi_targets = dlls
+            .iter()
+            .filter(|dll| dll.filename == "dxgi.dll")
+            .map(|dll| dll.dest_path.parent().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        assert!(dxgi_targets.contains(&Some(exe_dir)));
+        assert!(dxgi_targets.contains(&Some(engine_dir)));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }

@@ -31,6 +31,27 @@
 namespace dxmt {
 Logger Logger::s_instance("d3d11.log");
 
+using PFN_CreateDXGIFactory1_Dynamic = HRESULT(WINAPI *)(REFIID, void **);
+
+static HRESULT DXMTCreateDXGIFactory1(REFIID riid, void **factory) {
+  HMODULE dxgi = LoadLibraryA("dxgi.dll");
+  if (!dxgi) {
+    auto gle = GetLastError();
+    Logger::err(str::format("D3D11CreateDevice: LoadLibraryA(dxgi.dll) failed gle=%lu", gle));
+    return HRESULT_FROM_WIN32(gle);
+  }
+
+  auto proc = reinterpret_cast<PFN_CreateDXGIFactory1_Dynamic>(
+      GetProcAddress(dxgi, "CreateDXGIFactory1"));
+  if (!proc) {
+    auto gle = GetLastError();
+    Logger::err(str::format("D3D11CreateDevice: GetProcAddress(dxgi!CreateDXGIFactory1) failed gle=%lu", gle));
+    return HRESULT_FROM_WIN32(gle);
+  }
+
+  return proc(riid, factory);
+}
+
 extern "C" HRESULT WINAPI
 D3D11CoreCreateDevice(IDXGIFactory *pFactory, IDXGIAdapter *pAdapter,
                       UINT Flags, const D3D_FEATURE_LEVEL *pFeatureLevels,
@@ -140,7 +161,7 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(
     if (DriverType != D3D_DRIVER_TYPE_HARDWARE)
       WARN("D3D11CreateDevice: Unsupported driver type ", DriverType);
     // We'll use the first adapter returned by a DXGI factory
-    hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+    hr = DXMTCreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
 
     if (FAILED(hr)) {
       Logger::err("D3D11CreateDevice: Failed to create a DXGI factory");

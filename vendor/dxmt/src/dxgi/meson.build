@@ -1,4 +1,5 @@
 dxgi_res = wrc_generator.process('version.rc')
+dxgi_bootstrap_res = wrc_generator.process('version.rc')
 
 dxgi_src = [
   'dxgi_adapter.cpp',
@@ -9,21 +10,32 @@ dxgi_src = [
 ]
 
 dxgi_ld_args      = ['-L' + windows_native_install_dir] # a nice trick to force relink
+dxgi_bootstrap_ld_args = dxgi_ld_args + ['-nostdlib', '-lkernel32', '-Wl,--entry,DllMain']
 dxgi_link_depends = []
 
-dxgi_dll = shared_library('dxgi', dxgi_src, dxgi_res,
+dxgi_real_dll = shared_library('dxgi_dxmt', dxgi_src, dxgi_res,
   name_prefix         : '',
   dependencies        : [ dxmt_dep, util_dep, winemetal_dep ],
   include_directories : [ dxmt_include_path ],
   install             : true,
   install_dir         : windows_native_install_dir,
-  vs_module_defs      : 'dxgi.def',
+  vs_module_defs      : 'dxgi_dxmt.def',
   link_args           : dxgi_ld_args,
   link_depends        : [ dxgi_link_depends ],
 )
 
+dxgi_dll = shared_library('dxgi', ['dxgi_bootstrap.c'], dxgi_bootstrap_res,
+  name_prefix         : '',
+  include_directories : [ dxmt_include_path ],
+  install             : true,
+  install_dir         : windows_native_install_dir,
+  vs_module_defs      : 'dxgi.def',
+  link_args           : dxgi_bootstrap_ld_args,
+  link_depends        : [ dxgi_link_depends ],
+)
+
 dxgi_dep = declare_dependency(
-  link_with           : [ dxgi_dll ],
+  link_with           : [ dxgi_real_dll ],
   include_directories : [ dxmt_include_path, include_directories('.') ],
 )
 

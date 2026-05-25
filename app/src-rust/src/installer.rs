@@ -577,8 +577,16 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
 
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
     let pe_dir = dxmt_dir.join("x86_64-windows");
-    let required_pe =
-        ["d3d10core.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"];
+    let required_pe = [
+        "d3d10core.dll",
+        "d3d11.dll",
+        "d3d12.dll",
+        "dxgi.dll",
+        "dxgi_dxmt.dll",
+        "winemetal.dll",
+        "nvapi64.dll",
+        "nvngx.dll",
+    ];
     file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
         && required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
 }

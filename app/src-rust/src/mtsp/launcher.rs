@@ -657,7 +657,22 @@ fn stage_dxmt_nvidia_driver_shims(
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     std::fs::create_dir_all(&system32)?;
 
-    for shim in ["nvapi64.dll", "nvngx.dll"] {
+    let shims: &[&str] = if node.id == PipelineId::M12 {
+        &[
+            "d3d12.dll",
+            "d3d11.dll",
+            "dxgi.dll",
+            "dxgi_dxmt.dll",
+            "d3d10core.dll",
+            "winemetal.dll",
+            "nvapi64.dll",
+            "nvngx.dll",
+        ]
+    } else {
+        &["nvapi64.dll", "nvngx.dll"]
+    };
+
+    for shim in shims {
         let src = dxmt_dir.join(shim);
         if !src.exists() {
             continue;

@@ -670,6 +670,21 @@ static bool exprEndsWithScalarComponent(std::string expr) {
          ends_with(".w");
 }
 
+static bool exprContainsScalarComponentAccess(const std::string &expr) {
+  for (size_t pos = 0; pos + 1 < expr.size(); pos++) {
+    if (expr[pos] != '.')
+      continue;
+    char component = expr[pos + 1];
+    if (component != 'x' && component != 'y' &&
+        component != 'z' && component != 'w')
+      continue;
+    if (pos + 2 < expr.size() && isIdentifierChar(expr[pos + 2]))
+      continue;
+    return true;
+  }
+  return false;
+}
+
 static bool exprLooksScalar(const std::string &expr) {
   std::string trimmed = expr;
   size_t first = trimmed.find_first_not_of(" \t\r\n(");
@@ -688,10 +703,7 @@ static bool exprLooksScalar(const std::string &expr) {
 
   // Expressions assembled from scalar swizzles, like a dot product lowered to
   // "(a.x*b.x + a.y*b.y)", are scalar even if they reference vector sources.
-  if (trimmed.find(".x)") != std::string::npos ||
-      trimmed.find(".y)") != std::string::npos ||
-      trimmed.find(".z)") != std::string::npos ||
-      trimmed.find(".w)") != std::string::npos)
+  if (exprContainsScalarComponentAccess(trimmed))
     return true;
 
   return false;
@@ -731,6 +743,14 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
       startsExpr("bool2") || startsExpr("vec<float, 2>"))
     return 2;
   return 0;
+}
+
+static std::string scalarizeMSLExpr(const std::string &expr, uint8_t lanes) {
+  if (exprLooksScalar(expr) || inferVectorLaneCountFromExpr(expr) <= 1)
+    return expr;
+  if (lanes > 1)
+    return "(" + expr + ").x";
+  return expr;
 }
 
 static bool tryFoldIntegerBinary(LLVMInstruction::Opcode opcode,
@@ -1347,9 +1367,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
         return fallback;
       }
     }
-    if (argVectorLaneCount(arg) > 1)
-      return "(" + value + ").x";
-    return value;
+    return scalarizeMSLExpr(value, argVectorLaneCount(arg));
   };
 
   auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
@@ -2064,9 +2082,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, idx, 0);
     if (lanes <= 1)
       lanes = inferVectorLaneCountFromExpr(resolved);
-    if (lanes > 1)
-      return "(" + resolved + ").x";
-    return resolved;
+    return scalarizeMSLExpr(resolved, lanes);
   };
 
   auto uintValue = [&](uint32_t idx) -> std::string {

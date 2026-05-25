@@ -1603,6 +1603,29 @@ static HRESULT _SerializeRootSig(const D3D12_ROOT_SIGNATURE_DESC *desc,
 
 using namespace dxmt;
 
+using PFN_CreateDXGIFactory1_Dynamic = HRESULT(WINAPI *)(REFIID, void **);
+
+static HRESULT DXMTCreateDXGIFactory1(REFIID riid, void **factory) {
+  HMODULE dxgi = LoadLibraryA("dxgi.dll");
+  if (!dxgi) {
+    auto gle = GetLastError();
+    DXMTD3D12Trace("Entry", "LoadLibraryA(dxgi.dll) failed gle=%lu", gle);
+    return HRESULT_FROM_WIN32(gle);
+  }
+
+  auto proc = reinterpret_cast<PFN_CreateDXGIFactory1_Dynamic>(
+      GetProcAddress(dxgi, "CreateDXGIFactory1"));
+  if (!proc) {
+    auto gle = GetLastError();
+    DXMTD3D12Trace("Entry",
+                   "GetProcAddress(dxgi!CreateDXGIFactory1) failed gle=%lu",
+                   gle);
+    return HRESULT_FROM_WIN32(gle);
+  }
+
+  return proc(riid, factory);
+}
+
 extern "C" HRESULT WINAPI
 D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
                   REFIID riid, void **ppDevice) {
@@ -1640,7 +1663,7 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
                        desc.AdapterLuid.LowPart, desc.VendorId, desc.DeviceId);
         if (SUCCEEDED(desc_hr)) {
           Com<IDXGIFactory6> factory;
-          HRESULT factory_hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+          HRESULT factory_hr = DXMTCreateDXGIFactory1(IID_PPV_ARGS(&factory));
           DXMTD3D12Trace(
               "Entry",
               "D3D12CreateDevice adapter fallback CreateDXGIFactory1 hr=0x%lx",
@@ -1672,7 +1695,7 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
     }
   } else {
     Com<IDXGIFactory1> factory;
-    HRESULT factory_hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    HRESULT factory_hr = DXMTCreateDXGIFactory1(IID_PPV_ARGS(&factory));
     DXMTD3D12Trace("Entry", "D3D12CreateDevice CreateDXGIFactory1 hr=0x%lx",
                    factory_hr);
     if (FAILED(factory_hr)) {
@@ -1701,7 +1724,7 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel,
 
   if (!dxgi_adapter) {
     Com<IDXGIFactory1> factory;
-    HRESULT factory_hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    HRESULT factory_hr = DXMTCreateDXGIFactory1(IID_PPV_ARGS(&factory));
     DXMTD3D12Trace(
         "Entry",
         "D3D12CreateDevice fallback-to-default CreateDXGIFactory1 hr=0x%lx",
@@ -1904,6 +1927,7 @@ extern "C" HRESULT WINAPI D3D12GetDebugInterface(REFIID riid, void **ppDebug) {
 }
 
 extern "C" UINT D3D12SDKVersion = kD3D12AgilitySDKVersion;
+extern "C" const char D3D12SDKPath[] = ".\\D3D12\\x64\\";
 
 extern "C" HRESULT WINAPI D3D12EnableExperimentalFeatures(
     UINT feature_count, const IID *iids, void *configurations,

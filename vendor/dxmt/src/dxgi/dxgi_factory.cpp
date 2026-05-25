@@ -16,6 +16,16 @@ namespace dxmt {
 Com<IMTLDXGIAdapter> CreateAdapter(WMT::Device Device,
                                    IDXGIFactory2 *pFactory, Config &config);
 
+static constexpr GUID IID_IDXGIFactory6_MetalSharp =
+    dxmt::guid::make_guid("c1b6694f-ff09-44a9-b03c-779002a47b07");
+static constexpr GUID IID_IDXGIFactory7_MetalSharp =
+    dxmt::guid::make_guid("a4966eed-76db-44da-84c1-ee9a7afb20a8");
+// UE5/Subnautica 2 queries this non-WinSDK factory IID during adapter
+// selection. It follows the IDXGIFactory6 family and only needs the factory
+// vtable for enumeration, so accept it as a compatibility alias.
+static constexpr GUID IID_IDXGIFactory6_UEShim =
+    dxmt::guid::make_guid("c1b6694f-ff09-44a9-b03c-77900a0a1d17");
+
 class MTLDXGIFactory : public MTLDXGIObject<IDXGIFactory7> {
 
 public:
@@ -32,10 +42,13 @@ public:
 
     if (riid == __uuidof(IUnknown) || riid == __uuidof(IDXGIObject) ||
         riid == __uuidof(IDXGIFactory) || riid == __uuidof(IDXGIFactory1) ||
-        riid == __uuidof(IDXGIFactory2) || riid == __uuidof(IDXGIFactory2) ||
+        riid == __uuidof(IDXGIFactory2) ||
         riid == __uuidof(IDXGIFactory3) || riid == __uuidof(IDXGIFactory4) ||
         riid == __uuidof(IDXGIFactory5) || riid == __uuidof(IDXGIFactory6) ||
-        riid == __uuidof(IDXGIFactory7)) {
+        riid == __uuidof(IDXGIFactory7) ||
+        riid == IID_IDXGIFactory6_MetalSharp ||
+        riid == IID_IDXGIFactory7_MetalSharp ||
+        riid == IID_IDXGIFactory6_UEShim) {
       *ppvObject = ref(this);
       return S_OK;
     }
