@@ -6,6 +6,7 @@ SDK_DIR="$ROOT_DIR/tools/d3d12-metal-sdk"
 PROFILE="metalsharp"
 RESULTS_DIR="$SDK_DIR/results"
 RUN_PROBES=1
+RUN_OFFLINE_PSO=1
 ALLOW_EMPTY_CORPUS=0
 GAME_DIR=""
 CORPUS_ARGS=()
@@ -22,12 +23,14 @@ Options:
   --corpus PATH           Shader corpus directory. Can be repeated.
   --allow-empty-corpus    Do not fail when no .dxbc corpus exists.
   --no-probes             Skip existing Wine/D3D12 SDK probes.
+  --no-offline-pso        Skip offline Metal PSO factory tests.
   -h, --help              Show this help.
 
 This command does not launch Steam or a game. It gates game launches on:
   1. Winemetal route/export safety.
   2. Existing D3D12 Wine probes.
   3. Offline MetalShaderConverter replay of dumped .dxbc shaders.
+  4. Offline Metal PSO/function creation from converted shaders.
 USAGE
 }
 
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-probes)
       RUN_PROBES=0
+      shift
+      ;;
+    --no-offline-pso)
+      RUN_OFFLINE_PSO=0
       shift
       ;;
     -h|--help)
@@ -92,6 +99,18 @@ if [[ "${#CORPUS_ARGS[@]}" -gt 0 ]]; then
   python3 "$SDK_DIR/scripts/replay-shader-corpus.py" "${REPLAY_ARGS[@]}" "${CORPUS_ARGS[@]}"
 else
   python3 "$SDK_DIR/scripts/replay-shader-corpus.py" "${REPLAY_ARGS[@]}"
+fi
+
+if [[ "$RUN_OFFLINE_PSO" == "1" ]]; then
+  PSO_ARGS=(--profile "$PROFILE" --results-dir "$RESULTS_DIR")
+  if [[ "$ALLOW_EMPTY_CORPUS" == "1" ]]; then
+    PSO_ARGS+=(--allow-empty)
+  fi
+  if [[ "${#CORPUS_ARGS[@]}" -gt 0 ]]; then
+    python3 "$SDK_DIR/scripts/offline-pso-factory.py" "${PSO_ARGS[@]}" "${CORPUS_ARGS[@]}"
+  else
+    python3 "$SDK_DIR/scripts/offline-pso-factory.py" "${PSO_ARGS[@]}"
+  fi
 fi
 
 echo "D3D12 Metal SDK preflight passed for profile: $PROFILE"

@@ -87,6 +87,59 @@ python3 tools/d3d12-metal-sdk/scripts/replay-shader-corpus.py \
   --corpus "/path/to/shader-cache/m12/1962700"
 ```
 
+For a strict Winemetal ABI/export gate before any Steam or game launch:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/check-winemetal-abi.py \
+  --profile subnautica2 \
+  --game-dir "/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64"
+```
+
+This verifies that Steam/global Wine copies keep wrapper exports such as
+`WMTSetMetalShaderCachePath`, while DXMT/game-local copies also expose shader
+and PSO bridge exports such as `MTLLibrary_newFunctionWithDescriptor`.
+
+For offline Metal PSO factory checks against converted shaders:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/offline-pso-factory.py \
+  --profile subnautica2 \
+  --corpus "/path/to/shader-cache/m12/1962700"
+```
+
+Without a manifest, this loads converted `.metallib` files, verifies function
+lookup, and creates compute PSOs for compute shaders. With a captured manifest,
+it can create render PSOs too:
+
+```json
+{
+  "schema": "metalsharp.d3d12-metal.offline-pso-manifest.v1",
+  "pipelines": [
+    {
+      "name": "captured-render-pso",
+      "type": "render",
+      "vertex": {"metallib": "/path/vs.metallib", "function": "Main"},
+      "fragment": {"metallib": "/path/ps.metallib", "function": "Main"},
+      "color_formats": ["bgra8unorm"],
+      "depth_format": "depth32float",
+      "sample_count": 1
+    }
+  ]
+}
+```
+
+Run that manifest with:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/offline-pso-factory.py \
+  --profile subnautica2 \
+  --manifest /path/to/pso-manifest.json
+```
+
+Failures are captured in `results/offline-pso-factory-*.json` with the exact
+Metal error string from `newRenderPipelineStateWithDescriptor` or
+`newComputePipelineStateWithFunction`.
+
 If no corpus exists yet, use the bounded capture runner instead of a blind
 interactive launch:
 

@@ -9,11 +9,13 @@ from pathlib import Path
 
 
 LEGACY_EXPORTS = [
-    "MTLLibrary_newFunctionWithConstants",
     "WMTSetMetalShaderCachePath",
+    "WMTBootstrapRegister",
+    "WMTBootstrapLookUp",
 ]
 
 DXMT_EXPORTS = LEGACY_EXPORTS + [
+    "MTLLibrary_newFunctionWithConstants",
     "MTLLibrary_newFunctionWithDescriptor",
 ]
 
@@ -99,6 +101,25 @@ def main() -> int:
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    abi_command = [
+        sys.executable,
+        str(Path(__file__).with_name("check-winemetal-abi.py")),
+        "--profile",
+        args.profile,
+        "--results-dir",
+        str(results_dir),
+        "--dxmt-runtime",
+        str(dxmt_runtime),
+        "--wine-runtime",
+        str(wine_runtime),
+        "--prefix",
+        str(prefix),
+    ]
+    if args.game_dir:
+        abi_command.extend(["--game-dir", args.game_dir])
+    abi_status = subprocess.run(abi_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    abi_result_path = results_dir / f"winemetal-abi-{args.profile}.json"
+
     entries: list[dict] = []
     entries.append(
         inspect_file(dxmt_runtime / "x86_64-windows" / "winemetal.dll", DXMT_EXPORTS)
@@ -143,8 +164,14 @@ def main() -> int:
     result = {
         "schema": "metalsharp.d3d12-metal.runtime-preflight.v1",
         "profile": args.profile,
-        "ok": not failures,
+        "ok": not failures and abi_status.returncode == 0,
         "failure_count": len(failures),
+        "winemetal_abi": {
+            "ok": abi_status.returncode == 0,
+            "result": str(abi_result_path),
+            "stdout": abi_status.stdout.strip(),
+            "stderr": abi_status.stderr.strip(),
+        },
         "entries": entries,
         "notes": [
             "Steam/global Wine Winemetal copies must preserve legacy wrapper exports.",
@@ -156,7 +183,9 @@ def main() -> int:
     out_path = results_dir / f"runtime-preflight-{args.profile}.json"
     out_path.write_text(json.dumps(result, indent=2) + "\n")
     print(out_path)
-    if failures:
+    if failures or abi_status.returncode != 0:
+        if abi_status.stderr:
+            print(abi_status.stderr, file=sys.stderr, end="")
         for failure in failures:
             print(
                 f"preflight failed: {failure.get('role')} {failure.get('path')} "
