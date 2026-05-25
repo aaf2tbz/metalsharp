@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <cerrno>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -259,13 +260,21 @@ bool ShouldFallbackFromMetalShaderConverter(std::string_view fail_text,
 
 const std::string &GetShaderCacheRoot() {
   static const std::string root = []() {
+    auto normalize_host_path = [](std::string path) {
+      // Wine and Steam library conversion can hand us //Volumes/..., which
+      // std::filesystem on macOS does not reliably create as a local path.
+      if (path.starts_with("//Volumes/"))
+        path.erase(0, 1);
+      return path;
+    };
+
     const char *dxmt_cache = std::getenv("DXMT_SHADER_CACHE_PATH");
     if (dxmt_cache && dxmt_cache[0])
-      return std::string(dxmt_cache);
+      return normalize_host_path(std::string(dxmt_cache));
 
     const char *metalsharp_cache = std::getenv("METALSHARP_SHADER_CACHE_PATH");
     if (metalsharp_cache && metalsharp_cache[0])
-      return std::string(metalsharp_cache);
+      return normalize_host_path(std::string(metalsharp_cache));
 
     // Fallback for older launch environments. New SDK preflights expect this
     // to be overridden so dumped DXBC blobs land in the per-game corpus.
@@ -285,6 +294,18 @@ std::string BuildShaderCachePath(const char *suffix) {
 void EnsureShaderCacheDir() {
   std::error_code ec;
   std::filesystem::create_directories(GetShaderCacheRoot(), ec);
+  static bool logged_root = false;
+  if (!logged_root) {
+    logged_root = true;
+    if (ec) {
+      Logger::warn(str::format("D3D12 shader cache root create failed: ",
+                               GetShaderCacheRoot().c_str(), ": ",
+                               ec.message().c_str()));
+    } else {
+      Logger::info(str::format("D3D12 shader cache root: ",
+                               GetShaderCacheRoot().c_str()));
+    }
+  }
 }
 
 void DumpShaderBlob(const char *path, const void *bytecode, SIZE_T size) {
@@ -1013,11 +1034,7 @@ std::string OfflineShaderMetallibPath(const void *bytecode, SIZE_T size,
                                       const D3D12_INPUT_LAYOUT_DESC *input_layout) {
   size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
   auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
-  auto dxil_metallib = cache_path + ".metallib";
-  if (FileExistsNonEmpty(dxil_metallib))
-    return dxil_metallib;
-  return BuildShaderCachePath(
-      str::format("dxmt_sm50_", sm50_function_name, ".metallib").c_str());
+  return cache_path + ".metallib";
 }
 
 std::string OfflineShaderReflectionPath(const void *bytecode, SIZE_T size,
@@ -1067,8 +1084,11 @@ void EmitOfflineComputePsoManifest(const std::vector<uint8_t> &cs,
   const std::string manifest =
       OfflinePsoManifestPath("compute-" + cs_hash);
   FILE *file = fopen(manifest.c_str(), "w");
-  if (!file)
+  if (!file) {
+    Logger::warn(str::format("offline compute PSO manifest open failed: ",
+                             manifest.c_str(), ": ", strerror(errno)));
     return;
+  }
 
   const std::string metallib = OfflineShaderMetallibPath(
       cs.data(), cs.size(), ShaderType::Compute, "cs_main", nullptr);
@@ -1124,8 +1144,11 @@ void EmitOfflineRenderPsoManifest(
       "render-" + vs_hash + "-" + (ps.empty() ? std::string("nopixel") : ps_hash);
   const std::string manifest = OfflinePsoManifestPath(pso_name);
   FILE *file = fopen(manifest.c_str(), "w");
-  if (!file)
+  if (!file) {
+    Logger::warn(str::format("offline render PSO manifest open failed: ",
+                             manifest.c_str(), ": ", strerror(errno)));
     return;
+  }
 
   const std::string vs_metallib = OfflineShaderMetallibPath(
       vs.data(), vs.size(), ShaderType::Vertex, "vs_main", &input_layout);
@@ -1657,8 +1680,7 @@ bool MTLD3D12PipelineState::CompileShader(
 
           auto wmt_device = m_device->GetDXMTDevice().device();
 
-          std::string cache_path =
-              BuildShaderCachePath(str::format("%016zx", hash).c_str());
+          std::string cache_path = BuildShaderCachePath(HexHash(hash).c_str());
           char dxbc_path[256], metallib_path[256], reflection_path[256],
               module_summary_path[256], dxil_report_path[256],
               metallib_error_path[256], converter_fail_path[256];
@@ -1826,8 +1848,8 @@ bool MTLD3D12PipelineState::CompileShader(
             const char *dump_msl = std::getenv("DXMT_DUMP_MSL");
             if (dump_msl && dump_msl[0] && strcmp(dump_msl, "0") != 0) {
               std::string dump_path = BuildShaderCachePath(
-                  str::format("dxmt_msl_", func_name, "_",
-                              str::format("%016zx", hash), ".metal")
+                  str::format("dxmt_msl_", func_name, "_", HexHash(hash),
+                              ".metal")
                       .c_str());
               FILE *df = fopen(dump_path.c_str(), "w");
               if (df) {
@@ -2060,7 +2082,7 @@ bool MTLD3D12PipelineState::CompileShader(
     if (!has_dxil) {
       char dxbc_path[256];
       std::string dxbc_dump =
-          BuildShaderCachePath(str::format("%016zx.sm50_failed.dxbc", hash).c_str());
+          BuildShaderCachePath((HexHash(hash) + ".sm50_failed.dxbc").c_str());
       snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
       DumpShaderBlob(dxbc_path, bytecode, size);
       PSTRACE("SM50Init FAILED for %s: %s (no DXIL chunk, dumped %s)",
@@ -2127,7 +2149,7 @@ bool MTLD3D12PipelineState::CompileShader(
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
     char dxbc_path[256];
     std::string dxbc_dump = BuildShaderCachePath(
-        str::format("%016zx.sm50_compile_failed.dxbc", hash).c_str());
+        (HexHash(hash) + ".sm50_compile_failed.dxbc").c_str());
     snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("SM50Compile failed for %s: %s (dumped %s)", func_name, err_buf,
@@ -2145,12 +2167,20 @@ bool MTLD3D12PipelineState::CompileShader(
   SM50GetCompiledBitcode(compile_result, &bitcode);
 
   {
-    std::string dump_path =
+    std::string legacy_dump_path =
         BuildShaderCachePath(str::format("dxmt_sm50_", func_name, ".metallib").c_str());
+    std::string dump_path = BuildShaderCachePath((HexHash(hash) + ".metallib").c_str());
     FILE *df = fopen(dump_path.c_str(), "wb");
     if (df) {
       fwrite(bitcode.Data, 1, bitcode.Size, df);
       fclose(df);
+    }
+    if (legacy_dump_path != dump_path) {
+      FILE *legacy = fopen(legacy_dump_path.c_str(), "wb");
+      if (legacy) {
+        fwrite(bitcode.Data, 1, bitcode.Size, legacy);
+        fclose(legacy);
+      }
     }
     Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path,
                              " (", bitcode.Size, " bytes)"));
@@ -2167,7 +2197,7 @@ bool MTLD3D12PipelineState::CompileShader(
         err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
     char dxbc_path[256];
     std::string dxbc_dump = BuildShaderCachePath(
-        str::format("%016zx.sm50_metal_library_failed.dxbc", hash).c_str());
+        (HexHash(hash) + ".sm50_metal_library_failed.dxbc").c_str());
     snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("Failed to create Metal library for %s: %s (dumped %s)", func_name,
@@ -2197,7 +2227,7 @@ bool MTLD3D12PipelineState::CompileShader(
   if (!out_func.handle) {
     char dxbc_path[256];
     std::string dxbc_dump = BuildShaderCachePath(
-        str::format("%016zx.sm50_function_lookup_failed.dxbc", hash).c_str());
+        (HexHash(hash) + ".sm50_function_lookup_failed.dxbc").c_str());
     snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("Failed to get function %s from Metal library (dumped %s)",
@@ -2490,7 +2520,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
             (const char *)m_gs.data(), (size_t)m_gs.size()));
     char gs_dump_path[256];
     std::string gs_dump =
-        BuildShaderCachePath(str::format("%016zx.gs", gs_hash).c_str());
+        BuildShaderCachePath((HexHash(gs_hash) + ".gs").c_str());
     snprintf(gs_dump_path, sizeof(gs_dump_path), "%s", gs_dump.c_str());
     DumpShaderBlob(gs_dump_path, m_gs.data(), m_gs.size());
     PSTRACE("Graphics PSO GS unsupported: size=%zu hash=0x%016zx magic=%s dumped=%s",

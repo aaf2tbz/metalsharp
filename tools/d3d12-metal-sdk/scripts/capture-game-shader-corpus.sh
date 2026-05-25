@@ -103,7 +103,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-find "$CORPUS_DIR" -type f -name '*.dxbc' 2>/dev/null | sort > "$before_file" || true
+find "$CORPUS_DIR" -type f \( -name '*.dxbc' -o -name 'pso-*.json' \) 2>/dev/null | sort > "$before_file" || true
 
 curl -fsS -X POST "$BACKEND_URL/kill" \
   -H 'Content-Type: application/json' \
@@ -128,7 +128,7 @@ curl -fsS -X POST "$BACKEND_URL/kill" \
   -d "{\"appid\":$APPID,\"pid\":0}" >/dev/null || true
 pkill -9 -f '[S]ubnautica2-Win64-Shipping.exe|[S]ubnautica2|[C]rashReportClient.exe|[c]rashpad_handler.exe' || true
 
-find "$CORPUS_DIR" -type f -name '*.dxbc' 2>/dev/null | sort > "$after_file" || true
+find "$CORPUS_DIR" -type f \( -name '*.dxbc' -o -name 'pso-*.json' \) 2>/dev/null | sort > "$after_file" || true
 
 RESULTS_DIR="$RESULTS_DIR" \
 PROFILE="$PROFILE" \
@@ -147,6 +147,8 @@ from pathlib import Path
 before = set(Path(os.environ["BEFORE_FILE"]).read_text().splitlines())
 after = set(Path(os.environ["AFTER_FILE"]).read_text().splitlines())
 new_files = sorted(after - before)
+new_dxbc = [path for path in new_files if path.endswith(".dxbc")]
+new_pso_manifests = [path for path in new_files if Path(path).name.startswith("pso-") and path.endswith(".json")]
 launch_text = Path(os.environ["LAUNCH_FILE"]).read_text()
 try:
     launch = json.loads(launch_text)
@@ -163,7 +165,11 @@ result = {
     "before_count": len(before),
     "after_count": len(after),
     "new_count": len(new_files),
+    "new_dxbc_count": len(new_dxbc),
+    "new_pso_manifest_count": len(new_pso_manifests),
     "new_files": new_files,
+    "new_dxbc": new_dxbc,
+    "new_pso_manifests": new_pso_manifests,
     "launch": launch,
     "ok": len(new_files) > 0,
 }

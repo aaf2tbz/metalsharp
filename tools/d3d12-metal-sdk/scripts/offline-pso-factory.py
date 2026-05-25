@@ -22,6 +22,11 @@ static NSUInteger uintValue(NSDictionary *dict, NSString *key, NSUInteger fallba
   return [value respondsToSelector:@selector(unsignedIntegerValue)] ? [value unsignedIntegerValue] : fallback;
 }
 
+static NSDictionary *dictValue(NSDictionary *dict, NSString *key) {
+  id value = dict[key];
+  return [value isKindOfClass:[NSDictionary class]] ? value : nil;
+}
+
 static MTLPixelFormat pixelFormat(NSString *name) {
   if (!name || [name length] == 0 || [name isEqualToString:@"invalid"] || [name isEqualToString:@"unknown"]) return MTLPixelFormatInvalid;
   NSString *n = [name lowercaseString];
@@ -69,12 +74,29 @@ static id<MTLLibrary> loadLibrary(id<MTLDevice> device, NSString *path, NSString
   return library;
 }
 
+static NSString *entryPointFromReflection(NSDictionary *shader, NSString *metallibPath) {
+  NSString *reflectionPath = stringValue(shader, @"reflection", @"");
+  if ([reflectionPath length] == 0) {
+    reflectionPath = [[metallibPath stringByDeletingPathExtension] stringByAppendingPathExtension:@"json"];
+  }
+  NSDictionary *reflection = loadJSON(reflectionPath);
+  if (![reflection isKindOfClass:[NSDictionary class]]) return @"";
+  return stringValue(reflection, @"EntryPoint", @"");
+}
+
 static id<MTLFunction> loadFunction(id<MTLDevice> device, NSDictionary *shader, NSString **errorOut) {
   NSString *path = stringValue(shader, @"metallib", @"");
   NSString *function = stringValue(shader, @"function", @"");
   id<MTLLibrary> library = loadLibrary(device, path, errorOut);
   if (!library) return nil;
   id<MTLFunction> fn = [library newFunctionWithName:function];
+  if (!fn) {
+    NSString *reflectedFunction = entryPointFromReflection(shader, path);
+    if ([reflectedFunction length] > 0 && ![reflectedFunction isEqualToString:function]) {
+      fn = [library newFunctionWithName:reflectedFunction];
+      if (fn) return fn;
+    }
+  }
   if (!fn) {
     *errorOut = [NSString stringWithFormat:@"function not found: %@ in %@", function, path];
   }
@@ -173,6 +195,21 @@ int main(int argc, const char **argv) {
         MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
         desc.vertexFunction = vertex;
         desc.fragmentFunction = fragment;
+        NSDictionary *d3d12 = dictValue(pipeline, @"d3d12");
+        NSUInteger inputElements = d3d12 ? uintValue(d3d12, @"input_elements", 0) : 0;
+        if (inputElements > 0) {
+          MTLVertexDescriptor *vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
+          NSUInteger stride = 0;
+          for (NSUInteger i = 0; i < 31; i++) {
+            vertexDescriptor.attributes[i].format = MTLVertexFormatFloat4;
+            vertexDescriptor.attributes[i].offset = i * 16;
+            vertexDescriptor.attributes[i].bufferIndex = 0;
+            stride = (i + 1) * 16;
+          }
+          vertexDescriptor.layouts[0].stride = stride > 0 ? stride : 16;
+          vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+          desc.vertexDescriptor = vertexDescriptor;
+        }
         desc.rasterSampleCount = uintValue(pipeline, @"sample_count", 1);
         NSArray *colorFormats = pipeline[@"color_formats"];
         if (![colorFormats isKindOfClass:[NSArray class]] || [colorFormats count] == 0) {

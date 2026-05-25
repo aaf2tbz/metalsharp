@@ -1088,13 +1088,21 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
 }
 
 fn path_looks_external_volume(path: &Path) -> bool {
-    path.starts_with(Path::new("/Volumes"))
+    path.starts_with(Path::new("/Volumes")) || path.to_string_lossy().starts_with("//Volumes/")
+}
+
+fn normalize_host_cache_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(stripped) = text.strip_prefix("//Volumes/") {
+        return PathBuf::from(format!("/Volumes/{}", stripped));
+    }
+    path
 }
 
 fn preferred_cache_root(home: &Path, game_dir: Option<&Path>) -> PathBuf {
     if let Some(game_dir) = game_dir {
         if path_looks_external_volume(game_dir) {
-            let root = game_dir.join(".metalsharp-cache");
+            let root = normalize_host_cache_path(game_dir.join(".metalsharp-cache"));
             if std::fs::create_dir_all(&root).is_ok() {
                 return root;
             }
