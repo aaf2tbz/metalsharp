@@ -119,6 +119,13 @@ build_probe \
   -lgdi32 \
   -o "$OUT_DIR/probe_present_windowed.exe"
 
+build_probe \
+  "$SDK_DIR/probes/probe_subnautica_stress_game/probe_subnautica_stress_game.cpp" \
+  -lole32 \
+  -luuid \
+  -lgdi32 \
+  -o "$OUT_DIR/probe_subnautica_stress_game.exe"
+
 build_mini_probe 1 create_device
 build_mini_probe 2 command_queue
 build_mini_probe 3 swapchain_present -lole32 -luuid -lgdi32
@@ -141,6 +148,7 @@ echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
+echo "$OUT_DIR/probe_subnautica_stress_game.exe"
 echo "$OUT_DIR/probe_mini_create_device.exe"
 echo "$OUT_DIR/probe_mini_command_queue.exe"
 echo "$OUT_DIR/probe_mini_swapchain_present.exe"
