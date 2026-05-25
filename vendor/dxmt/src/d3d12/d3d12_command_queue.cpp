@@ -428,6 +428,10 @@ struct ReplayState {
     return buffer;
   }
 
+  uint32_t BindIndexOrFallback(uint32_t reflected, uint32_t fallback) const {
+    return reflected != ~0u ? reflected : fallback;
+  }
+
   bool BindRootBufferArgument(MTLD3D12Device *device, uint64_t *data,
                               const MTL_SM50_SHADER_ARGUMENT &arg,
                               D3D12_GPU_VIRTUAL_ADDRESS address,
@@ -833,12 +837,14 @@ struct ReplayState {
     if (cbv_table_buf.handle) {
       cbv_table_buf.updateContents(0, cbv_table_data, qword_count * 8);
       if (render_enc_open) {
-        render_enc.setFragmentBuffer(cbv_table_buf, 0,
-                                     kConstantBufferTableSlot);
+        uint32_t bind_index = BindIndexOrFallback(
+            pso->GetPSReflection().ConstanttBufferTableBindIndex,
+            kConstantBufferTableSlot);
+        render_enc.setFragmentBuffer(cbv_table_buf, 0, bind_index);
         render_enc.useResource(cbv_table_buf, WMTResourceUsageRead,
                                WMTRenderStageFragment);
         QTRACE("BuildConstantBufferTable: bound slot=%u qwords=%u",
-               kConstantBufferTableSlot, qword_count);
+               bind_index, qword_count);
       }
     }
   }
@@ -928,12 +934,14 @@ struct ReplayState {
     if (vs_cbv_table_buf.handle) {
       vs_cbv_table_buf.updateContents(0, vs_cbv_table_data, qword_count * 8);
       if (render_enc_open) {
-        render_enc.setVertexBuffer(vs_cbv_table_buf, 0,
-                                   kConstantBufferTableSlot);
+        uint32_t bind_index = BindIndexOrFallback(
+            pso->GetVSReflection().ConstanttBufferTableBindIndex,
+            kConstantBufferTableSlot);
+        render_enc.setVertexBuffer(vs_cbv_table_buf, 0, bind_index);
         render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
                                WMTRenderStageVertex);
         QTRACE("BuildVertexConstantBufferTable: bound slot=%u qwords=%u",
-               kConstantBufferTableSlot, qword_count);
+               bind_index, qword_count);
       }
     }
   }
@@ -1155,11 +1163,13 @@ struct ReplayState {
     if (vs_arg_buf.handle) {
       vs_arg_buf.updateContents(0, vs_arg_buf_data, qword_count * 8);
       if (render_enc_open) {
-        render_enc.setVertexBuffer(vs_arg_buf, 0, kArgBufSlot);
+        uint32_t bind_index = BindIndexOrFallback(
+            pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+        render_enc.setVertexBuffer(vs_arg_buf, 0, bind_index);
         render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
                                WMTRenderStageVertex);
         QTRACE("BuildVertexArgumentBuffer: bound slot=%u qwords=%u handle=%llu",
-               kArgBufSlot, qword_count, (unsigned long long)vs_arg_buf.handle);
+               bind_index, qword_count, (unsigned long long)vs_arg_buf.handle);
       }
     }
   }
@@ -1934,27 +1944,32 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
 
   uint32_t comp_cb_qwords = st.BuildComputeConstantBufferTable(device);
   if (comp_cb_qwords > 0 && st.comp_cbv_table_buf.handle) {
+    uint32_t bind_index = st.BindIndexOrFallback(
+        st.pso->GetCSReflection().ConstanttBufferTableBindIndex,
+        st.kConstantBufferTableSlot);
     struct wmtcmd_compute_setbuffer sbuf = {};
     sbuf.type = WMTComputeCommandSetBuffer;
     sbuf.buffer = st.comp_cbv_table_buf.handle;
     sbuf.offset = 0;
-    sbuf.index = st.kConstantBufferTableSlot;
+    sbuf.index = bind_index;
     append_cmd(&sbuf, sizeof(sbuf));
     QTRACE("%s: bound compute CBV table slot=%u qwords=%u handle=%llu",
-           trace_prefix, st.kConstantBufferTableSlot, comp_cb_qwords,
+           trace_prefix, bind_index, comp_cb_qwords,
            (unsigned long long)st.comp_cbv_table_buf.handle);
   }
 
   uint32_t comp_arg_qwords = st.BuildComputeArgumentBuffer(device);
   if (comp_arg_qwords > 0 && st.comp_arg_buf.handle) {
+    uint32_t bind_index = st.BindIndexOrFallback(
+        st.pso->GetCSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
     struct wmtcmd_compute_setbuffer sbuf = {};
     sbuf.type = WMTComputeCommandSetBuffer;
     sbuf.buffer = st.comp_arg_buf.handle;
     sbuf.offset = 0;
-    sbuf.index = st.kArgBufSlot;
+    sbuf.index = bind_index;
     append_cmd(&sbuf, sizeof(sbuf));
     QTRACE("%s: bound compute arg table slot=%u qwords=%u handle=%llu",
-           trace_prefix, st.kArgBufSlot, comp_arg_qwords,
+           trace_prefix, bind_index, comp_arg_qwords,
            (unsigned long long)st.comp_arg_buf.handle);
   }
 
@@ -2428,7 +2443,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.BuildConstantBufferTable(m_device);
         st.BuildArgumentBuffer(m_device);
         if (st.render_enc_open && st.arg_buf.handle) {
-          st.render_enc.setFragmentBuffer(st.arg_buf, 0, st.kArgBufSlot);
+          uint32_t bind_index = st.BindIndexOrFallback(
+              st.pso->GetPSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
+          st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
         }
         st.ApplyVertexBuffers(m_device);
         QTRACE("DrawInstanced v=%u i=%u enc_open=%d pso=%p compiled=%d "
@@ -2489,7 +2506,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.BuildConstantBufferTable(m_device);
         st.BuildArgumentBuffer(m_device);
         if (st.render_enc_open && st.arg_buf.handle) {
-          st.render_enc.setFragmentBuffer(st.arg_buf, 0, st.kArgBufSlot);
+          uint32_t bind_index = st.BindIndexOrFallback(
+              st.pso->GetPSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
+          st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
         }
         st.ApplyVertexBuffers(m_device);
 
@@ -2655,8 +2674,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.BuildVertexArgumentBuffer(m_device);
           st.BuildConstantBufferTable(m_device);
           st.BuildArgumentBuffer(m_device);
-          if (st.render_enc_open && st.arg_buf.handle)
-            st.render_enc.setFragmentBuffer(st.arg_buf, 0, st.kArgBufSlot);
+          if (st.render_enc_open && st.arg_buf.handle) {
+            uint32_t bind_index = st.BindIndexOrFallback(
+                st.pso->GetPSReflection().ArgumentBufferBindIndex,
+                st.kArgBufSlot);
+            st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
+          }
           st.ApplyVertexBuffers(m_device);
           QTRACE("ExecuteIndirect DRAW v=%u i=%u start_v=%u start_i=%u "
                  "enc_open=%d",
@@ -2686,8 +2709,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               st.BuildVertexArgumentBuffer(m_device);
               st.BuildConstantBufferTable(m_device);
               st.BuildArgumentBuffer(m_device);
-              if (st.render_enc_open && st.arg_buf.handle)
-                st.render_enc.setFragmentBuffer(st.arg_buf, 0, st.kArgBufSlot);
+              if (st.render_enc_open && st.arg_buf.handle) {
+                uint32_t bind_index = st.BindIndexOrFallback(
+                    st.pso->GetPSReflection().ArgumentBufferBindIndex,
+                    st.kArgBufSlot);
+                st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
+              }
               st.ApplyVertexBuffers(m_device);
               if (args.InstanceCount > 0 && args.IndexCountPerInstance > 0 &&
                   st.ib.BufferLocation) {
