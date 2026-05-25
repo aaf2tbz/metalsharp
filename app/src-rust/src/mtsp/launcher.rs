@@ -224,8 +224,109 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    stage_app_compat_config(appid, node.id, &prefix)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
+}
+
+fn stage_app_compat_config(
+    appid: u32,
+    pipeline_id: PipelineId,
+    prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if appid == 1962700 && pipeline_id == PipelineId::M12 {
+        stage_subnautica2_nanite_config(prefix)?;
+    }
+    Ok(())
+}
+
+fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let block = concat!(
+        "; BEGIN MetalSharp UE5 Nanite guard\n",
+        "[SystemSettings]\n",
+        "r.Nanite=0\n",
+        "r.Nanite.ProjectEnabled=0\n",
+        "r.Nanite.AllowTessellation=0\n",
+        "r.Nanite.Tessellation=0\n",
+        "r.Nanite.SkinnedMeshes=0\n",
+        "r.Nanite.AsyncRasterization=0\n",
+        "r.GeometryCollection.Nanite=0\n",
+        "r.RayTracing=0\n",
+        "r.Lumen.HardwareRayTracing=0\n",
+        "r.Shadow.Virtual.Enable=0\n",
+        "\n",
+        "[/Script/Engine.RendererSettings]\n",
+        "r.Nanite.ProjectEnabled=False\n",
+        "; END MetalSharp UE5 Nanite guard\n",
+    );
+
+    let mut users = wine_user_dirs(prefix);
+    if users.is_empty() {
+        let user_name = std::env::var("USER").unwrap_or_else(|_| "steamuser".to_string());
+        users.push(prefix.join("drive_c").join("users").join(user_name));
+    }
+
+    for user_dir in users {
+        for platform_dir in ["Windows", "WindowsNoEditor"] {
+            let config_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("Engine.ini");
+            write_marked_config_block(&config_path, block)?;
+        }
+    }
+    Ok(())
+}
+
+fn wine_user_dirs(prefix: &Path) -> Vec<PathBuf> {
+    let users_root = prefix.join("drive_c").join("users");
+    let Ok(entries) = std::fs::read_dir(users_root) else {
+        return Vec::new();
+    };
+    let mut users = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if name == "public" || name == "all users" || name == "default" {
+            continue;
+        }
+        users.push(path);
+    }
+    users
+}
+
+fn write_marked_config_block(path: &Path, block: &str) -> Result<(), Box<dyn std::error::Error>> {
+    const START: &str = "; BEGIN MetalSharp UE5 Nanite guard";
+    const END: &str = "; END MetalSharp UE5 Nanite guard";
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let without_old_block = match (existing.find(START), existing.find(END)) {
+        (Some(start), Some(end)) if end >= start => {
+            let end = end + END.len();
+            format!("{}{}", &existing[..start], &existing[end..])
+        },
+        _ => existing,
+    };
+
+    let mut next = without_old_block.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str(block);
+    std::fs::write(path, next)?;
+    Ok(())
 }
 
 pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
@@ -459,6 +560,7 @@ fn launch_dxmt_metal_with_context(
         prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    stage_app_compat_config(appid, node.id, &prefix)?;
 
     if node.uses_winedllpath_routing() {
         validate_recipe_runtime(&recipe)?;
@@ -501,12 +603,17 @@ fn launch_dxmt_metal_with_context(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    for (key, value) in app_compat_env_pairs(appid, node.id) {
+        cmd.env(key, value);
+    }
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
 
+    let launch_args = super::recipe::effective_launch_args(appid, node);
+    let launch_arg_refs: Vec<&str> = launch_args.iter().map(|arg| arg.as_str()).collect();
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
@@ -516,7 +623,7 @@ fn launch_dxmt_metal_with_context(
             prefix: &prefix,
             cwd: exe_dir,
             exe_name: &exe_name,
-            args: &node.launch_args,
+            args: &launch_arg_refs,
             cache_paths: cache_paths.as_ref(),
         },
     )?;
@@ -542,6 +649,17 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
     // DXMT's live D3D12 shader dump path is still /tmp-based in practice under Wine.
     // Keep the converter watching that root so it can actually see the emitted DXBC files.
     let cache_dir = PathBuf::from("/tmp/dxmt_shader_cache");
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".msc.fail") || name.ends_with(".msc.lock") {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 
     std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(180);
@@ -608,6 +726,8 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                             .arg(&metallib_path)
                             .arg(&path)
                             .arg(format!("--output-reflection-file={}", reflection_path.display()))
+                            .arg("--deployment-os=macOS")
+                            .arg("--minimum-os-build-version=15.0.0")
                             .output();
 
                         match output {
@@ -996,12 +1116,25 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
+    env.extend(app_compat_env_pairs(appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
             env.push((key, value));
         }
     }
     env
+}
+
+fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    if appid == 1962700 && pipeline_id == PipelineId::M12 {
+        return vec![
+            ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
+            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter".to_string()),
+            ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
+            ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+        ];
+    }
+    Vec::new()
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {

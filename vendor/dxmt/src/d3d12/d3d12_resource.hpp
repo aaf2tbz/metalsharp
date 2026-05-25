@@ -69,6 +69,13 @@ public:
   uint32_t GetTextureArrayLength() const;
   uint64_t GetBufferByteLength() const;
 
+  void MarkSwapchainBackBuffer(uint32_t index) {
+    m_is_swapchain_backbuffer = true;
+    m_swapchain_buffer_index = index;
+  }
+  bool IsSwapchainBackBuffer() const { return m_is_swapchain_backbuffer; }
+  uint32_t SwapchainBackBufferIndex() const { return m_swapchain_buffer_index; }
+
 private:
   void InitializeResource(WMT::Reference<WMT::Buffer> backing_buffer,
                           void *backing_cpu_addr,
@@ -85,6 +92,8 @@ private:
   WMT::Reference<WMT::Texture> m_mtl_texture;
   uint64_t m_tex_gpu_resource_id = 0;
   uint64_t m_backing_offset = 0;
+  bool m_is_swapchain_backbuffer = false;
+  uint32_t m_swapchain_buffer_index = 0;
 
   void *m_cpu_addr = nullptr;
   uint64_t m_gpu_addr = 0;

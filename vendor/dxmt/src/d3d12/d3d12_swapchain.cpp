@@ -344,10 +344,16 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
                                              D3D12_RESOURCE_STATE_RENDER_TARGET,
                                              heap_props);
     auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[i].ptr());
+    if (res)
+      res->MarkSwapchainBackBuffer(i);
     SCTRACE("ResizeBuffers backbuffer[%u] res=%p tex=%llu w=%u h=%u fmt=%u",
       i, (void*)res,
       res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
       m_desc.Width, m_desc.Height, (unsigned)m_desc.Format);
+    Logger::info(str::format("M12 swapchain backbuffer[", i, "] res=", (void *)res,
+                             " tex=", res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
+                             " size=", m_desc.Width, "x", m_desc.Height,
+                             " fmt=", (unsigned)m_desc.Format));
   }
   return S_OK;
 }
@@ -472,6 +478,13 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
       m_current_buffer, (void*)res,
       (unsigned long long)src_texture.handle,
       (unsigned long long)drawable.texture().handle, m_desc.Width, m_desc.Height);
+    if (m_present_count <= 20 || (m_present_count % 120) == 0) {
+      Logger::info(str::format("M12 present presenter count=", m_present_count,
+                               " idx=", m_current_buffer,
+                               " src=", (unsigned long long)src_texture.handle,
+                               " drawable=", (unsigned long long)drawable.texture().handle,
+                               " size=", m_desc.Width, "x", m_desc.Height));
+    }
 
     cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
@@ -491,11 +504,21 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     m_current_buffer, (void*)res,
     (unsigned long long)src_texture.handle,
     (unsigned long long)dst_texture.handle, m_desc.Width, m_desc.Height);
+    if (m_present_count <= 20 || (m_present_count % 120) == 0) {
+      Logger::info(str::format("M12 present blit count=", m_present_count,
+                               " idx=", m_current_buffer,
+                               " src=", (unsigned long long)src_texture.handle,
+                               " drawable=", (unsigned long long)dst_texture.handle,
+                               " size=", m_desc.Width, "x", m_desc.Height));
+    }
 
     if (src_texture.handle && dst_texture.handle) {
       auto blit = cmdbuf.blitCommandEncoder();
       uint64_t _sc_eid = __atomic_add_fetch(&g_sc_enc_id, 1, __ATOMIC_SEQ_CST);
       SCTRACE("[SC_ENC+%llu] CREATE blit handle=%llu", (unsigned long long)_sc_eid, (unsigned long long)blit.handle);
+      if (!blit.handle) {
+        SCTRACE("[SC_ENC] missing blit encoder handle; skipping present copy");
+      } else {
       struct wmtcmd_blit_copy_from_texture_to_texture copy = {};
       copy.type = WMTBlitCommandCopyFromTextureToTexture;
       copy.next.set(nullptr);
@@ -511,6 +534,7 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
       blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
       SCTRACE("[SC_ENC] END handle=%llu", (unsigned long long)blit.handle);
       blit.endEncoding();
+      }
     }
 
     cmdbuf.presentDrawable(drawable);

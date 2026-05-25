@@ -71,7 +71,7 @@ struct CmdDrawIndexedInstanced {
   CmdHeader header;
   uint32_t index_count;
   uint32_t instance_count;
-  uint32_t start_vertex;
+  uint32_t start_index;
   int32_t base_vertex;
   uint32_t start_instance;
 };

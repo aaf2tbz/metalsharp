@@ -1,10 +1,14 @@
 
 #include <algorithm>
 #include "Metal.hpp"
+#include "../d3d12/d3d12_trace.hpp"
 #include "dxmt_format.hpp"
 #include "dxmt_presenter.hpp"
 #include "util_likely.hpp"
 
+#define PRESENT_TRACE(fmt, ...) DXMTD3D12Trace("Presenter", fmt, ##__VA_ARGS__)
+
+static uint64_t g_present_enc_id = 0;
 
 namespace dxmt {
 
@@ -157,6 +161,8 @@ Presenter::encodeCommands(
     std::function<void(WMT::RenderCommandEncoder)> &&update_fences
 ) {
   auto drawable = layer_.nextDrawable();
+  if (!drawable.handle)
+    return drawable;
 
   WMTRenderPassInfo info;
   WMT::InitializeRenderPassInfo(info);
@@ -164,6 +170,14 @@ Presenter::encodeCommands(
   info.colors[0].store_action = WMTStoreActionStore;
   info.colors[0].texture = drawable.texture();
   auto encoder = cmdbuf.renderCommandEncoder(info);
+  uint64_t enc_id =
+      __atomic_add_fetch(&g_present_enc_id, 1, __ATOMIC_SEQ_CST);
+  PRESENT_TRACE("[PRES_ENC+%llu] CREATE render handle=%llu cmdbuf=%llu",
+                (unsigned long long)enc_id,
+                (unsigned long long)encoder.handle,
+                (unsigned long long)cmdbuf.handle);
+  if (!encoder.handle)
+    return {};
   wait_fences(encoder);
   encoder.setFragmentTexture(backbuffer, 0);
   encoder.setFragmentTexture(gamma_lut_texture_, 1);
@@ -180,6 +194,8 @@ Presenter::encodeCommands(
   encoder.setViewport({0, 0, width, height, 0, 1});
   encoder.drawPrimitives(WMTPrimitiveTypeTriangle, 0, 3);
   update_fences(encoder);
+  PRESENT_TRACE("[PRES_ENC] END handle=%llu",
+                (unsigned long long)encoder.handle);
   encoder.endEncoding();
 
   return drawable;

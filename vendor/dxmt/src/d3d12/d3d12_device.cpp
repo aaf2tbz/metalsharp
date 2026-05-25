@@ -476,8 +476,8 @@ static bool advance_pipeline_stream(uint8_t **stream, uint8_t *end) {
 }
 
 struct D3D12RTFormatArray {
-  UINT NumRenderTargets;
   DXGI_FORMAT RTFormats[8];
+  UINT NumRenderTargets;
 };
 
 struct D3D12DepthStencilDesc1 {
@@ -1532,7 +1532,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
 
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);
-  bool compiled = pso->RequestCompile(true);
+  bool compiled = pso->RequestCompile(false);
   auto failure_stage = pso->GetCompileFailureStage();
   auto failure_detail = pso->GetCompileFailureDetail();
   TRACE("CreateGraphicsPSO: compile=%d pending=%d VS=%p PS=%p stage=%s detail=%s",
@@ -1908,7 +1908,7 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
     o->CopyQueueTimestampQueriesSupported = FALSE;
-    o->CastingFullyTypedFormatSupported = FALSE;
+    o->CastingFullyTypedFormatSupported = TRUE;
     o->WriteBufferImmediateSupportFlags = D3D12_COMMAND_LIST_SUPPORT_FLAG_NONE;
     o->ViewInstancingTier = D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
     o->BarycentricsSupported = FALSE;
@@ -2755,11 +2755,12 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
             (unsigned long long)heap_offset,
             (unsigned long long)info.Alignment);
     }
-    if (heap_offset + info.SizeInBytes > heap_desc.SizeInBytes) {
-      TRACE("CreatePlacedResource out of heap bounds offset=%llu size=%llu heap_size=%llu",
-            (unsigned long long)heap_offset,
-            (unsigned long long)info.SizeInBytes,
-            (unsigned long long)heap_desc.SizeInBytes);
+    if (heap_offset > heap_desc.SizeInBytes ||
+        info.SizeInBytes > heap_desc.SizeInBytes - heap_offset) {
+      Logger::warn(str::format("CreatePlacedResource out of heap bounds offset=",
+                               heap_offset, " size=", info.SizeInBytes,
+                               " heap_size=", heap_desc.SizeInBytes));
+      return E_INVALIDARG;
     }
   }
 

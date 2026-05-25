@@ -118,6 +118,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         );
     }
 
+    let mut launch_args: Vec<String> = node.launch_args.iter().map(|arg| arg.to_string()).collect();
+    append_app_launch_args(appid, node.id, &mut launch_args);
+
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -126,7 +129,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args,
         env: node
             .env_vars
             .iter()
@@ -138,6 +141,40 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         anti_cheat_status,
         warnings,
     })
+}
+
+pub fn effective_launch_args(appid: u32, node: &PipelineNode) -> Vec<String> {
+    let mut launch_args: Vec<String> = node.launch_args.iter().map(|arg| arg.to_string()).collect();
+    append_app_launch_args(appid, node.id, &mut launch_args);
+    launch_args
+}
+
+fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Vec<String>) {
+    if appid == 1962700 && pipeline == PipelineId::M12 {
+        let dpcvars = [
+            "r.Nanite=0",
+            "r.Nanite.ProjectEnabled=0",
+            "r.Nanite.AllowTessellation=0",
+            "r.Nanite.Tessellation=0",
+            "r.Nanite.SkinnedMeshes=0",
+            "r.Nanite.AsyncRasterization=0",
+            "r.GeometryCollection.Nanite=0",
+            "r.RayTracing=0",
+            "r.Lumen.HardwareRayTracing=0",
+            "r.Shadow.Virtual.Enable=0",
+            "r.ShaderPipelineCache.Enabled=1",
+            "r.ShaderPipelineCache.StartupMode=1",
+            "r.ShaderPipelineCache.BackgroundBatchSize=1",
+            "r.ShaderPipelineCache.BatchSize=1",
+        ]
+        .join(",");
+        launch_args.push(format!("-dpcvars={}", dpcvars));
+        launch_args.push("-NoNanite".into());
+        launch_args.push(
+            "-ExecCmds=r.Nanite 0;r.Nanite.ProjectEnabled 0;r.Nanite.Tessellation 0;r.GeometryCollection.Nanite 0"
+                .into(),
+        );
+    }
 }
 
 pub fn build_custom_launch_recipe(
@@ -187,7 +224,7 @@ pub fn build_custom_launch_recipe(
         game_dir: Some(game_dir),
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: effective_launch_args(appid, node),
         env: node
             .env_vars
             .iter()
@@ -279,7 +316,7 @@ pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorR
                 game_dir: crate::setup::resolve_game_dir(appid),
                 exe_path: None,
                 exe_name: None,
-                launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+                launch_args: effective_launch_args(appid, node),
                 env: node
                     .env_vars
                     .iter()

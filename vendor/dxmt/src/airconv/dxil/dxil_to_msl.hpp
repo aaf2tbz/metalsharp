@@ -48,6 +48,7 @@ private:
     std::vector<uint8_t> value_vector_lanes;
     std::unordered_map<std::string, std::string> local_values;
     std::unordered_set<uint32_t> pointer_slots;
+    std::unordered_set<uint32_t> emitted_values;
     std::vector<ResourceBinding> resource_bindings;
     std::vector<std::string> diagnostics;
     uint32_t next_binding = 0;
@@ -57,6 +58,7 @@ private:
     bool uses_group_id = false;
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
+    uint32_t pixel_store_output_counter = 0;
   };
 
   static std::string getTypeName(const LLVMType &t, const LLVMModule &mod);

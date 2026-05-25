@@ -159,6 +159,10 @@ void TraceDxbcChunks(const void *bytecode, SIZE_T size, const char *label) {
 
 bool ShouldFallbackFromMetalShaderConverter(std::string_view fail_text,
                                             ShaderType type) {
+  if (fail_text.find("Unrecognized DXIL program header") !=
+      std::string_view::npos)
+    return true;
+
   if (type != ShaderType::Compute)
     return false;
 
@@ -286,6 +290,31 @@ bool ExtractJsonInt3Value(std::string_view text, const char *key, int &x,
          sscanf(values.c_str(), "%d,%d,%d", &x, &y, &z) == 3;
 }
 
+bool ExtractJsonUIntValue(std::string_view text, const char *key,
+                          uint32_t &out_value) {
+  std::string key_token = str::format("\"", key, "\"");
+  size_t key_pos = text.find(key_token);
+  if (key_pos == std::string_view::npos)
+    return false;
+
+  size_t colon = text.find(':', key_pos + key_token.size());
+  if (colon == std::string_view::npos)
+    return false;
+
+  const char *value_begin = text.data() + colon + 1;
+  const char *text_end = text.data() + text.size();
+  while (value_begin < text_end && std::isspace((unsigned char)*value_begin))
+    value_begin++;
+
+  char *end = nullptr;
+  unsigned long parsed = std::strtoul(value_begin, &end, 10);
+  if (end == value_begin)
+    return false;
+
+  out_value = (uint32_t)parsed;
+  return true;
+}
+
 bool ParseAttributeRegisterName(std::string_view name, uint32_t &out_register) {
   static constexpr std::string_view kPrefix = "attribute";
   if (name.size() <= kPrefix.size() ||
@@ -325,46 +354,70 @@ bool StageInSemanticMatchesInputElement(
 
 WMTAttributeFormat ReflectionElementTypeToFormat(std::string_view element_type,
                                                  uint32_t column_count) {
+  std::string normalized(element_type);
+  for (char &ch : normalized)
+    ch = (char)std::tolower((unsigned char)ch);
+
+  if (column_count == 0) {
+    if (!normalized.empty()) {
+      char last = normalized.back();
+      if (last >= '1' && last <= '4')
+        column_count = (uint32_t)(last - '0');
+    }
+    if (column_count == 0)
+      column_count = 1;
+  }
+
+  const bool is_float = normalized == "float" || normalized == "float32" ||
+                        normalized == "single" || normalized == "half" ||
+                        normalized == "float16";
+  const bool is_half = normalized == "half" || normalized == "float16";
+  const bool is_uint = normalized == "uint" || normalized == "uint32" ||
+                       normalized == "unsignedint" ||
+                       normalized == "unsignedint32";
+  const bool is_sint = normalized == "int" || normalized == "int32" ||
+                       normalized == "sint" || normalized == "sint32";
+
   switch (column_count) {
   case 1:
-    if (element_type == "Float")
-      return WMTAttributeFormatFloat;
-    if (element_type == "Uint32")
-      return WMTAttributeFormatUInt;
-    if (element_type == "Int32" || element_type == "Sint32")
-      return WMTAttributeFormatInt;
-    if (element_type == "Half")
+    if (is_half)
       return WMTAttributeFormatHalf;
+    if (is_float)
+      return WMTAttributeFormatFloat;
+    if (is_uint)
+      return WMTAttributeFormatUInt;
+    if (is_sint)
+      return WMTAttributeFormatInt;
     break;
   case 2:
-    if (element_type == "Float")
-      return WMTAttributeFormatFloat2;
-    if (element_type == "Uint32")
-      return WMTAttributeFormatUInt2;
-    if (element_type == "Int32" || element_type == "Sint32")
-      return WMTAttributeFormatInt2;
-    if (element_type == "Half")
+    if (is_half)
       return WMTAttributeFormatHalf2;
+    if (is_float)
+      return WMTAttributeFormatFloat2;
+    if (is_uint)
+      return WMTAttributeFormatUInt2;
+    if (is_sint)
+      return WMTAttributeFormatInt2;
     break;
   case 3:
-    if (element_type == "Float")
-      return WMTAttributeFormatFloat3;
-    if (element_type == "Uint32")
-      return WMTAttributeFormatUInt3;
-    if (element_type == "Int32" || element_type == "Sint32")
-      return WMTAttributeFormatInt3;
-    if (element_type == "Half")
+    if (is_half)
       return WMTAttributeFormatHalf3;
+    if (is_float)
+      return WMTAttributeFormatFloat3;
+    if (is_uint)
+      return WMTAttributeFormatUInt3;
+    if (is_sint)
+      return WMTAttributeFormatInt3;
     break;
   case 4:
-    if (element_type == "Float")
-      return WMTAttributeFormatFloat4;
-    if (element_type == "Uint32")
-      return WMTAttributeFormatUInt4;
-    if (element_type == "Int32" || element_type == "Sint32")
-      return WMTAttributeFormatInt4;
-    if (element_type == "Half")
+    if (is_half)
       return WMTAttributeFormatHalf4;
+    if (is_float)
+      return WMTAttributeFormatFloat4;
+    if (is_uint)
+      return WMTAttributeFormatUInt4;
+    if (is_sint)
+      return WMTAttributeFormatInt4;
     break;
   default:
     break;
@@ -537,23 +590,17 @@ ParseVertexInputReflection(std::string_view text) {
         }
 
         uint32_t column_count = 0;
-        size_t column_pos = object.find("\"columnCount\"");
-        if (column_pos != std::string_view::npos) {
-          size_t colon = object.find(':', column_pos + 13);
-          if (colon != std::string_view::npos) {
-            const char *value_begin = object.data() + colon + 1;
-            while ((size_t)(value_begin - object.data()) < object.size() &&
-                   std::isspace((unsigned char)*value_begin))
-              value_begin++;
-            char *end = nullptr;
-            unsigned long parsed = std::strtoul(value_begin, &end, 10);
-            if (end != value_begin)
-              column_count = (uint32_t)parsed;
-          }
-        }
+        ExtractJsonUIntValue(object, "columnCount", column_count) ||
+            ExtractJsonUIntValue(object, "columns", column_count) ||
+            ExtractJsonUIntValue(object, "componentCount", column_count) ||
+            ExtractJsonUIntValue(object, "components", column_count) ||
+            ExtractJsonUIntValue(object, "vectorSize", column_count);
 
         std::string element_type;
-        ExtractJsonStringValue(object, "elementType", element_type);
+        ExtractJsonStringValue(object, "elementType", element_type) ||
+            ExtractJsonStringValue(object, "componentType", element_type) ||
+            ExtractJsonStringValue(object, "scalarType", element_type) ||
+            ExtractJsonStringValue(object, "type", element_type);
         reflected.format =
             ReflectionElementTypeToFormat(element_type, column_count);
         attributes.push_back(reflected);
@@ -564,6 +611,114 @@ ParseVertexInputReflection(std::string_view text) {
   }
 
   return attributes;
+}
+
+bool ParseMetalShaderConverterArgumentType(std::string_view type,
+                                           SM50BindingType &out_type) {
+  if (type == "CBV" || type == "ConstantBuffer") {
+    out_type = SM50BindingType::ConstantBuffer;
+    return true;
+  }
+  if (type == "Sampler") {
+    out_type = SM50BindingType::Sampler;
+    return true;
+  }
+  if (type == "SRV") {
+    out_type = SM50BindingType::SRV;
+    return true;
+  }
+  if (type == "UAV") {
+    out_type = SM50BindingType::UAV;
+    return true;
+  }
+  return false;
+}
+
+std::vector<MTL_SM50_SHADER_ARGUMENT>
+ParseTopLevelArgumentBufferReflection(std::string_view text,
+                                      MTL_SHADER_REFLECTION &reflection) {
+  std::vector<MTL_SM50_SHADER_ARGUMENT> args;
+
+  size_t key_pos = text.find("\"TopLevelArgumentBuffer\"");
+  if (key_pos == std::string_view::npos)
+    return args;
+
+  size_t array_open = text.find('[', key_pos);
+  size_t array_close = array_open == std::string_view::npos
+                           ? std::string_view::npos
+                           : text.find(']', array_open + 1);
+  if (array_open == std::string_view::npos ||
+      array_close == std::string_view::npos || array_close <= array_open)
+    return args;
+
+  uint32_t max_qword = 0;
+  size_t cursor = array_open + 1;
+  while (cursor < array_close) {
+    size_t object_open = text.find('{', cursor);
+    if (object_open == std::string_view::npos || object_open >= array_close)
+      break;
+
+    size_t object_close = text.find('}', object_open + 1);
+    if (object_close == std::string_view::npos || object_close > array_close)
+      break;
+
+    std::string_view object =
+        text.substr(object_open, object_close - object_open + 1);
+    std::string type_name;
+    uint32_t slot = 0, space = 0, elt_offset = 0, size = 0;
+    SM50BindingType type = SM50BindingType::SRV;
+    if (ExtractJsonStringValue(object, "Type", type_name) &&
+        ParseMetalShaderConverterArgumentType(type_name, type) &&
+        ExtractJsonUIntValue(object, "Slot", slot) &&
+        ExtractJsonUIntValue(object, "EltOffset", elt_offset)) {
+      ExtractJsonUIntValue(object, "Space", space);
+      ExtractJsonUIntValue(object, "Size", size);
+
+      MTL_SM50_SHADER_ARGUMENT arg = {};
+      arg.Type = type;
+      arg.SM50BindingSlot = slot;
+      arg.SM50RegisterSpace = space;
+      arg.StructurePtrOffset = elt_offset / 8;
+      arg.Flags = (MTL_SM50_SHADER_ARGUMENT_FLAG)0;
+      args.push_back(arg);
+
+      uint32_t entry_qwords = (size + 7) / 8;
+      if (entry_qwords == 0)
+        entry_qwords = type == SM50BindingType::Sampler ? 3 : 2;
+      max_qword = std::max(max_qword, arg.StructurePtrOffset + entry_qwords);
+
+      switch (type) {
+      case SM50BindingType::ConstantBuffer:
+        if (slot < 16)
+          reflection.ConstantBufferSlotMask |= (uint16_t)(1u << slot);
+        break;
+      case SM50BindingType::Sampler:
+        if (slot < 16)
+          reflection.SamplerSlotMask |= (uint16_t)(1u << slot);
+        break;
+      case SM50BindingType::SRV:
+        if (slot < 64)
+          reflection.SRVSlotMaskLo |= 1ull << slot;
+        else if (slot < 128)
+          reflection.SRVSlotMaskHi |= 1ull << (slot - 64);
+        break;
+      case SM50BindingType::UAV:
+        if (slot < 64)
+          reflection.UAVSlotMask |= 1ull << slot;
+        break;
+      }
+    }
+
+    cursor = object_close + 1;
+  }
+
+  if (!args.empty()) {
+    reflection.NumArguments = (uint32_t)args.size();
+    reflection.ArgumentBufferBindIndex = 30;
+    reflection.ArgumentTableQwords = max_qword;
+  }
+
+  return args;
 }
 
 const char *DxilShaderKindName(dxmt::dxil::DxilShaderKind kind) {
@@ -1189,7 +1344,10 @@ bool MTLD3D12PipelineState::CompileShader(
 
             if (out_func.handle) {
               PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
-              s_shader_cache[hash] = out_func;
+              {
+                std::lock_guard<std::mutex> lock(s_shader_mutex);
+                s_shader_cache[hash] = out_func;
+              }
 
               if (type == ShaderType::Vertex)
                 m_vs_uses_stage_in = true;
@@ -1231,6 +1389,41 @@ bool MTLD3D12PipelineState::CompileShader(
               std::string actual_entry;
               ExtractJsonStringValue(reflection_text, "EntryPoint",
                                      actual_entry);
+              MTL_SHADER_REFLECTION reflected_arguments = {};
+              reflected_arguments.ConstanttBufferTableBindIndex = ~0u;
+              reflected_arguments.ArgumentBufferBindIndex = ~0u;
+              auto msc_args = ParseTopLevelArgumentBufferReflection(
+                  reflection_text, reflected_arguments);
+              if (!msc_args.empty()) {
+                switch (type) {
+                case ShaderType::Vertex:
+                  m_vs_reflection = reflected_arguments;
+                  m_vs_args = msc_args;
+                  break;
+                case ShaderType::Pixel:
+                  m_ps_reflection = reflected_arguments;
+                  m_ps_args = msc_args;
+                  break;
+                case ShaderType::Compute:
+                  m_cs_reflection = reflected_arguments;
+                  m_cs_args = msc_args;
+                  break;
+                default:
+                  break;
+                }
+                PSTRACE("  MSC TopLevelArgumentBuffer reflected: type=%u "
+                        "args=%zu qwords=%u",
+                        (unsigned)type, msc_args.size(),
+                        reflected_arguments.ArgumentTableQwords);
+                for (size_t i = 0; i < msc_args.size(); i++) {
+                  PSTRACE("    MSC arg[%zu] type=%d slot=%u space=%u "
+                          "offset=%u flags=0x%x",
+                          i, (int)msc_args[i].Type,
+                          msc_args[i].SM50BindingSlot,
+                          msc_args[i].SM50RegisterSpace,
+                          msc_args[i].StructurePtrOffset, msc_args[i].Flags);
+                }
+              }
               if (type == ShaderType::Vertex) {
                 m_vs_stage_in_attribute_order =
                     ParseVertexInputReflection(reflection_text);
@@ -1279,7 +1472,10 @@ bool MTLD3D12PipelineState::CompileShader(
                 out_func = library.newFunction("ps_main");
               if (out_func.handle) {
                 PSTRACE("  DXIL loaded from cache OK! entry=%s", fn_name);
-                s_shader_cache[hash] = out_func;
+                {
+                  std::lock_guard<std::mutex> lock(s_shader_mutex);
+                  s_shader_cache[hash] = out_func;
+                }
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = true;
                 int tw = 1, th = 1, td = 1;
@@ -1783,12 +1979,13 @@ bool MTLD3D12PipelineState::CompileImpl() {
               gs_hash, gs_reason.c_str());
     }
     if (m_gs_passthrough == ~0u) {
-    return RecordCompileFailure(
-        "pso/unsupported_geometry_shader",
-        str::format("Graphics PSO uses GS bytes=", m_gs.size(), " hash=0x",
-                    str::format("%016zx", gs_hash), " magic=",
-                    DescribeShaderBlobMagic(m_gs.data(), m_gs.size()),
-                    " dumped=", gs_dump_path));
+      Logger::warn(str::format(
+          "CreateGraphicsPipelineState: dropping unsupported GS bytes=",
+          m_gs.size(), " hash=0x", str::format("%016zx", gs_hash), " magic=",
+          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()), " dumped=",
+          gs_dump_path));
+      PSTRACE("Graphics PSO GS dropped hash=0x%016zx detail=%s", gs_hash,
+              gs_reason.c_str());
     }
   }
 
@@ -1836,70 +2033,71 @@ bool MTLD3D12PipelineState::CompileImpl() {
       info.stencil_pixel_format = depth_fmt;
   }
 
-  if (m_blend_desc.RenderTarget[0].BlendEnable) {
-    for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
-      auto &rt = m_blend_desc.RenderTarget[i];
-      info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
-      info.colors[i].write_mask =
-          kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
-
-      auto map_blend = [](D3D12_BLEND b) -> WMTBlendFactor {
-        switch (b) {
-        case D3D12_BLEND_ZERO:
-          return WMTBlendFactorZero;
-        case D3D12_BLEND_ONE:
-          return WMTBlendFactorOne;
-        case D3D12_BLEND_SRC_COLOR:
-          return WMTBlendFactorSourceColor;
-        case D3D12_BLEND_INV_SRC_COLOR:
-          return WMTBlendFactorOneMinusSourceColor;
-        case D3D12_BLEND_SRC_ALPHA:
-          return WMTBlendFactorSourceAlpha;
-        case D3D12_BLEND_INV_SRC_ALPHA:
-          return WMTBlendFactorOneMinusSourceAlpha;
-        case D3D12_BLEND_DEST_ALPHA:
-          return WMTBlendFactorDestinationAlpha;
-        case D3D12_BLEND_INV_DEST_ALPHA:
-          return WMTBlendFactorOneMinusDestinationAlpha;
-        case D3D12_BLEND_DEST_COLOR:
-          return WMTBlendFactorDestinationColor;
-        case D3D12_BLEND_INV_DEST_COLOR:
-          return WMTBlendFactorOneMinusDestinationColor;
-        case D3D12_BLEND_SRC_ALPHA_SAT:
-          return WMTBlendFactorSourceAlphaSaturated;
-        case D3D12_BLEND_BLEND_FACTOR:
-          return WMTBlendFactorBlendColor;
-        case D3D12_BLEND_INV_BLEND_FACTOR:
-          return WMTBlendFactorOneMinusBlendColor;
-        default:
-          return WMTBlendFactorOne;
-        }
-      };
-
-      auto map_op = [](D3D12_BLEND_OP op) -> WMTBlendOperation {
-        switch (op) {
-        case D3D12_BLEND_OP_ADD:
-          return WMTBlendOperationAdd;
-        case D3D12_BLEND_OP_SUBTRACT:
-          return WMTBlendOperationSubtract;
-        case D3D12_BLEND_OP_REV_SUBTRACT:
-          return WMTBlendOperationReverseSubtract;
-        case D3D12_BLEND_OP_MIN:
-          return WMTBlendOperationMin;
-        case D3D12_BLEND_OP_MAX:
-          return WMTBlendOperationMax;
-        default:
-          return WMTBlendOperationAdd;
-        }
-      };
-
-      info.colors[i].src_rgb_blend_factor = map_blend(rt.SrcBlend);
-      info.colors[i].dst_rgb_blend_factor = map_blend(rt.DestBlend);
-      info.colors[i].rgb_blend_operation = map_op(rt.BlendOp);
-      info.colors[i].src_alpha_blend_factor = map_blend(rt.SrcBlendAlpha);
-      info.colors[i].dst_alpha_blend_factor = map_blend(rt.DestBlendAlpha);
-      info.colors[i].alpha_blend_operation = map_op(rt.BlendOpAlpha);
+  auto map_blend = [](D3D12_BLEND b) -> WMTBlendFactor {
+    switch (b) {
+    case D3D12_BLEND_ZERO:
+      return WMTBlendFactorZero;
+    case D3D12_BLEND_ONE:
+      return WMTBlendFactorOne;
+    case D3D12_BLEND_SRC_COLOR:
+      return WMTBlendFactorSourceColor;
+    case D3D12_BLEND_INV_SRC_COLOR:
+      return WMTBlendFactorOneMinusSourceColor;
+    case D3D12_BLEND_SRC_ALPHA:
+      return WMTBlendFactorSourceAlpha;
+    case D3D12_BLEND_INV_SRC_ALPHA:
+      return WMTBlendFactorOneMinusSourceAlpha;
+    case D3D12_BLEND_DEST_ALPHA:
+      return WMTBlendFactorDestinationAlpha;
+    case D3D12_BLEND_INV_DEST_ALPHA:
+      return WMTBlendFactorOneMinusDestinationAlpha;
+    case D3D12_BLEND_DEST_COLOR:
+      return WMTBlendFactorDestinationColor;
+    case D3D12_BLEND_INV_DEST_COLOR:
+      return WMTBlendFactorOneMinusDestinationColor;
+    case D3D12_BLEND_SRC_ALPHA_SAT:
+      return WMTBlendFactorSourceAlphaSaturated;
+    case D3D12_BLEND_BLEND_FACTOR:
+      return WMTBlendFactorBlendColor;
+    case D3D12_BLEND_INV_BLEND_FACTOR:
+      return WMTBlendFactorOneMinusBlendColor;
+    default:
+      return WMTBlendFactorOne;
     }
+  };
+
+  auto map_op = [](D3D12_BLEND_OP op) -> WMTBlendOperation {
+    switch (op) {
+    case D3D12_BLEND_OP_ADD:
+      return WMTBlendOperationAdd;
+    case D3D12_BLEND_OP_SUBTRACT:
+      return WMTBlendOperationSubtract;
+    case D3D12_BLEND_OP_REV_SUBTRACT:
+      return WMTBlendOperationReverseSubtract;
+    case D3D12_BLEND_OP_MIN:
+      return WMTBlendOperationMin;
+    case D3D12_BLEND_OP_MAX:
+      return WMTBlendOperationMax;
+    default:
+      return WMTBlendOperationAdd;
+    }
+  };
+
+  for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+    auto &rt = m_blend_desc.RenderTarget[i];
+    info.colors[i].write_mask =
+        kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
+    info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
+
+    if (!rt.BlendEnable)
+      continue;
+
+    info.colors[i].src_rgb_blend_factor = map_blend(rt.SrcBlend);
+    info.colors[i].dst_rgb_blend_factor = map_blend(rt.DestBlend);
+    info.colors[i].rgb_blend_operation = map_op(rt.BlendOp);
+    info.colors[i].src_alpha_blend_factor = map_blend(rt.SrcBlendAlpha);
+    info.colors[i].dst_alpha_blend_factor = map_blend(rt.DestBlendAlpha);
+    info.colors[i].alpha_blend_operation = map_op(rt.BlendOpAlpha);
   }
 
   switch (m_topology) {
@@ -2130,8 +2328,21 @@ bool MTLD3D12PipelineState::CompileImpl() {
         const uint32_t attr_index = stage_in_attr.attribute_index;
         if (attr_index >= WMT_MAX_VERTEX_ATTRIBUTES)
           continue;
-        if (attribute_present[attr_index])
+        if (attribute_present[attr_index]) {
+          auto &attr = vtx_desc.attributes[attr_index];
+          if (stage_in_attr.format != WMTAttributeFormatInvalid &&
+              attr.format != stage_in_attr.format) {
+            PSTRACE("D3D12 PSO input-layout attr[%u]: overriding descriptor "
+                    "format %u with DXIL stage_in format %u for semantic=%s "
+                    "register=%u",
+                    attr_index, (unsigned)attr.format,
+                    (unsigned)stage_in_attr.format,
+                    stage_in_attr.semantic_name.c_str(),
+                    stage_in_attr.register_index);
+            attr.format = stage_in_attr.format;
+          }
           continue;
+        }
 
         const InputLayoutSource *source =
             find_source_for_stage_in(stage_in_attr, order_i);
@@ -2154,6 +2365,12 @@ bool MTLD3D12PipelineState::CompileImpl() {
                 attr_index, source->desc_index, stage_in_attr.register_index,
                 el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
                 (unsigned)attr.format, el.InputSlot, source->aligned_offset);
+      }
+
+      if (m_vs_stage_in_attribute_order.empty()) {
+        PSTRACE("D3D12 PSO input-layout: DXIL stage_in reflection did not "
+                "publish attribute order; preserving input-layout attributes "
+                "without synthetic padding");
       }
     }
 
@@ -2204,7 +2421,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
           attr_summary << ",";
         first_attr = false;
         attr_summary << attr_i << "@slot" << attr.buffer_index << "+";
-        attr_summary << attr.offset;
+        attr_summary << attr.offset << ":fmt" << (unsigned)attr.format;
       }
       attr_summary << "]";
       Logger::info(attr_summary.str());
@@ -2214,6 +2431,48 @@ bool MTLD3D12PipelineState::CompileImpl() {
     } else {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal "
               "vertex descriptor disabled");
+    }
+  }
+  if (m_vs_uses_stage_in && !info.vertex_descriptor) {
+    uint32_t attribute_count = 0;
+    for (const auto &stage_in_attr : m_vs_stage_in_attribute_order) {
+      if (stage_in_attr.attribute_index < WMT_MAX_VERTEX_ATTRIBUTES)
+        attribute_count =
+            std::max(attribute_count, stage_in_attr.attribute_index + 1);
+    }
+    attribute_count =
+        std::min<uint32_t>(attribute_count, WMT_MAX_VERTEX_ATTRIBUTES);
+    if (attribute_count == 0)
+      attribute_count = 1;
+    if (attribute_count > 0) {
+      for (const auto &stage_in_attr : m_vs_stage_in_attribute_order) {
+        const uint32_t attr_index = stage_in_attr.attribute_index;
+        if (attr_index >= attribute_count)
+          continue;
+        auto &attr = vtx_desc.attributes[attr_index];
+        attr.format = stage_in_attr.format != WMTAttributeFormatInvalid
+                          ? stage_in_attr.format
+                          : WMTAttributeFormatFloat4;
+        attr.offset = attr_index * 16;
+        attr.buffer_index = 0;
+      }
+      for (uint32_t attr_index = 0; attr_index < attribute_count; attr_index++) {
+        auto &attr = vtx_desc.attributes[attr_index];
+        if (attr.format != WMTAttributeFormatInvalid)
+          continue;
+        attr.format = WMTAttributeFormatFloat4;
+        attr.offset = attr_index * 16;
+        attr.buffer_index = 0;
+      }
+      vtx_desc.attribute_count = attribute_count;
+      vtx_desc.layout_count = 1;
+      vtx_desc.layouts[0].stride = std::max<uint32_t>(16, attribute_count * 16);
+      vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
+      vtx_desc.layouts[0].step_rate = 1;
+      info.vertex_descriptor = &vtx_desc;
+      Logger::info(str::format(
+          "D3D12 stage_in fallback vertex descriptor attrs=", attribute_count,
+          " layouts=1 has_input_layout=0"));
     }
   }
 
@@ -2243,6 +2502,52 @@ bool MTLD3D12PipelineState::CompileImpl() {
         err.handle ? err.description().getUTF8String() : std::string();
     const char *err_desc =
         err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+    auto retry_render_pso = [&](const char *reason, auto mutate) -> bool {
+      WMT::Reference<WMT::Error> retry_err;
+      WMTRenderPipelineInfo retry_info = info;
+      mutate(retry_info);
+      auto retry_pso = wmt_device.newRenderPipelineState(retry_info, retry_err);
+      if (retry_pso.handle) {
+        Logger::warn(str::format("CreateGraphicsPipelineState: using bounded "
+                                 "Metal render PSO fallback for ",
+                                 reason ? reason : "link failure", ": ",
+                                 err_desc ? err_desc : "unknown"));
+        m_render_pso = std::move(retry_pso);
+        return true;
+      }
+      auto retry_desc_string =
+          retry_err.handle ? retry_err.description().getUTF8String()
+                           : std::string();
+      Logger::warn(str::format(
+          "CreateGraphicsPipelineState: bounded Metal render PSO fallback failed for ",
+          reason ? reason : "link failure", ": ",
+          retry_desc_string.empty() ? "unknown" : retry_desc_string.c_str()));
+      PSTRACE("D3D12 PSO bounded fallback failed for %s: %s",
+              reason ? reason : "link failure",
+              retry_desc_string.empty() ? "unknown" : retry_desc_string.c_str());
+      return false;
+    };
+
+    std::string_view err_view(err_desc ? err_desc : "");
+    if (err_view.find("vertex shader's return type is void") !=
+        std::string_view::npos) {
+      if (retry_render_pso("void vertex shader", [](auto &retry_info) {
+            retry_info.rasterization_enabled = false;
+            retry_info.fragment_function = 0;
+          })) {
+        return true;
+      }
+    } else if (err_view.find("mismatching vertex shader output") !=
+                   std::string_view::npos ||
+               err_view.find("not written by vertex shader") !=
+                   std::string_view::npos) {
+      if (retry_render_pso("VS/PS varying mismatch", [](auto &retry_info) {
+            retry_info.fragment_function = 0;
+          })) {
+        return true;
+      }
+    }
+
     Logger::err(str::format("Failed to create render PSO: ",
                             err_desc ? err_desc : "unknown"));
     return RecordCompileFailure(
@@ -2418,7 +2723,7 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
   }
   m_strip_cut_value = desc.IBStripCutValue;
   m_topology = desc.PrimitiveTopologyType;
-  m_num_render_targets = desc.NumRenderTargets;
+  m_num_render_targets = std::min<UINT>(desc.NumRenderTargets, 8);
   memcpy(m_rtv_formats, desc.RTVFormats, sizeof(m_rtv_formats));
   m_dsv_format = desc.DSVFormat;
   m_sample_mask = desc.SampleMask;

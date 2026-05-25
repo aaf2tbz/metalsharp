@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 
 #define DXTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxil_trace.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
@@ -111,6 +112,60 @@ enum DXILMathOpcode {
   DXILOP_UMad = 49,
 };
 
+static bool isKnownDXILUnaryOpcode(int64_t op) {
+  switch (op) {
+  case DXILOP_FAbs:
+  case DXILOP_Saturate:
+  case DXILOP_IsNaN:
+  case DXILOP_IsInf:
+  case DXILOP_IsFinite:
+  case DXILOP_Cos:
+  case DXILOP_Sin:
+  case DXILOP_Tan:
+  case DXILOP_Acos:
+  case DXILOP_Asin:
+  case DXILOP_Atan:
+  case DXILOP_Exp:
+  case DXILOP_Frc:
+  case DXILOP_Log:
+  case DXILOP_Sqrt:
+  case DXILOP_Rsqrt:
+  case DXILOP_Round_ne:
+  case DXILOP_Round_ni:
+  case DXILOP_Round_pi:
+  case DXILOP_Round_z:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static bool isKnownDXILBinaryOpcode(int64_t op) {
+  switch (op) {
+  case DXILOP_FMax:
+  case DXILOP_FMin:
+  case DXILOP_IMax:
+  case DXILOP_IMin:
+  case DXILOP_UMax:
+  case DXILOP_UMin:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static bool isKnownDXILTertiaryOpcode(int64_t op) {
+  switch (op) {
+  case DXILOP_FMad:
+  case DXILOP_Fma:
+  case DXILOP_IMad:
+  case DXILOP_UMad:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static const char *kMetalHeader = R"(#include <metal_stdlib>
 using namespace metal;
 
@@ -132,6 +187,24 @@ inline uint dxmt_uint(uint4 v) { return v.x; }
 inline uint dxmt_uint(float2 v) { return uint(v.x); }
 inline uint dxmt_uint(float3 v) { return uint(v.x); }
 inline uint dxmt_uint(float4 v) { return uint(v.x); }
+inline float dxmt_float(bool v) { return v ? 1.0f : 0.0f; }
+inline float dxmt_float(int v) { return float(v); }
+inline float dxmt_float(uint v) { return float(v); }
+inline float dxmt_float(long v) { return float(v); }
+inline float dxmt_float(ulong v) { return float(v); }
+inline float dxmt_float(float v) { return v; }
+inline float dxmt_float(bool2 v) { return dxmt_float(v.x); }
+inline float dxmt_float(bool3 v) { return dxmt_float(v.x); }
+inline float dxmt_float(bool4 v) { return dxmt_float(v.x); }
+inline float dxmt_float(int2 v) { return float(v.x); }
+inline float dxmt_float(int3 v) { return float(v.x); }
+inline float dxmt_float(int4 v) { return float(v.x); }
+inline float dxmt_float(uint2 v) { return float(v.x); }
+inline float dxmt_float(uint3 v) { return float(v.x); }
+inline float dxmt_float(uint4 v) { return float(v.x); }
+inline float dxmt_float(float2 v) { return v.x; }
+inline float dxmt_float(float3 v) { return v.x; }
+inline float dxmt_float(float4 v) { return v.x; }
 inline bool dxmt_bool(bool v) { return v; }
 inline bool dxmt_bool(int v) { return v != 0; }
 inline bool dxmt_bool(uint v) { return v != 0; }
@@ -200,6 +273,8 @@ static std::string varyingField(const char *base, uint32_t signature_id) {
 }
 
 static std::string vertexInputField(const char *base, uint32_t signature_id) {
+  if (signature_id >= 16 && signature_id < 32)
+    signature_id -= 16;
   switch (signature_id) {
   case 0: return std::string(base) + ".a0";
   case 1: return std::string(base) + ".a1";
@@ -281,6 +356,10 @@ static bool startsWith(const std::string &text, const char *prefix) {
 static uint32_t inferDXIntrinsicIdFromName(const std::string &name) {
   if (!startsWith(name, "dx.op."))
     return 0;
+  if (name.find("loadInput") != std::string::npos)
+    return DXOP_LoadInput;
+  if (name.find("storeOutput") != std::string::npos)
+    return DXOP_StoreOutput;
   if (name.find("createHandleFromBinding") != std::string::npos)
     return DXOP_CreateHandleFromBinding;
   if (name.find("createHandleFromHeap") != std::string::npos)
@@ -419,15 +498,23 @@ static std::string inferDXIntrinsicNameFromCallShape(
       if (!match.empty())
         return match;
     }
-    if (float_like) {
+    if (float_like && isKnownDXILUnaryOpcode(signed_literal)) {
       auto match = findDeclaredDXOpByFragment(mod, "unary.f32");
       if (!match.empty())
         return match;
     }
   }
 
+  if ((call_args.size() == 3 || param_count == 3) && first_arg_is_signed_literal &&
+      isKnownDXILBinaryOpcode(signed_literal)) {
+    auto match = findDeclaredDXOpByFragment(mod, "binary");
+    if (!match.empty())
+      return match;
+  }
+
   if (call_args.size() == 4 || param_count == 4) {
-    if (first_arg_is_signed_literal && float_like) {
+    if (first_arg_is_signed_literal && float_like &&
+        isKnownDXILTertiaryOpcode(signed_literal)) {
       auto match = findDeclaredDXOpByFragment(mod, "tertiary.f32");
       if (!match.empty())
         return match;
@@ -492,6 +579,14 @@ static uint32_t findFunctionTypeForValue(const LLVMModule &mod, uint32_t value_i
   return 0;
 }
 
+static std::string findFunctionNameForValue(const LLVMModule &mod, uint32_t value_id) {
+  for (const auto &fn : mod.functions) {
+    if (fn.is_declaration && fn.value_id == value_id)
+      return fn.name;
+  }
+  return "";
+}
+
 static bool isFunctionLikeSymbol(const std::string &text) {
   auto endsWith = [&](const char *suffix) {
     size_t suffix_len = std::strlen(suffix);
@@ -500,13 +595,63 @@ static bool isFunctionLikeSymbol(const std::string &text) {
   };
   return startsWith(text, "dx.op.") || text == "cs_main" || text == "vs_main" ||
          text == "ps_main" || text.find("MainCS") != std::string::npos ||
-         text.find("_CS") != std::string::npos || endsWith("CS");
+         text.find("_CS") != std::string::npos || endsWith("CS") ||
+         endsWith("Main") || endsWith("VS") || endsWith("PS");
 }
 
 static bool parseSSAName(const std::string &text, uint32_t &value_id) {
   if (text.size() < 2 || text[0] != 'v')
     return false;
   return parseUnsignedLiteral(text.substr(1), value_id);
+}
+
+static bool isIdentifierChar(char c) {
+  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+static bool isMemberAccessToken(const std::string &source, size_t pos) {
+  if (pos == 0)
+    return false;
+  size_t prev = pos;
+  while (prev > 0 &&
+         std::isspace(static_cast<unsigned char>(source[prev - 1])))
+    prev--;
+  return prev > 0 && source[prev - 1] == '.';
+}
+
+static void collectSSATokens(const std::string &source,
+                             std::unordered_set<uint32_t> &used,
+                             std::unordered_set<uint32_t> &declared) {
+  for (size_t pos = 0; pos < source.size(); pos++) {
+    if (source[pos] != 'v' || pos + 1 >= source.size() ||
+        !std::isdigit(static_cast<unsigned char>(source[pos + 1])))
+      continue;
+    if (pos > 0 && isIdentifierChar(source[pos - 1]))
+      continue;
+    if (isMemberAccessToken(source, pos))
+      continue;
+
+    size_t end = pos + 1;
+    while (end < source.size() &&
+           std::isdigit(static_cast<unsigned char>(source[end])))
+      end++;
+    if (end < source.size() && isIdentifierChar(source[end]))
+      continue;
+
+    uint32_t value_id = 0;
+    if (!parseUnsignedLiteral(source.substr(pos + 1, end - pos - 1), value_id))
+      continue;
+
+    used.insert(value_id);
+    size_t line_start = source.rfind('\n', pos);
+    line_start = line_start == std::string::npos ? 0 : line_start + 1;
+    std::string prefix = source.substr(line_start, pos - line_start);
+    size_t non_space = prefix.find_first_not_of(" \t");
+    std::string trimmed =
+        non_space == std::string::npos ? std::string() : prefix.substr(non_space);
+    if (trimmed == "auto ")
+      declared.insert(value_id);
+  }
 }
 
 static bool exprEndsWithScalarComponent(std::string expr) {
@@ -523,26 +668,65 @@ static bool exprEndsWithScalarComponent(std::string expr) {
          ends_with(".w");
 }
 
+static bool exprLooksScalar(const std::string &expr) {
+  std::string trimmed = expr;
+  size_t first = trimmed.find_first_not_of(" \t\r\n(");
+  if (first != std::string::npos)
+    trimmed = trimmed.substr(first);
+
+  if (trimmed.empty() || trimmed == "0" || trimmed == "0.0" ||
+      trimmed == "0.0f" || trimmed == "false")
+    return true;
+  if (exprEndsWithScalarComponent(trimmed))
+    return true;
+
+  int64_t signed_literal = 0;
+  if (parseSignedLiteral(trimmed, signed_literal))
+    return true;
+
+  // Expressions assembled from scalar swizzles, like a dot product lowered to
+  // "(a.x*b.x + a.y*b.y)", are scalar even if they reference vector sources.
+  if (trimmed.find(".x)") != std::string::npos ||
+      trimmed.find(".y)") != std::string::npos ||
+      trimmed.find(".z)") != std::string::npos ||
+      trimmed.find(".w)") != std::string::npos)
+    return true;
+
+  return false;
+}
+
 static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
+  if (exprLooksScalar(expr))
+    return 0;
   if (exprEndsWithScalarComponent(expr))
     return 0;
-  if (expr.find("float4") != std::string::npos ||
-      expr.find("uint4") != std::string::npos ||
-      expr.find("int4") != std::string::npos ||
-      expr.find("bool4") != std::string::npos ||
-      expr.find("vec<float, 4>") != std::string::npos)
+  std::string trimmed = expr;
+  size_t first = trimmed.find_first_not_of(" \t\r\n(");
+  if (first != std::string::npos)
+    trimmed = trimmed.substr(first);
+  auto startsExpr = [&](const char *prefix) {
+    const size_t len = std::strlen(prefix);
+    return trimmed.size() >= len && trimmed.compare(0, len, prefix) == 0;
+  };
+  if (startsExpr("clamp(") || startsExpr("fma(") || startsExpr("abs(") ||
+      startsExpr("cos(") || startsExpr("sin(") || startsExpr("tan(") ||
+      startsExpr("acos(") || startsExpr("asin(") || startsExpr("atan(") ||
+      startsExpr("exp2(") || startsExpr("fract(") || startsExpr("log2(") ||
+      startsExpr("sqrt(") || startsExpr("rsqrt(") || startsExpr("rint(") ||
+      startsExpr("floor(") || startsExpr("ceil(") || startsExpr("trunc("))
+    return 0;
+  if (startsExpr("float4") || startsExpr("uint4") || startsExpr("int4") ||
+      startsExpr("bool4") || startsExpr("vec<float, 4>") ||
+      startsExpr("reinterpret_cast<device float4&>") ||
+      startsExpr("reinterpret_cast<device uint4&>") ||
+      trimmed.find(".sample(") != std::string::npos ||
+      trimmed.find(".read(") != std::string::npos)
     return 4;
-  if (expr.find("float3") != std::string::npos ||
-      expr.find("uint3") != std::string::npos ||
-      expr.find("int3") != std::string::npos ||
-      expr.find("bool3") != std::string::npos ||
-      expr.find("vec<float, 3>") != std::string::npos)
+  if (startsExpr("float3") || startsExpr("uint3") || startsExpr("int3") ||
+      startsExpr("bool3") || startsExpr("vec<float, 3>"))
     return 3;
-  if (expr.find("float2") != std::string::npos ||
-      expr.find("uint2") != std::string::npos ||
-      expr.find("int2") != std::string::npos ||
-      expr.find("bool2") != std::string::npos ||
-      expr.find("vec<float, 2>") != std::string::npos)
+  if (startsExpr("float2") || startsExpr("uint2") || startsExpr("int2") ||
+      startsExpr("bool2") || startsExpr("vec<float, 2>"))
     return 2;
   return 0;
 }
@@ -669,6 +853,14 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
 }
 
 static std::string normalizeFloatSuffixLiteral(const std::string &text) {
+  if (text == "nan" || text == "+nan" || text == "-nan" ||
+      text == "nanf" || text == "+nanf" || text == "-nanf")
+    return "as_type<float>(0x7fc00000u)";
+  if (text == "inf" || text == "+inf" || text == "inff" ||
+      text == "+inff")
+    return "INFINITY";
+  if (text == "-inf" || text == "-inff")
+    return "-INFINITY";
   if (text.size() < 2 || text.back() != 'f')
     return text;
   std::string body = text.substr(0, text.size() - 1);
@@ -690,6 +882,12 @@ static std::string normalizeConstantData(const std::string &text, uint32_t type_
 
 static bool isZeroLiteral(const std::string &text) {
   return text == "0" || text == "0.0" || text == "0.0f" || text == "false";
+}
+
+static bool isPointerLikeMSLExpr(const std::string &text) {
+  return startsWith(text, "buf") || text.find("_storage") != std::string::npos ||
+         text.find("device char*") != std::string::npos ||
+         text.find("device char *") != std::string::npos;
 }
 
 static std::string vectorComponent(const std::string &vector, uint32_t index) {
@@ -893,6 +1091,10 @@ std::string DXILToMSL::emitConstant(const std::vector<uint64_t> &ops, uint32_t t
       return f < 0.0f ? "-INFINITY" : "INFINITY";
     char buf[64];
     snprintf(buf, sizeof(buf), "%.9g", (double)f);
+    if (strstr(buf, "nan") || strstr(buf, "NaN") || strstr(buf, "NAN"))
+      return "as_type<float>(0x7fc00000u)";
+    if (strstr(buf, "inf") || strstr(buf, "Inf") || strstr(buf, "INF"))
+      return f < 0.0f ? "-INFINITY" : "INFINITY";
     if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E'))
       strcat(buf, ".0");
     return std::string(buf) + "f";
@@ -901,8 +1103,16 @@ std::string DXILToMSL::emitConstant(const std::vector<uint64_t> &ops, uint32_t t
     double d;
     uint64_t u = ops[0];
     memcpy(&d, &u, 8);
+    if (std::isnan(d))
+      return "as_type<double>(0x7ff8000000000000ul)";
+    if (std::isinf(d))
+      return d < 0.0 ? "-INFINITY" : "INFINITY";
     char buf[64];
     snprintf(buf, sizeof(buf), "%.17g", d);
+    if (strstr(buf, "nan") || strstr(buf, "NaN") || strstr(buf, "NAN"))
+      return "as_type<double>(0x7ff8000000000000ul)";
+    if (strstr(buf, "inf") || strstr(buf, "Inf") || strstr(buf, "INF"))
+      return d < 0.0 ? "-INFINITY" : "INFINITY";
     return std::string(buf);
   }
   default:
@@ -1001,6 +1211,11 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
   os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
   os << "};\n\n";
 
+  os << "struct pixel_output_v {\n";
+  for (uint32_t i = 0; i < 8; i++)
+    os << "  float4 color" << i << " [[color(" << i << ")]];\n";
+  os << "};\n\n";
+
   os << "struct vertex_input_v {\n";
   for (uint32_t i = 0; i < 16; i++)
     os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
@@ -1024,14 +1239,19 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     os << "vertex output_v vs_main(\n";
     os << "  vertex_input_v vin [[stage_in]],\n";
     os << "  uint vid [[vertex_id]],\n";
-    for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++) {
-      os << "  device char* buf" << i << " [[buffer(" << i << ")]]";
-      os << (i + 1 == kMaxMSLBufferBindings ? "\n" : ",\n");
+    for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++)
+      os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLTextureBindings; i++)
+      os << "  texture2d<float, access::sample> tex" << i
+         << " [[texture(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLSamplerBindings; i++) {
+      os << "  sampler samp" << i << " [[sampler(" << i << ")]]";
+      os << (i + 1 == kMaxMSLSamplerBindings ? "\n" : ",\n");
     }
     os << ") {\n";
     os << "  output_v out = {};\n";
   } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
-    os << "fragment float4 ps_main(\n";
+    os << "fragment pixel_output_v ps_main(\n";
     os << "  input_v in [[stage_in]],\n";
     for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++)
       os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
@@ -1043,7 +1263,8 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
       os << (i + 1 == kMaxMSLSamplerBindings ? "\n" : ",\n");
     }
     os << ") {\n";
-    os << "  float4 result = float4(0,0,0,1);\n";
+    os << "  pixel_output_v result = {};\n";
+    os << "  result.color0 = float4(0,0,0,1);\n";
   } else {
     os << "kernel void unknown_main() {\n";
   }
@@ -1064,8 +1285,14 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (idx < ctx.value_expr_table.size() && !ctx.value_expr_table[idx].empty()) {
       const auto &expr = ctx.value_expr_table[idx];
       uint32_t alias_idx = 0;
-      if (parseSSAName(expr, alias_idx) && alias_idx != idx)
-        return self(self, alias_idx, depth + 1);
+      if (parseSSAName(expr, alias_idx)) {
+        if (alias_idx != idx)
+          return self(self, alias_idx, depth + 1);
+        if (ctx.emitted_values.find(idx) == ctx.emitted_values.end())
+          return defaultValueForTypeId(
+              idx < ctx.value_types.size() ? ctx.value_types[idx] : 0,
+              ctx.mod);
+      }
       if (!isFunctionLikeSymbol(expr))
         return expr;
     }
@@ -1106,6 +1333,16 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   auto scalarValueArg = [&](size_t arg, const char *fallback) -> std::string {
     std::string value = valueArg(arg, fallback);
+    if (arg < args.size()) {
+      uint32_t idx = args[arg];
+      uint32_t type_id = idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
+      if (isPointerTypeId(type_id, ctx.mod) || isPointerLikeMSLExpr(value)) {
+        recordDiagnostic(ctx,
+                         "DXIL intrinsic %u pointer operand used as scalar: %s",
+                         intrinsic_id, value.c_str());
+        return fallback;
+      }
+    }
     if (argVectorLaneCount(arg) > 1)
       return "(" + value + ").x";
     return value;
@@ -1119,6 +1356,13 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     recordDiagnostic(ctx, "DXIL intrinsic %u: %s is not a literal: %s",
                      intrinsic_id, label, text.empty() ? "<missing>" : text.c_str());
     return fallback;
+  };
+
+  auto tryLiteralArg = [&](size_t arg, uint32_t &value) -> bool {
+    if (arg >= args.size())
+      return false;
+    std::string text = valueArg(arg, "");
+    return parseUnsignedLiteral(text, value);
   };
 
   switch (intrinsic_id) {
@@ -1184,6 +1428,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_ThreadId: {
+    if (ctx.shader.kind != DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL ThreadId used outside compute shader; lowered to 0");
+      return "0";
+    }
     ctx.uses_thread_id = true;
     if (!args.empty()) {
       uint32_t component = literalArg(0, 0, "thread id component");
@@ -1195,6 +1443,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_GroupId: {
+    if (ctx.shader.kind != DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL GroupId used outside compute shader; lowered to 0");
+      return "0";
+    }
     ctx.uses_group_id = true;
     if (!args.empty()) {
       uint32_t component = literalArg(0, 0, "group id component");
@@ -1206,6 +1458,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_ThreadIDInGroup: {
+    if (ctx.shader.kind != DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL ThreadIDInGroup used outside compute shader; lowered to 0");
+      return "0";
+    }
     ctx.uses_group_thread_id = true;
     if (!args.empty()) {
       uint32_t component = literalArg(0, 0, "group thread id component");
@@ -1217,6 +1473,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_FlattenedThreadIDInGroup: {
+    if (ctx.shader.kind != DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL FlattenedThreadIDInGroup used outside compute shader; lowered to 0");
+      return "0";
+    }
     ctx.uses_group_thread_id = true;
     ctx.uses_group_size = true;
     return "(int)(gtid.x + gtid.y * gsz.x + gtid.z * gsz.x * gsz.y)";
@@ -1331,17 +1591,22 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
     auto coord_x = scalarValueArg(2, "0.0");
     auto coord_y = scalarValueArg(3, "0.0");
-    auto coord = "float2(" + coord_x + ", " + coord_y + ")";
+    auto coord = "float2(dxmt_float(" + coord_x + "), dxmt_float(" + coord_y + "))";
+    if (ctx.shader.kind == DxilShaderKind::Compute) {
+      if (intrinsic_id != DXOP_TextureSample)
+        recordDiagnostic(ctx, "DXIL compute texture sample lowered through integer read fallback");
+      return handle + ".read(uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+             asIntegerIndexExpr(coord_y) + "))";
+    }
     if (intrinsic_id == DXOP_TextureSampleGrad) {
       recordDiagnostic(ctx, "DXIL SampleGrad lowered without explicit gradients");
     } else if (intrinsic_id == DXOP_TextureSampleLevel) {
-      recordDiagnostic(ctx, "DXIL SampleLevel lowered without explicit LOD");
+      auto lod = args.size() > 4 ? scalarValueArg(4, "0.0") : "0.0";
+      return handle + ".sample(" + sampler + ", " + coord + ", level(" + lod + "))";
     } else if (intrinsic_id == DXOP_TextureSampleBias) {
       recordDiagnostic(ctx, "DXIL SampleBias lowered without explicit bias");
     }
-    (void)sampler;
-    return handle + ".read(uint2(" + asIntegerIndexExpr(coord_x) + ", " +
-           asIntegerIndexExpr(coord_y) + "))";
+    return handle + ".sample(" + sampler + ", " + coord + ")";
   }
 
   case DXOP_TextureGather:
@@ -1397,23 +1662,23 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_DerivCoarseX:
   case DXOP_DerivFineX: {
     if (args.empty()) return "0.0";
-    return "dfdx(" + valueArg(0, "0.0") + ")";
+    return "dfdx(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
   }
 
   case DXOP_DerivCoarseY:
   case DXOP_DerivFineY: {
     if (args.empty()) return "0.0";
-    return "dfdy(" + valueArg(0, "0.0") + ")";
+    return "dfdy(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
   }
 
   case DXOP_CalcLOD: {
     if (args.size() < 4) return "0.0";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
-    return handle + ".calculate_unclamped_lod(" + sampler + ", float2(" +
-           coord_x + ", " + coord_y + "))";
+    auto coord_x = scalarValueArg(2, "0.0");
+    auto coord_y = scalarValueArg(3, "0.0");
+    return handle + ".calculate_unclamped_lod(" + sampler + ", float2(dxmt_float(" +
+           coord_x + "), dxmt_float(" + coord_y + ")))";
   }
 
   case DXOP_AtomicBinOp: {
@@ -1460,28 +1725,28 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_Unary: {
     if (args.size() < 2) return "0";
     uint32_t op = literalArg(0, 0xFFFFFFFFu, "unary opcode");
-    auto x = valueArg(1, "0.0");
+    auto x = scalarValueArg(1, "0.0");
     switch (op) {
-    case DXILOP_FAbs: return "abs(" + x + ")";
-    case DXILOP_Saturate: return "clamp(" + x + ", 0.0, 1.0)";
+    case DXILOP_FAbs: return "abs((float)(" + x + "))";
+    case DXILOP_Saturate: return "clamp((float)(" + x + "), 0.0f, 1.0f)";
     case DXILOP_IsNaN: return "isnan((float)(" + x + "))";
     case DXILOP_IsInf: return "isinf((float)(" + x + "))";
     case DXILOP_IsFinite: return "isfinite((float)(" + x + "))";
-    case DXILOP_Cos: return "cos(" + x + ")";
-    case DXILOP_Sin: return "sin(" + x + ")";
-    case DXILOP_Tan: return "tan(" + x + ")";
-    case DXILOP_Acos: return "acos(" + x + ")";
-    case DXILOP_Asin: return "asin(" + x + ")";
-    case DXILOP_Atan: return "atan(" + x + ")";
-    case DXILOP_Exp: return "exp2(" + x + ")";
-    case DXILOP_Frc: return "fract(" + x + ")";
-    case DXILOP_Log: return "log2(" + x + ")";
-    case DXILOP_Sqrt: return "sqrt(" + x + ")";
-    case DXILOP_Rsqrt: return "rsqrt(" + x + ")";
-    case DXILOP_Round_ne: return "rint(" + x + ")";
-    case DXILOP_Round_ni: return "floor(" + x + ")";
-    case DXILOP_Round_pi: return "ceil(" + x + ")";
-    case DXILOP_Round_z: return "trunc(" + x + ")";
+    case DXILOP_Cos: return "cos((float)(" + x + "))";
+    case DXILOP_Sin: return "sin((float)(" + x + "))";
+    case DXILOP_Tan: return "tan((float)(" + x + "))";
+    case DXILOP_Acos: return "acos((float)(" + x + "))";
+    case DXILOP_Asin: return "asin((float)(" + x + "))";
+    case DXILOP_Atan: return "atan((float)(" + x + "))";
+    case DXILOP_Exp: return "exp2((float)(" + x + "))";
+    case DXILOP_Frc: return "fract((float)(" + x + "))";
+    case DXILOP_Log: return "log2((float)(" + x + "))";
+    case DXILOP_Sqrt: return "sqrt((float)(" + x + "))";
+    case DXILOP_Rsqrt: return "rsqrt((float)(" + x + "))";
+    case DXILOP_Round_ne: return "rint((float)(" + x + "))";
+    case DXILOP_Round_ni: return "floor((float)(" + x + "))";
+    case DXILOP_Round_pi: return "ceil((float)(" + x + "))";
+    case DXILOP_Round_z: return "trunc((float)(" + x + "))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown unary opcode: %u", op);
@@ -1524,15 +1789,19 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_Binary: {
     if (args.size() < 3) return "0";
     uint32_t op = literalArg(0, 0xFFFFFFFFu, "binary opcode");
-    auto a = valueArg(1, "0");
-    auto b = valueArg(2, "0");
+    auto a = scalarValueArg(1, "0");
+    auto b = scalarValueArg(2, "0");
     switch (op) {
-    case DXILOP_FMax:
-    case DXILOP_IMax: return "max(" + a + ", " + b + ")";
-    case DXILOP_FMin:
-    case DXILOP_IMin: return "min(" + a + ", " + b + ")";
-    case DXILOP_UMax: return "max(dxmt_uint(" + a + "), dxmt_uint(" + b + "))";
-    case DXILOP_UMin: return "min(dxmt_uint(" + a + "), dxmt_uint(" + b + "))";
+    case DXILOP_FMax: return "max((float)(" + a + "), (float)(" + b + "))";
+    case DXILOP_FMin: return "min((float)(" + a + "), (float)(" + b + "))";
+    case DXILOP_IMax:
+      return "max((int)(dxmt_uint(" + a + ")), (int)(dxmt_uint(" + b + ")))";
+    case DXILOP_IMin:
+      return "min((int)(dxmt_uint(" + a + ")), (int)(dxmt_uint(" + b + ")))";
+    case DXILOP_UMax:
+      return "max((uint)(dxmt_uint(" + a + ")), (uint)(dxmt_uint(" + b + ")))";
+    case DXILOP_UMin:
+      return "min((uint)(dxmt_uint(" + a + ")), (uint)(dxmt_uint(" + b + ")))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown binary opcode: %u", op);
@@ -1543,12 +1812,14 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_Tertiary: {
     if (args.size() < 4) return "0";
     uint32_t op = literalArg(0, 0xFFFFFFFFu, "tertiary opcode");
-    auto a = valueArg(1, "0");
-    auto b = valueArg(2, "0");
-    auto c = valueArg(3, "0");
+    auto a = scalarValueArg(1, "0");
+    auto b = scalarValueArg(2, "0");
+    auto c = scalarValueArg(3, "0");
     switch (op) {
     case DXILOP_FMad:
-    case DXILOP_Fma: return "fma(" + a + ", " + b + ", " + c + ")";
+    case DXILOP_Fma:
+      return "(dxmt_float(" + a + ") * dxmt_float(" + b +
+             ") + dxmt_float(" + c + "))";
     case DXILOP_IMad:
     case DXILOP_UMad: return "((" + a + ") * (" + b + ") + (" + c + "))";
     default:
@@ -1593,8 +1864,31 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_LoadInput: {
     if (args.size() < 3) return "0.0";
-    uint32_t input_id = literalArg(0, 0, "input id");
-    uint32_t component = literalArg(2, 0, "input component");
+    uint32_t input_id = 0;
+    uint32_t component = 0;
+    bool decoded = false;
+    for (size_t i = 0; i + 2 < args.size(); i++) {
+      uint32_t candidate_input = 0;
+      uint32_t candidate_row = 0;
+      uint32_t candidate_component = 0;
+      if (!tryLiteralArg(i, candidate_input) ||
+          !tryLiteralArg(i + 1, candidate_row) ||
+          !tryLiteralArg(i + 2, candidate_component) ||
+          candidate_component > 3)
+        continue;
+      input_id = candidate_input;
+      component = candidate_component;
+      decoded = true;
+      if (i != 0)
+        recordDiagnostic(ctx,
+                         "DXIL LoadInput canonicalized shifted args: start=%zu input_id=%u row=%u component=%u",
+                         i, input_id, candidate_row, component);
+      break;
+    }
+    if (!decoded) {
+      input_id = literalArg(0, 0, "input id");
+      component = literalArg(2, 0, "input component");
+    }
     if (ctx.shader.kind == DxilShaderKind::Pixel) {
       return varyingField("in", input_id) + componentSuffix(component);
     }
@@ -1608,19 +1902,55 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_StoreOutput: {
     if (args.size() < 4) return "";
-    uint32_t output_id = literalArg(0, 0, "output id");
-    uint32_t component = literalArg(2, 0, "output component");
-    auto val = valueArg(3, "float4(0)");
+    uint32_t output_id = 0;
+    uint32_t component = 0;
+    size_t value_arg = 3;
+    bool decoded = false;
+    for (size_t i = 0; i + 3 < args.size(); i++) {
+      uint32_t candidate_output = 0;
+      uint32_t candidate_row = 0;
+      uint32_t candidate_component = 0;
+      if (!tryLiteralArg(i, candidate_output) ||
+          !tryLiteralArg(i + 1, candidate_row) ||
+          !tryLiteralArg(i + 2, candidate_component) ||
+          candidate_component > 3)
+        continue;
+      output_id = candidate_output;
+      component = candidate_component;
+      value_arg = i + 3;
+      decoded = true;
+      if (i != 0)
+        recordDiagnostic(ctx,
+                         "DXIL StoreOutput canonicalized shifted args: start=%zu output_id=%u row=%u component=%u",
+                         i, output_id, candidate_row, component);
+      break;
+    }
+    if (!decoded) {
+      output_id = literalArg(0, 0, "output id");
+      component = literalArg(2, 0, "output component");
+      value_arg = 3;
+    }
+    auto val = scalarValueArg(value_arg, "0");
 
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
       return varyingField("out", output_id) + componentSuffix(component) + " = " + val;
     }
     if (ctx.shader.kind == DxilShaderKind::Pixel) {
-      if (output_id > 0) {
-        recordDiagnostic(ctx, "DXIL StoreOutput MRT fallback: output_id=%u component=%u",
-                         output_id, component);
+      uint32_t target = 0;
+      if (output_id > 0 || component > 3) {
+        const uint32_t sequenced = ctx.pixel_store_output_counter++;
+        target = std::min<uint32_t>(7u, sequenced >> 2);
+        const uint32_t sequenced_component = sequenced & 3u;
+        recordDiagnostic(ctx,
+                         "DXIL StoreOutput signature fallback: output_id=%u component=%u target=%u sequenced=%u",
+                         output_id, component, target, sequenced_component);
+        component = sequenced_component;
+      } else {
+        ctx.pixel_store_output_counter =
+            std::max(ctx.pixel_store_output_counter, component + 1);
       }
-      return std::string("result") + componentSuffix(component) + " = " + val;
+      return std::string("result.color") + std::to_string(target) +
+             componentSuffix(component) + " = " + val;
     }
     recordDiagnostic(ctx, "DXIL StoreOutput fallback: shader_kind=%u output_id=%u component=%u",
                      (uint32_t)ctx.shader.kind, output_id, component);
@@ -1643,8 +1973,17 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   std::string result = emitValue(result_slot);
 
   auto rawValue = [&](uint32_t idx) -> std::string {
-    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-      return ctx.value_table[idx];
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+      const auto &value = ctx.value_table[idx];
+      uint32_t alias_idx = 0;
+      if (parseSSAName(value, alias_idx) && alias_idx == idx &&
+          ctx.emitted_values.find(idx) == ctx.emitted_values.end()) {
+        recordDiagnostic(ctx, "DXIL unresolved SSA alias: v%u", idx);
+        uint32_t type_id = idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
+        return defaultValueForTypeId(type_id, ctx.mod);
+      }
+      return value;
+    }
     recordDiagnostic(ctx, "DXIL missing SSA value: v%u", idx);
     return "0";
   };
@@ -1669,8 +2008,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (idx < ctx.value_expr_table.size() && !ctx.value_expr_table[idx].empty()) {
       const auto &expr = ctx.value_expr_table[idx];
       uint32_t alias_idx = 0;
-      if (parseSSAName(expr, alias_idx) && alias_idx != idx)
-        return self(self, alias_idx, depth + 1);
+      if (parseSSAName(expr, alias_idx)) {
+        if (alias_idx != idx)
+          return self(self, alias_idx, depth + 1);
+        if (ctx.emitted_values.find(idx) == ctx.emitted_values.end())
+          return defaultValueForTypeId(
+              idx < ctx.value_types.size() ? ctx.value_types[idx] : 0,
+              ctx.mod);
+      }
       if (isFunctionLikeSymbol(expr))
         return getValue(idx);
       return expr;
@@ -1751,6 +2096,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
                            std::string expr_override = std::string()) {
     ensureValueTable(result_slot);
     ctx.value_table[result_slot] = result;
+    ctx.emitted_values.insert(result_slot);
     ctx.value_expr_table[result_slot] = std::move(expr_override);
     ctx.value_types[result_slot] = inst.type_id;
     ctx.value_vector_lanes[result_slot] =
@@ -1794,6 +2140,13 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   auto floatOperandForResultType = [&](uint32_t operand, uint32_t result_type_id) -> std::string {
     uint8_t result_lanes = vectorLaneCountForTypeId(result_type_id, ctx.mod);
     std::string value = resolvedExpr(resolvedExpr, operand, 0);
+    if (ctx.pointer_slots.find(operand) != ctx.pointer_slots.end() ||
+        isPointerTypeId(valueTypeId(operand), ctx.mod) ||
+        isPointerLikeMSLExpr(value)) {
+      recordDiagnostic(ctx, "DXIL pointer operand used as float SSA value: v%u",
+                       operand);
+      return defaultValueForTypeId(result_type_id, ctx.mod);
+    }
     if (result_lanes > 1) {
       return std::string("float") + std::to_string(result_lanes) + "(" +
              value + ")";
@@ -1820,6 +2173,27 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
       os << "  return out;\n";
     } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
+      if (!inst.operands.empty()) {
+        std::string ret = getValue(inst.operands[0]);
+        uint8_t lanes =
+            resolvedVectorLaneCount(resolvedVectorLaneCount, inst.operands[0], 0);
+        if (lanes <= 1)
+          lanes = inferVectorLaneCountFromExpr(ret);
+        if (lanes >= 4) {
+          os << "  result.color0 = float4(" << ret << ");\n";
+          os << "  return result;\n";
+        } else if (lanes == 3) {
+          os << "  result.color0 = float4(" << ret << ", 1.0);\n";
+          os << "  return result;\n";
+        } else if (lanes == 2) {
+          os << "  result.color0 = float4(" << ret << ", 0.0, 1.0);\n";
+          os << "  return result;\n";
+        } else {
+          os << "  result.color0.x = " << ret << ";\n";
+          os << "  return result;\n";
+        }
+        break;
+      }
       os << "  return result;\n";
     } else {
       os << "  return;\n";
@@ -1845,13 +2219,32 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
     std::string callee_name =
         callee < ctx.value_table.size() ? rawValue(callee) : "";
+    std::string declared_callee_name = findFunctionNameForValue(ctx.mod, callee);
+    if ((callee_name.empty() || callee_name == "0") &&
+        !declared_callee_name.empty())
+      callee_name = declared_callee_name;
     uint32_t callee_type_id = findFunctionTypeForValue(ctx.mod, callee);
+    const bool callee_is_dxop = startsWith(callee_name, "dx.op");
+    const bool callee_is_declared_non_dx_function =
+        !declared_callee_name.empty() && !startsWith(declared_callee_name, "dx.op");
+    const bool callee_needs_dxop_recovery =
+        !callee_is_declared_non_dx_function &&
+        (callee_name.empty() || callee_name == "0" || callee_is_dxop);
     std::string type_callee_name =
-        findDeclaredDXOpNameForType(ctx.mod, function_type_id);
-    if (type_callee_name.empty()) {
+        callee_needs_dxop_recovery
+            ? findDeclaredDXOpNameForType(ctx.mod, function_type_id)
+            : "";
+    if (type_callee_name.empty() &&
+        (!has_intrinsic_literal || !isKnownDXIntrinsic(intrinsic_id))) {
       std::string first_arg_text = call_args.empty() ? "" : rawValue(call_args[0]);
       type_callee_name = inferDXIntrinsicNameFromCallShape(
           ctx.mod, function_type_id, inst.type_id, call_args, first_arg_text);
+    }
+    if (!type_callee_name.empty() && has_intrinsic_literal &&
+        isKnownDXIntrinsic(intrinsic_id)) {
+      uint32_t type_intrinsic_id = inferDXIntrinsicIdFromName(type_callee_name);
+      if (type_intrinsic_id && type_intrinsic_id != intrinsic_id)
+        type_callee_name.clear();
     }
     bool callee_matches_type =
         !type_callee_name.empty() && callee_type_id == function_type_id &&
@@ -1862,14 +2255,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       effective_callee_name = type_callee_name;
     }
     bool named_dxop = startsWith(effective_callee_name, "dx.op");
-    bool leading_arg_is_dxop_symbol = false;
-    std::string leading_arg_symbol;
-    if (!named_dxop && !call_args.empty()) {
-      leading_arg_symbol = rawValue(call_args[0]);
-      if (startsWith(leading_arg_symbol, "dx.op.")) {
-        effective_callee_name = leading_arg_symbol;
-        leading_arg_is_dxop_symbol = true;
-        named_dxop = true;
+    std::string dxop_arg_symbol;
+    if (!named_dxop) {
+      for (size_t i = 0; i < call_args.size(); i++) {
+        dxop_arg_symbol = rawValue(call_args[i]);
+        if (startsWith(dxop_arg_symbol, "dx.op.")) {
+          effective_callee_name = dxop_arg_symbol;
+          named_dxop = true;
+          break;
+        }
       }
     }
     uint32_t inferred_intrinsic_id =
@@ -1886,16 +2280,27 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  // dx.op call without literal intrinsic id\n";
       publishResult();
     } else if (has_intrinsic_literal && (named_dxop || isKnownDXIntrinsic(intrinsic_id))) {
-      size_t intrinsic_arg_index = leading_arg_is_dxop_symbol ? 1 : 0;
-      if (intrinsic_arg_index >= call_args.size()) {
-        ctx.unsupported_intrinsics++;
-        recordDiagnostic(ctx, "DXIL intrinsic %u missing opcode operand after recovered callee %s",
-                         intrinsic_id, effective_callee_name.c_str());
-        publishResult();
-        break;
+      std::vector<uint32_t> remaining_args;
+      bool skipped_intrinsic_literal = false;
+      bool skipped_symbol_operand = false;
+      for (size_t i = 0; i < call_args.size(); i++) {
+        std::string arg_text = rawValue(call_args[i]);
+        if (startsWith(arg_text, "dx.op.")) {
+          skipped_symbol_operand = true;
+          continue;
+        }
+        uint32_t literal = 0;
+        if (!skipped_intrinsic_literal &&
+            parseUnsignedLiteral(arg_text, literal) && literal == intrinsic_id) {
+          skipped_intrinsic_literal = true;
+          continue;
+        }
+        remaining_args.push_back(call_args[i]);
       }
-      std::vector<uint32_t> remaining_args(call_args.begin() + intrinsic_arg_index + 1,
-                                           call_args.end());
+      if (skipped_symbol_operand) {
+        recordDiagnostic(ctx, "DXIL intrinsic %u skipped recovered function symbol operand",
+                         intrinsic_id);
+      }
 
       std::string translated = translateDXIntrinsic(ctx, intrinsic_id, remaining_args);
 
@@ -1917,6 +2322,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         if (!translated.empty() && translated[0] != ' ') {
           os << "  auto " << result << " = " << translated << ";\n";
           ctx.value_table[result_slot] = result;
+          ctx.emitted_values.insert(result_slot);
           ctx.value_expr_table[result_slot] = translated;
           ctx.value_types[result_slot] = inst.type_id;
           ctx.value_vector_lanes[result_slot] =
@@ -1931,6 +2337,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
            << defaultValueForTypeId(inst.type_id, ctx.mod)
            << "; // fallback result after side-effect call\n";
         ctx.value_table[result_slot] = result;
+        ctx.emitted_values.insert(result_slot);
         ctx.value_expr_table[result_slot].clear();
         ctx.value_types[result_slot] = inst.type_id;
         ctx.value_vector_lanes[result_slot] = 0;
@@ -1938,6 +2345,42 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     } else {
       std::string fallback_callee =
           effective_callee_name.empty() ? rawValue(callee) : effective_callee_name;
+      if ((fallback_callee.empty() || fallback_callee == "0") &&
+          ctx.shader.kind == DxilShaderKind::Vertex && !call_args.empty()) {
+        ensureValueTable(result_slot);
+        if (call_args.size() == 3) {
+          auto a = getValue(call_args[0]);
+          auto b = getValue(call_args[1]);
+          auto c = getValue(call_args[2]);
+          std::string expr = "(dxmt_float(" + a + ") * dxmt_float(" + b +
+                             ") + dxmt_float(" + c + "))";
+          os << "  auto " << result << " = " << expr
+             << "; // recovered unnamed vertex ternary call\n";
+          ctx.value_table[result_slot] = result;
+          ctx.value_expr_table[result_slot] = expr;
+          ctx.value_types[result_slot] = inst.type_id;
+          ctx.value_vector_lanes[result_slot] = 0;
+          recordDiagnostic(ctx,
+                           "DXIL recovered unnamed vertex ternary call as scalar mad: "
+                           "result=v%u",
+                           result_slot);
+          value_counter = std::max(value_counter + 1, result_slot + 1);
+          break;
+        }
+        auto value = getValue(call_args[0]);
+        os << "  auto " << result << " = " << value
+           << "; // recovered unnamed vertex call passthrough\n";
+        ctx.value_table[result_slot] = result;
+        ctx.value_expr_table[result_slot] = value;
+        ctx.value_types[result_slot] = inst.type_id;
+        ctx.value_vector_lanes[result_slot] = 0;
+        recordDiagnostic(ctx,
+                         "DXIL recovered unnamed vertex call passthrough: "
+                         "result=v%u argc=%zu",
+                         result_slot, call_args.size());
+        value_counter = std::max(value_counter + 1, result_slot + 1);
+        break;
+      }
       os << "  auto " << result << " = 0; // call " << fallback_callee << "(";
       for (size_t i = 0; i < call_args.size(); i++) {
         if (i) os << ", ";
@@ -1955,23 +2398,23 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Add: {
     ensureValueTable(result_slot);
+    std::string expr;
     if (usesPointerOperand() && !isPointerTypeId(inst.type_id, ctx.mod)) {
       recordDiagnostic(ctx, "DXIL pointer add fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer add fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer add fallback\n";
     } else {
       auto lhs = getValue(inst.operands[0]);
       auto rhs = getValue(inst.operands[1]);
       std::string folded;
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
-        os << "  auto " << result << " = " << folded << ";\n";
+        expr = folded;
       } else {
-        os << "  auto " << result << " = "
-           << numericOperandForResultType(inst.operands[0], inst.type_id)
-           << " + "
-           << numericOperandForResultType(inst.operands[1], inst.type_id)
-           << ";\n";
+        expr = numericOperandForResultType(inst.operands[0], inst.type_id) +
+               " + " +
+               numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
@@ -1979,23 +2422,23 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Sub: {
     ensureValueTable(result_slot);
+    std::string expr;
     if (usesPointerOperand() && !isPointerTypeId(inst.type_id, ctx.mod)) {
       recordDiagnostic(ctx, "DXIL pointer sub fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer sub fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer sub fallback\n";
     } else {
       auto lhs = getValue(inst.operands[0]);
       auto rhs = getValue(inst.operands[1]);
       std::string folded;
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
-        os << "  auto " << result << " = " << folded << ";\n";
+        expr = folded;
       } else {
-        os << "  auto " << result << " = "
-           << numericOperandForResultType(inst.operands[0], inst.type_id)
-           << " - "
-           << numericOperandForResultType(inst.operands[1], inst.type_id)
-           << ";\n";
+        expr = numericOperandForResultType(inst.operands[0], inst.type_id) +
+               " - " +
+               numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
@@ -2003,91 +2446,124 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Mul: {
     ensureValueTable(result_slot);
+    std::string expr;
     if (usesPointerOperand()) {
       recordDiagnostic(ctx, "DXIL pointer mul fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer mul fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer mul fallback\n";
     } else {
       auto lhs = getValue(inst.operands[0]);
       auto rhs = getValue(inst.operands[1]);
       std::string folded;
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
-        os << "  auto " << result << " = " << folded << ";\n";
+        expr = folded;
       } else {
-        os << "  auto " << result << " = "
-           << numericOperandForResultType(inst.operands[0], inst.type_id)
-           << " * "
-           << numericOperandForResultType(inst.operands[1], inst.type_id)
-           << ";\n";
+        expr = numericOperandForResultType(inst.operands[0], inst.type_id) +
+               " * " +
+               numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
   }
 
   case LLVMInstruction::UDiv: {
+    std::string expr;
     if (usesPointerOperand()) {
       recordDiagnostic(ctx, "DXIL pointer udiv fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer udiv fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer udiv fallback\n";
     } else {
-      os << "  auto " << result << " = (" << scalarValue(inst.operands[0]) << ") / ("
-         << scalarValue(inst.operands[1]) << ");\n";
+      expr = "(" + scalarValue(inst.operands[0]) + ") / (" +
+             scalarValue(inst.operands[1]) + ")";
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
   }
 
   case LLVMInstruction::SDiv: {
+    std::string expr;
     if (usesPointerOperand()) {
       recordDiagnostic(ctx, "DXIL pointer sdiv fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer sdiv fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer sdiv fallback\n";
     } else {
-      os << "  auto " << result << " = (" << scalarValue(inst.operands[0]) << ") / ("
-         << scalarValue(inst.operands[1]) << ");\n";
+      expr = "(" + scalarValue(inst.operands[0]) + ") / (" +
+             scalarValue(inst.operands[1]) + ")";
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
   }
 
   case LLVMInstruction::FAdd: {
-    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
-       << " + " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
-    publishResult();
+    std::string expr;
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer fadd fallback: result=v%u", result_slot);
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+    } else {
+      expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
+             " + " + floatOperandForResultType(inst.operands[1], inst.type_id);
+    }
+    os << "  auto " << result << " = " << expr << ";\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FSub: {
-    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
-       << " - " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
-    publishResult();
+    std::string expr;
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer fsub fallback: result=v%u", result_slot);
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+    } else {
+      expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
+             " - " + floatOperandForResultType(inst.operands[1], inst.type_id);
+    }
+    os << "  auto " << result << " = " << expr << ";\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FMul: {
-    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
-       << " * " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
-    publishResult();
+    std::string expr;
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer fmul fallback: result=v%u", result_slot);
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+    } else {
+      expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
+             " * " + floatOperandForResultType(inst.operands[1], inst.type_id);
+    }
+    os << "  auto " << result << " = " << expr << ";\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FDiv: {
-    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
-       << " / " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
-    publishResult();
+    std::string expr;
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer fdiv fallback: result=v%u", result_slot);
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+    } else {
+      expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
+             " / " + floatOperandForResultType(inst.operands[1], inst.type_id);
+    }
+    os << "  auto " << result << " = " << expr << ";\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FRem: {
+    std::string expr;
     if (usesPointerOperand()) {
       recordDiagnostic(ctx, "DXIL pointer frem fallback: result=v%u", result_slot);
-      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
-         << "; // pointer frem fallback\n";
+      expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+      os << "  auto " << result << " = " << expr << "; // pointer frem fallback\n";
     } else {
-      os << "  auto " << result << " = fmod("
-         << floatOperandForResultType(inst.operands[0], inst.type_id) << ", "
-         << floatOperandForResultType(inst.operands[1], inst.type_id) << ");\n";
+      expr = "fmod(" + floatOperandForResultType(inst.operands[0], inst.type_id) +
+             ", " + floatOperandForResultType(inst.operands[1], inst.type_id) + ")";
+      os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult();
     break;
@@ -2469,7 +2945,9 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   case LLVMInstruction::PHI: {
     std::string expr;
     if (!inst.operands.empty()) {
-      expr = operandValueForResultType(inst.operands[0], inst.type_id);
+      expr = resolvedExpr(resolvedExpr, inst.operands[0], 0);
+      if (isFunctionLikeSymbol(expr))
+        expr = defaultValueForTypeId(inst.type_id, ctx.mod);
       os << "  auto " << result << " = " << expr << "; // phi first incoming\n";
     } else {
       expr = "0";
@@ -2555,8 +3033,20 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   case LLVMInstruction::ExtractElement: {
     if (inst.operands.size() >= 2) {
       auto idx = getValue(inst.operands[1]);
-      os << "  auto " << result << " = " << getValue(inst.operands[0])
-         << componentAccessor(idx) << ";\n";
+      auto vec = resolvedExpr(resolvedExpr, inst.operands[0], 0);
+      uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount,
+                                              inst.operands[0], 0);
+      if (lanes <= 1)
+        lanes = inferVectorLaneCountFromExpr(vec);
+      uint32_t literal_index = 0;
+      bool has_literal_index = parseUnsignedLiteral(idx, literal_index);
+      if (lanes > 1 && (!has_literal_index || literal_index < lanes)) {
+        os << "  auto " << result << " = " << vec
+           << componentAccessor(idx) << ";\n";
+      } else {
+        os << "  auto " << result << " = " << vec
+           << "; // extractelement scalar fallback\n";
+      }
     }
     publishResult();
     break;
@@ -2578,29 +3068,47 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
   }
 
-  case LLVMInstruction::ShuffleVector: {
-    auto lhs = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
-    auto rhs = inst.operands.size() >= 2 ? getValue(inst.operands[1]) : "float4(0)";
-    auto mask = inst.operands.size() >= 3 ? getValue(inst.operands[2]) : "";
-    auto mask_values = parseAggregateLiteral(mask);
-    if (mask_values.empty()) {
-      uint32_t single_index = 0;
-      if (parseUnsignedLiteral(mask, single_index))
-        mask_values.push_back(mask);
+	  case LLVMInstruction::ShuffleVector: {
+	    auto lhs = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
+	    auto rhs = inst.operands.size() >= 2 ? getValue(inst.operands[1]) : "float4(0)";
+	    auto mask = inst.operands.size() >= 3 ? getValue(inst.operands[2]) : "";
+	    uint8_t lhs_lanes = inst.operands.size() >= 1
+	                            ? resolvedVectorLaneCount(resolvedVectorLaneCount,
+	                                                      inst.operands[0], 0)
+	                            : 4;
+	    uint8_t rhs_lanes = inst.operands.size() >= 2
+	                            ? resolvedVectorLaneCount(resolvedVectorLaneCount,
+	                                                      inst.operands[1], 0)
+	                            : 4;
+	    if (lhs_lanes <= 1)
+	      lhs_lanes = inferVectorLaneCountFromExpr(lhs);
+	    if (rhs_lanes <= 1)
+	      rhs_lanes = inferVectorLaneCountFromExpr(rhs);
+	    auto shuffleComponent = [](const std::string &value, uint8_t lanes,
+	                               uint32_t index) {
+	      if (lanes > 1 && index < lanes)
+	        return vectorComponent(value, index);
+	      return value;
+	    };
+	    auto mask_values = parseAggregateLiteral(mask);
+	    if (mask_values.empty()) {
+	      uint32_t single_index = 0;
+	      if (parseUnsignedLiteral(mask, single_index))
+	        mask_values.push_back(mask);
     }
 
     if (!mask_values.empty()) {
       std::vector<std::string> components;
       for (auto &mask_value : mask_values) {
         uint32_t index = 0;
-        if (!parseUnsignedLiteral(mask_value, index) || index == 0xFFFFFFFFu) {
-          components.push_back("0.0f");
-        } else if (index < 4) {
-          components.push_back(vectorComponent(lhs, index));
-        } else {
-          components.push_back(vectorComponent(rhs, index - 4));
-        }
-      }
+	        if (!parseUnsignedLiteral(mask_value, index) || index == 0xFFFFFFFFu) {
+	          components.push_back("0.0f");
+	        } else if (index < 4) {
+	          components.push_back(shuffleComponent(lhs, lhs_lanes, index));
+	        } else {
+	          components.push_back(shuffleComponent(rhs, rhs_lanes, index - 4));
+	        }
+	      }
 
       if (components.size() == 1) {
         os << "  auto " << result << " = " << components[0]
@@ -2674,7 +3182,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
           module.functions.size(), module.types.size());
 
   std::ostringstream os;
-  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, false,
+  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, false,
                   false, false, false};
 
   if (module.functions.empty()) {
@@ -2727,6 +3235,8 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   }
 
   for (const auto &fn_value : module.functions) {
+    if (!fn_value.is_declaration || fn_value.value_id == 0)
+      continue;
     if (fn_value.value_id >= ctx.value_table.size()) {
       ctx.value_table.resize(fn_value.value_id + 1);
       ctx.value_expr_table.resize(fn_value.value_id + 1);
@@ -2753,6 +3263,39 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
 
   MSLShader result;
   result.source = os.str();
+  std::unordered_set<uint32_t> unresolved_ssa;
+  std::unordered_set<uint32_t> used_ssa;
+  std::unordered_set<uint32_t> declared_ssa;
+  collectSSATokens(result.source, used_ssa, declared_ssa);
+  for (uint32_t idx : used_ssa) {
+    if (declared_ssa.find(idx) == declared_ssa.end())
+      unresolved_ssa.insert(idx);
+  }
+  for (const auto &diag : ctx.diagnostics) {
+    uint32_t idx = 0;
+    if (sscanf(diag.c_str(), "DXIL missing SSA value: v%u", &idx) == 1 ||
+        sscanf(diag.c_str(), "DXIL unresolved SSA alias: v%u", &idx) == 1) {
+      unresolved_ssa.insert(idx);
+    }
+  }
+  if (!unresolved_ssa.empty()) {
+    std::string prologue;
+    for (uint32_t idx : unresolved_ssa) {
+      std::string name = emitValue(idx);
+      if (result.source.find(" " + name + " =") == std::string::npos) {
+        uint32_t type_id = idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
+        prologue += "  auto " + name + " = " +
+                    defaultValueForTypeId(type_id, ctx.mod) +
+                    "; // generated-source SSA fallback\n";
+        recordDiagnostic(ctx, "DXIL generated-source SSA fallback: v%u", idx);
+      }
+    }
+    if (!prologue.empty()) {
+      size_t body = result.source.find(") {\n");
+      if (body != std::string::npos)
+        result.source.insert(body + 4, prologue);
+    }
+  }
   result.entry_point = shader.entry_point;
   result.tg_size[0] = 1;
   result.tg_size[1] = 1;

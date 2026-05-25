@@ -929,6 +929,14 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       if (cur_block < fn.blocks.size()) {
         LLVMInstruction inst;
         inst.opcode = LLVMInstruction::Ret;
+        if (ops.size() >= 3) {
+          size_t slot = 1;
+          uint32_t type_id = 0;
+          inst.operands.push_back(valueTypePair(ops, slot, type_id));
+          inst.type_id = type_id;
+        } else if (ops.size() >= 2) {
+          inst.operands.push_back(value(ops[1]));
+        }
         fn.blocks[cur_block].instructions.push_back(inst);
         nextBlock();
       }

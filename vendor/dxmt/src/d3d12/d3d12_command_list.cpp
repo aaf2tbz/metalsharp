@@ -143,7 +143,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::DrawIndexedInstanced(
   cmd.header = {CmdType::DrawIndexedInstanced, sizeof(cmd)};
   cmd.index_count = index_count;
   cmd.instance_count = instance_count;
-  cmd.start_vertex = start_vertex;
+  cmd.start_index = start_vertex;
   cmd.base_vertex = base_vertex;
   cmd.start_instance = start_instance;
   Emit(cmd);

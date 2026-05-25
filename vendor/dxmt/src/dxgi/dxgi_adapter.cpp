@@ -17,6 +17,18 @@
 
 namespace dxmt {
 
+static constexpr uint64_t kGiB = 1024ull * 1024ull * 1024ull;
+
+static uint64_t umaBudgetFromWorkingSet(uint64_t working_set) {
+  // Metal's recommended working set is a pressure hint, not the same contract
+  // as DXGI's budget on unified memory. UE5's D3D12 transient allocator treats
+  // the DXGI budget as hard placement headroom, so keep a conservative UMA
+  // floor that leaves OS headroom on 16 GB Apple Silicon while avoiding false
+  // 128 MB Nanite allocation failures.
+  uint64_t budget = std::max<uint64_t>(working_set, 10ull * kGiB);
+  return std::min<uint64_t>(budget, 12ull * kGiB);
+}
+
 Com<IDXGIOutput> CreateOutput(IMTLDXGIAdapter *pAadapter, HMONITOR monitor, DxgiOptions &options);
 
 LUID GetAdapterLuid(WMT::Device device) {
@@ -187,12 +199,13 @@ public:
     pDesc->SubSysId = 0;
     pDesc->Revision = 0;
     uint64_t working_set = device_.recommendedMaxWorkingSetSize();
+    uint64_t uma_budget = umaBudgetFromWorkingSet(working_set);
     if (device_.hasUnifiedMemory())
-      pDesc->DedicatedVideoMemory = working_set;
+      pDesc->DedicatedVideoMemory = uma_budget;
     else
       pDesc->DedicatedVideoMemory = working_set;
     pDesc->DedicatedSystemMemory = 0;
-    pDesc->SharedSystemMemory = device_.hasUnifiedMemory() ? working_set : 0;
+    pDesc->SharedSystemMemory = device_.hasUnifiedMemory() ? uma_budget : 0;
     pDesc->AdapterLuid = GetAdapterLuid(device_);
     pDesc->Flags = DXGI_ADAPTER_FLAG3_NONE;
     pDesc->GraphicsPreemptionGranularity = DXGI_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
@@ -284,18 +297,33 @@ public:
     // budget. UE5's transient allocator treats zero reservation headroom as an
     // exhausted heap, so expose the remaining recommended working set instead
     // of claiming reservations are impossible.
-    uint64_t budget = device_.recommendedMaxWorkingSetSize();
+    uint64_t working_set = device_.recommendedMaxWorkingSetSize();
+    uint64_t budget = device_.hasUnifiedMemory()
+                          ? umaBudgetFromWorkingSet(working_set)
+                          : working_set;
     uint64_t usage = MemorySegmentGroup == DXGI_MEMORY_SEGMENT_GROUP_LOCAL
                          ? device_.currentAllocatedSize()
                          : 0;
     uint64_t reservation = mem_reserved_[uint32_t(MemorySegmentGroup)];
-    uint64_t committed = std::min<uint64_t>(budget, std::max(usage, reservation));
+    uint64_t committed = std::min<uint64_t>(budget, reservation);
 
     pVideoMemoryInfo->Budget = budget;
     pVideoMemoryInfo->CurrentUsage = usage;
     pVideoMemoryInfo->AvailableForReservation = budget - committed;
     pVideoMemoryInfo->CurrentReservation =
         reservation;
+    static uint32_t s_query_log_count = 0;
+    uint32_t query_log_count =
+        __atomic_add_fetch(&s_query_log_count, 1, __ATOMIC_RELAXED);
+    if (query_log_count <= 32 || (query_log_count % 128) == 0) {
+      Logger::info(str::format("M12 DXGI video memory group=",
+                               (uint32_t)MemorySegmentGroup,
+                               " budget=", budget,
+                               " usage=", usage,
+                               " reservation=", reservation,
+                               " available=", pVideoMemoryInfo->AvailableForReservation,
+                               " working_set=", working_set));
+    }
     DATRACE("QueryVideoMemoryInfo this=%p -> budget=%llu usage=%llu available=%llu reservation=%llu",
             this, (unsigned long long)pVideoMemoryInfo->Budget,
             (unsigned long long)pVideoMemoryInfo->CurrentUsage,

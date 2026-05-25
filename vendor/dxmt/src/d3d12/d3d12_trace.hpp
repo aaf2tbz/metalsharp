@@ -16,6 +16,15 @@ static inline bool DXMTD3D12TraceEnabled() {
   return enabled != 0;
 }
 
+static inline bool DXMTD3D12TraceComponentEnabled(const char *component) {
+  const char *filter = std::getenv("DXMT_D3D12_TRACE_COMPONENTS");
+  if (!filter || !filter[0])
+    return true;
+  if (!component || !component[0])
+    return false;
+  return std::strstr(filter, component) != nullptr;
+}
+
 static inline long DXMTD3D12TraceMaxBytes() {
   static long max_bytes = []() {
     const char *value = std::getenv("DXMT_D3D12_TRACE_MAX_MB");
@@ -40,6 +49,8 @@ static inline long DXMTD3D12TimingMinMs() {
 
 static inline void DXMTD3D12Trace(const char *component, const char *fmt, ...) {
   if (!DXMTD3D12TraceEnabled())
+    return;
+  if (!DXMTD3D12TraceComponentEnabled(component))
     return;
 
   FILE *f = fopen("Z:\\tmp\\dxmt_d3d12_trace.log", "a+");
