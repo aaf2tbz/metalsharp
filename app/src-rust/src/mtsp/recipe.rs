@@ -118,9 +118,6 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         );
     }
 
-    let mut launch_args: Vec<String> = node.launch_args.iter().map(|arg| arg.to_string()).collect();
-    append_app_launch_args(appid, node.id, &mut launch_args);
-
     Ok(LaunchRecipe {
         appid,
         pipeline: node.id,
@@ -129,7 +126,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args,
+        launch_args: effective_launch_args(appid, node),
         env: node
             .env_vars
             .iter()
@@ -145,6 +142,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
 
 pub fn effective_launch_args(appid: u32, node: &PipelineNode) -> Vec<String> {
     let mut launch_args: Vec<String> = node.launch_args.iter().map(|arg| arg.to_string()).collect();
+    if appid == 1962700 && node.id == PipelineId::M12 {
+        launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-NOSPLASH"));
+    }
     append_app_launch_args(appid, node.id, &mut launch_args);
     launch_args
 }

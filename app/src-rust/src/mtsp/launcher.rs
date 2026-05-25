@@ -254,7 +254,7 @@ fn stage_app_compat_config(
 }
 
 fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let block = concat!(
+    let engine_block = concat!(
         "; BEGIN MetalSharp UE5 Nanite guard\n",
         "[SystemSettings]\n",
         "r.Nanite=0\n",
@@ -271,6 +271,33 @@ fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::err
         "[/Script/Engine.RendererSettings]\n",
         "r.Nanite.ProjectEnabled=False\n",
         "; END MetalSharp UE5 Nanite guard\n",
+    );
+    let scalability_block = concat!(
+        "; BEGIN MetalSharp low quality guard\n",
+        "[ScalabilityGroups]\n",
+        "sg.ResolutionQuality=50.000000\n",
+        "sg.ViewDistanceQuality=0\n",
+        "sg.AntiAliasingQuality=0\n",
+        "sg.ShadowQuality=0\n",
+        "sg.GlobalIlluminationQuality=0\n",
+        "sg.ReflectionQuality=0\n",
+        "sg.PostProcessQuality=0\n",
+        "sg.TextureQuality=0\n",
+        "sg.EffectsQuality=0\n",
+        "sg.FoliageQuality=0\n",
+        "sg.ShadingQuality=0\n",
+        "\n",
+        "[/Script/Subnautica2.SubnauticaGameUserSettings]\n",
+        "bUseVSync=False\n",
+        "FrameRateLimit=24.000000\n",
+        "FullscreenMode=2\n",
+        "LastConfirmedFullscreenMode=2\n",
+        "PreferredFullscreenMode=2\n",
+        "ResolutionSizeX=1280\n",
+        "ResolutionSizeY=720\n",
+        "LastUserConfirmedResolutionSizeX=1280\n",
+        "LastUserConfirmedResolutionSizeY=720\n",
+        "; END MetalSharp low quality guard\n",
     );
 
     let mut users = wine_user_dirs(prefix);
@@ -289,7 +316,40 @@ fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::err
                 .join("Config")
                 .join(platform_dir)
                 .join("Engine.ini");
-            write_marked_config_block(&config_path, block)?;
+            write_marked_config_block(
+                &config_path,
+                "; BEGIN MetalSharp UE5 Nanite guard",
+                "; END MetalSharp UE5 Nanite guard",
+                engine_block,
+            )?;
+            let game_user_settings_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("GameUserSettings.ini");
+            write_marked_config_block(
+                &game_user_settings_path,
+                "; BEGIN MetalSharp low quality guard",
+                "; END MetalSharp low quality guard",
+                scalability_block,
+            )?;
+            let scalability_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("Scalability.ini");
+            write_marked_config_block(
+                &scalability_path,
+                "; BEGIN MetalSharp low quality guard",
+                "; END MetalSharp low quality guard",
+                scalability_block,
+            )?;
         }
     }
     Ok(())
@@ -315,18 +375,20 @@ fn wine_user_dirs(prefix: &Path) -> Vec<PathBuf> {
     users
 }
 
-fn write_marked_config_block(path: &Path, block: &str) -> Result<(), Box<dyn std::error::Error>> {
-    const START: &str = "; BEGIN MetalSharp UE5 Nanite guard";
-    const END: &str = "; END MetalSharp UE5 Nanite guard";
-
+fn write_marked_config_block(
+    path: &Path,
+    start_marker: &str,
+    end_marker: &str,
+    block: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let without_old_block = match (existing.find(START), existing.find(END)) {
+    let without_old_block = match (existing.find(start_marker), existing.find(end_marker)) {
         (Some(start), Some(end)) if end >= start => {
-            let end = end + END.len();
+            let end = end + end_marker.len();
             format!("{}{}", &existing[..start], &existing[end..])
         },
         _ => existing,
@@ -1200,6 +1262,10 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
             ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()),
+            ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
+            ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
+            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=24".to_string()),
         ];
     }
     Vec::new()

@@ -208,6 +208,8 @@ inline float dxmt_float(float4 v) { return v.x; }
 inline bool dxmt_bool(bool v) { return v; }
 inline bool dxmt_bool(int v) { return v != 0; }
 inline bool dxmt_bool(uint v) { return v != 0; }
+inline bool dxmt_bool(long v) { return v != 0; }
+inline bool dxmt_bool(ulong v) { return v != 0; }
 inline bool dxmt_bool(float v) { return v != 0.0f; }
 inline bool dxmt_bool(bool2 v) { return v.x; }
 inline bool dxmt_bool(bool3 v) { return v.x; }
@@ -1666,12 +1668,20 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_DerivCoarseX:
   case DXOP_DerivFineX: {
     if (args.empty()) return "0.0";
+    if (ctx.shader.kind == DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL derivative X used in compute shader; lowered to 0");
+      return "0.0f";
+    }
     return "dfdx(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
   }
 
   case DXOP_DerivCoarseY:
   case DXOP_DerivFineY: {
     if (args.empty()) return "0.0";
+    if (ctx.shader.kind == DxilShaderKind::Compute) {
+      recordDiagnostic(ctx, "DXIL derivative Y used in compute shader; lowered to 0");
+      return "0.0f";
+    }
     return "dfdy(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
   }
 
@@ -1782,12 +1792,12 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_LegacyF16ToF32: {
     auto x = scalarValueArg(0, "0");
-    return "(float)(half)as_type<half>((ushort)(" + x + "))";
+    return "(float)(half)as_type<half>((ushort)(dxmt_uint(" + x + ")))";
   }
 
   case DXOP_LegacyF32ToF16: {
     auto x = scalarValueArg(0, "0.0");
-    return "(uint)as_type<ushort>(half(" + x + "))";
+    return "(uint)as_type<ushort>(half(dxmt_float(" + x + ")))";
   }
 
   case DXOP_Binary: {
@@ -2160,7 +2170,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     }
     if (result_lanes > 1) {
       return std::string("float") + std::to_string(result_lanes) + "(" +
-             value + ")";
+             "dxmt_float(" + value + "))";
     }
     return scalarValue(operand);
   };
@@ -2169,9 +2179,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (!isIntegerLikeTypeId(result_type_id, ctx.mod) &&
         !isPointerTypeId(result_type_id, ctx.mod))
       return floatOperandForResultType(operand, result_type_id);
-    if (vectorLaneCountForTypeId(result_type_id, ctx.mod) == 0)
+    uint8_t result_lanes = vectorLaneCountForTypeId(result_type_id, ctx.mod);
+    if (result_lanes == 0)
       return scalarValue(operand);
-    return resolvedExpr(resolvedExpr, operand, 0);
+    std::string value = resolvedExpr(resolvedExpr, operand, 0);
+    return std::string("uint") + std::to_string(result_lanes) + "(dxmt_uint(" +
+           value + "))";
   };
 
   auto publishPointerResult = [&]() {
