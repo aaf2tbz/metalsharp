@@ -25,10 +25,7 @@ def discover_dxbc_files(roots: list[Path]) -> tuple[list[Path], list[Path]]:
     skipped: list[Path] = []
     for root in roots:
         for path in root.rglob("*.dxbc"):
-            if is_generated_geometry_mesh_sidecar(path):
-                skipped.append(path)
-            else:
-                files.append(path)
+            files.append(path)
     return sorted(set(files)), sorted(set(skipped))
 
 
@@ -36,20 +33,22 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
     metallib = dxbc.with_suffix(".metallib")
     reflection = dxbc.with_suffix(".json")
     layout = dxbc.with_suffix(".vertex-layout.json")
+    is_geometry_mesh = is_generated_geometry_mesh_sidecar(dxbc)
+    uses_stage_in = layout.exists() and not is_geometry_mesh
     stage_in = dxbc.with_suffix(".stageIn.metallib")
     fail_marker = dxbc.with_suffix(".msc.fail")
 
     if fail_marker.exists() and force:
         fail_marker.unlink()
 
-    if metallib.exists() and reflection.exists() and (not layout.exists() or stage_in.exists()) and not force:
+    if metallib.exists() and reflection.exists() and (not uses_stage_in or stage_in.exists()) and not force:
         return {
             "dxbc": str(dxbc),
             "status": "cached",
             "metallib": str(metallib),
             "reflection": str(reflection),
-            "stage_in": str(stage_in) if layout.exists() else "",
-            "uses_gs_ts_emulation": layout.exists(),
+            "stage_in": str(stage_in) if uses_stage_in else "",
+            "uses_gs_ts_emulation": uses_stage_in,
         }
 
     command = [
@@ -61,7 +60,7 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         "--deployment-os=macOS",
         "--minimum-os-build-version=15.0.0",
     ]
-    if layout.exists():
+    if uses_stage_in:
         command.extend(["--enable-gs-ts-emulation", "--vertex-stage-in", f"--vertex-input-layout-file={layout}"])
 
     completed = subprocess.run(
@@ -71,7 +70,7 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         stderr=subprocess.PIPE,
     )
     ok = completed.returncode == 0 and metallib.exists() and reflection.exists() and (
-        not layout.exists() or stage_in.exists()
+        not uses_stage_in or stage_in.exists()
     )
     if not ok:
         fail_marker.write_text(
@@ -88,10 +87,10 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         "metallib_exists": metallib.exists(),
         "reflection": str(reflection),
         "reflection_exists": reflection.exists(),
-        "stage_in": str(stage_in) if layout.exists() else "",
-        "stage_in_exists": stage_in.exists() if layout.exists() else False,
+        "stage_in": str(stage_in) if uses_stage_in else "",
+        "stage_in_exists": stage_in.exists() if uses_stage_in else False,
         "fail_marker": str(fail_marker) if not ok else "",
-        "uses_gs_ts_emulation": layout.exists(),
+        "uses_gs_ts_emulation": uses_stage_in,
         "stdout_tail": completed.stdout[-1000:],
         "stderr_tail": completed.stderr[-1000:],
     }

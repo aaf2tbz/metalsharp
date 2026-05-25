@@ -2,10 +2,17 @@
 #include "d3d12_device.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
+#include <cstdlib>
 #include <thread>
 
 #define FTRACE(fmt, ...)                                                       \
   do {                                                                         \
+    static bool _trace_enabled = [] {                                          \
+      const char *_raw = std::getenv("DXMT_D3D12_FENCE_TRACE");                \
+      return _raw && _raw[0] && _raw[0] != '0';                                \
+    }();                                                                       \
+    if (!_trace_enabled)                                                       \
+      break;                                                                   \
     FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");                    \
     if (_tf) {                                                                 \
       fprintf(_tf, "Fence::" fmt "\n", ##__VA_ARGS__);                         \

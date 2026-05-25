@@ -33,6 +33,12 @@ public:
       WMTPixelFormat format, WMTColorSpace colorspace, double width, double height, uint8_t sample_count
   );
 
+  bool changeLayerProperties(
+      WMTPixelFormat source_format, WMTPixelFormat layer_format,
+      WMTColorSpace colorspace, double width, double height,
+      uint8_t sample_count
+  );
+
   bool changeLayerColorSpace(WMTColorSpace colorspace);
 
   void changeHDRMetadata(const WMTHDRMetadata *metadata);

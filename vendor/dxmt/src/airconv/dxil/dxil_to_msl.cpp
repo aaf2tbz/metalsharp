@@ -710,10 +710,6 @@ static bool exprLooksScalar(const std::string &expr) {
 }
 
 static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
-  if (exprLooksScalar(expr))
-    return 0;
-  if (exprEndsWithScalarComponent(expr))
-    return 0;
   std::string trimmed = expr;
   size_t first = trimmed.find_first_not_of(" \t\r\n(");
   if (first != std::string::npos)
@@ -722,13 +718,6 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
     const size_t len = std::strlen(prefix);
     return trimmed.size() >= len && trimmed.compare(0, len, prefix) == 0;
   };
-  if (startsExpr("clamp(") || startsExpr("fma(") || startsExpr("abs(") ||
-      startsExpr("cos(") || startsExpr("sin(") || startsExpr("tan(") ||
-      startsExpr("acos(") || startsExpr("asin(") || startsExpr("atan(") ||
-      startsExpr("exp2(") || startsExpr("fract(") || startsExpr("log2(") ||
-      startsExpr("sqrt(") || startsExpr("rsqrt(") || startsExpr("rint(") ||
-      startsExpr("floor(") || startsExpr("ceil(") || startsExpr("trunc("))
-    return 0;
   if (startsExpr("float4") || startsExpr("uint4") || startsExpr("int4") ||
       startsExpr("bool4") || startsExpr("vec<float, 4>") ||
       startsExpr("reinterpret_cast<device float4&>") ||
@@ -742,6 +731,17 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
   if (startsExpr("float2") || startsExpr("uint2") || startsExpr("int2") ||
       startsExpr("bool2") || startsExpr("vec<float, 2>"))
     return 2;
+  if (exprLooksScalar(expr))
+    return 0;
+  if (exprEndsWithScalarComponent(expr))
+    return 0;
+  if (startsExpr("clamp(") || startsExpr("fma(") || startsExpr("abs(") ||
+      startsExpr("cos(") || startsExpr("sin(") || startsExpr("tan(") ||
+      startsExpr("acos(") || startsExpr("asin(") || startsExpr("atan(") ||
+      startsExpr("exp2(") || startsExpr("fract(") || startsExpr("log2(") ||
+      startsExpr("sqrt(") || startsExpr("rsqrt(") || startsExpr("rint(") ||
+      startsExpr("floor(") || startsExpr("ceil(") || startsExpr("trunc("))
+    return 0;
   return 0;
 }
 

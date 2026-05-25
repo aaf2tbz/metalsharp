@@ -1077,7 +1077,12 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                     let metallib_path = path.with_extension("metallib");
                     let reflection_path = path.with_extension("json");
                     let vertex_layout_path = path.with_extension("vertex-layout.json");
-                    let use_gs_ts_emulation = vertex_layout_path.exists();
+                    let is_geometry_mesh_shader = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.ends_with(".geom.gsmesh.dxbc"))
+                        .unwrap_or(false);
+                    let use_gs_ts_emulation = vertex_layout_path.exists() && !is_geometry_mesh_shader;
                     let stage_in_path = path.with_extension("stageIn.metallib");
                     let fail_path = path.with_extension("msc.fail");
                     if metallib_path.exists()

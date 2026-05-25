@@ -197,6 +197,23 @@ struct clear_data {
   uint array_index [[render_target_array_index]];
 };
 
+struct diagnostic_render_data {
+  float4 position [[position]];
+};
+
+[[vertex]] diagnostic_render_data vs_diagnostic_fullscreen_fallback(
+  uint id [[vertex_id]]
+) {
+  diagnostic_render_data output;
+  float2 corners[3] = {
+    float2(-1.0, -1.0),
+    float2( 3.0, -1.0),
+    float2(-1.0,  3.0),
+  };
+  output.position = float4(corners[id % 3], 0.0, 1.0);
+  return output;
+}
+
 [[vertex]] clear_data vs_clear_rt(
   ushort id [[vertex_id]],
   ushort instance_id [[instance_id]]
@@ -212,6 +229,10 @@ struct clear_data {
   constant float4& clear_value [[buffer(0)]]
 ) {
   return clear_value;
+}
+
+[[fragment]] float4 fs_diagnostic_varying_fallback() {
+  return float4(1.0, 0.0, 1.0, 1.0);
 }
 
 [[fragment]] uint4 fs_clear_rt_uint(

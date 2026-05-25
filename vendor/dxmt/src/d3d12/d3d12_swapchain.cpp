@@ -41,6 +41,27 @@ static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
   }
 }
 
+static WMTPixelFormat DXGIToDisplayLayerMTL(DXGI_FORMAT fmt) {
+  switch (fmt) {
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+    return WMTPixelFormatBGRA8Unorm;
+  default:
+    return DXGIToMTL(fmt);
+  }
+}
+
+static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
+  switch (fmt) {
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    return true;
+  default:
+    return false;
+  }
+}
+
 MTLD3D12SwapChain::MTLD3D12SwapChain(
     IDXGIFactory1 *factory, MTLD3D12Device *device,
     IMTLDXGIDevice *dxgi_device, HWND hWnd,
@@ -173,13 +194,16 @@ void MTLD3D12SwapChain::ConfigureLayer() {
   if (!m_layer.handle)
     return;
 
-  auto format = DXGIToMTL(m_desc.Format);
+  auto source_format = DXGIToMTL(m_desc.Format);
+  auto layer_format = DXGIToDisplayLayerMTL(m_desc.Format);
   auto width = m_source_width ? m_source_width : (m_desc.Width ? m_desc.Width : 1);
   auto height = m_source_height ? m_source_height : (m_desc.Height ? m_desc.Height : 1);
   auto sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
 
   if (m_presenter) {
-    m_presenter->changeLayerProperties(format, WMTColorSpaceSRGB, width, height, sample_count);
+    m_presenter->changeLayerProperties(source_format, layer_format,
+                                       WMTColorSpaceSRGB, width, height,
+                                       sample_count);
   } else {
     WMTLayerProps props = {};
     m_layer.getProps(props);
@@ -191,16 +215,21 @@ void MTLD3D12SwapChain::ConfigureLayer() {
       props.contents_scale = 1.0;
     props.drawable_width = width;
     props.drawable_height = height;
-    props.pixel_format = format;
+    props.pixel_format = layer_format;
     m_layer.setProps(props);
   }
 
   WMTLayerProps props = {};
   m_layer.getProps(props);
-  SCTRACE("ConfigureLayer drawable=%gx%g scale=%g fmt=%u framebuffer_only=%d presenter=%d",
+  Logger::info(str::format("M12 ConfigureLayer drawable=",
+                           props.drawable_width, "x", props.drawable_height,
+                           " src_fmt=", (unsigned)source_format,
+                           " layer_fmt=", (unsigned)props.pixel_format,
+                           " framebuffer_only=", (int)props.framebuffer_only));
+  SCTRACE("ConfigureLayer drawable=%gx%g scale=%g src_fmt=%u layer_fmt=%u framebuffer_only=%d presenter=%d",
           props.drawable_width, props.drawable_height, props.contents_scale,
-          (unsigned)props.pixel_format, (int)props.framebuffer_only,
-          m_presenter ? 1 : 0);
+          (unsigned)source_format, (unsigned)props.pixel_format,
+          (int)props.framebuffer_only, m_presenter ? 1 : 0);
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -522,8 +551,16 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     m_last_present_wait_seq = present_wait_seq;
   }
 
-  const bool force_raw_blit =
+  const bool force_raw_blit_requested =
       std::getenv("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT") != nullptr;
+  const bool force_raw_blit =
+      force_raw_blit_requested && CanUseRawSwapchainBlit(m_desc.Format);
+  if (force_raw_blit_requested && !force_raw_blit &&
+      (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0)) {
+    Logger::info(str::format(
+        "M12 present using presenter for non-raw-blit swapchain fmt=",
+        (unsigned)m_desc.Format, " count=", m_present_count));
+  }
   if (force_raw_blit && m_present_count <= 20) {
     SCTRACE("Present forcing raw swapchain blit path idx=%u", m_current_buffer);
   }

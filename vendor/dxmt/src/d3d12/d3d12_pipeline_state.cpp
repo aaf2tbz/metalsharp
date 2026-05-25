@@ -2962,9 +2962,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
               (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
           mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
           mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
-          mesh_info.rasterization_enabled =
-              geometry_ps_func.handle &&
-              (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+          mesh_info.rasterization_enabled = geometry_ps_func.handle != 0;
           mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
           for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
@@ -3238,9 +3236,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
             (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
         mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
         mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
-        mesh_info.rasterization_enabled =
-            geometry_ps_func.handle &&
-            (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+        mesh_info.rasterization_enabled = geometry_ps_func.handle != 0;
         mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
         for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
@@ -3400,8 +3396,9 @@ d3d12_geometry_fallback_to_vs_ps:
   if (ps_func.handle)
     info.fragment_function = ps_func.handle;
 
-  info.rasterization_enabled =
-      (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+  // D3D12 wireframe is still a rasterized fill mode; it must not be lowered to
+  // Metal rasterizationEnabled=false, which only accepts void vertex shaders.
+  info.rasterization_enabled = true;
   info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
   for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
@@ -3918,11 +3915,32 @@ d3d12_geometry_fallback_to_vs_ps:
     };
 
     std::string_view err_view(err_desc ? err_desc : "");
-    if (err_view.find("vertex shader's return type is void") !=
+    if (err_view.find("RasterizationEnabled is false but the vertex shader's return type is not void") !=
         std::string_view::npos) {
-      if (retry_render_pso("void vertex shader", [](auto &retry_info) {
-            retry_info.rasterization_enabled = false;
-            retry_info.fragment_function = 0;
+      if (retry_render_pso("wireframe rasterization state", [](auto &retry_info) {
+            retry_info.rasterization_enabled = true;
+          })) {
+        return true;
+      }
+    } else if (err_view.find("vertex shader's return type is void") !=
+        std::string_view::npos) {
+      auto fallback_vs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("vs_diagnostic_fullscreen_fallback");
+      auto fallback_fs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("fs_diagnostic_varying_fallback");
+      if (fallback_vs.handle && fallback_fs.handle &&
+          retry_render_pso("void vertex shader diagnostic raster path",
+                           [&](auto &retry_info) {
+            retry_info.rasterization_enabled = true;
+            retry_info.vertex_function = fallback_vs;
+            retry_info.fragment_function = fallback_fs;
+            retry_info.vertex_descriptor = nullptr;
           })) {
         return true;
       }
@@ -3930,8 +3948,15 @@ d3d12_geometry_fallback_to_vs_ps:
                    std::string_view::npos ||
                err_view.find("not written by vertex shader") !=
                    std::string_view::npos) {
-      if (retry_render_pso("VS/PS varying mismatch", [](auto &retry_info) {
-            retry_info.fragment_function = 0;
+      auto fallback_fs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("fs_diagnostic_varying_fallback");
+      if (fallback_fs.handle &&
+          retry_render_pso("VS/PS varying mismatch diagnostic fragment",
+                           [&](auto &retry_info) {
+                             retry_info.fragment_function = fallback_fs;
           })) {
         return true;
       }

@@ -42,12 +42,23 @@ bool
 Presenter::changeLayerProperties(
     WMTPixelFormat format, WMTColorSpace colorspace, double width, double height, uint8_t sample_count
 ) {
+  return changeLayerProperties(format, Forget_sRGB(format), colorspace, width,
+                               height, sample_count);
+}
+
+bool
+Presenter::changeLayerProperties(
+    WMTPixelFormat source_format, WMTPixelFormat layer_format,
+    WMTColorSpace colorspace, double width, double height,
+    uint8_t sample_count
+) {
   bool should_invalidated = colorspace_ != colorspace;
-  should_invalidated |= source_format_ != format;
-  source_format_ = format;
+  should_invalidated |= source_format_ != source_format;
+  source_format_ = source_format;
   should_invalidated |= sample_count_ != sample_count;
   sample_count_ = sample_count;
-  layer_props_.pixel_format = Forget_sRGB(format);
+  should_invalidated |= layer_props_.pixel_format != layer_format;
+  layer_props_.pixel_format = layer_format;
   layer_props_.drawable_height = height;
   layer_props_.drawable_width = width;
   colorspace_ = colorspace;
