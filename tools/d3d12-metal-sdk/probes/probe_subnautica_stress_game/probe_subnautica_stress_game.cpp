@@ -1,10 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cmath>
 #include <string>
 #include <vector>
 
@@ -12,30 +12,30 @@
 #include <d3dcompiler.h>
 #include <dxgi1_4.h>
 
-using D3D12CreateDeviceFn = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
-using D3D12SerializeRootSignatureFn = HRESULT(WINAPI *)(const D3D12_ROOT_SIGNATURE_DESC *,
-                                                        D3D_ROOT_SIGNATURE_VERSION, ID3DBlob **, ID3DBlob **);
-using D3DCompileFn = HRESULT(WINAPI *)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR,
-                                       LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
-using CreateDXGIFactory2Fn = HRESULT(WINAPI *)(UINT, REFIID, void **);
+using D3D12CreateDeviceFn = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+using D3D12SerializeRootSignatureFn = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION,
+                                                       ID3DBlob**, ID3DBlob**);
+using D3DCompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR,
+                                      UINT, UINT, ID3DBlob**, ID3DBlob**);
+using CreateDXGIFactory2Fn = HRESULT(WINAPI*)(UINT, REFIID, void**);
 
 static const GUID IID_D3D12DeviceProbe = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 
-template <typename T> static void safe_release(T *&object) {
+template <typename T> static void safe_release(T*& object) {
     if (object) {
         object->Release();
         object = nullptr;
     }
 }
 
-template <typename T> static T load_proc(HMODULE module, const char *name) {
+template <typename T> static T load_proc(HMODULE module, const char* name) {
     T fn = nullptr;
     FARPROC proc = module ? GetProcAddress(module, name) : nullptr;
     std::memcpy(&fn, &proc, sizeof(fn));
     return fn;
 }
 
-static std::string getenv_string(const char *key) {
+static std::string getenv_string(const char* key) {
     DWORD needed = GetEnvironmentVariableA(key, nullptr, 0);
     if (!needed)
         return "";
@@ -53,7 +53,7 @@ static std::string hr_hex(HRESULT hr) {
     return buffer;
 }
 
-static void fail_json(const char *stage, HRESULT hr, const std::string &detail = "") {
+static void fail_json(const char* stage, HRESULT hr, const std::string& detail = "") {
     std::printf("{\"ok\":false,\"stage\":\"%s\",\"hr\":\"%s\",\"detail\":\"%s\"}\n", stage, hr_hex(hr).c_str(),
                 detail.c_str());
 }
@@ -106,7 +106,7 @@ static D3D12_RESOURCE_DESC texture_desc(UINT width, UINT height, DXGI_FORMAT for
     return desc;
 }
 
-static D3D12_RESOURCE_BARRIER transition(ID3D12Resource *resource, D3D12_RESOURCE_STATES before,
+static D3D12_RESOURCE_BARRIER transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
                                          D3D12_RESOURCE_STATES after) {
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -128,7 +128,7 @@ struct Image {
     std::vector<uint8_t> rgba;
 };
 
-static bool load_bmp_24(const std::string &path, Image &image, std::string &error) {
+static bool load_bmp_24(const std::string& path, Image& image, std::string& error) {
     HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         error = "open bmp failed";
@@ -143,10 +143,10 @@ static bool load_bmp_24(const std::string &path, Image &image, std::string &erro
         error = "invalid bmp";
         return false;
     }
-    uint32_t data_offset = *reinterpret_cast<const uint32_t *>(&bytes[10]);
-    int32_t width = *reinterpret_cast<const int32_t *>(&bytes[18]);
-    int32_t height_raw = *reinterpret_cast<const int32_t *>(&bytes[22]);
-    uint16_t bpp = *reinterpret_cast<const uint16_t *>(&bytes[28]);
+    uint32_t data_offset = *reinterpret_cast<const uint32_t*>(&bytes[10]);
+    int32_t width = *reinterpret_cast<const int32_t*>(&bytes[18]);
+    int32_t height_raw = *reinterpret_cast<const int32_t*>(&bytes[22]);
+    uint16_t bpp = *reinterpret_cast<const uint16_t*>(&bytes[28]);
     if (width <= 0 || height_raw == 0 || bpp != 24) {
         error = "only 24-bit bmp supported";
         return false;
@@ -165,8 +165,8 @@ static bool load_bmp_24(const std::string &path, Image &image, std::string &erro
     bool bottom_up = height_raw > 0;
     for (UINT y = 0; y < image.height; y++) {
         UINT src_y = bottom_up ? (image.height - 1u - y) : y;
-        const uint8_t *src = bytes.data() + data_offset + static_cast<size_t>(src_y) * row_bytes;
-        uint8_t *dst = image.rgba.data() + static_cast<size_t>(y) * image.width * 4u;
+        const uint8_t* src = bytes.data() + data_offset + static_cast<size_t>(src_y) * row_bytes;
+        uint8_t* dst = image.rgba.data() + static_cast<size_t>(y) * image.width * 4u;
         for (UINT x = 0; x < image.width; x++) {
             dst[x * 4 + 0] = src[x * 3 + 2];
             dst[x * 4 + 1] = src[x * 3 + 1];
@@ -177,39 +177,39 @@ static bool load_bmp_24(const std::string &path, Image &image, std::string &erro
     return true;
 }
 
-static HRESULT compile_shader(const char *src, const char *entry, const char *target, ID3DBlob **blob,
-                              std::string &errors) {
+static HRESULT compile_shader(const char* src, const char* entry, const char* target, ID3DBlob** blob,
+                              std::string& errors) {
     HMODULE compiler = LoadLibraryA("d3dcompiler_47.dll");
     D3DCompileFn compile = load_proc<D3DCompileFn>(compiler, "D3DCompile");
     if (!compile)
         return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
 
-    ID3DBlob *err_blob = nullptr;
+    ID3DBlob* err_blob = nullptr;
     HRESULT hr = compile(src, std::strlen(src), "subnautica_stress.hlsl", nullptr, nullptr, entry, target, 0, 0, blob,
                          &err_blob);
     if (err_blob) {
-        errors.assign(static_cast<const char *>(err_blob->GetBufferPointer()), err_blob->GetBufferSize());
+        errors.assign(static_cast<const char*>(err_blob->GetBufferPointer()), err_blob->GetBufferSize());
         err_blob->Release();
     }
     return hr;
 }
 
-static HRESULT serialize_root_signature(const D3D12_ROOT_SIGNATURE_DESC &desc, ID3DBlob **blob, std::string &errors) {
+static HRESULT serialize_root_signature(const D3D12_ROOT_SIGNATURE_DESC& desc, ID3DBlob** blob, std::string& errors) {
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     D3D12SerializeRootSignatureFn serialize =
         load_proc<D3D12SerializeRootSignatureFn>(d3d12, "D3D12SerializeRootSignature");
     if (!serialize)
         return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
-    ID3DBlob *err_blob = nullptr;
+    ID3DBlob* err_blob = nullptr;
     HRESULT hr = serialize(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, blob, &err_blob);
     if (err_blob) {
-        errors.assign(static_cast<const char *>(err_blob->GetBufferPointer()), err_blob->GetBufferSize());
+        errors.assign(static_cast<const char*>(err_blob->GetBufferPointer()), err_blob->GetBufferSize());
         err_blob->Release();
     }
     return hr;
 }
 
-static bool wait_for_fence(ID3D12Fence *fence, UINT64 value, HANDLE event_handle) {
+static bool wait_for_fence(ID3D12Fence* fence, UINT64 value, HANDLE event_handle) {
     if (fence->GetCompletedValue() >= value)
         return true;
     if (FAILED(fence->SetEventOnCompletion(value, event_handle)))
@@ -236,7 +236,7 @@ struct QuadVertex {
     float a;
 };
 
-static const char *kGraphicsHlsl = R"(
+static const char* kGraphicsHlsl = R"(
 Texture2D splashTex : register(t0);
 SamplerState splashSampler : register(s0);
 
@@ -308,7 +308,7 @@ PSOut PSMain(GSOut input) {
 }
 )";
 
-static const char *kFallbackHlsl = R"(
+static const char* kFallbackHlsl = R"(
 Texture2D splashTex : register(t0);
 SamplerState splashSampler : register(s0);
 
@@ -346,7 +346,7 @@ PSOut PSMain(VSOut input) {
 }
 )";
 
-static const char *kComputeHlsl = R"(
+static const char* kComputeHlsl = R"(
 RWStructuredBuffer<float4> values : register(u0);
 [numthreads(64, 1, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID) {
@@ -391,15 +391,15 @@ int main() {
         return 2;
     }
 
-    IDXGIFactory4 *factory = nullptr;
+    IDXGIFactory4* factory = nullptr;
     HRESULT hr = create_factory(0, IID_PPV_ARGS(&factory));
     if (FAILED(hr)) {
         fail_json("CreateDXGIFactory2", hr);
         return 2;
     }
 
-    ID3D12Device *device = nullptr;
-    hr = create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe, reinterpret_cast<void **>(&device));
+    ID3D12Device* device = nullptr;
+    hr = create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe, reinterpret_cast<void**>(&device));
     if (FAILED(hr)) {
         fail_json("D3D12CreateDevice", hr);
         return 2;
@@ -407,7 +407,7 @@ int main() {
 
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    ID3D12CommandQueue *queue = nullptr;
+    ID3D12CommandQueue* queue = nullptr;
     hr = device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue));
     if (FAILED(hr)) {
         fail_json("CreateCommandQueue", hr);
@@ -422,13 +422,13 @@ int main() {
     sc_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sc_desc.BufferCount = 3;
     sc_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    IDXGISwapChain1 *sc1 = nullptr;
+    IDXGISwapChain1* sc1 = nullptr;
     hr = factory->CreateSwapChainForHwnd(queue, hwnd, &sc_desc, nullptr, nullptr, &sc1);
     if (FAILED(hr)) {
         fail_json("CreateSwapChainForHwnd", hr);
         return 2;
     }
-    IDXGISwapChain3 *swapchain = nullptr;
+    IDXGISwapChain3* swapchain = nullptr;
     hr = sc1->QueryInterface(IID_PPV_ARGS(&swapchain));
     safe_release(sc1);
     if (FAILED(hr)) {
@@ -436,7 +436,7 @@ int main() {
         return 2;
     }
 
-    ID3D12DescriptorHeap *rtv_heap = nullptr;
+    ID3D12DescriptorHeap* rtv_heap = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc = {};
     rtv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtv_heap_desc.NumDescriptors = 4;
@@ -447,17 +447,18 @@ int main() {
     }
     UINT rtv_inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    ID3D12Resource *backbuffers[3] = {};
+    ID3D12Resource* backbuffers[3] = {};
     for (UINT i = 0; i < 3; i++) {
         hr = swapchain->GetBuffer(i, IID_PPV_ARGS(&backbuffers[i]));
         if (FAILED(hr)) {
             fail_json("SwapChainGetBuffer", hr);
             return 2;
         }
-        device->CreateRenderTargetView(backbuffers[i], nullptr, offset_cpu(rtv_heap->GetCPUDescriptorHandleForHeapStart(), rtv_inc, i));
+        device->CreateRenderTargetView(backbuffers[i], nullptr,
+                                       offset_cpu(rtv_heap->GetCPUDescriptorHandleForHeapStart(), rtv_inc, i));
     }
 
-    ID3D12Resource *offscreen = nullptr;
+    ID3D12Resource* offscreen = nullptr;
     D3D12_CLEAR_VALUE off_clear = {};
     off_clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     off_clear.Color[3] = 1.0f;
@@ -470,9 +471,10 @@ int main() {
         fail_json("CreateOffscreenMRT", hr);
         return 2;
     }
-    device->CreateRenderTargetView(offscreen, nullptr, offset_cpu(rtv_heap->GetCPUDescriptorHandleForHeapStart(), rtv_inc, 3));
+    device->CreateRenderTargetView(offscreen, nullptr,
+                                   offset_cpu(rtv_heap->GetCPUDescriptorHandleForHeapStart(), rtv_inc, 3));
 
-    ID3D12DescriptorHeap *dsv_heap = nullptr;
+    ID3D12DescriptorHeap* dsv_heap = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc = {};
     dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     dsv_heap_desc.NumDescriptors = 1;
@@ -482,7 +484,7 @@ int main() {
         return 2;
     }
 
-    ID3D12Resource *depth = nullptr;
+    ID3D12Resource* depth = nullptr;
     D3D12_CLEAR_VALUE depth_clear = {};
     depth_clear.Format = DXGI_FORMAT_D32_FLOAT;
     depth_clear.DepthStencil.Depth = 1.0f;
@@ -496,7 +498,7 @@ int main() {
     }
     device->CreateDepthStencilView(depth, nullptr, dsv_heap->GetCPUDescriptorHandleForHeapStart());
 
-    ID3D12DescriptorHeap *srv_heap = nullptr;
+    ID3D12DescriptorHeap* srv_heap = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
     srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srv_heap_desc.NumDescriptors = 2;
@@ -508,9 +510,9 @@ int main() {
     }
     UINT srv_inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    ID3D12Resource *texture = nullptr;
-    D3D12_RESOURCE_DESC tex_desc = texture_desc(splash.width, splash.height, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                D3D12_RESOURCE_FLAG_NONE);
+    ID3D12Resource* texture = nullptr;
+    D3D12_RESOURCE_DESC tex_desc =
+        texture_desc(splash.width, splash.height, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_NONE);
     hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc, D3D12_RESOURCE_STATE_COPY_DEST,
                                          nullptr, IID_PPV_ARGS(&texture));
     if (FAILED(hr)) {
@@ -523,7 +525,7 @@ int main() {
     UINT64 row_size = 0;
     UINT64 upload_size = 0;
     device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &footprint, &rows, &row_size, &upload_size);
-    ID3D12Resource *upload = nullptr;
+    ID3D12Resource* upload = nullptr;
     D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
     D3D12_RESOURCE_DESC upload_desc = buffer_desc(upload_size);
     hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
@@ -532,15 +534,16 @@ int main() {
         fail_json("CreateTextureUpload", hr);
         return 2;
     }
-    void *mapped = nullptr;
+    void* mapped = nullptr;
     hr = upload->Map(0, nullptr, &mapped);
     if (FAILED(hr)) {
         fail_json("MapTextureUpload", hr);
         return 2;
     }
     for (UINT y = 0; y < splash.height; y++) {
-        std::memcpy(static_cast<uint8_t *>(mapped) + footprint.Offset + static_cast<size_t>(y) * footprint.Footprint.RowPitch,
-                    splash.rgba.data() + static_cast<size_t>(y) * splash.width * 4u, static_cast<size_t>(splash.width) * 4u);
+        std::memcpy(
+            static_cast<uint8_t*>(mapped) + footprint.Offset + static_cast<size_t>(y) * footprint.Footprint.RowPitch,
+            splash.rgba.data() + static_cast<size_t>(y) * splash.width * 4u, static_cast<size_t>(splash.width) * 4u);
     }
     upload->Unmap(0, nullptr);
 
@@ -551,7 +554,7 @@ int main() {
     srv_desc.Texture2D.MipLevels = 1;
     device->CreateShaderResourceView(texture, &srv_desc, srv_heap->GetCPUDescriptorHandleForHeapStart());
 
-    ID3D12Resource *compute_buffer = nullptr;
+    ID3D12Resource* compute_buffer = nullptr;
     D3D12_RESOURCE_DESC compute_desc = buffer_desc(64 * 16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &compute_desc,
                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&compute_buffer));
@@ -568,12 +571,12 @@ int main() {
                                       offset_cpu(srv_heap->GetCPUDescriptorHandleForHeapStart(), srv_inc, 1));
 
     std::string shader_errors;
-    ID3DBlob *vs = nullptr;
-    ID3DBlob *gs = nullptr;
-    ID3DBlob *ps = nullptr;
-    ID3DBlob *fallback_vs = nullptr;
-    ID3DBlob *fallback_ps = nullptr;
-    ID3DBlob *cs = nullptr;
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* gs = nullptr;
+    ID3DBlob* ps = nullptr;
+    ID3DBlob* fallback_vs = nullptr;
+    ID3DBlob* fallback_ps = nullptr;
+    ID3DBlob* cs = nullptr;
     if (FAILED(hr = compile_shader(kGraphicsHlsl, "VSMain", "vs_5_0", &vs, shader_errors)) ||
         FAILED(hr = compile_shader(kGraphicsHlsl, "GSMain", "gs_5_0", &gs, shader_errors)) ||
         FAILED(hr = compile_shader(kGraphicsHlsl, "PSMain", "ps_5_0", &ps, shader_errors)) ||
@@ -618,12 +621,12 @@ int main() {
     rs_desc.NumStaticSamplers = 1;
     rs_desc.pStaticSamplers = &sampler;
     rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-    ID3DBlob *rs_blob = nullptr;
+    ID3DBlob* rs_blob = nullptr;
     if (FAILED(hr = serialize_root_signature(rs_desc, &rs_blob, shader_errors))) {
         fail_json("SerializeRootSignature", hr, shader_errors);
         return 2;
     }
-    ID3D12RootSignature *root_sig = nullptr;
+    ID3D12RootSignature* root_sig = nullptr;
     hr = device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(), IID_PPV_ARGS(&root_sig));
     if (FAILED(hr)) {
         fail_json("CreateRootSignature", hr);
@@ -658,7 +661,7 @@ int main() {
     pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
-    ID3D12PipelineState *graphics_pso = nullptr;
+    ID3D12PipelineState* graphics_pso = nullptr;
     hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&graphics_pso));
     if (FAILED(hr)) {
         fail_json("CreateGeometryGraphicsPSO", hr);
@@ -676,7 +679,7 @@ int main() {
     fallback_pso_desc.PS = {fallback_ps->GetBufferPointer(), fallback_ps->GetBufferSize()};
     fallback_pso_desc.InputLayout = {fallback_input_elements, 3};
     fallback_pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    ID3D12PipelineState *fallback_pso = nullptr;
+    ID3D12PipelineState* fallback_pso = nullptr;
     hr = device->CreateGraphicsPipelineState(&fallback_pso_desc, IID_PPV_ARGS(&fallback_pso));
     if (FAILED(hr)) {
         fail_json("CreateFallbackGraphicsPSO", hr);
@@ -686,22 +689,23 @@ int main() {
     D3D12_COMPUTE_PIPELINE_STATE_DESC cpso_desc = {};
     cpso_desc.pRootSignature = root_sig;
     cpso_desc.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
-    ID3D12PipelineState *compute_pso = nullptr;
+    ID3D12PipelineState* compute_pso = nullptr;
     hr = device->CreateComputePipelineState(&cpso_desc, IID_PPV_ARGS(&compute_pso));
     if (FAILED(hr)) {
         fail_json("CreateComputePSO", hr);
         return 2;
     }
 
-    ID3D12CommandAllocator *allocator = nullptr;
-    ID3D12GraphicsCommandList *list = nullptr;
-    ID3D12Fence *fence = nullptr;
+    ID3D12CommandAllocator* allocator = nullptr;
+    ID3D12GraphicsCommandList* list = nullptr;
+    ID3D12Fence* fence = nullptr;
     HANDLE fence_event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
     UINT64 fence_value = 0;
     if (FAILED(hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
-        FAILED(hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&list))) ||
-        FAILED(hr = list->Close()) || FAILED(hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))) ||
-        !fence_event) {
+        FAILED(hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
+                                              IID_PPV_ARGS(&list))) ||
+        FAILED(hr = list->Close()) ||
+        FAILED(hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))) || !fence_event) {
         fail_json("CreateCommandObjects", hr);
         return 2;
     }
@@ -719,18 +723,19 @@ int main() {
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     dst.SubresourceIndex = 0;
     list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    D3D12_RESOURCE_BARRIER tex_ready = transition(texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    D3D12_RESOURCE_BARRIER tex_ready =
+        transition(texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     list->ResourceBarrier(1, &tex_ready);
     list->Close();
-    ID3D12CommandList *base = list;
+    ID3D12CommandList* base = list;
     queue->ExecuteCommandLists(1, &base);
     queue->Signal(fence, ++fence_value);
     wait_for_fence(fence, fence_value, fence_event);
 
-    ID3D12Resource *vertex_buffer = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
     D3D12_RESOURCE_DESC vb_desc = buffer_desc(sizeof(SpriteVertex) * 6);
-    hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
-                                         nullptr, IID_PPV_ARGS(&vertex_buffer));
+    hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
+                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertex_buffer));
     if (FAILED(hr)) {
         fail_json("CreateVertexBuffer", hr);
         return 2;
@@ -740,7 +745,7 @@ int main() {
     vbv.SizeInBytes = sizeof(SpriteVertex) * 6;
     vbv.StrideInBytes = sizeof(SpriteVertex);
 
-    ID3D12Resource *quad_buffer = nullptr;
+    ID3D12Resource* quad_buffer = nullptr;
     constexpr UINT kQuadCount = 10;
     constexpr UINT kQuadVertexCount = kQuadCount * 6;
     D3D12_RESOURCE_DESC quad_vb_desc = buffer_desc(sizeof(QuadVertex) * kQuadVertexCount);
@@ -761,7 +766,7 @@ int main() {
     std::fflush(stdout);
 
     bool running = true;
-    const char *exit_reason = "loop_complete";
+    const char* exit_reason = "loop_complete";
     UINT frame = 0;
     float player_x = 0.0f;
     float player_y = 0.0f;
@@ -789,32 +794,27 @@ int main() {
             player_y -= 0.02f;
 
         SpriteVertex sprites[6] = {
-            {player_x, player_y, 0.32f, frame * 0.05f},
-            {-0.65f, 0.45f, 0.22f, frame * 0.03f + 1.0f},
-            {0.65f, 0.45f, 0.22f, frame * 0.04f + 2.0f},
-            {-0.55f, -0.45f, 0.18f, frame * 0.07f + 3.0f},
-            {0.55f, -0.45f, 0.18f, frame * 0.06f + 4.0f},
-            {0.0f, -0.68f, 0.14f, frame * 0.09f + 5.0f},
+            {player_x, player_y, 0.32f, frame * 0.05f},   {-0.65f, 0.45f, 0.22f, frame * 0.03f + 1.0f},
+            {0.65f, 0.45f, 0.22f, frame * 0.04f + 2.0f},  {-0.55f, -0.45f, 0.18f, frame * 0.07f + 3.0f},
+            {0.55f, -0.45f, 0.18f, frame * 0.06f + 4.0f}, {0.0f, -0.68f, 0.14f, frame * 0.09f + 5.0f},
         };
-        void *vb_mapped = nullptr;
+        void* vb_mapped = nullptr;
         vertex_buffer->Map(0, nullptr, &vb_mapped);
         std::memcpy(vb_mapped, sprites, sizeof(sprites));
         vertex_buffer->Unmap(0, nullptr);
 
-        auto write_quad = [](QuadVertex *dst, float cx, float cy, float sx, float sy, float z, float r, float g,
+        auto write_quad = [](QuadVertex* dst, float cx, float cy, float sx, float sy, float z, float r, float g,
                              float b) {
             QuadVertex q[6] = {
-                {cx - sx, cy - sy, z, 0.0f, 1.0f, r, g, b, 1.0f},
-                {cx - sx, cy + sy, z, 0.0f, 0.0f, r, g, b, 1.0f},
-                {cx + sx, cy - sy, z, 1.0f, 1.0f, r, g, b, 1.0f},
-                {cx + sx, cy - sy, z, 1.0f, 1.0f, r, g, b, 1.0f},
-                {cx - sx, cy + sy, z, 0.0f, 0.0f, r, g, b, 1.0f},
-                {cx + sx, cy + sy, z, 1.0f, 0.0f, r, g, b, 1.0f},
+                {cx - sx, cy - sy, z, 0.0f, 1.0f, r, g, b, 1.0f}, {cx - sx, cy + sy, z, 0.0f, 0.0f, r, g, b, 1.0f},
+                {cx + sx, cy - sy, z, 1.0f, 1.0f, r, g, b, 1.0f}, {cx + sx, cy - sy, z, 1.0f, 1.0f, r, g, b, 1.0f},
+                {cx - sx, cy + sy, z, 0.0f, 0.0f, r, g, b, 1.0f}, {cx + sx, cy + sy, z, 1.0f, 0.0f, r, g, b, 1.0f},
             };
             std::memcpy(dst, q, sizeof(q));
         };
         QuadVertex quads[kQuadVertexCount] = {};
-        float pulse = 0.85f + 0.15f * static_cast<float>((frame % 120) < 60 ? (frame % 60) / 60.0 : (120 - frame % 120) / 60.0);
+        float pulse =
+            0.85f + 0.15f * static_cast<float>((frame % 120) < 60 ? (frame % 60) / 60.0 : (120 - frame % 120) / 60.0);
         write_quad(&quads[0], 0.0f, 0.0f, 1.32f, 0.88f, 0.55f, 0.55f, 0.72f, pulse);
         write_quad(&quads[6], player_x, player_y, 0.24f, 0.16f, 0.18f, 1.05f, 1.05f, 1.05f);
         write_quad(&quads[12], -player_x * 0.6f, -player_y * 0.6f, 0.18f, 0.12f, 0.28f, pulse, 0.75f, 1.15f);
@@ -823,10 +823,10 @@ int main() {
             float cx = std::sin(t + qi * 0.7f) * (0.78f - 0.035f * qi);
             float cy = std::cos(t * 0.8f + qi * 0.35f) * (0.48f - 0.018f * qi);
             float s = 0.07f + 0.012f * static_cast<float>(qi % 4);
-            write_quad(&quads[qi * 6], cx, cy, s * 1.5f, s, 0.20f + 0.025f * qi, 0.45f + 0.05f * qi,
-                       0.75f, 1.15f - 0.04f * qi);
+            write_quad(&quads[qi * 6], cx, cy, s * 1.5f, s, 0.20f + 0.025f * qi, 0.45f + 0.05f * qi, 0.75f,
+                       1.15f - 0.04f * qi);
         }
-        void *quad_mapped = nullptr;
+        void* quad_mapped = nullptr;
         quad_buffer->Map(0, nullptr, &quad_mapped);
         std::memcpy(quad_mapped, quads, sizeof(quads));
         quad_buffer->Unmap(0, nullptr);
@@ -834,7 +834,7 @@ int main() {
         UINT idx = swapchain->GetCurrentBackBufferIndex();
         allocator->Reset();
         list->Reset(allocator, nullptr);
-        ID3D12DescriptorHeap *heaps[] = {srv_heap};
+        ID3D12DescriptorHeap* heaps[] = {srv_heap};
         list->SetDescriptorHeaps(1, heaps);
         list->SetComputeRootSignature(root_sig);
         list->SetPipelineState(compute_pso);
@@ -844,8 +844,8 @@ int main() {
         list->SetComputeRootDescriptorTable(1, gpu1);
         list->Dispatch(1, 1, 1);
 
-        D3D12_RESOURCE_BARRIER to_rtv = transition(backbuffers[idx], D3D12_RESOURCE_STATE_PRESENT,
-                                                   D3D12_RESOURCE_STATE_RENDER_TARGET);
+        D3D12_RESOURCE_BARRIER to_rtv =
+            transition(backbuffers[idx], D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
         list->ResourceBarrier(1, &to_rtv);
         D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {
             offset_cpu(rtv_heap->GetCPUDescriptorHandleForHeapStart(), rtv_inc, idx),
@@ -874,8 +874,8 @@ int main() {
         list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list->IASetVertexBuffers(0, 1, &quad_vbv);
         list->DrawInstanced(kQuadVertexCount, 1, 0, 0);
-        D3D12_RESOURCE_BARRIER to_present = transition(backbuffers[idx], D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                                       D3D12_RESOURCE_STATE_PRESENT);
+        D3D12_RESOURCE_BARRIER to_present =
+            transition(backbuffers[idx], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         list->ResourceBarrier(1, &to_present);
         list->Close();
         base = list;

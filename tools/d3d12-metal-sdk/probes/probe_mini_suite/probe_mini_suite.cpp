@@ -317,8 +317,7 @@ static ProbeResult probe_command_queue() {
     bool ok = SUCCEEDED(direct_hr) && SUCCEEDED(compute_hr) && SUCCEEDED(copy_hr);
     std::string extra = "\"direct_hr\":\"" + hr_hex(direct_hr) + "\",\"compute_hr\":\"" + hr_hex(compute_hr) +
                         "\",\"copy_hr\":\"" + hr_hex(copy_hr) + "\"";
-    return {ok, ok ? S_OK : direct_hr, ok ? "direct/compute/copy queues created" : "one or more queues failed",
-            extra};
+    return {ok, ok ? S_OK : direct_hr, ok ? "direct/compute/copy queues created" : "one or more queues failed", extra};
 }
 
 static ProbeResult probe_root_signature() {
@@ -395,18 +394,19 @@ static ProbeResult probe_descriptors() {
     D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
     D3D12_RESOURCE_DESC upload_desc = buffer_desc(256);
     ID3D12Resource* upload = nullptr;
-    HRESULT upload_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
-                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                        IID_PPV_ARGS(&upload));
+    HRESULT upload_hr =
+        device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
+                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload));
 
     D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_RESOURCE_DESC uav_desc = buffer_desc(256, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     ID3D12Resource* uav = nullptr;
-    HRESULT uav_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &uav_desc,
-                                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                     IID_PPV_ARGS(&uav));
+    HRESULT uav_hr =
+        device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &uav_desc,
+                                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&uav));
 
-    D3D12_RESOURCE_DESC rt_desc = texture_desc(4, 4, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    D3D12_RESOURCE_DESC rt_desc =
+        texture_desc(4, 4, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     D3D12_CLEAR_VALUE clear = {};
     clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     ID3D12Resource* rt = nullptr;
@@ -582,7 +582,8 @@ static ProbeResult probe_compute_dispatch() {
     safe_release(root_blob);
     safe_release(cs);
     safe_release(device);
-    return {SUCCEEDED(hr) && verified, hr, verified ? "compute dispatch wrote expected UAV values" : "compute verification failed",
+    return {SUCCEEDED(hr) && verified, hr,
+            verified ? "compute dispatch wrote expected UAV values" : "compute verification failed",
             "\"verified\":" + std::string(verified ? "true" : "false")};
 }
 
@@ -611,7 +612,8 @@ static ProbeResult probe_rtv_clear() {
     }
     if (SUCCEEDED(hr)) {
         D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
-        D3D12_RESOURCE_DESC desc = texture_desc(8, 8, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        D3D12_RESOURCE_DESC desc =
+            texture_desc(8, 8, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
         D3D12_CLEAR_VALUE clear = {};
         clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         clear.Color[0] = 0.25f;
@@ -641,13 +643,14 @@ static ProbeResult probe_rtv_clear() {
 static HRESULT create_basic_graphics_pso(ID3D12Device* device, const char* vs_target, const char* ps_target,
                                          const char* gs_target, ID3D12PipelineState** pso_out,
                                          ID3D12RootSignature** root_out, std::string& detail) {
-    const char* hlsl = "struct VSIn{float3 pos:POSITION;float2 uv:TEXCOORD0;};"
-                       "struct VSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;};"
-                       "VSOut vs_main(VSIn input){VSOut o;o.pos=float4(input.pos,1);o.uv=input.uv;return o;}"
-                       "float4 ps_main(VSOut input):SV_Target{return float4(input.uv,0.25,1);}"
-                       "struct GSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;};"
-                       "[maxvertexcount(3)] void gs_main(triangle VSOut input[3], inout TriangleStream<GSOut> outstream){"
-                       "for(int i=0;i<3;i++){GSOut o;o.pos=input[i].pos;o.uv=input[i].uv;outstream.Append(o);}}";
+    const char* hlsl =
+        "struct VSIn{float3 pos:POSITION;float2 uv:TEXCOORD0;};"
+        "struct VSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;};"
+        "VSOut vs_main(VSIn input){VSOut o;o.pos=float4(input.pos,1);o.uv=input.uv;return o;}"
+        "float4 ps_main(VSOut input):SV_Target{return float4(input.uv,0.25,1);}"
+        "struct GSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;};"
+        "[maxvertexcount(3)] void gs_main(triangle VSOut input[3], inout TriangleStream<GSOut> outstream){"
+        "for(int i=0;i<3;i++){GSOut o;o.pos=input[i].pos;o.uv=input[i].uv;outstream.Append(o);}}";
     ID3DBlob* vs = nullptr;
     ID3DBlob* ps = nullptr;
     ID3DBlob* gs = nullptr;
@@ -750,9 +753,9 @@ static ProbeResult probe_subnautica_geometry_dxil_replay() {
     if (FAILED(hr)) {
         std::string extra = "\"corpus_dir\":\"" + json_escape(corpus_dir) + "\",\"d3d12_load_source\":\"" +
                             json_escape(g_d3d12_load_source) + "\",\"d3d12_loaded_path\":\"" +
-                            json_escape(g_d3d12_loaded_path) + "\",\"d3d12_load_error\":" +
-                            std::to_string(g_d3d12_load_error) + ",\"d3d12_proc_error\":" +
-                            std::to_string(g_d3d12_proc_error);
+                            json_escape(g_d3d12_loaded_path) +
+                            "\",\"d3d12_load_error\":" + std::to_string(g_d3d12_load_error) +
+                            ",\"d3d12_proc_error\":" + std::to_string(g_d3d12_proc_error);
         return {false, hr, "device creation failed", extra};
     }
 
@@ -842,12 +845,11 @@ static ProbeResult probe_subnautica_geometry_dxil_replay() {
     safe_release(root);
     safe_release(device);
     const bool ok = attempted == static_cast<UINT>(std::size(cases)) && passed == attempted;
-    std::string extra = "\"corpus_dir\":\"" + json_escape(corpus_dir) + "\",\"attempted\":" +
-                        std::to_string(attempted) + ",\"passed\":" + std::to_string(passed) +
+    std::string extra = "\"corpus_dir\":\"" + json_escape(corpus_dir) +
+                        "\",\"attempted\":" + std::to_string(attempted) + ",\"passed\":" + std::to_string(passed) +
                         ",\"total\":" + std::to_string(static_cast<UINT>(std::size(cases)));
     return {ok, ok ? S_OK : first_hr,
-            ok ? "captured Subnautica geometry DXIL PSOs replayed through CreateGraphicsPipelineState"
-               : first_failure,
+            ok ? "captured Subnautica geometry DXIL PSOs replayed through CreateGraphicsPipelineState" : first_failure,
             extra};
 }
 
@@ -900,8 +902,7 @@ static ProbeResult probe_texture_sample() {
         hr = upload->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
         if (SUCCEEDED(hr)) {
             const uint8_t pixels[16] = {
-                255, 0, 0, 255, 0, 255, 0, 255,
-                0, 0, 255, 255, 255, 255, 255, 255,
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
             };
             for (UINT y = 0; y < 2; ++y)
                 std::memcpy(mapped + footprint.Footprint.RowPitch * y, pixels + y * 2 * 4, 2 * 4);
@@ -1018,7 +1019,8 @@ static ProbeResult probe_texture_sample() {
     safe_release(allocator);
     safe_release(queue);
     safe_release(device);
-    return {SUCCEEDED(hr), hr, SUCCEEDED(hr) ? "texture upload, SRV, static sampler, and sampling PSO created" : detail, ""};
+    return {SUCCEEDED(hr), hr, SUCCEEDED(hr) ? "texture upload, SRV, static sampler, and sampling PSO created" : detail,
+            ""};
 }
 
 static LRESULT CALLBACK probe_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -1106,13 +1108,11 @@ static ProbeResult probe_swapchain_present() {
     std::string extra = "\"make_window_association_hr\":\"" + hr_hex(make_assoc_hr) +
                         "\",\"get_window_association_hr\":\"" + hr_hex(get_assoc_hr) +
                         "\",\"register_occlusion_status_window_hr\":\"" + hr_hex(register_occ_hr) +
-                        "\",\"create_swapchain_hr\":\"" + hr_hex(hr) + "\",\"get_hwnd_hr\":\"" +
-                        hr_hex(get_hwnd_hr) + "\",\"get_desc_hr\":\"" + hr_hex(get_desc_hr) +
-                        "\",\"present_hr\":\"" + hr_hex(present_hr) +
+                        "\",\"create_swapchain_hr\":\"" + hr_hex(hr) + "\",\"get_hwnd_hr\":\"" + hr_hex(get_hwnd_hr) +
+                        "\",\"get_desc_hr\":\"" + hr_hex(get_desc_hr) + "\",\"present_hr\":\"" + hr_hex(present_hr) +
                         "\",\"associated_matches\":" + (associated_hwnd == hwnd ? "true" : "false") +
                         ",\"swapchain_hwnd_matches\":" + (swapchain_hwnd == hwnd ? "true" : "false") +
-                        ",\"desc_output_window_matches\":" +
-                        (swapchain_desc.OutputWindow == hwnd ? "true" : "false");
+                        ",\"desc_output_window_matches\":" + (swapchain_desc.OutputWindow == hwnd ? "true" : "false");
     safe_release(swapchain1);
     safe_release(queue);
     if (hwnd)
@@ -1121,7 +1121,8 @@ static ProbeResult probe_swapchain_present() {
         UnregisterClassW(wc.lpszClassName, wc.hInstance);
     safe_release(factory);
     safe_release(device);
-    return {ok, ok ? S_OK : hr, ok ? "CreateSwapChainForHwnd and Present succeeded" : "swapchain/present failed", extra};
+    return {ok, ok ? S_OK : hr, ok ? "CreateSwapChainForHwnd and Present succeeded" : "swapchain/present failed",
+            extra};
 }
 
 static ProbeResult probe_mesh_shader_pso() {
@@ -1141,11 +1142,12 @@ static ProbeResult probe_mesh_shader_pso() {
 #endif
     safe_release(device);
 
-    std::string extra = "\"feature_hr\":\"" + hr_hex(feature_hr) + "\",\"mesh_shader_tier\":" + std::to_string(mesh_tier) +
-                        ",\"pso_attempted\":false";
-    return {false, feature_hr,
-            "mesh/object shader PSO mini-probe is a tracked gap; current probe records MeshShaderTier before PSO wiring",
-            extra};
+    std::string extra = "\"feature_hr\":\"" + hr_hex(feature_hr) +
+                        "\",\"mesh_shader_tier\":" + std::to_string(mesh_tier) + ",\"pso_attempted\":false";
+    return {
+        false, feature_hr,
+        "mesh/object shader PSO mini-probe is a tracked gap; current probe records MeshShaderTier before PSO wiring",
+        extra};
 }
 
 static ProbeResult run_probe() {
