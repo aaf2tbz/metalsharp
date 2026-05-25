@@ -11,6 +11,8 @@
 #include "d3d12.h"
 #include "Metal.hpp"
 
+#include <algorithm>
+
 #define DATRACE(fmt, ...) DXMTDXGITrace("DXGIAdapter", fmt, ##__VA_ARGS__)
 
 namespace dxmt {
@@ -184,12 +186,13 @@ public:
 
     pDesc->SubSysId = 0;
     pDesc->Revision = 0;
+    uint64_t working_set = device_.recommendedMaxWorkingSetSize();
     if (device_.hasUnifiedMemory())
-      pDesc->DedicatedVideoMemory = device_.recommendedMaxWorkingSetSize() / 2; // FIXME: use a more appropriate value
+      pDesc->DedicatedVideoMemory = working_set;
     else
-      pDesc->DedicatedVideoMemory = device_.recommendedMaxWorkingSetSize();
+      pDesc->DedicatedVideoMemory = working_set;
     pDesc->DedicatedSystemMemory = 0;
-    pDesc->SharedSystemMemory = 0;
+    pDesc->SharedSystemMemory = device_.hasUnifiedMemory() ? working_set : 0;
     pDesc->AdapterLuid = GetAdapterLuid(device_);
     pDesc->Flags = DXGI_ADAPTER_FLAG3_NONE;
     pDesc->GraphicsPreemptionGranularity = DXGI_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
@@ -277,15 +280,26 @@ public:
         MemorySegmentGroup != DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL)
       return E_INVALIDARG;
 
-    // we don't actually care about MemorySegmentGroup
-    pVideoMemoryInfo->Budget = device_.recommendedMaxWorkingSetSize();
-    pVideoMemoryInfo->CurrentUsage = device_.currentAllocatedSize();
-    pVideoMemoryInfo->AvailableForReservation = 0;
+    // Metal unified-memory devices still need a Windows-like local segment
+    // budget. UE5's transient allocator treats zero reservation headroom as an
+    // exhausted heap, so expose the remaining recommended working set instead
+    // of claiming reservations are impossible.
+    uint64_t budget = device_.recommendedMaxWorkingSetSize();
+    uint64_t usage = MemorySegmentGroup == DXGI_MEMORY_SEGMENT_GROUP_LOCAL
+                         ? device_.currentAllocatedSize()
+                         : 0;
+    uint64_t reservation = mem_reserved_[uint32_t(MemorySegmentGroup)];
+    uint64_t committed = std::min<uint64_t>(budget, std::max(usage, reservation));
+
+    pVideoMemoryInfo->Budget = budget;
+    pVideoMemoryInfo->CurrentUsage = usage;
+    pVideoMemoryInfo->AvailableForReservation = budget - committed;
     pVideoMemoryInfo->CurrentReservation =
-        mem_reserved_[uint32_t(MemorySegmentGroup)];
-    DATRACE("QueryVideoMemoryInfo this=%p -> budget=%llu usage=%llu reservation=%llu",
+        reservation;
+    DATRACE("QueryVideoMemoryInfo this=%p -> budget=%llu usage=%llu available=%llu reservation=%llu",
             this, (unsigned long long)pVideoMemoryInfo->Budget,
             (unsigned long long)pVideoMemoryInfo->CurrentUsage,
+            (unsigned long long)pVideoMemoryInfo->AvailableForReservation,
             (unsigned long long)pVideoMemoryInfo->CurrentReservation);
     return S_OK;
   }

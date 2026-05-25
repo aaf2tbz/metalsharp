@@ -53,6 +53,7 @@ public:
 
   bool RequestCompile(bool allow_async);
   bool Compile();
+  void RunAsyncCompile();
 
   bool EnsureCompiled() {
     if (!IsCompiled())
@@ -116,7 +117,6 @@ private:
   };
 
   bool CompileImpl();
-  void RunAsyncCompile();
   bool CompileShader(const void *bytecode, SIZE_T size, ShaderType type,
                      const char *func_name, WMT::Reference<WMT::Function> &out_func,
                      sm50_shader_t *out_shader_handle = nullptr,

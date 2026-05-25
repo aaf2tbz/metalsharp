@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <algorithm>
+#include <cmath>
 
 #define DXTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxil_trace.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
@@ -72,6 +73,9 @@ enum DXIntrinsicOpcode {
   DXOP_RenderTargetGetSamplePositionLegacy = 98,
   DXOP_NumPrimitives = 109,
   DXOP_NumOutputVertices = 110,
+  DXOP_UnaryBits = 10001,
+  DXOP_LegacyF16ToF32 = 10002,
+  DXOP_LegacyF32ToF16 = 10003,
 };
 
 enum DXILMathOpcode {
@@ -109,6 +113,41 @@ enum DXILMathOpcode {
 
 static const char *kMetalHeader = R"(#include <metal_stdlib>
 using namespace metal;
+
+inline uint dxmt_uint(bool v) { return v ? 1u : 0u; }
+inline uint dxmt_uint(int v) { return uint(v); }
+inline uint dxmt_uint(uint v) { return v; }
+inline uint dxmt_uint(long v) { return uint(v); }
+inline uint dxmt_uint(ulong v) { return uint(v); }
+inline uint dxmt_uint(float v) { return uint(v); }
+inline uint dxmt_uint(bool2 v) { return dxmt_uint(v.x); }
+inline uint dxmt_uint(bool3 v) { return dxmt_uint(v.x); }
+inline uint dxmt_uint(bool4 v) { return dxmt_uint(v.x); }
+inline uint dxmt_uint(int2 v) { return uint(v.x); }
+inline uint dxmt_uint(int3 v) { return uint(v.x); }
+inline uint dxmt_uint(int4 v) { return uint(v.x); }
+inline uint dxmt_uint(uint2 v) { return v.x; }
+inline uint dxmt_uint(uint3 v) { return v.x; }
+inline uint dxmt_uint(uint4 v) { return v.x; }
+inline uint dxmt_uint(float2 v) { return uint(v.x); }
+inline uint dxmt_uint(float3 v) { return uint(v.x); }
+inline uint dxmt_uint(float4 v) { return uint(v.x); }
+inline bool dxmt_bool(bool v) { return v; }
+inline bool dxmt_bool(int v) { return v != 0; }
+inline bool dxmt_bool(uint v) { return v != 0; }
+inline bool dxmt_bool(float v) { return v != 0.0f; }
+inline bool dxmt_bool(bool2 v) { return v.x; }
+inline bool dxmt_bool(bool3 v) { return v.x; }
+inline bool dxmt_bool(bool4 v) { return v.x; }
+inline bool dxmt_bool(int2 v) { return v.x != 0; }
+inline bool dxmt_bool(int3 v) { return v.x != 0; }
+inline bool dxmt_bool(int4 v) { return v.x != 0; }
+inline bool dxmt_bool(uint2 v) { return v.x != 0; }
+inline bool dxmt_bool(uint3 v) { return v.x != 0; }
+inline bool dxmt_bool(uint4 v) { return v.x != 0; }
+inline bool dxmt_bool(float2 v) { return v.x != 0.0f; }
+inline bool dxmt_bool(float3 v) { return v.x != 0.0f; }
+inline bool dxmt_bool(float4 v) { return v.x != 0.0f; }
 
 )";
 
@@ -212,7 +251,27 @@ static std::string componentAccessor(const std::string &index) {
 }
 
 static std::string asUIntExpr(const std::string &expr) {
-  return "(uint)(" + expr + ")";
+  return "dxmt_uint(" + expr + ")";
+}
+
+static std::string asIntegerIndexExpr(const std::string &expr) {
+  uint32_t literal = 0;
+  if (parseUnsignedLiteral(expr, literal))
+    return expr;
+  return asUIntExpr(expr);
+}
+
+static constexpr uint32_t kMaxMSLBufferBindings = 31;
+static constexpr uint32_t kMaxMSLTextureBindings = 8;
+static constexpr uint32_t kMaxMSLSamplerBindings = 16;
+
+static uint32_t clampMSLBindingIndex(const char *target_prefix, uint32_t index) {
+  uint32_t limit = kMaxMSLBufferBindings;
+  if (std::strcmp(target_prefix, "tex") == 0)
+    limit = kMaxMSLTextureBindings;
+  else if (std::strcmp(target_prefix, "samp") == 0)
+    limit = kMaxMSLSamplerBindings;
+  return limit ? std::min(index, limit - 1) : 0;
 }
 
 static bool startsWith(const std::string &text, const char *prefix) {
@@ -270,6 +329,12 @@ static uint32_t inferDXIntrinsicIdFromName(const std::string &name) {
     return DXOP_RawBufferLoad;
   if (name.find("bufferLoad") != std::string::npos)
     return DXOP_BufferLoad;
+  if (name.find("legacyF16ToF32") != std::string::npos)
+    return DXOP_LegacyF16ToF32;
+  if (name.find("legacyF32ToF16") != std::string::npos)
+    return DXOP_LegacyF32ToF16;
+  if (name.find("unaryBits") != std::string::npos)
+    return DXOP_UnaryBits;
   if (name.find("unary") != std::string::npos)
     return DXOP_Unary;
   if (name.find("binary") != std::string::npos)
@@ -285,6 +350,125 @@ static uint32_t inferDXIntrinsicIdFromName(const std::string &name) {
   if (name.find("barrier") != std::string::npos)
     return DXOP_Barrier;
   return 0;
+}
+
+static uint32_t getFunctionParamCountForType(const LLVMModule &mod,
+                                             uint32_t type_id) {
+  if (type_id >= mod.types.size())
+    return 0;
+  if (mod.types[type_id].kind == LLVMType::Pointer &&
+      !mod.types[type_id].type_refs.empty()) {
+    type_id = mod.types[type_id].type_refs[0];
+    if (type_id >= mod.types.size())
+      return 0;
+  }
+  if (mod.types[type_id].kind != LLVMType::Function ||
+      mod.types[type_id].type_refs.empty())
+    return 0;
+  return (uint32_t)mod.types[type_id].type_refs.size() - 1;
+}
+
+static const LLVMType *getScalarTypeForTypeId(const LLVMModule &mod,
+                                              uint32_t type_id) {
+  if (type_id >= mod.types.size())
+    return nullptr;
+  const LLVMType *type = &mod.types[type_id];
+  while (type && type->kind == LLVMType::Vector && !type->type_refs.empty()) {
+    type_id = type->type_refs[0];
+    if (type_id >= mod.types.size())
+      return nullptr;
+    type = &mod.types[type_id];
+  }
+  return type;
+}
+
+static bool typeLooksFloatLike(const LLVMModule &mod, uint32_t type_id) {
+  const LLVMType *type = getScalarTypeForTypeId(mod, type_id);
+  return type && (type->kind == LLVMType::Float || type->kind == LLVMType::Double);
+}
+
+static bool typeLooksIntegerLike(const LLVMModule &mod, uint32_t type_id) {
+  const LLVMType *type = getScalarTypeForTypeId(mod, type_id);
+  return type && type->kind == LLVMType::Integer;
+}
+
+static std::string findDeclaredDXOpByFragment(const LLVMModule &mod,
+                                              const char *fragment) {
+  for (const auto &fn : mod.functions) {
+    if (!fn.is_declaration)
+      continue;
+    if (fn.name.find(fragment) != std::string::npos)
+      return fn.name;
+  }
+  return "";
+}
+
+static std::string inferDXIntrinsicNameFromCallShape(
+    const LLVMModule &mod, uint32_t function_type_id, uint32_t result_type_id,
+    const std::vector<uint32_t> &call_args, const std::string &first_arg_text) {
+  const uint32_t param_count = getFunctionParamCountForType(mod, function_type_id);
+  const bool float_like = typeLooksFloatLike(mod, result_type_id);
+  const bool integer_like = typeLooksIntegerLike(mod, result_type_id);
+  int64_t signed_literal = 0;
+  const bool first_arg_is_signed_literal =
+      parseSignedLiteral(first_arg_text, signed_literal);
+
+  if ((call_args.size() == 2 || param_count == 2) && first_arg_is_signed_literal) {
+    if (integer_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "unaryBits");
+      if (!match.empty())
+        return match;
+    }
+    if (float_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "unary.f32");
+      if (!match.empty())
+        return match;
+    }
+  }
+
+  if (call_args.size() == 4 || param_count == 4) {
+    if (first_arg_is_signed_literal && float_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "tertiary.f32");
+      if (!match.empty())
+        return match;
+    }
+    if (integer_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "bufferLoad.i32");
+      if (!match.empty())
+        return match;
+    } else {
+      auto match = findDeclaredDXOpByFragment(mod, "bufferLoad.f32");
+      if (!match.empty())
+        return match;
+    }
+  }
+
+  if (call_args.size() == 6 || param_count == 6) {
+    if (integer_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "rawBufferLoad.i32");
+      if (!match.empty())
+        return match;
+    } else {
+      auto match = findDeclaredDXOpByFragment(mod, "rawBufferLoad.f32");
+      if (!match.empty())
+        return match;
+    }
+  }
+
+  if (call_args.size() == 1 || param_count == 1) {
+    if (integer_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "legacyF32ToF16");
+      if (!match.empty())
+        return match;
+    }
+    if (float_like) {
+      auto match = findDeclaredDXOpByFragment(mod, "legacyF16ToF32");
+      if (!match.empty())
+        return match;
+    }
+  }
+
+  return "";
 }
 
 static std::string findDeclaredDXOpNameForType(const LLVMModule &mod,
@@ -309,8 +493,58 @@ static uint32_t findFunctionTypeForValue(const LLVMModule &mod, uint32_t value_i
 }
 
 static bool isFunctionLikeSymbol(const std::string &text) {
+  auto endsWith = [&](const char *suffix) {
+    size_t suffix_len = std::strlen(suffix);
+    return text.size() >= suffix_len &&
+           text.compare(text.size() - suffix_len, suffix_len, suffix) == 0;
+  };
   return startsWith(text, "dx.op.") || text == "cs_main" || text == "vs_main" ||
-         text == "ps_main" || text.find("MainCS") != std::string::npos;
+         text == "ps_main" || text.find("MainCS") != std::string::npos ||
+         text.find("_CS") != std::string::npos || endsWith("CS");
+}
+
+static bool parseSSAName(const std::string &text, uint32_t &value_id) {
+  if (text.size() < 2 || text[0] != 'v')
+    return false;
+  return parseUnsignedLiteral(text.substr(1), value_id);
+}
+
+static bool exprEndsWithScalarComponent(std::string expr) {
+  while (!expr.empty() &&
+         (expr.back() == ' ' || expr.back() == '\t' || expr.back() == '\n' ||
+          expr.back() == '\r' || expr.back() == ')'))
+    expr.pop_back();
+  auto ends_with = [&](const char *suffix) {
+    const size_t suffix_len = std::strlen(suffix);
+    return expr.size() >= suffix_len &&
+           expr.compare(expr.size() - suffix_len, suffix_len, suffix) == 0;
+  };
+  return ends_with(".x") || ends_with(".y") || ends_with(".z") ||
+         ends_with(".w");
+}
+
+static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
+  if (exprEndsWithScalarComponent(expr))
+    return 0;
+  if (expr.find("float4") != std::string::npos ||
+      expr.find("uint4") != std::string::npos ||
+      expr.find("int4") != std::string::npos ||
+      expr.find("bool4") != std::string::npos ||
+      expr.find("vec<float, 4>") != std::string::npos)
+    return 4;
+  if (expr.find("float3") != std::string::npos ||
+      expr.find("uint3") != std::string::npos ||
+      expr.find("int3") != std::string::npos ||
+      expr.find("bool3") != std::string::npos ||
+      expr.find("vec<float, 3>") != std::string::npos)
+    return 3;
+  if (expr.find("float2") != std::string::npos ||
+      expr.find("uint2") != std::string::npos ||
+      expr.find("int2") != std::string::npos ||
+      expr.find("bool2") != std::string::npos ||
+      expr.find("vec<float, 2>") != std::string::npos)
+    return 2;
+  return 0;
 }
 
 static bool tryFoldIntegerBinary(LLVMInstruction::Opcode opcode,
@@ -364,6 +598,42 @@ static bool isBoolTypeId(uint32_t type_id, const LLVMModule &mod) {
 static bool isIntegerLikeTypeId(uint32_t type_id, const LLVMModule &mod) {
   return type_id < mod.types.size() &&
          mod.types[type_id].kind == LLVMType::Integer;
+}
+
+static uint8_t vectorLaneCountForTypeId(uint32_t type_id, const LLVMModule &mod) {
+  if (type_id >= mod.types.size())
+    return 0;
+  const auto &type = mod.types[type_id];
+  if (type.kind != LLVMType::Vector)
+    return 0;
+  if (type.bit_width > 0 && type.bit_width <= 16)
+    return (uint8_t)type.bit_width;
+  if (!type.subtypes.empty() && type.subtypes.size() <= 16)
+    return (uint8_t)type.subtypes.size();
+  return 4;
+}
+
+static uint8_t intrinsicResultVectorLaneCount(uint32_t intrinsic_id) {
+  switch (intrinsic_id) {
+  case DXOP_CBufferLoad:
+  case DXOP_CBufferLoadLegacy:
+  case DXOP_BufferLoad:
+  case DXOP_RawBufferLoad:
+  case DXOP_RawBufferVectorLoad:
+  case DXOP_RawBufferLoadLegacy:
+  case DXOP_TextureLoad:
+  case DXOP_TextureSample:
+  case DXOP_TextureSampleBias:
+  case DXOP_TextureSampleLevel:
+  case DXOP_TextureSampleGrad:
+  case DXOP_TextureGather:
+  case DXOP_TextureGatherCmp:
+  case DXOP_TextureGatherRaw:
+  case DXOP_GetDimensions:
+    return 4;
+  default:
+    return 0;
+  }
 }
 
 static bool isSideEffectOnlyIntrinsic(uint32_t intrinsic_id) {
@@ -437,16 +707,23 @@ static const char *bindingPrefixForClass(uint32_t resource_class) {
 }
 
 static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
+  if (handle.empty() || isFunctionLikeSymbol(handle))
+    return std::string(target_prefix) + "0";
   const char *prefixes[] = {"srv", "uav", "cbuf", "buf", "tex", "samp"};
   for (auto *prefix : prefixes) {
     if (startsWith(handle, prefix)) {
       const char *suffix = handle.c_str() + std::strlen(prefix);
-      return std::string(target_prefix) + suffix;
+      uint32_t literal_index = 0;
+      if (parseUnsignedLiteral(suffix, literal_index))
+        return std::string(target_prefix) +
+               std::to_string(clampMSLBindingIndex(target_prefix, literal_index));
+      return std::string(target_prefix) + "0";
     }
   }
   uint32_t literal_index = 0;
   if (parseUnsignedLiteral(handle, literal_index))
-    return std::string(target_prefix) + std::to_string(literal_index);
+    return std::string(target_prefix) +
+           std::to_string(clampMSLBindingIndex(target_prefix, literal_index));
   return std::string(target_prefix) + "0";
 }
 
@@ -610,6 +887,10 @@ std::string DXILToMSL::emitConstant(const std::vector<uint64_t> &ops, uint32_t t
     float f;
     uint32_t u = (uint32_t)ops[0];
     memcpy(&f, &u, 4);
+    if (std::isnan(f))
+      return "as_type<float>(0x7fc00000u)";
+    if (std::isinf(f))
+      return f < 0.0f ? "-INFINITY" : "INFINITY";
     char buf[64];
     snprintf(buf, sizeof(buf), "%.9g", (double)f);
     if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E'))
@@ -727,26 +1008,13 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
 
   if (ctx.shader.kind == DxilShaderKind::Compute) {
     os << "kernel void cs_main(\n";
-    os << "  device char* buf0 [[buffer(0)]],\n";
-    os << "  device char* buf1 [[buffer(1)]],\n";
-    os << "  device char* buf2 [[buffer(2)]],\n";
-    os << "  device char* buf3 [[buffer(3)]],\n";
-    os << "  device char* buf4 [[buffer(4)]],\n";
-    os << "  device char* buf5 [[buffer(5)]],\n";
-    os << "  device char* buf6 [[buffer(6)]],\n";
-    os << "  device char* buf7 [[buffer(7)]],\n";
-    os << "  texture2d<float, access::read_write> tex0 [[texture(0)]],\n";
-    os << "  texture2d<float, access::read_write> tex1 [[texture(1)]],\n";
-    os << "  texture2d<float, access::read_write> tex2 [[texture(2)]],\n";
-    os << "  texture2d<float, access::read_write> tex3 [[texture(3)]],\n";
-    os << "  texture2d<float, access::read_write> tex4 [[texture(4)]],\n";
-    os << "  texture2d<float, access::read_write> tex5 [[texture(5)]],\n";
-    os << "  texture2d<float, access::read_write> tex6 [[texture(6)]],\n";
-    os << "  texture2d<float, access::read_write> tex7 [[texture(7)]],\n";
-    os << "  sampler samp0 [[sampler(0)]],\n";
-    os << "  sampler samp1 [[sampler(1)]],\n";
-    os << "  sampler samp2 [[sampler(2)]],\n";
-    os << "  sampler samp3 [[sampler(3)]],\n";
+    for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++)
+      os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLTextureBindings; i++)
+      os << "  texture2d<float, access::read_write> tex" << i
+         << " [[texture(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLSamplerBindings; i++)
+      os << "  sampler samp" << i << " [[sampler(" << i << ")]],\n";
     os << "  uint3 dtid [[thread_position_in_grid]],\n";
     os << "  uint3 gtid [[thread_position_in_threadgroup]],\n";
     os << "  uint3 ggid [[threadgroup_position_in_grid]],\n";
@@ -756,39 +1024,24 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     os << "vertex output_v vs_main(\n";
     os << "  vertex_input_v vin [[stage_in]],\n";
     os << "  uint vid [[vertex_id]],\n";
-    os << "  device char* buf0 [[buffer(0)]],\n";
-    os << "  device char* buf1 [[buffer(1)]],\n";
-    os << "  device char* buf2 [[buffer(2)]],\n";
-    os << "  device char* buf3 [[buffer(3)]],\n";
-    os << "  device char* buf4 [[buffer(4)]],\n";
-    os << "  device char* buf5 [[buffer(5)]],\n";
-    os << "  device char* buf6 [[buffer(6)]],\n";
-    os << "  device char* buf7 [[buffer(7)]]\n";
+    for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++) {
+      os << "  device char* buf" << i << " [[buffer(" << i << ")]]";
+      os << (i + 1 == kMaxMSLBufferBindings ? "\n" : ",\n");
+    }
     os << ") {\n";
     os << "  output_v out = {};\n";
   } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
     os << "fragment float4 ps_main(\n";
     os << "  input_v in [[stage_in]],\n";
-    os << "  device char* buf0 [[buffer(0)]],\n";
-    os << "  device char* buf1 [[buffer(1)]],\n";
-    os << "  device char* buf2 [[buffer(2)]],\n";
-    os << "  device char* buf3 [[buffer(3)]],\n";
-    os << "  device char* buf4 [[buffer(4)]],\n";
-    os << "  device char* buf5 [[buffer(5)]],\n";
-    os << "  device char* buf6 [[buffer(6)]],\n";
-    os << "  device char* buf7 [[buffer(7)]],\n";
-    os << "  texture2d<float, access::sample> tex0 [[texture(0)]],\n";
-    os << "  texture2d<float, access::sample> tex1 [[texture(1)]],\n";
-    os << "  texture2d<float, access::sample> tex2 [[texture(2)]],\n";
-    os << "  texture2d<float, access::sample> tex3 [[texture(3)]],\n";
-    os << "  texture2d<float, access::sample> tex4 [[texture(4)]],\n";
-    os << "  texture2d<float, access::sample> tex5 [[texture(5)]],\n";
-    os << "  texture2d<float, access::sample> tex6 [[texture(6)]],\n";
-    os << "  texture2d<float, access::sample> tex7 [[texture(7)]],\n";
-    os << "  sampler samp0 [[sampler(0)]],\n";
-    os << "  sampler samp1 [[sampler(1)]],\n";
-    os << "  sampler samp2 [[sampler(2)]],\n";
-    os << "  sampler samp3 [[sampler(3)]]\n";
+    for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++)
+      os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLTextureBindings; i++)
+      os << "  texture2d<float, access::sample> tex" << i
+         << " [[texture(" << i << ")]],\n";
+    for (uint32_t i = 0; i < kMaxMSLSamplerBindings; i++) {
+      os << "  sampler samp" << i << " [[sampler(" << i << ")]]";
+      os << (i + 1 == kMaxMSLSamplerBindings ? "\n" : ",\n");
+    }
     os << ") {\n";
     os << "  float4 result = float4(0,0,0,1);\n";
   } else {
@@ -798,13 +1051,64 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
 
 std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic_id,
                                               const std::vector<uint32_t> &args) {
+  auto argTypeId = [&](size_t arg) -> uint32_t {
+    if (arg >= args.size())
+      return 0;
+    uint32_t idx = args[arg];
+    return idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
+  };
+
+  auto resolvedValueArg = [&](auto &&self, uint32_t idx, uint32_t depth) -> std::string {
+    if (depth > 8)
+      return idx < ctx.value_table.size() ? ctx.value_table[idx] : "0";
+    if (idx < ctx.value_expr_table.size() && !ctx.value_expr_table[idx].empty()) {
+      const auto &expr = ctx.value_expr_table[idx];
+      uint32_t alias_idx = 0;
+      if (parseSSAName(expr, alias_idx) && alias_idx != idx)
+        return self(self, alias_idx, depth + 1);
+      if (!isFunctionLikeSymbol(expr))
+        return expr;
+    }
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+      const auto &value = ctx.value_table[idx];
+      uint32_t alias_idx = 0;
+      if (parseSSAName(value, alias_idx) && alias_idx != idx)
+        return self(self, alias_idx, depth + 1);
+      return value;
+    }
+    return "0";
+  };
+
   auto valueArg = [&](size_t arg, const char *fallback) -> std::string {
     if (arg >= args.size())
       return fallback;
     uint32_t idx = args[arg];
-    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-      return ctx.value_table[idx];
+    std::string value = resolvedValueArg(resolvedValueArg, idx, 0);
+    if (!isFunctionLikeSymbol(value))
+      return value;
+    recordDiagnostic(ctx,
+                     "DXIL intrinsic %u rejected function symbol operand: %s",
+                     intrinsic_id, value.c_str());
     return fallback;
+  };
+
+  auto argVectorLaneCount = [&](size_t arg) -> uint8_t {
+    if (arg >= args.size())
+      return 0;
+    uint32_t idx = args[arg];
+    if (idx < ctx.value_vector_lanes.size() && ctx.value_vector_lanes[idx] > 0)
+      return ctx.value_vector_lanes[idx];
+    uint8_t lanes = vectorLaneCountForTypeId(argTypeId(arg), ctx.mod);
+    if (lanes > 1)
+      return lanes;
+    return inferVectorLaneCountFromExpr(valueArg(arg, ""));
+  };
+
+  auto scalarValueArg = [&](size_t arg, const char *fallback) -> std::string {
+    std::string value = valueArg(arg, fallback);
+    if (argVectorLaneCount(arg) > 1)
+      return "(" + value + ").x";
+    return value;
   };
 
   auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
@@ -922,14 +1226,14 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_CBufferLoadLegacy: {
     if (args.size() < 2) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "cbuf0"), "buf");
-    auto reg_idx = valueArg(1, "0");
+    auto reg_idx = asIntegerIndexExpr(scalarValueArg(1, "0"));
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*64]))";
   }
 
   case DXOP_BufferLoad: {
     if (args.size() < 3) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "buf");
-    auto index = valueArg(1, "0");
+    auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + index + ")*16]))";
   }
 
@@ -938,8 +1242,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferLoadLegacy: {
     if (args.size() < 3) return "uint4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
+    auto elem_offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
     auto byte_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     return "(reinterpret_cast<device uint4&>(" + handle + "[" + byte_offset + "]))";
   }
@@ -949,16 +1253,23 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferStoreLegacy: {
     if (args.size() < 4) return "";
     auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
+    auto elem_offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     std::ostringstream store;
     uint32_t value_count = std::min<uint32_t>(4, (uint32_t)args.size() - 3);
     for (uint32_t i = 0; i < value_count; i++) {
+      auto value_text = scalarValueArg(3 + i, "0");
+      uint32_t value_type_id =
+          args[3 + i] < ctx.value_types.size() ? ctx.value_types[args[3 + i]] : 0;
+      if (value_type_id < ctx.mod.types.size() &&
+          ctx.mod.types[value_type_id].kind == LLVMType::Vector) {
+        value_text = valueArg(3 + i, "0") + componentSuffix(i);
+      }
       if (i)
         store << ";\n  ";
       store << "reinterpret_cast<device uint&>(" << handle << "[(" << base_offset
-            << ") + " << (i * 4) << "]) = (uint)(" << valueArg(3 + i, "0")
+            << ") + " << (i * 4) << "]) = dxmt_uint(" << value_text
             << ")";
     }
     return store.str();
@@ -967,8 +1278,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferVectorStore: {
     if (args.size() < 4) return "";
     auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
+    auto elem_offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
     auto value = valueArg(3, "uint4(0)");
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     std::ostringstream store;
@@ -976,7 +1287,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       if (i)
         store << ";\n  ";
       store << "reinterpret_cast<device uint&>(" << handle << "[(" << base_offset
-            << ") + " << (i * 4) << "]) = (uint)(" << value
+            << ") + " << (i * 4) << "]) = dxmt_uint(" << value
             << componentSuffix(i) << ")";
     }
     return store.str();
@@ -985,9 +1296,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureLoad: {
     if (args.size() < 3) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
-    auto coord_x = valueArg(2, "0");
-    auto coord_y = valueArg(3, "0");
-    auto coord = "uint2(" + asUIntExpr(coord_x) + ", " + asUIntExpr(coord_y) + ")";
+    auto coord_x = scalarValueArg(2, "0");
+    auto coord_y = scalarValueArg(3, "0");
+    auto coord = "uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+                 asIntegerIndexExpr(coord_y) + ")";
     return handle + ".read(" + coord + ")";
   }
 
@@ -995,19 +1307,19 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureStoreSample: {
     if (args.size() < 6) return "";
     auto handle = resolveBindingName(valueArg(0, "uav0"), "tex");
-    auto coord_x = valueArg(1, "0");
-    auto coord_y = valueArg(2, "0");
+    auto coord_x = scalarValueArg(1, "0");
+    auto coord_y = scalarValueArg(2, "0");
     size_t value_base = intrinsic_id == DXOP_TextureStoreSample ? 5 : 4;
-    auto value_x = valueArg(value_base + 0, "0.0");
-    auto value_y = valueArg(value_base + 1, "0.0");
-    auto value_z = valueArg(value_base + 2, "0.0");
-    auto value_w = valueArg(value_base + 3, "0.0");
+    auto value_x = scalarValueArg(value_base + 0, "0.0");
+    auto value_y = scalarValueArg(value_base + 1, "0.0");
+    auto value_z = scalarValueArg(value_base + 2, "0.0");
+    auto value_w = scalarValueArg(value_base + 3, "0.0");
     if (intrinsic_id == DXOP_TextureStoreSample) {
       recordDiagnostic(ctx, "DXIL TextureStoreSample lowered without explicit sample index");
     }
     return handle + ".write(float4(" + value_x + ", " + value_y + ", " +
-           value_z + ", " + value_w + "), uint2(" + asUIntExpr(coord_x) + ", " +
-           asUIntExpr(coord_y) + "))";
+           value_z + ", " + value_w + "), uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+           asIntegerIndexExpr(coord_y) + "))";
   }
 
   case DXOP_TextureSample:
@@ -1017,8 +1329,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 4) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = scalarValueArg(2, "0.0");
+    auto coord_y = scalarValueArg(3, "0.0");
     auto coord = "float2(" + coord_x + ", " + coord_y + ")";
     if (intrinsic_id == DXOP_TextureSampleGrad) {
       recordDiagnostic(ctx, "DXIL SampleGrad lowered without explicit gradients");
@@ -1028,8 +1340,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       recordDiagnostic(ctx, "DXIL SampleBias lowered without explicit bias");
     }
     (void)sampler;
-    return handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
-           asUIntExpr(coord_y) + "))";
+    return handle + ".read(uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+           asIntegerIndexExpr(coord_y) + "))";
   }
 
   case DXOP_TextureGather:
@@ -1038,8 +1350,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 4) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = scalarValueArg(2, "0.0");
+    auto coord_y = scalarValueArg(3, "0.0");
     uint32_t channel = args.size() > 8 ? literalArg(8, 0, "gather channel") : 0;
     if (intrinsic_id == DXOP_TextureGatherCmp) {
       recordDiagnostic(ctx, "DXIL TextureGatherCmp lowered without explicit compare");
@@ -1047,8 +1359,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       recordDiagnostic(ctx, "DXIL TextureGatherRaw lowered through typed gather");
     }
     (void)sampler;
-    return "float4(" + handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
-           asUIntExpr(coord_y) +
+    return "float4(" + handle + ".read(uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+           asIntegerIndexExpr(coord_y) +
            "))." + componentName(channel) + ")";
   }
 
@@ -1058,12 +1370,12 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 5) return "0.0";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = scalarValueArg(2, "0.0");
+    auto coord_y = scalarValueArg(3, "0.0");
     auto compare = valueArg(4, "0.0");
     (void)sampler;
-    auto sample = handle + ".read(uint2(" + asUIntExpr(coord_x) + ", " +
-                  asUIntExpr(coord_y) + ")).r";
+    auto sample = handle + ".read(uint2(" + asIntegerIndexExpr(coord_x) + ", " +
+                  asIntegerIndexExpr(coord_y) + ")).r";
     return "((" + sample + ") < (" + compare + ") ? 1.0 : 0.0)";
   }
 
@@ -1110,7 +1422,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto offset = valueArg(2, "0");
     auto value = valueArg(3, "0");
     return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" +
-           handle + " + (" + offset + ")), (uint)(" + value +
+           handle + " + (" + offset + ")), dxmt_uint(" + value +
            "), memory_order_relaxed)";
   }
 
@@ -1152,9 +1464,9 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     switch (op) {
     case DXILOP_FAbs: return "abs(" + x + ")";
     case DXILOP_Saturate: return "clamp(" + x + ", 0.0, 1.0)";
-    case DXILOP_IsNaN: return "isnan(" + x + ")";
-    case DXILOP_IsInf: return "isinf(" + x + ")";
-    case DXILOP_IsFinite: return "isfinite(" + x + ")";
+    case DXILOP_IsNaN: return "isnan((float)(" + x + "))";
+    case DXILOP_IsInf: return "isinf((float)(" + x + "))";
+    case DXILOP_IsFinite: return "isfinite((float)(" + x + "))";
     case DXILOP_Cos: return "cos(" + x + ")";
     case DXILOP_Sin: return "sin(" + x + ")";
     case DXILOP_Tan: return "tan(" + x + ")";
@@ -1177,6 +1489,38 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     }
   }
 
+  case DXOP_UnaryBits: {
+    if (args.size() < 2)
+      return "0";
+    int64_t op = 0;
+    std::string op_text = valueArg(0, "0");
+    if (!parseSignedLiteral(op_text, op)) {
+      ctx.unsupported_intrinsics++;
+      recordDiagnostic(ctx, "DXIL unaryBits opcode is not a literal: %s",
+                       op_text.c_str());
+      return valueArg(1, "0");
+    }
+    auto x = valueArg(1, "0");
+    switch (op) {
+    case -2:
+      return "as_type<int>(as_type<uint>(" + x + "))";
+    default:
+      ctx.unsupported_intrinsics++;
+      recordDiagnostic(ctx, "DXIL unknown unaryBits opcode: %" PRId64, op);
+      return x;
+    }
+  }
+
+  case DXOP_LegacyF16ToF32: {
+    auto x = scalarValueArg(0, "0");
+    return "(float)(half)as_type<half>((ushort)(" + x + "))";
+  }
+
+  case DXOP_LegacyF32ToF16: {
+    auto x = scalarValueArg(0, "0.0");
+    return "(uint)as_type<ushort>(half(" + x + "))";
+  }
+
   case DXOP_Binary: {
     if (args.size() < 3) return "0";
     uint32_t op = literalArg(0, 0xFFFFFFFFu, "binary opcode");
@@ -1187,8 +1531,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     case DXILOP_IMax: return "max(" + a + ", " + b + ")";
     case DXILOP_FMin:
     case DXILOP_IMin: return "min(" + a + ", " + b + ")";
-    case DXILOP_UMax: return "max((uint)(" + a + "), (uint)(" + b + "))";
-    case DXILOP_UMin: return "min((uint)(" + a + "), (uint)(" + b + "))";
+    case DXILOP_UMax: return "max(dxmt_uint(" + a + "), dxmt_uint(" + b + "))";
+    case DXILOP_UMin: return "min(dxmt_uint(" + a + "), dxmt_uint(" + b + "))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown binary opcode: %u", op);
@@ -1315,14 +1659,109 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     return value;
   };
 
-  auto ensureValueTable = [&](uint32_t needed) {
-    if (ctx.value_table.size() <= needed)
-      ctx.value_table.resize(needed + 1);
+  auto valueTypeId = [&](uint32_t idx) -> uint32_t {
+    return idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
   };
 
-  auto publishResult = [&]() {
+  auto resolvedExpr = [&](auto &&self, uint32_t idx, uint32_t depth) -> std::string {
+    if (depth > 8)
+      return getValue(idx);
+    if (idx < ctx.value_expr_table.size() && !ctx.value_expr_table[idx].empty()) {
+      const auto &expr = ctx.value_expr_table[idx];
+      uint32_t alias_idx = 0;
+      if (parseSSAName(expr, alias_idx) && alias_idx != idx)
+        return self(self, alias_idx, depth + 1);
+      if (isFunctionLikeSymbol(expr))
+        return getValue(idx);
+      return expr;
+    }
+    return getValue(idx);
+  };
+
+  auto valueVectorLaneCount = [&](uint32_t idx) -> uint8_t {
+    if (idx < ctx.value_vector_lanes.size() && ctx.value_vector_lanes[idx] > 0)
+      return ctx.value_vector_lanes[idx];
+    return vectorLaneCountForTypeId(valueTypeId(idx), ctx.mod);
+  };
+
+  auto resolvedVectorLaneCount = [&](auto &&self, uint32_t idx, uint32_t depth) -> uint8_t {
+    if (depth > 8)
+      return valueVectorLaneCount(idx);
+    uint8_t lanes = valueVectorLaneCount(idx);
+    if (lanes > 1)
+      return lanes;
+    if (idx < ctx.value_expr_table.size() && !ctx.value_expr_table[idx].empty()) {
+      uint32_t alias_idx = 0;
+      if (parseSSAName(ctx.value_expr_table[idx], alias_idx) && alias_idx != idx)
+        return self(self, alias_idx, depth + 1);
+    }
+    return lanes;
+  };
+
+  auto scalarizeExprForLane0 = [&](const std::string &expr, uint32_t type_id) -> std::string {
+    if (vectorLaneCountForTypeId(type_id, ctx.mod) > 1)
+      return "(" + expr + ").x";
+    return expr;
+  };
+
+  auto scalarValue = [&](uint32_t idx) -> std::string {
+    std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
+    uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, idx, 0);
+    if (lanes <= 1)
+      lanes = inferVectorLaneCountFromExpr(resolved);
+    if (lanes > 1)
+      return "(" + resolved + ").x";
+    return scalarizeExprForLane0(getValue(idx), valueTypeId(idx));
+  };
+
+  auto uintValue = [&](uint32_t idx) -> std::string {
+    std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
+    if (isFunctionLikeSymbol(resolved)) {
+      recordDiagnostic(ctx, "DXIL function symbol used as integer SSA value: %s",
+                       resolved.c_str());
+      resolved = "0";
+    }
+    return "dxmt_uint(" + resolved + ")";
+  };
+
+  auto intValue = [&](uint32_t idx) -> std::string {
+    std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
+    if (isFunctionLikeSymbol(resolved)) {
+      recordDiagnostic(ctx, "DXIL function symbol used as integer SSA value: %s",
+                       resolved.c_str());
+      resolved = "0";
+    }
+    return "(int)(dxmt_uint(" + resolved + "))";
+  };
+
+  auto boolValue = [&](uint32_t idx) -> std::string {
+    std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
+    if (isFunctionLikeSymbol(resolved)) {
+      recordDiagnostic(ctx, "DXIL function symbol used as bool SSA value: %s",
+                       resolved.c_str());
+      resolved = "0";
+    }
+    return "dxmt_bool(" + resolved + ")";
+  };
+
+  auto ensureValueTable = [&](uint32_t needed) {
+    if (ctx.value_table.size() <= needed) {
+      ctx.value_table.resize(needed + 1);
+      ctx.value_expr_table.resize(needed + 1);
+      ctx.value_types.resize(needed + 1, 0);
+      ctx.value_vector_lanes.resize(needed + 1, 0);
+    }
+  };
+
+  auto publishResult = [&](uint8_t vector_lanes_override = 0,
+                           std::string expr_override = std::string()) {
     ensureValueTable(result_slot);
     ctx.value_table[result_slot] = result;
+    ctx.value_expr_table[result_slot] = std::move(expr_override);
+    ctx.value_types[result_slot] = inst.type_id;
+    ctx.value_vector_lanes[result_slot] =
+        vector_lanes_override ? vector_lanes_override
+                              : vectorLaneCountForTypeId(inst.type_id, ctx.mod);
     value_counter = std::max(value_counter + 1, result_slot + 1);
   };
 
@@ -1337,6 +1776,44 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
     }
     return false;
+  };
+
+  auto maxOperandVectorLaneCount = [&]() -> uint8_t {
+    uint8_t lanes = 0;
+    for (auto operand : inst.operands)
+      lanes = std::max(lanes, valueVectorLaneCount(operand));
+    return lanes;
+  };
+
+  auto operandValueForResultType = [&](uint32_t operand, uint32_t result_type_id) -> std::string {
+    if (!isPointerTypeId(result_type_id, ctx.mod) &&
+        vectorLaneCountForTypeId(result_type_id, ctx.mod) == 0) {
+      uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, operand, 0);
+      if (lanes <= 1)
+        lanes = inferVectorLaneCountFromExpr(resolvedExpr(resolvedExpr, operand, 0));
+      if (lanes > 1)
+        return scalarValue(operand);
+    }
+    return getValue(operand);
+  };
+
+  auto floatOperandForResultType = [&](uint32_t operand, uint32_t result_type_id) -> std::string {
+    uint8_t result_lanes = vectorLaneCountForTypeId(result_type_id, ctx.mod);
+    std::string value = resolvedExpr(resolvedExpr, operand, 0);
+    if (result_lanes > 1) {
+      return std::string("float") + std::to_string(result_lanes) + "(" +
+             value + ")";
+    }
+    return scalarValue(operand);
+  };
+
+  auto numericOperandForResultType = [&](uint32_t operand, uint32_t result_type_id) -> std::string {
+    if (!isIntegerLikeTypeId(result_type_id, ctx.mod) &&
+        !isPointerTypeId(result_type_id, ctx.mod))
+      return floatOperandForResultType(operand, result_type_id);
+    if (vectorLaneCountForTypeId(result_type_id, ctx.mod) == 0)
+      return scalarValue(operand);
+    return resolvedExpr(resolvedExpr, operand, 0);
   };
 
   auto publishPointerResult = [&]() {
@@ -1377,6 +1854,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     uint32_t callee_type_id = findFunctionTypeForValue(ctx.mod, callee);
     std::string type_callee_name =
         findDeclaredDXOpNameForType(ctx.mod, function_type_id);
+    if (type_callee_name.empty()) {
+      std::string first_arg_text = call_args.empty() ? "" : rawValue(call_args[0]);
+      type_callee_name = inferDXIntrinsicNameFromCallShape(
+          ctx.mod, function_type_id, inst.type_id, call_args, first_arg_text);
+    }
     bool callee_matches_type =
         !type_callee_name.empty() && callee_type_id == function_type_id &&
         callee_name == type_callee_name;
@@ -1431,14 +1913,20 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
           os << "  " << translated << ";\n";
         ensureValueTable(result_slot);
         ctx.value_table[result_slot] = defaultValueForTypeId(inst.type_id, ctx.mod);
+        ctx.value_types[result_slot] = inst.type_id;
       } else if (isHandleIntrinsic(intrinsic_id)) {
         ensureValueTable(result_slot);
         ctx.value_table[result_slot] = translated.empty() ? "0" : translated;
+        ctx.value_types[result_slot] = inst.type_id;
       } else if (translated.find('=') == std::string::npos) {
         ensureValueTable(result_slot);
         if (!translated.empty() && translated[0] != ' ') {
           os << "  auto " << result << " = " << translated << ";\n";
           ctx.value_table[result_slot] = result;
+          ctx.value_expr_table[result_slot] = translated;
+          ctx.value_types[result_slot] = inst.type_id;
+          ctx.value_vector_lanes[result_slot] =
+              intrinsicResultVectorLaneCount(intrinsic_id);
         } else if (!translated.empty()) {
           os << "  " << translated << ";\n";
         }
@@ -1449,6 +1937,9 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
            << defaultValueForTypeId(inst.type_id, ctx.mod)
            << "; // fallback result after side-effect call\n";
         ctx.value_table[result_slot] = result;
+        ctx.value_expr_table[result_slot].clear();
+        ctx.value_types[result_slot] = inst.type_id;
+        ctx.value_vector_lanes[result_slot] = 0;
       }
     } else {
       std::string fallback_callee =
@@ -1461,6 +1952,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << ")\n";
       ensureValueTable(result_slot);
       ctx.value_table[result_slot] = result;
+      ctx.value_expr_table[result_slot].clear();
+      ctx.value_vector_lanes[result_slot] = 0;
     }
     value_counter = std::max(value_counter + 1, result_slot + 1);
     break;
@@ -1479,11 +1972,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " + " << rhs << ";\n";
+        os << "  auto " << result << " = "
+           << numericOperandForResultType(inst.operands[0], inst.type_id)
+           << " + "
+           << numericOperandForResultType(inst.operands[1], inst.type_id)
+           << ";\n";
       }
     }
-    ctx.value_table[result_slot] = result;
-    value_counter = std::max(value_counter + 1, result_slot + 1);
+    publishResult();
     break;
   }
 
@@ -1500,11 +1996,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " - " << rhs << ";\n";
+        os << "  auto " << result << " = "
+           << numericOperandForResultType(inst.operands[0], inst.type_id)
+           << " - "
+           << numericOperandForResultType(inst.operands[1], inst.type_id)
+           << ";\n";
       }
     }
-    ctx.value_table[result_slot] = result;
-    value_counter = std::max(value_counter + 1, result_slot + 1);
+    publishResult();
     break;
   }
 
@@ -1521,52 +2020,81 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " * " << rhs << ";\n";
+        os << "  auto " << result << " = "
+           << numericOperandForResultType(inst.operands[0], inst.type_id)
+           << " * "
+           << numericOperandForResultType(inst.operands[1], inst.type_id)
+           << ";\n";
       }
     }
-    ctx.value_table[result_slot] = result;
-    value_counter = std::max(value_counter + 1, result_slot + 1);
+    publishResult();
     break;
   }
 
   case LLVMInstruction::UDiv: {
-    os << "  auto " << result << " = (" << getValue(inst.operands[0]) << ") / (" << getValue(inst.operands[1]) << ");\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer udiv fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer udiv fallback\n";
+    } else {
+      os << "  auto " << result << " = (" << scalarValue(inst.operands[0]) << ") / ("
+         << scalarValue(inst.operands[1]) << ");\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::SDiv: {
-    os << "  auto " << result << " = (" << getValue(inst.operands[0]) << ") / (" << getValue(inst.operands[1]) << ");\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer sdiv fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer sdiv fallback\n";
+    } else {
+      os << "  auto " << result << " = (" << scalarValue(inst.operands[0]) << ") / ("
+         << scalarValue(inst.operands[1]) << ");\n";
+    }
     publishResult();
     break;
   }
 
   case LLVMInstruction::FAdd: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + " << getValue(inst.operands[1]) << ";\n";
+    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
+       << " + " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::FSub: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " - " << getValue(inst.operands[1]) << ";\n";
+    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
+       << " - " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::FMul: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " * " << getValue(inst.operands[1]) << ";\n";
+    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
+       << " * " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::FDiv: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " / " << getValue(inst.operands[1]) << ";\n";
+    os << "  auto " << result << " = " << floatOperandForResultType(inst.operands[0], inst.type_id)
+       << " / " << floatOperandForResultType(inst.operands[1], inst.type_id) << ";\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::FRem: {
-    os << "  auto " << result << " = fmod(" << getValue(inst.operands[0]) << ", " << getValue(inst.operands[1]) << ");\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer frem fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer frem fallback\n";
+    } else {
+      os << "  auto " << result << " = fmod("
+         << floatOperandForResultType(inst.operands[0], inst.type_id) << ", "
+         << floatOperandForResultType(inst.operands[1], inst.type_id) << ");\n";
+    }
     publishResult();
     break;
   }
@@ -1583,12 +2111,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
-        os << "  bool " << result << " = (" << lhs << ") && (" << rhs << ");\n";
+        os << "  bool " << result << " = (" << boolValue(inst.operands[0]) << ") && ("
+           << boolValue(inst.operands[1]) << ");\n";
       } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
-        os << "  auto " << result << " = (uint)(" << lhs << ") & (uint)(" << rhs
-           << ");\n";
+        os << "  auto " << result << " = " << uintValue(inst.operands[0]) << " & "
+           << uintValue(inst.operands[1]) << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " & " << rhs << ";\n";
+        os << "  auto " << result << " = " << intValue(inst.operands[0]) << " & "
+           << intValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1607,12 +2137,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
-        os << "  bool " << result << " = (" << lhs << ") || (" << rhs << ");\n";
+        os << "  bool " << result << " = (" << boolValue(inst.operands[0]) << ") || ("
+           << boolValue(inst.operands[1]) << ");\n";
       } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
-        os << "  auto " << result << " = (uint)(" << lhs << ") | (uint)(" << rhs
-           << ");\n";
+        os << "  auto " << result << " = " << uintValue(inst.operands[0]) << " | "
+           << uintValue(inst.operands[1]) << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " | " << rhs << ";\n";
+        os << "  auto " << result << " = " << intValue(inst.operands[0]) << " | "
+           << intValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1631,12 +2163,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else if (isBoolTypeId(inst.type_id, ctx.mod)) {
-        os << "  bool " << result << " = (" << lhs << ") != (" << rhs << ");\n";
+        os << "  bool " << result << " = (" << boolValue(inst.operands[0]) << ") != ("
+           << boolValue(inst.operands[1]) << ");\n";
       } else if (!isIntegerLikeTypeId(inst.type_id, ctx.mod)) {
-        os << "  auto " << result << " = (uint)(" << lhs << ") ^ (uint)(" << rhs
-           << ");\n";
+        os << "  auto " << result << " = " << uintValue(inst.operands[0]) << " ^ "
+           << uintValue(inst.operands[1]) << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " ^ " << rhs << ";\n";
+        os << "  auto " << result << " = " << intValue(inst.operands[0]) << " ^ "
+           << intValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1655,7 +2189,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = " << lhs << " << " << rhs << ";\n";
+        os << "  auto " << result << " = " << intValue(inst.operands[0]) << " << "
+           << uintValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1674,8 +2209,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = (uint)(" << lhs << ") >> " << rhs
-           << ";\n";
+        os << "  auto " << result << " = " << uintValue(inst.operands[0]) << " >> "
+           << uintValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1694,8 +2229,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       if (tryFoldIntegerBinary(inst.opcode, lhs, rhs, folded)) {
         os << "  auto " << result << " = " << folded << ";\n";
       } else {
-        os << "  auto " << result << " = (int)(" << lhs << ") >> " << rhs
-           << ";\n";
+        os << "  auto " << result << " = " << intValue(inst.operands[0]) << " >> "
+           << uintValue(inst.operands[1]) << ";\n";
       }
     }
     publishResult();
@@ -1703,73 +2238,89 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::BitCast: {
+    std::string bitcast_expr = inst.operands.size() >= 1
+                                   ? operandValueForResultType(inst.operands[0], inst.type_id)
+                                   : "0";
     if (inst.operands.size() >= 1) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // bitcast\n";
+      os << "  auto " << result << " = " << bitcast_expr << "; // bitcast\n";
     }
     if (isPointerTypeId(inst.type_id, ctx.mod))
       publishPointerResult();
     else
-      publishResult();
+      publishResult(0, bitcast_expr);
     break;
   }
 
   case LLVMInstruction::ZExt: {
+    std::string expr = inst.operands.size() >= 1
+                           ? operandValueForResultType(inst.operands[0], inst.type_id)
+                           : "0";
     if (inst.operands.size() >= 1) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // zext\n";
+      os << "  auto " << result << " = " << expr << "; // zext\n";
     }
-    publishResult();
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::SExt: {
+    std::string expr = inst.operands.size() >= 1
+                           ? operandValueForResultType(inst.operands[0], inst.type_id)
+                           : "0";
     if (inst.operands.size() >= 1) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // sext\n";
+      os << "  auto " << result << " = " << expr << "; // sext\n";
     }
-    publishResult();
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::Trunc: {
+    std::string expr = inst.operands.size() >= 1
+                           ? operandValueForResultType(inst.operands[0], inst.type_id)
+                           : "0";
     if (inst.operands.size() >= 1) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // trunc\n";
+      os << "  auto " << result << " = " << expr << "; // trunc\n";
     }
-    publishResult();
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FPToUI: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptoui\n";
+    os << "  auto " << result << " = " << uintValue(inst.operands[0]) << "; // fptoui\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::FPToSI: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptosi\n";
+    os << "  auto " << result << " = " << intValue(inst.operands[0]) << "; // fptosi\n";
     publishResult();
     break;
   }
 
   case LLVMInstruction::UIToFP: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // uitofp\n";
-    publishResult();
+    std::string expr = operandValueForResultType(inst.operands[0], inst.type_id);
+    os << "  auto " << result << " = " << expr << "; // uitofp\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::SIToFP: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // sitofp\n";
-    publishResult();
+    std::string expr = operandValueForResultType(inst.operands[0], inst.type_id);
+    os << "  auto " << result << " = " << expr << "; // sitofp\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FPTrunc: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fptrunc\n";
-    publishResult();
+    std::string expr = operandValueForResultType(inst.operands[0], inst.type_id);
+    os << "  auto " << result << " = " << expr << "; // fptrunc\n";
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::FPExt: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << "; // fpext\n";
-    publishResult();
+    std::string expr = operandValueForResultType(inst.operands[0], inst.type_id);
+    os << "  auto " << result << " = " << expr << "; // fpext\n";
+    publishResult(0, expr);
     break;
   }
 
@@ -1806,7 +2357,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       case 37: op = "<="; break;
       default: op = "=="; break;
       }
-      os << "  bool " << result << " = " << lhs << " " << op << " " << rhs << ";\n";
+      os << "  bool " << result << " = " << scalarValue(inst.operands[1]) << " "
+         << op << " " << scalarValue(inst.operands[2]) << ";\n";
     }
     publishResult();
     break;
@@ -1821,13 +2373,13 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       switch (pred) {
       case 0: os << "  bool " << result << " = false;\n"; break;
       case 1: os << "  bool " << result << " = true;\n"; break;
-      case 2: os << "  bool " << result << " = (isnan(" << lhs << ") || isnan(" << rhs << "));\n"; break;
-      case 3: os << "  bool " << result << " = (" << lhs << " == " << rhs << ");\n"; break;
-      case 4: os << "  bool " << result << " = (" << lhs << " != " << rhs << ");\n"; break;
-      case 5: os << "  bool " << result << " = (" << lhs << " > " << rhs << ");\n"; break;
-      case 6: os << "  bool " << result << " = (" << lhs << " >= " << rhs << ");\n"; break;
-      case 7: os << "  bool " << result << " = (" << lhs << " < " << rhs << ");\n"; break;
-      case 8: os << "  bool " << result << " = (" << lhs << " <= " << rhs << ");\n"; break;
+      case 2: os << "  bool " << result << " = (isnan((float)(" << scalarValue(inst.operands[1]) << ")) || isnan((float)(" << scalarValue(inst.operands[2]) << ")));\n"; break;
+      case 3: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " == " << scalarValue(inst.operands[2]) << ");\n"; break;
+      case 4: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " != " << scalarValue(inst.operands[2]) << ");\n"; break;
+      case 5: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " > " << scalarValue(inst.operands[2]) << ");\n"; break;
+      case 6: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " >= " << scalarValue(inst.operands[2]) << ");\n"; break;
+      case 7: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " < " << scalarValue(inst.operands[2]) << ");\n"; break;
+      case 8: os << "  bool " << result << " = (" << scalarValue(inst.operands[1]) << " <= " << scalarValue(inst.operands[2]) << ");\n"; break;
       default: os << "  bool " << result << " = false;\n"; break;
       }
     }
@@ -1837,25 +2389,29 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::Select: {
     if (inst.operands.size() >= 3) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " ? " << getValue(inst.operands[1]) << " : " << getValue(inst.operands[2]) << ";\n";
+      os << "  auto " << result << " = " << boolValue(inst.operands[0]) << " ? "
+         << getValue(inst.operands[1]) << " : " << getValue(inst.operands[2]) << ";\n";
     }
     publishResult();
     break;
   }
 
   case LLVMInstruction::Load: {
+    std::string expr = "0";
     if (inst.operands.size() >= 1) {
       auto ptr = getValue(inst.operands[0]);
       auto stored = ctx.local_values.find(ptr);
       if (stored != ctx.local_values.end()) {
+        expr = stored->second;
         os << "  auto " << result << " = " << stored->second
            << "; // load local " << ptr << "\n";
       } else {
         recordDiagnostic(ctx, "DXIL generic load fallback: ptr=%s", ptr.c_str());
+        expr = "0";
         os << "  auto " << result << " = 0; // load from " << ptr << "\n";
       }
     }
-    publishResult();
+    publishResult(maxOperandVectorLaneCount(), expr);
     break;
   }
 
@@ -1917,13 +2473,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::PHI: {
+    std::string expr;
     if (!inst.operands.empty()) {
-      os << "  auto " << result << " = " << getValue(inst.operands[0])
-         << "; // phi first incoming\n";
+      expr = operandValueForResultType(inst.operands[0], inst.type_id);
+      os << "  auto " << result << " = " << expr << "; // phi first incoming\n";
     } else {
+      expr = "0";
       os << "  auto " << result << " = 0; // empty phi\n";
     }
-    publishResult();
+    publishResult(0, expr);
     break;
   }
 
@@ -1931,7 +2489,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (inst.operands.size() == 1) {
       // unconditional branch
     } else if (inst.operands.size() >= 3) {
-      auto cond = getValue(inst.operands[0]);
+      auto cond = boolValue(inst.operands[0]);
       os << "  if (" << cond << ") {\n  // br true\n  } else {\n  // br false\n  }\n";
     }
     break;
@@ -1943,25 +2501,55 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::ExtractValue: {
+    std::string expr;
+    uint8_t lanes = 0;
     if (inst.operands.size() >= 2) {
-      auto agg = getValue(inst.operands[0]);
+      auto agg = resolvedExpr(resolvedExpr, inst.operands[0], 0);
+      uint32_t agg_type_id = inst.operands[0] < ctx.value_types.size()
+                                 ? ctx.value_types[inst.operands[0]]
+                                 : 0;
+      lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, inst.operands[0], 0);
+      if (lanes <= 1)
+        lanes = inferVectorLaneCountFromExpr(agg);
+      bool aggregate_like =
+          agg_type_id < ctx.mod.types.size() &&
+          (ctx.mod.types[agg_type_id].kind == LLVMType::Struct ||
+           ctx.mod.types[agg_type_id].kind == LLVMType::Array ||
+           ctx.mod.types[agg_type_id].kind == LLVMType::Vector);
       auto idx = inst.operands[1];
-      if (idx < 4) {
-        os << "  auto " << result << " = (" << agg << ")"
-           << componentSuffix(idx) << "; // extractvalue\n";
+      if (!aggregate_like || isZeroLiteral(agg) || isFunctionLikeSymbol(agg) ||
+          (lanes <= 1 && idx < 4) || (lanes > 1 && idx >= lanes)) {
+        expr = defaultValueForTypeId(inst.type_id, ctx.mod);
+        os << "  auto " << result << " = " << expr
+           << "; // extractvalue fallback\n";
+      } else if (idx < 4 && lanes > 1) {
+        expr = "(" + agg + ")" + componentSuffix(idx);
+        os << "  auto " << result << " = " << expr
+           << "; // extractvalue\n";
       } else {
-        os << "  auto " << result << " = (" << agg
-           << "); // extractvalue idx=" << idx << "\n";
+        expr = "(" + agg + ")";
+        os << "  auto " << result << " = " << expr
+           << "; // extractvalue idx=" << idx << "\n";
       }
     }
-    publishResult();
+    publishResult(0, expr);
     break;
   }
 
   case LLVMInstruction::InsertValue: {
-    os << "  auto " << result << " = "
-       << (inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)")
-       << "; // insertvalue\n";
+    std::string base = inst.operands.size() >= 1 ? getValue(inst.operands[0])
+                                                 : defaultValueForTypeId(inst.type_id, ctx.mod);
+    uint32_t agg_type_id = inst.operands.size() >= 1 && inst.operands[0] < ctx.value_types.size()
+                               ? ctx.value_types[inst.operands[0]]
+                               : 0;
+    bool aggregate_like =
+        agg_type_id < ctx.mod.types.size() &&
+        (ctx.mod.types[agg_type_id].kind == LLVMType::Struct ||
+         ctx.mod.types[agg_type_id].kind == LLVMType::Array ||
+         ctx.mod.types[agg_type_id].kind == LLVMType::Vector);
+    if (!aggregate_like || isZeroLiteral(base) || isFunctionLikeSymbol(base))
+      base = defaultValueForTypeId(inst.type_id, ctx.mod);
+    os << "  auto " << result << " = " << base << "; // insertvalue\n";
     if (inst.operands.size() >= 3 && inst.operands[2] < 4) {
       os << "  " << result << componentSuffix(inst.operands[2])
          << " = " << getValue(inst.operands[1]) << ";\n";
@@ -2058,7 +2646,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   case LLVMInstruction::URem:
   case LLVMInstruction::SRem: {
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " % " << getValue(inst.operands[1]) << ";\n";
+    if (usesPointerOperand()) {
+      recordDiagnostic(ctx, "DXIL pointer rem fallback: result=v%u", result_slot);
+      os << "  auto " << result << " = " << defaultValueForTypeId(inst.type_id, ctx.mod)
+         << "; // pointer rem fallback\n";
+    } else {
+      os << "  auto " << result << " = " << intValue(inst.operands[0]) << " % "
+         << intValue(inst.operands[1]) << ";\n";
+    }
     publishResult();
     break;
   }
@@ -2085,7 +2680,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
           module.functions.size(), module.types.size());
 
   std::ostringstream os;
-  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, 0, 0, 0, false,
+  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, false,
                   false, false, false};
 
   if (module.functions.empty()) {
@@ -2119,6 +2714,9 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   emitFunctionPrologue(ctx);
 
   ctx.value_table.resize(256);
+  ctx.value_expr_table.resize(256);
+  ctx.value_types.resize(256, 0);
+  ctx.value_vector_lanes.resize(256, 0);
 
   for (size_t i = 0; i < module.constants.size(); i++) {
     uint32_t val_idx = module.constants[i].id;
@@ -2127,14 +2725,24 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     if (val_idx < ctx.value_table.size()) {
       ctx.value_table[val_idx] = normalizeConstantData(
           module.constants[i].constant_data, module.constants[i].type_id, module);
+      ctx.value_expr_table[val_idx] = ctx.value_table[val_idx];
+      ctx.value_types[val_idx] = module.constants[i].type_id;
+      ctx.value_vector_lanes[val_idx] =
+          vectorLaneCountForTypeId(module.constants[i].type_id, module);
     }
   }
 
   for (const auto &fn_value : module.functions) {
-    if (fn_value.value_id >= ctx.value_table.size())
+    if (fn_value.value_id >= ctx.value_table.size()) {
       ctx.value_table.resize(fn_value.value_id + 1);
+      ctx.value_expr_table.resize(fn_value.value_id + 1);
+      ctx.value_types.resize(fn_value.value_id + 1, 0);
+    }
     if (!fn_value.name.empty())
       ctx.value_table[fn_value.value_id] = fn_value.name;
+    ctx.value_expr_table[fn_value.value_id] = ctx.value_table[fn_value.value_id];
+    ctx.value_types[fn_value.value_id] = fn_value.type_id;
+    ctx.value_vector_lanes[fn_value.value_id] = 0;
   }
 
   DXTRACE("DXILToMSL: entry function has %zu blocks", fn.blocks.size());

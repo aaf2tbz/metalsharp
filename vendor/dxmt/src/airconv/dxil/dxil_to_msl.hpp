@@ -43,6 +43,9 @@ private:
     const LLVMModule &mod;
     const DxilParsedShader &shader;
     std::vector<std::string> value_table;
+    std::vector<std::string> value_expr_table;
+    std::vector<uint32_t> value_types;
+    std::vector<uint8_t> value_vector_lanes;
     std::unordered_map<std::string, std::string> local_values;
     std::unordered_set<uint32_t> pointer_slots;
     std::vector<ResourceBinding> resource_bindings;

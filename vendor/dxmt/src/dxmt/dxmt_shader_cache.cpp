@@ -22,7 +22,20 @@ ShaderCache::ShaderCache(WMTMetalVersion metal_version) {
   if (env::getEnvVar("DXMT_SHADER_CACHE") == "0")
     return;
   std::string path;
-  if (path = env::getEnvVar("DXMT_SHADER_CACHE_PATH"); !path.empty() && path.starts_with("/")) {
+  if (path = env::getEnvVar("DXMT_SHADER_CACHE_PATH"); !path.empty()) {
+    if (!path.starts_with("/")) {
+      auto unix_path = env::getUnixPath(path);
+      if (!unix_path.empty())
+        path = unix_path;
+    }
+    if (path.starts_with("/")) {
+      if (!path.ends_with('/'))
+        path += "/";
+    } else {
+      path.clear();
+    }
+  }
+  if (!path.empty()) {
     if (!path.ends_with('/'))
       path += "/";
   } else {

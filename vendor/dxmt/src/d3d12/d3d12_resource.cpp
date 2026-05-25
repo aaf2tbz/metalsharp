@@ -1,66 +1,126 @@
 #include "d3d12_resource.hpp"
 #include "d3d12_device.hpp"
 #include "d3d12_pipeline_state.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 
-#define RTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a"); if (_tf) { fprintf(_tf, "Resource::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define RTRACE(fmt, ...) DXMTD3D12Trace("Resource", fmt, ##__VA_ARGS__)
 
 namespace dxmt {
+
+static std::atomic<uint64_t> g_next_texture_virtual_address{0x200000000000ull};
 
 MTLD3D12Resource::MTLD3D12Resource(
     MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
     D3D12_RESOURCE_STATES initial_state,
-    D3D12_HEAP_PROPERTIES heap_properties)
+    D3D12_HEAP_PROPERTIES heap_properties, D3D12_HEAP_FLAGS heap_flags)
     : m_device(device), m_desc(desc), m_state(initial_state),
-      m_heap_properties(heap_properties) {
+      m_heap_properties(heap_properties), m_heap_flags(heap_flags) {
+  InitializeResource(WMT::Reference<WMT::Buffer>{}, nullptr, 0, 0);
+}
+
+MTLD3D12Resource::MTLD3D12Resource(
+    MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
+    D3D12_RESOURCE_STATES initial_state,
+    D3D12_HEAP_PROPERTIES heap_properties,
+    D3D12_HEAP_FLAGS heap_flags,
+    WMT::Reference<WMT::Buffer> backing_buffer, void *backing_cpu_addr,
+    uint64_t backing_gpu_addr, uint64_t backing_offset)
+    : m_device(device), m_desc(desc), m_state(initial_state),
+      m_heap_properties(heap_properties), m_heap_flags(heap_flags),
+      m_backing_offset(backing_offset) {
+  InitializeResource(std::move(backing_buffer), backing_cpu_addr,
+                     backing_gpu_addr, backing_offset);
+}
+
+void MTLD3D12Resource::InitializeResource(
+    WMT::Reference<WMT::Buffer> backing_buffer, void *backing_cpu_addr,
+    uint64_t backing_gpu_addr, uint64_t backing_offset) {
   m_device->AddRef();
 
   auto wmt_device = m_device->GetDXMTDevice().device();
   RTRACE("ctor: wmt_device=%llu dim=%u fmt=%u w=%llu h=%u depth_or_arr=%u",
-    (unsigned long long)wmt_device.handle, desc.Dimension, desc.Format,
-    desc.Width, desc.Height, desc.DepthOrArraySize);
+    (unsigned long long)wmt_device.handle, m_desc.Dimension, m_desc.Format,
+    m_desc.Width, m_desc.Height, m_desc.DepthOrArraySize);
 
-  if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+  if (m_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+    bool cpu_accessible = (m_heap_properties.Type == D3D12_HEAP_TYPE_UPLOAD ||
+                           m_heap_properties.Type == D3D12_HEAP_TYPE_READBACK);
     WMTBufferInfo buf_info = {};
-    buf_info.length = desc.Width ? desc.Width : 256;
-    buf_info.options = WMTResourceStorageModeShared;
-    m_mtl_buffer = wmt_device.newBuffer(buf_info);
-    m_cpu_addr = buf_info.memory.get_accessible_or_null();
-    m_gpu_addr = buf_info.gpu_address;
-    m_buf_info = buf_info;
-    RTRACE("ctor: buffer cpu=%p gpu=0x%llx len=%llu", m_cpu_addr, (unsigned long long)m_gpu_addr, (unsigned long long)desc.Width);
+    buf_info.length = m_desc.Width ? m_desc.Width : 256;
+    if (backing_buffer.handle) {
+      m_mtl_buffer = std::move(backing_buffer);
+      m_cpu_addr = backing_cpu_addr
+                       ? static_cast<void *>(static_cast<char *>(backing_cpu_addr) +
+                                             backing_offset)
+                       : nullptr;
+      m_gpu_addr = backing_gpu_addr + backing_offset;
+      buf_info.gpu_address = m_gpu_addr;
+      buf_info.length = m_desc.Width ? m_desc.Width : 256;
+      m_buf_info = buf_info;
+      RTRACE("ctor: placed buffer cpu=%p gpu=0x%llx len=%llu heap_off=%llu "
+             "heap_type=%u",
+             m_cpu_addr, (unsigned long long)m_gpu_addr,
+             (unsigned long long)m_desc.Width,
+             (unsigned long long)backing_offset,
+             (unsigned)m_heap_properties.Type);
+      if (m_desc.Width >= (64ull << 20)) {
+        Logger::info(str::format("M12 large resource uses heap backing width=",
+                                 m_desc.Width, " gpu=0x",
+                                 (unsigned long long)m_gpu_addr, " off=",
+                                 (unsigned long long)backing_offset));
+      }
+    } else {
+      buf_info.options =
+          cpu_accessible ? WMTResourceStorageModeShared
+                         : WMTResourceStorageModePrivate;
+      m_mtl_buffer = wmt_device.newBuffer(buf_info);
+      m_cpu_addr = buf_info.memory.get_accessible_or_null();
+      m_gpu_addr = buf_info.gpu_address;
+      m_buf_info = buf_info;
+      RTRACE("ctor: buffer cpu=%p gpu=0x%llx len=%llu opts=%u heap_type=%u",
+             m_cpu_addr, (unsigned long long)m_gpu_addr,
+             (unsigned long long)m_desc.Width, (unsigned)buf_info.options,
+             (unsigned)m_heap_properties.Type);
+      if (m_desc.Width >= (64ull << 20)) {
+        Logger::info(str::format("M12 large resource standalone buffer width=",
+                                 m_desc.Width, " gpu=0x",
+                                 (unsigned long long)m_gpu_addr, " heap_type=",
+                                 (unsigned)m_heap_properties.Type));
+      }
+    }
   } else {
-    bool cpu_accessible = (heap_properties.Type == D3D12_HEAP_TYPE_UPLOAD ||
-                           heap_properties.Type == D3D12_HEAP_TYPE_READBACK);
+    bool cpu_accessible = (m_heap_properties.Type == D3D12_HEAP_TYPE_UPLOAD ||
+                           m_heap_properties.Type == D3D12_HEAP_TYPE_READBACK);
     WMTTextureInfo tex_info = {};
-    tex_info.width = desc.Width;
-    tex_info.height = desc.Height;
-    tex_info.depth = (desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
-                         ? desc.DepthOrArraySize
+    tex_info.width = m_desc.Width;
+    tex_info.height = m_desc.Height;
+    tex_info.depth = (m_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+                         ? m_desc.DepthOrArraySize
                          : 1;
     tex_info.array_length =
-        (desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D)
-            ? desc.DepthOrArraySize
+        (m_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D)
+            ? m_desc.DepthOrArraySize
             : 1;
-    tex_info.mipmap_level_count = desc.MipLevels ? desc.MipLevels : 1;
-    tex_info.sample_count = desc.SampleDesc.Count ? desc.SampleDesc.Count : 1;
-    switch (desc.Dimension) {
+    tex_info.mipmap_level_count = m_desc.MipLevels ? m_desc.MipLevels : 1;
+    tex_info.sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
+    switch (m_desc.Dimension) {
     case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
-      tex_info.type = (desc.DepthOrArraySize > 1) ? WMTTextureType1DArray : WMTTextureType1D;
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType1DArray : WMTTextureType1D;
       break;
     case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
       tex_info.type = WMTTextureType3D;
       break;
     default:
-      tex_info.type = (desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
       break;
     }
     tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget |
                                       WMTTextureUsageShaderRead |
                                       WMTTextureUsageShaderWrite);
     tex_info.options = cpu_accessible ? WMTResourceStorageModeShared : WMTResourceStorageModePrivate;
-    tex_info.pixel_format = MTLD3D12PipelineState::DXGIToMTLPixelFormat(static_cast<DXGI_FORMAT>(desc.Format));
+    tex_info.pixel_format = MTLD3D12PipelineState::DXGIToMTLPixelFormat(static_cast<DXGI_FORMAT>(m_desc.Format));
     if (tex_info.pixel_format == WMTPixelFormatInvalid)
       tex_info.pixel_format = WMTPixelFormatBGRA8Unorm;
 
@@ -78,20 +138,15 @@ MTLD3D12Resource::MTLD3D12Resource(
         tex_info.pixel_format, (unsigned)tex_info.width, (unsigned)tex_info.height, (unsigned)tex_info.array_length,
         (unsigned long long)m_mtl_texture.handle, cpu_accessible ? "cpu" : "gpu");
     }
-    {
-      uint64_t fake_size = (uint64_t)tex_info.width * tex_info.height * 4;
-      if (fake_size < 256) fake_size = 256;
-      WMTBufferInfo fake_buf = {};
-      fake_buf.length = fake_size;
-      fake_buf.options = WMTResourceStorageModeShared;
-      m_fake_buffer = wmt_device.newBuffer(fake_buf);
-      m_gpu_addr = fake_buf.gpu_address;
-      RTRACE("ctor: texture fake gpu_addr=0x%llx (from fake buffer %llu bytes)", (unsigned long long)m_gpu_addr, (unsigned long long)fake_size);
-    }
+    // Textures do not expose a real D3D12 GPU virtual address. Older bridge
+    // code allocated a same-sized fake Metal buffer here, which doubled memory
+    // pressure for large render targets before UE5/Nanite transient heaps.
+    m_gpu_addr = g_next_texture_virtual_address.fetch_add(0x10000ull);
+    RTRACE("ctor: texture synthetic gpu_addr=0x%llx (no backing buffer)", (unsigned long long)m_gpu_addr);
   }
 
-  Logger::info(str::format("D3D12Resource: dim=", desc.Dimension,
-                            " ", desc.Width, "x", desc.Height,
+  Logger::info(str::format("D3D12Resource: dim=", m_desc.Dimension,
+                            " ", m_desc.Width, "x", m_desc.Height,
                             " gpu=", m_gpu_addr));
   m_device->RegisterResource(this);
 }
@@ -327,7 +382,7 @@ MTLD3D12Resource::GetHeapProperties(D3D12_HEAP_PROPERTIES *heap_properties,
   if (heap_properties)
     *heap_properties = m_heap_properties;
   if (flags)
-    *flags = D3D12_HEAP_FLAG_NONE;
+    *flags = m_heap_flags;
   return S_OK;
 }
 

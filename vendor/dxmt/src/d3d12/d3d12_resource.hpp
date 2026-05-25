@@ -14,7 +14,15 @@ class MTLD3D12Resource : public ID3D12Resource {
 public:
   MTLD3D12Resource(MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
                    D3D12_RESOURCE_STATES initial_state,
-                   D3D12_HEAP_PROPERTIES heap_properties);
+                   D3D12_HEAP_PROPERTIES heap_properties,
+                   D3D12_HEAP_FLAGS heap_flags = D3D12_HEAP_FLAG_NONE);
+  MTLD3D12Resource(MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
+                   D3D12_RESOURCE_STATES initial_state,
+                   D3D12_HEAP_PROPERTIES heap_properties,
+                   D3D12_HEAP_FLAGS heap_flags,
+                   WMT::Reference<WMT::Buffer> backing_buffer,
+                   void *backing_cpu_addr, uint64_t backing_gpu_addr,
+                   uint64_t backing_offset);
   ~MTLD3D12Resource();
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
@@ -62,15 +70,21 @@ public:
   uint64_t GetBufferByteLength() const;
 
 private:
+  void InitializeResource(WMT::Reference<WMT::Buffer> backing_buffer,
+                          void *backing_cpu_addr,
+                          uint64_t backing_gpu_addr,
+                          uint64_t backing_offset);
+
   MTLD3D12Device *m_device;
   D3D12_RESOURCE_DESC m_desc;
   D3D12_RESOURCE_STATES m_state;
   D3D12_HEAP_PROPERTIES m_heap_properties;
+  D3D12_HEAP_FLAGS m_heap_flags = D3D12_HEAP_FLAG_NONE;
   WMTBufferInfo m_buf_info = {};
   WMT::Reference<WMT::Buffer> m_mtl_buffer;
   WMT::Reference<WMT::Texture> m_mtl_texture;
-  WMT::Reference<WMT::Buffer> m_fake_buffer;
   uint64_t m_tex_gpu_resource_id = 0;
+  uint64_t m_backing_offset = 0;
 
   void *m_cpu_addr = nullptr;
   uint64_t m_gpu_addr = 0;

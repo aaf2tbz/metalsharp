@@ -539,9 +539,9 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
         .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
-    let cache_dir = cache_paths
-        .map(|cache| PathBuf::from(&cache.shader))
-        .unwrap_or_else(|| PathBuf::from("/tmp/dxmt_shader_cache"));
+    // DXMT's live D3D12 shader dump path is still /tmp-based in practice under Wine.
+    // Keep the converter watching that root so it can actually see the emitted DXBC files.
+    let cache_dir = PathBuf::from("/tmp/dxmt_shader_cache");
 
     std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(180);

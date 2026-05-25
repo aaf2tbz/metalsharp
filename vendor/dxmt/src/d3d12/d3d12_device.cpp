@@ -2613,6 +2613,41 @@ MTLD3D12Device::GetResourceAllocationInfo(
   return __ret;
 }
 
+static D3D12_RESOURCE_ALLOCATION_INFO *
+FillResourceAllocationInfoWithSideband(
+    D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
+    UINT resource_desc_count, const D3D12_RESOURCE_DESC *resource_descs,
+    D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
+  if (!__ret)
+    return nullptr;
+
+  __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+  __ret->SizeInBytes = 0;
+  if (!resource_descs || !resource_desc_count)
+    return __ret;
+
+  UINT64 cursor = 0;
+  for (UINT i = 0; i < resource_desc_count; i++) {
+    UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
+    UINT64 size = EstimateResourceAllocationSize(resource_descs[i]);
+    cursor = AlignTo(cursor, alignment);
+    if (resource_allocation_info1) {
+      resource_allocation_info1[i].Offset = cursor;
+      resource_allocation_info1[i].Alignment = alignment;
+      resource_allocation_info1[i].SizeInBytes = size;
+    }
+    __ret->Alignment = std::max<UINT64>(__ret->Alignment, alignment);
+    cursor += size;
+  }
+
+  __ret->SizeInBytes = AlignTo(cursor, __ret->Alignment);
+  TRACE("GetResourceAllocationInfo sideband visible=0x%x count=%u -> size=%llu align=%llu",
+        visible_mask, resource_desc_count,
+        (unsigned long long)__ret->SizeInBytes,
+        (unsigned long long)__ret->Alignment);
+  return __ret;
+}
+
 D3D12_HEAP_PROPERTIES* STDMETHODCALLTYPE
 MTLD3D12Device::GetCustomHeapProperties(D3D12_HEAP_PROPERTIES *__ret,
                                         UINT node_mask,
@@ -2640,7 +2675,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource(
 
   auto res = new MTLD3D12Resource(this, *desc, initial_state,
                                   heap_properties ? *heap_properties
-                                                  : D3D12_HEAP_PROPERTIES{});
+                                                  : D3D12_HEAP_PROPERTIES{},
+                                  heap_flags);
+  if (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+      desc->Width >= (64ull << 20)) {
+    Logger::info(str::format("M12 large committed buffer width=", desc->Width,
+                             " heap_type=",
+                             heap_properties ? heap_properties->Type : 0,
+                             " flags=0x", (unsigned)heap_flags));
+  }
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreateCommittedResource res_obj=%p out=%p hr=0x%lx", (void*)res, resource ? *resource : nullptr, hr);
   if (resource && *resource == (void*)this) {
@@ -2669,6 +2712,12 @@ MTLD3D12Device::CreateHeap(const D3D12_HEAP_DESC *desc, REFIID riid,
                                    normalized.Alignment);
 
   auto h = new MTLD3D12Heap(this, normalized);
+  if (normalized.SizeInBytes >= (64ull << 20)) {
+    Logger::info(str::format("M12 large heap size=", normalized.SizeInBytes,
+                             " alignment=", normalized.Alignment,
+                             " heap_type=", normalized.Properties.Type,
+                             " flags=0x", (unsigned)normalized.Flags));
+  }
   HRESULT hr = h->QueryInterface(riid, heap);
   TRACE("CreateHeap normalized size=%llu alignment=%llu out=%p hr=0x%lx",
         (unsigned long long)normalized.SizeInBytes,
@@ -2692,11 +2741,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
   InitReturnPtr(resource);
 
   D3D12_HEAP_PROPERTIES heap_props = {};
+  D3D12_HEAP_FLAGS heap_flags = D3D12_HEAP_FLAG_NONE;
   heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
   auto mt_heap = static_cast<MTLD3D12Heap *>(heap);
   if (mt_heap) {
     const auto &heap_desc = mt_heap->GetHeapDesc();
     heap_props = heap_desc.Properties;
+    heap_flags = heap_desc.Flags;
     D3D12_RESOURCE_ALLOCATION_INFO info = {};
     GetResourceAllocationInfo(&info, 0, 1, desc);
     if (heap_offset % info.Alignment) {
@@ -2712,7 +2763,25 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
     }
   }
 
-  auto res = new MTLD3D12Resource(this, *desc, initial_state, heap_props);
+  auto heap_buffer = mt_heap ? mt_heap->GetMTLBuffer() : WMT::Reference<WMT::Buffer>{};
+  bool use_heap_backing =
+      mt_heap && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+      heap_buffer.handle != NULL_OBJECT_HANDLE;
+  if (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+      desc->Width >= (64ull << 20)) {
+    Logger::info(str::format("M12 large placed buffer width=", desc->Width,
+                             " heap_offset=", heap_offset,
+                             " heap_backing=", use_heap_backing ? 1 : 0,
+                             " heap_gpu=0x",
+                             (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0)));
+  }
+  auto res = use_heap_backing
+                 ? new MTLD3D12Resource(this, *desc, initial_state, heap_props,
+                                        heap_flags,
+                                        heap_buffer, mt_heap->GetCPUAddress(),
+                                        mt_heap->GetGPUAddress(), heap_offset)
+                 : new MTLD3D12Resource(this, *desc, initial_state, heap_props,
+                                        heap_flags);
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreatePlacedResource out=%p hr=0x%lx", resource ? *resource : nullptr,
         hr);
@@ -3420,8 +3489,11 @@ D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE MTLD3D12Device::GetResourceAll
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
     UINT resource_descs_count, const D3D12_RESOURCE_DESC *resource_descs,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
-  TRACE("ID3D12Device4::GetResourceAllocationInfo1 -> delegating");
-  return GetResourceAllocationInfo(__ret, visible_mask, resource_descs_count, resource_descs);
+  TRACE("ID3D12Device4::GetResourceAllocationInfo1 count=%u sideband=%p",
+        resource_descs_count, (void *)resource_allocation_info1);
+  return FillResourceAllocationInfoWithSideband(
+      __ret, visible_mask, resource_descs_count, resource_descs,
+      resource_allocation_info1);
 }
 
 /*** ID3D12Device5 ***/
@@ -3551,12 +3623,15 @@ D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE MTLD3D12Device::GetResourceAll
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
     UINT resource_descs_count, const D3D12_RESOURCE_DESC1 *resource_descs,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
-  TRACE("ID3D12Device8::GetResourceAllocationInfo2 -> delegating");
+  TRACE("ID3D12Device8::GetResourceAllocationInfo2 count=%u sideband=%p",
+        resource_descs_count, (void *)resource_allocation_info1);
   D3D12_RESOURCE_DESC descs_compat[MAX_DESCS];
-  for (UINT i = 0; i < resource_descs_count && i < MAX_DESCS; i++) {
+  UINT count = std::min<UINT>(resource_descs_count, MAX_DESCS);
+  for (UINT i = 0; i < count; i++) {
     memcpy(&descs_compat[i], &resource_descs[i], sizeof(D3D12_RESOURCE_DESC));
   }
-  return GetResourceAllocationInfo(__ret, visible_mask, resource_descs_count, descs_compat);
+  return FillResourceAllocationInfoWithSideband(
+      __ret, visible_mask, count, descs_compat, resource_allocation_info1);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource2(

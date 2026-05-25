@@ -2,6 +2,7 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
+#include "Metal.hpp"
 #include <atomic>
 
 namespace dxmt {
@@ -31,10 +32,17 @@ public:
   D3D12_HEAP_DESC *STDMETHODCALLTYPE GetDesc(D3D12_HEAP_DESC *__ret) override;
 
   const D3D12_HEAP_DESC &GetHeapDesc() const { return m_desc; }
+  WMT::Reference<WMT::Buffer> GetMTLBuffer() const { return m_buffer; }
+  void *GetCPUAddress() const { return m_cpu_addr; }
+  uint64_t GetGPUAddress() const { return m_gpu_addr; }
 
 private:
   MTLD3D12Device *m_device;
   D3D12_HEAP_DESC m_desc;
+  WMTBufferInfo m_buf_info = {};
+  WMT::Reference<WMT::Buffer> m_buffer;
+  void *m_cpu_addr = nullptr;
+  uint64_t m_gpu_addr = 0;
   std::atomic<uint32_t> m_refCount = {1ul};
 };
 
