@@ -236,7 +236,7 @@ pub fn prepare_steam_pipeline_env(
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let prefix = home.join(".metalsharp").join("prefix-steam");
-    stage_app_compat_config(appid, node.id, &prefix)?;
+    stage_app_compat_config(appid, node.id, &prefix, recipe.game_dir.as_deref())?;
     stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
@@ -246,9 +246,13 @@ fn stage_app_compat_config(
     appid: u32,
     pipeline_id: PipelineId,
     prefix: &Path,
+    game_dir: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         stage_subnautica2_nanite_config(prefix)?;
+        if let Some(game_dir) = game_dir {
+            stage_subnautica2_movie_codec_compat(game_dir)?;
+        }
     }
     Ok(())
 }
@@ -352,6 +356,106 @@ fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::err
             )?;
         }
     }
+    Ok(())
+}
+
+fn subnautica2_movie_files(game_dir: &Path) -> Vec<PathBuf> {
+    let movies_dir = game_dir.join("Subnautica2").join("Content").join("Movies");
+    let Ok(entries) = std::fs::read_dir(movies_dir) else {
+        return Vec::new();
+    };
+    let mut movies: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("mp4")))
+        .collect();
+    movies.sort();
+    movies
+}
+
+fn ffmpeg_binary() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("METALSHARP_FFMPEG_PATH") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    Some(PathBuf::from("ffmpeg"))
+}
+
+fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let movies = subnautica2_movie_files(game_dir);
+    if movies.is_empty() {
+        return Ok(());
+    }
+
+    let marker_dir = game_dir.join(".metalsharp").join("media");
+    let marker = marker_dir.join("subnautica2-h264-movies-v1.ok");
+    if marker.exists() {
+        return Ok(());
+    }
+
+    let ffmpeg = ffmpeg_binary().ok_or("ffmpeg not found for Subnautica 2 movie compatibility transcode")?;
+    let backup_dir = game_dir.join(".metalsharp").join("originals").join("movies");
+    std::fs::create_dir_all(&backup_dir)?;
+    std::fs::create_dir_all(&marker_dir)?;
+
+    let mut converted = Vec::new();
+    for movie in movies {
+        let Some(file_name) = movie.file_name() else {
+            continue;
+        };
+        let backup = backup_dir.join(file_name);
+        if !backup.exists() {
+            std::fs::copy(&movie, &backup)?;
+        }
+
+        let tmp = movie.with_extension("mp4.metalsharp-h264.tmp");
+        let status = Command::new(&ffmpeg)
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-y")
+            .arg("-i")
+            .arg(&backup)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-map")
+            .arg("0:a?")
+            .arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("veryfast")
+            .arg("-crf")
+            .arg("23")
+            .arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("160k")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg(&tmp)
+            .status()?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("ffmpeg failed to transcode Subnautica 2 movie {}", movie.display()).into());
+        }
+        std::fs::rename(&tmp, &movie)?;
+        converted.push(movie);
+    }
+
+    let mut marker_text = String::from("MetalSharp Subnautica 2 movie compatibility transcode\n");
+    marker_text.push_str("codec=h264\npix_fmt=yuv420p\naudio=preserve_optional_aac\nsource=Content/Movies/*.mp4\n");
+    marker_text.push_str(&format!("converted={}\n", converted.len()));
+    std::fs::write(marker, marker_text)?;
     Ok(())
 }
 
@@ -667,7 +771,7 @@ fn launch_dxmt_metal_with_context(
         prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-    stage_app_compat_config(appid, node.id, &prefix)?;
+    stage_app_compat_config(appid, node.id, &prefix, Some(game_dir))?;
     stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
 
     if node.uses_winedllpath_routing() {
@@ -2008,6 +2112,23 @@ mod tests {
         let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
 
         assert_eq!(launch_working_dir(&game_dir, &exe_path), exe_path.parent().unwrap());
+    }
+
+    #[test]
+    fn subnautica_movie_files_discovers_mp4_assets_only() {
+        let game_dir = test_dir("subnautica-movies");
+        let movies_dir = game_dir.join("Subnautica2").join("Content").join("Movies");
+        std::fs::create_dir_all(&movies_dir).expect("create movies dir");
+        std::fs::write(movies_dir.join("B.mp4"), b"b").expect("write b");
+        std::fs::write(movies_dir.join("a.MP4"), b"a").expect("write a");
+        std::fs::write(movies_dir.join("ignore.webm"), b"x").expect("write ignore");
+
+        let movies = subnautica2_movie_files(&game_dir);
+
+        assert_eq!(movies.len(), 2);
+        assert_eq!(movies[0].file_name().unwrap().to_string_lossy(), "B.mp4");
+        assert_eq!(movies[1].file_name().unwrap().to_string_lossy(), "a.MP4");
+        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     #[test]
