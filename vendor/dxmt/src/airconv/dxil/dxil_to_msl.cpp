@@ -1698,12 +1698,6 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     return lanes;
   };
 
-  auto scalarizeExprForLane0 = [&](const std::string &expr, uint32_t type_id) -> std::string {
-    if (vectorLaneCountForTypeId(type_id, ctx.mod) > 1)
-      return "(" + expr + ").x";
-    return expr;
-  };
-
   auto scalarValue = [&](uint32_t idx) -> std::string {
     std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
     uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, idx, 0);
@@ -1711,7 +1705,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       lanes = inferVectorLaneCountFromExpr(resolved);
     if (lanes > 1)
       return "(" + resolved + ").x";
-    return scalarizeExprForLane0(getValue(idx), valueTypeId(idx));
+    return resolved;
   };
 
   auto uintValue = [&](uint32_t idx) -> std::string {
@@ -2360,7 +2354,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       os << "  bool " << result << " = " << scalarValue(inst.operands[1]) << " "
          << op << " " << scalarValue(inst.operands[2]) << ";\n";
     }
-    publishResult();
+    publishResult(1, result);
     break;
   }
 
@@ -2383,7 +2377,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       default: os << "  bool " << result << " = false;\n"; break;
       }
     }
-    publishResult();
+    publishResult(1, result);
     break;
   }
 
