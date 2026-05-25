@@ -249,10 +249,46 @@ fn stage_app_compat_config(
     game_dir: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
+        stage_subnautica2_ue5_cache_reset(prefix)?;
         stage_subnautica2_nanite_config(prefix)?;
         if let Some(game_dir) = game_dir {
             stage_subnautica2_movie_codec_compat(game_dir)?;
         }
+    }
+    Ok(())
+}
+
+fn stage_subnautica2_ue5_cache_reset(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut users = wine_user_dirs(prefix);
+    if users.is_empty() {
+        let user_name = std::env::var("USER").unwrap_or_else(|_| "steamuser".to_string());
+        users.push(prefix.join("drive_c").join("users").join(user_name));
+    }
+
+    for user_dir in users {
+        let saved_dir = user_dir.join("AppData").join("Local").join("Subnautica2").join("Saved");
+        let marker_dir = saved_dir.join("MetalSharp");
+        let marker = marker_dir.join("subnautica2-ue5-cache-reset-v1.ok");
+        if marker.exists() {
+            continue;
+        }
+
+        for cache_dir in [
+            saved_dir.join("DerivedDataCache"),
+            saved_dir.join("PipelineCaches"),
+            saved_dir.join("ShaderDebugInfo"),
+            saved_dir.join("Temp"),
+        ] {
+            if cache_dir.exists() {
+                std::fs::remove_dir_all(cache_dir)?;
+            }
+        }
+
+        std::fs::create_dir_all(&marker_dir)?;
+        std::fs::write(
+            marker,
+            "MetalSharp Subnautica 2 UE5 cache reset\nreason=PassLoadingScreenWindowBackToGame No Window\nversion=1\n",
+        )?;
     }
     Ok(())
 }
@@ -2273,6 +2309,36 @@ mod tests {
         assert_eq!(movies[1].file_name().unwrap().to_string_lossy(), "a.MP4");
         assert_eq!(movies[2].file_name().unwrap().to_string_lossy(), "c.mov");
         let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn subnautica_cache_reset_removes_ue5_cache_once_and_preserves_config() {
+        let prefix = test_dir("subnautica-cache-reset");
+        let user_dir = prefix.join("drive_c").join("users").join("steamuser");
+        let saved_dir = user_dir.join("AppData").join("Local").join("Subnautica2").join("Saved");
+        let config_dir = saved_dir.join("Config").join("Windows");
+        let ddc_dir = saved_dir.join("DerivedDataCache");
+        let pipeline_dir = saved_dir.join("PipelineCaches");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&ddc_dir).unwrap();
+        std::fs::create_dir_all(&pipeline_dir).unwrap();
+        std::fs::write(config_dir.join("GameUserSettings.ini"), b"user config").unwrap();
+        std::fs::write(ddc_dir.join("stale.bin"), b"stale").unwrap();
+        std::fs::write(pipeline_dir.join("stale.bin"), b"stale").unwrap();
+
+        stage_subnautica2_ue5_cache_reset(&prefix).unwrap();
+
+        assert!(!ddc_dir.exists());
+        assert!(!pipeline_dir.exists());
+        assert_eq!(std::fs::read(config_dir.join("GameUserSettings.ini")).unwrap(), b"user config");
+        assert!(saved_dir.join("MetalSharp").join("subnautica2-ue5-cache-reset-v1.ok").exists());
+
+        std::fs::create_dir_all(&ddc_dir).unwrap();
+        std::fs::write(ddc_dir.join("rebuilt.bin"), b"rebuilt").unwrap();
+        stage_subnautica2_ue5_cache_reset(&prefix).unwrap();
+
+        assert_eq!(std::fs::read(ddc_dir.join("rebuilt.bin")).unwrap(), b"rebuilt");
+        let _ = std::fs::remove_dir_all(prefix);
     }
 
     #[test]
