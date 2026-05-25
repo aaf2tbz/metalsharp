@@ -654,8 +654,12 @@ fn stage_dxmt_nvidia_driver_shims(
     }
 
     let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let wine_builtin_dir = ms_root.join("lib").join("wine").join("x86_64-windows");
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     std::fs::create_dir_all(&system32)?;
+    if node.id == PipelineId::M12 {
+        std::fs::create_dir_all(&wine_builtin_dir)?;
+    }
 
     let shims: &[&str] = if node.id == PipelineId::M12 {
         &[
@@ -680,9 +684,17 @@ fn stage_dxmt_nvidia_driver_shims(
 
         let dst = system32.join(shim);
         if dst.exists() && files_match(&src, &dst) {
-            continue;
+        } else {
+            std::fs::copy(&src, &dst)?;
         }
-        std::fs::copy(&src, &dst)?;
+
+        if node.id == PipelineId::M12 {
+            let builtin_dst = wine_builtin_dir.join(shim);
+            if builtin_dst.exists() && files_match(&src, &builtin_dst) {
+                continue;
+            }
+            std::fs::copy(&src, builtin_dst)?;
+        }
     }
 
     Ok(())
@@ -2165,6 +2177,29 @@ mod tests {
         let env = steam_pipeline_env_pairs(&home, node, 1);
         assert!(!env.iter().any(|(key, _)| key == "WINEDLLPATH"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn m12_stages_winemetal_to_wine_builtin_x64_dir() {
+        let home = test_dir("m12-winemetal-builtin");
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let prefix = home.join(".metalsharp").join("prefix-steam");
+        let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+        std::fs::create_dir_all(&dxmt_dir).unwrap();
+        std::fs::write(dxmt_dir.join("winemetal.dll"), b"dxmt descriptor export dll").unwrap();
+        std::fs::write(dxmt_dir.join("d3d12.dll"), b"d3d12").unwrap();
+
+        stage_dxmt_nvidia_driver_shims(get_pipeline(PipelineId::M12), &ms_root, &prefix).unwrap();
+
+        assert_eq!(
+            std::fs::read(ms_root.join("lib").join("wine").join("x86_64-windows").join("winemetal.dll")).unwrap(),
+            b"dxmt descriptor export dll"
+        );
+        assert_eq!(
+            std::fs::read(prefix.join("drive_c").join("windows").join("system32").join("winemetal.dll")).unwrap(),
+            b"dxmt descriptor export dll"
+        );
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

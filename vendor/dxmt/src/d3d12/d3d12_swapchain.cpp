@@ -624,9 +624,16 @@ HRESULT MTLD3D12SwapChain::PresentBackBufferFromQueue(
     return DXGI_ERROR_INVALID_CALL;
 
   Logger::info(str::format("M12 autopresent swapchain backbuffer=", buffer,
-                           " res=", (void *)resource));
+                           " res=", (void *)resource,
+                           " logical_idx=", m_current_buffer));
+  uint32_t logical_buffer = m_current_buffer;
   m_current_buffer = buffer;
-  return Present1(0, 0, nullptr);
+  HRESULT hr = Present1(0, 0, nullptr);
+  // Autopresent is a diagnostic/compatibility fallback for command streams that
+  // render swapchain buffers without a timely DXGI Present. It must not advance
+  // UE's app-visible swapchain index behind GetCurrentBackBufferIndex().
+  m_current_buffer = logical_buffer;
+  return hr;
 }
 
 WINBOOL STDMETHODCALLTYPE MTLD3D12SwapChain::IsTemporaryMonoSupported() {

@@ -160,7 +160,7 @@ def main() -> int:
         inspect(
             wine_runtime / "lib" / "wine" / "x86_64-windows" / "winemetal.dll",
             "wine_builtin_windows",
-            STEAM_WRAPPER_EXPORTS,
+            DXMT_EXPORTS,
             "pe",
         ),
         inspect(
@@ -172,7 +172,7 @@ def main() -> int:
         inspect(
             prefix / "drive_c" / "windows" / "system32" / "winemetal.dll",
             "prefix_system32",
-            STEAM_WRAPPER_EXPORTS,
+            DXMT_EXPORTS,
             "pe",
         ),
         inspect(
@@ -205,7 +205,8 @@ def main() -> int:
         },
         "entries": entries,
         "notes": [
-            "Steam/global Wine copies must preserve Steam wrapper exports.",
+            "Steam/global Wine x86_64 copies must preserve Steam wrapper exports plus D3D12 shader/PSO bridge exports.",
+            "The 32-bit syswow64 copy is still checked for legacy wrapper exports only.",
             "DXMT/game-local copies must preserve Steam wrapper exports plus D3D12 shader/PSO bridge exports.",
             "A red result here means do not launch Steam or a game; repair DLL staging first.",
         ],

@@ -2658,12 +2658,17 @@ bool MTLD3D12PipelineState::CompileImpl() {
               !wait_for_file(vs_stage_in_metallib_path, "stage-in") ||
               !wait_for_msc_output(gs_metallib_path, gs_reflection_path,
                                    gs_fail_path, "mesh")) {
-            return RecordCompileFailure(
-                "pso/geometry_msc_compile",
-                str::format("MetalShaderConverter did not produce DXIL "
-                            "geometry object/mesh metallibs; VS=",
-                            vs_dxbc_path, " stageIn=",
-                            vs_stage_in_metallib_path, " GS=", gs_dxbc_path));
+            Logger::warn(str::format(
+                "CreateGraphicsPipelineState: MetalShaderConverter did not "
+                "produce a complete DXIL geometry mesh pipeline; falling back "
+                "to VS/PS render PSO without GS. VS=",
+                vs_dxbc_path, " stageIn=", vs_stage_in_metallib_path,
+                " GS=", gs_dxbc_path));
+            PSTRACE("DXIL geometry MSC incomplete; dropping GS and compiling "
+                    "bounded VS/PS fallback base=%s",
+                    base.c_str());
+            m_gs.clear();
+            goto d3d12_geometry_fallback_to_vs_ps;
           }
 
           auto read_binary = [](const std::string &path,
@@ -3366,6 +3371,8 @@ bool MTLD3D12PipelineState::CompileImpl() {
       return RecordCompileFailure("pso/unsupported_geometry_shader", detail);
     }
   }
+
+d3d12_geometry_fallback_to_vs_ps:
 
   if (m_has_stream_output) {
     return RecordCompileFailure(
