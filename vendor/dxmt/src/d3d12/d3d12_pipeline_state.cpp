@@ -467,11 +467,6 @@ bool InferGeometryPassThroughFromDxbcSignatures(
   const D3D11_SIGNATURE_PARAMETER *output_params = nullptr;
   size_t num_input = input_parser.GetParameters(&input_params);
   size_t num_output = output_parser.Signature(0)->GetParameters(&output_params);
-  if (num_output > num_input) {
-    reason = str::format("output count ", num_output, " > input count ", num_input);
-    return false;
-  }
-
   MTL_GEOMETRY_SHADER_PASS_THROUGH data = {};
   data.RenderTargetArrayIndexComponent = 255;
   data.RenderTargetArrayIndexReg = 255;
@@ -481,39 +476,46 @@ bool InferGeometryPassThroughFromDxbcSignatures(
   bool saw_rt_array = false;
   bool saw_viewport_array = false;
 
+  auto signature_output_matches_input = [](const D3D11_SIGNATURE_PARAMETER &out,
+                                           const D3D11_SIGNATURE_PARAMETER &in) {
+    if ((out.Mask & in.Mask) != out.Mask)
+      return false;
+
+    if (out.SystemValue != D3D10_SB_NAME_UNDEFINED)
+      return out.SystemValue == in.SystemValue;
+
+    return out.SemanticIndex == in.SemanticIndex && out.SemanticName &&
+           in.SemanticName && strcasecmp(out.SemanticName, in.SemanticName) == 0;
+  };
+
   for (size_t i = 0; i < num_output; i++) {
     bool matched = false;
     const D3D11_SIGNATURE_PARAMETER &out = output_params[i];
+    if (out.SystemValue == D3D10_SB_NAME_RENDER_TARGET_ARRAY_INDEX) {
+      data.RenderTargetArrayIndexReg = out.Register;
+      data.RenderTargetArrayIndexComponent = __builtin_ctz(out.Mask);
+      saw_rt_array = true;
+      continue;
+    }
+    if (out.SystemValue == D3D10_SB_NAME_VIEWPORT_ARRAY_INDEX) {
+      data.ViewportArrayIndexReg = out.Register;
+      data.ViewportArrayIndexComponent = __builtin_ctz(out.Mask);
+      saw_viewport_array = true;
+      continue;
+    }
+
     for (size_t j = 0; j < num_input; j++) {
       const D3D11_SIGNATURE_PARAMETER &in = input_params[j];
-      if (out.Register == in.Register && (out.Mask & in.Mask) == out.Mask) {
-        if (out.SystemValue == D3D10_SB_NAME_RENDER_TARGET_ARRAY_INDEX) {
-          data.RenderTargetArrayIndexReg = out.Register;
-          data.RenderTargetArrayIndexComponent = __builtin_ctz(out.Mask);
-          saw_rt_array = true;
-        } else if (out.SystemValue == D3D10_SB_NAME_VIEWPORT_ARRAY_INDEX) {
-          data.ViewportArrayIndexReg = out.Register;
-          data.ViewportArrayIndexComponent = __builtin_ctz(out.Mask);
-          saw_viewport_array = true;
-        } else {
-          if (out.SemanticIndex != in.SemanticIndex ||
-              !out.SemanticName || !in.SemanticName ||
-              strcasecmp(out.SemanticName, in.SemanticName)) {
-            reason = str::format("semantic mismatch out=",
-                                 out.SemanticName ? out.SemanticName : "?",
-                                 out.SemanticIndex, " in=",
-                                 in.SemanticName ? in.SemanticName : "?",
-                                 in.SemanticIndex);
-            return false;
-          }
-        }
+      if (signature_output_matches_input(out, in)) {
         matched = true;
         break;
       }
     }
     if (!matched) {
       reason = str::format("unmatched output reg=", out.Register,
-                           " sys=", (unsigned)out.SystemValue);
+                           " sys=", (unsigned)out.SystemValue, " sem=",
+                           out.SemanticName ? out.SemanticName : "?",
+                           out.SemanticIndex, " mask=", (unsigned)out.Mask);
       return false;
     }
   }
@@ -1982,7 +1984,8 @@ bool MTLD3D12PipelineState::CompileImpl() {
       Logger::warn(str::format(
           "CreateGraphicsPipelineState: dropping unsupported GS bytes=",
           m_gs.size(), " hash=0x", str::format("%016zx", gs_hash), " magic=",
-          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()), " dumped=",
+          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()), " reason=",
+          gs_reason.empty() ? "unknown" : gs_reason, " dumped=",
           gs_dump_path));
       PSTRACE("Graphics PSO GS dropped hash=0x%016zx detail=%s", gs_hash,
               gs_reason.c_str());

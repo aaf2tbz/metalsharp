@@ -1129,7 +1129,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         return vec![
             ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter".to_string()),
+            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter,PSO".to_string()),
             ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
             ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
         ];
