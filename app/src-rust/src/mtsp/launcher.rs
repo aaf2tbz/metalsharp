@@ -713,6 +713,8 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                     }
                     let metallib_path = path.with_extension("metallib");
                     let reflection_path = path.with_extension("json");
+                    let vertex_layout_path = path.with_extension("vertex-layout.json");
+                    let use_gs_ts_emulation = vertex_layout_path.exists();
                     let fail_path = path.with_extension("msc.fail");
                     if metallib_path.exists() && reflection_path.exists() {
                         continue;
@@ -736,14 +738,20 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                             let _ = writeln!(log, "compile_start dxbc={}", path.display());
                         }
 
-                        let output = Command::new(&tool_path)
+                        let mut command = Command::new(&tool_path);
+                        command
                             .arg("-o")
                             .arg(&metallib_path)
                             .arg(&path)
                             .arg(format!("--output-reflection-file={}", reflection_path.display()))
                             .arg("--deployment-os=macOS")
-                            .arg("--minimum-os-build-version=15.0.0")
-                            .output();
+                            .arg("--minimum-os-build-version=15.0.0");
+                        if use_gs_ts_emulation {
+                            command
+                                .arg("--enable-gs-ts-emulation")
+                                .arg(format!("--vertex-input-layout-file={}", vertex_layout_path.display()));
+                        }
+                        let output = command.output();
 
                         match output {
                             Ok(result) => {
@@ -762,11 +770,12 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
                                 if let Some(log) = log.as_mut() {
                                     let _ = writeln!(
                                         log,
-                                        "compile_end dxbc={} status={} metallib={} reflection={}",
+                                        "compile_end dxbc={} status={} metallib={} reflection={} gs_ts_emulation={}",
                                         path.display(),
                                         result.status,
                                         metallib_path.exists(),
-                                        reflection_path.exists()
+                                        reflection_path.exists(),
+                                        use_gs_ts_emulation
                                     );
                                     if !stdout_text.is_empty() {
                                         let _ = log.write_all(stdout_text.as_bytes());

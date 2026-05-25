@@ -246,6 +246,17 @@ struct unixcall_mtllibrary_newfunction_with_constants {
   obj_handle_t ret_error;
 };
 
+struct unixcall_mtllibrary_newfunction_with_descriptor {
+  obj_handle_t library;
+  struct WMTConstMemoryPointer name;
+  struct WMTConstMemoryPointer specialized_name;
+  struct WMTConstMemoryPointer constants;
+  uint64_t num_constants;
+  uint32_t options;
+  obj_handle_t ret;
+  obj_handle_t ret_error;
+};
+
 struct unixcall_query_display_setting {
   uint64_t display_id;
   enum WMTColorSpace colorspace;

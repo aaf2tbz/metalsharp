@@ -910,6 +910,32 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   descriptor.fragmentFunction = (id<MTLFunction>)info->fragment_function;
   descriptor.payloadMemoryLength = info->payload_memory_length;
 
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000
+  if (@available(macOS 13, *)) {
+    if (info->num_object_linked_functions && info->object_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->object_linked_functions.ptr
+                                                    count:info->num_object_linked_functions];
+      descriptor.objectLinkedFunctions = linked;
+      [linked release];
+    }
+    if (info->num_mesh_linked_functions && info->mesh_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->mesh_linked_functions.ptr
+                                                    count:info->num_mesh_linked_functions];
+      descriptor.meshLinkedFunctions = linked;
+      [linked release];
+    }
+    if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.privateFunctions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->fragment_linked_functions.ptr
+                                                    count:info->num_fragment_linked_functions];
+      descriptor.fragmentLinkedFunctions = linked;
+      [linked release];
+    }
+  }
+#endif
+
   descriptor.meshThreadgroupSizeIsMultipleOfThreadExecutionWidth = info->mesh_tgsize_is_multiple_of_sgwidth;
   descriptor.objectThreadgroupSizeIsMultipleOfThreadExecutionWidth = info->object_tgsize_is_multiple_of_sgwidth;
 
@@ -2786,6 +2812,39 @@ _MTLLibrary_newFunctionWithConstants(void *obj) {
 }
 
 static NTSTATUS
+_MTLLibrary_newFunctionWithDescriptor(void *obj) {
+  struct unixcall_mtllibrary_newfunction_with_descriptor *params = obj;
+  id<MTLLibrary> library = (id<MTLLibrary>)params->library;
+  NSString *name = [[NSString alloc] initWithCString:(char *)params->name.ptr encoding:NSUTF8StringEncoding];
+  NSString *specialized_name = nil;
+  if (params->specialized_name.ptr) {
+    specialized_name = [[NSString alloc] initWithCString:(char *)params->specialized_name.ptr
+                                                encoding:NSUTF8StringEncoding];
+  }
+
+  MTLFunctionDescriptor *descriptor = [MTLFunctionDescriptor functionDescriptor];
+  descriptor.name = name;
+  descriptor.specializedName = specialized_name;
+  descriptor.options = (MTLFunctionOptions)params->options;
+
+  struct WMTFunctionConstant *constants = (struct WMTFunctionConstant *)params->constants.ptr;
+  if (constants && params->num_constants) {
+    MTLFunctionConstantValues *values = [[MTLFunctionConstantValues alloc] init];
+    for (uint64_t i = 0; i < params->num_constants; i++)
+      [values setConstantValue:constants[i].data.ptr type:(MTLDataType)constants[i].type atIndex:constants[i].index];
+    descriptor.constantValues = values;
+    [values release];
+  }
+
+  NSError *err = NULL;
+  params->ret = (obj_handle_t)[library newFunctionWithDescriptor:descriptor error:&err];
+  params->ret_error = (obj_handle_t)err;
+  [name release];
+  [specialized_name release];
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 _WMTQueryDisplaySetting(void *obj) {
   struct unixcall_query_display_setting *params = obj;
   CGDirectDisplayID display_id = params->display_id;
@@ -3428,6 +3487,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLCommandBuffer_property,
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
+    &_MTLLibrary_newFunctionWithDescriptor,
 };
 
 #ifndef DXMT_NATIVE
@@ -3565,5 +3625,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLCommandBuffer_property,
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
+    &_MTLLibrary_newFunctionWithDescriptor,
 };
 #endif

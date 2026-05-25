@@ -802,6 +802,173 @@ ParseTopLevelArgumentBufferReflection(std::string_view text,
   return args;
 }
 
+uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size);
+
+const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    return "R32G32B32A32_FLOAT";
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+    return "R32G32B32A32_UINT";
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+    return "R32G32B32A32_SINT";
+  case DXGI_FORMAT_R32G32B32_FLOAT:
+    return "R32G32B32_FLOAT";
+  case DXGI_FORMAT_R32G32B32_UINT:
+    return "R32G32B32_UINT";
+  case DXGI_FORMAT_R32G32B32_SINT:
+    return "R32G32B32_SINT";
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    return "R16G16B16A16_FLOAT";
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+    return "R16G16B16A16_UNORM";
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+    return "R16G16B16A16_UINT";
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+    return "R16G16B16A16_SNORM";
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+    return "R16G16B16A16_SINT";
+  case DXGI_FORMAT_R32G32_FLOAT:
+    return "R32G32_FLOAT";
+  case DXGI_FORMAT_R32G32_UINT:
+    return "R32G32_UINT";
+  case DXGI_FORMAT_R32G32_SINT:
+    return "R32G32_SINT";
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+    return "R10G10B10A2_UNORM";
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+    return "R10G10B10A2_UINT";
+  case DXGI_FORMAT_R11G11B10_FLOAT:
+    return "R11G11B10_FLOAT";
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+    return "R8G8B8A8_UNORM";
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    return "R8G8B8A8_UNORM_SRGB";
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+    return "R8G8B8A8_UINT";
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+    return "R8G8B8A8_SNORM";
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+    return "R8G8B8A8_SINT";
+  case DXGI_FORMAT_R16G16_FLOAT:
+    return "R16G16_FLOAT";
+  case DXGI_FORMAT_R16G16_UNORM:
+    return "R16G16_UNORM";
+  case DXGI_FORMAT_R16G16_UINT:
+    return "R16G16_UINT";
+  case DXGI_FORMAT_R16G16_SNORM:
+    return "R16G16_SNORM";
+  case DXGI_FORMAT_R16G16_SINT:
+    return "R16G16_SINT";
+  case DXGI_FORMAT_R32_FLOAT:
+    return "R32_FLOAT";
+  case DXGI_FORMAT_R32_UINT:
+    return "R32_UINT";
+  case DXGI_FORMAT_R32_SINT:
+    return "R32_SINT";
+  case DXGI_FORMAT_R8G8_UNORM:
+    return "R8G8_UNORM";
+  case DXGI_FORMAT_R8G8_UINT:
+    return "R8G8_UINT";
+  case DXGI_FORMAT_R8G8_SNORM:
+    return "R8G8_SNORM";
+  case DXGI_FORMAT_R8G8_SINT:
+    return "R8G8_SINT";
+  case DXGI_FORMAT_R16_FLOAT:
+    return "R16_FLOAT";
+  case DXGI_FORMAT_R16_UNORM:
+    return "R16_UNORM";
+  case DXGI_FORMAT_R16_UINT:
+    return "R16_UINT";
+  case DXGI_FORMAT_R16_SNORM:
+    return "R16_SNORM";
+  case DXGI_FORMAT_R16_SINT:
+    return "R16_SINT";
+  case DXGI_FORMAT_R8_UNORM:
+    return "R8_UNORM";
+  case DXGI_FORMAT_R8_UINT:
+    return "R8_UINT";
+  case DXGI_FORMAT_R8_SNORM:
+    return "R8_SNORM";
+  case DXGI_FORMAT_R8_SINT:
+    return "R8_SINT";
+  default:
+    return nullptr;
+  }
+}
+
+std::string EscapeJsonString(std::string_view value) {
+  std::string escaped;
+  escaped.reserve(value.size() + 8);
+  for (char ch : value) {
+    if (ch == '"' || ch == '\\')
+      escaped.push_back('\\');
+    escaped.push_back(ch);
+  }
+  return escaped;
+}
+
+std::string HexHash(size_t hash) {
+  char text[32] = {};
+  snprintf(text, sizeof(text), "%016zx", hash);
+  return text;
+}
+
+bool WriteMetalShaderConverterVertexLayout(
+    MTLD3D12Device *device, const D3D12_INPUT_LAYOUT_DESC &input_layout,
+    const char *path) {
+  if (!path || !input_layout.NumElements || !input_layout.pInputElementDescs)
+    return false;
+
+  FILE *file = fopen(path, "w");
+  if (!file)
+    return false;
+
+  uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
+  fprintf(file, "{\"InputElements\":[");
+  for (UINT i = 0; i < input_layout.NumElements; i++) {
+    const auto &el = input_layout.pInputElementDescs[i];
+    const char *format_name = DXGIFormatToMetalShaderConverterName(el.Format);
+    MTL_DXGI_FORMAT_DESC metal_format = {};
+    uint32_t byte_size = 16;
+    if (SUCCEEDED(MTLQueryDXGIFormat(device->GetMTLDevice(), el.Format,
+                                     metal_format)) &&
+        metal_format.BytesPerTexel)
+      byte_size = metal_format.BytesPerTexel;
+
+    uint32_t aligned_offset =
+        el.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
+            ? AlignD3D12InputOffset(append_offset[el.InputSlot], byte_size)
+            : el.AlignedByteOffset;
+    if (el.InputSlot < WMT_MAX_VERTEX_BUFFER_LAYOUTS)
+      append_offset[el.InputSlot] = aligned_offset + byte_size;
+
+    if (i)
+      fprintf(file, ",");
+    fprintf(file,
+            "{\"AlignedByteOffset\":%u,\"Format\":\"%s\",\"InputSlot\":%u,"
+            "\"InputSlotClass\":\"%s\",\"InstanceDataStepRate\":%u,"
+            "\"SemanticIndex\":%u}",
+            aligned_offset, format_name ? format_name : "R32G32B32A32_FLOAT",
+            el.InputSlot,
+            el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+                ? "PerInstanceData"
+                : "PerVertexData",
+            el.InstanceDataStepRate, el.SemanticIndex);
+  }
+  fprintf(file, "],\"SemanticNames\":[");
+  for (UINT i = 0; i < input_layout.NumElements; i++) {
+    const auto &el = input_layout.pInputElementDescs[i];
+    if (i)
+      fprintf(file, ",");
+    auto semantic = EscapeJsonString(el.SemanticName ? el.SemanticName : "");
+    fprintf(file, "\"%s\"", semantic.c_str());
+  }
+  fprintf(file, "]}");
+  fclose(file);
+  return true;
+}
+
 const char *DxilShaderKindName(dxmt::dxil::DxilShaderKind kind) {
   switch (kind) {
   case dxmt::dxil::DxilShaderKind::Pixel:
@@ -2076,16 +2243,397 @@ bool MTLD3D12PipelineState::CompileImpl() {
         }
         if (!DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size()) ||
             !DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size())) {
-          return RecordCompileFailure(
-              "pso/unsupported_dxil_geometry_shader",
-              str::format("Geometry mesh PSO requires SM5 DXBC shader blobs; "
-                          "VS bytes=",
-                          m_vs.size(), " magic=",
-                          DescribeShaderBlobMagic(m_vs.data(), m_vs.size()),
-                          " GS bytes=", m_gs.size(), " magic=",
-                          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()),
-                          ". DXIL geometry shaders need a MetalShaderConverter "
-                          "mesh-stage implementation."));
+          size_t geometry_hash = 0;
+          auto hash_bytes = [&](const void *data, SIZE_T byte_size) {
+            const uint8_t *bytes = (const uint8_t *)data;
+            for (SIZE_T i = 0; i < byte_size; i++)
+              geometry_hash = geometry_hash * 131 + bytes[i];
+          };
+          geometry_hash = geometry_hash * 131 + m_input_layout.NumElements;
+          hash_bytes(m_vs.data(), m_vs.size());
+          hash_bytes(m_gs.data(), m_gs.size());
+          for (UINT i = 0; i < m_input_layout.NumElements; i++) {
+            const auto &el = m_input_layout.pInputElementDescs[i];
+            geometry_hash = geometry_hash * 131 + el.SemanticIndex;
+            geometry_hash = geometry_hash * 131 + el.Format;
+            geometry_hash = geometry_hash * 131 + el.InputSlot;
+            geometry_hash = geometry_hash * 131 + el.AlignedByteOffset;
+            geometry_hash = geometry_hash * 131 + el.InputSlotClass;
+            geometry_hash = geometry_hash * 131 + el.InstanceDataStepRate;
+            if (el.SemanticName) {
+              for (const char *s = el.SemanticName; *s; s++)
+                geometry_hash = geometry_hash * 131 + (unsigned char)*s;
+            }
+          }
+
+          const std::string base =
+              BuildShaderCachePath((HexHash(geometry_hash) + ".geom").c_str());
+          const std::string vs_dxbc_path = base + ".gsvs.dxbc";
+          const std::string gs_dxbc_path = base + ".gsmesh.dxbc";
+          const std::string vs_layout_path = base + ".gsvs.vertex-layout.json";
+          const std::string gs_layout_path = base + ".gsmesh.vertex-layout.json";
+          const std::string vs_metallib_path = base + ".gsvs.metallib";
+          const std::string gs_metallib_path = base + ".gsmesh.metallib";
+          const std::string vs_reflection_path = base + ".gsvs.json";
+          const std::string gs_reflection_path = base + ".gsmesh.json";
+          const std::string vs_fail_path = base + ".gsvs.msc.fail";
+          const std::string gs_fail_path = base + ".gsmesh.msc.fail";
+          EnsureShaderCacheDir();
+          DumpShaderBlob(vs_dxbc_path.c_str(), m_vs.data(), m_vs.size());
+          DumpShaderBlob(gs_dxbc_path.c_str(), m_gs.data(), m_gs.size());
+          if (!WriteMetalShaderConverterVertexLayout(
+                  m_device, m_input_layout, vs_layout_path.c_str()) ||
+              !WriteMetalShaderConverterVertexLayout(
+                  m_device, m_input_layout, gs_layout_path.c_str())) {
+            return RecordCompileFailure(
+                "pso/geometry_msc_vertex_layout",
+                str::format("Failed to write MetalShaderConverter vertex "
+                            "layout for DXIL geometry PSO base=",
+                            base));
+          }
+
+          auto wait_for_msc_output =
+              [&](const std::string &metallib_path,
+                  const std::string &reflection_path,
+                  const std::string &fail_path, const char *stage) -> bool {
+            for (uint32_t attempt = 0; attempt < 250; attempt++) {
+              FILE *mf = fopen(metallib_path.c_str(), "rb");
+              FILE *rf = fopen(reflection_path.c_str(), "rb");
+              if (mf && rf) {
+                fclose(mf);
+                fclose(rf);
+                PSTRACE("DXIL geometry MSC %s ready after %u waits", stage,
+                        attempt + 1);
+                return true;
+              }
+              if (mf)
+                fclose(mf);
+              if (rf)
+                fclose(rf);
+              FILE *ff = fopen(fail_path.c_str(), "rb");
+              if (ff) {
+                fclose(ff);
+                PSTRACE("DXIL geometry MSC %s failure marker hit after %u waits",
+                        stage, attempt + 1);
+                return false;
+              }
+              Sleep(20);
+            }
+            PSTRACE("DXIL geometry MSC %s timed out waiting for %s", stage,
+                    metallib_path.c_str());
+            return false;
+          };
+
+          if (!wait_for_msc_output(vs_metallib_path, vs_reflection_path,
+                                   vs_fail_path, "object") ||
+              !wait_for_msc_output(gs_metallib_path, gs_reflection_path,
+                                   gs_fail_path, "mesh")) {
+            return RecordCompileFailure(
+                "pso/geometry_msc_compile",
+                str::format("MetalShaderConverter did not produce DXIL "
+                            "geometry object/mesh metallibs; VS=",
+                            vs_dxbc_path, " GS=", gs_dxbc_path));
+          }
+
+          auto read_binary = [](const std::string &path,
+                                std::vector<uint8_t> &out) -> bool {
+            FILE *file = fopen(path.c_str(), "rb");
+            if (!file)
+              return false;
+            fseek(file, 0, SEEK_END);
+            long size = ftell(file);
+            fseek(file, 0, SEEK_SET);
+            if (size <= 0) {
+              fclose(file);
+              return false;
+            }
+            out.resize((size_t)size);
+            size_t read = fread(out.data(), 1, (size_t)size, file);
+            fclose(file);
+            out.resize(read);
+            return read == (size_t)size;
+          };
+
+          std::string vs_reflection_text = ReadTextFile(vs_reflection_path.c_str());
+          std::string gs_reflection_text = ReadTextFile(gs_reflection_path.c_str());
+          uint32_t vertex_output_size = 0;
+          uint32_t payload_size = 16256;
+          ExtractJsonUIntValue(vs_reflection_text,
+                               "vertex_output_size_in_bytes",
+                               vertex_output_size);
+          ExtractJsonUIntValue(gs_reflection_text,
+                               "max_payload_size_in_bytes", payload_size);
+          if (!vertex_output_size)
+            vertex_output_size = 16;
+          if (!payload_size)
+            payload_size = 16256;
+
+          std::string vs_entry;
+          std::string gs_entry;
+          ExtractJsonStringValue(vs_reflection_text, "EntryPoint", vs_entry);
+          ExtractJsonStringValue(gs_reflection_text, "EntryPoint", gs_entry);
+          if (vs_entry.empty())
+            vs_entry = "vs_main";
+          if (gs_entry.empty())
+            gs_entry = "gs_main";
+          std::string object_entry = vs_entry + ".dxil_irconverter_object_shader";
+
+          bool tessellation_enabled = false;
+          int vertex_output_size_int = (int)vertex_output_size;
+          WMTFunctionConstant constants[2] = {};
+          constants[0].data.set(&tessellation_enabled);
+          constants[0].type = WMTDataTypeBool;
+          constants[0].index = 0;
+          constants[1].data.set(&vertex_output_size_int);
+          constants[1].type = WMTDataTypeInt;
+          constants[1].index = 1;
+
+          auto load_msc_function =
+              [&](const std::string &metallib_path, const char *function_name,
+                  const char *stage,
+                  WMT::Reference<WMT::Function> &out_func) -> bool {
+            std::vector<uint8_t> lib_data;
+            if (!read_binary(metallib_path, lib_data))
+              return RecordCompileFailure(
+                  stage, str::format("Failed to read MSC metallib ",
+                                     metallib_path));
+            auto dispatch_data =
+                WMT::MakeDispatchData(lib_data.data(), lib_data.size());
+            WMT::Reference<WMT::Error> lib_err;
+            auto library = wmt_device.newLibrary(dispatch_data, lib_err);
+            if (lib_err.handle) {
+              auto err_desc_string = lib_err.description().getUTF8String();
+              const char *err_desc =
+                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+              return RecordCompileFailure(
+                  stage, str::format("MSC geometry Metal library failed: ",
+                                     err_desc ? err_desc : "unknown",
+                                     "; metallib ", metallib_path));
+            }
+
+            WMT::Reference<WMT::Error> fn_err;
+            out_func = library.newFunctionWithConstants(
+                function_name, constants, std::size(constants), fn_err);
+            if (!out_func.handle) {
+              auto err_desc_string =
+                  fn_err.handle ? fn_err.description().getUTF8String()
+                                : std::string();
+              const char *err_desc =
+                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+              return RecordCompileFailure(
+                  stage, str::format("MSC geometry function lookup failed for ",
+                                     function_name, ": ",
+                                     err_desc ? err_desc : "unknown",
+                                     "; metallib ", metallib_path));
+            }
+            return true;
+          };
+
+          auto load_msc_plain_function =
+              [&](const std::string &metallib_path, const char *function_name,
+                  const char *stage,
+                  WMT::Reference<WMT::Function> &out_func) -> bool {
+            std::vector<uint8_t> lib_data;
+            if (!read_binary(metallib_path, lib_data))
+              return RecordCompileFailure(
+                  stage, str::format("Failed to read MSC metallib ",
+                                     metallib_path));
+            auto dispatch_data =
+                WMT::MakeDispatchData(lib_data.data(), lib_data.size());
+            WMT::Reference<WMT::Error> lib_err;
+            auto library = wmt_device.newLibrary(dispatch_data, lib_err);
+            if (lib_err.handle) {
+              auto err_desc_string = lib_err.description().getUTF8String();
+              const char *err_desc =
+                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+              return RecordCompileFailure(
+                  stage, str::format("MSC geometry linked library failed: ",
+                                     err_desc ? err_desc : "unknown",
+                                     "; metallib ", metallib_path));
+            }
+
+            WMT::Reference<WMT::Error> fn_err;
+            out_func = library.newFunctionWithDescriptor(
+                function_name, nullptr, constants, std::size(constants),
+                WMTFunctionOptionCompileToBinary, fn_err);
+            std::string fn_error_desc =
+                fn_err.handle ? fn_err.description().getUTF8String()
+                              : std::string();
+            if (!out_func.handle) {
+              std::string visible_ref_name =
+                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
+              WMT::Reference<WMT::Error> visible_fn_err;
+              out_func = library.newFunctionWithDescriptor(
+                  visible_ref_name.c_str(), nullptr, constants,
+                  std::size(constants), WMTFunctionOptionCompileToBinary,
+                  visible_fn_err);
+              if (!out_func.handle && visible_fn_err.handle)
+                fn_error_desc = visible_fn_err.description().getUTF8String();
+            }
+            if (!out_func.handle)
+              return RecordCompileFailure(
+                  stage, str::format("MSC geometry linked function lookup "
+                                     "failed for ",
+                                     function_name, ": ",
+                                     fn_error_desc.empty()
+                                         ? "unknown"
+                                         : fn_error_desc,
+                                     "; metallib ", metallib_path));
+            return true;
+          };
+
+          WMT::Reference<WMT::Function> geometry_vs_func;
+          WMT::Reference<WMT::Function> geometry_gs_func;
+          WMT::Reference<WMT::Function> stage_in_linked_func;
+          if (!load_msc_function(vs_metallib_path, object_entry.c_str(),
+                                 "shader/geometry_msc_object_function",
+                                 geometry_vs_func) ||
+              !load_msc_function(gs_metallib_path, gs_entry.c_str(),
+                                 "shader/geometry_msc_mesh_function",
+                                 geometry_gs_func) ||
+              !load_msc_plain_function(
+                  vs_metallib_path, "irconverter_stage_in_shader",
+                  "shader/geometry_msc_stage_in_function",
+                  stage_in_linked_func)) {
+            return false;
+          }
+
+          MTL_SHADER_REFLECTION reflected_vs = {};
+          MTL_SHADER_REFLECTION reflected_gs = {};
+          reflected_vs.ConstanttBufferTableBindIndex = ~0u;
+          reflected_vs.ArgumentBufferBindIndex = ~0u;
+          reflected_gs.ConstanttBufferTableBindIndex = ~0u;
+          reflected_gs.ArgumentBufferBindIndex = ~0u;
+          m_vs_args = ParseTopLevelArgumentBufferReflection(vs_reflection_text,
+                                                            reflected_vs);
+          m_gs_args = ParseTopLevelArgumentBufferReflection(gs_reflection_text,
+                                                            reflected_gs);
+          m_vs_reflection = reflected_vs;
+          m_gs_reflection = reflected_gs;
+
+          WMT::Reference<WMT::Function> geometry_ps_func;
+          if (!m_ps.empty() &&
+              !CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel,
+                             "ps_main", geometry_ps_func, &m_ps_shader,
+                             &m_ps_reflection)) {
+            return false;
+          }
+
+          WMTMeshRenderPipelineInfo mesh_info;
+          WMT::InitializeMeshRenderPipelineInfo(mesh_info);
+          mesh_info.object_function = geometry_vs_func.handle;
+          mesh_info.mesh_function = geometry_gs_func.handle;
+          if (geometry_ps_func.handle)
+            mesh_info.fragment_function = geometry_ps_func.handle;
+          obj_handle_t mesh_linked_functions[] = {stage_in_linked_func.handle};
+          mesh_info.object_linked_functions.set(mesh_linked_functions);
+          mesh_info.num_object_linked_functions =
+              std::size(mesh_linked_functions);
+          mesh_info.mesh_linked_functions.set(mesh_linked_functions);
+          mesh_info.num_mesh_linked_functions = std::size(mesh_linked_functions);
+          mesh_info.payload_memory_length = payload_size;
+          mesh_info.immutable_object_buffers =
+              (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
+          mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
+          mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
+          mesh_info.rasterization_enabled =
+              (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+          mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
+
+          for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+            auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
+            if (fmt != WMTPixelFormatInvalid)
+              mesh_info.colors[i].pixel_format = fmt;
+            auto &rt = m_blend_desc.RenderTarget[i];
+            mesh_info.colors[i].write_mask =
+                kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
+            mesh_info.colors[i].blending_enabled =
+                rt.BlendEnable ? true : false;
+            if (rt.BlendEnable) {
+              mesh_info.colors[i].src_rgb_blend_factor =
+                  D3D12BlendToWMT(rt.SrcBlend);
+              mesh_info.colors[i].dst_rgb_blend_factor =
+                  D3D12BlendToWMT(rt.DestBlend);
+              mesh_info.colors[i].rgb_blend_operation =
+                  D3D12BlendOpToWMT(rt.BlendOp);
+              mesh_info.colors[i].src_alpha_blend_factor =
+                  D3D12BlendToWMT(rt.SrcBlendAlpha);
+              mesh_info.colors[i].dst_alpha_blend_factor =
+                  D3D12BlendToWMT(rt.DestBlendAlpha);
+              mesh_info.colors[i].alpha_blend_operation =
+                  D3D12BlendOpToWMT(rt.BlendOpAlpha);
+            }
+          }
+
+          auto depth_fmt = DXGIToMTLPixelFormat(m_dsv_format);
+          if (depth_fmt != WMTPixelFormatInvalid) {
+            mesh_info.depth_pixel_format = depth_fmt;
+            if (m_dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+                m_dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+              mesh_info.stencil_pixel_format = depth_fmt;
+          }
+
+          WMT::Reference<WMT::Error> mesh_err;
+          m_render_pso = wmt_device.newRenderPipelineState(mesh_info, mesh_err);
+          if (!m_render_pso.handle) {
+            auto err_desc_string =
+                mesh_err.handle ? mesh_err.description().getUTF8String()
+                                : std::string();
+            const char *err_desc =
+                err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+            return RecordCompileFailure(
+                "pso/metal_geometry_msc_mesh_pso",
+                str::format("Metal MSC geometry mesh PSO creation failed: ",
+                            err_desc ? err_desc : "unknown",
+                            "; object=", object_entry, "; mesh=", gs_entry,
+                            "; payload=", payload_size,
+                            "; vertex_output=", vertex_output_size));
+          }
+
+          if (m_ps_shader) {
+            if (m_ps_reflection.NumConstantBuffers > 0 &&
+                m_ps_cb_args.empty())
+              m_ps_cb_args.resize(m_ps_reflection.NumConstantBuffers);
+            if (m_ps_reflection.NumArguments > 0 && m_ps_args.empty())
+              m_ps_args.resize(m_ps_reflection.NumArguments);
+            if (!m_ps_cb_args.empty() || !m_ps_args.empty()) {
+              SM50GetArgumentsInfo(m_ps_shader,
+                                   m_ps_cb_args.empty() ? nullptr
+                                                        : m_ps_cb_args.data(),
+                                   m_ps_args.empty() ? nullptr
+                                                     : m_ps_args.data());
+            }
+            SM50Destroy(m_ps_shader);
+            m_ps_shader = nullptr;
+          }
+
+          if (m_depth_stencil_desc.DepthEnable ||
+              m_depth_stencil_desc.StencilEnable) {
+            struct WMTDepthStencilInfo ds_info = {};
+            ds_info.depth_compare_function = WMTCompareFunctionAlways;
+            ds_info.depth_write_enabled = false;
+            ds_info.front_stencil.enabled = false;
+            ds_info.back_stencil.enabled = false;
+            if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
+                m_depth_stencil_desc.DepthFunc <=
+                    D3D12_COMPARISON_FUNC_ALWAYS) {
+              ds_info.depth_compare_function =
+                  kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
+            }
+            ds_info.depth_write_enabled =
+                m_depth_stencil_desc.DepthEnable &&
+                m_depth_stencil_desc.DepthWriteMask ==
+                    D3D12_DEPTH_WRITE_MASK_ALL;
+            m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
+          }
+
+          m_uses_geometry_mesh_pipeline = true;
+          Logger::info(str::format(
+              "Graphics DXIL geometry MSC mesh PSO compiled: object=",
+              object_entry, " mesh=", gs_entry, " payload=", payload_size,
+              " vertex_output=", vertex_output_size, " RTs=",
+              m_num_render_targets, " DSV=", (int)m_dsv_format));
+          return true;
         }
 
         auto init_shader = [&](const void *bytecode, SIZE_T bytecode_size,

@@ -29,6 +29,36 @@ Run the SDK against the local MetalSharp runtime:
 tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
 ```
 
+Before launching Steam or a game, run the game-safe preflight:
+
+```bash
+tools/d3d12-metal-sdk/scripts/preflight-before-game.sh \
+  --profile subnautica2 \
+  --game-dir "/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64"
+```
+
+This command does not launch Steam or the game. It validates the Winemetal route
+layout, runs the existing D3D12 Wine probes, and replays any dumped `.dxbc`
+shader corpus through MetalShaderConverter. If no shader corpus exists yet, it
+fails with a clear capture-needed message instead of using the game as the
+debugger.
+
+For layout-only checks while iterating on DLL staging:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py \
+  --profile subnautica2 \
+  --game-dir "/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64"
+```
+
+For offline shader replay against a known corpus:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/replay-shader-corpus.py \
+  --profile subnautica2 \
+  --corpus "/path/to/shader-cache/m12/1962700"
+```
+
 Run the SDK against an arbitrary Wine/DXMT runtime:
 
 ```bash
@@ -50,6 +80,17 @@ x86_64-windows/
 x86_64-unix/
   winemetal.so
 ```
+
+The runtime preflight intentionally treats Winemetal as two routes:
+
+- Steam/global Wine copies must preserve legacy wrapper exports such as
+  `WMTSetMetalShaderCachePath`.
+- DXMT/game-local copies must preserve those legacy exports and expose any new
+  shader bridge exports such as `MTLLibrary_newFunctionWithDescriptor`.
+
+Do not copy the smaller DXMT `winemetal.dll` into `system32`, `syswow64`, or
+`runtime/wine/lib/wine`. The preflight is designed to catch that class of
+regression before Steam is launched.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 

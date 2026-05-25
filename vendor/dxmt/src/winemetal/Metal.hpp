@@ -774,6 +774,16 @@ public:
         MTLLibrary_newFunctionWithConstants(handle, name, constants, num_constants, &error.handle)
     );
   }
+
+  Reference<Function>
+  newFunctionWithDescriptor(
+      const char *name, const char *specialized_name, const WMTFunctionConstant *constants,
+      uint32_t num_constants, WMTFunctionOptions options, Error &error
+  ) {
+    return Reference<Function>(MTLLibrary_newFunctionWithDescriptor(
+        handle, name, specialized_name, constants, num_constants, options, &error.handle
+    ));
+  }
 };
 
 class BinaryArchive : public Object {
@@ -1196,7 +1206,13 @@ InitializeMeshRenderPipelineInfo(WMTMeshRenderPipelineInfo &info) {
   info.object_tgsize_is_multiple_of_sgwidth = 0;
   info.binary_archive_for_serialization = NULL_OBJECT_HANDLE;
   info.binary_archives_for_lookup.set(nullptr);
+  info.object_linked_functions.set(nullptr);
+  info.mesh_linked_functions.set(nullptr);
+  info.fragment_linked_functions.set(nullptr);
   info.num_binary_archives_for_lookup = 0;
+  info.num_object_linked_functions = 0;
+  info.num_mesh_linked_functions = 0;
+  info.num_fragment_linked_functions = 0;
   info.fail_on_binary_archive_miss = false;
 }
 

@@ -887,6 +887,27 @@ MTLLibrary_newFunctionWithConstants(
   return params.ret;
 }
 
+WINEMETAL_API obj_handle_t
+MTLLibrary_newFunctionWithDescriptor(
+    obj_handle_t library, const char *name, const char *specialized_name,
+    const struct WMTFunctionConstant *constants, uint32_t num_constants,
+    enum WMTFunctionOptions options, obj_handle_t *err_out
+) {
+  struct unixcall_mtllibrary_newfunction_with_descriptor params;
+  params.library = library;
+  WMT_MEMPTR_SET(params.name, name);
+  WMT_MEMPTR_SET(params.specialized_name, specialized_name);
+  WMT_MEMPTR_SET(params.constants, constants);
+  params.num_constants = num_constants;
+  params.options = options;
+  params.ret = 0;
+  params.ret_error = 0;
+  UNIX_CALL(132, &params);
+  if (err_out)
+    *err_out = params.ret_error;
+  return params.ret;
+}
+
 WINEMETAL_API bool
 WMTQueryDisplaySetting(uint32_t display_id, enum WMTColorSpace *colorspace, struct WMTHDRMetadata *metadata) {
   struct unixcall_query_display_setting params;

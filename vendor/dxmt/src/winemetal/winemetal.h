@@ -863,9 +863,15 @@ struct WMTMeshRenderPipelineInfo {
   bool object_tgsize_is_multiple_of_sgwidth;
   obj_handle_t binary_archive_for_serialization;
   struct WMTConstMemoryPointer binary_archives_for_lookup;
+  struct WMTConstMemoryPointer object_linked_functions;
+  struct WMTConstMemoryPointer mesh_linked_functions;
+  struct WMTConstMemoryPointer fragment_linked_functions;
   uint8_t num_binary_archives_for_lookup;
+  uint8_t num_object_linked_functions;
+  uint8_t num_mesh_linked_functions;
+  uint8_t num_fragment_linked_functions;
   bool fail_on_binary_archive_miss;
-  uint8_t padding[6];
+  uint8_t padding[3];
 };
 
 WINEMETAL_API obj_handle_t
@@ -1874,6 +1880,17 @@ struct WMTFunctionConstant {
 WINEMETAL_API obj_handle_t MTLLibrary_newFunctionWithConstants(
     obj_handle_t library, const char *name, const struct WMTFunctionConstant *constants, uint32_t num_constants,
     obj_handle_t *err_out
+);
+
+enum WMTFunctionOptions : uint32_t {
+  WMTFunctionOptionNone = 0,
+  WMTFunctionOptionCompileToBinary = 1 << 0,
+};
+
+WINEMETAL_API obj_handle_t MTLLibrary_newFunctionWithDescriptor(
+    obj_handle_t library, const char *name, const char *specialized_name,
+    const struct WMTFunctionConstant *constants, uint32_t num_constants,
+    enum WMTFunctionOptions options, obj_handle_t *err_out
 );
 
 struct WMTHDRMetadata {
