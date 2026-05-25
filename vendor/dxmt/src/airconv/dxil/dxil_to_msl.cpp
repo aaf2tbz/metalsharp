@@ -1333,6 +1333,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   auto scalarValueArg = [&](size_t arg, const char *fallback) -> std::string {
     std::string value = valueArg(arg, fallback);
+    if (isZeroLiteral(value))
+      return value;
     if (arg < args.size()) {
       uint32_t idx = args[arg];
       uint32_t type_id = idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
@@ -1541,6 +1543,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
     auto elem_offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
     auto value = valueArg(3, "uint4(0)");
+    if (isZeroLiteral(value))
+      value = "uint4(0)";
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     std::ostringstream store;
     for (uint32_t i = 0; i < 4; i++) {
@@ -2045,6 +2049,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
   auto scalarValue = [&](uint32_t idx) -> std::string {
     std::string resolved = resolvedExpr(resolvedExpr, idx, 0);
+    if (isZeroLiteral(resolved))
+      return resolved;
     uint8_t lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, idx, 0);
     if (lanes <= 1)
       lanes = inferVectorLaneCountFromExpr(resolved);
@@ -2108,6 +2114,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   auto usesPointerOperand = [&]() -> bool {
     for (auto operand : inst.operands) {
       if (ctx.pointer_slots.find(operand) != ctx.pointer_slots.end())
+        return true;
+      if (isPointerTypeId(valueTypeId(operand), ctx.mod))
+        return true;
+      std::string resolved = resolvedExpr(resolvedExpr, operand, 0);
+      if (isPointerLikeMSLExpr(resolved))
         return true;
       if (operand < ctx.value_table.size()) {
         const auto &value = ctx.value_table[operand];
@@ -2860,7 +2871,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   case LLVMInstruction::Select: {
     if (inst.operands.size() >= 3) {
       os << "  auto " << result << " = " << boolValue(inst.operands[0]) << " ? "
-         << getValue(inst.operands[1]) << " : " << getValue(inst.operands[2]) << ";\n";
+         << operandValueForResultType(inst.operands[1], inst.type_id) << " : "
+         << operandValueForResultType(inst.operands[2], inst.type_id) << ";\n";
     }
     publishResult();
     break;

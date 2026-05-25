@@ -14,6 +14,21 @@ static uint64_t g_sc_enc_id = 0;
 
 namespace dxmt {
 
+static uint64_t PresentLogInterval() {
+  static uint64_t interval = [] {
+    const char *raw = std::getenv("DXMT_D3D12_PRESENT_LOG_INTERVAL");
+    if (!raw || !raw[0])
+      return 120ull;
+
+    char *end = nullptr;
+    auto parsed = std::strtoull(raw, &end, 10);
+    if (end == raw || parsed == 0)
+      return 120ull;
+    return parsed;
+  }();
+  return interval;
+}
+
 static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R8G8B8A8_UNORM: return WMTPixelFormatRGBA8Unorm;
@@ -485,7 +500,7 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
       m_current_buffer, (void*)res,
       (unsigned long long)src_texture.handle,
       (unsigned long long)drawable.texture().handle, m_desc.Width, m_desc.Height);
-    if (m_present_count <= 20 || (m_present_count % 120) == 0) {
+    if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
       Logger::info(str::format("M12 present presenter count=", m_present_count,
                                " idx=", m_current_buffer,
                                " src=", (unsigned long long)src_texture.handle,
@@ -511,7 +526,7 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     m_current_buffer, (void*)res,
     (unsigned long long)src_texture.handle,
     (unsigned long long)dst_texture.handle, m_desc.Width, m_desc.Height);
-    if (m_present_count <= 20 || (m_present_count % 120) == 0) {
+    if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
       Logger::info(str::format("M12 present blit count=", m_present_count,
                                " idx=", m_current_buffer,
                                " src=", (unsigned long long)src_texture.handle,

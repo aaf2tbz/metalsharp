@@ -234,8 +234,10 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let prefix = home.join(".metalsharp").join("prefix-steam");
     stage_app_compat_config(appid, node.id, &prefix)?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
@@ -336,6 +338,35 @@ fn write_marked_config_block(path: &Path, block: &str) -> Result<(), Box<dyn std
     }
     next.push_str(block);
     std::fs::write(path, next)?;
+    Ok(())
+}
+
+fn stage_dxmt_nvidia_driver_shims(
+    node: &PipelineNode,
+    ms_root: &Path,
+    prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if node.backend != "dxmt" {
+        return Ok(());
+    }
+
+    let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    std::fs::create_dir_all(&system32)?;
+
+    for shim in ["nvapi64.dll", "nvngx.dll"] {
+        let src = dxmt_dir.join(shim);
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = system32.join(shim);
+        if dst.exists() && files_match(&src, &dst) {
+            continue;
+        }
+        std::fs::copy(&src, &dst)?;
+    }
+
     Ok(())
 }
 
@@ -453,6 +484,7 @@ pub fn launch_custom_with_options(
 
     let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
@@ -574,6 +606,7 @@ fn launch_dxmt_metal_with_context(
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
     stage_app_compat_config(appid, node.id, &prefix)?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
 
     if node.uses_winedllpath_routing() {
         cleanup_legacy_injections(game_dir)?;
@@ -1165,6 +1198,8 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
             ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
+            ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
+            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()),
         ];
     }
     Vec::new()
