@@ -2542,25 +2542,53 @@ void STDMETHODCALLTYPE MTLD3D12Device::CopyDescriptors(
     const D3D12_CPU_DESCRIPTOR_HANDLE *src_descriptor_range_offsets,
     const UINT *src_descriptor_range_sizes,
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
-  UINT src_idx = 0;
+  UINT descriptor_stride =
+      GetDescriptorHandleIncrementSize(descriptor_heap_type) /
+      sizeof(D3D12Descriptor);
+  if (descriptor_stride == 0)
+    descriptor_stride = 1;
+
+  auto descriptor_at = [descriptor_stride](D3D12_CPU_DESCRIPTOR_HANDLE base,
+                                           UINT index) {
+    return reinterpret_cast<D3D12Descriptor *>(base.ptr) +
+           (index * descriptor_stride);
+  };
+
+  UINT src_range = 0;
+  UINT src_offset = 0;
   for (UINT dst_range = 0; dst_range < dst_descriptor_range_count; dst_range++) {
-    for (UINT i = 0; i < dst_descriptor_range_sizes[dst_range]; i++) {
-      auto *dst = reinterpret_cast<D3D12Descriptor *>(
-          dst_descriptor_range_offsets[dst_range].ptr) +
-                  i * (GetDescriptorHandleIncrementSize(descriptor_heap_type) /
-                       sizeof(D3D12Descriptor));
-      if (src_idx < src_descriptor_range_count) {
-        auto *src = reinterpret_cast<D3D12Descriptor *>(
-            src_descriptor_range_offsets[src_idx].ptr) +
-                    i * (GetDescriptorHandleIncrementSize(descriptor_heap_type) /
-                         sizeof(D3D12Descriptor));
-        if (src->resource && (void*)src->resource == (void*)this) {
-          TRACE("!!! CopyDescriptors: src descriptor at %p has device pointer as resource! copying to dst %p", (void*)src, (void*)dst);
-        }
-        *dst = *src;
+    UINT dst_count =
+        dst_descriptor_range_sizes ? dst_descriptor_range_sizes[dst_range] : 1;
+    for (UINT dst_offset = 0; dst_offset < dst_count; dst_offset++) {
+      while (src_range < src_descriptor_range_count) {
+        UINT src_count =
+            src_descriptor_range_sizes ? src_descriptor_range_sizes[src_range]
+                                       : 1;
+        if (src_offset < src_count)
+          break;
+        src_range++;
+        src_offset = 0;
       }
+
+      if (src_range >= src_descriptor_range_count) {
+        TRACE("CopyDescriptors: source ranges exhausted at dst_range=%u "
+              "dst_offset=%u",
+              dst_range, dst_offset);
+        return;
+      }
+
+      auto *dst = descriptor_at(dst_descriptor_range_offsets[dst_range],
+                                dst_offset);
+      auto *src = descriptor_at(src_descriptor_range_offsets[src_range],
+                                src_offset);
+      if (src->resource && (void *)src->resource == (void *)this) {
+        TRACE("!!! CopyDescriptors: src descriptor at %p has device pointer as "
+              "resource! copying to dst %p",
+              (void *)src, (void *)dst);
+      }
+      *dst = *src;
+      src_offset++;
     }
-    src_idx++;
   }
 }
 
