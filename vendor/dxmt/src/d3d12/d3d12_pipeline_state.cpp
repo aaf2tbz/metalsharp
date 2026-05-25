@@ -70,6 +70,14 @@ unsigned DXMTD3D12AsyncPipelineWorkerCount() {
   return worker_count;
 }
 
+bool DXMTD3D12GeometryMeshPipelineEnabled() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_ENABLE_GEOMETRY_MESH");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
 class PipelineCompileScheduler {
 public:
   PipelineCompileScheduler() {
@@ -131,6 +139,56 @@ const char *DescribeShaderBlobMagic(const void *bytecode, SIZE_T size) {
   }
 }
 
+WMTBlendFactor D3D12BlendToWMT(D3D12_BLEND b) {
+  switch (b) {
+  case D3D12_BLEND_ZERO:
+    return WMTBlendFactorZero;
+  case D3D12_BLEND_ONE:
+    return WMTBlendFactorOne;
+  case D3D12_BLEND_SRC_COLOR:
+    return WMTBlendFactorSourceColor;
+  case D3D12_BLEND_INV_SRC_COLOR:
+    return WMTBlendFactorOneMinusSourceColor;
+  case D3D12_BLEND_SRC_ALPHA:
+    return WMTBlendFactorSourceAlpha;
+  case D3D12_BLEND_INV_SRC_ALPHA:
+    return WMTBlendFactorOneMinusSourceAlpha;
+  case D3D12_BLEND_DEST_ALPHA:
+    return WMTBlendFactorDestinationAlpha;
+  case D3D12_BLEND_INV_DEST_ALPHA:
+    return WMTBlendFactorOneMinusDestinationAlpha;
+  case D3D12_BLEND_DEST_COLOR:
+    return WMTBlendFactorDestinationColor;
+  case D3D12_BLEND_INV_DEST_COLOR:
+    return WMTBlendFactorOneMinusDestinationColor;
+  case D3D12_BLEND_SRC_ALPHA_SAT:
+    return WMTBlendFactorSourceAlphaSaturated;
+  case D3D12_BLEND_BLEND_FACTOR:
+    return WMTBlendFactorBlendColor;
+  case D3D12_BLEND_INV_BLEND_FACTOR:
+    return WMTBlendFactorOneMinusBlendColor;
+  default:
+    return WMTBlendFactorOne;
+  }
+}
+
+WMTBlendOperation D3D12BlendOpToWMT(D3D12_BLEND_OP op) {
+  switch (op) {
+  case D3D12_BLEND_OP_ADD:
+    return WMTBlendOperationAdd;
+  case D3D12_BLEND_OP_SUBTRACT:
+    return WMTBlendOperationSubtract;
+  case D3D12_BLEND_OP_REV_SUBTRACT:
+    return WMTBlendOperationReverseSubtract;
+  case D3D12_BLEND_OP_MIN:
+    return WMTBlendOperationMin;
+  case D3D12_BLEND_OP_MAX:
+    return WMTBlendOperationMax;
+  default:
+    return WMTBlendOperationAdd;
+  }
+}
+
 void TraceDxbcChunks(const void *bytecode, SIZE_T size, const char *label) {
   if (!bytecode || size < 32)
     return;
@@ -155,6 +213,27 @@ void TraceDxbcChunks(const void *bytecode, SIZE_T size, const char *label) {
               label ? label : "blob", i, tag, offset, chunk_size);
     }
   }
+}
+
+bool DxbcContainsSm50ShaderBlob(const void *bytecode, SIZE_T size) {
+  if (!bytecode || size < 32)
+    return false;
+
+  const uint32_t *chunks = (const uint32_t *)bytecode;
+  if (chunks[0] != 0x43425844)
+    return false;
+
+  uint32_t num_chunks = chunks[7];
+  for (uint32_t i = 0; i < num_chunks && i < 64; i++) {
+    uint32_t offset = chunks[8 + i];
+    if (offset + 8 > size)
+      continue;
+    char tag[5] = {};
+    memcpy(tag, (const char *)bytecode + offset, 4);
+    if (std::strcmp(tag, "SHDR") == 0 || std::strcmp(tag, "SHEX") == 0)
+      return true;
+  }
+  return false;
 }
 
 bool ShouldFallbackFromMetalShaderConverter(std::string_view fail_text,
@@ -1865,6 +1944,7 @@ bool MTLD3D12PipelineState::CompileImpl() {
          (unsigned)m_compile_state.load(std::memory_order_acquire),
          m_is_compute);
   ClearCompileFailure();
+  m_uses_geometry_mesh_pipeline = false;
   DXMTD3D12ScopedTimer compile_timer("PSO", "CompilePipelineState");
   compile_timer.SetDetail("this=%p compute=%d root=%p vs=%zu ps=%zu cs=%zu il=%u",
                           (void *)this, m_is_compute, (void *)m_root_sig,
@@ -1988,6 +2068,315 @@ bool MTLD3D12PipelineState::CompileImpl() {
               gs_hash, gs_reason.c_str());
     }
     if (m_gs_passthrough == ~0u) {
+      if (DXMTD3D12GeometryMeshPipelineEnabled()) {
+        if (m_vs.empty()) {
+          return RecordCompileFailure(
+              "pso/geometry_mesh_no_vs",
+              "Geometry mesh PSO requested but graphics PSO has no VS bytecode");
+        }
+        if (!DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size()) ||
+            !DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size())) {
+          return RecordCompileFailure(
+              "pso/unsupported_dxil_geometry_shader",
+              str::format("Geometry mesh PSO requires SM5 DXBC shader blobs; "
+                          "VS bytes=",
+                          m_vs.size(), " magic=",
+                          DescribeShaderBlobMagic(m_vs.data(), m_vs.size()),
+                          " GS bytes=", m_gs.size(), " magic=",
+                          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()),
+                          ". DXIL geometry shaders need a MetalShaderConverter "
+                          "mesh-stage implementation."));
+        }
+
+        auto init_shader = [&](const void *bytecode, SIZE_T bytecode_size,
+                               const char *label, sm50_shader_t *shader,
+                               MTL_SHADER_REFLECTION *reflection) -> bool {
+          sm50_error_t sm50_err = nullptr;
+          if (SM50Initialize(bytecode, bytecode_size, shader, reflection,
+                             &sm50_err)) {
+            char err_buf[256] = {};
+            SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
+            SM50FreeError(sm50_err);
+            return RecordCompileFailure(
+                "shader/geometry_sm50_init",
+                str::format(label, " SM50Initialize failed: ", err_buf));
+          }
+          return true;
+        };
+
+        auto load_sm50_function =
+            [&](sm50_bitcode_t bitcode, const char *func_name,
+                const char *stage,
+                WMT::Reference<WMT::Function> &out_func) -> bool {
+          SM50_COMPILED_BITCODE compiled = {};
+          SM50GetCompiledBitcode(bitcode, &compiled);
+          auto lib_data = WMT::MakeDispatchData(compiled.Data, compiled.Size);
+          WMT::Reference<WMT::Error> lib_err;
+          auto library = wmt_device.newLibrary(lib_data, lib_err);
+          if (lib_err.handle) {
+            auto err_desc_string = lib_err.description().getUTF8String();
+            const char *err_desc =
+                err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+            SM50DestroyBitcode(bitcode);
+            return RecordCompileFailure(
+                stage, str::format(func_name,
+                                   " geometry Metal library failed: ",
+                                   err_desc ? err_desc : "unknown"));
+          }
+
+          out_func = library.newFunction(func_name);
+          SM50DestroyBitcode(bitcode);
+          if (!out_func.handle) {
+            return RecordCompileFailure(
+                stage, str::format(func_name,
+                                   " geometry Metal function lookup failed"));
+          }
+          return true;
+        };
+
+        if (!init_shader(m_vs.data(), m_vs.size(), "geometry VS", &m_vs_shader,
+                         &m_vs_reflection) ||
+            !init_shader(m_gs.data(), m_gs.size(), "geometry GS", &m_gs_shader,
+                         &m_gs_reflection)) {
+          if (m_vs_shader) {
+            SM50Destroy(m_vs_shader);
+            m_vs_shader = nullptr;
+          }
+          if (m_gs_shader) {
+            SM50Destroy(m_gs_shader);
+            m_gs_shader = nullptr;
+          }
+          return false;
+        }
+
+        SM50_SHADER_COMMON_DATA common = {};
+        common.next = nullptr;
+        common.type = SM50_SHADER_COMMON;
+        common.metal_version = SM50_SHADER_METAL_310;
+        common.flags = {};
+
+        std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
+        uint32_t slot_mask = 0;
+        BuildIAInputLayout(m_vs.data(), m_vs.size(), ia_elements, slot_mask);
+        m_ia_slot_mask = slot_mask;
+
+        SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};
+        ia_layout.next = &common;
+        ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
+        ia_layout.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
+        ia_layout.slot_mask = slot_mask;
+        ia_layout.num_elements = (uint32_t)ia_elements.size();
+        ia_layout.elements = ia_elements.data();
+
+        SM50_SHADER_PSO_GEOMETRY_SHADER_DATA geometry_for_vs = {};
+        geometry_for_vs.next = &ia_layout;
+        geometry_for_vs.type = SM50_SHADER_PSO_GEOMETRY_SHADER;
+        geometry_for_vs.strip_topology = false;
+
+        WMT::Reference<WMT::Function> geometry_vs_func;
+        sm50_error_t sm50_err = nullptr;
+        sm50_bitcode_t geometry_vs_bitcode = nullptr;
+        if (SM50CompileGeometryPipelineVertex(
+                m_vs_shader, m_gs_shader,
+                (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&geometry_for_vs,
+                "vsgs_main", &geometry_vs_bitcode, &sm50_err)) {
+          char err_buf[256] = {};
+          SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
+          SM50FreeError(sm50_err);
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return RecordCompileFailure(
+              "shader/geometry_vertex_compile",
+              str::format("vsgs_main SM50 geometry vertex compile failed: ",
+                          err_buf));
+        }
+        if (!load_sm50_function(geometry_vs_bitcode, "vsgs_main",
+                                "shader/geometry_vertex_metallib",
+                                geometry_vs_func)) {
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return false;
+        }
+
+        SM50_SHADER_PSO_GEOMETRY_SHADER_DATA geometry_for_gs = {};
+        geometry_for_gs.next = &common;
+        geometry_for_gs.type = SM50_SHADER_PSO_GEOMETRY_SHADER;
+        geometry_for_gs.strip_topology = false;
+
+        WMT::Reference<WMT::Function> geometry_gs_func;
+        sm50_bitcode_t geometry_gs_bitcode = nullptr;
+        sm50_err = nullptr;
+        if (SM50CompileGeometryPipelineGeometry(
+                m_vs_shader, m_gs_shader,
+                (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&geometry_for_gs,
+                "gs_main", &geometry_gs_bitcode, &sm50_err)) {
+          char err_buf[256] = {};
+          SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
+          SM50FreeError(sm50_err);
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return RecordCompileFailure(
+              "shader/geometry_mesh_compile",
+              str::format("gs_main SM50 geometry mesh compile failed: ",
+                          err_buf));
+        }
+        if (!load_sm50_function(geometry_gs_bitcode, "gs_main",
+                                "shader/geometry_mesh_metallib",
+                                geometry_gs_func)) {
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return false;
+        }
+
+        WMT::Reference<WMT::Function> geometry_ps_func;
+        if (!m_ps.empty() &&
+            !CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel,
+                           "ps_main", geometry_ps_func, &m_ps_shader,
+                           &m_ps_reflection)) {
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return false;
+        }
+
+        WMTMeshRenderPipelineInfo mesh_info;
+        WMT::InitializeMeshRenderPipelineInfo(mesh_info);
+        mesh_info.object_function = geometry_vs_func.handle;
+        mesh_info.mesh_function = geometry_gs_func.handle;
+        if (geometry_ps_func.handle)
+          mesh_info.fragment_function = geometry_ps_func.handle;
+        mesh_info.payload_memory_length = 16256;
+        mesh_info.immutable_object_buffers =
+            (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
+        mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
+        mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
+        mesh_info.rasterization_enabled =
+            (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+        mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
+
+        for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+          auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
+          if (fmt != WMTPixelFormatInvalid)
+            mesh_info.colors[i].pixel_format = fmt;
+          auto &rt = m_blend_desc.RenderTarget[i];
+          mesh_info.colors[i].write_mask =
+              kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
+          mesh_info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
+          if (rt.BlendEnable) {
+            mesh_info.colors[i].src_rgb_blend_factor =
+                D3D12BlendToWMT(rt.SrcBlend);
+            mesh_info.colors[i].dst_rgb_blend_factor =
+                D3D12BlendToWMT(rt.DestBlend);
+            mesh_info.colors[i].rgb_blend_operation =
+                D3D12BlendOpToWMT(rt.BlendOp);
+            mesh_info.colors[i].src_alpha_blend_factor =
+                D3D12BlendToWMT(rt.SrcBlendAlpha);
+            mesh_info.colors[i].dst_alpha_blend_factor =
+                D3D12BlendToWMT(rt.DestBlendAlpha);
+            mesh_info.colors[i].alpha_blend_operation =
+                D3D12BlendOpToWMT(rt.BlendOpAlpha);
+          }
+        }
+
+        auto depth_fmt = DXGIToMTLPixelFormat(m_dsv_format);
+        if (depth_fmt != WMTPixelFormatInvalid) {
+          mesh_info.depth_pixel_format = depth_fmt;
+          if (m_dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+              m_dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+            mesh_info.stencil_pixel_format = depth_fmt;
+        }
+
+        WMT::Reference<WMT::Error> mesh_err;
+        m_render_pso = wmt_device.newRenderPipelineState(mesh_info, mesh_err);
+        if (!m_render_pso.handle) {
+          auto err_desc_string =
+              mesh_err.handle ? mesh_err.description().getUTF8String()
+                              : std::string();
+          const char *err_desc =
+              err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+          SM50Destroy(m_vs_shader);
+          SM50Destroy(m_gs_shader);
+          m_vs_shader = nullptr;
+          m_gs_shader = nullptr;
+          return RecordCompileFailure(
+              "pso/metal_geometry_mesh_pso",
+              str::format("Metal geometry mesh PSO creation failed: ",
+                          err_desc ? err_desc : "unknown"));
+        }
+
+        if (m_vs_reflection.NumConstantBuffers > 0)
+          m_vs_cb_args.resize(m_vs_reflection.NumConstantBuffers);
+        if (m_vs_reflection.NumArguments > 0)
+          m_vs_args.resize(m_vs_reflection.NumArguments);
+        if (m_gs_reflection.NumConstantBuffers > 0)
+          m_gs_cb_args.resize(m_gs_reflection.NumConstantBuffers);
+        if (m_gs_reflection.NumArguments > 0)
+          m_gs_args.resize(m_gs_reflection.NumArguments);
+        SM50GetArgumentsInfo(m_vs_shader,
+                             m_vs_cb_args.empty() ? nullptr
+                                                  : m_vs_cb_args.data(),
+                             m_vs_args.empty() ? nullptr : m_vs_args.data());
+        SM50GetArgumentsInfo(m_gs_shader,
+                             m_gs_cb_args.empty() ? nullptr
+                                                  : m_gs_cb_args.data(),
+                             m_gs_args.empty() ? nullptr : m_gs_args.data());
+        SM50Destroy(m_vs_shader);
+        SM50Destroy(m_gs_shader);
+        m_vs_shader = nullptr;
+        m_gs_shader = nullptr;
+
+        if (m_ps_shader) {
+          if (m_ps_reflection.NumConstantBuffers > 0 &&
+              m_ps_cb_args.empty())
+            m_ps_cb_args.resize(m_ps_reflection.NumConstantBuffers);
+          if (m_ps_reflection.NumArguments > 0 && m_ps_args.empty())
+            m_ps_args.resize(m_ps_reflection.NumArguments);
+          if (!m_ps_cb_args.empty() || !m_ps_args.empty()) {
+            SM50GetArgumentsInfo(
+                m_ps_shader, m_ps_cb_args.empty() ? nullptr : m_ps_cb_args.data(),
+                m_ps_args.empty() ? nullptr : m_ps_args.data());
+          }
+          SM50Destroy(m_ps_shader);
+          m_ps_shader = nullptr;
+        }
+
+        if (m_depth_stencil_desc.DepthEnable ||
+            m_depth_stencil_desc.StencilEnable) {
+          struct WMTDepthStencilInfo ds_info = {};
+          ds_info.depth_compare_function = WMTCompareFunctionAlways;
+          ds_info.depth_write_enabled = false;
+          ds_info.front_stencil.enabled = false;
+          ds_info.back_stencil.enabled = false;
+          if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
+              m_depth_stencil_desc.DepthFunc <=
+                  D3D12_COMPARISON_FUNC_ALWAYS) {
+            ds_info.depth_compare_function =
+                kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
+          }
+          ds_info.depth_write_enabled =
+              m_depth_stencil_desc.DepthEnable &&
+              m_depth_stencil_desc.DepthWriteMask ==
+                  D3D12_DEPTH_WRITE_MASK_ALL;
+          m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
+        }
+
+        m_uses_geometry_mesh_pipeline = true;
+        Logger::info(str::format("Graphics geometry mesh PSO compiled: RTs=",
+                                 m_num_render_targets, " DSV=",
+                                 (int)m_dsv_format, " samples=",
+                                 m_sample_count));
+        return true;
+      }
+
       std::string detail = str::format(
           "CreateGraphicsPipelineState: dropping unsupported GS bytes=",
           m_gs.size(), " hash=0x", str::format("%016zx", gs_hash), " magic=",
@@ -2717,6 +3106,16 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
       desc.StreamOutput.NumEntries > 0 || desc.StreamOutput.NumStrides > 0 ||
       desc.StreamOutput.pSODeclaration || desc.StreamOutput.pBufferStrides;
   m_vs_uses_stage_in = false;
+  m_uses_geometry_mesh_pipeline = false;
+  m_vs_reflection = {};
+  m_vs_args.clear();
+  m_vs_cb_args.clear();
+  m_ps_reflection = {};
+  m_ps_args.clear();
+  m_ps_cb_args.clear();
+  m_gs_reflection = {};
+  m_gs_args.clear();
+  m_gs_cb_args.clear();
   m_input_elements.clear();
   m_input_semantic_names.clear();
   m_input_layout = {};

@@ -59,6 +59,54 @@ static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
 }
 
+struct D3D12GeometryDrawArguments {
+  uint32_t VertexCount;
+  uint32_t InstanceCount;
+  uint32_t StartVertex;
+  uint32_t StartInstance;
+};
+
+struct D3D12GeometryDrawIndexedArguments {
+  uint32_t IndexCount;
+  uint32_t InstanceCount;
+  uint32_t StartIndex;
+  int32_t BaseVertex;
+  uint32_t StartInstance;
+};
+
+static std::pair<uint32_t, uint32_t>
+D3D12GeometryVertexCount(D3D_PRIMITIVE_TOPOLOGY primitive) {
+  switch (primitive) {
+  case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
+  case D3D_PRIMITIVE_TOPOLOGY_LINELIST:
+  case D3D_PRIMITIVE_TOPOLOGY_LINELIST_ADJ:
+    return {32, 32};
+  case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP:
+    return {32, 31};
+  case D3D_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ:
+    return {32, 29};
+  case D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST:
+  case D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ:
+    return {30, 30};
+  case D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP:
+    return {32, 30};
+  case D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ:
+    return {32, 28};
+  default:
+    break;
+  }
+
+  if (primitive >= D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST &&
+      primitive <= D3D_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST) {
+    uint32_t control_points =
+        uint32_t(primitive) -
+        uint32_t(D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST) + 1;
+    return {control_points, control_points};
+  }
+
+  return {32, 32};
+}
+
 static uint64_t TextureMetadata(uint32_t array_length, float min_lod = 0.0f) {
   uint32_t min_lod_bits = 0;
   static_assert(sizeof(min_lod_bits) == sizeof(min_lod));
@@ -418,15 +466,20 @@ struct ReplayState {
   uint64_t cbv_table_data[kConstantBufferMaxQwords] = {};
   uint64_t vs_arg_buf_data[kArgBufMaxQwords] = {};
   uint64_t vs_cbv_table_data[kConstantBufferMaxQwords] = {};
+  uint64_t gs_arg_buf_data[kArgBufMaxQwords] = {};
+  uint64_t gs_cbv_table_data[kConstantBufferMaxQwords] = {};
   uint64_t comp_arg_buf_data[kArgBufMaxQwords] = {};
   uint64_t comp_cbv_table_data[kConstantBufferMaxQwords] = {};
   WMT::Reference<WMT::Buffer> arg_buf;
   WMT::Reference<WMT::Buffer> cbv_table_buf;
   WMT::Reference<WMT::Buffer> vs_arg_buf;
   WMT::Reference<WMT::Buffer> vs_cbv_table_buf;
+  WMT::Reference<WMT::Buffer> gs_arg_buf;
+  WMT::Reference<WMT::Buffer> gs_cbv_table_buf;
   WMT::Reference<WMT::Buffer> comp_arg_buf;
   WMT::Reference<WMT::Buffer> comp_cbv_table_buf;
   WMT::Reference<WMT::Buffer> root_constants_mtl_buf;
+  WMT::Reference<WMT::Buffer> geometry_draw_args_buf;
   VertexBufferEntry vertex_table_data[kVertexBufferSlotCount] = {};
   WMT::Reference<WMT::Buffer> vertex_table_buf;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
@@ -1188,6 +1241,437 @@ struct ReplayState {
                bind_index, qword_count, (unsigned long long)vs_arg_buf.handle);
       }
     }
+  }
+
+  void BindGeometryMeshBuffers() {
+    if (!pso || !pso->UsesGeometryMeshPipeline() || !render_enc_open)
+      return;
+
+    if (vertex_table_buf.handle) {
+      render_enc.setObjectBuffer(vertex_table_buf, 0, kVertexBufferTableSlot);
+      render_enc.useResource(vertex_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageObject);
+    }
+    if (vs_cbv_table_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ConstanttBufferTableBindIndex,
+          kConstantBufferTableSlot);
+      render_enc.setObjectBuffer(vs_cbv_table_buf, 0, bind_index);
+      render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageObject);
+    }
+    if (vs_arg_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+      render_enc.setObjectBuffer(vs_arg_buf, 0, bind_index);
+      render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageObject);
+    }
+    if (gs_cbv_table_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetGSReflection().ConstanttBufferTableBindIndex,
+          kConstantBufferTableSlot);
+      render_enc.setMeshBuffer(gs_cbv_table_buf, 0, bind_index);
+      render_enc.useResource(gs_cbv_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageMesh);
+    }
+    if (gs_arg_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetGSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+      render_enc.setMeshBuffer(gs_arg_buf, 0, bind_index);
+      render_enc.useResource(gs_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageMesh);
+    }
+    if (cbv_table_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetPSReflection().ConstanttBufferTableBindIndex,
+          kConstantBufferTableSlot);
+      render_enc.setFragmentBuffer(cbv_table_buf, 0, bind_index);
+      render_enc.useResource(cbv_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageFragment);
+    }
+    if (arg_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetPSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+      render_enc.setFragmentBuffer(arg_buf, 0, bind_index);
+      render_enc.useResource(arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageFragment);
+    }
+
+    QTRACE("BindGeometryMeshBuffers: vertex_table=%llu vs_cbv=%llu vs_arg=%llu "
+           "gs_cbv=%llu gs_arg=%llu ps_cbv=%llu ps_arg=%llu",
+           (unsigned long long)vertex_table_buf.handle,
+           (unsigned long long)vs_cbv_table_buf.handle,
+           (unsigned long long)vs_arg_buf.handle,
+           (unsigned long long)gs_cbv_table_buf.handle,
+           (unsigned long long)gs_arg_buf.handle,
+           (unsigned long long)cbv_table_buf.handle,
+           (unsigned long long)arg_buf.handle);
+  }
+
+  void BuildGeometryConstantBufferTable(MTLD3D12Device *device) {
+    if (!pso || pso->GetGSConstantBuffers().empty())
+      return;
+
+    memset(gs_cbv_table_data, 0, sizeof(gs_cbv_table_data));
+    auto *root_sig = pso->GetRootSignature();
+    auto *dxmt_sig =
+        root_sig ? static_cast<MTLD3D12RootSignature *>(root_sig) : nullptr;
+    uint32_t qword_count = 0;
+
+    for (const auto &arg : pso->GetGSConstantBuffers()) {
+      if (arg.Type != SM50BindingType::ConstantBuffer ||
+          arg.StructurePtrOffset >= kConstantBufferMaxQwords)
+        continue;
+
+      qword_count = std::max(qword_count, arg.StructurePtrOffset + 1);
+      uint64_t gpu_address = 0;
+      uint32_t root_idx = ~0u;
+      if (dxmt_sig) {
+        auto &params = dxmt_sig->GetParameters();
+        for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
+          for (uint32_t p = 0; p < params.size() && p < 16; p++) {
+            if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
+                params[p].register_index == arg.SM50BindingSlot &&
+                params[p].register_space == arg.SM50RegisterSpace &&
+                ShaderVisibilityMatches(params[p].shader_visibility,
+                                        D3D12_SHADER_VISIBILITY_GEOMETRY,
+                                        pass == 0)) {
+              root_idx = p;
+              break;
+            }
+          }
+        }
+      }
+
+      if (root_idx != ~0u && root_cbv_set[root_idx]) {
+        gpu_address = root_cbvs[root_idx];
+      } else if (dxmt_sig) {
+        uint32_t table_root_idx = ~0u;
+        uint32_t descriptor_offset = 0;
+        if (dxmt_sig->FindDescriptorTableRangeForVisibility(
+                D3D12_DESCRIPTOR_RANGE_TYPE_CBV, arg.SM50BindingSlot,
+                arg.SM50RegisterSpace, D3D12_SHADER_VISIBILITY_GEOMETRY,
+                &table_root_idx, &descriptor_offset) &&
+            table_root_idx < 16 && root_table_set[table_root_idx]) {
+          for (uint32_t h = 0; h < desc_heap_count; h++) {
+            auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+            if (!heap)
+              continue;
+            auto *desc = heap->GetDescriptorFromGPUHandle(
+                root_tables[table_root_idx], descriptor_offset);
+            if (desc && desc->cbv.BufferLocation) {
+              gpu_address = desc->cbv.BufferLocation;
+              break;
+            }
+          }
+        }
+      }
+
+      gs_cbv_table_data[arg.StructurePtrOffset] = gpu_address;
+      if (gpu_address && render_enc_open) {
+        auto *res = device->LookupResourceByGPUAddress(gpu_address);
+        if (res && res->GetMTLBuffer().handle) {
+          render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                                 WMTRenderStageMesh);
+        }
+      }
+    }
+
+    if (qword_count == 0)
+      return;
+
+    gs_cbv_table_buf =
+        MakeTransientBuffer(device, kConstantBufferMaxQwords * 8);
+    if (gs_cbv_table_buf.handle) {
+      gs_cbv_table_buf.updateContents(0, gs_cbv_table_data, qword_count * 8);
+      if (render_enc_open) {
+        uint32_t bind_index = BindIndexOrFallback(
+            pso->GetGSReflection().ConstanttBufferTableBindIndex,
+            kConstantBufferTableSlot);
+        render_enc.setMeshBuffer(gs_cbv_table_buf, 0, bind_index);
+        render_enc.useResource(gs_cbv_table_buf, WMTResourceUsageRead,
+                               WMTRenderStageMesh);
+      }
+    }
+  }
+
+  void BuildGeometryArgumentBuffer(MTLD3D12Device *device) {
+    if (!pso || pso->GetGSArguments().empty())
+      return;
+
+    auto &args = pso->GetGSArguments();
+    uint32_t qword_count = pso->GetGSReflection().ArgumentTableQwords;
+    if (qword_count == 0 || qword_count > kArgBufMaxQwords)
+      return;
+    memset(gs_arg_buf_data, 0, qword_count * 8);
+
+    auto *root_sig = pso->GetRootSignature();
+    auto *dxmt_sig =
+        root_sig ? static_cast<MTLD3D12RootSignature *>(root_sig) : nullptr;
+
+    for (auto &arg : args) {
+      uint32_t root_idx = ~0u;
+      uint32_t descriptor_offset = 0;
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+      bool table_arg = true;
+      if (arg.Type == SM50BindingType::SRV)
+        range_type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+      else if (arg.Type == SM50BindingType::Sampler)
+        range_type = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+      else if (arg.Type == SM50BindingType::UAV)
+        range_type = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+      else if (arg.Type == SM50BindingType::ConstantBuffer)
+        range_type = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+      else
+        table_arg = false;
+
+      if (dxmt_sig && table_arg) {
+        dxmt_sig->FindDescriptorTableRangeForVisibility(
+            range_type, arg.SM50BindingSlot, arg.SM50RegisterSpace,
+            D3D12_SHADER_VISIBILITY_GEOMETRY, &root_idx, &descriptor_offset);
+      }
+
+      if (root_idx == ~0u || !root_table_set[root_idx] ||
+          desc_heap_count == 0) {
+        uint32_t root_desc_idx = ~0u;
+        if (arg.Type == SM50BindingType::SRV &&
+            FindRootDescriptorParameter(dxmt_sig, D3D12_ROOT_PARAMETER_TYPE_SRV,
+                                        arg, D3D12_SHADER_VISIBILITY_GEOMETRY,
+                                        &root_desc_idx) &&
+            root_srv_set[root_desc_idx] &&
+            BindRootBufferArgument(device, gs_arg_buf_data, arg,
+                                   root_srvs[root_desc_idx],
+                                   WMTResourceUsageRead, WMTRenderStageMesh,
+                                   "BuildGeometryArgBuf")) {
+          continue;
+        }
+        if (arg.Type == SM50BindingType::UAV &&
+            FindRootDescriptorParameter(dxmt_sig, D3D12_ROOT_PARAMETER_TYPE_UAV,
+                                        arg, D3D12_SHADER_VISIBILITY_GEOMETRY,
+                                        &root_desc_idx) &&
+            root_uav_set[root_desc_idx] &&
+            BindRootBufferArgument(device, gs_arg_buf_data, arg,
+                                   root_uavs[root_desc_idx],
+                                   (WMTResourceUsage)(WMTResourceUsageRead |
+                                                      WMTResourceUsageWrite),
+                                   WMTRenderStageMesh,
+                                   "BuildGeometryArgBuf")) {
+          continue;
+        }
+        if (arg.Type == SM50BindingType::ConstantBuffer &&
+            FindRootDescriptorParameter(dxmt_sig, D3D12_ROOT_PARAMETER_TYPE_CBV,
+                                        arg, D3D12_SHADER_VISIBILITY_GEOMETRY,
+                                        &root_desc_idx) &&
+            root_cbv_set[root_desc_idx] &&
+            WriteConstantBufferArgument(device, gs_arg_buf_data, arg,
+                                        root_cbvs[root_desc_idx], 0,
+                                        WMTRenderStageMesh,
+                                        "BuildGeometryArgBuf")) {
+          continue;
+        }
+        if (arg.Type == SM50BindingType::Sampler && dxmt_sig) {
+          if (auto *sampler = dxmt_sig->FindStaticSampler(
+                  arg.SM50BindingSlot, arg.SM50RegisterSpace,
+                  D3D12_SHADER_VISIBILITY_GEOMETRY)) {
+            gs_arg_buf_data[arg.StructurePtrOffset] = sampler->sampler_gpu_id;
+            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                sampler->sampler_cube_gpu_id ? sampler->sampler_cube_gpu_id
+                                             : sampler->sampler_gpu_id;
+            gs_arg_buf_data[arg.StructurePtrOffset + 2] =
+                sampler->lod_bias_bits;
+          }
+        }
+        continue;
+      }
+
+      for (uint32_t h = 0; h < desc_heap_count; h++) {
+        auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+        if (!heap)
+          continue;
+        auto *desc = heap->GetDescriptorFromGPUHandle(root_tables[root_idx],
+                                                      descriptor_offset);
+        if (!desc)
+          continue;
+
+        if (arg.Type == SM50BindingType::SRV && desc->resource) {
+          auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+              res->GetMTLBuffer().handle) {
+            gs_arg_buf_data[arg.StructurePtrOffset] =
+                res->GetGPUVirtualAddress() + SRVBufferByteOffset(desc);
+            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                SRVBufferByteLength(desc, res);
+            if (render_enc_open)
+              render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                                     WMTRenderStageMesh);
+          } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
+            gs_arg_buf_data[arg.StructurePtrOffset] =
+                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
+            if (render_enc_open)
+              render_enc.useResource(
+                  tex,
+                  (WMTResourceUsage)(WMTResourceUsageSample |
+                                     WMTResourceUsageRead),
+                  WMTRenderStageMesh);
+          }
+        } else if (arg.Type == SM50BindingType::Sampler &&
+                   desc->type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER &&
+                   desc->metal_sampler_gpu_id) {
+          gs_arg_buf_data[arg.StructurePtrOffset] = desc->metal_sampler_gpu_id;
+          gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+              SamplerCubeGPUResourceID(desc);
+          gs_arg_buf_data[arg.StructurePtrOffset + 2] = SamplerLodBiasBits(desc);
+        } else if (arg.Type == SM50BindingType::UAV && desc->resource) {
+          auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+              res->GetMTLBuffer().handle) {
+            gs_arg_buf_data[arg.StructurePtrOffset] =
+                res->GetGPUVirtualAddress() + UAVBufferByteOffset(desc);
+            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                UAVBufferByteLength(desc, res);
+            if (render_enc_open)
+              render_enc.useResource(
+                  res->GetMTLBuffer(),
+                  (WMTResourceUsage)(WMTResourceUsageRead |
+                                     WMTResourceUsageWrite),
+                  WMTRenderStageMesh);
+          } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
+            gs_arg_buf_data[arg.StructurePtrOffset] =
+                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
+            if (render_enc_open)
+              render_enc.useResource(
+                  tex,
+                  (WMTResourceUsage)(WMTResourceUsageRead |
+                                     WMTResourceUsageWrite),
+                  WMTRenderStageMesh);
+          }
+        } else if (arg.Type == SM50BindingType::ConstantBuffer) {
+          WriteConstantBufferArgument(device, gs_arg_buf_data, arg,
+                                      desc->cbv.BufferLocation,
+                                      desc->cbv.SizeInBytes,
+                                      WMTRenderStageMesh,
+                                      "BuildGeometryArgBuf");
+        }
+      }
+    }
+
+    gs_arg_buf = MakeTransientBuffer(device, kArgBufMaxQwords * 8);
+    if (gs_arg_buf.handle) {
+      gs_arg_buf.updateContents(0, gs_arg_buf_data, qword_count * 8);
+      if (render_enc_open) {
+        uint32_t bind_index = BindIndexOrFallback(
+            pso->GetGSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+        render_enc.setMeshBuffer(gs_arg_buf, 0, bind_index);
+        render_enc.useResource(gs_arg_buf, WMTResourceUsageRead,
+                               WMTRenderStageMesh);
+      }
+    }
+  }
+
+  bool EncodeGeometryDraw(MTLD3D12Device *device, uint32_t vertex_count,
+                          uint32_t instance_count, uint32_t start_vertex,
+                          uint32_t start_instance) {
+    if (!pso || !pso->UsesGeometryMeshPipeline() || !render_enc_open ||
+        vertex_count == 0 || instance_count == 0)
+      return false;
+
+    D3D12GeometryDrawArguments args = {};
+    args.VertexCount = vertex_count;
+    args.InstanceCount = instance_count;
+    args.StartVertex = start_vertex;
+    args.StartInstance = start_instance;
+    geometry_draw_args_buf = MakeTransientBuffer(device, sizeof(args));
+    if (!geometry_draw_args_buf.handle)
+      return false;
+    geometry_draw_args_buf.updateContents(0, &args, sizeof(args));
+    render_enc.setObjectBuffer(geometry_draw_args_buf, 0, 21);
+    render_enc.useResource(geometry_draw_args_buf, WMTResourceUsageRead,
+                           WMTRenderStageObject);
+
+    auto [vertex_per_warp, vertex_increment_per_warp] =
+        D3D12GeometryVertexCount(topology);
+    uint32_t warp_count =
+        vertex_increment_per_warp
+            ? ((vertex_count - 1) / vertex_increment_per_warp + 1)
+            : 1;
+
+    struct wmtcmd_render_dxmt_geometry_draw draw = {};
+    draw.type = WMTRenderCommandDXMTGeometryDraw;
+    draw.next.set(nullptr);
+    draw.draw_arguments_offset = 0;
+    draw.warp_count = warp_count;
+    draw.instance_count = instance_count;
+    draw.vertex_per_warp = vertex_per_warp;
+    render_enc.encodeCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+    QTRACE("EncodeGeometryDraw v=%u i=%u start=%u instance_start=%u "
+           "warp=%u vertex_per_warp=%u",
+           vertex_count, instance_count, start_vertex, start_instance,
+           warp_count, vertex_per_warp);
+    return true;
+  }
+
+  bool EncodeGeometryDrawIndexed(MTLD3D12Device *device, uint32_t index_count,
+                                 uint32_t instance_count,
+                                 uint32_t start_index, int32_t base_vertex,
+                                 uint32_t start_instance) {
+    if (!pso || !pso->UsesGeometryMeshPipeline() || !render_enc_open ||
+        index_count == 0 || instance_count == 0 || !ib.BufferLocation)
+      return false;
+
+    auto *ib_res = device->LookupResourceByGPUAddress(ib.BufferLocation);
+    if (!ib_res && ib.BufferLocation)
+      ib_res = reinterpret_cast<MTLD3D12Resource *>(ib.BufferLocation);
+    if (!ib_res || !ib_res->GetMTLBuffer().handle)
+      return false;
+
+    uint64_t index_buffer_offset =
+        ib.BufferLocation - ib_res->GetGPUVirtualAddress();
+    index_buffer_offset +=
+        uint64_t(start_index) * (ib.Format == DXGI_FORMAT_R32_UINT ? 4ull : 2ull);
+
+    D3D12GeometryDrawIndexedArguments args = {};
+    args.IndexCount = index_count;
+    args.InstanceCount = instance_count;
+    args.StartIndex = start_index;
+    args.BaseVertex = base_vertex;
+    args.StartInstance = start_instance;
+    geometry_draw_args_buf = MakeTransientBuffer(device, sizeof(args));
+    if (!geometry_draw_args_buf.handle)
+      return false;
+    geometry_draw_args_buf.updateContents(0, &args, sizeof(args));
+    render_enc.setObjectBuffer(geometry_draw_args_buf, 0, 21);
+    render_enc.useResource(geometry_draw_args_buf, WMTResourceUsageRead,
+                           WMTRenderStageObject);
+
+    auto [vertex_per_warp, vertex_increment_per_warp] =
+        D3D12GeometryVertexCount(topology);
+    uint32_t warp_count =
+        vertex_increment_per_warp
+            ? ((index_count - 1) / vertex_increment_per_warp + 1)
+            : 1;
+
+    struct wmtcmd_render_dxmt_geometry_draw_indexed draw = {};
+    draw.type = WMTRenderCommandDXMTGeometryDrawIndexed;
+    draw.next.set(nullptr);
+    draw.draw_arguments_offset = 0;
+    draw.index_buffer = ib_res->GetMTLBuffer().handle;
+    draw.index_buffer_offset = index_buffer_offset;
+    draw.warp_count = warp_count;
+    draw.instance_count = instance_count;
+    draw.vertex_per_warp = vertex_per_warp;
+    render_enc.encodeCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+    render_enc.useResource(ib_res->GetMTLBuffer(), WMTResourceUsageRead,
+                           WMTRenderStageObject);
+    QTRACE("EncodeGeometryDrawIndexed idx=%u inst=%u start=%u base=%d "
+           "warp=%u vertex_per_warp=%u ib_off=%llu",
+           index_count, instance_count, start_index, base_vertex, warp_count,
+           vertex_per_warp, (unsigned long long)index_buffer_offset);
+    return true;
   }
 
   uint32_t BuildComputeConstantBufferTable(MTLD3D12Device *device) {
@@ -2611,6 +3095,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.ApplyRootBindings(m_device);
         st.BuildVertexConstantBufferTable(m_device);
         st.BuildVertexArgumentBuffer(m_device);
+        st.BuildGeometryConstantBufferTable(m_device);
+        st.BuildGeometryArgumentBuffer(m_device);
         st.BuildConstantBufferTable(m_device);
         st.BuildArgumentBuffer(m_device);
         if (st.render_enc_open && st.arg_buf.handle) {
@@ -2619,6 +3105,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
         }
         st.ApplyVertexBuffers(m_device);
+        st.BindGeometryMeshBuffers();
         QTRACE("DrawInstanced v=%u i=%u enc_open=%d pso=%p compiled=%d "
                "stage=%s detail=%s",
                cmd->vertex_count, cmd->instance_count, st.render_enc_open,
@@ -2626,7 +3113,18 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                TraceCompileFailureStage(st.pso),
                TraceCompileFailureDetail(st.pso));
 
-        if (cmd->instance_count > 0 && cmd->vertex_count > 0 &&
+        if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
+            st.EncodeGeometryDraw(m_device, cmd->vertex_count,
+                                  cmd->instance_count, cmd->start_vertex,
+                                  cmd->start_instance)) {
+          if (st.HasSwapchainRenderTarget() &&
+              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+            Logger::info(str::format("M12 swapchain GeometryDraw encoded v=",
+                                     cmd->vertex_count, " i=",
+                                     cmd->instance_count, " pso=",
+                                     (void *)st.pso));
+          }
+        } else if (cmd->instance_count > 0 && cmd->vertex_count > 0 &&
             st.render_enc_open && st.HasUsableRenderPSO()) {
           struct wmtcmd_render_draw draw = {};
           draw.type = WMTRenderCommandDraw;
@@ -2674,6 +3172,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.ApplyRootBindings(m_device);
         st.BuildVertexConstantBufferTable(m_device);
         st.BuildVertexArgumentBuffer(m_device);
+        st.BuildGeometryConstantBufferTable(m_device);
+        st.BuildGeometryArgumentBuffer(m_device);
         st.BuildConstantBufferTable(m_device);
         st.BuildArgumentBuffer(m_device);
         if (st.render_enc_open && st.arg_buf.handle) {
@@ -2682,8 +3182,21 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
         }
         st.ApplyVertexBuffers(m_device);
+        st.BindGeometryMeshBuffers();
 
-        if (cmd->instance_count > 0 && cmd->index_count > 0 &&
+        if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
+            st.EncodeGeometryDrawIndexed(m_device, cmd->index_count,
+                                         cmd->instance_count,
+                                         cmd->start_index, cmd->base_vertex,
+                                         cmd->start_instance)) {
+          if (st.HasSwapchainRenderTarget() &&
+              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+            Logger::info(str::format(
+                "M12 swapchain GeometryDrawIndexed encoded idx=",
+                cmd->index_count, " inst=", cmd->instance_count, " pso=",
+                (void *)st.pso));
+          }
+        } else if (cmd->instance_count > 0 && cmd->index_count > 0 &&
             st.ib.BufferLocation && st.render_enc_open &&
             st.HasUsableRenderPSO()) {
           auto *ib_res =

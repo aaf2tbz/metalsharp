@@ -102,8 +102,12 @@ public:
   const MTL_SHADER_REFLECTION &GetPSReflection() const { return m_ps_reflection; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetPSArguments() const { return m_ps_args; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetPSConstantBuffers() const { return m_ps_cb_args; }
+  const MTL_SHADER_REFLECTION &GetGSReflection() const { return m_gs_reflection; }
+  const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetGSArguments() const { return m_gs_args; }
+  const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetGSConstantBuffers() const { return m_gs_cb_args; }
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
+  bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
 
@@ -147,6 +151,7 @@ private:
   std::vector<std::string> m_input_semantic_names;
   bool m_has_stream_output = false;
   bool m_vs_uses_stage_in = false;
+  bool m_uses_geometry_mesh_pipeline = false;
   uint32_t m_gs_passthrough = ~0u;
   D3D12_INDEX_BUFFER_STRIP_CUT_VALUE m_strip_cut_value = {};
   D3D12_PRIMITIVE_TOPOLOGY_TYPE m_topology = {};
@@ -173,6 +178,10 @@ private:
   std::vector<MTL_SM50_SHADER_ARGUMENT> m_ps_args;
   std::vector<MTL_SM50_SHADER_ARGUMENT> m_ps_cb_args;
   sm50_shader_t m_ps_shader = nullptr;
+  MTL_SHADER_REFLECTION m_gs_reflection = {};
+  std::vector<MTL_SM50_SHADER_ARGUMENT> m_gs_args;
+  std::vector<MTL_SM50_SHADER_ARGUMENT> m_gs_cb_args;
+  sm50_shader_t m_gs_shader = nullptr;
   uint32_t m_ia_slot_mask = 0;
   std::unordered_map<uint32_t, StageInVertexAttributeInfo> m_vs_stage_in_register_map;
   std::vector<StageInVertexAttributeInfo> m_vs_stage_in_attribute_order;

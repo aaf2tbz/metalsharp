@@ -1147,6 +1147,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter,PSO".to_string()),
             ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
             ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+            ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
         ];
     }
     Vec::new()
