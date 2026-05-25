@@ -281,8 +281,10 @@ run_probe_exe() {
   local exe="$1"
   local result_file="$2"
   local strict_deferred_pso=0
+  local enable_geometry_mesh="${DXMT_D3D12_ENABLE_GEOMETRY_MESH:-0}"
   if [[ "$(basename "$exe")" == "probe_mini_subnautica_geometry_dxil_replay.exe" ]]; then
     strict_deferred_pso=1
+    enable_geometry_mesh=1
   fi
   (
     cd "$SDK_DIR/out/bin"
@@ -291,6 +293,7 @@ run_probe_exe() {
     WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
     DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_D3D12_ENABLE_GEOMETRY_MESH="$enable_geometry_mesh" \
     DXMT_D3D12_FAIL_DEFERRED_PSO="$strict_deferred_pso" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     "$WINE_BIN" "$exe" > "$result_file"

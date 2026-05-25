@@ -16,11 +16,20 @@ def default_corpus_roots() -> list[Path]:
     return [root for root in roots if root.exists()]
 
 
-def discover_dxbc_files(roots: list[Path]) -> list[Path]:
+def is_generated_geometry_mesh_sidecar(path: Path) -> bool:
+    return path.name.endswith(".geom.gsmesh.dxbc")
+
+
+def discover_dxbc_files(roots: list[Path]) -> tuple[list[Path], list[Path]]:
     files: list[Path] = []
+    skipped: list[Path] = []
     for root in roots:
-        files.extend(root.rglob("*.dxbc"))
-    return sorted(set(files))
+        for path in root.rglob("*.dxbc"):
+            if is_generated_geometry_mesh_sidecar(path):
+                skipped.append(path)
+            else:
+                files.append(path)
+    return sorted(set(files)), sorted(set(skipped))
 
 
 def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
@@ -102,7 +111,7 @@ def main() -> int:
     args = parser.parse_args()
 
     roots = [Path(path) for path in args.corpus] if args.corpus else default_corpus_roots()
-    dxbc_files = discover_dxbc_files(roots)
+    dxbc_files, skipped_sidecars = discover_dxbc_files(roots)
     if args.limit > 0:
         dxbc_files = dxbc_files[: args.limit]
 
@@ -119,6 +128,7 @@ def main() -> int:
             "roots": [str(root) for root in roots],
             "message": "No .dxbc shader corpus found. Capture shaders before treating this as render-ready.",
             "shaders": [],
+            "skipped_generated_sidecars": [str(path) for path in skipped_sidecars],
         }
         out_path.write_text(json.dumps(result, indent=2) + "\n")
         print(out_path)
@@ -133,8 +143,10 @@ def main() -> int:
         "empty": False,
         "roots": [str(root) for root in roots],
         "shader_count": len(shaders),
+        "skipped_generated_sidecar_count": len(skipped_sidecars),
         "failure_count": len(failures),
         "gs_ts_emulation_count": sum(1 for shader in shaders if shader.get("uses_gs_ts_emulation")),
+        "skipped_generated_sidecars": [str(path) for path in skipped_sidecars],
         "shaders": shaders,
     }
     out_path.write_text(json.dumps(result, indent=2) + "\n")
