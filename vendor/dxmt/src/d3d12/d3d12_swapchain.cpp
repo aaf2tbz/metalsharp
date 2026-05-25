@@ -6,6 +6,7 @@
 #include "util_string.hpp"
 #include "Metal.hpp"
 #include <chrono>
+#include <cstdlib>
 
 #define SCTRACE(fmt, ...) DXMTD3D12Trace("SwapChain", fmt, ##__VA_ARGS__)
 
@@ -461,7 +462,13 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     m_last_present_wait_seq = present_wait_seq;
   }
 
-  if (m_presenter && src_texture.handle) {
+  const bool force_raw_blit =
+      std::getenv("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT") != nullptr;
+  if (force_raw_blit && m_present_count <= 20) {
+    SCTRACE("Present forcing raw swapchain blit path idx=%u", m_current_buffer);
+  }
+
+  if (!force_raw_blit && m_presenter && src_texture.handle) {
     auto state = m_presenter->synchronizeLayerProperties();
     auto drawable = m_presenter->encodeCommands(
         cmdbuf, src_texture, state.metadata,
