@@ -367,7 +367,11 @@ fn subnautica2_movie_files(game_dir: &Path) -> Vec<PathBuf> {
     let mut movies: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("mp4")))
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4") || ext.eq_ignore_ascii_case("mov"))
+        })
         .collect();
     movies.sort();
     movies
@@ -389,6 +393,122 @@ fn ffmpeg_binary() -> Option<PathBuf> {
     Some(PathBuf::from("ffmpeg"))
 }
 
+fn ffprobe_binary() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("METALSHARP_FFPROBE_PATH") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for candidate in ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    Some(PathBuf::from("ffprobe"))
+}
+
+fn ffmpeg_has_encoder(ffmpeg: &Path, encoder: &str) -> bool {
+    Command::new(ffmpeg)
+        .arg("-hide_banner")
+        .arg("-encoders")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .is_some_and(|stdout| stdout.contains(encoder))
+}
+
+fn movie_is_wine_friendly(ffprobe: &Path, movie: &Path) -> bool {
+    let video = Command::new(ffprobe)
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=codec_name,pix_fmt")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(movie)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    let Some(video) = video else {
+        return false;
+    };
+    let mut video_lines = video.lines();
+    let codec = video_lines.next().unwrap_or_default();
+    let pix_fmt = video_lines.next().unwrap_or_default();
+    if codec != "h264" || pix_fmt != "yuv420p" {
+        return false;
+    }
+
+    let audio = Command::new(ffprobe)
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("a")
+        .arg("-show_entries")
+        .arg("stream=codec_name")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(movie)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .unwrap_or_default();
+
+    audio.lines().all(|codec| codec == "aac")
+}
+
+fn transcode_subnautica2_movie(
+    ffmpeg: &Path,
+    movie: &Path,
+    backup: &Path,
+    use_videotoolbox: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = movie.with_extension("mp4.metalsharp-h264.tmp");
+    let mut command = Command::new(ffmpeg);
+    command
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-y")
+        .arg("-i")
+        .arg(backup)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("0:a?")
+        .arg("-c:v");
+
+    if use_videotoolbox {
+        command.arg("h264_videotoolbox").arg("-allow_sw").arg("1").arg("-b:v").arg("12000k");
+    } else {
+        command.arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("23").arg("-threads").arg("4");
+    }
+
+    let status = command
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("160k")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg("-f")
+        .arg("mp4")
+        .arg(&tmp)
+        .status()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("ffmpeg failed to transcode Subnautica 2 movie {}", movie.display()).into());
+    }
+    std::fs::rename(&tmp, movie)?;
+    Ok(())
+}
+
 fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let movies = subnautica2_movie_files(game_dir);
     if movies.is_empty() {
@@ -402,12 +522,22 @@ fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn s
     }
 
     let ffmpeg = ffmpeg_binary().ok_or("ffmpeg not found for Subnautica 2 movie compatibility transcode")?;
+    let ffprobe = ffprobe_binary().ok_or("ffprobe not found for Subnautica 2 movie compatibility probe")?;
+    let use_videotoolbox =
+        std::env::var("METALSHARP_MOVIE_TRANSCODER").map(|value| value != "software").unwrap_or(true)
+            && ffmpeg_has_encoder(&ffmpeg, "h264_videotoolbox");
     let backup_dir = game_dir.join(".metalsharp").join("originals").join("movies");
     std::fs::create_dir_all(&backup_dir)?;
     std::fs::create_dir_all(&marker_dir)?;
 
     let mut converted = Vec::new();
+    let mut skipped = Vec::new();
     for movie in movies {
+        if movie_is_wine_friendly(&ffprobe, &movie) {
+            skipped.push(movie);
+            continue;
+        }
+
         let Some(file_name) = movie.file_name() else {
             continue;
         };
@@ -416,45 +546,16 @@ fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn s
             std::fs::copy(&movie, &backup)?;
         }
 
-        let tmp = movie.with_extension("mp4.metalsharp-h264.tmp");
-        let status = Command::new(&ffmpeg)
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("error")
-            .arg("-y")
-            .arg("-i")
-            .arg(&backup)
-            .arg("-map")
-            .arg("0:v:0")
-            .arg("-map")
-            .arg("0:a?")
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg("veryfast")
-            .arg("-crf")
-            .arg("23")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
-            .arg("-c:a")
-            .arg("aac")
-            .arg("-b:a")
-            .arg("160k")
-            .arg("-movflags")
-            .arg("+faststart")
-            .arg(&tmp)
-            .status()?;
-        if !status.success() {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("ffmpeg failed to transcode Subnautica 2 movie {}", movie.display()).into());
-        }
-        std::fs::rename(&tmp, &movie)?;
+        transcode_subnautica2_movie(&ffmpeg, &movie, &backup, use_videotoolbox)?;
         converted.push(movie);
     }
 
     let mut marker_text = String::from("MetalSharp Subnautica 2 movie compatibility transcode\n");
-    marker_text.push_str("codec=h264\npix_fmt=yuv420p\naudio=preserve_optional_aac\nsource=Content/Movies/*.mp4\n");
+    marker_text
+        .push_str("codec=h264\npix_fmt=yuv420p\naudio=preserve_optional_aac\nsource=Content/Movies/*.{mp4,mov}\n");
+    marker_text.push_str(&format!("encoder={}\n", if use_videotoolbox { "h264_videotoolbox" } else { "libx264" }));
     marker_text.push_str(&format!("converted={}\n", converted.len()));
+    marker_text.push_str(&format!("already_compatible={}\n", skipped.len()));
     std::fs::write(marker, marker_text)?;
     Ok(())
 }
@@ -1236,7 +1337,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     let manifest: serde_json::Value = match serde_json::from_str(&manifest_str) {
         Ok(v) => v,
         Err(_) => {
-            let _ = std::fs::remove_dir_all(&injection_dir);
+            let _ = std::fs::remove_file(&manifest_path);
+            let _ = std::fs::remove_dir(&injection_dir);
             return Ok(());
         },
     };
@@ -1244,7 +1346,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     let dlls = match manifest.get("dlls").and_then(|d| d.as_array()) {
         Some(d) => d,
         None => {
-            let _ = std::fs::remove_dir_all(&injection_dir);
+            let _ = std::fs::remove_file(&manifest_path);
+            let _ = std::fs::remove_dir(&injection_dir);
             return Ok(());
         },
     };
@@ -1286,7 +1389,10 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     }
 
     if !any_copy_failed {
-        let _ = std::fs::remove_dir_all(&injection_dir);
+        let _ = std::fs::remove_file(&manifest_path);
+        let originals_dir = injection_dir.join("originals");
+        let _ = std::fs::remove_dir(&originals_dir);
+        let _ = std::fs::remove_dir(&injection_dir);
     }
     Ok(())
 }
@@ -2064,7 +2170,43 @@ mod tests {
         cleanup_legacy_injections(&game_dir).unwrap();
 
         assert!(!outside_path.exists());
-        assert!(!injection_dir.exists());
+        assert!(!injection_dir.join("injections.json").exists());
+        let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
+    fn cleanup_legacy_injections_preserves_non_injection_state() {
+        let game_dir = test_dir("cleanup-preserve-media");
+        let injection_dir = game_dir.join(".metalsharp");
+        let originals_dir = injection_dir.join("originals");
+        let media_dir = injection_dir.join("media");
+        let movie_backup_dir = originals_dir.join("movies");
+        std::fs::create_dir_all(&movie_backup_dir).unwrap();
+        std::fs::create_dir_all(&media_dir).unwrap();
+
+        let original_dll = game_dir.join("dxgi.dll");
+        let backup_dll = originals_dir.join("dxgi.dll");
+        std::fs::write(&backup_dll, b"original-dxgi-content").unwrap();
+        std::fs::write(media_dir.join("subnautica2-h264-movies-v1.ok"), b"ready").unwrap();
+        std::fs::write(movie_backup_dir.join("intro.mp4"), b"movie").unwrap();
+
+        let manifest = serde_json::json!({
+            "appid": 1234,
+            "dlls": [{
+                "filename": "dxgi.dll",
+                "dest_path": original_dll.to_string_lossy().to_string(),
+                "backup_path": backup_dll.to_string_lossy().to_string(),
+            }]
+        });
+        std::fs::write(injection_dir.join("injections.json"), serde_json::to_string_pretty(&manifest).unwrap())
+            .unwrap();
+
+        cleanup_legacy_injections(&game_dir).unwrap();
+
+        assert_eq!(std::fs::read(&original_dll).unwrap(), b"original-dxgi-content");
+        assert!(media_dir.join("subnautica2-h264-movies-v1.ok").exists());
+        assert!(movie_backup_dir.join("intro.mp4").exists());
+        assert!(!injection_dir.join("injections.json").exists());
         let _ = std::fs::remove_dir_all(&game_dir);
     }
 
@@ -2115,19 +2257,21 @@ mod tests {
     }
 
     #[test]
-    fn subnautica_movie_files_discovers_mp4_assets_only() {
+    fn subnautica_movie_files_discovers_movie_assets_only() {
         let game_dir = test_dir("subnautica-movies");
         let movies_dir = game_dir.join("Subnautica2").join("Content").join("Movies");
         std::fs::create_dir_all(&movies_dir).expect("create movies dir");
         std::fs::write(movies_dir.join("B.mp4"), b"b").expect("write b");
         std::fs::write(movies_dir.join("a.MP4"), b"a").expect("write a");
+        std::fs::write(movies_dir.join("c.mov"), b"c").expect("write c");
         std::fs::write(movies_dir.join("ignore.webm"), b"x").expect("write ignore");
 
         let movies = subnautica2_movie_files(&game_dir);
 
-        assert_eq!(movies.len(), 2);
+        assert_eq!(movies.len(), 3);
         assert_eq!(movies[0].file_name().unwrap().to_string_lossy(), "B.mp4");
         assert_eq!(movies[1].file_name().unwrap().to_string_lossy(), "a.MP4");
+        assert_eq!(movies[2].file_name().unwrap().to_string_lossy(), "c.mov");
         let _ = std::fs::remove_dir_all(game_dir);
     }
 
