@@ -2440,7 +2440,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
       os << "  auto " << result << " = " << expr << ";\n";
     }
-    publishResult();
+    publishResult(inferVectorLaneCountFromExpr(expr), expr);
     break;
   }
 
@@ -2464,7 +2464,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
       os << "  auto " << result << " = " << expr << ";\n";
     }
-    publishResult();
+    publishResult(inferVectorLaneCountFromExpr(expr), expr);
     break;
   }
 
@@ -2488,7 +2488,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
       os << "  auto " << result << " = " << expr << ";\n";
     }
-    publishResult();
+    publishResult(inferVectorLaneCountFromExpr(expr), expr);
     break;
   }
 
