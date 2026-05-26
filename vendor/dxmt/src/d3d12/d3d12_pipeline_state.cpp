@@ -1542,6 +1542,18 @@ std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
   return m_compile_failure_detail;
 }
 
+std::string MTLD3D12PipelineState::GetVSCacheHash() const {
+  return ShaderBytecodeDigest(m_vs, ShaderType::Vertex, &m_input_layout);
+}
+
+std::string MTLD3D12PipelineState::GetPSCacheHash() const {
+  return ShaderBytecodeDigest(m_ps, ShaderType::Pixel, nullptr);
+}
+
+std::string MTLD3D12PipelineState::GetGSCacheHash() const {
+  return ShaderBytecodeDigest(m_gs, ShaderType::Geometry, nullptr);
+}
+
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   switch (format) {
   case DXGI_FORMAT_R8G8B8A8_UNORM:
@@ -3759,13 +3771,19 @@ d3d12_geometry_fallback_to_vs_ps:
     vtx_desc.attribute_count = attribute_count;
     vtx_desc.layout_count = max_slot;
     bool slot_used_by_attribute[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
+    uint32_t stage_in_slot_mask = 0;
     for (uint32_t attr_i = 0; attr_i < attribute_count; attr_i++) {
       const auto &attr = vtx_desc.attributes[attr_i];
       if (attr.format == WMTAttributeFormatInvalid)
         continue;
-      if (attr.buffer_index < WMT_MAX_VERTEX_BUFFER_LAYOUTS)
+      if (attr.buffer_index < WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
         slot_used_by_attribute[attr.buffer_index] = true;
+        if (attr.buffer_index < kMetalD3D12VertexBufferSlotCount)
+          stage_in_slot_mask |= 1u << attr.buffer_index;
+      }
     }
+    if (m_vs_uses_stage_in && stage_in_slot_mask)
+      m_ia_slot_mask = stage_in_slot_mask;
     for (uint32_t s = 0; s < max_slot; s++) {
       if (!slot_used_by_attribute[s]) {
         vtx_desc.layouts[s].stride = 0;
@@ -3791,6 +3809,8 @@ d3d12_geometry_fallback_to_vs_ps:
       std::stringstream attr_summary;
       attr_summary << "D3D12 stage_in vertex descriptor attrs="
                    << attribute_count << " layouts=" << max_slot
+                   << " slot_mask=0x" << std::hex << stage_in_slot_mask
+                   << std::dec
                    << " has_input_signature=" << (has_input_signature ? 1 : 0)
                    << " reflection_order="
                    << m_vs_stage_in_attribute_order.size() << " present=[";

@@ -48,14 +48,6 @@ bool DXMTD3D12AutopresentSwapchain() {
   return enabled != 0;
 }
 
-bool DXMTD3D12DisableSwapchainCull() {
-  static int enabled = [] {
-    const char *value = std::getenv("DXMT_D3D12_DISABLE_SWAPCHAIN_CULL");
-    return value && value[0] && value[0] != '0';
-  }();
-  return enabled != 0;
-}
-
 const char *TraceCompileFailureStage(MTLD3D12PipelineState *pso) {
   static thread_local std::string stage;
   stage = pso ? pso->GetCompileFailureStage() : "no_pso";
@@ -68,10 +60,30 @@ const char *TraceCompileFailureDetail(MTLD3D12PipelineState *pso) {
   return detail.c_str();
 }
 
+const char *TracePsoShaderSummary(MTLD3D12PipelineState *pso) {
+  static thread_local std::string summary;
+  if (!pso) {
+    summary = "vs=0 ps=0 gs=0";
+    return summary.c_str();
+  }
+
+  summary = str::format("vs=", pso->GetVSCacheHash(), " ps=",
+                        pso->GetPSCacheHash(), " gs=", pso->GetGSCacheHash(),
+                        " ps_args=", (unsigned)pso->GetPSArguments().size(),
+                        " ps_cb=", (unsigned)pso->GetPSConstantBuffers().size(),
+                        " ps_qwords=",
+                        (unsigned)pso->GetPSReflection().ArgumentTableQwords,
+                        " stage_in=", pso->UsesStageInVertexDescriptor(),
+                        " geom_mesh=", pso->UsesGeometryMeshPipeline());
+  return summary.c_str();
+}
+
 static uint32_t g_swapchain_encoder_logs = 0;
 static uint32_t g_swapchain_draw_logs = 0;
 static uint32_t g_swapchain_clear_logs = 0;
 static uint32_t g_swapchain_state_logs = 0;
+static uint32_t g_swapchain_argbuf_logs = 0;
+static uint32_t g_swapchain_stage_in_vb_logs = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
@@ -743,9 +755,10 @@ struct ReplayState {
                  root_idx, descriptor_offset, (void *)desc,
                  desc->resource ? (void *)desc->resource : nullptr, arg.Flags,
                  arg.StructurePtrOffset);
-          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) && desc->resource) {
+          if (desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            if (res->GetMTLBuffer().handle) {
+            if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+                res->GetMTLBuffer().handle) {
               arg_buf_data[arg.StructurePtrOffset] =
                   res->GetGPUVirtualAddress() + SRVBufferByteOffset(desc);
               arg_buf_data[arg.StructurePtrOffset + 1] =
@@ -757,10 +770,7 @@ struct ReplayState {
                                       WMTRenderStageFragment));
               }
             }
-          } else if (desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            auto tex = DescriptorTexture(desc, res);
-            if (tex.handle) {
+            else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
               uint64_t gpu_id = DescriptorTextureGPUResourceID(desc, res);
               QTRACE("BuildArgBuf: SRV tex_handle=%llu gpu_id=0x%llx view=%d",
                      (unsigned long long)tex.handle,
@@ -864,6 +874,23 @@ struct ReplayState {
       for (uint32_t i = 0; i < qword_count && i < 8; i++) {
         QTRACE("  arg_buf[%u] = 0x%llx", i,
                (unsigned long long)arg_buf_data[i]);
+      }
+      if (HasSwapchainRenderTarget() &&
+          TakeLogBudget(&g_swapchain_argbuf_logs, 48)) {
+        Logger::info(str::format(
+            "M12 swapchain PS argbuf ", TracePsoShaderSummary(pso),
+            " bind_index=", BindIndexOrFallback(
+                pso->GetPSReflection().ArgumentBufferBindIndex, kArgBufSlot),
+            " qwords=", qword_count, " data=[",
+            (unsigned long long)arg_buf_data[0], ",",
+            (unsigned long long)(qword_count > 1 ? arg_buf_data[1] : 0), ",",
+            (unsigned long long)(qword_count > 2 ? arg_buf_data[2] : 0), ",",
+            (unsigned long long)(qword_count > 3 ? arg_buf_data[3] : 0), ",",
+            (unsigned long long)(qword_count > 4 ? arg_buf_data[4] : 0), ",",
+            (unsigned long long)(qword_count > 5 ? arg_buf_data[5] : 0), ",",
+            (unsigned long long)(qword_count > 6 ? arg_buf_data[6] : 0), ",",
+            (unsigned long long)(qword_count > 7 ? arg_buf_data[7] : 0), ",",
+            (unsigned long long)(qword_count > 8 ? arg_buf_data[8] : 0), "]"));
       }
       if (render_enc_open) {
         render_enc.useResource(
@@ -2162,7 +2189,10 @@ struct ReplayState {
       cull_mode = WMTCullModeBack;
     else if (rast.CullMode == D3D12_CULL_MODE_FRONT)
       cull_mode = WMTCullModeFront;
-    if (HasSwapchainRenderTarget() && DXMTD3D12DisableSwapchainCull())
+    // UE5 frontend paths can land in a stage-in coordinate convention that
+    // flips quad winding relative to the D3D rasterizer state. If the active
+    // render target is a swapchain backbuffer, prefer visibility over culling.
+    if (HasSwapchainRenderTarget())
       cull_mode = WMTCullModeNone;
     WMTDepthClipMode depth_clip =
         rast.DepthClipEnable ? WMTDepthClipModeClip : WMTDepthClipModeClamp;
@@ -2179,10 +2209,27 @@ struct ReplayState {
            blend_factor[3], stencil_ref);
   }
 
+  WMTCullMode EffectiveCullMode() const {
+    if (!pso)
+      return WMTCullModeNone;
+
+    const auto &rast = pso->GetRasterizerDesc();
+    WMTCullMode cull_mode = WMTCullModeNone;
+    if (rast.CullMode == D3D12_CULL_MODE_BACK)
+      cull_mode = WMTCullModeBack;
+    else if (rast.CullMode == D3D12_CULL_MODE_FRONT)
+      cull_mode = WMTCullModeFront;
+
+    if (HasSwapchainRenderTarget())
+      cull_mode = WMTCullModeNone;
+    return cull_mode;
+  }
+
   void ApplyRootBindings(MTLD3D12Device *device) {
     if (!render_enc_open || !pso)
       return;
 
+    const bool stage_in_vertex_inputs = pso->UsesStageInVertexDescriptor();
     bool has_root_constants = false;
     for (uint32_t i = 0; i < 16; i++)
       has_root_constants |= root_constant_set[i] && root_constant_sizes[i] > 0;
@@ -2201,11 +2248,13 @@ struct ReplayState {
     for (uint32_t i = 0; i < 16; i++) {
       if (root_constant_set[i] && root_constant_sizes[i] > 0 &&
           root_constants_mtl_buf.handle) {
-        render_enc.setVertexBuffer(root_constants_mtl_buf,
-                                   root_constant_offsets[i], i);
+        if (!stage_in_vertex_inputs) {
+          render_enc.setVertexBuffer(root_constants_mtl_buf,
+                                     root_constant_offsets[i], i);
+        }
         render_enc.setFragmentBuffer(root_constants_mtl_buf,
                                      root_constant_offsets[i], i);
-        if (UsesGeometryMeshPipeline()) {
+        if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
           render_enc.setObjectBuffer(root_constants_mtl_buf,
                                      root_constant_offsets[i], i);
           render_enc.setMeshBuffer(root_constants_mtl_buf,
@@ -2237,9 +2286,10 @@ struct ReplayState {
         if (slot >= 8)
           return;
         uint64_t offset = address - res->GetGPUVirtualAddress();
-        render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
+        if (!stage_in_vertex_inputs)
+          render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
         render_enc.setFragmentBuffer(res->GetMTLBuffer(), offset, slot);
-        if (UsesGeometryMeshPipeline()) {
+        if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
           render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, slot);
           render_enc.setMeshBuffer(res->GetMTLBuffer(), offset, slot);
         }
@@ -2280,10 +2330,12 @@ struct ReplayState {
             if (cbv_res)
               off = desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
           }
-          render_enc.setVertexBuffer(res->GetMTLBuffer(), off, shader_register);
+          if (!stage_in_vertex_inputs)
+            render_enc.setVertexBuffer(res->GetMTLBuffer(), off,
+                                       shader_register);
           render_enc.setFragmentBuffer(res->GetMTLBuffer(), off,
                                        shader_register);
-          if (UsesGeometryMeshPipeline()) {
+          if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
             render_enc.setObjectBuffer(res->GetMTLBuffer(), off,
                                        shader_register);
             render_enc.setMeshBuffer(res->GetMTLBuffer(), off,
@@ -2369,6 +2421,48 @@ struct ReplayState {
 
     uint32_t slot_mask = pso ? pso->GetIAInputSlotMask() : 0;
     if (slot_mask) {
+      if (pso && pso->UsesStageInVertexDescriptor()) {
+        uint32_t bound_slots = 0;
+        for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
+          if (!(slot_mask & (1u << slot)))
+            continue;
+
+          auto &view = vbs[slot];
+          auto *res =
+              view.BufferLocation
+                  ? device->LookupResourceByGPUAddress(view.BufferLocation)
+                  : nullptr;
+          if (res && res->GetMTLBuffer().handle) {
+            uint64_t offset =
+                view.BufferLocation - res->GetGPUVirtualAddress();
+            render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
+            if (UsesGeometryMeshPipeline())
+              render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, slot);
+            render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                                   VertexInputStages());
+            bound_slots++;
+            QTRACE("ApplyVertexBuffers: stage_in slot=%u gpu=0x%llx "
+                   "offset=%llu size=%u stride=%u",
+                   slot, (unsigned long long)view.BufferLocation,
+                   (unsigned long long)offset, view.SizeInBytes,
+                   view.StrideInBytes);
+          } else {
+            QTRACE("ApplyVertexBuffers: stage_in slot=%u gpu=0x%llx "
+                   "unresolved",
+                   slot, (unsigned long long)view.BufferLocation);
+          }
+        }
+        if (HasSwapchainRenderTarget() &&
+            TakeLogBudget(&g_swapchain_stage_in_vb_logs, 64)) {
+          Logger::info(str::format("M12 swapchain stage_in vertex buffers "
+                                   "mask=", slot_mask,
+                                   " bound=", bound_slots, " pso=",
+                                   (void *)pso, " ",
+                                   TracePsoShaderSummary(pso)));
+        }
+        return;
+      }
+
       memset(vertex_table_data, 0, sizeof(vertex_table_data));
       uint32_t table_index = 0;
       for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
@@ -3198,7 +3292,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             Logger::info(str::format("M12 swapchain GeometryDraw encoded v=",
                                      cmd->vertex_count, " i=",
                                      cmd->instance_count, " pso=",
-                                     (void *)st.pso));
+                                     (void *)st.pso, " ",
+                                     TracePsoShaderSummary(st.pso)));
           }
         } else if (cmd->instance_count > 0 && cmd->vertex_count > 0 &&
             st.render_enc_open && st.HasUsableRenderPSO()) {
@@ -3219,7 +3314,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                      cmd->vertex_count, " i=", cmd->instance_count,
                                      " start=", cmd->start_vertex,
                                      " pso=", (void *)st.pso,
-                                     " enc=", (unsigned long long)st.render_enc.handle));
+                                     " enc=", (unsigned long long)st.render_enc.handle,
+                                     " ", TracePsoShaderSummary(st.pso)));
           }
         } else {
           QTRACE(
@@ -3272,7 +3368,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             Logger::info(str::format(
                 "M12 swapchain GeometryDrawIndexed encoded idx=",
                 cmd->index_count, " inst=", cmd->instance_count, " pso=",
-                (void *)st.pso));
+                (void *)st.pso, " ", TracePsoShaderSummary(st.pso)));
           }
         } else if (cmd->instance_count > 0 && cmd->index_count > 0 &&
             st.ib.BufferLocation && st.render_enc_open &&
@@ -3329,7 +3425,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                      " ib_res=", (void *)ib_res,
                                      " ib_off=", (unsigned long long)index_buffer_offset,
                                      " pso=", (void *)st.pso,
-                                     " enc=", (unsigned long long)st.render_enc.handle));
+                                     " enc=", (unsigned long long)st.render_enc.handle,
+                                     " ", TracePsoShaderSummary(st.pso)));
           }
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_state_logs, 32)) {
@@ -3338,6 +3435,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             const auto &rast = st.pso->GetRasterizerDesc();
             const auto &ds = st.pso->GetDepthStencilDesc();
             const auto &vb0 = st.vbs[0];
+            const auto effective_cull = st.EffectiveCullMode();
             Logger::info(str::format(
                 "M12 swapchain draw state vp_count=", st.viewport_count,
                 " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ",
@@ -3349,7 +3447,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 (unsigned)rast.FrontCounterClockwise, " depth_enable=",
                 (unsigned)ds.DepthEnable, " depth_func=",
                 (unsigned)ds.DepthFunc, " stencil_enable=",
-                (unsigned)ds.StencilEnable, " vb0_gpu=",
+                (unsigned)ds.StencilEnable, " effective_cull=",
+                (unsigned)effective_cull, " vb0_gpu=",
                 (unsigned long long)vb0.BufferLocation, " vb0_size=",
                 vb0.SizeInBytes, " vb0_stride=", vb0.StrideInBytes,
                 " ib_fmt=", (unsigned)st.ib.Format));
@@ -4165,6 +4264,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               st.pso->GetDepthStencilState().handle) {
             st.render_enc.setDepthStencilState(st.pso->GetDepthStencilState());
           }
+          st.ApplyFixedFunctionState();
         }
         break;
       }

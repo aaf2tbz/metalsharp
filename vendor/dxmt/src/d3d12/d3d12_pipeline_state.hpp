@@ -99,14 +99,18 @@ public:
   const MTL_SHADER_REFLECTION &GetVSReflection() const { return m_vs_reflection; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetVSArguments() const { return m_vs_args; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetVSConstantBuffers() const { return m_vs_cb_args; }
+  std::string GetVSCacheHash() const;
   const MTL_SHADER_REFLECTION &GetPSReflection() const { return m_ps_reflection; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetPSArguments() const { return m_ps_args; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetPSConstantBuffers() const { return m_ps_cb_args; }
+  std::string GetPSCacheHash() const;
   const MTL_SHADER_REFLECTION &GetGSReflection() const { return m_gs_reflection; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetGSArguments() const { return m_gs_args; }
   const std::vector<MTL_SM50_SHADER_ARGUMENT> &GetGSConstantBuffers() const { return m_gs_cb_args; }
+  std::string GetGSCacheHash() const;
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
+  bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
