@@ -99,6 +99,18 @@ This verifies that Steam/global Wine copies keep wrapper exports such as
 `WMTSetMetalShaderCachePath`, while DXMT/game-local copies also expose shader
 and PSO bridge exports such as `MTLLibrary_newFunctionWithDescriptor`.
 
+When rebuilding the x86_64 WineMetal Unix bridge on Apple Silicon, use the
+repo helper to stage an x86_64 LLVM 15 toolchain outside the internal drive and
+reconfigure DXMT before linking:
+
+```bash
+METALSHARP_X86_LLVM_ROOT=/Volumes/AverySSD/toolchains \
+  tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+```
+
+This avoids the common failure where `winemetal.so` links an x86_64 target
+against arm64 Homebrew LLVM libraries.
+
 For offline Metal PSO factory checks against converted shaders:
 
 ```bash
