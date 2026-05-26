@@ -396,6 +396,18 @@ static uint64_t DescriptorTextureGPUResourceID(const D3D12Descriptor *desc,
   return res ? res->GetTextureGPUResourceID() : 0;
 }
 
+static void WriteMSCTextureArgument(uint64_t *data,
+                                    const MTL_SM50_SHADER_ARGUMENT &arg,
+                                    uint64_t texture_view_id,
+                                    uint32_t array_length,
+                                    float min_lod = 0.0f) {
+  // Apple MetalShaderConverter uses IRDescriptorTableEntry:
+  // { gpuVA, textureViewID, metadata }.
+  data[arg.StructurePtrOffset] = 0;
+  data[arg.StructurePtrOffset + 1] = texture_view_id;
+  data[arg.StructurePtrOffset + 2] = TextureMetadata(array_length, min_lod);
+}
+
 static bool FormatHasStencil(DXGI_FORMAT format) {
   return format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
          format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
@@ -1011,10 +1023,8 @@ struct ReplayState {
                      (unsigned long long)tex.handle,
                      (unsigned long long)gpu_id,
                      desc->metal_texture_view.handle ? 1 : 0);
-              arg_buf_data[arg.StructurePtrOffset] = 0;
-              arg_buf_data[arg.StructurePtrOffset + 1] = gpu_id;
-              arg_buf_data[arg.StructurePtrOffset + 2] =
-                  TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
+              WriteMSCTextureArgument(arg_buf_data, arg, gpu_id,
+                                      SRVTextureArrayLength(desc, res));
               if (render_enc_open) {
                 render_enc.useResource(
                     tex,
@@ -1074,11 +1084,9 @@ struct ReplayState {
                                       WMTRenderStageFragment));
               }
             } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-              arg_buf_data[arg.StructurePtrOffset] = 0;
-              arg_buf_data[arg.StructurePtrOffset + 1] =
-                  DescriptorTextureGPUResourceID(desc, res);
-              arg_buf_data[arg.StructurePtrOffset + 2] =
-                  TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
+              WriteMSCTextureArgument(
+                  arg_buf_data, arg, DescriptorTextureGPUResourceID(desc, res),
+                  UAVTextureArrayLength(desc, res));
               if (render_enc_open) {
                 render_enc.useResource(
                     tex,
@@ -1466,11 +1474,10 @@ struct ReplayState {
                                        WMTResourceUsageRead,
                                        WMTRenderStageVertex);
             } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-              vs_arg_buf_data[arg.StructurePtrOffset] = 0;
-              vs_arg_buf_data[arg.StructurePtrOffset + 1] =
-                  DescriptorTextureGPUResourceID(desc, res);
-              vs_arg_buf_data[arg.StructurePtrOffset + 2] =
-                  TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
+              WriteMSCTextureArgument(
+                  vs_arg_buf_data, arg,
+                  DescriptorTextureGPUResourceID(desc, res),
+                  SRVTextureArrayLength(desc, res));
               if (render_enc_open)
                 render_enc.useResource(
                     tex,
@@ -1521,11 +1528,9 @@ struct ReplayState {
                                                         WMTResourceUsageWrite),
                                      WMTRenderStageVertex);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            vs_arg_buf_data[arg.StructurePtrOffset] = 0;
-            vs_arg_buf_data[arg.StructurePtrOffset + 1] =
-                DescriptorTextureGPUResourceID(desc, res);
-            vs_arg_buf_data[arg.StructurePtrOffset + 2] =
-                TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
+            WriteMSCTextureArgument(vs_arg_buf_data, arg,
+                                    DescriptorTextureGPUResourceID(desc, res),
+                                    UAVTextureArrayLength(desc, res));
             if (render_enc_open)
               render_enc.useResource(tex,
                                      (WMTResourceUsage)(WMTResourceUsageRead |
@@ -1848,11 +1853,9 @@ struct ReplayState {
               render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                      WMTRenderStageMesh);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            gs_arg_buf_data[arg.StructurePtrOffset] = 0;
-            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
-                DescriptorTextureGPUResourceID(desc, res);
-            gs_arg_buf_data[arg.StructurePtrOffset + 2] =
-                TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
+            WriteMSCTextureArgument(gs_arg_buf_data, arg,
+                                    DescriptorTextureGPUResourceID(desc, res),
+                                    SRVTextureArrayLength(desc, res));
             if (render_enc_open)
               render_enc.useResource(
                   tex,
@@ -1882,11 +1885,9 @@ struct ReplayState {
                                      WMTResourceUsageWrite),
                   WMTRenderStageMesh);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            gs_arg_buf_data[arg.StructurePtrOffset] = 0;
-            gs_arg_buf_data[arg.StructurePtrOffset + 1] =
-                DescriptorTextureGPUResourceID(desc, res);
-            gs_arg_buf_data[arg.StructurePtrOffset + 2] =
-                TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
+            WriteMSCTextureArgument(gs_arg_buf_data, arg,
+                                    DescriptorTextureGPUResourceID(desc, res),
+                                    UAVTextureArrayLength(desc, res));
             if (render_enc_open)
               render_enc.useResource(
                   tex,
@@ -2270,13 +2271,11 @@ struct ReplayState {
                 SRVBufferByteLength(desc, res);
           }
         } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-          comp_arg_buf_data[arg.StructurePtrOffset] = 0;
-          comp_arg_buf_data[arg.StructurePtrOffset + 1] =
-              DescriptorTextureGPUResourceID(desc, res);
-          comp_arg_buf_data[arg.StructurePtrOffset + 2] =
+          WriteMSCTextureArgument(
+              comp_arg_buf_data, arg, DescriptorTextureGPUResourceID(desc, res),
               arg.Type == SM50BindingType::UAV
-                  ? TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f)
-                  : TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
+                  ? UAVTextureArrayLength(desc, res)
+                  : SRVTextureArrayLength(desc, res));
         }
       }
     }
