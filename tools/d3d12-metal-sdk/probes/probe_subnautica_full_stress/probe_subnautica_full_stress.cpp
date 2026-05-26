@@ -229,22 +229,38 @@ static std::string detect_shader_tag(const uint8_t* data, size_t size) {
                 uint32_t prog_ver = u32[payload_off / 4];
                 uint32_t shader_kind = (prog_ver >> 16) & 0xFF;
                 switch (shader_kind) {
-                case 0: return "ps";
-                case 1: return "vs";
-                case 2: return "gs";
-                case 3: return "hs";
-                case 4: return "ds";
-                case 5: return "cs";
-                case 6: return "lib";
-                case 7: return "raygen";
-                case 8: return "intersection";
-                case 9: return "anyhit";
-                case 10: return "closesthit";
-                case 11: return "miss";
-                case 12: return "callable";
-                case 13: return "mesh";
-                case 14: return "amp";
-                default: return "dxil_unknown";
+                case 0:
+                    return "ps";
+                case 1:
+                    return "vs";
+                case 2:
+                    return "gs";
+                case 3:
+                    return "hs";
+                case 4:
+                    return "ds";
+                case 5:
+                    return "cs";
+                case 6:
+                    return "lib";
+                case 7:
+                    return "raygen";
+                case 8:
+                    return "intersection";
+                case 9:
+                    return "anyhit";
+                case 10:
+                    return "closesthit";
+                case 11:
+                    return "miss";
+                case 12:
+                    return "callable";
+                case 13:
+                    return "mesh";
+                case 14:
+                    return "amp";
+                default:
+                    return "dxil_unknown";
                 }
             }
         }
@@ -253,12 +269,18 @@ static std::string detect_shader_tag(const uint8_t* data, size_t size) {
             if (payload_offset + 16 <= size) {
                 uint16_t type = data[payload_offset + 3];
                 switch (type) {
-                case 0xFF: return "cs";
-                case 0xFE: return "vs";
-                case 0xFD: return "ps";
-                case 0xFC: return "gs";
-                case 0xFB: return "hs";
-                case 0xFA: return "ds";
+                case 0xFF:
+                    return "cs";
+                case 0xFE:
+                    return "vs";
+                case 0xFD:
+                    return "ps";
+                case 0xFC:
+                    return "gs";
+                case 0xFB:
+                    return "hs";
+                case 0xFA:
+                    return "ds";
                 }
             }
         }
@@ -266,12 +288,18 @@ static std::string detect_shader_tag(const uint8_t* data, size_t size) {
             if (offset + 8 + 11 < size) {
                 uint8_t shader_type = data[offset + 8 + 10];
                 switch (shader_type) {
-                case 0: return "vs";
-                case 1: return "ps";
-                case 2: return "gs";
-                case 3: return "hs";
-                case 4: return "ds";
-                case 5: return "cs";
+                case 0:
+                    return "vs";
+                case 1:
+                    return "ps";
+                case 2:
+                    return "gs";
+                case 3:
+                    return "hs";
+                case 4:
+                    return "ds";
+                case 5:
+                    return "cs";
                 }
             }
         }
@@ -427,15 +455,17 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
         D3D12_CLEAR_VALUE cv = {};
         cv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         cv.Color[3] = 1.0f;
-        auto desc = texture2d_desc(fr.WIDTH, fr.HEIGHT, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        auto desc =
+            texture2d_desc(fr.WIDTH, fr.HEIGHT, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
         auto heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
         for (int i = 0; i < 2; i++) {
-            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&fr.offscreen[i]));
+            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                 &cv, IID_PPV_ARGS(&fr.offscreen[i]));
             if (FAILED(hr))
                 return hr;
-            device->CreateRenderTargetView(fr.offscreen[i], nullptr,
-                                           offset_cpu(fr.rtv_heap->GetCPUDescriptorHandleForHeapStart(), fr.rtv_inc, 3 + i));
+            device->CreateRenderTargetView(
+                fr.offscreen[i], nullptr,
+                offset_cpu(fr.rtv_heap->GetCPUDescriptorHandleForHeapStart(), fr.rtv_inc, 3 + i));
         }
     }
 
@@ -451,8 +481,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
         dcv.DepthStencil.Depth = 1.0f;
         auto desc = texture2d_desc(fr.WIDTH, fr.HEIGHT, DXGI_FORMAT_D32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
         auto heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_DEPTH_WRITE, &dcv, IID_PPV_ARGS(&fr.depth));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &dcv,
+                                             IID_PPV_ARGS(&fr.depth));
         if (FAILED(hr))
             return hr;
         device->CreateDepthStencilView(fr.depth, nullptr, fr.dsv_heap->GetCPUDescriptorHandleForHeapStart());
@@ -472,8 +502,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
         auto desc = texture2d_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_NONE);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&fr.texture_2d));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                             nullptr, IID_PPV_ARGS(&fr.texture_2d));
         if (FAILED(hr))
             return hr;
         D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
@@ -509,8 +539,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         auto desc = buffer_desc(64 * 64 * 4);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.upload_buffer));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                             nullptr, IID_PPV_ARGS(&fr.upload_buffer));
         if (FAILED(hr))
             return hr;
         void* mapped = nullptr;
@@ -533,22 +563,22 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
         auto heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         {
             auto desc = buffer_desc(sizeof(float) * 4 * 8);
-            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.vb_sprite));
+            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                 nullptr, IID_PPV_ARGS(&fr.vb_sprite));
             if (FAILED(hr))
                 return hr;
         }
         {
             auto desc = buffer_desc(sizeof(float) * 8 * 36);
-            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.vb_quad));
+            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                 nullptr, IID_PPV_ARGS(&fr.vb_quad));
             if (FAILED(hr))
                 return hr;
         }
         {
             auto desc = buffer_desc(256);
-            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.cb_root));
+            hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                 nullptr, IID_PPV_ARGS(&fr.cb_root));
             if (FAILED(hr))
                 return hr;
         }
@@ -557,9 +587,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
         auto desc = buffer_desc(1024 * 16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                             IID_PPV_ARGS(&fr.compute_buf));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                             nullptr, IID_PPV_ARGS(&fr.compute_buf));
         if (FAILED(hr))
             return hr;
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
@@ -574,8 +603,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         auto desc = buffer_desc(sizeof(uint16_t) * 36);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.index_buf));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                             nullptr, IID_PPV_ARGS(&fr.index_buf));
         if (FAILED(hr))
             return hr;
         uint16_t indices[36];
@@ -596,8 +625,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         auto desc = buffer_desc(sizeof(float) * 4 * 64);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&fr.instance_buf));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                             nullptr, IID_PPV_ARGS(&fr.instance_buf));
         if (FAILED(hr))
             return hr;
     }
@@ -605,8 +634,8 @@ static HRESULT init_frame_resources(FrameResources& fr, ID3D12Device* device, ID
     {
         auto heap = heap_props(D3D12_HEAP_TYPE_READBACK);
         auto desc = buffer_desc(fr.WIDTH * fr.HEIGHT * 4);
-        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&fr.readback_buf));
+        hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                             nullptr, IID_PPV_ARGS(&fr.readback_buf));
         if (FAILED(hr))
             return hr;
     }
@@ -873,9 +902,8 @@ static HRESULT build_test_psos(ID3D12Device* device, ID3D12RootSignature* root_s
             TestPSO& tp = psos[*out_count];
             tp.name = name;
             tp.pso = pso;
-            tp.topology = (prim_type == D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE)
-                              ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST
-                              : D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+            tp.topology = (prim_type == D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE) ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+                                                                                : D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
             tp.uses_depth = depth;
             tp.uses_mrt = num_rts > 1;
             tp.uses_indexed = false;
@@ -901,8 +929,8 @@ static HRESULT build_test_psos(ID3D12Device* device, ID3D12RootSignature* root_s
     make_gfx_pso(basic_vs_bc, basic_ps_bc, "triangle_depth", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 1, true,
                  simple_input, 3);
     make_gfx_pso(basic_vs_bc, mrt_ps_bc, "mrt_2rt", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 2, false, simple_input, 3);
-    make_gfx_pso(basic_vs_bc, mrt_ps_bc, "mrt_2rt_depth", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 2, true,
-                 simple_input, 3);
+    make_gfx_pso(basic_vs_bc, mrt_ps_bc, "mrt_2rt_depth", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 2, true, simple_input,
+                 3);
     make_gfx_pso(basic_vs_bc, depth_ps_bc, "depth_visualize", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 1, true,
                  simple_input, 3);
     make_gfx_pso(root_const_vs_bc, basic_ps_bc, "root_constants", D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, 1, false,
@@ -1028,8 +1056,7 @@ static DrawResult execute_test_draw(FrameResources& fr, ID3D12CommandQueue* queu
     if (pso.topology == D3D_PRIMITIVE_TOPOLOGY_UNDEFINED) {
         fr.list->SetComputeRootSignature(compute_root_sig);
         fr.list->SetPipelineState(pso.pso);
-        fr.list->SetComputeRootDescriptorTable(
-            0, fr.srv_heap->GetGPUDescriptorHandleForHeapStart());
+        fr.list->SetComputeRootDescriptorTable(0, fr.srv_heap->GetGPUDescriptorHandleForHeapStart());
         fr.list->Dispatch(16, 1, 1);
         fr.list->Close();
         ID3D12CommandList* base = fr.list;
@@ -1177,8 +1204,8 @@ static uint64_t count_nonzero_readback(FrameResources& fr, ID3D12Device* device,
     return nonzero;
 }
 
-static HRESULT test_dxbc_pso(ID3D12Device* device, ID3D12RootSignature* root_sig,
-                             const ShaderBlob& vs_blob, const ShaderBlob& ps_blob) {
+static HRESULT test_dxbc_pso(ID3D12Device* device, ID3D12RootSignature* root_sig, const ShaderBlob& vs_blob,
+                             const ShaderBlob& ps_blob) {
     D3D12_INPUT_ELEMENT_DESC inputs[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -1238,18 +1265,18 @@ int main() {
             other_count++;
     }
 
-    json_out("{\"ok\":true,\"stage\":\"shader_corpus\",\"total\":%u,\"vs\":%u,\"ps\":%u,\"cs\":%u,\"gs\":%u,\"other\":%u}",
-             (uint32_t)shader_blobs.size(), vs_count, ps_count, cs_count, gs_count, other_count);
+    json_out(
+        "{\"ok\":true,\"stage\":\"shader_corpus\",\"total\":%u,\"vs\":%u,\"ps\":%u,\"cs\":%u,\"gs\":%u,\"other\":%u}",
+        (uint32_t)shader_blobs.size(), vs_count, ps_count, cs_count, gs_count, other_count);
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = window_proc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"MetalSharpFullStress";
     RegisterClassW(&wc);
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName,
-                                L"MetalSharp D3D12 Full Stress - Subnautica Shader Corpus",
-                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT,
-                                nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"MetalSharp D3D12 Full Stress - Subnautica Shader Corpus",
+                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT, nullptr, nullptr,
+                                wc.hInstance, nullptr);
     if (!hwnd) {
         fail_json("create_window", HRESULT_FROM_WIN32(GetLastError()));
         return 2;
@@ -1280,8 +1307,8 @@ int main() {
             adapter->GetDesc1(&desc);
             char name[128] = {};
             WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name), nullptr, nullptr);
-            json_out("{\"ok\":true,\"stage\":\"adapter\",\"index\":%u,\"name\":\"%s\",\"vram_mb\":%llu}",
-                     adapter_index, name, (unsigned long long)(desc.DedicatedVideoMemory / (1024 * 1024)));
+            json_out("{\"ok\":true,\"stage\":\"adapter\",\"index\":%u,\"name\":\"%s\",\"vram_mb\":%llu}", adapter_index,
+                     name, (unsigned long long)(desc.DedicatedVideoMemory / (1024 * 1024)));
             adapter->Release();
             adapter_index++;
         }
@@ -1300,7 +1327,8 @@ int main() {
     fl_query.pFeatureLevelsRequested = levels;
     fl_query.NumFeatureLevels = 5;
     device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &fl_query, sizeof(fl_query));
-    json_out("{\"ok\":true,\"stage\":\"feature_level\",\"max_supported\":%u}", (unsigned)fl_query.MaxSupportedFeatureLevel);
+    json_out("{\"ok\":true,\"stage\":\"feature_level\",\"max_supported\":%u}",
+             (unsigned)fl_query.MaxSupportedFeatureLevel);
 
     D3D12_FEATURE_DATA_SHADER_MODEL sm_query = {};
     sm_query.HighestShaderModel = D3D_SHADER_MODEL_6_6;
@@ -1355,7 +1383,8 @@ int main() {
         else
             pso_fail++;
     }
-    json_out("{\"ok\":true,\"stage\":\"builtin_psos\",\"total\":%u,\"ok\":%u,\"fail\":%u}", test_pso_count, pso_ok, pso_fail);
+    json_out("{\"ok\":true,\"stage\":\"builtin_psos\",\"total\":%u,\"ok\":%u,\"fail\":%u}", test_pso_count, pso_ok,
+             pso_fail);
 
     json_out("{\"ok\":true,\"stage\":\"dxbc_pso_test_begin\",\"corpus_size\":%u}", (uint32_t)shader_blobs.size());
 
@@ -1385,21 +1414,23 @@ int main() {
         } else {
             dxbc_fail++;
             if (dxbc_fail <= 20) {
-                json_out("{\"ok\":false,\"stage\":\"dxbc_pso_create\",\"pair\":%u,\"hr\":\"%s\",\"vs_size\":%u,\"ps_size\":%u}",
+                json_out("{\"ok\":false,\"stage\":\"dxbc_pso_create\",\"pair\":%u,\"hr\":\"%s\",\"vs_size\":%u,\"ps_"
+                         "size\":%u}",
                          i, hr_hex(pso_hr).c_str(), (uint32_t)vs.data.size(), (uint32_t)ps.data.size());
             }
         }
 
         if (dxbc_tested % 50 == 0) {
-            json_out("{\"ok\":true,\"stage\":\"dxbc_pso_progress\",\"tested\":%u,\"pass\":%u,\"fail\":%u}",
-                     dxbc_tested, dxbc_pass, dxbc_fail);
+            json_out("{\"ok\":true,\"stage\":\"dxbc_pso_progress\",\"tested\":%u,\"pass\":%u,\"fail\":%u}", dxbc_tested,
+                     dxbc_pass, dxbc_fail);
         }
     }
 
-    json_out("{\"ok\":true,\"stage\":\"dxbc_pso_test_done\",\"tested\":%u,\"pass\":%u,\"fail\":%u}",
-             dxbc_tested, dxbc_pass, dxbc_fail);
+    json_out("{\"ok\":true,\"stage\":\"dxbc_pso_test_done\",\"tested\":%u,\"pass\":%u,\"fail\":%u}", dxbc_tested,
+             dxbc_pass, dxbc_fail);
 
-    json_out("{\"ok\":true,\"stage\":\"render_loop_start\",\"pso_count\":%u,\"msg\":\"Cycling through PSOs with draw calls\"}",
+    json_out("{\"ok\":true,\"stage\":\"render_loop_start\",\"pso_count\":%u,\"msg\":\"Cycling through PSOs with draw "
+             "calls\"}",
              test_pso_count);
 
     bool running = true;
@@ -1460,11 +1491,12 @@ int main() {
             last_pso_idx = pso_idx;
             if (frame > 0) {
                 char snap[256];
-                std::snprintf(snap, sizeof(snap), "%s\\frame_%u_pso_%s.bmp",
-                              screen_dir.c_str(), frame, current_pso.name);
+                std::snprintf(snap, sizeof(snap), "%s\\frame_%u_pso_%s.bmp", screen_dir.c_str(), frame,
+                              current_pso.name);
                 uint64_t nz = count_nonzero_readback(fr, device, queue, snap);
                 total_nonzero += nz;
-                json_out("{\"ok\":true,\"stage\":\"pso_transition\",\"frame\":%u,\"pso\":\"%s\",\"nonzero_px\":%llu,\"screen\":\"%s\"}",
+                json_out("{\"ok\":true,\"stage\":\"pso_transition\",\"frame\":%u,\"pso\":\"%s\",\"nonzero_px\":%llu,"
+                         "\"screen\":\"%s\"}",
                          frame, current_pso.name, (unsigned long long)nz, snap);
             }
         }
@@ -1474,7 +1506,8 @@ int main() {
             std::snprintf(snap, sizeof(snap), "%s\\heartbeat_%u.bmp", screen_dir.c_str(), frame);
             uint64_t nz = count_nonzero_readback(fr, device, queue, snap);
             total_nonzero += nz;
-            json_out("{\"ok\":true,\"stage\":\"render_heartbeat\",\"frame\":%u,\"pso\":\"%s\",\"nonzero_px\":%llu,\"screen\":\"%s\"}",
+            json_out("{\"ok\":true,\"stage\":\"render_heartbeat\",\"frame\":%u,\"pso\":\"%s\",\"nonzero_px\":%llu,"
+                     "\"screen\":\"%s\"}",
                      frame, current_pso.name, (unsigned long long)nz, snap);
         }
 
@@ -1494,9 +1527,8 @@ int main() {
     json_out("{\"ok\":true,\"stage\":\"complete\",\"frames\":%u,\"draws_ok\":%u,\"draws_fail\":%u,"
              "\"dxbc_tested\":%u,\"dxbc_pass\":%u,\"dxbc_fail\":%u,"
              "\"builtin_pso_ok\":%u,\"total_nonzero_px\":%llu,\"exit\":\"%s\"}",
-             frame, draws_ok, draws_fail,
-             dxbc_tested, dxbc_pass, dxbc_fail,
-             pso_ok, (unsigned long long)total_nonzero, exit_reason);
+             frame, draws_ok, draws_fail, dxbc_tested, dxbc_pass, dxbc_fail, pso_ok, (unsigned long long)total_nonzero,
+             exit_reason);
 
     return 0;
 }

@@ -1111,8 +1111,7 @@ static ProbeResult probe_dxil_texture_color_output() {
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         D3D12_RESOURCE_DESC upload_desc = buffer_desc(src_upload_bytes);
         hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
-                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                             IID_PPV_ARGS(&texture_upload));
+                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&texture_upload));
     }
     if (SUCCEEDED(hr)) {
         uint8_t* mapped = nullptr;
@@ -1141,8 +1140,7 @@ static ProbeResult probe_dxil_texture_color_output() {
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         D3D12_RESOURCE_DESC vb_desc = buffer_desc(sizeof(vertices));
         hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
-                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                             IID_PPV_ARGS(&vertex_buffer));
+                                             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertex_buffer));
         if (SUCCEEDED(hr)) {
             void* mapped = nullptr;
             D3D12_RANGE read_range = {0, 0};
@@ -1163,8 +1161,7 @@ static ProbeResult probe_dxil_texture_color_output() {
         clear.Color[2] = 0.0f;
         clear.Color[3] = 0.0f;
         hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &rt_desc,
-                                             D3D12_RESOURCE_STATE_RENDER_TARGET, &clear,
-                                             IID_PPV_ARGS(&render_target));
+                                             D3D12_RESOURCE_STATE_RENDER_TARGET, &clear, IID_PPV_ARGS(&render_target));
     }
     if (SUCCEEDED(hr)) {
         device->GetCopyableFootprints(&rt_desc, 0, 1, 0, &rb_footprint, &rb_rows, &rb_row_size, &rb_bytes);
