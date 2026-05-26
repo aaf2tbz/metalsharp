@@ -5,7 +5,9 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 
 #define SCTRACE(fmt, ...) DXMTD3D12Trace("SwapChain", fmt, ##__VA_ARGS__)
@@ -61,6 +63,135 @@ static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
   default:
     return false;
   }
+}
+
+struct SwapchainReadbackProbe {
+  WMT::Reference<WMT::Buffer> buffer;
+  void *mapped = nullptr;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t bytes_per_row = 0;
+  uint64_t present_count = 0;
+};
+
+static bool SwapchainReadbackEnabled() {
+  static bool enabled = [] {
+    const char *raw = std::getenv("DXMT_D3D12_SWAPCHAIN_READBACK");
+    return raw && raw[0] && raw[0] != '0';
+  }();
+  return enabled;
+}
+
+static uint64_t SwapchainReadbackInterval() {
+  static uint64_t interval = [] {
+    const char *raw = std::getenv("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL");
+    if (!raw || !raw[0])
+      return 30ull;
+
+    char *end = nullptr;
+    auto parsed = std::strtoull(raw, &end, 10);
+    if (end == raw || parsed == 0)
+      return 30ull;
+    return parsed;
+  }();
+  return interval;
+}
+
+static bool ShouldReadbackPresent(uint64_t present_count) {
+  if (!SwapchainReadbackEnabled())
+    return false;
+  return present_count <= 12 || (present_count % SwapchainReadbackInterval()) == 0;
+}
+
+static uint32_t AlignTo(uint32_t value, uint32_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+static SwapchainReadbackProbe EncodeSwapchainReadback(
+    WMT::Device device, WMT::CommandBuffer cmdbuf, WMT::Texture texture,
+    UINT width, UINT height, DXGI_FORMAT format, uint64_t present_count) {
+  SwapchainReadbackProbe probe = {};
+  if (!texture.handle || !width || !height || !ShouldReadbackPresent(present_count))
+    return probe;
+
+  probe.width = std::min<uint32_t>(width, 1920u);
+  probe.height = std::min<uint32_t>(height, 1080u);
+  probe.bytes_per_row = AlignTo(probe.width * 4u, 256u);
+  probe.present_count = present_count;
+
+  WMTBufferInfo info = {};
+  info.length = uint64_t(probe.bytes_per_row) * probe.height;
+  info.options = WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+  info.memory.set(nullptr);
+  probe.buffer = device.newBuffer(info);
+  probe.mapped = info.memory.get();
+  if (!probe.buffer.handle || !probe.mapped) {
+    Logger::info(str::format("M12 swapchain readback unavailable count=",
+                             present_count, " fmt=", (unsigned)format));
+    return {};
+  }
+
+  auto blit = cmdbuf.blitCommandEncoder();
+  if (!blit.handle) {
+    Logger::info(str::format("M12 swapchain readback skipped: no blit encoder count=",
+                             present_count));
+    return {};
+  }
+
+  struct wmtcmd_blit_copy_from_texture_to_buffer copy = {};
+  copy.type = WMTBlitCommandCopyFromTextureToBuffer;
+  copy.next.set(nullptr);
+  copy.src = texture;
+  copy.slice = 0;
+  copy.level = 0;
+  copy.origin = {0, 0, 0};
+  copy.size = {probe.width, probe.height, 1};
+  copy.dst = probe.buffer;
+  copy.offset = 0;
+  copy.bytes_per_row = probe.bytes_per_row;
+  copy.bytes_per_image = probe.bytes_per_row * probe.height;
+  blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
+  blit.endEncoding();
+  return probe;
+}
+
+static void LogSwapchainReadback(const SwapchainReadbackProbe &probe,
+                                 DXGI_FORMAT format) {
+  if (!probe.mapped || !probe.width || !probe.height)
+    return;
+
+  uint64_t nonzero_pixels = 0;
+  uint64_t nonzero_bytes = 0;
+  uint8_t max_byte = 0;
+  uint64_t checksum = 1469598103934665603ull;
+  auto *rows = static_cast<const uint8_t *>(probe.mapped);
+  for (uint32_t y = 0; y < probe.height; y++) {
+    auto *row = rows + uint64_t(y) * probe.bytes_per_row;
+    for (uint32_t x = 0; x < probe.width; x++) {
+      auto *px = row + x * 4u;
+      bool pixel_nonzero = false;
+      for (uint32_t i = 0; i < 4; i++) {
+        auto value = px[i];
+        if (value) {
+          pixel_nonzero = true;
+          nonzero_bytes++;
+          max_byte = std::max(max_byte, value);
+        }
+        checksum ^= value;
+        checksum *= 1099511628211ull;
+      }
+      if (pixel_nonzero)
+        nonzero_pixels++;
+    }
+  }
+
+  Logger::info(str::format("M12 swapchain readback count=", probe.present_count,
+                           " fmt=", (unsigned)format,
+                           " sample=", probe.width, "x", probe.height,
+                           " nonzero_pixels=", nonzero_pixels,
+                           " nonzero_bytes=", nonzero_bytes,
+                           " max_byte=", (unsigned)max_byte,
+                           " checksum=0x", std::hex, checksum));
 }
 
 MTLD3D12SwapChain::MTLD3D12SwapChain(
@@ -567,6 +698,9 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
   }
 
   if (!force_raw_blit && m_presenter && src_texture.handle) {
+    auto readback_probe = EncodeSwapchainReadback(
+        m_dxgi_device->GetMTLDevice(), cmdbuf, src_texture, m_desc.Width,
+        m_desc.Height, m_desc.Format, m_present_count);
     auto state = m_presenter->synchronizeLayerProperties();
     auto drawable = m_presenter->encodeCommands(
         cmdbuf, src_texture, state.metadata,
@@ -594,6 +728,10 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
+    if (readback_probe.mapped) {
+      cmdbuf.waitUntilCompleted();
+      LogSwapchainReadback(readback_probe, m_desc.Format);
+    }
   } else {
     auto drawable = m_layer.nextDrawable();
     if (!drawable.handle) {
@@ -617,6 +755,9 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
                                " size=", m_desc.Width, "x", m_desc.Height));
     }
 
+    auto readback_probe = EncodeSwapchainReadback(
+        m_dxgi_device->GetMTLDevice(), cmdbuf, src_texture, m_desc.Width,
+        m_desc.Height, m_desc.Format, m_present_count);
     if (src_texture.handle && dst_texture.handle) {
       auto blit = cmdbuf.blitCommandEncoder();
       uint64_t _sc_eid = __atomic_add_fetch(&g_sc_enc_id, 1, __ATOMIC_SEQ_CST);
@@ -645,6 +786,10 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
+    if (readback_probe.mapped) {
+      cmdbuf.waitUntilCompleted();
+      LogSwapchainReadback(readback_probe, m_desc.Format);
+    }
   }
 
   m_current_buffer = (m_current_buffer + 1) % (m_desc.BufferCount ? m_desc.BufferCount : 2);

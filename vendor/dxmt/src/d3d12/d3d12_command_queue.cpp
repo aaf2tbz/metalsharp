@@ -48,6 +48,14 @@ bool DXMTD3D12AutopresentSwapchain() {
   return enabled != 0;
 }
 
+bool DXMTD3D12DisableSwapchainCull() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_DISABLE_SWAPCHAIN_CULL");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 const char *TraceCompileFailureStage(MTLD3D12PipelineState *pso) {
   static thread_local std::string stage;
   stage = pso ? pso->GetCompileFailureStage() : "no_pso";
@@ -2154,6 +2162,8 @@ struct ReplayState {
       cull_mode = WMTCullModeBack;
     else if (rast.CullMode == D3D12_CULL_MODE_FRONT)
       cull_mode = WMTCullModeFront;
+    if (HasSwapchainRenderTarget() && DXMTD3D12DisableSwapchainCull())
+      cull_mode = WMTCullModeNone;
     WMTDepthClipMode depth_clip =
         rast.DepthClipEnable ? WMTDepthClipModeClip : WMTDepthClipModeClamp;
     WMTWinding winding = rast.FrontCounterClockwise ? WMTWindingCounterClockwise
