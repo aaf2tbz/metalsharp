@@ -840,7 +840,11 @@ struct WMTRenderPipelineInfo {
   uint8_t num_binary_archives_for_lookup;
   bool fail_on_binary_archive_miss;
   struct WMTVertexDescriptor *vertex_descriptor;
-  uint8_t padding[6];
+  struct WMTConstMemoryPointer vertex_linked_functions;
+  struct WMTConstMemoryPointer fragment_linked_functions;
+  uint8_t num_vertex_linked_functions;
+  uint8_t num_fragment_linked_functions;
+  uint8_t padding[4];
 };
 
 struct WMTMeshRenderPipelineInfo {

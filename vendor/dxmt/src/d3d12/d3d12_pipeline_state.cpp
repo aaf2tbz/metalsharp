@@ -1005,6 +1005,24 @@ bool FileExistsNonEmpty(const std::string &path) {
   return size > 0;
 }
 
+bool ReadBinaryFile(const std::string &path, std::vector<uint8_t> &out) {
+  FILE *file = fopen(path.c_str(), "rb");
+  if (!file)
+    return false;
+  fseek(file, 0, SEEK_END);
+  long size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+  if (size <= 0) {
+    fclose(file);
+    return false;
+  }
+  out.resize((size_t)size);
+  size_t read = fread(out.data(), 1, (size_t)size, file);
+  fclose(file);
+  out.resize(read);
+  return read == (size_t)size;
+}
+
 const char *OfflineMetalPixelFormatName(WMTPixelFormat format) {
   switch (format) {
   case WMTPixelFormatR8Unorm:
@@ -1059,6 +1077,14 @@ std::string OfflineShaderMetallibPath(const void *bytecode, SIZE_T size,
   size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
   auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
   return cache_path + ".metallib";
+}
+
+std::string OfflineShaderStageInMetallibPath(
+    const void *bytecode, SIZE_T size, ShaderType type,
+    const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
+  auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
+  return cache_path + ".stageIn.metallib";
 }
 
 std::string OfflineShaderReflectionPath(const void *bytecode, SIZE_T size,
@@ -1718,6 +1744,7 @@ bool MTLD3D12PipelineState::CompileShader(
 
           std::string cache_path = BuildShaderCachePath(HexHash(hash).c_str());
           char dxbc_path[256], metallib_path[256], reflection_path[256],
+              vertex_layout_path[256], stage_in_metallib_path[256],
               module_summary_path[256], dxil_report_path[256],
               metallib_error_path[256], converter_fail_path[256];
           snprintf(dxbc_path, sizeof(dxbc_path), "%s.dxbc", cache_path.c_str());
@@ -1725,6 +1752,10 @@ bool MTLD3D12PipelineState::CompileShader(
                    cache_path.c_str());
           snprintf(reflection_path, sizeof(reflection_path), "%s.json",
                    cache_path.c_str());
+          snprintf(vertex_layout_path, sizeof(vertex_layout_path),
+                   "%s.vertex-layout.json", cache_path.c_str());
+          snprintf(stage_in_metallib_path, sizeof(stage_in_metallib_path),
+                   "%s.stageIn.metallib", cache_path.c_str());
           snprintf(module_summary_path, sizeof(module_summary_path),
                    "%s.module.txt", cache_path.c_str());
           snprintf(dxil_report_path, sizeof(dxil_report_path),
@@ -1735,8 +1766,28 @@ bool MTLD3D12PipelineState::CompileShader(
                    "%s.msc.fail", cache_path.c_str());
           EnsureShaderCacheDir();
 
+          const bool needs_stage_in =
+              type == ShaderType::Vertex && m_input_layout.NumElements > 0 &&
+              m_input_layout.pInputElementDescs;
+          if (needs_stage_in &&
+              !WriteMetalShaderConverterVertexLayout(
+                  m_device, m_input_layout, vertex_layout_path)) {
+            return RecordCompileFailure(
+                "shader/msc_vertex_layout",
+                str::format(func_name,
+                            " failed to write MetalShaderConverter vertex "
+                            "layout: ",
+                            vertex_layout_path));
+          }
+
           FILE *mf = fopen(metallib_path, "rb");
           FILE *ff = fopen(converter_fail_path, "rb");
+          FILE *sf = needs_stage_in ? fopen(stage_in_metallib_path, "rb")
+                                    : nullptr;
+          if (needs_stage_in && mf && !sf) {
+            fclose(mf);
+            mf = nullptr;
+          }
           if (!mf) {
             PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
             DumpShaderBlob(dxbc_path, bytecode, size);
@@ -1745,10 +1796,19 @@ bool MTLD3D12PipelineState::CompileShader(
               if (rf) {
                 fclose(rf);
                 mf = fopen(metallib_path, "rb");
-                if (mf) {
+                if (needs_stage_in) {
+                  if (sf)
+                    fclose(sf);
+                  sf = fopen(stage_in_metallib_path, "rb");
+                }
+                if (mf && (!needs_stage_in || sf)) {
                   PSTRACE("  external metallib cache hit after %u waits",
                           attempt + 1);
                   break;
+                }
+                if (mf && needs_stage_in && !sf) {
+                  fclose(mf);
+                  mf = nullptr;
                 }
               }
               ff = fopen(converter_fail_path, "rb");
@@ -1761,6 +1821,8 @@ bool MTLD3D12PipelineState::CompileShader(
               Sleep(20);
             }
           }
+          if (sf)
+            fclose(sf);
 
           if (ff) {
             fseek(ff, 0, SEEK_END);
@@ -3436,6 +3498,8 @@ d3d12_geometry_fallback_to_vs_ps:
 
   WMTRenderPipelineInfo info;
   WMT::InitializeRenderPipelineInfo(info);
+  std::vector<WMT::Reference<WMT::Function>> vertex_linked_refs;
+  std::vector<obj_handle_t> vertex_linked_handles;
 
   if (vs_func.handle)
     info.vertex_function = vs_func.handle;
@@ -3480,6 +3544,68 @@ d3d12_geometry_fallback_to_vs_ps:
       Logger::warn("D3D12 diagnostic fragment shader requested but fallback "
                    "function was unavailable");
     }
+  }
+
+  if (m_vs_uses_stage_in && m_input_layout.NumElements > 0 &&
+      m_input_layout.pInputElementDescs &&
+      !DXMTD3D12ForceDiagnosticFullscreen()) {
+    const std::string stage_in_path = OfflineShaderStageInMetallibPath(
+        m_vs.data(), m_vs.size(), ShaderType::Vertex, &m_input_layout);
+    std::vector<uint8_t> stage_in_data;
+    if (!ReadBinaryFile(stage_in_path, stage_in_data)) {
+      return RecordCompileFailure(
+          "pso/msc_stage_in_missing",
+          str::format("DXIL vertex shader requires MetalShaderConverter "
+                      "stage-in function but sidecar is missing: ",
+                      stage_in_path));
+    }
+
+    auto dispatch_data =
+        WMT::MakeDispatchData(stage_in_data.data(), stage_in_data.size());
+    WMT::Reference<WMT::Error> stage_in_lib_err;
+    auto stage_in_library = wmt_device.newLibrary(dispatch_data, stage_in_lib_err);
+    if (stage_in_lib_err.handle) {
+      auto err_desc_string = stage_in_lib_err.description().getUTF8String();
+      const char *err_desc =
+          err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
+      return RecordCompileFailure(
+          "pso/msc_stage_in_library",
+          str::format("MetalShaderConverter stage-in library failed: ",
+                      err_desc ? err_desc : "unknown", "; metallib ",
+                      stage_in_path));
+    }
+
+    WMT::Reference<WMT::Error> stage_in_fn_err;
+    WMT::Reference<WMT::Function> stage_in_func =
+        stage_in_library.newFunctionWithDescriptor(
+            "irconverter_stage_in_shader", nullptr, nullptr, 0,
+            WMTFunctionOptionCompileToBinary, stage_in_fn_err);
+    std::string stage_in_error =
+        stage_in_fn_err.handle ? stage_in_fn_err.description().getUTF8String()
+                               : std::string();
+    if (!stage_in_func.handle)
+      stage_in_func =
+          stage_in_library.newFunction("irconverter_stage_in_shader");
+    if (!stage_in_func.handle)
+      stage_in_func = stage_in_library.newFunction(
+          "irconverter_stage_in_shader.MTL_VISIBLE_FN_REF");
+    if (!stage_in_func.handle) {
+      return RecordCompileFailure(
+          "pso/msc_stage_in_function",
+          str::format("MetalShaderConverter stage-in function lookup failed: ",
+                      stage_in_error.empty() ? "unknown" : stage_in_error,
+                      "; metallib ", stage_in_path));
+    }
+
+    vertex_linked_refs.push_back(stage_in_func);
+    for (auto &func : vertex_linked_refs)
+      vertex_linked_handles.push_back(func.handle);
+    info.vertex_linked_functions.set(vertex_linked_handles.data());
+    info.num_vertex_linked_functions =
+        (uint8_t)std::min<size_t>(vertex_linked_handles.size(), UINT8_MAX);
+    Logger::info(str::format(
+        "D3D12 linked MetalShaderConverter stage-in function for VS ",
+        GetVSCacheHash(), " sidecar=", stage_in_path));
   }
 
   // D3D12 wireframe is still a rasterized fill mode; it must not be lowered to

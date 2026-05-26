@@ -829,6 +829,25 @@ _MTLDevice_newRenderPipelineState(void *obj) {
   descriptor.vertexFunction = (id<MTLFunction>)info->vertex_function;
   descriptor.fragmentFunction = (id<MTLFunction>)info->fragment_function;
 
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000
+  if (@available(macOS 13, *)) {
+    if (info->num_vertex_linked_functions && info->vertex_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.functions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->vertex_linked_functions.ptr
+                                             count:info->num_vertex_linked_functions];
+      descriptor.vertexLinkedFunctions = linked;
+      [linked release];
+    }
+    if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.functions = [NSArray arrayWithObjects:(id<MTLFunction> *)info->fragment_linked_functions.ptr
+                                             count:info->num_fragment_linked_functions];
+      descriptor.fragmentLinkedFunctions = linked;
+      [linked release];
+    }
+  }
+#endif
+
   if (info->vertex_descriptor &&
       (info->vertex_descriptor->attribute_count > 0 || info->vertex_descriptor->layout_count > 0)) {
     MTLVertexDescriptor *vd = [[MTLVertexDescriptor alloc] init];

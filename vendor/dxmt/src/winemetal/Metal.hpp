@@ -1161,6 +1161,10 @@ InitializeRenderPipelineInfo(WMTRenderPipelineInfo &info) {
   info.num_binary_archives_for_lookup = 0;
   info.fail_on_binary_archive_miss = false;
   info.vertex_descriptor = nullptr;
+  info.vertex_linked_functions.set(nullptr);
+  info.fragment_linked_functions.set(nullptr);
+  info.num_vertex_linked_functions = 0;
+  info.num_fragment_linked_functions = 0;
 }
 
 inline void
