@@ -126,6 +126,13 @@ build_probe \
   -lgdi32 \
   -o "$OUT_DIR/probe_subnautica_stress_game.exe"
 
+build_probe \
+  "$SDK_DIR/probes/probe_subnautica_full_stress/probe_subnautica_full_stress.cpp" \
+  -lole32 \
+  -luuid \
+  -lgdi32 \
+  -o "$OUT_DIR/probe_subnautica_full_stress.exe"
+
 build_mini_probe 1 create_device
 build_mini_probe 2 command_queue
 build_mini_probe 3 swapchain_present -lole32 -luuid -lgdi32
@@ -138,6 +145,7 @@ build_mini_probe 9 geometry_shader_pso
 build_mini_probe 10 mesh_object_shader_pso
 build_mini_probe 11 texture_sample
 build_mini_probe 12 subnautica_geometry_dxil_replay
+build_mini_probe 13 dxil_texture_color_output
 
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
@@ -150,6 +158,7 @@ echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
 echo "$OUT_DIR/probe_subnautica_stress_game.exe"
+echo "$OUT_DIR/probe_subnautica_full_stress.exe"
 echo "$OUT_DIR/probe_mini_create_device.exe"
 echo "$OUT_DIR/probe_mini_command_queue.exe"
 echo "$OUT_DIR/probe_mini_swapchain_present.exe"
@@ -162,3 +171,4 @@ echo "$OUT_DIR/probe_mini_geometry_shader_pso.exe"
 echo "$OUT_DIR/probe_mini_mesh_object_shader_pso.exe"
 echo "$OUT_DIR/probe_mini_texture_sample.exe"
 echo "$OUT_DIR/probe_mini_subnautica_geometry_dxil_replay.exe"
+echo "$OUT_DIR/probe_mini_dxil_texture_color_output.exe"

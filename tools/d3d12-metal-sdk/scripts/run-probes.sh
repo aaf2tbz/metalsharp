@@ -8,6 +8,8 @@ WINE_BIN="${WINE_BIN:-wine}"
 WINE_PREFIX="${WINEPREFIX:-}"
 DXMT_RUNTIME="${DXMT_RUNTIME:-}"
 RESULTS_DIR="$SDK_DIR/results"
+SHADER_CACHE_DIR="${DXMT_SHADER_CACHE_PATH:-}"
+METAL_SHADER_CONVERTER="${METAL_SHADER_CONVERTER:-}"
 AGILITY_SDK_VERSION="${AGILITY_SDK_VERSION:-}"
 AGILITY_SDK_PATH="${AGILITY_SDK_PATH:-}"
 RUN_LOADER=1
@@ -21,6 +23,7 @@ RUN_SHADERS=1
 RUN_RENDER_HEADLESS=1
 RUN_MINI=1
 RUN_PRESENT_WINDOWED=0
+RUN_FULL_STRESS=0
 MINI_PROBES=(
   create_device
   command_queue
@@ -34,6 +37,7 @@ MINI_PROBES=(
   mesh_object_shader_pso
   texture_sample
   subnautica_geometry_dxil_replay
+  dxil_texture_color_output
 )
 
 usage() {
@@ -64,6 +68,7 @@ Options:
   --mini-only           Run only one-purpose D3D12 mini-app probes.
   --windowed-present    Run the optional probe_present_windowed window/swapchain proof.
   --no-windowed-present Skip probe_present_windowed.
+  --full-stress         Run the full Subnautica DXBC shader corpus stress probe.
   -h, --help            Show this help.
 
 Examples:
@@ -168,6 +173,10 @@ while [[ $# -gt 0 ]]; do
       RUN_PRESENT_WINDOWED=0
       shift
       ;;
+    --full-stress)
+      RUN_FULL_STRESS=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -270,6 +279,9 @@ if [[ "$NEED_BUILD" == "1" ]]; then
 fi
 
 mkdir -p "$RESULTS_DIR"
+if [[ -z "$SHADER_CACHE_DIR" ]]; then
+  SHADER_CACHE_DIR="$RESULTS_DIR/shader-cache-$PROFILE"
+fi
 RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
 CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
@@ -297,12 +309,106 @@ run_probe_exe() {
     WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
     DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
     DXMT_D3D12_ENABLE_GEOMETRY_MESH="$enable_geometry_mesh" \
     DXMT_D3D12_FAIL_DEFERRED_PSO="$strict_deferred_pso" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     "$WINE_BIN" "$exe" > "$result_file"
   )
   echo "$result_file"
+}
+
+convert_dxil_shader_cache() {
+  local cache_dir="$1"
+  local converter="$METAL_SHADER_CONVERTER"
+  if [[ -z "$converter" ]]; then
+    converter="$(command -v metal-shaderconverter || true)"
+  fi
+  if [[ -z "$converter" || ! -x "$converter" ]]; then
+    echo "metal-shaderconverter not found; DXIL probes may fail until shader cache is prebuilt" >&2
+    return 0
+  fi
+
+  local dxbc
+  shopt -s nullglob
+  for dxbc in "$cache_dir"/*.dxbc; do
+    local base="${dxbc%.dxbc}"
+    local metallib="$base.metallib"
+    local reflection="$base.json"
+    local layout="$base.vertex-layout.json"
+    if [[ -s "$metallib" && -s "$reflection" ]]; then
+      continue
+    fi
+    if [[ -s "$layout" ]]; then
+      "$converter" -o "$metallib" "$dxbc" \
+        --output-reflection-file="$reflection" \
+        --deployment-os=macOS \
+        --minimum-os-build-version=15.0.0 \
+        --vertex-input-layout-file="$layout" >/dev/null
+    else
+      "$converter" -o "$metallib" "$dxbc" \
+        --output-reflection-file="$reflection" \
+        --deployment-os=macOS \
+        --minimum-os-build-version=15.0.0 >/dev/null
+    fi
+  done
+  shopt -u nullglob
+}
+
+prepare_dxil_color_probe() {
+  local hlsl="$SDK_DIR/out/bin/probe_dxil_color.hlsl"
+  local vs="$SDK_DIR/out/bin/probe_dxil_color_vs.cso"
+  local ps="$SDK_DIR/out/bin/probe_dxil_color_ps.cso"
+
+  cat > "$hlsl" <<'HLSL'
+struct VSIn {
+  float3 pos : POSITION;
+  float2 uv : TEXCOORD0;
+};
+
+struct VSOut {
+  float4 pos : SV_POSITION;
+  float2 uv : TEXCOORD0;
+};
+
+Texture2D tx : register(t0);
+SamplerState smp : register(s0);
+
+VSOut vs_main(VSIn input) {
+  VSOut output;
+  output.pos = float4(input.pos, 1.0);
+  output.uv = input.uv;
+  return output;
+}
+
+float4 ps_main(VSOut input) : SV_Target0 {
+  return tx.Sample(smp, input.uv);
+}
+HLSL
+
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E vs_main -T vs_6_0 -Fo probe_dxil_color_vs.cso probe_dxil_color.hlsl >/dev/null
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E ps_main -T ps_6_0 -Fo probe_dxil_color_ps.cso probe_dxil_color.hlsl >/dev/null
+  )
+
+  mkdir -p "$SHADER_CACHE_DIR"
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" probe_mini_dxil_texture_color_output.exe >/dev/null || true
+  )
+  convert_dxil_shader_cache "$SHADER_CACHE_DIR"
 }
 
 cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
@@ -316,6 +422,7 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
   "unix_runtime": "$UNIX_DIR",
   "wine_unix_runtime": "$WINE_UNIX_DIR",
   "dyld_runtime_path": "$DXMT_DYLD_LIBRARY_PATH",
+  "shader_cache": "$SHADER_CACHE_DIR",
   "winemetal_unixlib": "$DXMT_WINEMETAL_UNIXLIB_NAME",
   "winemetal_so": "$UNIX_DIR/winemetal.so",
   "required_windows_dlls": [
@@ -327,6 +434,10 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
   ]
 }
 EOF
+
+if [[ "$RUN_MINI" == "1" ]]; then
+  prepare_dxil_color_probe
+fi
 
 if [[ "$RUN_LOADER" == "1" ]]; then
   # DXMT is shipped as PE DLLs; native-first avoids Wine resolving stale builtin shims.
@@ -480,4 +591,25 @@ if [[ "$RUN_PRESENT_WINDOWED" == "1" ]]; then
     "$WINE_BIN" "$PRESENT_WINDOWED_PROBE_EXE" > "$PRESENT_WINDOWED_RESULT_FILE"
   )
   echo "$PRESENT_WINDOWED_RESULT_FILE"
+fi
+
+FULL_STRESS_RESULT_DIR="$RESULTS_DIR/full-stress"
+FULL_STRESS_PROBE_EXE="$SDK_DIR/out/bin/probe_subnautica_full_stress.exe"
+
+if [[ "$RUN_FULL_STRESS" == "1" ]]; then
+  mkdir -p "$FULL_STRESS_RESULT_DIR"
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    DXMT_SHADER_CACHE="/tmp/dxmt_shader_cache" \
+    "$WINE_BIN" "$FULL_STRESS_PROBE_EXE" \
+      > "$FULL_STRESS_RESULT_DIR/probe_full_stress.stdout.jsonl" \
+      2> "$FULL_STRESS_RESULT_DIR/probe_full_stress.stderr.log"
+  )
+  echo "$FULL_STRESS_RESULT_DIR"
 fi

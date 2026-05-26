@@ -42,6 +42,7 @@ namespace dxmt {
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
 constexpr uint32_t kMetalShaderConverterStageInAttributeBase = 11;
+constexpr uint32_t kMetalShaderConverterVertexBufferBindPoint = 6;
 
 bool DXMTD3D12AsyncPipelineCompileEnabled() {
   static int enabled = []() {
@@ -98,6 +99,14 @@ bool DXMTD3D12ForceDiagnosticFragment() {
 bool DXMTD3D12ForceDiagnosticFullscreen() {
   static int enabled = []() {
     const char *value = std::getenv("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12ShaderDiagnosticLogsEnabled() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_SHADER_DIAGNOSTICS");
     return value && value[0] && std::strcmp(value, "0") != 0;
   }();
   return enabled != 0;
@@ -464,6 +473,28 @@ bool ParseAttributeRegisterName(std::string_view name, uint32_t &out_register) {
   return true;
 }
 
+bool ParseSemanticNameWithTrailingIndex(std::string_view name,
+                                        std::string &out_semantic,
+                                        uint32_t &out_index) {
+  if (name.empty())
+    return false;
+
+  size_t digit_start = name.size();
+  while (digit_start > 0 &&
+         std::isdigit((unsigned char)name[digit_start - 1]))
+    digit_start--;
+  if (digit_start == name.size() || digit_start == 0)
+    return false;
+
+  uint32_t value = 0;
+  for (size_t i = digit_start; i < name.size(); i++)
+    value = value * 10 + (uint32_t)(name[i] - '0');
+
+  out_semantic.assign(name.substr(0, digit_start));
+  out_index = value;
+  return !out_semantic.empty();
+}
+
 bool StageInSemanticMatchesInputElement(
     const StageInVertexAttributeInfo &stage_in_attr,
     const D3D12_INPUT_ELEMENT_DESC &element) {
@@ -474,13 +505,22 @@ bool StageInSemanticMatchesInputElement(
                  stage_in_attr.semantic_name.c_str()) == 0)
     return true;
 
+  std::string reflected_base;
   uint32_t reflected_semantic_index = 0;
+  if (ParseSemanticNameWithTrailingIndex(stage_in_attr.semantic_name,
+                                         reflected_base,
+                                         reflected_semantic_index)) {
+    return strcasecmp(element.SemanticName, reflected_base.c_str()) == 0 &&
+           element.SemanticIndex == reflected_semantic_index;
+  }
+
+  uint32_t reflected_attribute_index = 0;
   if (!ParseAttributeRegisterName(stage_in_attr.semantic_name,
-                                  reflected_semantic_index))
+                                  reflected_attribute_index))
     return false;
 
   return strcasecmp(element.SemanticName, "ATTRIBUTE") == 0 &&
-         element.SemanticIndex == reflected_semantic_index;
+         element.SemanticIndex == reflected_attribute_index;
 }
 
 WMTAttributeFormat ReflectionElementTypeToFormat(std::string_view element_type,
@@ -701,13 +741,23 @@ ParseVertexInputReflection(std::string_view text) {
     std::string name;
     if (ExtractJsonStringValue(object, "name", name)) {
       uint32_t register_index = 0;
-      if (ParseAttributeRegisterName(name, register_index)) {
+      bool name_is_attribute = ParseAttributeRegisterName(name, register_index);
+      std::string semantic_base;
+      uint32_t semantic_index = 0;
+      if (!name_is_attribute &&
+          ParseSemanticNameWithTrailingIndex(name, semantic_base,
+                                             semantic_index)) {
+        register_index = (uint32_t)attributes.size();
+      }
+      if (name_is_attribute || !semantic_base.empty()) {
         StageInVertexAttributeInfo reflected = {};
         reflected.register_index = register_index;
-        reflected.semantic_name = name;
+        reflected.semantic_name = semantic_base.empty() ? name : semantic_base;
+        reflected.attribute_index =
+            kMetalShaderConverterStageInAttributeBase + register_index;
 
         size_t index_pos = object.find("\"index\"");
-        if (index_pos != std::string_view::npos) {
+        if (name_is_attribute && index_pos != std::string_view::npos) {
           size_t colon = object.find(':', index_pos + 7);
           if (colon != std::string_view::npos) {
             const char *value_begin = object.data() + colon + 1;
@@ -716,7 +766,7 @@ ParseVertexInputReflection(std::string_view text) {
               value_begin++;
             char *end = nullptr;
             unsigned long parsed = std::strtoul(value_begin, &end, 10);
-            if (end != value_begin)
+            if (end != value_begin && parsed == register_index)
               reflected.attribute_index =
                   kMetalShaderConverterStageInAttributeBase + (uint32_t)parsed;
           }
@@ -847,7 +897,7 @@ ParseTopLevelArgumentBufferReflection(std::string_view text,
 
   if (!args.empty()) {
     reflection.NumArguments = (uint32_t)args.size();
-    reflection.ArgumentBufferBindIndex = 30;
+    reflection.ArgumentBufferBindIndex = 2;
     reflection.ArgumentTableQwords = max_qword;
   }
 
@@ -1180,7 +1230,7 @@ void EmitOfflineRenderPsoManifest(
     const std::vector<uint8_t> &gs, const WMTRenderPipelineInfo &info,
     const D3D12_INPUT_LAYOUT_DESC &input_layout, UINT num_render_targets,
     DXGI_FORMAT dsv_format, UINT sample_count, bool uses_stage_in,
-    bool uses_geometry_mesh) {
+    bool requires_msc_stage_in, bool uses_geometry_mesh) {
   if (vs.empty())
     return;
   EnsureShaderCacheDir();
@@ -1232,6 +1282,15 @@ void EmitOfflineRenderPsoManifest(
           pso_name.c_str(), EscapeJsonString(vs_metallib).c_str(),
           EscapeJsonString(vs_function).c_str(),
           EscapeJsonString(vs_reflection).c_str());
+  if (requires_msc_stage_in) {
+    const std::string stage_in_metallib = OfflineShaderStageInMetallibPath(
+        vs.data(), vs.size(), ShaderType::Vertex, &input_layout);
+    fprintf(file,
+            "      \"vertex_linked_functions\": ["
+            "{\"metallib\": \"%s\", \"function\": "
+            "\"irconverter_stage_in_shader\"}],\n",
+            EscapeJsonString(stage_in_metallib).c_str());
+  }
   if (!ps.empty()) {
     fprintf(file,
             "      \"fragment\": {\"metallib\": \"%s\", \"function\": \"%s\", "
@@ -1729,6 +1788,13 @@ bool MTLD3D12PipelineState::CompileShader(
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
     SM50FreeError(sm50_err);
 
+    if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+        (type == ShaderType::Vertex || type == ShaderType::Pixel)) {
+      Logger::warn(str::format("DIAG ", func_name, " SM50Init failed size=",
+                               size, " hash=", HexHash(hash),
+                               " err=", err_buf));
+    }
+
     bool has_dxil = false;
     using namespace microsoft;
     CDXBCParser dxbcParser;
@@ -1784,12 +1850,14 @@ bool MTLD3D12PipelineState::CompileShader(
           FILE *ff = fopen(converter_fail_path, "rb");
           FILE *sf = needs_stage_in ? fopen(stage_in_metallib_path, "rb")
                                     : nullptr;
-          if (needs_stage_in && mf && !sf) {
-            fclose(mf);
-            mf = nullptr;
-          }
           if (!mf) {
             PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
+            if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+                type == ShaderType::Vertex)
+              Logger::warn(str::format(
+                  "DIAG ", func_name, " metallib not cached hash=",
+                  HexHash(hash), " needs_stage_in=", needs_stage_in,
+                  " path=", metallib_path));
             DumpShaderBlob(dxbc_path, bytecode, size);
             for (uint32_t attempt = 0; attempt < 100 && !mf && !ff; attempt++) {
               FILE *rf = fopen(reflection_path, "rb");
@@ -1801,14 +1869,10 @@ bool MTLD3D12PipelineState::CompileShader(
                     fclose(sf);
                   sf = fopen(stage_in_metallib_path, "rb");
                 }
-                if (mf && (!needs_stage_in || sf)) {
+                if (mf) {
                   PSTRACE("  external metallib cache hit after %u waits",
                           attempt + 1);
                   break;
-                }
-                if (mf && needs_stage_in && !sf) {
-                  fclose(mf);
-                  mf = nullptr;
                 }
               }
               ff = fopen(converter_fail_path, "rb");
@@ -1890,6 +1954,11 @@ bool MTLD3D12PipelineState::CompileShader(
                 dxmt::dxil::DXILToMSL::convert(*module, shader_info);
             if (!msl_result) {
               PSTRACE("  DXILToMSL::convert FAILED");
+              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+                  type == ShaderType::Vertex)
+                Logger::warn(str::format("DIAG ", func_name,
+                                         " DXILToMSL FAILED hash=",
+                                         HexHash(hash)));
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure(
                   "shader/dxil_to_msl",
@@ -1992,15 +2061,17 @@ bool MTLD3D12PipelineState::CompileShader(
                 out_func = library.newFunction("ps_main");
             }
 
-            if (out_func.handle) {
-              PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
-              {
-                std::lock_guard<std::mutex> lock(s_shader_mutex);
-                s_shader_cache[hash] = out_func;
-              }
+              if (out_func.handle) {
+                PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
+                {
+                  std::lock_guard<std::mutex> lock(s_shader_mutex);
+                  s_shader_cache[hash] = out_func;
+                }
 
-              if (type == ShaderType::Vertex)
+              if (type == ShaderType::Vertex) {
                 m_vs_uses_stage_in = true;
+                m_vs_requires_msc_stage_in = false;
+              }
 
               if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
                 m_threadgroup_size.width = msl_result->tg_size[0];
@@ -2035,6 +2106,11 @@ bool MTLD3D12PipelineState::CompileShader(
             WMT::Reference<WMT::Error> err;
             auto library = wmt_device.newLibrary(dispatch_data, err);
             if (!err.handle) {
+              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+                  type == ShaderType::Vertex && needs_stage_in)
+                Logger::info(str::format(
+                    "DIAG vertex metallib loaded OK size=", lib_size,
+                    " stage_in_sidecar=", sf ? 1 : 0));
               std::string reflection_text = ReadTextFile(reflection_path);
               std::string actual_entry;
               ExtractJsonStringValue(reflection_text, "EntryPoint",
@@ -2108,7 +2184,57 @@ bool MTLD3D12PipelineState::CompileShader(
               const char *fn_name =
                   actual_entry.empty() ? func_name : actual_entry.c_str();
               PSTRACE("  trying newFunction(%s)", fn_name);
-              out_func = library.newFunction(fn_name);
+
+              bool needs_fc = false;
+              {
+                size_t fc_pos = reflection_text.find("\"NeedsFunctionConstants\"");
+                if (fc_pos != std::string_view::npos) {
+                  size_t val_pos = reflection_text.find("true", fc_pos);
+                  if (val_pos != std::string_view::npos &&
+                      val_pos - fc_pos < 40)
+                    needs_fc = true;
+                }
+              }
+
+              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+                  type == ShaderType::Vertex && needs_stage_in) {
+                Logger::info(str::format("DIAG fn_lookup entry=", fn_name,
+                                         " needs_fc=", needs_fc,
+                                         " stage_in=1"));
+              }
+
+              if (needs_fc && type == ShaderType::Vertex) {
+                bool tessellation_enabled = false;
+                int vertex_output_size = 96;
+                {
+                  size_t state_pos = reflection_text.find("\"state\"");
+                  if (state_pos != std::string_view::npos) {
+                    size_t vos_pos =
+                        reflection_text.find("\"vertex_output_size_in_bytes\"",
+                                             state_pos);
+                    if (vos_pos != std::string_view::npos)
+                      ExtractJsonUIntValue(
+                          reflection_text.substr(vos_pos, 80),
+                          "vertex_output_size_in_bytes",
+                          (uint32_t &)vertex_output_size);
+                  }
+                }
+                WMTFunctionConstant constants[2] = {};
+                constants[0].data.set(&tessellation_enabled);
+                constants[0].type = WMTDataTypeBool;
+                constants[0].index = 0;
+                constants[1].data.set(&vertex_output_size);
+                constants[1].type = WMTDataTypeInt;
+                constants[1].index = 1;
+                WMT::Reference<WMT::Error> fc_err;
+                out_func = library.newFunctionWithConstants(
+                    fn_name, constants, 2, fc_err);
+                if (!out_func.handle)
+                  out_func = library.newFunction(fn_name);
+              } else {
+                out_func = library.newFunction(fn_name);
+              }
+
               if (!out_func.handle && !actual_entry.empty()) {
                 out_func = library.newFunction(func_name);
               }
@@ -2128,6 +2254,8 @@ bool MTLD3D12PipelineState::CompileShader(
                 }
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = true;
+                if (type == ShaderType::Vertex)
+                  m_vs_requires_msc_stage_in = needs_stage_in && sf;
                 int tw = 1, th = 1, td = 1;
                 if (ExtractJsonInt3Value(reflection_text, "tg_size", tw, th,
                                          td)) {
@@ -3546,7 +3674,8 @@ d3d12_geometry_fallback_to_vs_ps:
     }
   }
 
-  if (m_vs_uses_stage_in && m_input_layout.NumElements > 0 &&
+  if (m_vs_requires_msc_stage_in && m_vs_uses_stage_in &&
+      m_input_layout.NumElements > 0 &&
       m_input_layout.pInputElementDescs &&
       !DXMTD3D12ForceDiagnosticFullscreen()) {
     const std::string stage_in_path = OfflineShaderStageInMetallibPath(
@@ -3717,12 +3846,21 @@ d3d12_geometry_fallback_to_vs_ps:
 
   info.immutable_vertex_buffers = (1 << 16) | (1 << 29) | (1 << 30);
   info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
+  if (m_vs_uses_stage_in) {
+    info.immutable_vertex_buffers |= (1 << 2) | (1 << 4) | (1 << 5);
+    for (uint32_t slot = kMetalShaderConverterVertexBufferBindPoint;
+         slot < WMT_MAX_VERTEX_BUFFER_LAYOUTS && slot < 31; slot++)
+      info.immutable_vertex_buffers |= (1u << slot);
+  }
+  if (m_ps_reflection.ArgumentBufferBindIndex == 2)
+    info.immutable_fragment_buffers |= (1 << 2);
 
   WMTVertexDescriptor vtx_desc = {};
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t max_slot = 0;
+    uint32_t d3d_stage_in_slot_mask = 0;
     bool slot_per_vertex[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t attribute_count = 0;
     uint32_t next_attribute = 0;
@@ -3769,7 +3907,13 @@ d3d12_geometry_fallback_to_vs_ps:
         continue;
       }
 
-      if (el.InputSlot >= kMetalD3D12VertexBufferSlotCount) {
+      const bool use_msc_vertex_fetch = m_vs_uses_stage_in;
+      const uint32_t metal_buffer_slot =
+          use_msc_vertex_fetch
+              ? kMetalShaderConverterVertexBufferBindPoint + el.InputSlot
+              : el.InputSlot;
+      if (el.InputSlot >= kMetalD3D12VertexBufferSlotCount ||
+          metal_buffer_slot >= WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
         PSTRACE("D3D12 PSO input-layout skip[%u]: input slot %u is outside "
                 "Metal-backed slot cap %u",
                 i, el.InputSlot, kMetalD3D12VertexBufferSlotCount);
@@ -3861,12 +4005,14 @@ d3d12_geometry_fallback_to_vs_ps:
               : el.AlignedByteOffset;
       uint32_t end = aligned_offset + metal_format.BytesPerTexel;
       append_offset[el.InputSlot] = end;
-      if (end > slot_stride[el.InputSlot])
-        slot_stride[el.InputSlot] = end;
-      if (el.InputSlot >= max_slot)
-        max_slot = el.InputSlot + 1;
-      slot_per_vertex[el.InputSlot] =
+      if (end > slot_stride[metal_buffer_slot])
+        slot_stride[metal_buffer_slot] = end;
+      if (metal_buffer_slot >= max_slot)
+        max_slot = metal_buffer_slot + 1;
+      slot_per_vertex[metal_buffer_slot] =
           (el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA);
+      if (use_msc_vertex_fetch && el.InputSlot < 32)
+        d3d_stage_in_slot_mask |= 1u << el.InputSlot;
 
       input_sources.push_back({i, &el, metal_format, aligned_offset, end});
 
@@ -3887,7 +4033,7 @@ d3d12_geometry_fallback_to_vs_ps:
               ? stage_in_attr->format
               : metal_format.AttributeFormat;
       attr.offset = aligned_offset;
-      attr.buffer_index = el.InputSlot;
+      attr.buffer_index = metal_buffer_slot;
       attribute_present[attr_index] = true;
       attribute_count = std::max(attribute_count, attr_index + 1);
 
@@ -3897,7 +4043,7 @@ d3d12_geometry_fallback_to_vs_ps:
               attr_index, i, el.SemanticName ? el.SemanticName : "?",
               el.SemanticIndex, (unsigned)el.Format,
               (unsigned)metal_format.AttributeFormat, (unsigned)attr.format,
-              el.InputSlot, aligned_offset, end, (unsigned)el.InputSlotClass,
+              metal_buffer_slot, aligned_offset, end, (unsigned)el.InputSlotClass,
               el.InstanceDataStepRate);
     }
 
@@ -3955,16 +4101,20 @@ d3d12_geometry_fallback_to_vs_ps:
                           ? stage_in_attr.format
                           : source->metal_format.AttributeFormat;
         attr.offset = source->aligned_offset;
-        attr.buffer_index = el.InputSlot;
+        attr.buffer_index =
+            kMetalShaderConverterVertexBufferBindPoint + el.InputSlot;
         attribute_present[attr_index] = true;
         attribute_count = std::max(attribute_count, attr_index + 1);
+        if (m_vs_uses_stage_in && el.InputSlot < 32)
+          d3d_stage_in_slot_mask |= 1u << el.InputSlot;
 
         PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: filled missing "
                 "DXIL stage_in register=%u semantic=%s%u chosen_fmt=%u "
                 "slot=%u offset=%u",
                 attr_index, source->desc_index, stage_in_attr.register_index,
                 el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
-                (unsigned)attr.format, el.InputSlot, source->aligned_offset);
+                (unsigned)attr.format, attr.buffer_index,
+                source->aligned_offset);
       }
 
       if (m_vs_stage_in_attribute_order.empty()) {
@@ -3988,8 +4138,8 @@ d3d12_geometry_fallback_to_vs_ps:
           stage_in_slot_mask |= 1u << attr.buffer_index;
       }
     }
-    if (m_vs_uses_stage_in && stage_in_slot_mask)
-      m_ia_slot_mask = stage_in_slot_mask;
+    if (m_vs_uses_stage_in && d3d_stage_in_slot_mask)
+      m_ia_slot_mask = d3d_stage_in_slot_mask;
     for (uint32_t s = 0; s < max_slot; s++) {
       if (!slot_used_by_attribute[s]) {
         vtx_desc.layouts[s].stride = 0;
@@ -4033,15 +4183,21 @@ d3d12_geometry_fallback_to_vs_ps:
       }
       attr_summary << "]";
       Logger::info(attr_summary.str());
-      info.vertex_descriptor = &vtx_desc;
-      PSTRACE("D3D12 PSO input-layout attached as Metal vertex descriptor for "
-              "DXIL stage_in");
+      if (!m_vs_requires_msc_stage_in) {
+        info.vertex_descriptor = &vtx_desc;
+        PSTRACE("D3D12 PSO input-layout attached as Metal vertex descriptor for "
+                "DXIL stage_in");
+      } else {
+        PSTRACE("D3D12 PSO input-layout retained for MSC stage-in table "
+                "binding; Metal vertex descriptor disabled");
+      }
     } else {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal "
               "vertex descriptor disabled");
     }
   }
-  if (m_vs_uses_stage_in && !info.vertex_descriptor) {
+  if (m_vs_uses_stage_in && !m_vs_requires_msc_stage_in &&
+      !info.vertex_descriptor) {
     uint32_t attribute_count = 0;
     for (const auto &stage_in_attr : m_vs_stage_in_attribute_order) {
       if (stage_in_attr.attribute_index < WMT_MAX_VERTEX_ATTRIBUTES)
@@ -4062,7 +4218,7 @@ d3d12_geometry_fallback_to_vs_ps:
                           ? stage_in_attr.format
                           : WMTAttributeFormatFloat4;
         attr.offset = attr_index * 16;
-        attr.buffer_index = 0;
+        attr.buffer_index = kMetalShaderConverterVertexBufferBindPoint;
       }
       for (uint32_t attr_index = 0; attr_index < attribute_count; attr_index++) {
         auto &attr = vtx_desc.attributes[attr_index];
@@ -4070,13 +4226,16 @@ d3d12_geometry_fallback_to_vs_ps:
           continue;
         attr.format = WMTAttributeFormatFloat4;
         attr.offset = attr_index * 16;
-        attr.buffer_index = 0;
+        attr.buffer_index = kMetalShaderConverterVertexBufferBindPoint;
       }
       vtx_desc.attribute_count = attribute_count;
-      vtx_desc.layout_count = 1;
-      vtx_desc.layouts[0].stride = std::max<uint32_t>(16, attribute_count * 16);
-      vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
-      vtx_desc.layouts[0].step_rate = 1;
+      vtx_desc.layout_count = kMetalShaderConverterVertexBufferBindPoint + 1;
+      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint].stride =
+          std::max<uint32_t>(16, attribute_count * 16);
+      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint]
+          .step_function = WMTVertexStepFunctionPerVertex;
+      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint].step_rate =
+          1;
       info.vertex_descriptor = &vtx_desc;
       Logger::info(str::format(
           "D3D12 stage_in fallback vertex descriptor attrs=", attribute_count,
@@ -4107,6 +4266,7 @@ d3d12_geometry_fallback_to_vs_ps:
   EmitOfflineRenderPsoManifest(m_vs, m_ps, m_gs, info, m_input_layout,
                                m_num_render_targets, m_dsv_format,
                                m_sample_count, m_vs_uses_stage_in,
+                               m_vs_requires_msc_stage_in,
                                m_uses_geometry_mesh_pipeline);
   m_render_pso = wmt_device.newRenderPipelineState(info, err);
   if (!m_render_pso.handle) {
@@ -4345,6 +4505,7 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
       desc.StreamOutput.NumEntries > 0 || desc.StreamOutput.NumStrides > 0 ||
       desc.StreamOutput.pSODeclaration || desc.StreamOutput.pBufferStrides;
   m_vs_uses_stage_in = false;
+  m_vs_requires_msc_stage_in = false;
   m_uses_geometry_mesh_pipeline = false;
   m_vs_reflection = {};
   m_vs_args.clear();

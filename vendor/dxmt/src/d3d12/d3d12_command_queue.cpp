@@ -57,6 +57,20 @@ bool DXMTD3D12ForceSwapchainColor() {
   return enabled != 0;
 }
 
+bool DXMTD3D12SwapchainRenderReadback() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_SWAPCHAIN_RENDER_READBACK");
+    if (!value || !value[0])
+      value = std::getenv("DXMT_D3D12_SWAPCHAIN_READBACK");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
+static uint32_t AlignReadbackPitch(uint32_t value, uint32_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
 const char *TraceCompileFailureStage(MTLD3D12PipelineState *pso) {
   static thread_local std::string stage;
   stage = pso ? pso->GetCompileFailureStage() : "no_pso";
@@ -96,6 +110,7 @@ static uint32_t g_swapchain_vs_argbuf_logs = 0;
 static uint32_t g_swapchain_stage_in_vb_logs = 0;
 static uint32_t g_swapchain_forced_color_logs = 0;
 static uint32_t g_swapchain_vertex_sample_logs = 0;
+static uint32_t g_swapchain_render_readback_captures = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
@@ -397,6 +412,16 @@ static void EndMetalEncoder(Encoder &encoder, const char *label) {
   encoder = Encoder{};
 }
 
+template <typename Encoder> struct ScopedMetalEncoderEnd {
+  Encoder &encoder;
+  const char *label;
+
+  ~ScopedMetalEncoderEnd() {
+    if (encoder.handle)
+      EndMetalEncoder(encoder, label);
+  }
+};
+
 static bool DSVHasStencil(const D3D12Descriptor *desc) {
   if (!desc || !desc->resource)
     return false;
@@ -412,11 +437,36 @@ static bool DSVHasStencil(const D3D12Descriptor *desc) {
 struct ReplayState {
   static constexpr uint32_t kVertexBufferSlotCount = 29;
   static constexpr uint32_t kVertexBufferTableSlot = 16;
+  static constexpr uint32_t kMSCArgumentBufferSlot = 2;
+  static constexpr uint32_t kMSCDrawArgumentsSlot = 4;
+  static constexpr uint32_t kMSCUniformsSlot = 5;
+  static constexpr uint32_t kMSCVertexBufferBindPoint = 6;
+  static constexpr uint16_t kMSCNonIndexedDraw = 0;
 
   struct VertexBufferEntry {
     uint64_t buffer_handle;
     uint32_t stride;
     uint32_t length;
+  };
+
+  struct MSCDrawArgument {
+    uint32_t vertexCountPerInstance;
+    uint32_t instanceCount;
+    uint32_t startVertexLocation;
+    uint32_t startInstanceLocation;
+  };
+
+  struct MSCDrawIndexedArgument {
+    uint32_t indexCountPerInstance;
+    uint32_t instanceCount;
+    uint32_t startIndexLocation;
+    int32_t baseVertexLocation;
+    uint32_t startInstanceLocation;
+  };
+
+  union MSCDrawParams {
+    MSCDrawArgument draw;
+    MSCDrawIndexedArgument drawIndexed;
   };
 
   WMT::CommandBuffer cmdbuf;
@@ -509,6 +559,128 @@ struct ReplayState {
   bool swapchain_work_encoded = false;
   MTLD3D12Resource *swapchain_rt_for_present = nullptr;
 
+  struct RenderReadbackProbe {
+    WMT::Reference<WMT::Buffer> buffer;
+    void *mapped = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t bytes_per_row = 0;
+    uint32_t backbuffer = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    uint32_t capture = 0;
+  } render_readback;
+
+  void CaptureSwapchainRenderReadback(MTLD3D12Device *device,
+                                      WMT::CommandBuffer &cmdbuf) {
+    if (!DXMTD3D12SwapchainRenderReadback() || !swapchain_work_encoded ||
+        !swapchain_rt_for_present || render_readback.buffer.handle)
+      return;
+
+    uint32_t capture =
+        __atomic_add_fetch(&g_swapchain_render_readback_captures, 1,
+                           __ATOMIC_RELAXED);
+    if (capture > 16 && (capture % 30) != 0)
+      return;
+
+    auto tex = swapchain_rt_for_present->GetMTLTexture();
+    if (!tex.handle)
+      return;
+
+    D3D12_RESOURCE_DESC desc = {};
+    swapchain_rt_for_present->GetDesc(&desc);
+    uint32_t width = (uint32_t)std::min<UINT64>(std::max<UINT64>(desc.Width, 1),
+                                                1920);
+    uint32_t height = (uint32_t)std::min<UINT>(std::max<UINT>(desc.Height, 1),
+                                               1080);
+    uint32_t bytes_per_row = AlignReadbackPitch(width * 4u, 256u);
+
+    WMTBufferInfo info = {};
+    info.length = uint64_t(bytes_per_row) * height;
+    info.options =
+        WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+    info.memory.set(nullptr);
+    auto buffer = device->GetDXMTDevice().device().newBuffer(info);
+    void *mapped = info.memory.get();
+    if (!buffer.handle || !mapped) {
+      Logger::info(str::format("M12 swapchain render readback unavailable "
+                               "capture=",
+                               capture, " backbuffer=",
+                               swapchain_rt_for_present
+                                   ->SwapchainBackBufferIndex()));
+      return;
+    }
+
+    auto blit = cmdbuf.blitCommandEncoder();
+    ENC_CREATE("blit_swapchain_render_readback", blit.handle);
+    ScopedMetalEncoderEnd blit_guard{blit, "blit_swapchain_render_readback"};
+    if (!blit.handle)
+      return;
+
+    struct wmtcmd_blit_copy_from_texture_to_buffer copy = {};
+    copy.type = WMTBlitCommandCopyFromTextureToBuffer;
+    copy.next.set(nullptr);
+    copy.src = tex;
+    copy.slice = 0;
+    copy.level = 0;
+    copy.origin = {0, 0, 0};
+    copy.size = {width, height, 1};
+    copy.dst = buffer;
+    copy.offset = 0;
+    copy.bytes_per_row = bytes_per_row;
+    copy.bytes_per_image = bytes_per_row * height;
+    blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
+    EndMetalEncoder(blit, "blit_swapchain_render_readback");
+
+    render_readback.buffer = buffer;
+    render_readback.mapped = mapped;
+    render_readback.width = width;
+    render_readback.height = height;
+    render_readback.bytes_per_row = bytes_per_row;
+    render_readback.backbuffer =
+        swapchain_rt_for_present->SwapchainBackBufferIndex();
+    render_readback.format = desc.Format;
+    render_readback.capture = capture;
+  }
+
+  void LogSwapchainRenderReadback() {
+    if (!render_readback.mapped || !render_readback.width ||
+        !render_readback.height)
+      return;
+
+    uint64_t nonzero_pixels = 0;
+    uint64_t nonzero_bytes = 0;
+    uint8_t max_byte = 0;
+    uint64_t checksum = 1469598103934665603ull;
+    const auto *rows = static_cast<const uint8_t *>(render_readback.mapped);
+    for (uint32_t y = 0; y < render_readback.height; y++) {
+      const auto *row = rows + uint64_t(y) * render_readback.bytes_per_row;
+      for (uint32_t x = 0; x < render_readback.width; x++) {
+        const auto *px = row + x * 4u;
+        bool pixel_nonzero = false;
+        for (uint32_t i = 0; i < 4; i++) {
+          uint8_t value = px[i];
+          if (value) {
+            pixel_nonzero = true;
+            nonzero_bytes++;
+            max_byte = std::max(max_byte, value);
+          }
+          checksum ^= value;
+          checksum *= 1099511628211ull;
+        }
+        if (pixel_nonzero)
+          nonzero_pixels++;
+      }
+    }
+
+    Logger::info(str::format(
+        "M12 swapchain render readback capture=", render_readback.capture,
+        " backbuffer=", render_readback.backbuffer, " fmt=",
+        (unsigned)render_readback.format, " sample=", render_readback.width,
+        "x", render_readback.height, " nonzero_pixels=", nonzero_pixels,
+        " nonzero_bytes=", nonzero_bytes, " max_byte=", (unsigned)max_byte,
+        " checksum=0x", std::hex, checksum));
+  }
+
   void ForceSwapchainDiagnosticColor(WMT::CommandBuffer &cmdbuf) {
     if (!DXMTD3D12ForceSwapchainColor() || !swapchain_work_encoded ||
         !swapchain_rt_for_present)
@@ -534,6 +706,7 @@ struct ReplayState {
 
     auto enc = cmdbuf.renderCommandEncoder(rp);
     ENC_CREATE("render_swapchain_forced_color", enc.handle);
+    ScopedMetalEncoderEnd enc_guard{enc, "render_swapchain_forced_color"};
     EndMetalEncoder(enc, "render_swapchain_forced_color");
     if (TakeLogBudget(&g_swapchain_forced_color_logs, 16)) {
       Logger::info(str::format("M12 swapchain forced diagnostic color "
@@ -604,6 +777,9 @@ struct ReplayState {
   WMT::Reference<WMT::Buffer> comp_cbv_table_buf;
   WMT::Reference<WMT::Buffer> root_constants_mtl_buf;
   WMT::Reference<WMT::Buffer> geometry_draw_args_buf;
+  WMT::Reference<WMT::Buffer> msc_vertex_arg_buf;
+  WMT::Reference<WMT::Buffer> msc_draw_args_buf;
+  WMT::Reference<WMT::Buffer> msc_uniforms_buf;
   VertexBufferEntry vertex_table_data[kVertexBufferSlotCount] = {};
   WMT::Reference<WMT::Buffer> vertex_table_buf;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
@@ -835,8 +1011,9 @@ struct ReplayState {
                      (unsigned long long)tex.handle,
                      (unsigned long long)gpu_id,
                      desc->metal_texture_view.handle ? 1 : 0);
-              arg_buf_data[arg.StructurePtrOffset] = gpu_id;
-              arg_buf_data[arg.StructurePtrOffset + 1] =
+              arg_buf_data[arg.StructurePtrOffset] = 0;
+              arg_buf_data[arg.StructurePtrOffset + 1] = gpu_id;
+              arg_buf_data[arg.StructurePtrOffset + 2] =
                   TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open) {
                 render_enc.useResource(
@@ -897,9 +1074,10 @@ struct ReplayState {
                                       WMTRenderStageFragment));
               }
             } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-              arg_buf_data[arg.StructurePtrOffset] =
-                  DescriptorTextureGPUResourceID(desc, res);
+              arg_buf_data[arg.StructurePtrOffset] = 0;
               arg_buf_data[arg.StructurePtrOffset + 1] =
+                  DescriptorTextureGPUResourceID(desc, res);
+              arg_buf_data[arg.StructurePtrOffset + 2] =
                   TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open) {
                 render_enc.useResource(
@@ -1288,9 +1466,10 @@ struct ReplayState {
                                        WMTResourceUsageRead,
                                        WMTRenderStageVertex);
             } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-              vs_arg_buf_data[arg.StructurePtrOffset] =
-                  DescriptorTextureGPUResourceID(desc, res);
+              vs_arg_buf_data[arg.StructurePtrOffset] = 0;
               vs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                  DescriptorTextureGPUResourceID(desc, res);
+              vs_arg_buf_data[arg.StructurePtrOffset + 2] =
                   TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
               if (render_enc_open)
                 render_enc.useResource(
@@ -1342,9 +1521,10 @@ struct ReplayState {
                                                         WMTResourceUsageWrite),
                                      WMTRenderStageVertex);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            vs_arg_buf_data[arg.StructurePtrOffset] =
-                DescriptorTextureGPUResourceID(desc, res);
+            vs_arg_buf_data[arg.StructurePtrOffset] = 0;
             vs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                DescriptorTextureGPUResourceID(desc, res);
+            vs_arg_buf_data[arg.StructurePtrOffset + 2] =
                 TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
             if (render_enc_open)
               render_enc.useResource(tex,
@@ -1668,9 +1848,10 @@ struct ReplayState {
               render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                      WMTRenderStageMesh);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            gs_arg_buf_data[arg.StructurePtrOffset] =
-                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset] = 0;
             gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset + 2] =
                 TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
             if (render_enc_open)
               render_enc.useResource(
@@ -1701,9 +1882,10 @@ struct ReplayState {
                                      WMTResourceUsageWrite),
                   WMTRenderStageMesh);
           } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-            gs_arg_buf_data[arg.StructurePtrOffset] =
-                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset] = 0;
             gs_arg_buf_data[arg.StructurePtrOffset + 1] =
+                DescriptorTextureGPUResourceID(desc, res);
+            gs_arg_buf_data[arg.StructurePtrOffset + 2] =
                 TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f);
             if (render_enc_open)
               render_enc.useResource(
@@ -2088,9 +2270,10 @@ struct ReplayState {
                 SRVBufferByteLength(desc, res);
           }
         } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-          comp_arg_buf_data[arg.StructurePtrOffset] =
-              DescriptorTextureGPUResourceID(desc, res);
+          comp_arg_buf_data[arg.StructurePtrOffset] = 0;
           comp_arg_buf_data[arg.StructurePtrOffset + 1] =
+              DescriptorTextureGPUResourceID(desc, res);
+          comp_arg_buf_data[arg.StructurePtrOffset + 2] =
               arg.Type == SM50BindingType::UAV
                   ? TextureMetadata(UAVTextureArrayLength(desc, res), 0.0f)
                   : TextureMetadata(SRVTextureArrayLength(desc, res), 0.0f);
@@ -2346,13 +2529,17 @@ struct ReplayState {
                i, root_constant_offsets[i], root_constant_sizes[i]);
       }
 
-      auto root_register = [&](D3D12_ROOT_PARAMETER_TYPE type) {
+      auto root_register_and_vis = [&](D3D12_ROOT_PARAMETER_TYPE type,
+                                        D3D12_SHADER_VISIBILITY *out_vis) {
         if (graphics_root_sig &&
             i < graphics_root_sig->GetParameters().size()) {
           const auto &param = graphics_root_sig->GetParameters()[i];
-          if (param.type == type)
+          if (param.type == type) {
+            *out_vis = param.shader_visibility;
             return param.register_index;
+          }
         }
+        *out_vis = D3D12_SHADER_VISIBILITY_ALL;
         return i;
       };
 
@@ -2364,13 +2551,17 @@ struct ReplayState {
         auto *res = device->LookupResourceByGPUAddress(address);
         if (!res || !res->GetMTLBuffer().handle)
           return;
-        uint32_t slot = root_register(type);
-        if (slot >= 8)
+        D3D12_SHADER_VISIBILITY vis = D3D12_SHADER_VISIBILITY_ALL;
+        uint32_t slot = root_register_and_vis(type, &vis);
+        if (slot >= 31)
           return;
         uint64_t offset = address - res->GetGPUVirtualAddress();
-        if (!stage_in_vertex_inputs)
+        if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_VERTEX) {
           render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
-        render_enc.setFragmentBuffer(res->GetMTLBuffer(), offset, slot);
+        }
+        if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_PIXEL) {
+          render_enc.setFragmentBuffer(res->GetMTLBuffer(), offset, slot);
+        }
         if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
           render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, slot);
           render_enc.setMeshBuffer(res->GetMTLBuffer(), offset, slot);
@@ -2381,8 +2572,20 @@ struct ReplayState {
                label, i, slot, (unsigned long long)address);
       };
 
-      if (root_cbv_set[i])
+      if (root_cbv_set[i]) {
         bind_root_buffer(root_cbvs[i], D3D12_ROOT_PARAMETER_TYPE_CBV, "CBV");
+        if (stage_in_vertex_inputs && HasSwapchainRenderTarget() &&
+            TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+          D3D12_SHADER_VISIBILITY cbv_vis = D3D12_SHADER_VISIBILITY_ALL;
+          uint32_t cbv_slot = root_register_and_vis(D3D12_ROOT_PARAMETER_TYPE_CBV, &cbv_vis);
+          Logger::info(str::format(
+              "M12 MSC root CBV param=", i,
+              " slot=", cbv_slot,
+              " vis=", (int)cbv_vis,
+              " gpu=0x", (unsigned long long)root_cbvs[i],
+              " set=", root_cbv_set[i]));
+        }
+      }
       if (root_srv_set[i])
         bind_root_buffer(root_srvs[i], D3D12_ROOT_PARAMETER_TYPE_SRV, "SRV");
       if (root_uav_set[i])
@@ -2390,18 +2593,23 @@ struct ReplayState {
 
       auto bind_descriptor = [&](D3D12Descriptor *desc,
                                  D3D12_DESCRIPTOR_RANGE_TYPE range_type,
-                                 uint32_t shader_register) {
+                                 uint32_t shader_register,
+                                 D3D12_SHADER_VISIBILITY vis) {
         if (!desc)
           return;
         if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
           if (shader_register < 4 && desc->metal_sampler.handle) {
-            render_enc.setFragmentSamplerState(desc->metal_sampler,
-                                               shader_register);
+            if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_PIXEL)
+              render_enc.setFragmentSamplerState(desc->metal_sampler,
+                                                 shader_register);
             QTRACE("ApplyRootBindings: table sampler s%u", shader_register);
           }
           return;
         }
-        if (!desc->resource || shader_register >= 8)
+        if (!desc->resource)
+          return;
+        uint32_t buf_slot = shader_register;
+        if (buf_slot >= 31)
           return;
         auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
         if (res->GetMTLBuffer().handle) {
@@ -2412,16 +2620,13 @@ struct ReplayState {
             if (cbv_res)
               off = desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
           }
-          if (!stage_in_vertex_inputs)
-            render_enc.setVertexBuffer(res->GetMTLBuffer(), off,
-                                       shader_register);
-          render_enc.setFragmentBuffer(res->GetMTLBuffer(), off,
-                                       shader_register);
+          if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_VERTEX)
+            render_enc.setVertexBuffer(res->GetMTLBuffer(), off, buf_slot);
+          if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_PIXEL)
+            render_enc.setFragmentBuffer(res->GetMTLBuffer(), off, buf_slot);
           if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
-            render_enc.setObjectBuffer(res->GetMTLBuffer(), off,
-                                       shader_register);
-            render_enc.setMeshBuffer(res->GetMTLBuffer(), off,
-                                     shader_register);
+            render_enc.setObjectBuffer(res->GetMTLBuffer(), off, buf_slot);
+            render_enc.setMeshBuffer(res->GetMTLBuffer(), off, buf_slot);
           }
           WMTResourceUsage usage =
               range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV
@@ -2435,7 +2640,8 @@ struct ReplayState {
         } else if (auto tex = DescriptorTexture(desc, res);
                    tex.handle &&
                    range_type != D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
-          render_enc.setFragmentTexture(tex, shader_register);
+          if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_PIXEL)
+            render_enc.setFragmentTexture(tex, shader_register);
           WMTResourceUsage usage =
               range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV
                   ? (WMTResourceUsage)(WMTResourceUsageRead |
@@ -2460,12 +2666,14 @@ struct ReplayState {
           if (graphics_root_sig &&
               i < graphics_root_sig->GetParameters().size()) {
             const auto &param = graphics_root_sig->GetParameters()[i];
+            D3D12_SHADER_VISIBILITY table_vis = param.shader_visibility;
             if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE &&
                 !param.ranges.empty()) {
               for (const auto &range : param.ranges) {
                 uint32_t max_slots =
-                    range.range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER ? 4
-                                                                            : 8;
+                    range.range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER
+                        ? 4
+                        : 31;
                 if (range.base_register >= max_slots)
                   continue;
                 uint32_t count = range.num_descriptors == UINT32_MAX
@@ -2477,7 +2685,7 @@ struct ReplayState {
                   auto *desc = heap->GetDescriptorFromGPUHandle(
                       root_tables[i], range.offset_in_table + d);
                   bind_descriptor(desc, range.range_type,
-                                  range.base_register + d);
+                                  range.base_register + d, table_vis);
                 }
               }
               continue;
@@ -2491,10 +2699,89 @@ struct ReplayState {
                           desc->type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
                               ? D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER
                               : D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-                          i);
+                          i, D3D12_SHADER_VISIBILITY_ALL);
         }
       }
     }
+  }
+
+  void BindStaticSamplers() {
+    if (!render_enc_open || !pso || !pso->UsesStageInVertexDescriptor())
+      return;
+    auto *root_sig = pso ? pso->GetRootSignature() : nullptr;
+    auto *dxmt_sig = root_sig ? static_cast<MTLD3D12RootSignature *>(root_sig) : nullptr;
+    if (!dxmt_sig)
+      return;
+    for (uint32_t i = 0; i < dxmt_sig->GetNumStaticSamplers(); i++) {
+      const auto *s = dxmt_sig->GetStaticSamplers().data() + i;
+      if (!s || !s->sampler.handle)
+        continue;
+      uint32_t reg = s->shader_register;
+      D3D12_SHADER_VISIBILITY vis = (D3D12_SHADER_VISIBILITY)s->shader_visibility;
+      if (reg >= 16)
+        continue;
+      if (vis == D3D12_SHADER_VISIBILITY_ALL || vis == D3D12_SHADER_VISIBILITY_PIXEL)
+        render_enc.setFragmentSamplerState(s->sampler, reg);
+    }
+  }
+
+  void BindMSCDrawParameters(MTLD3D12Device *device, uint32_t element_count,
+                             uint32_t instance_count, uint32_t start_element,
+                             int32_t base_vertex, uint32_t start_instance,
+                             bool indexed, WMTIndexType index_type) {
+    if (!render_enc_open || !pso || !pso->UsesStageInVertexDescriptor())
+      return;
+
+    if (pso->RequiresMSCStageInFunction() && !vs_arg_buf.handle) {
+      uint64_t zero_ab[1] = {};
+      msc_vertex_arg_buf = MakeTransientBuffer(device, sizeof(zero_ab));
+      if (msc_vertex_arg_buf.handle) {
+        msc_vertex_arg_buf.updateContents(0, zero_ab, sizeof(zero_ab));
+        render_enc.setVertexBuffer(msc_vertex_arg_buf, 0,
+                                   kMSCArgumentBufferSlot);
+        render_enc.useResource(msc_vertex_arg_buf, WMTResourceUsageRead,
+                               WMTRenderStageVertex);
+      }
+    }
+
+    MSCDrawParams params = {};
+    if (indexed) {
+      params.drawIndexed.indexCountPerInstance = element_count;
+      params.drawIndexed.instanceCount = instance_count;
+      params.drawIndexed.startIndexLocation = start_element;
+      params.drawIndexed.baseVertexLocation = base_vertex;
+      params.drawIndexed.startInstanceLocation = start_instance;
+    } else {
+      params.draw.vertexCountPerInstance = element_count;
+      params.draw.instanceCount = instance_count;
+      params.draw.startVertexLocation = start_element;
+      params.draw.startInstanceLocation = start_instance;
+    }
+
+    const uint16_t draw_info =
+        indexed ? (uint16_t)((uint16_t)index_type + 1u) : kMSCNonIndexedDraw;
+
+    msc_draw_args_buf = MakeTransientBuffer(device, sizeof(params));
+    if (msc_draw_args_buf.handle) {
+      msc_draw_args_buf.updateContents(0, &params, sizeof(params));
+      render_enc.setVertexBuffer(msc_draw_args_buf, 0, kMSCDrawArgumentsSlot);
+      render_enc.useResource(msc_draw_args_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
+
+    msc_uniforms_buf = MakeTransientBuffer(device, sizeof(draw_info));
+    if (msc_uniforms_buf.handle) {
+      msc_uniforms_buf.updateContents(0, &draw_info, sizeof(draw_info));
+      render_enc.setVertexBuffer(msc_uniforms_buf, 0, kMSCUniformsSlot);
+      render_enc.useResource(msc_uniforms_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
+
+    QTRACE("BindMSCDrawParameters: indexed=%u count=%u inst=%u start=%u "
+           "base=%d start_inst=%u index_type=%u slots=%u/%u",
+           indexed ? 1u : 0u, element_count, instance_count, start_element,
+           base_vertex, start_instance, (unsigned)index_type,
+           kMSCDrawArgumentsSlot, kMSCUniformsSlot);
   }
 
   void ApplyVertexBuffers(MTLD3D12Device *device) {
@@ -2505,6 +2792,7 @@ struct ReplayState {
     if (slot_mask) {
       if (pso && pso->UsesStageInVertexDescriptor()) {
         uint32_t bound_slots = 0;
+        memset(vertex_table_data, 0, sizeof(vertex_table_data));
         for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
           if (!(slot_mask & (1u << slot)))
             continue;
@@ -2517,21 +2805,50 @@ struct ReplayState {
           if (res && res->GetMTLBuffer().handle) {
             uint64_t offset =
                 view.BufferLocation - res->GetGPUVirtualAddress();
-            render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
+            uint32_t msc_slot = kMSCVertexBufferBindPoint + slot;
+            render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, msc_slot);
+            vertex_table_data[slot].buffer_handle = view.BufferLocation;
+            vertex_table_data[slot].stride = view.StrideInBytes;
+            vertex_table_data[slot].length = view.SizeInBytes;
             if (UsesGeometryMeshPipeline())
-              render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, slot);
+              render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, msc_slot);
             render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                    VertexInputStages());
             bound_slots++;
-            QTRACE("ApplyVertexBuffers: stage_in slot=%u gpu=0x%llx "
+            QTRACE("ApplyVertexBuffers: stage_in slot=%u->msc_slot=%u gpu=0x%llx "
                    "offset=%llu size=%u stride=%u",
-                   slot, (unsigned long long)view.BufferLocation,
+                   slot, msc_slot, (unsigned long long)view.BufferLocation,
                    (unsigned long long)offset, view.SizeInBytes,
                    view.StrideInBytes);
           } else {
             QTRACE("ApplyVertexBuffers: stage_in slot=%u gpu=0x%llx "
                    "unresolved",
                    slot, (unsigned long long)view.BufferLocation);
+          }
+        }
+        if (bound_slots > 0) {
+          vertex_table_buf =
+              MakeTransientBuffer(device, sizeof(vertex_table_data));
+          if (vertex_table_buf.handle) {
+            vertex_table_buf.updateContents(0, vertex_table_data,
+                                            sizeof(vertex_table_data));
+            const uint32_t table_slot = pso->RequiresMSCStageInFunction()
+                                            ? kMSCVertexBufferBindPoint
+                                            : kVertexBufferTableSlot;
+            render_enc.setVertexBuffer(vertex_table_buf, 0, table_slot);
+            render_enc.setVertexBuffer(vertex_table_buf, 0,
+                                       kVertexBufferTableSlot);
+            if (UsesGeometryMeshPipeline()) {
+              render_enc.setObjectBuffer(vertex_table_buf, 0, table_slot);
+              render_enc.setObjectBuffer(vertex_table_buf, 0,
+                                         kVertexBufferTableSlot);
+            }
+            render_enc.useResource(vertex_table_buf, WMTResourceUsageRead,
+                                   VertexInputStages());
+            QTRACE("ApplyVertexBuffers: stage_in vertex table slot=%u legacy_slot=%u "
+                   "mask=0x%x bound=%u",
+                   table_slot, kVertexBufferTableSlot, slot_mask,
+                   bound_slots);
           }
         }
         if (HasSwapchainRenderTarget() &&
@@ -2819,6 +3136,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   st.CloseRenderEncoder();
   auto comp = cmdbuf.computeCommandEncoder(false);
   ENC_CREATE("compute_dispatch", comp.handle);
+  ScopedMetalEncoderEnd comp_guard{comp, "compute_dispatch"};
   if (!comp.handle) {
     QTRACE("%s: FAILED to create compute encoder", trace_prefix);
     return;
@@ -2967,7 +3285,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
       auto *res = device->LookupResourceByGPUAddress(address);
       if (res && res->GetMTLBuffer().handle) {
         uint32_t slot = compute_root_register(type);
-        if (slot >= 8)
+        if (slot >= 31)
           return;
         struct wmtcmd_compute_setbuffer sbuf = {};
         sbuf.type = WMTComputeCommandSetBuffer;
@@ -3014,7 +3332,10 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         }
         return;
       }
-      if (!desc->resource || shader_register >= 8)
+      if (!desc->resource)
+        return;
+      uint32_t buf_slot = shader_register;
+      if (buf_slot >= 31)
         return;
       auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
       bool writable = range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
@@ -3030,7 +3351,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
             sbuf.offset =
                 desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
         }
-        sbuf.index = shader_register;
+        sbuf.index = buf_slot;
         append_cmd(&sbuf, sizeof(sbuf));
         if (writable) {
           struct wmtcmd_compute_useresource use = {};
@@ -3067,8 +3388,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
                 !param.ranges.empty()) {
               for (const auto &range : param.ranges) {
                 uint32_t max_slots =
-                    range.range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER ? 4
-                                                                            : 8;
+                    range.range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER
+                        ? 4
+                        : 31;
                 if (range.base_register >= max_slots)
                   continue;
                 uint32_t count = range.num_descriptors == UINT32_MAX
@@ -3355,6 +3677,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               st.pso->GetPSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
           st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
         }
+        if (st.pso && st.pso->UsesStageInVertexDescriptor()) {
+          st.BindStaticSamplers();
+        }
         st.ApplyVertexBuffers(m_device);
         st.BindGeometryMeshBuffers();
         QTRACE("DrawInstanced v=%u i=%u enc_open=%d pso=%p compiled=%d "
@@ -3387,6 +3712,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           draw.vertex_count = cmd->vertex_count;
           draw.base_instance = cmd->start_instance;
           draw.instance_count = cmd->instance_count;
+          st.BindMSCDrawParameters(m_device, cmd->vertex_count,
+                                   cmd->instance_count, cmd->start_vertex, 0,
+                                   cmd->start_instance, false,
+                                   WMTIndexTypeUInt16);
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
           st.MarkSwapchainWorkEncoded();
@@ -3435,6 +3764,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           uint32_t bind_index = st.BindIndexOrFallback(
               st.pso->GetPSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
           st.render_enc.setFragmentBuffer(st.arg_buf, 0, bind_index);
+        }
+        if (st.pso && st.pso->UsesStageInVertexDescriptor()) {
+          st.BindStaticSamplers();
         }
         st.ApplyVertexBuffers(m_device);
         st.BindGeometryMeshBuffers();
@@ -3585,6 +3917,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           draw.instance_count = cmd->instance_count;
           draw.base_vertex = cmd->base_vertex;
           draw.base_instance = cmd->start_instance;
+          st.BindMSCDrawParameters(m_device, cmd->index_count,
+                                   cmd->instance_count, cmd->start_index,
+                                   cmd->base_vertex, cmd->start_instance, true,
+                                   draw.index_type);
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
           st.MarkSwapchainWorkEncoded();
@@ -3755,6 +4091,11 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             draw.vertex_count = args.VertexCountPerInstance;
             draw.base_instance = args.StartInstanceLocation;
             draw.instance_count = args.InstanceCount;
+            st.BindMSCDrawParameters(m_device, args.VertexCountPerInstance,
+                                     args.InstanceCount,
+                                     args.StartVertexLocation, 0,
+                                     args.StartInstanceLocation, false,
+                                     WMTIndexTypeUInt16);
             st.render_enc.encodeCommands(
                 reinterpret_cast<const wmtcmd_render_nop *>(&draw));
           }
@@ -3812,6 +4153,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 draw.instance_count = args.InstanceCount;
                 draw.base_vertex = args.BaseVertexLocation;
                 draw.base_instance = args.StartInstanceLocation;
+                st.BindMSCDrawParameters(
+                    m_device, args.IndexCountPerInstance, args.InstanceCount,
+                    args.StartIndexLocation, args.BaseVertexLocation,
+                    args.StartInstanceLocation, true, draw.index_type);
                 if (st.render_enc_open)
                   st.render_enc.encodeCommands(
                       reinterpret_cast<const wmtcmd_render_nop *>(&draw));
@@ -4008,6 +4353,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               src_res->GetMTLBuffer().handle) {
             auto blit = cmdbuf.blitCommandEncoder();
             ENC_CREATE("blit_copybuf", blit.handle);
+            ScopedMetalEncoderEnd blit_guard{blit, "blit_copybuf"};
             if (!blit.handle) {
               QTRACE("CopyBufferRegion: FAILED to create blit encoder");
               break;
@@ -4047,6 +4393,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.CloseRenderEncoder();
         auto blit = cmdbuf.blitCommandEncoder();
         ENC_CREATE("blit_copytex", blit.handle);
+        ScopedMetalEncoderEnd blit_guard{blit, "blit_copytex"};
         if (!blit.handle) {
           QTRACE("CopyTextureRegion: FAILED to create blit encoder");
           break;
@@ -4250,6 +4597,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (dst_res->GetMTLBuffer().handle && src_res->GetMTLBuffer().handle) {
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_copyres_buf", blit.handle);
+          ScopedMetalEncoderEnd blit_guard{blit, "blit_copyres_buf"};
           if (!blit.handle) {
             QTRACE("CopyResource buffer: FAILED to create blit encoder");
             break;
@@ -4270,6 +4618,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                    src_res->GetMTLTexture().handle) {
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_copyres_tex", blit.handle);
+          ScopedMetalEncoderEnd blit_guard{blit, "blit_copyres_tex"};
           if (!blit.handle) {
             QTRACE("CopyResource texture: FAILED to create blit encoder");
             break;
@@ -4344,11 +4693,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           rp.colors[0].resolve_slice = dst_slice;
           auto enc = cmdbuf.renderCommandEncoder(rp);
           ENC_CREATE("render_resolve", enc.handle);
+          ScopedMetalEncoderEnd enc_guard{enc, "render_resolve"};
           EndMetalEncoder(enc, "render_resolve");
         } else if (!multisample) {
           st.CloseRenderEncoder();
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_resolve_copy", blit.handle);
+          ScopedMetalEncoderEnd blit_guard{blit, "blit_resolve_copy"};
           if (!blit.handle) {
             QTRACE("ResolveSubresource: FAILED to create blit encoder");
             break;
@@ -4427,6 +4778,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           staging.updateContents(0, &value, sizeof(value));
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_writeimm", blit.handle);
+          ScopedMetalEncoderEnd blit_guard{blit, "blit_writeimm"};
           if (!blit.handle) {
             QTRACE("WriteBufferImmediate[%u] SKIPPED blit encoder create failed",
                    i);
@@ -4625,6 +4977,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
         auto enc = cmdbuf.renderCommandEncoder(rp);
         ENC_CREATE("render_clearrtv", enc.handle);
+        ScopedMetalEncoderEnd enc_guard{enc, "render_clearrtv"};
         EndMetalEncoder(enc, "render_clearrtv");
         break;
       }
@@ -4690,6 +5043,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
         auto enc = cmdbuf.renderCommandEncoder(rp);
         ENC_CREATE("render_cleardsv", enc.handle);
+        ScopedMetalEncoderEnd enc_guard{enc, "render_cleardsv"};
         EndMetalEncoder(enc, "render_cleardsv");
         break;
       }
@@ -4735,6 +5089,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (zero_clear) {
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_clearuav", blit.handle);
+          ScopedMetalEncoderEnd blit_guard{blit, "blit_clearuav"};
           if (!blit.handle) {
             QTRACE("ClearUnorderedAccessView SKIPPED blit encoder create failed");
             break;
@@ -4844,6 +5199,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         staging.updateContents(0, results.data(), bytes);
         auto blit = cmdbuf.blitCommandEncoder();
         ENC_CREATE("blit_query", blit.handle);
+        ScopedMetalEncoderEnd blit_guard{blit, "blit_query"};
         if (!blit.handle) {
           QTRACE("ResolveQueryData SKIPPED blit encoder create failed");
           break;
@@ -5095,6 +5451,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         QTRACE("  type[%d]=%u", i, type_counts[i]);
 
     st.CloseRenderEncoder();
+    st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     st.ForceSwapchainDiagnosticColor(cmdbuf);
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
@@ -5115,9 +5472,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       auto err = cmdbuf.error();
       Logger::err(str::format("ExecuteCommandLists: cmdbuf status=", status,
                               " error_handle=", err.handle));
-    } else if (DXMTD3D12AutopresentSwapchain() &&
-               st.swapchain_work_encoded && st.swapchain_rt_for_present &&
-               st.swapchain_rt_for_present->OwningSwapchain()) {
+    } else {
+      st.LogSwapchainRenderReadback();
+    }
+    if (status == WMTCommandBufferStatusCompleted &&
+        DXMTD3D12AutopresentSwapchain() && st.swapchain_work_encoded &&
+        st.swapchain_rt_for_present &&
+        st.swapchain_rt_for_present->OwningSwapchain()) {
       auto *swapchain = st.swapchain_rt_for_present->OwningSwapchain();
       HRESULT hr = swapchain->PresentBackBufferFromQueue(
           st.swapchain_rt_for_present);

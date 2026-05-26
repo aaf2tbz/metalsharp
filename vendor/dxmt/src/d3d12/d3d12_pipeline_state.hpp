@@ -117,6 +117,7 @@ public:
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
   bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
+  bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
@@ -161,6 +162,7 @@ private:
   std::vector<std::string> m_input_semantic_names;
   bool m_has_stream_output = false;
   bool m_vs_uses_stage_in = false;
+  bool m_vs_requires_msc_stage_in = false;
   bool m_uses_geometry_mesh_pipeline = false;
   uint32_t m_gs_passthrough = ~0u;
   D3D12_INDEX_BUFFER_STRIP_CUT_VALUE m_strip_cut_value = {};
