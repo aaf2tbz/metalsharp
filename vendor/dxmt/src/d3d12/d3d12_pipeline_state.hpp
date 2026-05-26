@@ -85,6 +85,12 @@ public:
   const D3D12_DEPTH_STENCIL_DESC &GetDepthStencilDesc() const {
     return m_depth_stencil_desc;
   }
+  const D3D12_BLEND_DESC &GetBlendDesc() const { return m_blend_desc; }
+  UINT GetNumRenderTargets() const { return m_num_render_targets; }
+  DXGI_FORMAT GetRTVFormat(UINT index) const {
+    return index < 8 ? m_rtv_formats[index] : DXGI_FORMAT_UNKNOWN;
+  }
+  UINT GetSampleCount() const { return m_sample_count; }
   WMT::Reference<WMT::ComputePipelineState> GetComputePSO() const {
     return m_compute_pso;
   }

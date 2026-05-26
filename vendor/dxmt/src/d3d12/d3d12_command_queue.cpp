@@ -14,6 +14,7 @@
 #include "Metal.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -91,11 +92,25 @@ static uint32_t g_swapchain_draw_logs = 0;
 static uint32_t g_swapchain_clear_logs = 0;
 static uint32_t g_swapchain_state_logs = 0;
 static uint32_t g_swapchain_argbuf_logs = 0;
+static uint32_t g_swapchain_vs_argbuf_logs = 0;
 static uint32_t g_swapchain_stage_in_vb_logs = 0;
 static uint32_t g_swapchain_forced_color_logs = 0;
+static uint32_t g_swapchain_vertex_sample_logs = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
+}
+
+static std::string FormatDebugBytes(const uint8_t *bytes, size_t count) {
+  std::string out;
+  char text[8] = {};
+  for (size_t i = 0; i < count; i++) {
+    if (i)
+      out.push_back(' ');
+    std::snprintf(text, sizeof(text), "%02x", bytes[i]);
+    out += text;
+  }
+  return out;
 }
 
 struct D3D12GeometryDrawArguments {
@@ -1358,6 +1373,29 @@ struct ReplayState {
       if (render_enc_open) {
         uint32_t bind_index = BindIndexOrFallback(
             pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+        if (HasSwapchainRenderTarget() &&
+            TakeLogBudget(&g_swapchain_vs_argbuf_logs, 64)) {
+          Logger::info(str::format(
+              "M12 swapchain VS argbuf ", TracePsoShaderSummary(pso),
+              " bind_index=", bind_index, " qwords=", qword_count, " data=[",
+              (unsigned long long)vs_arg_buf_data[0], ",",
+              (unsigned long long)(qword_count > 1 ? vs_arg_buf_data[1] : 0),
+              ",",
+              (unsigned long long)(qword_count > 2 ? vs_arg_buf_data[2] : 0),
+              ",",
+              (unsigned long long)(qword_count > 3 ? vs_arg_buf_data[3] : 0),
+              ",",
+              (unsigned long long)(qword_count > 4 ? vs_arg_buf_data[4] : 0),
+              ",",
+              (unsigned long long)(qword_count > 5 ? vs_arg_buf_data[5] : 0),
+              ",",
+              (unsigned long long)(qword_count > 6 ? vs_arg_buf_data[6] : 0),
+              ",",
+              (unsigned long long)(qword_count > 7 ? vs_arg_buf_data[7] : 0),
+              ",",
+              (unsigned long long)(qword_count > 8 ? vs_arg_buf_data[8] : 0),
+              "]"));
+        }
         render_enc.setVertexBuffer(vs_arg_buf, 0, bind_index);
         render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
                                WMTRenderStageVertex);
@@ -3446,6 +3484,95 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                  st.pso ? st.pso->IsCompiled() : 0,
                  TraceCompileFailureStage(st.pso),
                  TraceCompileFailureDetail(st.pso));
+          if (st.HasSwapchainRenderTarget() &&
+              TakeLogBudget(&g_swapchain_vertex_sample_logs, 24)) {
+            uint32_t first_index = cmd->start_index;
+            bool index_sampled = false;
+            HRESULT index_map_hr = E_FAIL;
+            if (ib_res) {
+              D3D12_RESOURCE_DESC ib_desc = {};
+              ib_res->GetDesc(&ib_desc);
+              const uint32_t index_size =
+                  st.ib.Format == DXGI_FORMAT_R32_UINT ? 4u : 2u;
+              const uint64_t raw_index_offset =
+                  st.ib.BufferLocation - ib_res->GetGPUVirtualAddress() +
+                  uint64_t(cmd->start_index) * index_size;
+              if (raw_index_offset + index_size <= ib_desc.Width) {
+                void *index_base = nullptr;
+                D3D12_RANGE read_range = {raw_index_offset,
+                                          raw_index_offset + index_size};
+                index_map_hr = ib_res->Map(0, &read_range, &index_base);
+                if (SUCCEEDED(index_map_hr) && index_base) {
+                  const auto *index_bytes =
+                      static_cast<const uint8_t *>(index_base) + raw_index_offset;
+                  if (st.ib.Format == DXGI_FORMAT_R32_UINT) {
+                    uint32_t value = 0;
+                    std::memcpy(&value, index_bytes, sizeof(value));
+                    first_index = value;
+                  } else {
+                    uint16_t value = 0;
+                    std::memcpy(&value, index_bytes, sizeof(value));
+                    first_index = value;
+                  }
+                  index_sampled = true;
+                  ib_res->Unmap(0, nullptr);
+                }
+              }
+            }
+
+            const auto &vb0 = st.vbs[0];
+            const int64_t vertex_id =
+                int64_t(cmd->base_vertex) + int64_t(first_index);
+            bool vertex_sampled = false;
+            HRESULT vertex_map_hr = E_FAIL;
+            std::string vertex_bytes;
+            float f[4] = {};
+            uint64_t vertex_gpu = 0;
+            uint64_t vertex_offset = 0;
+            MTLD3D12Resource *vb_res = nullptr;
+            if (vb0.BufferLocation && vb0.StrideInBytes && vertex_id >= 0) {
+              vertex_gpu = vb0.BufferLocation +
+                           uint64_t(vertex_id) * uint64_t(vb0.StrideInBytes);
+              vb_res = m_device->LookupResourceByGPUAddress(vertex_gpu);
+              if (vb_res) {
+                D3D12_RESOURCE_DESC vb_desc = {};
+                vb_res->GetDesc(&vb_desc);
+                vertex_offset = vertex_gpu - vb_res->GetGPUVirtualAddress();
+                const size_t sample_bytes =
+                    std::min<size_t>(vb0.StrideInBytes, 64);
+                if (vertex_offset + sample_bytes <= vb_desc.Width) {
+                  void *vertex_base = nullptr;
+                  D3D12_RANGE read_range = {vertex_offset,
+                                            vertex_offset + sample_bytes};
+                  vertex_map_hr = vb_res->Map(0, &read_range, &vertex_base);
+                  if (SUCCEEDED(vertex_map_hr) && vertex_base) {
+                    const auto *bytes =
+                        static_cast<const uint8_t *>(vertex_base) + vertex_offset;
+                    vertex_bytes = FormatDebugBytes(bytes, sample_bytes);
+                    const size_t float_bytes =
+                        std::min<size_t>(sample_bytes, sizeof(f));
+                    std::memcpy(f, bytes, float_bytes);
+                    vertex_sampled = true;
+                    vb_res->Unmap(0, nullptr);
+                  }
+                }
+              }
+            }
+
+            Logger::info(str::format(
+                "M12 swapchain vertex sample idx_count=", cmd->index_count,
+                " start_index=", cmd->start_index, " first_index=", first_index,
+                " index_sampled=", index_sampled, " index_hr=0x", std::hex,
+                (unsigned)index_map_hr, std::dec, " base_vertex=",
+                cmd->base_vertex, " vertex_id=", (long long)vertex_id,
+                " vb0_gpu=", (unsigned long long)vb0.BufferLocation,
+                " vb0_stride=", vb0.StrideInBytes, " vertex_gpu=",
+                (unsigned long long)vertex_gpu, " vb_res=", (void *)vb_res,
+                " vertex_off=", (unsigned long long)vertex_offset,
+                " vertex_sampled=", vertex_sampled, " vertex_hr=0x", std::hex,
+                (unsigned)vertex_map_hr, std::dec, " f0=", f[0], " f1=", f[1],
+                " f2=", f[2], " f3=", f[3], " bytes=[", vertex_bytes, "]"));
+          }
           struct wmtcmd_render_draw_indexed draw = {};
           draw.type = WMTRenderCommandDrawIndexed;
           draw.next.set(nullptr);
@@ -3478,8 +3605,20 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             const auto &sc = st.scissor_rects[0];
             const auto &rast = st.pso->GetRasterizerDesc();
             const auto &ds = st.pso->GetDepthStencilDesc();
+            const auto &blend = st.pso->GetBlendDesc();
             const auto &vb0 = st.vbs[0];
             const auto effective_cull = st.EffectiveCullMode();
+            DXGI_FORMAT actual_rt_format = DXGI_FORMAT_UNKNOWN;
+            auto *rt_desc = reinterpret_cast<const D3D12Descriptor *>(
+                st.rt_handles[0].ptr);
+            auto *rt_res =
+                rt_desc ? static_cast<MTLD3D12Resource *>(rt_desc->resource)
+                        : nullptr;
+            if (rt_res) {
+              D3D12_RESOURCE_DESC resource_desc = {};
+              rt_res->GetDesc(&resource_desc);
+              actual_rt_format = resource_desc.Format;
+            }
             Logger::info(str::format(
                 "M12 swapchain draw state vp_count=", st.viewport_count,
                 " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ",
@@ -3492,7 +3631,21 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 (unsigned)ds.DepthEnable, " depth_func=",
                 (unsigned)ds.DepthFunc, " stencil_enable=",
                 (unsigned)ds.StencilEnable, " effective_cull=",
-                (unsigned)effective_cull, " vb0_gpu=",
+                (unsigned)effective_cull, " pso_rts=",
+                (unsigned)st.pso->GetNumRenderTargets(), " pso_rtv0=",
+                (unsigned)st.pso->GetRTVFormat(0), " actual_rtv0=",
+                (unsigned)actual_rt_format, " sample_count=",
+                (unsigned)st.pso->GetSampleCount(), " blend0=",
+                (unsigned)blend.RenderTarget[0].BlendEnable, " write_mask0=0x",
+                std::hex, (unsigned)blend.RenderTarget[0].RenderTargetWriteMask,
+                std::dec, " src_blend0=",
+                (unsigned)blend.RenderTarget[0].SrcBlend, " dst_blend0=",
+                (unsigned)blend.RenderTarget[0].DestBlend, " blend_op0=",
+                (unsigned)blend.RenderTarget[0].BlendOp, " src_alpha0=",
+                (unsigned)blend.RenderTarget[0].SrcBlendAlpha, " dst_alpha0=",
+                (unsigned)blend.RenderTarget[0].DestBlendAlpha,
+                " blend_op_alpha0=", (unsigned)blend.RenderTarget[0].BlendOpAlpha,
+                " vb0_gpu=",
                 (unsigned long long)vb0.BufferLocation, " vb0_size=",
                 vb0.SizeInBytes, " vb0_stride=", vb0.StrideInBytes,
                 " ib_fmt=", (unsigned)st.ib.Format));

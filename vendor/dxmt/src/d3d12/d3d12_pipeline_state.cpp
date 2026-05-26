@@ -79,6 +79,30 @@ bool DXMTD3D12GeometryMeshPipelineEnabled() {
   return enabled != 0;
 }
 
+bool DXMTD3D12ForceColorWriteState() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_FORCE_COLOR_WRITE_STATE");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12ForceDiagnosticFragment() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12ForceDiagnosticFullscreen() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
 class PipelineCompileScheduler {
 public:
   PipelineCompileScheduler() {
@@ -2988,6 +3012,11 @@ bool MTLD3D12PipelineState::CompileImpl() {
                 kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
             mesh_info.colors[i].blending_enabled =
                 rt.BlendEnable ? true : false;
+            if (DXMTD3D12ForceColorWriteState()) {
+              mesh_info.colors[i].write_mask = WMTColorWriteMaskAll;
+              mesh_info.colors[i].blending_enabled = false;
+              continue;
+            }
             if (rt.BlendEnable) {
               mesh_info.colors[i].src_rgb_blend_factor =
                   D3D12BlendToWMT(rt.SrcBlend);
@@ -3261,6 +3290,11 @@ bool MTLD3D12PipelineState::CompileImpl() {
           mesh_info.colors[i].write_mask =
               kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
           mesh_info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
+          if (DXMTD3D12ForceColorWriteState()) {
+            mesh_info.colors[i].write_mask = WMTColorWriteMaskAll;
+            mesh_info.colors[i].blending_enabled = false;
+            continue;
+          }
           if (rt.BlendEnable) {
             mesh_info.colors[i].src_rgb_blend_factor =
                 D3D12BlendToWMT(rt.SrcBlend);
@@ -3407,6 +3441,46 @@ d3d12_geometry_fallback_to_vs_ps:
     info.vertex_function = vs_func.handle;
   if (ps_func.handle)
     info.fragment_function = ps_func.handle;
+  if (DXMTD3D12ForceDiagnosticFullscreen() && m_num_render_targets > 0) {
+    auto diagnostic_vs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("vs_diagnostic_fullscreen_fallback");
+    auto diagnostic_fs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("fs_diagnostic_varying_fallback");
+    if (diagnostic_vs.handle && diagnostic_fs.handle) {
+      info.vertex_function = diagnostic_vs.handle;
+      info.fragment_function = diagnostic_fs.handle;
+      info.vertex_descriptor = nullptr;
+      Logger::info(str::format(
+          "D3D12 forcing diagnostic fullscreen shader pair for render PSO this=",
+          (void *)this, " rts=", m_num_render_targets, " vs=",
+          GetVSCacheHash(), " ps=", GetPSCacheHash()));
+    } else {
+      Logger::warn("D3D12 diagnostic fullscreen requested but fallback "
+                   "functions were unavailable");
+    }
+  } else if (DXMTD3D12ForceDiagnosticFragment() && m_num_render_targets > 0) {
+    auto diagnostic_fs = m_device->GetDXMTDevice()
+                             .queue()
+                             .cmd_library
+                             .getLibrary()
+                             .newFunction("fs_diagnostic_varying_fallback");
+    if (diagnostic_fs.handle) {
+      info.fragment_function = diagnostic_fs.handle;
+      Logger::info(str::format(
+          "D3D12 forcing diagnostic fragment shader for render PSO this=",
+          (void *)this, " rts=", m_num_render_targets, " vs=",
+          GetVSCacheHash(), " ps=", GetPSCacheHash()));
+    } else {
+      Logger::warn("D3D12 diagnostic fragment shader requested but fallback "
+                   "function was unavailable");
+    }
+  }
 
   // D3D12 wireframe is still a rasterized fill mode; it must not be lowered to
   // Metal rasterizationEnabled=false, which only accepts void vertex shaders.
@@ -3482,6 +3556,12 @@ d3d12_geometry_fallback_to_vs_ps:
     info.colors[i].write_mask =
         kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
     info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
+
+    if (DXMTD3D12ForceColorWriteState()) {
+      info.colors[i].write_mask = WMTColorWriteMaskAll;
+      info.colors[i].blending_enabled = false;
+      continue;
+    }
 
     if (!rt.BlendEnable)
       continue;

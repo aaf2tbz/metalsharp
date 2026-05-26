@@ -1559,6 +1559,24 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         {
             env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
         }
+        if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
+        }
         return env;
     }
     Vec::new()
