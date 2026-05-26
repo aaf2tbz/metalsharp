@@ -67,6 +67,14 @@ bool DXMTD3D12SwapchainRenderReadback() {
   return enabled != 0;
 }
 
+bool DXMTD3D12FinalRenderSnapshot() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_FINAL_RENDER_SNAPSHOT");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 static uint32_t AlignReadbackPitch(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -111,6 +119,7 @@ static uint32_t g_swapchain_stage_in_vb_logs = 0;
 static uint32_t g_swapchain_forced_color_logs = 0;
 static uint32_t g_swapchain_vertex_sample_logs = 0;
 static uint32_t g_swapchain_render_readback_captures = 0;
+static uint32_t g_swapchain_final_snapshot_logs = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
@@ -446,6 +455,134 @@ static bool DSVHasStencil(const D3D12Descriptor *desc) {
   return FormatHasStencil(format);
 }
 
+static const char *DescriptorRangeTypeName(D3D12_DESCRIPTOR_RANGE_TYPE type) {
+  switch (type) {
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SRV:
+    return "SRV";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_UAV:
+    return "UAV";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_CBV:
+    return "CBV";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER:
+    return "SAMPLER";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static const char *RootParameterTypeName(D3D12_ROOT_PARAMETER_TYPE type) {
+  switch (type) {
+  case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE:
+    return "TABLE";
+  case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS:
+    return "CONSTANTS";
+  case D3D12_ROOT_PARAMETER_TYPE_CBV:
+    return "CBV";
+  case D3D12_ROOT_PARAMETER_TYPE_SRV:
+    return "SRV";
+  case D3D12_ROOT_PARAMETER_TYPE_UAV:
+    return "UAV";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static const char *ShaderVisibilityName(uint32_t visibility) {
+  switch ((D3D12_SHADER_VISIBILITY)visibility) {
+  case D3D12_SHADER_VISIBILITY_ALL:
+    return "ALL";
+  case D3D12_SHADER_VISIBILITY_VERTEX:
+    return "VS";
+  case D3D12_SHADER_VISIBILITY_HULL:
+    return "HS";
+  case D3D12_SHADER_VISIBILITY_DOMAIN:
+    return "DS";
+  case D3D12_SHADER_VISIBILITY_GEOMETRY:
+    return "GS";
+  case D3D12_SHADER_VISIBILITY_PIXEL:
+    return "PS";
+  case D3D12_SHADER_VISIBILITY_AMPLIFICATION:
+    return "AS";
+  case D3D12_SHADER_VISIBILITY_MESH:
+    return "MS";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static std::string ResourceSummary(MTLD3D12Resource *res) {
+  if (!res)
+    return "res=null";
+
+  D3D12_RESOURCE_DESC desc = {};
+  res->GetDesc(&desc);
+  auto tex = res->GetMTLTexture();
+  auto buf = res->GetMTLBuffer();
+  return str::format("res=", (void *)res, " dim=", (unsigned)desc.Dimension,
+                     " fmt=", (unsigned)desc.Format, " size=", desc.Width, "x",
+                     (unsigned)desc.Height, "x", (unsigned)desc.DepthOrArraySize,
+                     " mips=", (unsigned)desc.MipLevels, " samples=",
+                     (unsigned)desc.SampleDesc.Count, " tex=",
+                     (unsigned long long)tex.handle, " tex_id=",
+                     (unsigned long long)res->GetTextureGPUResourceID(),
+                     " tex_array=", res->GetTextureArrayLength(), " buf=",
+                     (unsigned long long)buf.handle, " gpu=0x",
+                     (unsigned long long)res->GetGPUVirtualAddress(), " bytes=",
+                     (unsigned long long)res->GetBufferByteLength(),
+                     " swapchain=", res->IsSwapchainBackBuffer(),
+                     " bb=", res->IsSwapchainBackBuffer()
+                                  ? res->SwapchainBackBufferIndex()
+                                  : 0u);
+}
+
+static std::string DescriptorSummary(const D3D12Descriptor *desc,
+                                     D3D12_DESCRIPTOR_RANGE_TYPE range_type) {
+  if (!desc)
+    return "desc=null";
+
+  auto *res = desc->resource ? static_cast<MTLD3D12Resource *>(desc->resource)
+                             : nullptr;
+  std::string summary =
+      str::format("desc=", (const void *)desc, " heap_type=",
+                  (unsigned)desc->type, " range=",
+                  DescriptorRangeTypeName(range_type), " ", ResourceSummary(res));
+
+  if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
+    return str::format(summary, " sampler=", (unsigned long long)desc->metal_sampler.handle,
+                       " sampler_id=",
+                       (unsigned long long)desc->metal_sampler_gpu_id,
+                       " cube_id=",
+                       (unsigned long long)desc->metal_sampler_cube_gpu_id);
+  }
+
+  if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
+    return str::format(summary, " cbv_gpu=0x",
+                       (unsigned long long)desc->cbv.BufferLocation,
+                       " cbv_size=", desc->cbv.SizeInBytes);
+  }
+
+  if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV) {
+    auto tex = DescriptorTexture(desc, res);
+    return str::format(summary, " uav_fmt=", (unsigned)desc->uav.Format,
+                       " uav_dim=", (unsigned)desc->uav.ViewDimension,
+                       " uav_counter=", (const void *)desc->resource_uav_counter,
+                       " view=", (unsigned long long)desc->metal_texture_view.handle,
+                       " view_id=",
+                       (unsigned long long)DescriptorTextureGPUResourceID(desc, res),
+                       " tex=", (unsigned long long)tex.handle,
+                       " array_len=", UAVTextureArrayLength(desc, res));
+  }
+
+  auto tex = DescriptorTexture(desc, res);
+  return str::format(summary, " srv_fmt=", (unsigned)desc->srv.Format,
+                     " srv_dim=", (unsigned)desc->srv.ViewDimension,
+                     " view=", (unsigned long long)desc->metal_texture_view.handle,
+                     " view_id=",
+                     (unsigned long long)DescriptorTextureGPUResourceID(desc, res),
+                     " tex=", (unsigned long long)tex.handle,
+                     " array_len=", SRVTextureArrayLength(desc, res));
+}
+
 struct ReplayState {
   static constexpr uint32_t kVertexBufferSlotCount = 29;
   static constexpr uint32_t kVertexBufferTableSlot = 16;
@@ -751,6 +888,124 @@ struct ReplayState {
                              compiled, " pso=", (void *)pso, " stage=",
                              TraceCompileFailureStage(pso), " detail=",
                              TraceCompileFailureDetail(pso)));
+  }
+
+  void LogFinalRenderSnapshot(const char *draw_kind, uint32_t element_count,
+                              uint32_t instance_count, uint32_t start_element) {
+    if (!DXMTD3D12FinalRenderSnapshot() || !HasSwapchainRenderTarget() || !pso)
+      return;
+
+    uint32_t capture =
+        __atomic_add_fetch(&g_swapchain_final_snapshot_logs, 1,
+                           __ATOMIC_RELAXED);
+    if (capture > 32 && (capture % 60) != 0)
+      return;
+
+    Logger::info(str::format(
+        "M12 final render snapshot #", capture, " draw=", draw_kind,
+        " elems=", element_count, " inst=", instance_count,
+        " start=", start_element, " enc=", (unsigned long long)render_enc.handle,
+        " pso=", (void *)pso, " compiled=", pso->IsCompiled(),
+        " render_handle=", (unsigned long long)pso->GetRenderPSO().handle,
+        " geom_mesh=", pso->UsesGeometryMeshPipeline(), " ",
+        TracePsoShaderSummary(pso)));
+
+    const auto &blend = pso->GetBlendDesc();
+    Logger::info(str::format(
+        "M12 final pso color rts=", (unsigned)pso->GetNumRenderTargets(),
+        " rtv0=", (unsigned)pso->GetRTVFormat(0),
+        " sample_count=", (unsigned)pso->GetSampleCount(),
+        " blend0=", (unsigned)blend.RenderTarget[0].BlendEnable,
+        " write_mask0=0x", std::hex,
+        (unsigned)blend.RenderTarget[0].RenderTargetWriteMask, std::dec,
+        " logic_op0=", (unsigned)blend.RenderTarget[0].LogicOpEnable,
+        " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
+        " dst0=", (unsigned)blend.RenderTarget[0].DestBlend,
+        " op0=", (unsigned)blend.RenderTarget[0].BlendOp));
+
+    for (uint32_t i = 0; i < rt_count && i < 8; i++) {
+      auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
+      auto *res =
+          desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
+      Logger::info(str::format(
+          "M12 final RTV slot=", i, " handle=0x",
+          (unsigned long long)rt_handles[i].ptr, " rtv_fmt=",
+          desc ? (unsigned)desc->rtv.Format : 0u, " rtv_dim=",
+          desc ? (unsigned)desc->rtv.ViewDimension : 0u, " ",
+          ResourceSummary(res)));
+    }
+
+    if (has_dsv) {
+      auto *desc = reinterpret_cast<const D3D12Descriptor *>(dsv_handle.ptr);
+      auto *res =
+          desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
+      Logger::info(str::format(
+          "M12 final DSV handle=0x", (unsigned long long)dsv_handle.ptr,
+          " dsv_fmt=", desc ? (unsigned)desc->dsv.Format : 0u,
+          " dsv_dim=", desc ? (unsigned)desc->dsv.ViewDimension : 0u,
+          " stencil=", desc ? DSVHasStencil(desc) : false, " ",
+          ResourceSummary(res)));
+    }
+
+    auto *sig = graphics_root_sig;
+    if (!sig && pso->GetRootSignature())
+      sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
+    if (!sig) {
+      Logger::info("M12 final roots root_sig=null");
+      return;
+    }
+
+    const auto &params = sig->GetParameters();
+    Logger::info(str::format("M12 final root signature params=",
+                             (unsigned)params.size(), " heaps=",
+                             desc_heap_count));
+    for (uint32_t i = 0; i < params.size() && i < 16; i++) {
+      const auto &param = params[i];
+      Logger::info(str::format(
+          "M12 final root[", i, "] type=", RootParameterTypeName(param.type),
+          " vis=", ShaderVisibilityName(param.shader_visibility),
+          " reg=", param.register_index, " space=", param.register_space,
+          " constants=", root_constant_set[i], " cbv=", root_cbv_set[i],
+          " srv=", root_srv_set[i], " uav=", root_uav_set[i],
+          " table=", root_table_set[i], " table_gpu=0x",
+          (unsigned long long)root_tables[i].ptr, " const_size=",
+          root_constant_sizes[i], " root_cbv=0x",
+          (unsigned long long)root_cbvs[i], " root_srv=0x",
+          (unsigned long long)root_srvs[i], " root_uav=0x",
+          (unsigned long long)root_uavs[i]));
+
+      if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
+          !root_table_set[i])
+        continue;
+
+      for (uint32_t r = 0; r < param.ranges.size(); r++) {
+        const auto &range = param.ranges[r];
+        uint32_t descriptor_count =
+            range.num_descriptors == UINT32_MAX ? 1u : range.num_descriptors;
+        uint32_t inspect_count = std::min<uint32_t>(descriptor_count, 4u);
+        Logger::info(str::format(
+            "M12 final root[", i, "] range[", r,
+            "] type=", DescriptorRangeTypeName(range.range_type),
+            " base=", range.base_register, " space=", range.register_space,
+            " offset=", range.offset_in_table, " descriptors=",
+            descriptor_count, " inspect=", inspect_count));
+
+        for (uint32_t d = 0; d < inspect_count; d++) {
+          D3D12Descriptor *desc = nullptr;
+          for (uint32_t h = 0; h < desc_heap_count && !desc; h++) {
+            auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+            if (heap) {
+              desc = heap->GetDescriptorFromGPUHandle(
+                  root_tables[i], range.offset_in_table + d);
+            }
+          }
+          Logger::info(str::format(
+              "M12 final root[", i, "] range[", r, "] desc[", d,
+              "] reg=", range.base_register + d, " ",
+              DescriptorSummary(desc, range.range_type)));
+        }
+      }
+    }
   }
 
   MTLD3D12RootSignature *compute_root_sig = nullptr;
@@ -3692,6 +3947,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             st.EncodeGeometryDraw(m_device, cmd->vertex_count,
                                   cmd->instance_count, cmd->start_vertex,
                                   cmd->start_instance)) {
+          st.LogFinalRenderSnapshot("GeometryDraw", cmd->vertex_count,
+                                    cmd->instance_count, cmd->start_vertex);
           st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
@@ -3715,6 +3972,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    cmd->instance_count, cmd->start_vertex, 0,
                                    cmd->start_instance, false,
                                    WMTIndexTypeUInt16);
+          st.LogFinalRenderSnapshot("DrawInstanced", cmd->vertex_count,
+                                    cmd->instance_count, cmd->start_vertex);
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
           st.MarkSwapchainWorkEncoded();
@@ -3775,6 +4034,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                          cmd->instance_count,
                                          cmd->start_index, cmd->base_vertex,
                                          cmd->start_instance)) {
+          st.LogFinalRenderSnapshot("GeometryDrawIndexed", cmd->index_count,
+                                    cmd->instance_count, cmd->start_index);
           st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
@@ -3920,6 +4181,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    cmd->instance_count, cmd->start_index,
                                    cmd->base_vertex, cmd->start_instance, true,
                                    draw.index_type);
+          st.LogFinalRenderSnapshot("DrawIndexedInstanced", cmd->index_count,
+                                    cmd->instance_count, cmd->start_index);
           st.render_enc.encodeCommands(
               reinterpret_cast<const wmtcmd_render_nop *>(&draw));
           st.MarkSwapchainWorkEncoded();
