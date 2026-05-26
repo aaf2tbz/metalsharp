@@ -44,7 +44,7 @@ static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
 static WMTPixelFormat DXGIToDisplayLayerMTL(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R10G10B10A2_UNORM:
-    return WMTPixelFormatBGRA8Unorm;
+    return WMTPixelFormatRGB10A2Unorm;
   default:
     return DXGIToMTL(fmt);
   }
@@ -56,6 +56,7 @@ static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
   case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
   case DXGI_FORMAT_B8G8R8A8_UNORM:
   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
     return true;
   default:
     return false;

@@ -420,6 +420,27 @@ struct ReplayState {
            pso->GetRenderPSO().handle;
   }
 
+  bool UsesGeometryMeshPipeline() const {
+    return pso && pso->UsesGeometryMeshPipeline();
+  }
+
+  WMTRenderStages VertexInputStages() const {
+    WMTRenderStages stages = WMTRenderStageVertex;
+    if (UsesGeometryMeshPipeline())
+      stages = (WMTRenderStages)(stages | WMTRenderStageObject);
+    return stages;
+  }
+
+  WMTRenderStages RootBindingStages() const {
+    WMTRenderStages stages =
+        (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment);
+    if (UsesGeometryMeshPipeline()) {
+      stages = (WMTRenderStages)(stages | WMTRenderStageObject |
+                                 WMTRenderStageMesh);
+    }
+    return stages;
+  }
+
   bool HasSwapchainRenderTarget() const {
     return SwapchainRenderTargetResource() != nullptr;
   }
@@ -2163,8 +2184,7 @@ struct ReplayState {
         root_constants_mtl_buf.updateContents(0, root_constants_buf,
                                               sizeof(root_constants_buf));
         render_enc.useResource(
-            root_constants_mtl_buf, WMTResourceUsageRead,
-            (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment));
+            root_constants_mtl_buf, WMTResourceUsageRead, RootBindingStages());
       }
     }
 
@@ -2175,6 +2195,12 @@ struct ReplayState {
                                    root_constant_offsets[i], i);
         render_enc.setFragmentBuffer(root_constants_mtl_buf,
                                      root_constant_offsets[i], i);
+        if (UsesGeometryMeshPipeline()) {
+          render_enc.setObjectBuffer(root_constants_mtl_buf,
+                                     root_constant_offsets[i], i);
+          render_enc.setMeshBuffer(root_constants_mtl_buf,
+                                   root_constant_offsets[i], i);
+        }
         QTRACE("ApplyRootBindings: constants idx=%u off=%u size=%u via buffer",
                i, root_constant_offsets[i], root_constant_sizes[i]);
       }
@@ -2203,6 +2229,12 @@ struct ReplayState {
         uint64_t offset = address - res->GetGPUVirtualAddress();
         render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
         render_enc.setFragmentBuffer(res->GetMTLBuffer(), offset, slot);
+        if (UsesGeometryMeshPipeline()) {
+          render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, slot);
+          render_enc.setMeshBuffer(res->GetMTLBuffer(), offset, slot);
+        }
+        render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                               RootBindingStages());
         QTRACE("ApplyRootBindings: root %s param=%u -> slot=%u gpu=0x%llx",
                label, i, slot, (unsigned long long)address);
       };
@@ -2241,14 +2273,19 @@ struct ReplayState {
           render_enc.setVertexBuffer(res->GetMTLBuffer(), off, shader_register);
           render_enc.setFragmentBuffer(res->GetMTLBuffer(), off,
                                        shader_register);
+          if (UsesGeometryMeshPipeline()) {
+            render_enc.setObjectBuffer(res->GetMTLBuffer(), off,
+                                       shader_register);
+            render_enc.setMeshBuffer(res->GetMTLBuffer(), off,
+                                     shader_register);
+          }
           WMTResourceUsage usage =
               range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV
                   ? (WMTResourceUsage)(WMTResourceUsageRead |
                                        WMTResourceUsageWrite)
                   : WMTResourceUsageRead;
-          render_enc.useResource(
-              res->GetMTLBuffer(), usage,
-              (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment));
+          render_enc.useResource(res->GetMTLBuffer(), usage,
+                                 RootBindingStages());
           QTRACE("ApplyRootBindings: table buffer reg=%u type=%u off=%llu",
                  shader_register, range_type, (unsigned long long)off);
         } else if (auto tex = DescriptorTexture(desc, res);
@@ -2263,7 +2300,7 @@ struct ReplayState {
                                        WMTResourceUsageSample);
           render_enc.useResource(
               tex, usage,
-              (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment));
+              (WMTRenderStages)(RootBindingStages() & ~WMTRenderStageMesh));
           QTRACE("ApplyRootBindings: table texture reg=%u type=%u tex=%llu",
                  shader_register, range_type,
                  (unsigned long long)tex.handle);
@@ -2338,7 +2375,7 @@ struct ReplayState {
           vertex_table_data[table_index].stride = view.StrideInBytes;
           vertex_table_data[table_index].length = view.SizeInBytes;
           render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
-                                 WMTRenderStageVertex);
+                                 VertexInputStages());
           QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u gpu=0x%llx size=%u "
                  "stride=%u",
                  table_index, slot, (unsigned long long)view.BufferLocation,
@@ -2375,6 +2412,10 @@ struct ReplayState {
                  (unsigned long long)offset, vbs[i].SizeInBytes,
                  vbs[i].StrideInBytes);
           render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, i);
+          if (UsesGeometryMeshPipeline())
+            render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, i);
+          render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                                 VertexInputStages());
         } else {
           QTRACE("ApplyVertexBuffers: slot=%u gpu=0x%llx unresolved", i,
                  (unsigned long long)vbs[i].BufferLocation);
