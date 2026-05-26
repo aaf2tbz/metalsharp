@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #define QTRACE(fmt, ...) DXMTD3D12Trace("Queue", fmt, ##__VA_ARGS__)
@@ -71,6 +72,16 @@ bool DXMTD3D12FinalRenderSnapshot() {
   static int enabled = [] {
     const char *value = std::getenv("DXMT_D3D12_FINAL_RENDER_SNAPSHOT");
     return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12SkipUnsafeMSCOffscreenPass() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_SKIP_UNSAFE_MSC_OFFSCREEN_PASS");
+    if (!value || !value[0])
+      value = std::getenv("DXMT_D3D12_SKIP_UNSAFE_MSC_R16_DEPTH_PASS");
+    return !value || !value[0] || value[0] != '0';
   }();
   return enabled != 0;
 }
@@ -707,6 +718,135 @@ struct ReplayState {
 
   bool swapchain_work_encoded = false;
   MTLD3D12Resource *swapchain_rt_for_present = nullptr;
+  static constexpr uint32_t kFaultBreadcrumbCount = 16;
+  std::string fault_breadcrumbs[kFaultBreadcrumbCount] = {};
+  uint32_t fault_breadcrumb_cursor = 0;
+  std::string last_vertex_table_summary = "vb=unbound";
+  uint32_t last_bound_vertex_buffers = 0;
+
+  void AddFaultBreadcrumb(const std::string &summary) {
+    fault_breadcrumbs[fault_breadcrumb_cursor % kFaultBreadcrumbCount] = summary;
+    fault_breadcrumb_cursor++;
+  }
+
+  std::string FormatFaultBreadcrumbs() const {
+    if (!fault_breadcrumb_cursor)
+      return "none";
+
+    std::string out;
+    const uint32_t count =
+        std::min<uint32_t>(fault_breadcrumb_cursor, kFaultBreadcrumbCount);
+    const uint32_t first = fault_breadcrumb_cursor - count;
+    for (uint32_t i = 0; i < count; i++) {
+      const uint32_t seq = first + i;
+      const auto &entry = fault_breadcrumbs[seq % kFaultBreadcrumbCount];
+      if (entry.empty())
+        continue;
+      if (!out.empty())
+        out += " | ";
+      out += "#";
+      out += std::to_string(seq);
+      out += " ";
+      out += entry;
+    }
+    return out.empty() ? "none" : out;
+  }
+
+  void AddRenderFaultBreadcrumb(const char *kind, uint32_t element_count,
+                                uint32_t instance_count,
+                                uint32_t start_element, int32_t base_vertex,
+                                uint64_t index_gpu, bool indexed) {
+    uint32_t rtv0 = 0;
+    uint32_t sample_count = 0;
+    uint32_t write_mask0 = 0;
+    uint32_t depth_enabled = 0;
+    uint32_t stencil_enabled = 0;
+    uint32_t num_rts = 0;
+    bool compiled = false;
+    bool stage_in = false;
+    bool geom_mesh = false;
+    std::string pso_summary = TracePsoShaderSummary(pso);
+    if (pso) {
+      const auto &blend = pso->GetBlendDesc();
+      const auto &ds = pso->GetDepthStencilDesc();
+      compiled = pso->IsCompiled();
+      stage_in = pso->UsesStageInVertexDescriptor();
+      geom_mesh = pso->UsesGeometryMeshPipeline();
+      num_rts = pso->GetNumRenderTargets();
+      rtv0 = pso->GetRTVFormat(0);
+      sample_count = pso->GetSampleCount();
+      write_mask0 = blend.RenderTarget[0].RenderTargetWriteMask;
+      depth_enabled = ds.DepthEnable ? 1u : 0u;
+      stencil_enabled = ds.StencilEnable ? 1u : 0u;
+    }
+
+    AddFaultBreadcrumb(str::format(
+        kind, " elems=", element_count, " inst=", instance_count,
+        " start=", start_element, " base=", base_vertex,
+        " indexed=", indexed ? 1u : 0u, " ib=0x", std::hex,
+        (unsigned long long)index_gpu, std::dec, " enc=", render_enc_open,
+        " pso=", (void *)pso, " compiled=", compiled, " rts=", num_rts,
+        " rtv0=", rtv0, " sample=", sample_count, " write_mask0=0x",
+        std::hex, write_mask0, std::dec, " depth=", depth_enabled,
+        " stencil=", stencil_enabled, " stage_in=", stage_in,
+        " geom_mesh=", geom_mesh, " swapchain=", HasSwapchainRenderTarget(),
+        " rt_count=", rt_count, " dsv=", has_dsv, " ", last_vertex_table_summary,
+        " ", pso_summary));
+  }
+
+  void AddComputeFaultBreadcrumb(const char *kind, uint32_t x, uint32_t y,
+                                 uint32_t z) {
+    AddFaultBreadcrumb(str::format(
+        kind, " groups=", x, "x", y, "x", z, " pso=", (void *)pso,
+        " compiled=", pso ? pso->IsCompiled() : false, " compute=",
+        pso ? pso->IsCompute() : false, " heaps=", desc_heap_count,
+        " stage=", TraceCompileFailureStage(pso), " detail=",
+        TraceCompileFailureDetail(pso), " ", TracePsoShaderSummary(pso)));
+  }
+
+  bool ShouldSkipUnsafeMSCOffscreenPass() const {
+    if (!DXMTD3D12SkipUnsafeMSCOffscreenPass() || !pso ||
+        !pso->UsesStageInVertexDescriptor() || HasSwapchainRenderTarget())
+      return false;
+
+    const auto rtv0 = pso->GetRTVFormat(0);
+    if (!has_dsv) {
+      return rt_count == 1 && last_bound_vertex_buffers == 0;
+    }
+
+    if (!pso->RequiresMSCStageInFunction())
+      return false;
+
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R16G16B16A16_UNORM)
+      return true;
+
+    if (rt_count >= 3 && pso->GetNumRenderTargets() >= 3 &&
+        rtv0 == DXGI_FORMAT_R8G8B8A8_UNORM)
+      return true;
+
+    const auto &ds = pso->GetDepthStencilDesc();
+    return rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
+           ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT;
+  }
+
+  const char *UnsafeMSCOffscreenPassReason() const {
+    if (!pso)
+      return "unknown";
+
+    const auto rtv0 = pso->GetRTVFormat(0);
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R16G16B16A16_UNORM)
+      return "r16_dsv";
+    if (rt_count >= 3 && pso->GetNumRenderTargets() >= 3 &&
+        rtv0 == DXGI_FORMAT_R8G8B8A8_UNORM)
+      return "rgba8_mrt_dsv";
+    const auto &ds = pso->GetDepthStencilDesc();
+    if (rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
+        ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT)
+      return "r11g11b10_gbuffer_dsv_stencil";
+    if (!has_dsv && rt_count == 1 && last_bound_vertex_buffers == 0)
+      return "zero_vb_stage_in_offscreen";
+    return "unknown";
+  }
 
   struct RenderReadbackProbe {
     WMT::Reference<WMT::Buffer> buffer;
@@ -3042,16 +3182,21 @@ struct ReplayState {
     if (!render_enc_open)
       return;
 
+    last_bound_vertex_buffers = 0;
     uint32_t slot_mask = pso ? pso->GetIAInputSlotMask() : 0;
     if (slot_mask) {
       if (pso && pso->UsesStageInVertexDescriptor()) {
         uint32_t bound_slots = 0;
+        uint32_t table_entries = 0;
+        uint32_t table_index = 0;
+        const bool msc_stage_in = pso->RequiresMSCStageInFunction();
         memset(vertex_table_data, 0, sizeof(vertex_table_data));
         for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
           if (!(slot_mask & (1u << slot)))
             continue;
 
           auto &view = vbs[slot];
+          const uint32_t table_slot_index = table_index++;
           auto *res =
               view.BufferLocation
                   ? device->LookupResourceByGPUAddress(view.BufferLocation)
@@ -3060,27 +3205,39 @@ struct ReplayState {
             uint64_t offset =
                 view.BufferLocation - res->GetGPUVirtualAddress();
             uint32_t msc_slot = kMSCVertexBufferBindPoint + slot;
-            render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, msc_slot);
-            vertex_table_data[slot].buffer_handle = view.BufferLocation;
-            vertex_table_data[slot].stride = view.StrideInBytes;
-            vertex_table_data[slot].length = view.SizeInBytes;
-            if (UsesGeometryMeshPipeline())
-              render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, msc_slot);
+            if (!msc_stage_in) {
+              render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, msc_slot);
+              if (UsesGeometryMeshPipeline())
+                render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, msc_slot);
+            }
+            if (table_slot_index < kVertexBufferSlotCount) {
+              vertex_table_data[table_slot_index].buffer_handle =
+                  view.BufferLocation;
+              vertex_table_data[table_slot_index].stride = view.StrideInBytes;
+              vertex_table_data[table_slot_index].length = view.SizeInBytes;
+              table_entries =
+                  std::max<uint32_t>(table_entries, table_slot_index + 1);
+            }
             render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                    VertexInputStages());
             bound_slots++;
             QTRACE("ApplyVertexBuffers: stage_in slot=%u->msc_slot=%u gpu=0x%llx "
-                   "offset=%llu size=%u stride=%u",
+                   "offset=%llu size=%u stride=%u table_index=%u msc=%u",
                    slot, msc_slot, (unsigned long long)view.BufferLocation,
                    (unsigned long long)offset, view.SizeInBytes,
-                   view.StrideInBytes);
+                   view.StrideInBytes, table_slot_index,
+                   msc_stage_in ? 1u : 0u);
           } else {
             QTRACE("ApplyVertexBuffers: stage_in slot=%u gpu=0x%llx "
-                   "unresolved",
-                   slot, (unsigned long long)view.BufferLocation);
+                   "unresolved table_index=%u",
+                   slot, (unsigned long long)view.BufferLocation,
+                   table_slot_index);
           }
+          if (table_slot_index < kVertexBufferSlotCount)
+            table_entries =
+                std::max<uint32_t>(table_entries, table_slot_index + 1);
         }
-        if (bound_slots > 0) {
+        if (table_entries > 0) {
           vertex_table_buf =
               MakeTransientBuffer(device, sizeof(vertex_table_data));
           if (vertex_table_buf.handle) {
@@ -3100,16 +3257,22 @@ struct ReplayState {
             render_enc.useResource(vertex_table_buf, WMTResourceUsageRead,
                                    VertexInputStages());
             QTRACE("ApplyVertexBuffers: stage_in vertex table slot=%u legacy_slot=%u "
-                   "mask=0x%x bound=%u",
+                   "mask=0x%x entries=%u bound=%u",
                    table_slot, kVertexBufferTableSlot, slot_mask,
-                   bound_slots);
+                   table_entries, bound_slots);
           }
         }
+        last_vertex_table_summary =
+            str::format("vb_stage_in mask=0x", std::hex, slot_mask, std::dec,
+                        " entries=", table_entries, " bound=", bound_slots,
+                        " msc=", msc_stage_in ? 1u : 0u);
+        last_bound_vertex_buffers = bound_slots;
         if (HasSwapchainRenderTarget() &&
             TakeLogBudget(&g_swapchain_stage_in_vb_logs, 64)) {
           Logger::info(str::format("M12 swapchain stage_in vertex buffers "
-                                   "mask=", slot_mask,
-                                   " bound=", bound_slots, " pso=",
+                                   "mask=", slot_mask, " entries=",
+                                   table_entries, " bound=", bound_slots,
+                                   " pso=",
                                    (void *)pso, " ",
                                    TracePsoShaderSummary(pso)));
         }
@@ -3155,9 +3318,14 @@ struct ReplayState {
                "entries=%u",
                kVertexBufferTableSlot, slot_mask, table_index);
       }
+      last_vertex_table_summary =
+          str::format("vb_table mask=0x", std::hex, slot_mask, std::dec,
+                      " entries=", table_index);
+      last_bound_vertex_buffers = table_index;
       return;
     }
 
+    uint32_t raw_bound_slots = 0;
     for (uint32_t i = 0; i < kVertexBufferSlotCount; i++) {
       if (vbs[i].BufferLocation) {
         auto *res = device->LookupResourceByGPUAddress(vbs[i].BufferLocation);
@@ -3173,12 +3341,17 @@ struct ReplayState {
             render_enc.setObjectBuffer(res->GetMTLBuffer(), offset, i);
           render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                  VertexInputStages());
+          raw_bound_slots++;
         } else {
           QTRACE("ApplyVertexBuffers: slot=%u gpu=0x%llx unresolved", i,
                  (unsigned long long)vbs[i].BufferLocation);
         }
       }
     }
+    last_vertex_table_summary =
+        str::format("vb_raw bound=", raw_bound_slots, " mask=0x", std::hex,
+                    slot_mask, std::dec);
+    last_bound_vertex_buffers = raw_bound_slots;
   }
 };
 
@@ -3370,6 +3543,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
                                   WMT::CommandBuffer cmdbuf, uint32_t x,
                                   uint32_t y, uint32_t z,
                                   const char *trace_prefix) {
+  st.AddComputeFaultBreadcrumb(trace_prefix, x, y, z);
   QTRACE("%s x=%u y=%u z=%u pso=%p compiled=%d compute=%d heaps=%u stage=%s "
          "detail=%s",
          trace_prefix, x, y, z, (void *)st.pso,
@@ -3598,37 +3772,42 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         sbuf.type = WMTComputeCommandSetBuffer;
         sbuf.buffer = res->GetMTLBuffer().handle;
         sbuf.offset = 0;
-        if (desc->cbv.BufferLocation) {
+        if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV &&
+            desc->cbv.BufferLocation) {
           auto *cbv_res =
               device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
           if (cbv_res)
             sbuf.offset =
                 desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
+        } else if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV) {
+          sbuf.offset = UAVBufferByteOffset(desc);
+        } else if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) {
+          sbuf.offset = SRVBufferByteOffset(desc);
         }
         sbuf.index = buf_slot;
         append_cmd(&sbuf, sizeof(sbuf));
-        if (writable) {
-          struct wmtcmd_compute_useresource use = {};
-          use.type = WMTComputeCommandUseResource;
-          use.resource = res->GetMTLBuffer().handle;
-          use.usage =
-              (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite);
-          append_cmd(&use, sizeof(use));
-        }
+        struct wmtcmd_compute_useresource use = {};
+        use.type = WMTComputeCommandUseResource;
+        use.resource = res->GetMTLBuffer().handle;
+        use.usage = writable
+                        ? (WMTResourceUsage)(WMTResourceUsageRead |
+                                             WMTResourceUsageWrite)
+                        : WMTResourceUsageRead;
+        append_cmd(&use, sizeof(use));
       } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
         struct wmtcmd_compute_settexture stex = {};
         stex.type = WMTComputeCommandSetTexture;
         stex.texture = tex.handle;
         stex.index = shader_register;
         append_cmd(&stex, sizeof(stex));
-        if (writable) {
-          struct wmtcmd_compute_useresource use = {};
-          use.type = WMTComputeCommandUseResource;
-          use.resource = tex.handle;
-          use.usage =
-              (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite);
-          append_cmd(&use, sizeof(use));
-        }
+        struct wmtcmd_compute_useresource use = {};
+        use.type = WMTComputeCommandUseResource;
+        use.resource = tex.handle;
+        use.usage = writable
+                        ? (WMTResourceUsage)(WMTResourceUsageRead |
+                                             WMTResourceUsageWrite)
+                        : WMTResourceUsageRead;
+        append_cmd(&use, sizeof(use));
       }
     };
 
@@ -3936,6 +4115,19 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         }
         st.ApplyVertexBuffers(m_device);
         st.BindGeometryMeshBuffers();
+        st.AddRenderFaultBreadcrumb("DrawInstanced", cmd->vertex_count,
+                                    cmd->instance_count, cmd->start_vertex, 0,
+                                    0, false);
+        if (st.ShouldSkipUnsafeMSCOffscreenPass()) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+            Logger::warn(str::format(
+                "M12 skipping unsafe MSC offscreen DrawInstanced reason=",
+                st.UnsafeMSCOffscreenPassReason(), " v=",
+                cmd->vertex_count, " i=", cmd->instance_count, " pso=",
+                (void *)st.pso, " ", TracePsoShaderSummary(st.pso)));
+          }
+          break;
+        }
         QTRACE("DrawInstanced v=%u i=%u enc_open=%d pso=%p compiled=%d "
                "stage=%s detail=%s",
                cmd->vertex_count, cmd->instance_count, st.render_enc_open,
@@ -4028,6 +4220,21 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         }
         st.ApplyVertexBuffers(m_device);
         st.BindGeometryMeshBuffers();
+        st.AddRenderFaultBreadcrumb("DrawIndexedInstanced", cmd->index_count,
+                                    cmd->instance_count, cmd->start_index,
+                                    cmd->base_vertex, st.ib.BufferLocation,
+                                    true);
+        if (st.ShouldSkipUnsafeMSCOffscreenPass()) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+            Logger::warn(str::format(
+                "M12 skipping unsafe MSC offscreen DrawIndexedInstanced reason=",
+                st.UnsafeMSCOffscreenPassReason(), " idx=",
+                cmd->index_count, " inst=", cmd->instance_count,
+                " start=", cmd->start_index, " pso=", (void *)st.pso, " ",
+                TracePsoShaderSummary(st.pso)));
+          }
+          break;
+        }
 
         if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
             st.EncodeGeometryDrawIndexed(m_device, cmd->index_count,
@@ -5732,8 +5939,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
            (int)status, (long long)wait_ms, m_desc.Type);
     if (status != WMTCommandBufferStatusCompleted) {
       auto err = cmdbuf.error();
+      auto err_desc_string =
+          err.handle ? err.description().getUTF8String() : std::string();
       Logger::err(str::format("ExecuteCommandLists: cmdbuf status=", status,
-                              " error_handle=", err.handle));
+                              " error_handle=", err.handle,
+                              " error=",
+                              err_desc_string.empty()
+                                  ? "unknown"
+                                  : err_desc_string.c_str()));
+      Logger::err(str::format("ExecuteCommandLists fault breadcrumbs: ",
+                              st.FormatFaultBreadcrumbs()));
     } else {
       st.LogSwapchainRenderReadback();
     }

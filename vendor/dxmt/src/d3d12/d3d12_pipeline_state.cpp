@@ -80,6 +80,15 @@ bool DXMTD3D12GeometryMeshPipelineEnabled() {
   return enabled != 0;
 }
 
+bool DXMTD3D12DepthOnlyGeometryFallbackEnabled() {
+  static int enabled = []() {
+    const char *value =
+        std::getenv("DXMT_D3D12_DEPTH_ONLY_GEOMETRY_FALLBACK");
+    return !value || !value[0] || std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
 bool DXMTD3D12ForceColorWriteState() {
   static int enabled = []() {
     const char *value = std::getenv("DXMT_D3D12_FORCE_COLOR_WRITE_STATE");
@@ -1665,28 +1674,85 @@ std::string MTLD3D12PipelineState::GetGSCacheHash() const {
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   switch (format) {
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
   case DXGI_FORMAT_R8G8B8A8_UNORM:
     return WMTPixelFormatRGBA8Unorm;
   case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
     return WMTPixelFormatRGBA8Unorm_sRGB;
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+    return WMTPixelFormatRGBA8Snorm;
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+    return WMTPixelFormatRGBA8Uint;
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+    return WMTPixelFormatRGBA8Sint;
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
   case DXGI_FORMAT_B8G8R8A8_UNORM:
     return WMTPixelFormatBGRA8Unorm;
   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
     return WMTPixelFormatBGRA8Unorm_sRGB;
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    return WMTPixelFormatRGBA16Unorm;
   case DXGI_FORMAT_R16G16B16A16_FLOAT:
     return WMTPixelFormatRGBA16Float;
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+    return WMTPixelFormatRGBA16Unorm;
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+    return WMTPixelFormatRGBA16Snorm;
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+    return WMTPixelFormatRGBA16Uint;
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+    return WMTPixelFormatRGBA16Sint;
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+    return WMTPixelFormatRGBA32Float;
   case DXGI_FORMAT_R32G32B32A32_FLOAT:
     return WMTPixelFormatRGBA32Float;
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+    return WMTPixelFormatRGBA32Uint;
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+    return WMTPixelFormatRGBA32Sint;
+  case DXGI_FORMAT_R32G32_TYPELESS:
+    return WMTPixelFormatRG32Float;
+  case DXGI_FORMAT_R32G32_FLOAT:
+    return WMTPixelFormatRG32Float;
+  case DXGI_FORMAT_R32G32_UINT:
+    return WMTPixelFormatRG32Uint;
+  case DXGI_FORMAT_R32G32_SINT:
+    return WMTPixelFormatRG32Sint;
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
   case DXGI_FORMAT_R10G10B10A2_UNORM:
     return WMTPixelFormatRGB10A2Unorm;
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+    return WMTPixelFormatRGB10A2Uint;
   case DXGI_FORMAT_R11G11B10_FLOAT:
     return WMTPixelFormatRG11B10Float;
+  case DXGI_FORMAT_R8_TYPELESS:
   case DXGI_FORMAT_R8_UNORM:
     return WMTPixelFormatR8Unorm;
+  case DXGI_FORMAT_R8_SNORM:
+    return WMTPixelFormatR8Snorm;
+  case DXGI_FORMAT_R8_UINT:
+    return WMTPixelFormatR8Uint;
+  case DXGI_FORMAT_R8_SINT:
+    return WMTPixelFormatR8Sint;
+  case DXGI_FORMAT_R16_TYPELESS:
+    return WMTPixelFormatR16Unorm;
+  case DXGI_FORMAT_R16_UNORM:
+    return WMTPixelFormatR16Unorm;
   case DXGI_FORMAT_R16_FLOAT:
     return WMTPixelFormatR16Float;
+  case DXGI_FORMAT_R16_SNORM:
+    return WMTPixelFormatR16Snorm;
+  case DXGI_FORMAT_R16_UINT:
+    return WMTPixelFormatR16Uint;
+  case DXGI_FORMAT_R16_SINT:
+    return WMTPixelFormatR16Sint;
+  case DXGI_FORMAT_R32_TYPELESS:
   case DXGI_FORMAT_R32_FLOAT:
     return WMTPixelFormatR32Float;
+  case DXGI_FORMAT_R32_UINT:
+    return WMTPixelFormatR32Uint;
+  case DXGI_FORMAT_R32_SINT:
+    return WMTPixelFormatR32Sint;
   case DXGI_FORMAT_D32_FLOAT:
     return WMTPixelFormatDepth32Float;
   case DXGI_FORMAT_D24_UNORM_S8_UINT:
@@ -1695,12 +1761,27 @@ WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
     return WMTPixelFormatDepth32Float_Stencil8;
   case DXGI_FORMAT_D16_UNORM:
     return WMTPixelFormatDepth16Unorm;
+  case DXGI_FORMAT_R16G16_TYPELESS:
+    return WMTPixelFormatRG16Unorm;
   case DXGI_FORMAT_R16G16_FLOAT:
     return WMTPixelFormatRG16Float;
   case DXGI_FORMAT_R16G16_UNORM:
     return WMTPixelFormatRG16Unorm;
+  case DXGI_FORMAT_R16G16_SNORM:
+    return WMTPixelFormatRG16Snorm;
+  case DXGI_FORMAT_R16G16_UINT:
+    return WMTPixelFormatRG16Uint;
+  case DXGI_FORMAT_R16G16_SINT:
+    return WMTPixelFormatRG16Sint;
+  case DXGI_FORMAT_R8G8_TYPELESS:
   case DXGI_FORMAT_R8G8_UNORM:
     return WMTPixelFormatRG8Unorm;
+  case DXGI_FORMAT_R8G8_SNORM:
+    return WMTPixelFormatRG8Snorm;
+  case DXGI_FORMAT_R8G8_UINT:
+    return WMTPixelFormatRG8Uint;
+  case DXGI_FORMAT_R8G8_SINT:
+    return WMTPixelFormatRG8Sint;
   case DXGI_FORMAT_BC1_TYPELESS:
   case DXGI_FORMAT_BC1_UNORM:
     return WMTPixelFormatBC1_RGBA;
@@ -2772,6 +2853,19 @@ bool MTLD3D12PipelineState::CompileImpl() {
           return RecordCompileFailure(
               "pso/geometry_mesh_no_vs",
               "Geometry mesh PSO requested but graphics PSO has no VS bytecode");
+        }
+        if (DXMTD3D12DepthOnlyGeometryFallbackEnabled() &&
+            m_num_render_targets == 0 &&
+            m_dsv_format != DXGI_FORMAT_UNKNOWN) {
+          Logger::warn(str::format(
+              "CreateGraphicsPipelineState: depth-only DXIL GS bytes=",
+              m_gs.size(), " DSV=", (unsigned)m_dsv_format,
+              " falling back to VS/depth PSO to avoid Metal mesh GPU hang "
+              "(hash=0x", str::format("%016zx", gs_hash), ")"));
+          PSTRACE("Graphics PSO depth-only GS fallback hash=0x%016zx dsv=%u",
+                  gs_hash, (unsigned)m_dsv_format);
+          m_gs.clear();
+          goto d3d12_geometry_fallback_to_vs_ps;
         }
         if (!DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size()) ||
             !DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size())) {
