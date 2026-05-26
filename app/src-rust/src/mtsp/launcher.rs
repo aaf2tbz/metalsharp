@@ -1537,7 +1537,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
 
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
-        return vec![
+        let mut env = vec![
             ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
             ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter,PSO".to_string()),
             ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
@@ -1553,6 +1553,13 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=24".to_string()),
         ];
+        if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
+        }
+        return env;
     }
     Vec::new()
 }

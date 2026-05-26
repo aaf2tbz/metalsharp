@@ -48,6 +48,14 @@ bool DXMTD3D12AutopresentSwapchain() {
   return enabled != 0;
 }
 
+bool DXMTD3D12ForceSwapchainColor() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 const char *TraceCompileFailureStage(MTLD3D12PipelineState *pso) {
   static thread_local std::string stage;
   stage = pso ? pso->GetCompileFailureStage() : "no_pso";
@@ -84,6 +92,7 @@ static uint32_t g_swapchain_clear_logs = 0;
 static uint32_t g_swapchain_state_logs = 0;
 static uint32_t g_swapchain_argbuf_logs = 0;
 static uint32_t g_swapchain_stage_in_vb_logs = 0;
+static uint32_t g_swapchain_forced_color_logs = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
@@ -484,6 +493,41 @@ struct ReplayState {
 
   bool swapchain_work_encoded = false;
   MTLD3D12Resource *swapchain_rt_for_present = nullptr;
+
+  void ForceSwapchainDiagnosticColor(WMT::CommandBuffer &cmdbuf) {
+    if (!DXMTD3D12ForceSwapchainColor() || !swapchain_work_encoded ||
+        !swapchain_rt_for_present)
+      return;
+
+    auto tex = swapchain_rt_for_present->GetMTLTexture();
+    if (!tex.handle)
+      return;
+
+    WMTRenderPassInfo rp = {};
+    WMT::InitializeRenderPassInfo(rp);
+    for (uint32_t i = 0; i < 8; i++) {
+      rp.colors[i].texture = NULL_OBJECT_HANDLE;
+      rp.colors[i].load_action = WMTLoadActionDontCare;
+      rp.colors[i].store_action = WMTStoreActionDontCare;
+    }
+    rp.colors[0].texture = tex.handle;
+    rp.colors[0].load_action = WMTLoadActionClear;
+    rp.colors[0].store_action = WMTStoreActionStore;
+    rp.colors[0].clear_color = {1.0, 0.0, 1.0, 1.0};
+    rp.depth.texture = NULL_OBJECT_HANDLE;
+    rp.stencil.texture = NULL_OBJECT_HANDLE;
+
+    auto enc = cmdbuf.renderCommandEncoder(rp);
+    ENC_CREATE("render_swapchain_forced_color", enc.handle);
+    EndMetalEncoder(enc, "render_swapchain_forced_color");
+    if (TakeLogBudget(&g_swapchain_forced_color_logs, 16)) {
+      Logger::info(str::format("M12 swapchain forced diagnostic color "
+                               "backbuffer=",
+                               swapchain_rt_for_present->SwapchainBackBufferIndex(),
+                               " tex=", (unsigned long long)tex.handle,
+                               " color=1,0,1,1"));
+    }
+  }
 
   void EnsureSwapchainRenderPSOReady() {
     if (!HasSwapchainRenderTarget() || !pso || pso->IsCompiled())
@@ -4898,6 +4942,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         QTRACE("  type[%d]=%u", i, type_counts[i]);
 
     st.CloseRenderEncoder();
+    st.ForceSwapchainDiagnosticColor(cmdbuf);
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
     auto wait_begin = std::chrono::steady_clock::now();
