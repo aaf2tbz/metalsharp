@@ -3714,12 +3714,41 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          st.pso ? st.pso->IsCompiled() : 0, st.pso ? st.pso->IsCompute() : 0,
          st.desc_heap_count, TraceCompileFailureStage(st.pso),
          TraceCompileFailureDetail(st.pso));
-  if (!(st.pso && st.pso->IsCompiled() && st.pso->IsCompute() &&
-        st.pso->GetComputePSO().handle)) {
-    QTRACE("%s SKIPPED x=%u y=%u z=%u pso=%p compiled=%d compute=%d stage=%s "
-           "detail=%s",
-           trace_prefix, x, y, z, (void *)st.pso,
-           st.pso ? st.pso->IsCompiled() : 0, st.pso ? st.pso->IsCompute() : 0,
+  if (!(st.pso && st.pso->IsCompute())) {
+    QTRACE("%s SKIPPED no compute PSO pso=%p compute=%d", trace_prefix,
+           (void *)st.pso, st.pso ? st.pso->IsCompute() : 0);
+    return;
+  }
+  if (!st.pso->IsCompiled()) {
+    Logger::info(str::format(
+        "M12 compute dispatch first-use compile pso=", (void *)st.pso,
+        " tg=", st.pso->GetThreadgroupSize().width, "x",
+        st.pso->GetThreadgroupSize().height, "x",
+        st.pso->GetThreadgroupSize().depth,
+        " dispatch=", x, "x", y, "x", z,
+        " stage=", TraceCompileFailureStage(st.pso),
+        " detail=", TraceCompileFailureDetail(st.pso)));
+    bool compiled = st.pso->EnsureCompiled();
+    if (!compiled) {
+      Logger::err(str::format(
+          "M12 COMPUTE PSO FAILURE pso=", (void *)st.pso,
+          " dispatch=", x, "x", y, "x", z,
+          " root_sig=", (void *)st.pso->GetRootSignature(),
+          " tg=", st.pso->GetThreadgroupSize().width, "x",
+          st.pso->GetThreadgroupSize().height, "x",
+          st.pso->GetThreadgroupSize().depth,
+          " heaps=", st.desc_heap_count,
+          " stage=", TraceCompileFailureStage(st.pso),
+          " metal_error=", TraceCompileFailureDetail(st.pso),
+          " cs_hash=", st.pso->GetCSReflection().NumArguments,
+          " cs_args=", st.pso->GetCSArguments().size(),
+          " cs_cb=", st.pso->GetCSConstantBuffers().size()));
+      return;
+    }
+  }
+  if (!st.pso->GetComputePSO().handle) {
+    QTRACE("%s SKIPPED no Metal compute PSO handle pso=%p stage=%s detail=%s",
+           trace_prefix, (void *)st.pso,
            TraceCompileFailureStage(st.pso),
            TraceCompileFailureDetail(st.pso));
     return;

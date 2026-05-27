@@ -38,6 +38,7 @@ MINI_PROBES=(
   texture_sample
   subnautica_geometry_dxil_replay
   dxil_texture_color_output
+  compute_first_use_dispatch
 )
 
 usage() {

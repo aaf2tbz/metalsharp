@@ -599,6 +599,138 @@ static ProbeResult probe_compute_dispatch() {
             "\"verified\":" + std::string(verified ? "true" : "false")};
 }
 
+static ProbeResult probe_compute_first_use_dispatch() {
+    ID3D12Device* device = nullptr;
+    HRESULT hr = create_device(&device);
+    if (FAILED(hr))
+        return {false, hr, "device creation failed", ""};
+
+    const char* hlsl = "RWByteAddressBuffer outbuf:register(u0);"
+                       "[numthreads(4,1,1)] void main(uint3 id:SV_DispatchThreadID){outbuf.Store(id.x*4,(id.x+1)*7);}";
+    ID3DBlob* cs = nullptr;
+    std::string errors;
+    hr = compile_shader(hlsl, "main", "cs_5_0", &cs, errors);
+    if (FAILED(hr)) {
+        safe_release(device);
+        return {false, hr, errors.empty() ? "compute shader compile failed" : errors, ""};
+    }
+
+    D3D12_DESCRIPTOR_RANGE range = {};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    range.NumDescriptors = 1;
+    range.BaseShaderRegister = 0;
+    range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_ROOT_PARAMETER param = {};
+    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    param.DescriptorTable.NumDescriptorRanges = 1;
+    param.DescriptorTable.pDescriptorRanges = &range;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = 1;
+    root_desc.pParameters = &param;
+    ID3DBlob* root_blob = nullptr;
+    hr = serialize_root_signature(root_desc, &root_blob, errors);
+    ID3D12RootSignature* root = nullptr;
+    if (SUCCEEDED(hr))
+        hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                         IID_PPV_ARGS(&root));
+
+    ID3D12PipelineState* pso = nullptr;
+    if (SUCCEEDED(hr)) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root;
+        pso_desc.CS.pShaderBytecode = cs->GetBufferPointer();
+        pso_desc.CS.BytecodeLength = cs->GetBufferSize();
+        hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&pso));
+    }
+
+    ID3D12CommandQueue* queue = nullptr;
+    ID3D12CommandAllocator* allocator = nullptr;
+    ID3D12GraphicsCommandList* list = nullptr;
+    ID3D12DescriptorHeap* heap = nullptr;
+    ID3D12Resource* uav = nullptr;
+    ID3D12Resource* readback = nullptr;
+
+    if (SUCCEEDED(hr))
+        hr = create_queue(device, D3D12_COMMAND_LIST_TYPE_COMPUTE, &queue);
+    if (SUCCEEDED(hr))
+        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator));
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_HEAP_PROPERTIES rb_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+
+    if (SUCCEEDED(hr)) {
+        D3D12_RESOURCE_DESC desc = buffer_desc(256, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&uav));
+    }
+    if (SUCCEEDED(hr)) {
+        D3D12_RESOURCE_DESC desc = buffer_desc(256);
+        hr = device->CreateCommittedResource(&rb_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                             nullptr, IID_PPV_ARGS(&readback));
+    }
+
+    if (SUCCEEDED(hr)) {
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap_desc.NumDescriptors = 1;
+        heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&heap));
+    }
+
+    if (SUCCEEDED(hr)) {
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, allocator, pso, IID_PPV_ARGS(&list));
+    }
+
+    if (SUCCEEDED(hr)) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC view = {};
+        view.Format = DXGI_FORMAT_R32_TYPELESS;
+        view.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        view.Buffer.NumElements = 64;
+        view.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        device->CreateUnorderedAccessView(uav, nullptr, &view, heap->GetCPUDescriptorHandleForHeapStart());
+        ID3D12DescriptorHeap* heaps[] = {heap};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetComputeRootSignature(root);
+        list->SetComputeRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
+        list->SetPipelineState(pso);
+        list->Dispatch(1, 1, 1);
+        D3D12_RESOURCE_BARRIER barrier = {};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = uav;
+        list->ResourceBarrier(1, &barrier);
+        list->CopyResource(readback, uav);
+        hr = execute_and_wait(queue, list);
+    }
+
+    bool verified = false;
+    if (SUCCEEDED(hr)) {
+        uint32_t* data = nullptr;
+        D3D12_RANGE read_range = {0, 16};
+        HRESULT map_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&data));
+        verified = SUCCEEDED(map_hr) && data[0] == 7 && data[1] == 14 && data[2] == 21 && data[3] == 28;
+        if (SUCCEEDED(map_hr)) {
+            D3D12_RANGE write_range = {0, 0};
+            readback->Unmap(0, &write_range);
+        }
+    }
+
+    safe_release(readback);
+    safe_release(uav);
+    safe_release(heap);
+    safe_release(list);
+    safe_release(allocator);
+    safe_release(queue);
+    safe_release(pso);
+    safe_release(root);
+    safe_release(root_blob);
+    safe_release(cs);
+    safe_release(device);
+    return {SUCCEEDED(hr) && verified, hr,
+            verified ? "compute first-use dispatch compiled and executed correctly"
+                     : "compute first-use dispatch verification failed",
+            "\"verified\":" + std::string(verified ? "true" : "false")};
+}
+
 static ProbeResult probe_rtv_clear() {
     ID3D12Device* device = nullptr;
     HRESULT hr = create_device(&device);
@@ -1486,6 +1618,8 @@ static ProbeResult run_probe() {
         return probe_subnautica_geometry_dxil_replay();
     case 13:
         return probe_dxil_texture_color_output();
+    case 14:
+        return probe_compute_first_use_dispatch();
     default:
         return {false, E_INVALIDARG, "unknown mini probe case", ""};
     }
