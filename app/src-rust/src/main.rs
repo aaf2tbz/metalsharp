@@ -358,7 +358,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             match parse_request_appid(&body) {
                 Ok(id) => {
-                    let launch_method = body.get("launchMethod")
+                    let launch_method = body
+                        .get("launchMethod")
                         .or_else(|| body.get("pipeline"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("steam");
