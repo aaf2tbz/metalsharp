@@ -20,6 +20,7 @@ REQUIRED_CONTRACTS = [
     "unsupported-api-ledger.json",
     "risky-stub-ledger.json",
     "contract-waivers.json",
+    "winemetal-bridge-contract.json",
 ]
 
 DECLARED_TIERS = {"required", "emulated", "stubbed-safe", "unsupported"}
@@ -157,6 +158,34 @@ def validate_reference_contract(path: Path, data: dict[str, Any], errors: list[s
         require(summary.get("method_count", 0) > 0, f"{path}: method_count must be > 0", errors)
 
 
+def validate_winemetal_bridge(path: Path, data: dict[str, Any], errors: list[str]) -> None:
+    source_audit = data.get("source_audit")
+    require(isinstance(source_audit, dict), f"{path}: missing source_audit object", errors)
+    if isinstance(source_audit, dict):
+        for key in ("pe_header", "cxx_facade", "pe_thunks", "unix_bridge", "unix_struct_header"):
+            value = source_audit.get(key)
+            require(isinstance(value, str) and bool(value), f"{path}: source_audit.{key} missing", errors)
+            if isinstance(value, str) and value:
+                require((ROOT_DIR / value).exists(), f"{path}: source_audit.{key} path does not exist: {value}", errors)
+    for key in ("required_pe_exports", "required_unix_call_entries", "probe_coverage"):
+        value = data.get(key)
+        require(isinstance(value, list) and len(value) > 0, f"{path}: {key} must be non-empty list", errors)
+    sizes = data.get("critical_unixcall_struct_sizes")
+    require(isinstance(sizes, dict) and len(sizes) > 0, f"{path}: critical_unixcall_struct_sizes must be non-empty object", errors)
+    if isinstance(sizes, dict):
+        for struct_name, size in sizes.items():
+            require(struct_name.startswith("unixcall_"), f"{path}: invalid unixcall struct name `{struct_name}`", errors)
+            require(isinstance(size, int) and size > 0 and size % 8 == 0, f"{path}: invalid size for `{struct_name}`: {size}", errors)
+    deferred = data.get("deferred_until_claimed")
+    require(isinstance(deferred, list), f"{path}: deferred_until_claimed must be list", errors)
+    if isinstance(deferred, list):
+        for i, entry in enumerate(deferred):
+            require(isinstance(entry, dict), f"{path}: deferred_until_claimed[{i}] must be object", errors)
+            if isinstance(entry, dict):
+                require(bool(entry.get("surface")), f"{path}: deferred_until_claimed[{i}] missing surface", errors)
+                require(bool(entry.get("reason")), f"{path}: deferred_until_claimed[{i}] missing reason", errors)
+
+
 def validate_contracts(root: Path) -> list[str]:
     errors: list[str] = []
     waiver_ids = active_waiver_ids(root, errors)
@@ -186,6 +215,8 @@ def validate_contracts(root: Path) -> list[str]:
             validate_waivers(path, data, errors)
         elif name == "feature-support-contract.json":
             validate_feature_support(path, data, waiver_ids, errors)
+        elif name == "winemetal-bridge-contract.json":
+            validate_winemetal_bridge(path, data, errors)
         else:
             validate_evidence(path, data, errors)
     return errors

@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_BUILD_DIR = ROOT_DIR / "vendor" / "dxmt" / "build-metalsharp-x64"
 DEFAULT_RUNTIME_DIR = Path(os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt"))
+DEFAULT_PREFIX_DIR = Path(os.path.expanduser("~/.metalsharp/prefix-steam"))
 DEFAULT_RESULTS_DIR = ROOT_DIR / "tools" / "d3d12-metal-sdk" / "results"
 
 ARTIFACTS = [
@@ -49,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stage rebuilt DXMT artifacts into ~/.metalsharp runtime.")
     parser.add_argument("--build-dir", type=Path, default=DEFAULT_BUILD_DIR)
     parser.add_argument("--runtime-dir", type=Path, default=DEFAULT_RUNTIME_DIR)
+    parser.add_argument("--prefix", type=Path, default=DEFAULT_PREFIX_DIR)
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument("--dry-run", action="store_true", help="Write the manifest without copying files.")
@@ -59,14 +61,27 @@ def main() -> int:
     args = parse_args()
     build_dir = args.build_dir
     runtime_dir = args.runtime_dir
+    wine_lib_dir = runtime_dir.parent / "wine"
+    prefix = args.prefix
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     records: list[dict] = []
     failures: list[str] = []
 
-    for src_rel, dst_rel in ARTIFACTS:
+    artifacts = list(ARTIFACTS)
+    artifacts.extend(
+        [
+            ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
+            ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
+            ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
+        ]
+    )
+
+    for src_rel, dst_rel in artifacts:
         src = build_dir / src_rel
-        dst = runtime_dir / dst_rel
+        dst = Path(dst_rel)
+        if not dst.is_absolute():
+            dst = runtime_dir / dst
         before = file_record(dst)
         source = file_record(src)
 

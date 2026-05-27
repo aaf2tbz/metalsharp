@@ -18,7 +18,7 @@ The SDK exists to make D3D12 changes evidence-driven before game-specific debugg
 - Keep the core probes Wine-compatible and host-agnostic.
 - Prove Agility SDK negotiation behaves as modern D3D12 games expect.
 - Prove feature reports match implemented or explicitly emulated behavior.
-- Prove resources, descriptors, shaders, queues, fences, and rendering paths through headless probes.
+- Prove resources, descriptors, shaders, queues, fences, Winemetal ABI coverage, and rendering paths through repeatable probes.
 - Keep future D3D12 work accurate, repeatable, and reviewable.
 
 ## Runtime Profiles
@@ -52,6 +52,12 @@ The current mini suite isolates:
 - `mesh_object_shader_pso`
 - `texture_sample`
 
+PRs that touch `vendor/dxmt/src/d3d12`, `vendor/dxmt/src/airconv`,
+`vendor/dxmt/src/winemetal`, or `tools/d3d12-metal-sdk` are expected to keep
+this mini profile green locally. Repository CI validates the contracts and
+probe matrix, then prints this local command as the host-runtime gate for those
+touch paths.
+
 `mesh_object_shader_pso` is intentionally a tracked gap until the SDK has a
 real mesh/object pipeline-state-stream probe. Keeping it as a runnable mini-app
 prevents future UE5/Nanite work from being described as supported without a
@@ -69,6 +75,25 @@ the shaders through D3D12 and validates UAV readbacks for float/int math,
 bitcasts, buffer load/store, barriers, atomics, compute IDs, wave ops, and quad
 ops. Results are written to `results/probe-dxil-semantics-*.json`; the warmup
 pass is kept beside it to show the primary backend cache-miss route explicitly.
+This synthetic corpus is the contract proof for the SM6/DXIL opcode groups;
+`probe-shaders` remains a shader-entrypoint, root-signature, argument-binding,
+and PSO smoke test.
+
+For the full required SDK matrix, including the Winemetal ABI gate and DXIL
+semantic corpus, run:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
+```
+
+Windowed present and indexed-texture headless render checks are useful
+diagnostics, but they are not hard gates in the default matrix. Enable the
+headless render proof explicitly when investigating render output:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --render-headless
+```
 
 For root-signature and descriptor binding coverage, the descriptor probe now
 checks root signature 1.0/1.1 parsing, all root parameter kinds, static
@@ -211,9 +236,22 @@ python3 tools/d3d12-metal-sdk/scripts/check-winemetal-abi.py \
   --game-dir "/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64"
 ```
 
-This verifies that Steam/global Wine copies keep wrapper exports such as
-`WMTSetMetalShaderCachePath`, while DXMT/game-local copies also expose shader
-and PSO bridge exports such as `MTLLibrary_newFunctionWithDescriptor`.
+The same check is enabled by default from `run-probes.sh`, and can be run by
+itself:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --winemetal-abi-only
+```
+
+This verifies the source ABI contract in
+`contracts/winemetal-bridge-contract.json`, size-checks critical PE/Unix call
+structs, compares normal and WOW64 Unix-call tables, and confirms staged
+runtime exports. Steam/global Wine copies must keep wrapper exports such as
+`WMTSetMetalShaderCachePath`; rebuilt DXMT copies must also expose shader,
+pipeline-state, binary-archive, counter-sample, shared-event, and bootstrap
+bridge exports such as `MTLLibrary_newFunctionWithDescriptor` and
+`MTLDevice_newLibraryWithData`.
 
 When rebuilding the x86_64 WineMetal Unix bridge on Apple Silicon, use the
 repo helper to stage an x86_64 LLVM 15 toolchain outside the internal drive and
@@ -324,12 +362,15 @@ The runtime preflight intentionally treats Winemetal as two routes:
 
 - Steam/global Wine copies must preserve legacy wrapper exports such as
   `WMTSetMetalShaderCachePath`.
-- DXMT/game-local copies must preserve those legacy exports and expose any new
-  shader bridge exports such as `MTLLibrary_newFunctionWithDescriptor`.
+- Rebuilt DXMT copies must preserve those legacy exports and expose the full
+  WineMetal bridge contract, including shader, PSO, binary archive, shared
+  event, counter sample, and bootstrap exports.
 
-Do not copy the smaller DXMT `winemetal.dll` into `system32`, `syswow64`, or
-`runtime/wine/lib/wine`. The preflight is designed to catch that class of
-regression before Steam is launched.
+Do not manually copy stale or ad hoc `winemetal.dll`/`winemetal.so` artifacts
+into `system32`, `syswow64`, or `runtime/wine/lib/wine`. Use
+`stage-dxmt-runtime.py`, which mirrors the verified rebuilt bridge into the
+runtime and prefix surfaces expected by the ABI checker. The preflight is
+designed to catch stale-copy regressions before Steam is launched.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 
@@ -374,6 +415,13 @@ Validate all required contract files:
 python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
 ```
 
+Validate that every required probe group in the phase matrix has a runnable
+script token, contract coverage entry, and CI contract gate:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/validate-probe-matrix.py
+```
+
 Phase 1 imports:
 
 - `contracts/d3d12-metal-contract.json` from `/Volumes/AverySSD/metalsharp/metal-api-table/final/d3d12_to_metal_map.json`
@@ -382,6 +430,7 @@ Phase 1 imports:
 - `contracts/dxgi-contract.json`
 - `contracts/unsupported-api-ledger.json`
 - `contracts/risky-stub-ledger.json`
+- `contracts/winemetal-bridge-contract.json`
 
 ## Phase Discipline
 

@@ -118,6 +118,19 @@ jobs:
       - name: Install clang-format
         run: brew install clang-format
 
+      - name: D3D12 Metal SDK contracts
+        run: |
+          python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
+          python3 tools/d3d12-metal-sdk/scripts/validate-probe-matrix.py
+          if ! git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > /tmp/metalsharp-pr-files.txt; then
+            echo "Unable to diff PR files from the current checkout; assuming D3D12 Metal SDK touch."
+            echo "tools/d3d12-metal-sdk" > /tmp/metalsharp-pr-files.txt
+          fi
+          if grep -E '^(vendor/dxmt/src/d3d12|vendor/dxmt/src/airconv|vendor/dxmt/src/winemetal|tools/d3d12-metal-sdk)/' /tmp/metalsharp-pr-files.txt >/dev/null; then
+            echo "D3D12 Metal SDK touch detected; mini probes are the required local gate:"
+            echo "tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --mini-only"
+          fi
+
       - name: Format check
         run: find src include tests tools \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) -print0 | xargs -0 clang-format --dry-run --Werror
 

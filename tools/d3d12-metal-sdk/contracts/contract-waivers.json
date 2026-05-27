@@ -10,10 +10,11 @@
       "applies_to_profiles": [
         "metalsharp"
       ],
-      "justification": "Phase 8 proves pinned DXC SM6 compute DXIL container parse, DXIL-to-MSL translation, and compute PSO creation, but does not yet prove broader SM6 graphics coverage or descriptor-indexing shader cases.",
+      "justification": "Phase 14.14 proves the synthetic DXIL semantics corpus and pinned DXC SM6 compute PSO creation, but broader SM6 graphics coverage and descriptor-indexing shader cases remain pending.",
       "expires_when": "A wave-using or descriptor-indexing SM6 shader probe passes without waiver.",
       "evidence": [
-        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json"
+        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json",
+        "tools/d3d12-metal-sdk/results/probe-dxil-semantics-metalsharp.json"
       ]
     },
     {
@@ -24,11 +25,12 @@
       "applies_to_profiles": [
         "metalsharp"
       ],
-      "justification": "Phase 4 proves the reported WaveOps fields and Phase 8 proves an SM6 DXIL path exists, but no probe yet executes a real wave-intrinsic shader and validates the result.",
+      "justification": "Phase 4 proves the reported WaveOps fields and Phase 14.14 proves an SM6 DXIL path exists, but no probe yet executes a real wave-intrinsic shader and validates the result.",
       "expires_when": "A wave-intrinsic shader probe executes successfully and validates output.",
       "evidence": [
         "tools/d3d12-metal-sdk/results/probe-device-caps-metalsharp.json",
-        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json"
+        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json",
+        "tools/d3d12-metal-sdk/results/probe-dxil-semantics-metalsharp.json"
       ]
     }
   ]

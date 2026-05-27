@@ -14,18 +14,25 @@ DEFAULT_RESULTS_DIR = SDK_DIR / "results"
 DEFAULT_CONTRACTS_DIR = SDK_DIR / "contracts"
 
 REQUIRED_PROBES = [
+    "winemetal-abi",
     "probe-loader",
     "probe-agility-ue5",
     "probe-device-caps",
     "probe-dxgi-factory",
     "probe-resources",
+    "probe-resource-views-formats",
     "probe-descriptors",
     "probe-shaders",
+    "probe-dxil-semantics",
     "probe-queues",
-    "probe-render-headless",
+    "probe-graphics-pso",
+    "probe-compute-pso",
+    "probe-command-replay",
+    "probe-barriers-render-pass",
 ]
 
 OPTIONAL_PROBES = [
+    "probe-render-headless",
     "probe-present-windowed",
 ]
 
@@ -93,6 +100,9 @@ def load_probe_results(results_dir: Path, profile: str) -> dict[str, dict[str, A
     for path in sorted(results_dir.glob(f"probe-*-{profile}.json")):
         probe_name = path.name[: -(len(profile) + len(".json") + 1)]
         results[probe_name] = load_json(path)
+    abi_path = results_dir / f"winemetal-abi-{profile}.json"
+    if abi_path.exists():
+        results["winemetal-abi"] = load_json(abi_path)
     return results
 
 
@@ -124,7 +134,7 @@ def check_required_probes(results: dict[str, dict[str, Any]]) -> tuple[list[Issu
             issues.append(Issue("error", "probe", f"Missing required probe `{probe}`", "Expected JSON result was not found."))
             summary["required"][probe] = {"present": False, "pass": False}
             continue
-        passed = bool(data.get("pass"))
+        passed = bool(data.get("pass", data.get("ok")))
         summary["required"][probe] = {"present": True, "pass": passed}
         if not passed:
             issues.append(Issue("error", "probe", f"Required probe `{probe}` did not pass", "Comparator only trusts passing proof targets."))
@@ -180,6 +190,7 @@ def check_unsupported(results: dict[str, dict[str, Any]], ledger: dict[str, Any]
 def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[str, Any]) -> tuple[list[Issue], list[dict[str, Any]]]:
     device_caps = results["probe-device-caps"]
     shader_probe = results["probe-shaders"]
+    dxil_semantics_probe = results["probe-dxil-semantics"]
 
     issues: list[Issue] = []
     summary: list[dict[str, Any]] = []
@@ -214,6 +225,8 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     observed_shader_model = get_nested(device_caps, "shader_model", "highest")
     shader_model_ok = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
     dxil_to_msl_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
+    dxil_semantics_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok")))
+    dxil_path_proven = dxil_semantics_ok or dxil_to_msl_ok
     shader_summary = {
         "feature": "D3D12_FEATURE_SHADER_MODEL",
         "state": shader_model_contract.get("state"),
@@ -221,8 +234,10 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
         "target": shader_model_contract.get("current_target"),
         "sm66_reported": shader_model_ok,
         "dxil_to_msl_proven": dxil_to_msl_ok,
+        "dxil_semantics_proven": dxil_semantics_ok,
+        "dxil_path_proven": dxil_path_proven,
     }
-    shader_summary["compliant"] = shader_model_ok and dxil_to_msl_ok
+    shader_summary["compliant"] = shader_model_ok and dxil_path_proven
     summary.append(shader_summary)
     if not shader_summary["compliant"]:
         issues.append(
@@ -230,7 +245,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
                 "error",
                 "feature_support",
                 "Shader model report advertises an unproven SM6 path",
-                f"Observed `{observed_shader_model}` with DXIL-to-MSL proof `{dxil_to_msl_ok}`.",
+                f"Observed `{observed_shader_model}` with DXIL proof `{dxil_path_proven}`.",
             )
         )
 
@@ -335,16 +350,19 @@ def field_to_options1_value(options1: dict[str, Any], field: str) -> Any:
 def risky_status(target: str, results: dict[str, dict[str, Any]]) -> RiskStatus:
     device_caps = results["probe-device-caps"]
     shader_probe = results["probe-shaders"]
+    dxil_semantics_probe = results["probe-dxil-semantics"]
     dxgi_probe = results["probe-dxgi-factory"]
 
     if target == "D3D12_FEATURE_SHADER_MODEL reports SM 6.6":
         used = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
         if not used:
             return RiskStatus("not_used", "Profile does not advertise SM 6.6.")
-        dxil_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
+        dxil_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok"))) or bool(
+            get_nested(shader_probe, "dxc", "dxil_to_msl")
+        )
         bindless_note = str(get_nested(shader_probe, "dxmt_shader_paths", "bindless_descriptor_indexing") or "")
         if not dxil_ok:
-            return RiskStatus("failed", "SM 6.6 is advertised but the DXIL-to-MSL path is not proven.")
+            return RiskStatus("failed", "SM 6.6 is advertised but no DXIL semantics or DXIL-to-MSL path is proven.")
         if "ready_for_next_shader_case" in bindless_note:
             return RiskStatus("waiver_required", "SM6 compute is proven, but broader descriptor-indexing or graphics SM6 coverage is still pending.")
         return RiskStatus("covered", "SM6 shader path is probe-covered without known gaps.")

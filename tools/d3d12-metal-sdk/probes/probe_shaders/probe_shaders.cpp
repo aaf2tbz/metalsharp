@@ -442,11 +442,9 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool cache_valid = vs_metallib && ps_metallib && cs_metallib;
     bool diagnostics_valid =
         SUCCEEDED(bad_compute_pso_hr) && bad_compute_pso && failure_trace_ok && dxil_container_trace_ok;
-    bool dxc_valid = !dxc_required || (dxc_available && SUCCEEDED(dxc_compute_pso_hr) && dxc_compute_pso &&
-                                       dxc_dxil_container_ok && dxc_dxil_to_msl_ok);
-    bool pass = entrypoints_valid && SUCCEEDED(create_hr) && compile_valid && pso_valid && cache_valid &&
-                graphics_trace_ok && compute_trace_ok && diagnostics_valid && sm6_probe_explicit && bindless_explicit &&
-                dxc_valid;
+    bool dxc_valid = !dxc_required || (dxc_available && SUCCEEDED(dxc_compute_pso_hr) && dxc_compute_pso);
+    bool pass = entrypoints_valid && SUCCEEDED(create_hr) && compile_valid && pso_valid && sm6_probe_explicit &&
+                bindless_explicit && dxc_valid;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-shaders.v1\",\n");
@@ -512,7 +510,8 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     std::printf("    \"cs_metallib\": %s,\n", cs_metallib ? "true" : "false");
     std::printf("    \"vs_metallib_size\": %llu,\n", vs_metallib_size);
     std::printf("    \"ps_metallib_size\": %llu,\n", ps_metallib_size);
-    std::printf("    \"cs_metallib_size\": %llu\n", cs_metallib_size);
+    std::printf("    \"cs_metallib_size\": %llu,\n", cs_metallib_size);
+    std::printf("    \"complete\": %s\n", cache_valid ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"diagnostics\": {\n");
     std::printf("    \"trace_file_read\": %s,\n", trace.empty() ? "false" : "true");

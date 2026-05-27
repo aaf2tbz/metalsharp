@@ -20,14 +20,15 @@ RUN_RESOURCES=1
 RUN_QUEUES=1
 RUN_DESCRIPTORS=1
 RUN_SHADERS=1
-RUN_DXIL_SEMANTICS=0
+RUN_DXIL_SEMANTICS=1
 RUN_GRAPHICS_PSO=1
 RUN_COMPUTE_PSO=1
 RUN_COMMAND_REPLAY=1
 RUN_BARRIERS_RENDER_PASS=1
 RUN_RESOURCE_VIEWS_FORMATS=1
-RUN_RENDER_HEADLESS=1
+RUN_RENDER_HEADLESS=0
 RUN_MINI=1
+RUN_WINEMETAL_ABI=1
 RUN_PRESENT_WINDOWED=0
 RUN_FULL_STRESS=0
 MINI_PROBES=(
@@ -89,7 +90,10 @@ Options:
                         Skip probe_resource_views_formats.
   --resource-views-formats-only
                         Run only the resource/view/format probe.
+  --render-headless     Run optional probe_render_headless.
   --no-render-headless  Skip probe_render_headless.
+  --no-winemetal-abi    Skip the WineMetal PE/Unix ABI export gate.
+  --winemetal-abi-only  Run only the WineMetal PE/Unix ABI export gate.
   --no-mini             Skip one-purpose D3D12 mini-app probes.
   --mini-only           Run only one-purpose D3D12 mini-app probes.
   --windowed-present    Run the optional probe_present_windowed window/swapchain proof.
@@ -378,6 +382,35 @@ while [[ $# -gt 0 ]]; do
       RUN_RENDER_HEADLESS=0
       shift
       ;;
+    --render-headless)
+      RUN_RENDER_HEADLESS=1
+      shift
+      ;;
+    --no-winemetal-abi)
+      RUN_WINEMETAL_ABI=0
+      shift
+      ;;
+    --winemetal-abi-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_RENDER_HEADLESS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_MINI=0
+      RUN_WINEMETAL_ABI=1
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
     --no-mini)
       RUN_MINI=0
       shift
@@ -391,6 +424,7 @@ while [[ $# -gt 0 ]]; do
       RUN_QUEUES=0
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
       RUN_RENDER_HEADLESS=0
       RUN_GRAPHICS_PSO=0
       RUN_COMPUTE_PSO=0
@@ -467,6 +501,7 @@ fi
 WINDOWS_DIR="$DXMT_RUNTIME/x86_64-windows"
 UNIX_DIR="$DXMT_RUNTIME/x86_64-unix"
 RUNTIME_LIB_DIR="$(dirname "$DXMT_RUNTIME")"
+WINE_RUNTIME_ROOT="$(dirname "$RUNTIME_LIB_DIR")"
 WINE_UNIX_DIR="$RUNTIME_LIB_DIR/wine/x86_64-unix"
 DXMT_DYLD_LIBRARY_PATH="$WINE_UNIX_DIR:$UNIX_DIR:${DYLD_LIBRARY_PATH:-}"
 DXMT_WINEMETAL_UNIXLIB_NAME="winemetal.so"
@@ -561,6 +596,7 @@ BARRIERS_RENDER_PASS_RESULT_FILE="$RESULTS_DIR/probe-barriers-render-pass-${PROF
 RESOURCE_VIEWS_FORMATS_RESULT_FILE="$RESULTS_DIR/probe-resource-views-formats-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
 PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
+WINEMETAL_ABI_RESULT_FILE="$RESULTS_DIR/winemetal-abi-${PROFILE}.json"
 
 run_probe_exe() {
   local exe="$1"
@@ -773,11 +809,14 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
   "dxmt_runtime": "$DXMT_RUNTIME",
   "windows_runtime": "$WINDOWS_DIR",
   "unix_runtime": "$UNIX_DIR",
+  "wine_runtime": "$WINE_RUNTIME_ROOT",
   "wine_unix_runtime": "$WINE_UNIX_DIR",
   "dyld_runtime_path": "$DXMT_DYLD_LIBRARY_PATH",
   "shader_cache": "$SHADER_CACHE_DIR",
   "winemetal_unixlib": "$DXMT_WINEMETAL_UNIXLIB_NAME",
   "winemetal_so": "$UNIX_DIR/winemetal.so",
+  "winemetal_abi_contract": "$SDK_DIR/contracts/winemetal-bridge-contract.json",
+  "winemetal_abi_result": "$WINEMETAL_ABI_RESULT_FILE",
   "required_windows_dlls": [
     "$WINDOWS_DIR/d3d12.dll",
     "$WINDOWS_DIR/dxgi.dll",
@@ -787,6 +826,15 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
   ]
 }
 EOF
+
+if [[ "$RUN_WINEMETAL_ABI" == "1" ]]; then
+  python3 "$SDK_DIR/scripts/check-winemetal-abi.py" \
+    --profile "$PROFILE" \
+    --dxmt-runtime "$DXMT_RUNTIME" \
+    --wine-runtime "$WINE_RUNTIME_ROOT" \
+    --prefix "$WINE_PREFIX" \
+    --results-dir "$RESULTS_DIR"
+fi
 
 if [[ "$RUN_MINI" == "1" ]]; then
   prepare_dxil_color_probe
@@ -800,7 +848,7 @@ if [[ "$RUN_LOADER" == "1" ]]; then
   DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
   DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
   D3D12_METAL_SDK_PROFILE="$PROFILE" \
-  D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="system32" \
+  D3D12_METAL_SDK_EXPECT_WINDOWS_SUBSTR="$(basename "$SDK_DIR")" \
   "$WINE_BIN" "$PROBE_EXE" > "$RESULT_FILE"
   echo "$RESULT_FILE"
 fi

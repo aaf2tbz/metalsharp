@@ -854,7 +854,7 @@ public:
   Reference<Library>
   newLibrary(const void *bytecode, uint64_t bytecode_length, Error &error) {
     auto data = DispatchData_alloc_init((uint64_t)bytecode, bytecode_length);
-    auto ret = Reference<Library>(MTLDevice_newLibrary(handle, data, &error.handle));
+    auto ret = Reference<Library>(MTLDevice_newLibraryWithData(handle, data, &error.handle));
     NSObject_release(data);
     return ret;
   }
@@ -862,14 +862,14 @@ public:
   Reference<Library>
   newLibraryFromNativeBuffer(uint64_t bytecode, uint64_t bytecode_length, Error &error) {
     auto data = DispatchData_alloc_init(bytecode, bytecode_length);
-    auto ret = Reference<Library>(MTLDevice_newLibrary(handle, data, &error.handle));
+    auto ret = Reference<Library>(MTLDevice_newLibraryWithData(handle, data, &error.handle));
     NSObject_release(data);
     return ret;
   }
 
   Reference<Library>
   newLibrary(DispatchData data, Error &error) {
-    return Reference<Library>(MTLDevice_newLibrary(handle, data, &error.handle));
+    return Reference<Library>(MTLDevice_newLibraryWithData(handle, data, &error.handle));
   }
 
   Reference<Library>
