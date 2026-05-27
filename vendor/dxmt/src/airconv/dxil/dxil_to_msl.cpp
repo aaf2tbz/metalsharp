@@ -74,6 +74,67 @@ enum DXIntrinsicOpcode {
   DXOP_RenderTargetGetSamplePositionLegacy = 98,
   DXOP_NumPrimitives = 109,
   DXOP_NumOutputVertices = 110,
+  DXOP_IsHelperLane = 9,
+  DXOP_ViewID = 10,
+  DXOP_Discard = 82,
+  DXOP_WaveIsFirstLane = 20,
+  DXOP_WaveGetLaneIndex = 21,
+  DXOP_WaveGetLaneCount = 22,
+  DXOP_WaveReadLaneAt = 24,
+  DXOP_WaveReadLaneFirst = 25,
+  DXOP_WaveActiveAllTrue = 26,
+  DXOP_WaveActiveAnyTrue = 27,
+  DXOP_WaveActiveBallot = 28,
+  DXOP_WaveActiveAllEqual = 29,
+  DXOP_WaveActiveProduct = 30,
+  DXOP_WaveActiveUSum = 31,
+  DXOP_WaveActiveSum = 32,
+  DXOP_WaveActiveBitAnd = 33,
+  DXOP_WaveActiveBitOr = 34,
+  DXOP_WaveActiveBitXor = 35,
+  DXOP_WavePrefixProduct = 37,
+  DXOP_WavePrefixSum = 38,
+  DXOP_WaveMultiPrefixSum = 39,
+  DXOP_WaveMultiPrefixProduct = 40,
+  DXOP_WaveMatch = 44,
+  DXOP_WaveMultiPrefixCountBits = 45,
+  DXOP_QuadReadAcrossX = 41,
+  DXOP_QuadReadAcrossY = 42,
+  DXOP_QuadReadAcrossDiagonal = 43,
+  DXOP_QuadReadLaneAt = 46,
+  DXOP_QuadSwizzle = 47,
+  DXOP_RawBufferStructuredCount = 118,
+  DXOP_CycleCounterLegacy = 131,
+  DXOP_QuadOp = 164,
+  DXOP_EmitIndices = 170,
+  DXOP_GetMeshPayload = 171,
+  DXOP_StoreVertexOutput = 172,
+  DXOP_StorePrimitiveOutput = 173,
+  DXOP_DispatchMesh = 194,
+  DXOP_WriteSamplerFeedback = 200,
+  DXOP_WriteSamplerFeedbackBias = 201,
+  DXOP_WriteSamplerFeedbackLevel = 202,
+  DXOP_WriteSamplerFeedbackGrad = 203,
+  DXOP_TraceRay = 208,
+  DXOP_ReportHit = 220,
+  DXOP_CallShader = 240,
+  DXOP_IgnoreHit = 241,
+  DXOP_AcceptHitAndEndSearch = 242,
+  DXOP_RayQuery_GetRayFlags = 248,
+  DXOP_RayQuery_GetRayDesc = 249,
+  DXOP_RayQuery_GetTriangleVertexPositions = 250,
+  DXOP_RayQuery_GetIntersectionAttributes = 251,
+  DXOP_RayQuery_GetIntersectionType = 252,
+  DXOP_RayQuery_GetIntersectionKind = 253,
+  DXOP_RayQuery_CommitProceduralPrimitiveHit = 254,
+  DXOP_RayQuery_CommitNonOpaqueTriangleHit = 255,
+  DXOP_RayQuery_Abort = 256,
+  DXOP_RayQuery_Proceed = 257,
+  DXOP_RayQuery_StateScalar = 258,
+  DXOP_RayQuery_StateVector = 259,
+  DXOP_AllocateRayQuery = 512,
+  DXOP_GeometryIndex = 540,
+  DXOP_HitObject_Attributes = 542,
   DXOP_UnaryBits = 10001,
   DXOP_LegacyF16ToF32 = 10002,
   DXOP_LegacyF32ToF16 = 10003,
@@ -653,6 +714,113 @@ static uint32_t inferDXIntrinsicIdFromName(const std::string &name) {
     return DXOP_Dot4;
   if (name.find("barrier") != std::string::npos)
     return DXOP_Barrier;
+  if (name.find("discard") != std::string::npos)
+    return DXOP_Discard;
+  if (name.find("isHelperLane") != std::string::npos)
+    return DXOP_IsHelperLane;
+  if (name.find("viewID") != std::string::npos)
+    return DXOP_ViewID;
+  if (name.find("waveIsFirstLane") != std::string::npos)
+    return DXOP_WaveIsFirstLane;
+  if (name.find("waveGetLaneIndex") != std::string::npos)
+    return DXOP_WaveGetLaneIndex;
+  if (name.find("waveGetLaneCount") != std::string::npos)
+    return DXOP_WaveGetLaneCount;
+  if (name.find("waveReadLaneAt") != std::string::npos)
+    return DXOP_WaveReadLaneAt;
+  if (name.find("waveReadLaneFirst") != std::string::npos)
+    return DXOP_WaveReadLaneFirst;
+  if (name.find("waveActiveAllTrue") != std::string::npos)
+    return DXOP_WaveActiveAllTrue;
+  if (name.find("waveActiveAnyTrue") != std::string::npos)
+    return DXOP_WaveActiveAnyTrue;
+  if (name.find("waveActiveBallot") != std::string::npos)
+    return DXOP_WaveActiveBallot;
+  if (name.find("waveActiveAllEqual") != std::string::npos)
+    return DXOP_WaveActiveAllEqual;
+  if (name.find("waveActiveProduct") != std::string::npos)
+    return DXOP_WaveActiveProduct;
+  if (name.find("waveActiveUSum") != std::string::npos)
+    return DXOP_WaveActiveUSum;
+  if (name.find("waveActiveSum") != std::string::npos)
+    return DXOP_WaveActiveSum;
+  if (name.find("waveActiveBitAnd") != std::string::npos)
+    return DXOP_WaveActiveBitAnd;
+  if (name.find("waveActiveBitOr") != std::string::npos)
+    return DXOP_WaveActiveBitOr;
+  if (name.find("waveActiveBitXor") != std::string::npos)
+    return DXOP_WaveActiveBitXor;
+  if (name.find("wavePrefixProduct") != std::string::npos)
+    return DXOP_WavePrefixProduct;
+  if (name.find("wavePrefixSum") != std::string::npos)
+    return DXOP_WavePrefixSum;
+  if (name.find("waveMultiPrefixSum") != std::string::npos)
+    return DXOP_WaveMultiPrefixSum;
+  if (name.find("waveMultiPrefixProduct") != std::string::npos)
+    return DXOP_WaveMultiPrefixProduct;
+  if (name.find("waveMatch") != std::string::npos)
+    return DXOP_WaveMatch;
+  if (name.find("waveMultiPrefixCountBits") != std::string::npos)
+    return DXOP_WaveMultiPrefixCountBits;
+  if (name.find("quadReadAcrossX") != std::string::npos)
+    return DXOP_QuadReadAcrossX;
+  if (name.find("quadReadAcrossY") != std::string::npos)
+    return DXOP_QuadReadAcrossY;
+  if (name.find("quadReadAcrossDiagonal") != std::string::npos)
+    return DXOP_QuadReadAcrossDiagonal;
+  if (name.find("quadReadLaneAt") != std::string::npos)
+    return DXOP_QuadReadLaneAt;
+  if (name.find("quadSwizzle") != std::string::npos)
+    return DXOP_QuadSwizzle;
+  if (name.find("rawBufferStructuredCount") != std::string::npos)
+    return DXOP_RawBufferStructuredCount;
+  if (name.find("cycleCounterLegacy") != std::string::npos)
+    return DXOP_CycleCounterLegacy;
+  if (name.find("quadOp") != std::string::npos)
+    return DXOP_QuadOp;
+  if (name.find("emitIndices") != std::string::npos)
+    return DXOP_EmitIndices;
+  if (name.find("getMeshPayload") != std::string::npos)
+    return DXOP_GetMeshPayload;
+  if (name.find("storeVertexOutput") != std::string::npos)
+    return DXOP_StoreVertexOutput;
+  if (name.find("storePrimitiveOutput") != std::string::npos)
+    return DXOP_StorePrimitiveOutput;
+  if (name.find("dispatchMesh") != std::string::npos)
+    return DXOP_DispatchMesh;
+  if (name.find("writeSamplerFeedback") != std::string::npos)
+    return DXOP_WriteSamplerFeedback;
+  if (name.find("traceRay") != std::string::npos)
+    return DXOP_TraceRay;
+  if (name.find("reportHit") != std::string::npos)
+    return DXOP_ReportHit;
+  if (name.find("callShader") != std::string::npos)
+    return DXOP_CallShader;
+  if (name.find("ignoreHit") != std::string::npos)
+    return DXOP_IgnoreHit;
+  if (name.find("acceptHitAndEndSearch") != std::string::npos)
+    return DXOP_AcceptHitAndEndSearch;
+  if (name.find("allocateRayQuery") != std::string::npos)
+    return DXOP_AllocateRayQuery;
+  if (name.find("geometryIndex") != std::string::npos)
+    return DXOP_GeometryIndex;
+  if (name.find("hitObject") != std::string::npos)
+    return DXOP_HitObject_Attributes;
+  if (name.size() > 5) {
+    size_t dot_pos = name.find('.', 5);
+    size_t start = 5;
+    size_t end = (dot_pos == std::string::npos) ? name.size() : dot_pos;
+    std::string suffix = name.substr(start, end - start);
+    bool all_digits = !suffix.empty();
+    for (char c : suffix) {
+      if (!std::isdigit((unsigned char)c)) { all_digits = false; break; }
+    }
+    if (all_digits) {
+      unsigned long val = std::strtoul(suffix.c_str(), nullptr, 10);
+      if (val > 0 && val < 65536)
+        return (uint32_t)val;
+    }
+  }
   return 0;
 }
 
@@ -813,15 +981,14 @@ static std::string findFunctionNameForValue(const LLVMModule &mod, uint32_t valu
 }
 
 static bool isFunctionLikeSymbol(const std::string &text) {
-  auto endsWith = [&](const char *suffix) {
-    size_t suffix_len = std::strlen(suffix);
-    return text.size() >= suffix_len &&
-           text.compare(text.size() - suffix_len, suffix_len, suffix) == 0;
-  };
-  return startsWith(text, "dx.op.") || text == "cs_main" || text == "vs_main" ||
-         text == "ps_main" || text.find("MainCS") != std::string::npos ||
-         text.find("_CS") != std::string::npos || endsWith("CS") ||
-         endsWith("Main") || endsWith("VS") || endsWith("PS");
+  if (startsWith(text, "dx.op."))
+    return true;
+  if (text.find("::") != std::string::npos)
+    return false;
+  return text == "cs_main" || text == "vs_main" || text == "ps_main" ||
+         text == "gs_main" || text == "hs_main" || text == "ds_main" ||
+         text == "ms_main" || text == "as_main" ||
+         text.find("MainCS") != std::string::npos;
 }
 
 static bool parseSSAName(const std::string &text, uint32_t &value_id) {
@@ -1299,6 +1466,7 @@ static bool isSideEffectOnlyIntrinsic(uint32_t intrinsic_id) {
   case DXOP_TextureStoreSample:
   case DXOP_StoreOutput:
   case DXOP_Barrier:
+  case DXOP_Discard:
     return true;
   default:
     return false;
@@ -1469,6 +1637,53 @@ static bool isKnownDXIntrinsic(uint32_t intrinsic_id) {
   case DXOP_RenderTargetGetSamplePositionLegacy:
   case DXOP_NumPrimitives:
   case DXOP_NumOutputVertices:
+  case DXOP_IsHelperLane:
+  case DXOP_ViewID:
+  case DXOP_Discard:
+  case DXOP_WaveIsFirstLane:
+  case DXOP_WaveGetLaneIndex:
+  case DXOP_WaveGetLaneCount:
+  case DXOP_WaveReadLaneAt:
+  case DXOP_WaveReadLaneFirst:
+  case DXOP_WaveActiveAllTrue:
+  case DXOP_WaveActiveAnyTrue:
+  case DXOP_WaveActiveBallot:
+  case DXOP_WaveActiveAllEqual:
+  case DXOP_WaveActiveProduct:
+  case DXOP_WaveActiveUSum:
+  case DXOP_WaveActiveSum:
+  case DXOP_WaveActiveBitAnd:
+  case DXOP_WaveActiveBitOr:
+  case DXOP_WaveActiveBitXor:
+  case DXOP_WavePrefixProduct:
+  case DXOP_WavePrefixSum:
+  case DXOP_WaveMultiPrefixSum:
+  case DXOP_WaveMultiPrefixProduct:
+  case DXOP_WaveMatch:
+  case DXOP_WaveMultiPrefixCountBits:
+  case DXOP_QuadReadAcrossX:
+  case DXOP_QuadReadAcrossY:
+  case DXOP_QuadReadAcrossDiagonal:
+  case DXOP_QuadReadLaneAt:
+  case DXOP_QuadSwizzle:
+  case DXOP_RawBufferStructuredCount:
+  case DXOP_CycleCounterLegacy:
+  case DXOP_QuadOp:
+  case DXOP_EmitIndices:
+  case DXOP_GetMeshPayload:
+  case DXOP_StoreVertexOutput:
+  case DXOP_StorePrimitiveOutput:
+  case DXOP_DispatchMesh:
+  case DXOP_WriteSamplerFeedback:
+  case DXOP_TraceRay:
+  case DXOP_ReportHit:
+  case DXOP_CallShader:
+  case DXOP_IgnoreHit:
+  case DXOP_AcceptHitAndEndSearch:
+  case DXOP_RayQuery_GetRayFlags:
+  case DXOP_AllocateRayQuery:
+  case DXOP_GeometryIndex:
+  case DXOP_HitObject_Attributes:
     return true;
   default:
     return false;
@@ -2555,6 +2770,56 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
                      (uint32_t)ctx.shader.kind, output_id, component);
     return "";
   }
+
+  case DXOP_Discard:
+  case DXOP_IsHelperLane:
+  case DXOP_ViewID:
+  case DXOP_WaveIsFirstLane:
+  case DXOP_WaveGetLaneIndex:
+  case DXOP_WaveGetLaneCount:
+  case DXOP_WaveReadLaneAt:
+  case DXOP_WaveReadLaneFirst:
+  case DXOP_WaveActiveAllTrue:
+  case DXOP_WaveActiveAnyTrue:
+  case DXOP_WaveActiveBallot:
+  case DXOP_WaveActiveAllEqual:
+  case DXOP_WaveActiveProduct:
+  case DXOP_WaveActiveUSum:
+  case DXOP_WaveActiveSum:
+  case DXOP_WaveActiveBitAnd:
+  case DXOP_WaveActiveBitOr:
+  case DXOP_WaveActiveBitXor:
+  case DXOP_WavePrefixProduct:
+  case DXOP_WavePrefixSum:
+  case DXOP_WaveMultiPrefixSum:
+  case DXOP_WaveMultiPrefixProduct:
+  case DXOP_WaveMatch:
+  case DXOP_WaveMultiPrefixCountBits:
+  case DXOP_QuadReadAcrossX:
+  case DXOP_QuadReadAcrossY:
+  case DXOP_QuadReadAcrossDiagonal:
+  case DXOP_QuadReadLaneAt:
+  case DXOP_QuadSwizzle:
+  case DXOP_RawBufferStructuredCount:
+  case DXOP_CycleCounterLegacy:
+  case DXOP_QuadOp:
+  case DXOP_EmitIndices:
+  case DXOP_GetMeshPayload:
+  case DXOP_StoreVertexOutput:
+  case DXOP_StorePrimitiveOutput:
+  case DXOP_DispatchMesh:
+  case DXOP_WriteSamplerFeedback:
+  case DXOP_TraceRay:
+  case DXOP_ReportHit:
+  case DXOP_CallShader:
+  case DXOP_IgnoreHit:
+  case DXOP_AcceptHitAndEndSearch:
+  case DXOP_RayQuery_GetRayFlags:
+  case DXOP_AllocateRayQuery:
+  case DXOP_GeometryIndex:
+  case DXOP_HitObject_Attributes:
+    recordDiagnostic(ctx, "DXIL intrinsic %u identified but not yet translated", intrinsic_id);
+    return "0";
 
   default:
     ctx.unsupported_intrinsics++;
