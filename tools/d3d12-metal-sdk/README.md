@@ -57,6 +57,19 @@ real mesh/object pipeline-state-stream probe. Keeping it as a runnable mini-app
 prevents future UE5/Nanite work from being described as supported without a
 repeatable proof.
 
+For DXIL semantic coverage, run the reduced SM6 opcode-group probe:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --semantic-only
+```
+
+This compiles reduced DXIL shaders with DXC, warms the DXMT shader cache,
+converts those dumped cache entries through MetalShaderConverter, then reruns
+the shaders through D3D12 and validates UAV readbacks for float/int math,
+bitcasts, buffer load/store, barriers, atomics, compute IDs, wave ops, and quad
+ops. Results are written to `results/probe-dxil-semantics-*.json`; the warmup
+pass is kept beside it to show the primary backend cache-miss route explicitly.
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash

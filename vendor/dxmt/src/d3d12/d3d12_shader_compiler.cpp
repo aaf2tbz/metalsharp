@@ -281,9 +281,25 @@ DebugMSLEmitterBackend::Compile(const D3D12ShaderCompileRequest &request) {
     return output;
   }
 
-  WriteTextFile(request.paths.msl, msl->source);
   WriteTextFile(request.paths.dxil_report,
                 BuildCompileReport(request, *module, shader, *msl, Name()));
+  if (msl->unsupported_intrinsics || msl->unsupported_opcodes) {
+    output.diagnostics =
+        str::format("DXILToMSL rejected unsupported semantics: intrinsics=",
+                    msl->unsupported_intrinsics, " opcodes=",
+                    msl->unsupported_opcodes, "\n");
+    return output;
+  }
+  for (const auto &diagnostic : msl->diagnostics) {
+    if (diagnostic.find("generated-source SSA fallback") != std::string::npos) {
+      output.diagnostics =
+          str::format("DXILToMSL rejected generated SSA fallback: ",
+                      diagnostic, "\n");
+      return output;
+    }
+  }
+
+  WriteTextFile(request.paths.msl, msl->source);
 
   WMT::Reference<WMT::Error> compile_error;
   auto metal_device = request.metal_device;

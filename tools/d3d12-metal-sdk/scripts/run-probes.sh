@@ -20,6 +20,7 @@ RUN_RESOURCES=1
 RUN_QUEUES=1
 RUN_DESCRIPTORS=1
 RUN_SHADERS=1
+RUN_DXIL_SEMANTICS=0
 RUN_RENDER_HEADLESS=1
 RUN_MINI=1
 RUN_PRESENT_WINDOWED=0
@@ -64,6 +65,8 @@ Options:
   --no-queues           Skip probe_queues.
   --no-descriptors      Skip probe_descriptors.
   --no-shaders          Skip probe_shaders.
+  --dxil-semantics      Run the DXIL semantic opcode-group probe.
+  --semantic-only       Run only the DXIL semantic opcode-group probe.
   --no-render-headless  Skip probe_render_headless.
   --no-mini             Skip one-purpose D3D12 mini-app probes.
   --mini-only           Run only one-purpose D3D12 mini-app probes.
@@ -142,6 +145,25 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-shaders)
       RUN_SHADERS=0
+      shift
+      ;;
+    --dxil-semantics)
+      RUN_DXIL_SEMANTICS=1
+      shift
+      ;;
+    --semantic-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=1
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
       shift
       ;;
     --no-render-headless)
@@ -223,6 +245,7 @@ RESOURCES_PROBE_EXE="$SDK_DIR/out/bin/probe_resources.exe"
 QUEUES_PROBE_EXE="$SDK_DIR/out/bin/probe_queues.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
 SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
+DXIL_SEMANTICS_PROBE_EXE="$SDK_DIR/out/bin/probe_dxil_semantics.exe"
 RENDER_HEADLESS_PROBE_EXE="$SDK_DIR/out/bin/probe_render_headless.exe"
 PRESENT_WINDOWED_PROBE_EXE="$SDK_DIR/out/bin/probe_present_windowed.exe"
 
@@ -265,7 +288,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -291,6 +314,8 @@ RESOURCES_RESULT_FILE="$RESULTS_DIR/probe-resources-${PROFILE}.json"
 QUEUES_RESULT_FILE="$RESULTS_DIR/probe-queues-${PROFILE}.json"
 DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
 SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
+DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PROFILE}.json"
+DXIL_SEMANTICS_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
 PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
 
@@ -408,6 +433,90 @@ HLSL
     DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     "$WINE_BIN" probe_mini_dxil_texture_color_output.exe >/dev/null || true
+  )
+  convert_dxil_shader_cache "$SHADER_CACHE_DIR"
+}
+
+prepare_dxil_semantic_probes() {
+  local hlsl="$SDK_DIR/out/bin/probe_dxil_semantics.hlsl"
+
+  cat > "$hlsl" <<'HLSL'
+RWByteAddressBuffer outbuf : register(u0);
+ByteAddressBuffer inbuf : register(t0);
+
+[numthreads(4, 1, 1)]
+void cs_math_bits(uint3 id : SV_DispatchThreadID) {
+  if (id.x == 0) {
+    float f = sqrt(144.0) + abs(-5.0) + floor(2.9) + ceil(2.1);
+    uint bits = (1u << 5) | (0xf0u & 0x0fu) | (0x12u ^ 0x02u);
+    outbuf.Store(0, (uint)f);
+    outbuf.Store(4, bits);
+    outbuf.Store(8, asuint(asfloat(0x3f800000u)));
+    outbuf.Store(12, countbits(0xf0f0u));
+  }
+}
+
+[numthreads(4, 1, 1)]
+void cs_buffer(uint3 id : SV_DispatchThreadID) {
+  uint v = inbuf.Load(id.x * 4);
+  outbuf.Store(id.x * 4, v * 3 + 1);
+}
+
+groupshared uint g_counter;
+
+[numthreads(4, 1, 1)]
+void cs_atomics_ids(uint3 gid : SV_GroupID,
+                    uint3 tid : SV_GroupThreadID,
+                    uint gi : SV_GroupIndex,
+                    uint3 did : SV_DispatchThreadID) {
+  if (gi == 0)
+    g_counter = 0;
+  GroupMemoryBarrierWithGroupSync();
+  InterlockedAdd(g_counter, 1);
+  GroupMemoryBarrierWithGroupSync();
+  outbuf.Store(gi * 4, g_counter + did.x + tid.x + gid.x);
+}
+
+[numthreads(4, 1, 1)]
+void cs_wave_quad(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
+  uint first = WaveReadLaneFirst(id.x + 1);
+  uint sum = WaveActiveSum(1);
+  uint across = QuadReadAcrossX(id.x);
+  uint valid = (sum >= 4 ? 0x100u : 0u) |
+               (first == 1 ? 0x10u : 0u) |
+               (across == (id.x ^ 1u) ? 0x1u : 0u);
+  outbuf.Store(gi * 4, valid);
+}
+HLSL
+
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E cs_math_bits -T cs_6_0 -Fo probe_dxil_semantic_math_bits.cso probe_dxil_semantics.hlsl >/dev/null
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E cs_buffer -T cs_6_0 -Fo probe_dxil_semantic_buffer.cso probe_dxil_semantics.hlsl >/dev/null
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E cs_atomics_ids -T cs_6_0 -Fo probe_dxil_semantic_atomics_ids.cso probe_dxil_semantics.hlsl >/dev/null
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLOVERRIDES="dxcompiler,dxil=n,b" \
+    "$WINE_BIN" dxc.exe -nologo -E cs_wave_quad -T cs_6_6 -Fo probe_dxil_semantic_wave_quad.cso probe_dxil_semantics.hlsl >/dev/null
+  )
+
+  mkdir -p "$SHADER_CACHE_DIR"
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    D3D12_METAL_SDK_DXIL_SEMANTICS_MODE="warmup" \
+    "$WINE_BIN" "$DXIL_SEMANTICS_PROBE_EXE" > "$DXIL_SEMANTICS_WARMUP_RESULT_FILE"
   )
   convert_dxil_shader_cache "$SHADER_CACHE_DIR"
 }
@@ -556,6 +665,23 @@ if [[ "$RUN_SHADERS" == "1" ]]; then
     "$WINE_BIN" "$SHADERS_PROBE_EXE" > "$SHADERS_RESULT_FILE"
   )
   echo "$SHADERS_RESULT_FILE"
+fi
+
+if [[ "$RUN_DXIL_SEMANTICS" == "1" ]]; then
+  prepare_dxil_semantic_probes
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$DXIL_SEMANTICS_PROBE_EXE" > "$DXIL_SEMANTICS_RESULT_FILE"
+  )
+  echo "$DXIL_SEMANTICS_WARMUP_RESULT_FILE"
+  echo "$DXIL_SEMANTICS_RESULT_FILE"
 fi
 
 if [[ "$RUN_RENDER_HEADLESS" == "1" ]]; then
