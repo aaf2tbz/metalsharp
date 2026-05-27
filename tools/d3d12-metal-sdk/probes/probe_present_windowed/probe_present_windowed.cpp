@@ -246,8 +246,8 @@ static bool clear_present_and_verify(ID3D12Device* device, ID3D12CommandQueue* q
                                      UINT64& fence_value, IDXGISwapChain3* swapchain, ID3D12Resource* backbuffer,
                                      D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle, D3D12_RESOURCE_STATES before_state,
                                      const float clear_color[4], uint8_t expected_r, uint8_t expected_g,
-                                     uint8_t expected_b, Pixel& pixel_out, HRESULT& map_hr_out,
-                                     HRESULT& present_hr_out) {
+                                     uint8_t expected_b, Pixel& pixel_out, HRESULT& map_hr_out, HRESULT& present_hr_out,
+                                     HANDLE frame_latency_waitable) {
     bool verified = false;
 
     if (SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator, nullptr))) {
@@ -267,6 +267,9 @@ static bool clear_present_and_verify(ID3D12Device* device, ID3D12CommandQueue* q
                                             expected_b, pixel_out, map_hr_out);
             if (verified) {
                 present_hr_out = swapchain->Present(0, 0);
+                if (SUCCEEDED(present_hr_out) && frame_latency_waitable) {
+                    WaitForSingleObject(frame_latency_waitable, 0);
+                }
                 pump_messages();
                 return verified && SUCCEEDED(present_hr_out);
             }
@@ -312,6 +315,19 @@ int main() {
     HRESULT present0_hr = S_OK;
     HRESULT present1_hr = S_OK;
     HRESULT present_resize_hr = S_OK;
+    HRESULT get_swapchain_device_hr = S_OK;
+    HRESULT get_buffer0_device_hr = S_OK;
+    HRESULT set_frame_latency_hr = S_OK;
+    HRESULT get_frame_latency_hr = S_OK;
+    HRESULT check_sdr_color_space_hr = S_OK;
+    HRESULT set_sdr_color_space_hr = S_OK;
+    HRESULT check_hdr_color_space_hr = S_OK;
+    HRESULT set_hdr_color_space_hr = S_OK;
+    HRESULT get_fullscreen_state_initial_hr = S_OK;
+    HRESULT set_fullscreen_state_hr = S_OK;
+    HRESULT get_fullscreen_state_after_set_hr = S_OK;
+    HRESULT restore_windowed_hr = S_OK;
+    HRESULT get_fullscreen_state_restored_hr = S_OK;
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = probe_window_proc;
@@ -344,8 +360,11 @@ int main() {
     ID3D12GraphicsCommandList* list = nullptr;
     ID3D12Fence* fence = nullptr;
     HANDLE fence_event = nullptr;
+    HANDLE frame_latency_waitable = nullptr;
     UINT64 fence_value = 0;
     HWND swapchain_hwnd = nullptr;
+    ID3D12Device* swapchain_device = nullptr;
+    ID3D12Device* buffer0_device = nullptr;
 
     std::array<ID3D12Resource*, 2> buffers = {nullptr, nullptr};
     std::array<ID3D12Resource*, 2> resized_buffers = {nullptr, nullptr};
@@ -372,6 +391,10 @@ int main() {
     bool buffer0_verified = false;
     bool buffer1_verified = false;
     bool resized_buffer_verified = false;
+    bool device_ownership_verified = false;
+    bool frame_latency_verified = false;
+    bool color_space_verified = false;
+    bool fullscreen_windowed_verified = false;
 
     if (!d3d12 || !dxgi || !d3d12_create_device || !create_dxgi_factory2 || !hwnd || FAILED(register_class_hr)) {
         create_factory_hr = d3d12_create_device ? create_factory_hr : E_NOINTERFACE;
@@ -397,6 +420,7 @@ int main() {
             desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
             desc.Scaling = DXGI_SCALING_STRETCH;
             desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+            desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
             create_swapchain_hr = factory4->CreateSwapChainForHwnd(queue, hwnd, &desc, nullptr, nullptr, &swapchain1);
         }
@@ -405,6 +429,7 @@ int main() {
         }
         if (SUCCEEDED(query_swapchain3_hr)) {
             get_hwnd_hr = swapchain3->GetHwnd(&swapchain_hwnd);
+            get_swapchain_device_hr = swapchain3->GetDevice(IID_PPV_ARGS(&swapchain_device));
         }
         if (SUCCEEDED(query_swapchain3_hr)) {
             D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
@@ -444,6 +469,9 @@ int main() {
                 device->CreateRenderTargetView(buffers[i], nullptr, offset_cpu(rtv_start, rtv_increment, i));
             }
         }
+        if (buffers[0]) {
+            get_buffer0_device_hr = buffers[0]->GetDevice(IID_PPV_ARGS(&buffer0_device));
+        }
 
         D3D12_RESOURCE_DESC buffer0_desc = {};
         D3D12_RESOURCE_DESC buffer1_desc = {};
@@ -458,6 +486,44 @@ int main() {
                                       buffer1_desc.Height == initial_height;
         backbuffers_distinct = buffers[0] && buffers[1] && buffers[0] != buffers[1];
         hwnd_matches = SUCCEEDED(get_hwnd_hr) && swapchain_hwnd == hwnd;
+        device_ownership_verified = SUCCEEDED(get_swapchain_device_hr) && SUCCEEDED(get_buffer0_device_hr) &&
+                                    swapchain_device == device && buffer0_device == device;
+
+        set_frame_latency_hr = swapchain3->SetMaximumFrameLatency(2);
+        UINT frame_latency = 0;
+        get_frame_latency_hr = swapchain3->GetMaximumFrameLatency(&frame_latency);
+        frame_latency_waitable = swapchain3->GetFrameLatencyWaitableObject();
+        DWORD initial_wait = frame_latency_waitable ? WaitForSingleObject(frame_latency_waitable, 0) : WAIT_FAILED;
+        frame_latency_verified = SUCCEEDED(set_frame_latency_hr) && SUCCEEDED(get_frame_latency_hr) &&
+                                 frame_latency == 2 && frame_latency_waitable != nullptr &&
+                                 (initial_wait == WAIT_OBJECT_0 || initial_wait == WAIT_TIMEOUT);
+
+        UINT sdr_color_space_support = 0;
+        UINT hdr_color_space_support = 0;
+        check_sdr_color_space_hr =
+            swapchain3->CheckColorSpaceSupport(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, &sdr_color_space_support);
+        set_sdr_color_space_hr = swapchain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
+        check_hdr_color_space_hr =
+            swapchain3->CheckColorSpaceSupport(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, &hdr_color_space_support);
+        set_hdr_color_space_hr = swapchain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+        color_space_verified = SUCCEEDED(check_sdr_color_space_hr) &&
+                               (sdr_color_space_support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) &&
+                               SUCCEEDED(set_sdr_color_space_hr) && SUCCEEDED(check_hdr_color_space_hr) &&
+                               hdr_color_space_support == 0 && FAILED(set_hdr_color_space_hr);
+
+        BOOL initial_fullscreen = TRUE;
+        BOOL after_set_fullscreen = TRUE;
+        BOOL restored_fullscreen = TRUE;
+        get_fullscreen_state_initial_hr = swapchain3->GetFullscreenState(&initial_fullscreen, nullptr);
+        set_fullscreen_state_hr = swapchain3->SetFullscreenState(FALSE, nullptr);
+        get_fullscreen_state_after_set_hr = swapchain3->GetFullscreenState(&after_set_fullscreen, nullptr);
+        restore_windowed_hr = swapchain3->SetFullscreenState(FALSE, nullptr);
+        get_fullscreen_state_restored_hr = swapchain3->GetFullscreenState(&restored_fullscreen, nullptr);
+        fullscreen_windowed_verified = SUCCEEDED(get_fullscreen_state_initial_hr) && initial_fullscreen == FALSE &&
+                                       SUCCEEDED(set_fullscreen_state_hr) &&
+                                       SUCCEEDED(get_fullscreen_state_after_set_hr) && after_set_fullscreen == FALSE &&
+                                       SUCCEEDED(restore_windowed_hr) && SUCCEEDED(get_fullscreen_state_restored_hr) &&
+                                       restored_fullscreen == FALSE;
 
         swapchain3->GetLastPresentCount(&initial_present_count);
         initial_index = swapchain3->GetCurrentBackBufferIndex();
@@ -470,7 +536,7 @@ int main() {
             buffer0_verified = clear_present_and_verify(device, queue, allocator, list, fence, fence_event, fence_value,
                                                         swapchain3, buffers[0], offset_cpu(rtv_start, rtv_increment, 0),
                                                         D3D12_RESOURCE_STATE_RENDER_TARGET, red_clear, 255, 0, 0,
-                                                        pixel0, map0_hr, present0_hr);
+                                                        pixel0, map0_hr, present0_hr, frame_latency_waitable);
         }
 
         swapchain3->GetLastPresentCount(&present_count_after_first);
@@ -480,7 +546,7 @@ int main() {
             buffer1_verified = clear_present_and_verify(device, queue, allocator, list, fence, fence_event, fence_value,
                                                         swapchain3, buffers[1], offset_cpu(rtv_start, rtv_increment, 1),
                                                         D3D12_RESOURCE_STATE_RENDER_TARGET, green_clear, 0, 255, 0,
-                                                        pixel1, map1_hr, present1_hr);
+                                                        pixel1, map1_hr, present1_hr, frame_latency_waitable);
         }
 
         swapchain3->GetLastPresentCount(&present_count_after_second);
@@ -526,7 +592,7 @@ int main() {
                     device, queue, allocator, list, fence, fence_event, fence_value, swapchain3,
                     resized_buffers[resize_index], offset_cpu(rtv_start, rtv_increment, resize_index),
                     D3D12_RESOURCE_STATE_RENDER_TARGET, blue_clear, 0, 0, 255, pixel_resize, map_resize_hr,
-                    present_resize_hr);
+                    present_resize_hr, frame_latency_waitable);
             }
 
             swapchain3->GetLastPresentCount(&present_count_after_resize);
@@ -546,7 +612,8 @@ int main() {
                 SUCCEEDED(create_list_hr) && SUCCEEDED(create_fence_hr) && backbuffers_distinct && hwnd_matches &&
                 initial_dimensions_verified && buffer0_verified && buffer1_verified && present_counts_verified &&
                 index_progression_verified && SUCCEEDED(resize_hr) && resize_dimensions_verified &&
-                resize_replaced_buffers && resized_buffer_verified;
+                resize_replaced_buffers && resized_buffer_verified && device_ownership_verified &&
+                frame_latency_verified && color_space_verified && fullscreen_windowed_verified;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-present-windowed.v1\",\n");
@@ -563,7 +630,11 @@ int main() {
     std::printf("    \"index_progression_verified\": %s,\n", index_progression_verified ? "true" : "false");
     std::printf("    \"resize_dimensions_verified\": %s,\n", resize_dimensions_verified ? "true" : "false");
     std::printf("    \"resize_replaced_buffers\": %s,\n", resize_replaced_buffers ? "true" : "false");
-    std::printf("    \"resized_buffer_verified\": %s\n", resized_buffer_verified ? "true" : "false");
+    std::printf("    \"resized_buffer_verified\": %s,\n", resized_buffer_verified ? "true" : "false");
+    std::printf("    \"device_ownership_verified\": %s,\n", device_ownership_verified ? "true" : "false");
+    std::printf("    \"frame_latency_verified\": %s,\n", frame_latency_verified ? "true" : "false");
+    std::printf("    \"color_space_verified\": %s,\n", color_space_verified ? "true" : "false");
+    std::printf("    \"fullscreen_windowed_verified\": %s\n", fullscreen_windowed_verified ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"window\": {\n");
     std::printf("    \"hwnd\": \"%p\",\n", hwnd);
@@ -581,6 +652,14 @@ int main() {
     std::printf("    \"after_second\": %u,\n", index_after_second);
     std::printf("    \"after_resize\": %u\n", index_after_resize);
     std::printf("  },\n");
+    std::printf("  \"ownership\": {\n");
+    std::printf("    \"created_device\": \"%p\",\n", device);
+    std::printf("    \"swapchain_device\": \"%p\",\n", swapchain_device);
+    std::printf("    \"buffer0_device\": \"%p\"\n", buffer0_device);
+    std::printf("  },\n");
+    std::printf("  \"frame_latency\": {\n");
+    std::printf("    \"waitable_object\": \"%p\"\n", frame_latency_waitable);
+    std::printf("  },\n");
     std::printf("  \"sampled_pixels\": {\n");
     std::printf("    \"buffer0_center\": [%u, %u, %u, %u],\n", pixel0.r, pixel0.g, pixel0.b, pixel0.a);
     std::printf("    \"buffer1_center\": [%u, %u, %u, %u],\n", pixel1.r, pixel1.g, pixel1.b, pixel1.a);
@@ -595,6 +674,19 @@ int main() {
     print_hr("create_swapchain", create_swapchain_hr);
     print_hr("query_swapchain3", query_swapchain3_hr);
     print_hr("get_hwnd", get_hwnd_hr);
+    print_hr("get_swapchain_device", get_swapchain_device_hr);
+    print_hr("get_buffer0_device", get_buffer0_device_hr);
+    print_hr("set_frame_latency", set_frame_latency_hr);
+    print_hr("get_frame_latency", get_frame_latency_hr);
+    print_hr("check_sdr_color_space", check_sdr_color_space_hr);
+    print_hr("set_sdr_color_space", set_sdr_color_space_hr);
+    print_hr("check_hdr_color_space", check_hdr_color_space_hr);
+    print_hr("set_hdr_color_space", set_hdr_color_space_hr);
+    print_hr("get_fullscreen_state_initial", get_fullscreen_state_initial_hr);
+    print_hr("set_fullscreen_state_windowed", set_fullscreen_state_hr);
+    print_hr("get_fullscreen_state_after_set", get_fullscreen_state_after_set_hr);
+    print_hr("restore_windowed", restore_windowed_hr);
+    print_hr("get_fullscreen_state_restored", get_fullscreen_state_restored_hr);
     print_hr("create_rtv_heap", create_rtv_heap_hr);
     print_hr("create_allocator", create_allocator_hr);
     print_hr("create_list", create_list_hr);
@@ -622,6 +714,8 @@ int main() {
     safe_release(list);
     safe_release(allocator);
     safe_release(rtv_heap);
+    safe_release(buffer0_device);
+    safe_release(swapchain_device);
     safe_release(swapchain3);
     safe_release(swapchain1);
     safe_release(queue);

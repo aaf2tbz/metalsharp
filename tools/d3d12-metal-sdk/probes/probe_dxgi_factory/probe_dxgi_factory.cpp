@@ -142,10 +142,14 @@ int main() {
 
     IDXGIAdapter* adapter0 = nullptr;
     IDXGIAdapter1* adapter1 = nullptr;
+    IDXGIAdapter1* adapter1_second = nullptr;
     IDXGIAdapter1* gpu_preference_adapter = nullptr;
     IDXGIAdapter1* luid_adapter = nullptr;
     HRESULT enum_adapter_hr = factory0 ? factory0->EnumAdapters(0, &adapter0) : E_FAIL;
     HRESULT enum_adapter1_hr = factory1 ? factory1->EnumAdapters1(0, &adapter1) : E_FAIL;
+    HRESULT enum_adapter1_second_hr = factory1 ? factory1->EnumAdapters1(0, &adapter1_second) : E_FAIL;
+    IDXGIAdapter1* adapter_end = nullptr;
+    HRESULT enum_adapter_end_hr = factory1 ? factory1->EnumAdapters1(32, &adapter_end) : E_FAIL;
 
     IDXGIFactory4* factory4 = nullptr;
     IDXGIFactory6* factory6 = nullptr;
@@ -164,10 +168,19 @@ int main() {
     DXGI_ADAPTER_DESC1 desc = {};
     if (adapter1)
         adapter1->GetDesc1(&desc);
+    DXGI_ADAPTER_DESC1 desc_second = {};
+    if (adapter1_second)
+        adapter1_second->GetDesc1(&desc_second);
     LUID luid = desc.AdapterLuid;
     HRESULT enum_luid_hr =
         factory4 ? factory4->EnumAdapterByLuid(luid, IID_DXGIAdapter1Probe, reinterpret_cast<void**>(&luid_adapter))
                  : E_NOINTERFACE;
+    DXGI_ADAPTER_DESC1 desc_luid = {};
+    if (luid_adapter)
+        luid_adapter->GetDesc1(&desc_luid);
+    DXGI_ADAPTER_DESC1 desc_preference = {};
+    if (gpu_preference_adapter)
+        gpu_preference_adapter->GetDesc1(&desc_preference);
 
     IDXGIOutput* output = nullptr;
     HRESULT enum_output_hr = adapter0 ? adapter0->EnumOutputs(0, &output) : E_FAIL;
@@ -184,10 +197,23 @@ int main() {
                                                  ? factory7->UnregisterAdaptersChangedEvent(adapters_changed_cookie)
                                                  : E_NOINTERFACE;
 
+    bool factory_versions_supported = true;
+    for (const auto& probe : interfaces)
+        factory_versions_supported = factory_versions_supported && probe.supported;
+    bool adapter_stable = SUCCEEDED(enum_adapter1_hr) && SUCCEEDED(enum_adapter1_second_hr) &&
+                          SUCCEEDED(gpu_preference_hr) && SUCCEEDED(enum_luid_hr) &&
+                          desc.AdapterLuid.HighPart == desc_second.AdapterLuid.HighPart &&
+                          desc.AdapterLuid.LowPart == desc_second.AdapterLuid.LowPart &&
+                          desc.AdapterLuid.HighPart == desc_preference.AdapterLuid.HighPart &&
+                          desc.AdapterLuid.LowPart == desc_preference.AdapterLuid.LowPart &&
+                          desc.AdapterLuid.HighPart == desc_luid.AdapterLuid.HighPart &&
+                          desc.AdapterLuid.LowPart == desc_luid.AdapterLuid.LowPart;
+
     bool pass = dxgi && create_factory && create_factory1 && create_factory2 && SUCCEEDED(create_hr) &&
                 SUCCEEDED(create1_hr) && SUCCEEDED(create2_hr) && SUCCEEDED(enum_adapter_hr) &&
                 SUCCEEDED(enum_adapter1_hr) && desc.VendorId != 0 &&
-                desc.DedicatedVideoMemory + desc.SharedSystemMemory > 0 && unknown_qi_hr == E_NOINTERFACE;
+                desc.DedicatedVideoMemory + desc.SharedSystemMemory > 0 && unknown_qi_hr == E_NOINTERFACE &&
+                factory_versions_supported && adapter_stable && enum_adapter_end_hr == DXGI_ERROR_NOT_FOUND;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-dxgi-factory.v1\",\n");
@@ -211,9 +237,13 @@ int main() {
     std::printf("  \"adapter_enumeration\": {\n");
     print_hr("EnumAdapters", enum_adapter_hr);
     print_hr("EnumAdapters1", enum_adapter1_hr);
+    print_hr("EnumAdapters1_repeat", enum_adapter1_second_hr);
+    print_hr("EnumAdapters1_end", enum_adapter_end_hr);
     print_hr("EnumAdapterByGpuPreference", gpu_preference_hr);
     print_hr("EnumAdapterByLuid", enum_luid_hr);
     print_hr("EnumOutputs", enum_output_hr);
+    std::printf("    \"factory_versions_supported\": %s,\n", factory_versions_supported ? "true" : "false");
+    std::printf("    \"adapter_stable\": %s,\n", adapter_stable ? "true" : "false");
     std::printf("    \"description\": \"%s\",\n", json_escape(wide_to_utf8(desc.Description)).c_str());
     std::printf("    \"vendor_id\": %u,\n", desc.VendorId);
     std::printf("    \"device_id\": %u,\n", desc.DeviceId);

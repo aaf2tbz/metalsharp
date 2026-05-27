@@ -49,13 +49,20 @@ static bool WindowHandoffEnabled() {
 
 static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
   switch (fmt) {
-  case DXGI_FORMAT_R8G8B8A8_UNORM: return WMTPixelFormatRGBA8Unorm;
-  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return WMTPixelFormatRGBA8Unorm_sRGB;
-  case DXGI_FORMAT_B8G8R8A8_UNORM: return WMTPixelFormatBGRA8Unorm;
-  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return WMTPixelFormatBGRA8Unorm_sRGB;
-  case DXGI_FORMAT_R16G16B16A16_FLOAT: return WMTPixelFormatRGBA16Float;
-  case DXGI_FORMAT_R10G10B10A2_UNORM: return WMTPixelFormatRGB10A2Unorm;
-  default: return WMTPixelFormatBGRA8Unorm;
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+    return WMTPixelFormatRGBA8Unorm;
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    return WMTPixelFormatRGBA8Unorm_sRGB;
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+    return WMTPixelFormatBGRA8Unorm;
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    return WMTPixelFormatBGRA8Unorm_sRGB;
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    return WMTPixelFormatRGBA16Float;
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+    return WMTPixelFormatRGB10A2Unorm;
+  default:
+    return WMTPixelFormatBGRA8Unorm;
   }
 }
 
@@ -76,6 +83,21 @@ static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
   case DXGI_FORMAT_R10G10B10A2_UNORM:
     return true;
+  default:
+    return false;
+  }
+}
+
+static bool IsSupportedColorSpaceForFormat(DXGI_FORMAT fmt,
+                                           DXGI_COLOR_SPACE_TYPE color_space) {
+  switch (color_space) {
+  case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709:
+    return fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
+           fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+           fmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
+           fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+  case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
+    return fmt == DXGI_FORMAT_R10G10B10A2_UNORM;
   default:
     return false;
   }
@@ -116,18 +138,21 @@ static uint64_t SwapchainReadbackInterval() {
 static bool ShouldReadbackPresent(uint64_t present_count) {
   if (!SwapchainReadbackEnabled())
     return false;
-  return present_count <= 12 || (present_count % SwapchainReadbackInterval()) == 0;
+  return present_count <= 12 ||
+         (present_count % SwapchainReadbackInterval()) == 0;
 }
 
 static uint32_t AlignTo(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
 
-static SwapchainReadbackProbe EncodeSwapchainReadback(
-    WMT::Device device, WMT::CommandBuffer cmdbuf, WMT::Texture texture,
-    UINT width, UINT height, DXGI_FORMAT format, uint64_t present_count) {
+static SwapchainReadbackProbe
+EncodeSwapchainReadback(WMT::Device device, WMT::CommandBuffer cmdbuf,
+                        WMT::Texture texture, UINT width, UINT height,
+                        DXGI_FORMAT format, uint64_t present_count) {
   SwapchainReadbackProbe probe = {};
-  if (!texture.handle || !width || !height || !ShouldReadbackPresent(present_count))
+  if (!texture.handle || !width || !height ||
+      !ShouldReadbackPresent(present_count))
     return probe;
 
   probe.width = std::min<uint32_t>(width, 1920u);
@@ -137,7 +162,8 @@ static SwapchainReadbackProbe EncodeSwapchainReadback(
 
   WMTBufferInfo info = {};
   info.length = uint64_t(probe.bytes_per_row) * probe.height;
-  info.options = WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+  info.options =
+      WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
   info.memory.set(nullptr);
   probe.buffer = device.newBuffer(info);
   probe.mapped = info.memory.get();
@@ -149,8 +175,9 @@ static SwapchainReadbackProbe EncodeSwapchainReadback(
 
   auto blit = cmdbuf.blitCommandEncoder();
   if (!blit.handle) {
-    Logger::info(str::format("M12 swapchain readback skipped: no blit encoder count=",
-                             present_count));
+    Logger::info(
+        str::format("M12 swapchain readback skipped: no blit encoder count=",
+                    present_count));
     return {};
   }
 
@@ -201,19 +228,16 @@ static void LogSwapchainReadback(const SwapchainReadbackProbe &probe,
     }
   }
 
-  Logger::info(str::format("M12 swapchain readback count=", probe.present_count,
-                           " fmt=", (unsigned)format,
-                           " sample=", probe.width, "x", probe.height,
-                           " nonzero_pixels=", nonzero_pixels,
-                           " nonzero_bytes=", nonzero_bytes,
-                           " max_byte=", (unsigned)max_byte,
-                           " checksum=0x", std::hex, checksum));
+  Logger::info(str::format(
+      "M12 swapchain readback count=", probe.present_count,
+      " fmt=", (unsigned)format, " sample=", probe.width, "x", probe.height,
+      " nonzero_pixels=", nonzero_pixels, " nonzero_bytes=", nonzero_bytes,
+      " max_byte=", (unsigned)max_byte, " checksum=0x", std::hex, checksum));
 }
 
 MTLD3D12SwapChain::MTLD3D12SwapChain(
-    IDXGIFactory1 *factory, MTLD3D12Device *device,
-    IMTLDXGIDevice *dxgi_device, HWND hWnd,
-    const DXGI_SWAP_CHAIN_DESC1 *desc,
+    IDXGIFactory1 *factory, MTLD3D12Device *device, IMTLDXGIDevice *dxgi_device,
+    HWND hWnd, const DXGI_SWAP_CHAIN_DESC1 *desc,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fs_desc)
     : m_factory(factory), m_dxgi_device(dxgi_device), m_device(device),
       m_hwnd(hWnd), m_desc(*desc) {
@@ -232,10 +256,14 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
   }
   m_source_width = m_desc.Width;
   m_source_height = m_desc.Height;
+  if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
+    m_frame_latency_event = CreateEventW(nullptr, FALSE, TRUE, nullptr);
   if (m_hwnd && IsWindow(m_hwnd)) {
     m_monitor = wsi::getWindowMonitor(m_hwnd);
-    m_window_state.style = static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
-    m_window_state.exstyle = static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
+    m_window_state.style =
+        static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
+    m_window_state.exstyle =
+        static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
     GetWindowRect(m_hwnd, &m_window_state.rect);
   }
 
@@ -247,12 +275,16 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
 
   ResizeBuffers(0, m_desc.Width, m_desc.Height, m_desc.Format, m_desc.Flags);
   Logger::info(str::format("D3D12SwapChain: ", m_desc.Width, "x", m_desc.Height,
-                            " fmt=", m_desc.Format, " hwnd=", (void*)hWnd));
+                           " fmt=", m_desc.Format, " hwnd=", (void *)hWnd));
 }
 
 MTLD3D12SwapChain::~MTLD3D12SwapChain() {
   for (uint32_t i = 0; i < 4; i++)
     m_backbuffers[i] = nullptr;
+  if (m_frame_latency_event) {
+    CloseHandle(m_frame_latency_event);
+    m_frame_latency_event = nullptr;
+  }
   if (m_native_view.handle)
     WMT::ReleaseMetalView(m_native_view);
   if (m_device)
@@ -272,7 +304,8 @@ bool MTLD3D12SwapChain::EnsureMetalView() {
   WINBOOL has_rect = GetClientRect(m_hwnd, &rect);
   DWORD window_pid = 0;
   DWORD window_tid = GetWindowThreadProcessId(m_hwnd, &window_pid);
-  SCTRACE("EnsureMetalView attempt hwnd=%p is_window=%d tid=%lu pid=%lu current_pid=%lu rect=%ld,%ld %ldx%ld",
+  SCTRACE("EnsureMetalView attempt hwnd=%p is_window=%d tid=%lu pid=%lu "
+          "current_pid=%lu rect=%ld,%ld %ldx%ld",
           (void *)m_hwnd, (int)IsWindow(m_hwnd), (unsigned long)window_tid,
           (unsigned long)window_pid, (unsigned long)GetCurrentProcessId(),
           has_rect ? rect.left : 0, has_rect ? rect.top : 0,
@@ -325,7 +358,8 @@ bool MTLD3D12SwapChain::AttachMetalViewForHWND(HWND hwnd) {
   DWORD candidate_tid = GetWindowThreadProcessId(hwnd, &candidate_pid);
   RECT rect = {};
   WINBOOL has_rect = GetClientRect(hwnd, &rect);
-  SCTRACE("AttachMetalView hwnd=%p is_window=%d tid=%lu pid=%lu rect=%ld,%ld %ldx%ld",
+  SCTRACE("AttachMetalView hwnd=%p is_window=%d tid=%lu pid=%lu rect=%ld,%ld "
+          "%ldx%ld",
           (void *)hwnd, (int)IsWindow(hwnd), (unsigned long)candidate_tid,
           (unsigned long)candidate_pid, has_rect ? rect.left : 0,
           has_rect ? rect.top : 0, has_rect ? rect.right - rect.left : 0,
@@ -378,20 +412,20 @@ void MTLD3D12SwapChain::ReassertWindowForHandoff(const char *reason) {
                  SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
   } else {
     SetWindowPos(m_hwnd, HWND_TOP, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
-                     SWP_FRAMECHANGED);
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
   }
 
   SetForegroundWindow(m_hwnd);
-  SCTRACE("ReassertWindowForHandoff reason=%s hwnd=%p client=%ldx%ld window=%ld,%ld %ldx%ld fs_windowed=%u",
+  SCTRACE("ReassertWindowForHandoff reason=%s hwnd=%p client=%ldx%ld "
+          "window=%ld,%ld %ldx%ld fs_windowed=%u",
           reason ? reason : "unknown", (void *)m_hwnd,
-          client.right - client.left, client.bottom - client.top,
-          window.left, window.top, window.right - window.left,
-          window.bottom - window.top, m_fs_desc.Windowed ? 1 : 0);
-  Logger::info(str::format("M12 reassert window handoff reason=",
-                           reason ? reason : "unknown", " hwnd=", (void *)m_hwnd,
-                           " client=", width, "x", height,
-                           " windowed=", m_fs_desc.Windowed ? 1 : 0));
+          client.right - client.left, client.bottom - client.top, window.left,
+          window.top, window.right - window.left, window.bottom - window.top,
+          m_fs_desc.Windowed ? 1 : 0);
+  Logger::info(str::format(
+      "M12 reassert window handoff reason=", reason ? reason : "unknown",
+      " hwnd=", (void *)m_hwnd, " client=", width, "x", height,
+      " windowed=", m_fs_desc.Windowed ? 1 : 0));
 }
 
 void MTLD3D12SwapChain::ConfigureLayer() {
@@ -400,8 +434,10 @@ void MTLD3D12SwapChain::ConfigureLayer() {
 
   auto source_format = DXGIToMTL(m_desc.Format);
   auto layer_format = DXGIToDisplayLayerMTL(m_desc.Format);
-  auto width = m_source_width ? m_source_width : (m_desc.Width ? m_desc.Width : 1);
-  auto height = m_source_height ? m_source_height : (m_desc.Height ? m_desc.Height : 1);
+  auto width =
+      m_source_width ? m_source_width : (m_desc.Width ? m_desc.Width : 1);
+  auto height =
+      m_source_height ? m_source_height : (m_desc.Height ? m_desc.Height : 1);
   auto sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
 
   if (m_presenter) {
@@ -425,19 +461,20 @@ void MTLD3D12SwapChain::ConfigureLayer() {
 
   WMTLayerProps props = {};
   m_layer.getProps(props);
-  Logger::info(str::format("M12 ConfigureLayer drawable=",
-                           props.drawable_width, "x", props.drawable_height,
+  Logger::info(str::format("M12 ConfigureLayer drawable=", props.drawable_width,
+                           "x", props.drawable_height,
                            " src_fmt=", (unsigned)source_format,
                            " layer_fmt=", (unsigned)props.pixel_format,
                            " framebuffer_only=", (int)props.framebuffer_only));
-  SCTRACE("ConfigureLayer drawable=%gx%g scale=%g src_fmt=%u layer_fmt=%u framebuffer_only=%d presenter=%d",
+  SCTRACE("ConfigureLayer drawable=%gx%g scale=%g src_fmt=%u layer_fmt=%u "
+          "framebuffer_only=%d presenter=%d",
           props.drawable_width, props.drawable_height, props.contents_scale,
           (unsigned)source_format, (unsigned)props.pixel_format,
           (int)props.framebuffer_only, m_presenter ? 1 : 0);
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::QueryInterface(REFIID riid, void **ppv) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::QueryInterface(REFIID riid,
+                                                            void **ppv) {
   if (!ppv)
     return E_POINTER;
   *ppv = nullptr;
@@ -462,40 +499,43 @@ ULONG STDMETHODCALLTYPE MTLD3D12SwapChain::Release() {
   return rc;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetPrivateData(REFGUID Name, UINT *pDataSize, void *pData) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetPrivateData(REFGUID Name,
+                                                            UINT *pDataSize,
+                                                            void *pData) {
   SCTRACE("GetPrivateData E_NOTIMPL");
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::SetPrivateData(REFGUID Name, UINT DataSize, const void *pData) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetPrivateData(REFGUID Name,
+                                                            UINT DataSize,
+                                                            const void *pData) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::SetPrivateDataInterface(REFGUID Name, const IUnknown *pUnknown) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetPrivateDataInterface(
+    REFGUID Name, const IUnknown *pUnknown) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetDevice(REFIID riid, void **device) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetDevice(REFIID riid,
+                                                       void **device) {
   return m_device->QueryInterface(riid, device);
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetParent(REFIID riid, void **ppParent) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetParent(REFIID riid,
+                                                       void **ppParent) {
   return m_factory->QueryInterface(riid, ppParent);
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::Present(UINT sync_interval, UINT flags) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present(UINT sync_interval,
+                                                     UINT flags) {
   SCTRACE("Present sync=%u flags=0x%x", sync_interval, flags);
   return Present1(sync_interval, flags, nullptr);
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetBuffer(UINT buffer_idx, REFIID riid, void **surface) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetBuffer(UINT buffer_idx,
+                                                       REFIID riid,
+                                                       void **surface) {
   SCTRACE("GetBuffer idx=%u", buffer_idx);
   if (!surface)
     return E_POINTER;
@@ -536,8 +576,7 @@ MTLD3D12SwapChain::GetFullscreenState(BOOL *fullscreen, IDXGIOutput **target) {
   if (target)
     *target = m_fullscreen_target.ref();
   SCTRACE("GetFullscreenState fullscreen=%u target=%p hwnd=%p",
-          m_fs_desc.Windowed ? 0 : 1,
-          target ? *target : nullptr, m_hwnd);
+          m_fs_desc.Windowed ? 0 : 1, target ? *target : nullptr, m_hwnd);
   return S_OK;
 }
 
@@ -558,17 +597,20 @@ MTLD3D12SwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC *desc) {
   desc->Windowed = m_fs_desc.Windowed;
   desc->SwapEffect = m_desc.SwapEffect;
   desc->Flags = m_desc.Flags;
-  SCTRACE("GetDesc hwnd=%p w=%u h=%u fmt=%u buffers=%u windowed=%u",
-          m_hwnd, m_desc.Width, m_desc.Height, (unsigned)m_desc.Format,
+  SCTRACE("GetDesc hwnd=%p w=%u h=%u fmt=%u buffers=%u windowed=%u", m_hwnd,
+          m_desc.Width, m_desc.Height, (unsigned)m_desc.Format,
           m_desc.BufferCount, m_fs_desc.Windowed ? 1 : 0);
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
-                                 DXGI_FORMAT format, UINT flags) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count,
+                                                           UINT width,
+                                                           UINT height,
+                                                           DXGI_FORMAT format,
+                                                           UINT flags) {
   SCTRACE("ResizeBuffers count=%u w=%u h=%u fmt=%u flags=0x%x (old: w=%u h=%u)",
-    buffer_count, width, height, (unsigned)format, flags, m_desc.Width, m_desc.Height);
+          buffer_count, width, height, (unsigned)format, flags, m_desc.Width,
+          m_desc.Height);
   for (uint32_t i = 0; i < 4; i++)
     m_backbuffers[i] = nullptr;
 
@@ -576,6 +618,7 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
     m_desc.BufferCount = buffer_count;
   if (format != DXGI_FORMAT_UNKNOWN)
     m_desc.Format = format;
+  m_desc.Flags = flags;
 
   if (width == 0 || height == 0) {
     RECT rect;
@@ -613,23 +656,26 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
   heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
 
   uint32_t count = m_desc.BufferCount ? m_desc.BufferCount : 2;
-  if (count > 4) count = 4;
+  if (count > 4)
+    count = 4;
   for (uint32_t i = 0; i < count; i++) {
-    m_backbuffers[i] = new MTLD3D12Resource(m_device, res_desc,
-                                             D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                             heap_props);
+    m_backbuffers[i] = new MTLD3D12Resource(
+        m_device, res_desc, D3D12_RESOURCE_STATE_RENDER_TARGET, heap_props);
     auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[i].ptr());
     if (res)
       res->MarkSwapchainBackBuffer(i, this);
-    SCTRACE("ResizeBuffers backbuffer[%u] res=%p tex=%llu w=%u h=%u fmt=%u",
-      i, (void*)res,
-      res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
-      m_desc.Width, m_desc.Height, (unsigned)m_desc.Format);
-    Logger::info(str::format("M12 swapchain backbuffer[", i, "] res=", (void *)res,
-                             " tex=", res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
-                             " size=", m_desc.Width, "x", m_desc.Height,
-                             " fmt=", (unsigned)m_desc.Format));
+    SCTRACE("ResizeBuffers backbuffer[%u] res=%p tex=%llu w=%u h=%u fmt=%u", i,
+            (void *)res,
+            res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
+            m_desc.Width, m_desc.Height, (unsigned)m_desc.Format);
+    Logger::info(str::format(
+        "M12 swapchain backbuffer[", i, "] res=", (void *)res,
+        " tex=", res ? (unsigned long long)res->GetMTLTexture().handle : 0ull,
+        " size=", m_desc.Width, "x", m_desc.Height,
+        " fmt=", (unsigned)m_desc.Format));
   }
+  if (m_frame_latency_event)
+    SetEvent(m_frame_latency_event);
   return S_OK;
 }
 
@@ -649,30 +695,30 @@ MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
   m_fs_desc.ScanlineOrdering = new_target_params->ScanlineOrdering;
   m_fs_desc.Scaling = new_target_params->Scaling;
 
-  if (m_fs_desc.Windowed && new_target_params->Width && new_target_params->Height) {
+  if (m_fs_desc.Windowed && new_target_params->Width &&
+      new_target_params->Height) {
     RECT client = {0, 0, static_cast<LONG>(new_target_params->Width),
                    static_cast<LONG>(new_target_params->Height)};
     DWORD style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
     DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
     AdjustWindowRectEx(&client, style, FALSE, ex_style);
     SetWindowPos(m_hwnd, nullptr, 0, 0, client.right - client.left,
-                 client.bottom - client.top, SWP_NOMOVE | SWP_NOZORDER |
-                                             SWP_NOACTIVATE);
+                 client.bottom - client.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     ReassertWindowForHandoff("resize_target_windowed");
   } else if (!m_fs_desc.Windowed) {
     m_monitor = wsi::getWindowMonitor(m_hwnd);
-    wsi::WsiMode mode{
-        new_target_params->Width,
-        new_target_params->Height,
-        {new_target_params->RefreshRate.Numerator,
-         new_target_params->RefreshRate.Denominator
-             ? new_target_params->RefreshRate.Denominator
-             : 1u},
-        32,
-        new_target_params->ScanlineOrdering ==
-                DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST ||
-            new_target_params->ScanlineOrdering ==
-                DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST};
+    wsi::WsiMode mode{new_target_params->Width,
+                      new_target_params->Height,
+                      {new_target_params->RefreshRate.Numerator,
+                       new_target_params->RefreshRate.Denominator
+                           ? new_target_params->RefreshRate.Denominator
+                           : 1u},
+                      32,
+                      new_target_params->ScanlineOrdering ==
+                              DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST ||
+                          new_target_params->ScanlineOrdering ==
+                              DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST};
     wsi::setWindowMode(m_monitor, m_hwnd, mode);
     wsi::updateFullscreenWindow(m_monitor, m_hwnd, false);
     ReassertWindowForHandoff("resize_target_fullscreen");
@@ -687,9 +733,11 @@ MTLD3D12SwapChain::GetContainingOutput(IDXGIOutput **output) {
   *output = nullptr;
   Com<IDXGIAdapter> adapter;
   HRESULT hr = m_factory->EnumAdapters(0, &adapter);
-  if (FAILED(hr)) return hr;
+  if (FAILED(hr))
+    return hr;
   hr = adapter->EnumOutputs(0, output);
-  SCTRACE("GetContainingOutput -> hr=0x%lx output=%p", hr, output ? *output : nullptr);
+  SCTRACE("GetContainingOutput -> hr=0x%lx output=%p", hr,
+          output ? *output : nullptr);
   return hr;
 }
 
@@ -714,9 +762,8 @@ MTLD3D12SwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1 *desc) {
   if (!desc)
     return E_INVALIDARG;
   *desc = m_desc;
-  SCTRACE("GetDesc1 hwnd=%p w=%u h=%u fmt=%u buffers=%u",
-          m_hwnd, m_desc.Width, m_desc.Height, (unsigned)m_desc.Format,
-          m_desc.BufferCount);
+  SCTRACE("GetDesc1 hwnd=%p w=%u h=%u fmt=%u buffers=%u", m_hwnd, m_desc.Width,
+          m_desc.Height, (unsigned)m_desc.Format, m_desc.BufferCount);
   return S_OK;
 }
 
@@ -728,8 +775,7 @@ MTLD3D12SwapChain::GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC *desc) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetHwnd(HWND *hWnd) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetHwnd(HWND *hWnd) {
   if (!hWnd)
     return E_INVALIDARG;
   *hWnd = m_hwnd;
@@ -737,21 +783,21 @@ MTLD3D12SwapChain::GetHwnd(HWND *hWnd) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetCoreWindow(REFIID riid, void **core_window) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetCoreWindow(REFIID riid,
+                                                           void **core_window) {
   SCTRACE("GetCoreWindow E_NOTIMPL");
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
-                            const DXGI_PRESENT_PARAMETERS *params) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
+    UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *params) {
   m_present_count++;
   if (m_present_count <= 8 || (m_present_count % PresentLogInterval()) == 0)
     ReassertWindowForHandoff("present");
 
   if (!m_backbuffers[m_current_buffer]) {
-    SCTRACE("SwapChain::Present sync=%u flags=0x%x NO BACKBUFFER idx=%u", sync_interval, flags, m_current_buffer);
+    SCTRACE("SwapChain::Present sync=%u flags=0x%x NO BACKBUFFER idx=%u",
+            sync_interval, flags, m_current_buffer);
     return S_OK;
   }
 
@@ -762,12 +808,13 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
 
   auto cmdbuf = m_present_queue.commandBuffer();
 
-  auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
+  auto *res =
+      static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
   if (!EnsureMetalView()) {
     Logger::err("D3D12SwapChain::Present: failed to create Metal view/layer");
-    SCTRACE("SwapChain::Present sync=%u flags=0x%x NO METAL VIEW", sync_interval,
-            flags);
+    SCTRACE("SwapChain::Present sync=%u flags=0x%x NO METAL VIEW",
+            sync_interval, flags);
     return DXGI_STATUS_OCCLUDED;
   }
 
@@ -777,12 +824,14 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     present_wait_seq -= 1;
   if (present_wait_seq > m_last_present_wait_seq) {
     if (LivePresentEnabled()) {
-      if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
+      if (m_present_count <= 20 ||
+          (m_present_count % PresentLogInterval()) == 0) {
         SCTRACE("Present live mode skipping CPU render wait seq=%llu buffer=%u",
                 (unsigned long long)present_wait_seq, m_current_buffer);
       }
     } else {
-      SCTRACE("Present waiting for render seq=%llu", (unsigned long long)present_wait_seq);
+      SCTRACE("Present waiting for render seq=%llu",
+              (unsigned long long)present_wait_seq);
       auto wait_begin = std::chrono::steady_clock::now();
       dxmt_queue.WaitCPUFence(present_wait_seq);
       auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -802,7 +851,8 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
   const bool force_raw_blit =
       force_raw_blit_requested && CanUseRawSwapchainBlit(m_desc.Format);
   if (force_raw_blit_requested && !force_raw_blit &&
-      (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0)) {
+      (m_present_count <= 20 ||
+       (m_present_count % PresentLogInterval()) == 0)) {
     Logger::info(str::format(
         "M12 present using presenter for non-raw-blit swapchain fmt=",
         (unsigned)m_desc.Format, " count=", m_present_count));
@@ -817,30 +867,33 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
         m_desc.Height, m_desc.Format, m_present_count);
     auto state = m_presenter->synchronizeLayerProperties();
     auto drawable = m_presenter->encodeCommands(
-        cmdbuf, src_texture, state.metadata,
-        [](WMT::RenderCommandEncoder) {},
+        cmdbuf, src_texture, state.metadata, [](WMT::RenderCommandEncoder) {},
         [](WMT::RenderCommandEncoder) {});
     if (!drawable.handle) {
-      SCTRACE("SwapChain::Present presenter sync=%u flags=0x%x NO DRAWABLE", sync_interval, flags);
+      SCTRACE("SwapChain::Present presenter sync=%u flags=0x%x NO DRAWABLE",
+              sync_interval, flags);
       Logger::err("D3D12SwapChain::Present: presenter returned no drawable");
       cmdbuf.commit();
       return DXGI_STATUS_OCCLUDED;
     }
 
     SCTRACE("Present presenter: idx=%u res=%p src=%llu drawable=%llu w=%u h=%u",
-      m_current_buffer, (void*)res,
-      (unsigned long long)src_texture.handle,
-      (unsigned long long)drawable.texture().handle, m_desc.Width, m_desc.Height);
-    if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
-      Logger::info(str::format("M12 present presenter count=", m_present_count,
-                               " idx=", m_current_buffer,
-                               " src=", (unsigned long long)src_texture.handle,
-                               " drawable=", (unsigned long long)drawable.texture().handle,
-                               " size=", m_desc.Width, "x", m_desc.Height));
+            m_current_buffer, (void *)res,
+            (unsigned long long)src_texture.handle,
+            (unsigned long long)drawable.texture().handle, m_desc.Width,
+            m_desc.Height);
+    if (m_present_count <= 20 ||
+        (m_present_count % PresentLogInterval()) == 0) {
+      Logger::info(str::format(
+          "M12 present presenter count=", m_present_count, " idx=",
+          m_current_buffer, " src=", (unsigned long long)src_texture.handle,
+          " drawable=", (unsigned long long)drawable.texture().handle,
+          " size=", m_desc.Width, "x", m_desc.Height));
     }
 
     cmdbuf.presentDrawable(drawable);
-    SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
+    SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu",
+            (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
     if (readback_probe.mapped) {
       cmdbuf.waitUntilCompleted();
@@ -849,7 +902,8 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
   } else {
     auto drawable = m_layer.nextDrawable();
     if (!drawable.handle) {
-      SCTRACE("SwapChain::Present sync=%u flags=0x%x NO DRAWABLE", sync_interval, flags);
+      SCTRACE("SwapChain::Present sync=%u flags=0x%x NO DRAWABLE",
+              sync_interval, flags);
       Logger::err("D3D12SwapChain::Present: layer returned no drawable");
       cmdbuf.commit();
       return DXGI_STATUS_OCCLUDED;
@@ -857,16 +911,17 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
 
     auto dst_texture = drawable.texture();
 
-    SCTRACE("Present blit: idx=%u res=%p src=%llu dst=%llu w=%u h=%u",
-    m_current_buffer, (void*)res,
-    (unsigned long long)src_texture.handle,
-    (unsigned long long)dst_texture.handle, m_desc.Width, m_desc.Height);
-    if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
-      Logger::info(str::format("M12 present blit count=", m_present_count,
-                               " idx=", m_current_buffer,
-                               " src=", (unsigned long long)src_texture.handle,
-                               " drawable=", (unsigned long long)dst_texture.handle,
-                               " size=", m_desc.Width, "x", m_desc.Height));
+    SCTRACE(
+        "Present blit: idx=%u res=%p src=%llu dst=%llu w=%u h=%u",
+        m_current_buffer, (void *)res, (unsigned long long)src_texture.handle,
+        (unsigned long long)dst_texture.handle, m_desc.Width, m_desc.Height);
+    if (m_present_count <= 20 ||
+        (m_present_count % PresentLogInterval()) == 0) {
+      Logger::info(str::format(
+          "M12 present blit count=", m_present_count, " idx=", m_current_buffer,
+          " src=", (unsigned long long)src_texture.handle,
+          " drawable=", (unsigned long long)dst_texture.handle,
+          " size=", m_desc.Width, "x", m_desc.Height));
     }
 
     auto readback_probe = EncodeSwapchainReadback(
@@ -875,25 +930,26 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     if (src_texture.handle && dst_texture.handle) {
       auto blit = cmdbuf.blitCommandEncoder();
       uint64_t _sc_eid = __atomic_add_fetch(&g_sc_enc_id, 1, __ATOMIC_SEQ_CST);
-      SCTRACE("[SC_ENC+%llu] CREATE blit handle=%llu", (unsigned long long)_sc_eid, (unsigned long long)blit.handle);
+      SCTRACE("[SC_ENC+%llu] CREATE blit handle=%llu",
+              (unsigned long long)_sc_eid, (unsigned long long)blit.handle);
       if (!blit.handle) {
         SCTRACE("[SC_ENC] missing blit encoder handle; skipping present copy");
       } else {
-      struct wmtcmd_blit_copy_from_texture_to_texture copy = {};
-      copy.type = WMTBlitCommandCopyFromTextureToTexture;
-      copy.next.set(nullptr);
-      copy.src = src_texture;
-      copy.src_slice = 0;
-      copy.src_level = 0;
-      copy.src_origin = {0, 0, 0};
-      copy.src_size = {m_desc.Width, m_desc.Height, 1};
-      copy.dst = dst_texture;
-      copy.dst_slice = 0;
-      copy.dst_level = 0;
-      copy.dst_origin = {0, 0, 0};
-      blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
-      SCTRACE("[SC_ENC] END handle=%llu", (unsigned long long)blit.handle);
-      blit.endEncoding();
+        struct wmtcmd_blit_copy_from_texture_to_texture copy = {};
+        copy.type = WMTBlitCommandCopyFromTextureToTexture;
+        copy.next.set(nullptr);
+        copy.src = src_texture;
+        copy.src_slice = 0;
+        copy.src_level = 0;
+        copy.src_origin = {0, 0, 0};
+        copy.src_size = {m_desc.Width, m_desc.Height, 1};
+        copy.dst = dst_texture;
+        copy.dst_slice = 0;
+        copy.dst_level = 0;
+        copy.dst_origin = {0, 0, 0};
+        blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
+        SCTRACE("[SC_ENC] END handle=%llu", (unsigned long long)blit.handle);
+        blit.endEncoding();
       }
     }
 
@@ -906,13 +962,16 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
     }
   }
 
-  m_current_buffer = (m_current_buffer + 1) % (m_desc.BufferCount ? m_desc.BufferCount : 2);
+  m_current_buffer =
+      (m_current_buffer + 1) % (m_desc.BufferCount ? m_desc.BufferCount : 2);
+  if (m_frame_latency_event)
+    SetEvent(m_frame_latency_event);
 
   return S_OK;
 }
 
-HRESULT MTLD3D12SwapChain::PresentBackBufferFromQueue(
-    MTLD3D12Resource *resource) {
+HRESULT
+MTLD3D12SwapChain::PresentBackBufferFromQueue(MTLD3D12Resource *resource) {
   if (!resource || !resource->IsSwapchainBackBuffer())
     return DXGI_ERROR_INVALID_CALL;
 
@@ -944,13 +1003,19 @@ MTLD3D12SwapChain::GetRestrictToOutput(IDXGIOutput **output) {
 }
 
 HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::SetBackgroundColor(const DXGI_RGBA *color) { return S_OK; }
+MTLD3D12SwapChain::SetBackgroundColor(const DXGI_RGBA *color) {
+  return S_OK;
+}
 
 HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::GetBackgroundColor(DXGI_RGBA *color) { return S_OK; }
+MTLD3D12SwapChain::GetBackgroundColor(DXGI_RGBA *color) {
+  return S_OK;
+}
 
 HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::SetRotation(DXGI_MODE_ROTATION rotation) { return S_OK; }
+MTLD3D12SwapChain::SetRotation(DXGI_MODE_ROTATION rotation) {
+  return S_OK;
+}
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetRotation(DXGI_MODE_ROTATION *rotation) {
@@ -959,7 +1024,8 @@ MTLD3D12SwapChain::GetRotation(DXGI_MODE_ROTATION *rotation) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetSourceSize(UINT Width, UINT Height) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetSourceSize(UINT Width,
+                                                           UINT Height) {
   if (Width == 0 || Height == 0)
     return E_INVALIDARG;
   m_source_width = Width;
@@ -968,36 +1034,70 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetSourceSize(UINT Width, UINT Heig
   SCTRACE("SetSourceSize w=%u h=%u", Width, Height);
   return S_OK;
 }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetSourceSize(UINT *pWidth, UINT *pHeight) {
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetSourceSize(UINT *pWidth,
+                                                           UINT *pHeight) {
   if (pWidth)
     *pWidth = m_source_width ? m_source_width : m_desc.Width;
   if (pHeight)
     *pHeight = m_source_height ? m_source_height : m_desc.Height;
   return S_OK;
 }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetMaximumFrameLatency(UINT MaxLatency) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::SetMaximumFrameLatency(UINT MaxLatency) {
   if (MaxLatency == 0 || MaxLatency > DXGI_MAX_SWAP_CHAIN_BUFFERS)
     return E_INVALIDARG;
   m_frame_latency = MaxLatency;
   return S_OK;
 }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetMaximumFrameLatency(UINT *pMaxLatency) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::GetMaximumFrameLatency(UINT *pMaxLatency) {
   if (pMaxLatency)
     *pMaxLatency = m_frame_latency;
   return S_OK;
 }
-HANDLE STDMETHODCALLTYPE MTLD3D12SwapChain::GetFrameLatencyWaitableObject() { return nullptr; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) { return S_OK; }
-UINT STDMETHODCALLTYPE MTLD3D12SwapChain::GetCurrentBackBufferIndex() { return m_current_buffer; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE ColorSpace, UINT *pSupport) { if (pSupport) *pSupport = 0; return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) { return S_OK; }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers1(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT *, IUnknown *const *) {
-  SCTRACE("ResizeBuffers1 count=%u w=%u h=%u fmt=%u flags=0x%x",
-          BufferCount, Width, Height, (unsigned)Format, SwapChainFlags);
+HANDLE STDMETHODCALLTYPE MTLD3D12SwapChain::GetFrameLatencyWaitableObject() {
+  return m_frame_latency_event;
+}
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) {
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) {
+  return S_OK;
+}
+UINT STDMETHODCALLTYPE MTLD3D12SwapChain::GetCurrentBackBufferIndex() {
+  return m_current_buffer;
+}
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::CheckColorSpaceSupport(
+    DXGI_COLOR_SPACE_TYPE ColorSpace, UINT *pSupport) {
+  if (!pSupport)
+    return E_INVALIDARG;
+  *pSupport = IsSupportedColorSpaceForFormat(m_desc.Format, ColorSpace)
+                  ? DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT
+                  : 0;
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) {
+  UINT support = 0;
+  CheckColorSpaceSupport(ColorSpace, &support);
+  if (!(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT))
+    return E_INVALIDARG;
+  m_color_space = ColorSpace;
+  return S_OK;
+}
+HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers1(
+    UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
+    UINT SwapChainFlags, const UINT *, IUnknown *const *) {
+  SCTRACE("ResizeBuffers1 count=%u w=%u h=%u fmt=%u flags=0x%x", BufferCount,
+          Width, Height, (unsigned)Format, SwapChainFlags);
   return ResizeBuffers(BufferCount, Width, Height, Format, SwapChainFlags);
 }
-HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE, UINT, void *) { return S_OK; }
+HRESULT STDMETHODCALLTYPE
+MTLD3D12SwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE, UINT, void *) {
+  return S_OK;
+}
 
 HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,
                              IMTLDXGIDevice *dxgi_device, HWND hWnd,
@@ -1008,8 +1108,8 @@ HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,
     return E_POINTER;
   *pp_swap_chain = nullptr;
 
-  auto swapchain = new MTLD3D12SwapChain(factory, device, dxgi_device, hWnd,
-                                          desc, fs_desc);
+  auto swapchain =
+      new MTLD3D12SwapChain(factory, device, dxgi_device, hWnd, desc, fs_desc);
   HRESULT hr = swapchain->QueryInterface(IID_PPV_ARGS(pp_swap_chain));
   if (FAILED(hr))
     swapchain->Release();

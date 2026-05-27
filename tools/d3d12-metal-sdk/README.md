@@ -137,6 +137,22 @@ tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
   --resource-views-formats-only
 ```
 
+For DXGI factory and swapchain/present coverage, run the phase 14.10 probes.
+The factory probe validates `IDXGIFactory` through `IDXGIFactory7`, deterministic
+adapter enumeration, GPU-preference enumeration, LUID lookup, and output
+enumeration. The swapchain probe validates create, buffer retrieval, render to
+backbuffer, present, readback, resize, fullscreen-windowed state, color-space
+reporting, frame-latency waitable object behavior, and shared device/resource
+ownership:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --dxgi-only
+
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --swapchain-only
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash

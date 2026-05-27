@@ -66,6 +66,7 @@ Options:
   --no-agility          Skip probe_agility_ue5.
   --no-caps             Skip probe_device_caps.
   --no-dxgi             Skip probe_dxgi_factory.
+  --dxgi-only           Run only the DXGI factory probe.
   --no-resources        Skip probe_resources.
   --no-queues           Skip probe_queues.
   --no-descriptors      Skip probe_descriptors.
@@ -90,6 +91,7 @@ Options:
   --no-mini             Skip one-purpose D3D12 mini-app probes.
   --mini-only           Run only one-purpose D3D12 mini-app probes.
   --windowed-present    Run the optional probe_present_windowed window/swapchain proof.
+  --swapchain-only      Run only the windowed swapchain/present probe.
   --no-windowed-present Skip probe_present_windowed.
   --full-stress         Run the full Subnautica DXBC shader corpus stress probe.
   -h, --help            Show this help.
@@ -148,6 +150,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-dxgi)
       RUN_DXGI=0
+      shift
+      ;;
+    --dxgi-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=1
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
       shift
       ;;
     --no-resources)
@@ -338,6 +360,26 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --windowed-present)
+      RUN_PRESENT_WINDOWED=1
+      shift
+      ;;
+    --swapchain-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
       RUN_PRESENT_WINDOWED=1
       shift
       ;;
