@@ -4,19 +4,22 @@
       "api": "D3D12_FEATURE_SHADER_MODEL reports SM 6.6",
       "next_probe": "tools/d3d12-metal-sdk/probes/probe_shaders",
       "risk": "Games may compile or load SM6 shaders that exceed the proven DXIL-to-Metal path.",
-      "state": "stub_risky"
+      "state": "stub_risky",
+      "tier": "required"
     },
     {
       "api": "D3D12_FEATURE_D3D12_OPTIONS1 WaveOps reports supported",
       "next_probe": "tools/d3d12-metal-sdk/probes/probe_device_caps",
       "risk": "Wave intrinsic support must be verified through shader probes, not only feature reports.",
-      "state": "stub_risky"
+      "state": "stub_risky",
+      "tier": "required"
     },
     {
       "api": "IDXGIFactory7 RegisterAdaptersChangedEvent",
       "next_probe": "tools/d3d12-metal-sdk/probes/probe_dxgi_factory",
       "risk": "Returning the wrong HRESULT can change UE5 adapter handling.",
-      "state": "stub_risky"
+      "state": "stub_risky",
+      "tier": "stubbed-safe"
     }
   ],
   "purpose": "Track startup-unblocking behavior that must be replaced or proven before broad compatibility claims.",

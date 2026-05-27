@@ -22,6 +22,18 @@ REQUIRED_CONTRACTS = [
     "contract-waivers.json",
 ]
 
+DECLARED_TIERS = {"required", "emulated", "stubbed-safe", "unsupported"}
+
+REQUIRED_UNSUPPORTED_APIS = {
+    "D3D12 ray tracing tiers",
+    "D3D12 mesh shader tiers",
+    "D3D12 sampler feedback tier",
+    "D3D12 work graphs",
+    "D3D12 video encode/decode/process APIs",
+    "D3D12 protected resource sessions",
+    "D3D12 DSR",
+}
+
 
 def load(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
@@ -54,7 +66,51 @@ def validate_ledgers(path: Path, data: dict[str, Any], errors: list[str]) -> Non
             if isinstance(entry, dict):
                 require(bool(entry.get("api")), f"{path}: entries[{i}] missing api", errors)
                 require(bool(entry.get("state")), f"{path}: entries[{i}] missing state", errors)
+                tier = entry.get("tier")
+                require(tier in DECLARED_TIERS, f"{path}: entries[{i}] invalid tier `{tier}`", errors)
                 require(bool(entry.get("reason") or entry.get("risk")), f"{path}: entries[{i}] missing reason/risk", errors)
+
+
+def active_waiver_ids(root: Path, errors: list[str]) -> set[str]:
+    path = root / "contract-waivers.json"
+    if not path.exists():
+        return set()
+    try:
+        data = load(path)
+    except json.JSONDecodeError as exc:
+        errors.append(f"{path}: invalid JSON while collecting waivers: {exc}")
+        return set()
+    return {
+        waiver["id"]
+        for waiver in data.get("waivers", [])
+        if isinstance(waiver, dict) and waiver.get("status") == "active" and waiver.get("id")
+    }
+
+
+def validate_feature_support(path: Path, data: dict[str, Any], waiver_ids: set[str], errors: list[str]) -> None:
+    validate_evidence(path, data, errors)
+    features = data.get("features")
+    require(isinstance(features, dict) and len(features) > 0, f"{path}: features must be non-empty object", errors)
+    if not isinstance(features, dict):
+        return
+    for feature, entry in features.items():
+        require(isinstance(entry, dict), f"{path}: feature `{feature}` must be object", errors)
+        if not isinstance(entry, dict):
+            continue
+        tier = entry.get("tier")
+        require(tier in DECLARED_TIERS, f"{path}: feature `{feature}` invalid tier `{tier}`", errors)
+        reported = entry.get("reported")
+        require(reported in {"supported", "unsupported", "partial", "n/a"}, f"{path}: feature `{feature}` invalid reported `{reported}`", errors)
+        if reported in {"supported", "partial"}:
+            require(bool(entry.get("probe") or entry.get("waiver")), f"{path}: feature `{feature}` reported {reported} without probe/waiver", errors)
+        if entry.get("state") == "stub_risky" and reported in {"supported", "partial"}:
+            waiver = entry.get("waiver")
+            probe_status = entry.get("probe_status")
+            require(
+                waiver in waiver_ids or probe_status == "passed",
+                f"{path}: risky supported feature `{feature}` lacks active waiver or passing probe",
+                errors,
+            )
 
 
 def validate_waivers(path: Path, data: dict[str, Any], errors: list[str]) -> None:
@@ -94,6 +150,7 @@ def validate_reference_contract(path: Path, data: dict[str, Any], errors: list[s
 
 def validate_contracts(root: Path) -> list[str]:
     errors: list[str] = []
+    waiver_ids = active_waiver_ids(root, errors)
     for name in REQUIRED_CONTRACTS:
         path = root / name
         require(path.exists(), f"missing required contract: {path}", errors)
@@ -112,8 +169,14 @@ def validate_contracts(root: Path) -> list[str]:
             validate_reference_contract(path, data, errors)
         elif name in {"unsupported-api-ledger.json", "risky-stub-ledger.json"}:
             validate_ledgers(path, data, errors)
+            if name == "unsupported-api-ledger.json":
+                apis = {entry.get("api") for entry in data.get("entries", []) if isinstance(entry, dict)}
+                missing = sorted(REQUIRED_UNSUPPORTED_APIS - apis)
+                require(not missing, f"{path}: missing required unsupported APIs: {', '.join(missing)}", errors)
         elif name == "contract-waivers.json":
             validate_waivers(path, data, errors)
+        elif name == "feature-support-contract.json":
+            validate_feature_support(path, data, waiver_ids, errors)
         else:
             validate_evidence(path, data, errors)
     return errors

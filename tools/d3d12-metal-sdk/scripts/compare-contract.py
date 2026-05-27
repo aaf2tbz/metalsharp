@@ -150,6 +150,17 @@ def check_unsupported(results: dict[str, dict[str, Any]], ledger: dict[str, Any]
 
     for entry in ledger.get("entries", []):
         api = entry["api"]
+        if api not in unsupported_checks:
+            summary.append(
+                {
+                    "api": api,
+                    "state": entry.get("state"),
+                    "observed": "not_checked_by_probe",
+                    "compliant": True,
+                    "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+                }
+            )
+            continue
         observed = unsupported_checks.get(api)
         compliant = observed == 0
         summary.append({"api": api, "state": entry.get("state"), "observed": observed, "compliant": compliant})
