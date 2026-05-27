@@ -1678,6 +1678,10 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
   os << "  float4 v10 [[user(locn10)]]; float4 v11 [[user(locn11)]];\n";
   os << "  float4 v12 [[user(locn12)]]; float4 v13 [[user(locn13)]];\n";
   os << "  float4 v14 [[user(locn14)]]; float4 v15 [[user(locn15)]];\n";
+  if (ctx.options.gs_passthrough_rtai_reg != 255)
+    os << "  uint render_target_array_index [[render_target_array_index]];\n";
+  if (ctx.options.gs_passthrough_vpai_reg != 255)
+    os << "  uint viewport_array_index [[viewport_array_index]];\n";
   os << "};\n\n";
 
   os << "struct pixel_output_v {\n";
@@ -2524,6 +2528,15 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
       ctx.vertex_store_output_counter++;
+      uint32_t reg = vertexOutputRegisterForSignature(ctx.options, output_id);
+      if (ctx.options.gs_passthrough_rtai_reg != 255 &&
+          reg == ctx.options.gs_passthrough_rtai_reg &&
+          component == ctx.options.gs_passthrough_rtai_comp)
+        return std::string("out.render_target_array_index = ") + val;
+      if (ctx.options.gs_passthrough_vpai_reg != 255 &&
+          reg == ctx.options.gs_passthrough_vpai_reg &&
+          component == ctx.options.gs_passthrough_vpai_comp)
+        return std::string("out.viewport_array_index = ") + val;
       return vertexOutputField(ctx.options, "out", output_id) +
              componentSuffix(component) + " = " + val;
     }

@@ -58,6 +58,10 @@ struct MSLConvertOptions {
   std::array<bool, 32> pixel_input_is_position = {};
   std::array<uint32_t, 32> pixel_output_target_for_signature = {};
   std::array<bool, 32> pixel_output_signature_valid = {};
+  uint8_t gs_passthrough_rtai_reg = 255;
+  uint8_t gs_passthrough_rtai_comp = 255;
+  uint8_t gs_passthrough_vpai_reg = 255;
+  uint8_t gs_passthrough_vpai_comp = 255;
 };
 
 class DXILToMSL {

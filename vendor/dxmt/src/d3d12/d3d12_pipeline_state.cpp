@@ -2502,6 +2502,20 @@ bool MTLD3D12PipelineState::CompileShader(
             auto msl_options = BuildDXILMSLConvertOptions(
                 type, bytecode, size, m_input_layout, m_rtv_formats,
                 m_num_render_targets);
+            if (type == ShaderType::Vertex && m_gs_passthrough != ~0u) {
+              MTL_GEOMETRY_SHADER_PASS_THROUGH pt = {};
+              memcpy(&pt, &m_gs_passthrough, sizeof(pt));
+              msl_options.gs_passthrough_rtai_reg = pt.RenderTargetArrayIndexReg;
+              msl_options.gs_passthrough_rtai_comp = pt.RenderTargetArrayIndexComponent;
+              msl_options.gs_passthrough_vpai_reg = pt.ViewportArrayIndexReg;
+              msl_options.gs_passthrough_vpai_comp = pt.ViewportArrayIndexComponent;
+              PSTRACE("  DXIL VS with GS pass-through: rtai_reg=%u rtai_comp=%u "
+                      "vpai_reg=%u vpai_comp=%u",
+                      (unsigned)pt.RenderTargetArrayIndexReg,
+                      (unsigned)pt.RenderTargetArrayIndexComponent,
+                      (unsigned)pt.ViewportArrayIndexReg,
+                      (unsigned)pt.ViewportArrayIndexComponent);
+            }
             auto msl_result = dxmt::dxil::DXILToMSL::convert(
                 *module, shader_info, msl_options);
             if (!msl_result) {
@@ -3315,9 +3329,11 @@ bool MTLD3D12PipelineState::CompileImpl() {
       PSTRACE("Graphics PSO GS synthesized pass-through hash=0x%016zx detail=%s",
               gs_hash, gs_reason.c_str());
       if (DXMTD3D12GeometryMeshPipelineEnabled() && !m_ps.empty() &&
-          m_num_render_targets > 0) {
+          m_num_render_targets > 0 &&
+          DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size()) &&
+          DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size())) {
         Logger::warn(str::format(
-            "CreateGraphicsPipelineState: preferring real geometry mesh "
+            "CreateGraphicsPipelineState: preferring SM50 geometry mesh "
             "conversion over synthesized GS pass-through for color PSO "
             "bytes=",
             m_gs.size(), " (", gs_reason, ")"));
