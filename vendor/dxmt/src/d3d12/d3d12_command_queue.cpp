@@ -438,6 +438,15 @@ static void WriteMSCTextureArgument(uint64_t *data,
   data[arg.StructurePtrOffset + 2] = TextureMetadata(array_length, min_lod);
 }
 
+static bool MSCArgumentAcceptsBuffer(const MTL_SM50_SHADER_ARGUMENT &arg,
+                                     const MTLD3D12Resource *res) {
+  if (arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER)
+    return true;
+  const auto resource_flags =
+      MTL_SM50_SHADER_ARGUMENT_BUFFER | MTL_SM50_SHADER_ARGUMENT_TEXTURE;
+  return res && res->IsBuffer() && (arg.Flags & resource_flags) == 0;
+}
+
 static bool FormatHasStencil(DXGI_FORMAT format) {
   return format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
          format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
@@ -1422,11 +1431,13 @@ struct ReplayState {
                               WMTResourceUsage usage,
                               WMTRenderStages render_stages,
                               const char *label) {
-    if (!(arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) || !address)
+    if (!address)
       return false;
 
     auto *res = device->LookupResourceByGPUAddress(address);
     if (!res || !res->GetMTLBuffer().handle)
+      return false;
+    if (!MSCArgumentAcceptsBuffer(arg, res))
       return false;
 
     uint64_t offset = address - res->GetGPUVirtualAddress();
@@ -1609,7 +1620,7 @@ struct ReplayState {
                  arg.StructurePtrOffset);
           if (desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+            if (MSCArgumentAcceptsBuffer(arg, res) &&
                 res->GetMTLBuffer().handle) {
               arg_buf_data[arg.StructurePtrOffset] =
                   res->GetGPUVirtualAddress() + SRVBufferByteOffset(desc);
@@ -1674,7 +1685,7 @@ struct ReplayState {
                  arg.StructurePtrOffset);
           if (desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+            if (MSCArgumentAcceptsBuffer(arg, res) &&
                 res->GetMTLBuffer().handle) {
               arg_buf_data[arg.StructurePtrOffset] =
                   res->GetGPUVirtualAddress() + UAVBufferByteOffset(desc);
@@ -2068,7 +2079,7 @@ struct ReplayState {
                  arg.StructurePtrOffset);
           if (desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-            if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+            if (MSCArgumentAcceptsBuffer(arg, res) &&
                 res->GetMTLBuffer().handle) {
               vs_arg_buf_data[arg.StructurePtrOffset] =
                   res->GetGPUVirtualAddress() + SRVBufferByteOffset(desc);
@@ -2121,7 +2132,7 @@ struct ReplayState {
                  "flags=0x%x offset=%u",
                  root_idx, descriptor_offset, (void *)desc, (void *)res,
                  arg.Flags, arg.StructurePtrOffset);
-          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+          if (MSCArgumentAcceptsBuffer(arg, res) &&
               res->GetMTLBuffer().handle) {
             vs_arg_buf_data[arg.StructurePtrOffset] =
                 res->GetGPUVirtualAddress() + UAVBufferByteOffset(desc);
@@ -2448,7 +2459,7 @@ struct ReplayState {
 
         if (arg.Type == SM50BindingType::SRV && desc->resource) {
           auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+          if (MSCArgumentAcceptsBuffer(arg, res) &&
               res->GetMTLBuffer().handle) {
             gs_arg_buf_data[arg.StructurePtrOffset] =
                 res->GetGPUVirtualAddress() + SRVBufferByteOffset(desc);
@@ -2477,7 +2488,7 @@ struct ReplayState {
           gs_arg_buf_data[arg.StructurePtrOffset + 2] = SamplerLodBiasBits(desc);
         } else if (arg.Type == SM50BindingType::UAV && desc->resource) {
           auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
-          if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+          if (MSCArgumentAcceptsBuffer(arg, res) &&
               res->GetMTLBuffer().handle) {
             gs_arg_buf_data[arg.StructurePtrOffset] =
                 res->GetGPUVirtualAddress() + UAVBufferByteOffset(desc);
@@ -2864,7 +2875,7 @@ struct ReplayState {
                "flags=0x%x offset=%u",
                (int)arg.Type, root_idx, descriptor_offset, (void *)res,
                arg.Flags, arg.StructurePtrOffset);
-        if ((arg.Flags & MTL_SM50_SHADER_ARGUMENT_BUFFER) &&
+        if (MSCArgumentAcceptsBuffer(arg, res) &&
             res->GetMTLBuffer().handle) {
           if (arg.Type == SM50BindingType::UAV) {
             comp_arg_buf_data[arg.StructurePtrOffset] =

@@ -130,7 +130,7 @@ int main() {
 
     D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc = {};
     cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    cbv_heap_desc.NumDescriptors = 8;
+    cbv_heap_desc.NumDescriptors = 16;
     cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     D3D12_DESCRIPTOR_HEAP_DESC sampler_heap_desc = {};
     sampler_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
@@ -219,6 +219,9 @@ int main() {
     bool rtv_created = false;
     bool dsv_created = false;
     bool descriptors_copied = false;
+    bool null_srv_created = false;
+    bool null_uav_created = false;
+    bool null_cbv_created = false;
     if (device && cbv_heap && upload_buffer && cbv_srv_uav_increment != 0) {
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbv = {};
         cbv.BufferLocation = upload_buffer->GetGPUVirtualAddress();
@@ -268,6 +271,25 @@ int main() {
         device->CopyDescriptorsSimple(5, offset_cpu(cbv_start, cbv_srv_uav_increment, 5), cbv_start,
                                       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         descriptors_copied = true;
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC null_srv = {};
+        null_srv.Format = DXGI_FORMAT_R32_FLOAT;
+        null_srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        null_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        null_srv.Buffer.NumElements = 4;
+        device->CreateShaderResourceView(nullptr, &null_srv, offset_cpu(cbv_start, cbv_srv_uav_increment, 10));
+        null_srv_created = true;
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC null_uav = {};
+        null_uav.Format = DXGI_FORMAT_R32_UINT;
+        null_uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        null_uav.Buffer.NumElements = 4;
+        device->CreateUnorderedAccessView(nullptr, nullptr, &null_uav,
+                                          offset_cpu(cbv_start, cbv_srv_uav_increment, 11));
+        null_uav_created = true;
+
+        device->CreateConstantBufferView(nullptr, offset_cpu(cbv_start, cbv_srv_uav_increment, 12));
+        null_cbv_created = true;
     }
 
     if (device && sampler_heap && sampler_increment != 0) {
@@ -375,6 +397,10 @@ int main() {
         deserialized_desc && deserialized_desc->NumParameters == 5 && deserialized_desc->NumStaticSamplers == 1 &&
         deserialized_desc->pParameters[0].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE &&
         deserialized_desc->pParameters[0].DescriptorTable.NumDescriptorRanges == 3 &&
+        deserialized_desc->pParameters[1].ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
+        deserialized_desc->pParameters[1].Constants.Num32BitValues == 16 &&
+        deserialized_desc->pParameters[1].Constants.RegisterSpace == 1 &&
+        deserialized_desc->pParameters[2].ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV &&
         deserialized_desc->pParameters[3].ParameterType == D3D12_ROOT_PARAMETER_TYPE_SRV &&
         deserialized_desc->pParameters[4].ParameterType == D3D12_ROOT_PARAMETER_TYPE_UAV;
 
@@ -437,6 +463,74 @@ int main() {
                                           IID_PPV_ARGS(&root_signature1))
             : E_FAIL;
 
+    D3D12_DESCRIPTOR_RANGE1 collision_ranges[2] = {};
+    collision_ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    collision_ranges[0].NumDescriptors = 1;
+    collision_ranges[0].BaseShaderRegister = 0;
+    collision_ranges[0].RegisterSpace = 0;
+    collision_ranges[0].OffsetInDescriptorsFromTableStart = 0;
+    collision_ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    collision_ranges[1].NumDescriptors = 1;
+    collision_ranges[1].BaseShaderRegister = 0;
+    collision_ranges[1].RegisterSpace = 1;
+    collision_ranges[1].OffsetInDescriptorsFromTableStart = 1;
+    D3D12_DESCRIPTOR_RANGE1 unbounded_range = {};
+    unbounded_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    unbounded_range.NumDescriptors = UINT_MAX;
+    unbounded_range.BaseShaderRegister = 4;
+    unbounded_range.RegisterSpace = 2;
+    unbounded_range.OffsetInDescriptorsFromTableStart = 2;
+
+    D3D12_ROOT_PARAMETER1 binding_params1[2] = {};
+    binding_params1[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    binding_params1[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    binding_params1[0].DescriptorTable.NumDescriptorRanges = 2;
+    binding_params1[0].DescriptorTable.pDescriptorRanges = collision_ranges;
+    binding_params1[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    binding_params1[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    binding_params1[1].DescriptorTable.NumDescriptorRanges = 1;
+    binding_params1[1].DescriptorTable.pDescriptorRanges = &unbounded_range;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC binding_root_desc1 = {};
+    binding_root_desc1.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    binding_root_desc1.Desc_1_1.NumParameters = 2;
+    binding_root_desc1.Desc_1_1.pParameters = binding_params1;
+
+    ID3DBlob* binding_root_blob = nullptr;
+    ID3DBlob* binding_error_blob = nullptr;
+    HRESULT serialize_binding_hr =
+        serialize_versioned_root_signature
+            ? serialize_versioned_root_signature(&binding_root_desc1, &binding_root_blob, &binding_error_blob)
+            : E_FAIL;
+    ID3D12RootSignatureDeserializer* binding_deserializer = nullptr;
+    HRESULT deserialize_binding_hr = (create_root_signature_deserializer && binding_root_blob)
+                                         ? create_root_signature_deserializer(binding_root_blob->GetBufferPointer(),
+                                                                              binding_root_blob->GetBufferSize(),
+                                                                              IID_PPV_ARGS(&binding_deserializer))
+                                         : E_FAIL;
+    const D3D12_ROOT_SIGNATURE_DESC* binding_desc =
+        binding_deserializer ? binding_deserializer->GetRootSignatureDesc() : nullptr;
+    bool register_space_collision_preserved =
+        binding_desc && binding_desc->NumParameters == 2 &&
+        binding_desc->pParameters[0].DescriptorTable.NumDescriptorRanges == 2 &&
+        binding_desc->pParameters[0].DescriptorTable.pDescriptorRanges[0].BaseShaderRegister == 0 &&
+        binding_desc->pParameters[0].DescriptorTable.pDescriptorRanges[0].RegisterSpace == 0 &&
+        binding_desc->pParameters[0].DescriptorTable.pDescriptorRanges[1].BaseShaderRegister == 0 &&
+        binding_desc->pParameters[0].DescriptorTable.pDescriptorRanges[1].RegisterSpace == 1;
+    bool unbounded_range_preserved =
+        binding_desc && binding_desc->NumParameters == 2 &&
+        binding_desc->pParameters[1].DescriptorTable.NumDescriptorRanges == 1 &&
+        binding_desc->pParameters[1].DescriptorTable.pDescriptorRanges[0].NumDescriptors == UINT_MAX &&
+        binding_desc->pParameters[1].DescriptorTable.pDescriptorRanges[0].BaseShaderRegister == 4 &&
+        binding_desc->pParameters[1].DescriptorTable.pDescriptorRanges[0].RegisterSpace == 2 &&
+        binding_desc->pParameters[1].DescriptorTable.pDescriptorRanges[0].OffsetInDescriptorsFromTableStart == 2;
+    ID3D12RootSignature* binding_root_signature = nullptr;
+    HRESULT create_binding_root_signature_hr =
+        (device && binding_root_blob)
+            ? device->CreateRootSignature(0, binding_root_blob->GetBufferPointer(), binding_root_blob->GetBufferSize(),
+                                          IID_PPV_ARGS(&binding_root_signature))
+            : E_FAIL;
+
     const char invalid_blob[] = "not a root signature";
     ID3D12RootSignatureDeserializer* invalid_deserializer = nullptr;
     HRESULT invalid_blob_hr = create_root_signature_deserializer
@@ -463,7 +557,7 @@ int main() {
         offset_cpu(sampler_start, sampler_increment, 1).ptr - sampler_start.ptr == sampler_increment &&
         offset_cpu(rtv_start, rtv_increment, 1).ptr - rtv_start.ptr == rtv_increment;
     bool heap_desc_roundtrip = cbv_heap_roundtrip.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV &&
-                               cbv_heap_roundtrip.NumDescriptors == 8 &&
+                               cbv_heap_roundtrip.NumDescriptors == 16 &&
                                cbv_heap_roundtrip.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     bool entrypoints_valid = d3d12 && create_device && serialize_root_signature && serialize_versioned_root_signature &&
                              create_root_signature_deserializer;
@@ -472,11 +566,13 @@ int main() {
     bool descriptors_valid = SUCCEEDED(cbv_heap_hr) && SUCCEEDED(sampler_heap_hr) && SUCCEEDED(rtv_heap_hr) &&
                              SUCCEEDED(dsv_heap_hr) && cbv_created && srv_created && uav_created && sampler_created &&
                              texture_srv_created && texture_uav_created && rtv_created && dsv_created &&
-                             descriptors_copied;
+                             descriptors_copied && null_srv_created && null_uav_created && null_cbv_created;
     bool root_signature_valid = SUCCEEDED(serialize_hr) && SUCCEEDED(deserialize_hr) && deserialized_matches &&
                                 SUCCEEDED(create_root_signature_hr) && SUCCEEDED(serialize_1_1_hr) &&
-                                SUCCEEDED(create_root_signature_1_1_hr) && unsupported_rejected &&
-                                invalid_blob_rejected;
+                                SUCCEEDED(create_root_signature_1_1_hr) && SUCCEEDED(serialize_binding_hr) &&
+                                SUCCEEDED(deserialize_binding_hr) && SUCCEEDED(create_binding_root_signature_hr) &&
+                                register_space_collision_preserved && unbounded_range_preserved &&
+                                unsupported_rejected && invalid_blob_rejected;
     bool pass = entrypoints_valid && SUCCEEDED(create_hr) && handles_valid && increments_valid && heap_desc_roundtrip &&
                 resources_valid && descriptors_valid && root_signature_valid;
 
@@ -527,6 +623,9 @@ int main() {
     std::printf("    \"sampler_created\": %s,\n", sampler_created ? "true" : "false");
     std::printf("    \"rtv_created\": %s,\n", rtv_created ? "true" : "false");
     std::printf("    \"dsv_created\": %s,\n", dsv_created ? "true" : "false");
+    std::printf("    \"null_srv_created\": %s,\n", null_srv_created ? "true" : "false");
+    std::printf("    \"null_uav_created\": %s,\n", null_uav_created ? "true" : "false");
+    std::printf("    \"null_cbv_created\": %s,\n", null_cbv_created ? "true" : "false");
     std::printf("    \"copy_descriptors_simple\": %s\n", descriptors_copied ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"root_signature\": {\n");
@@ -535,6 +634,9 @@ int main() {
     print_hr("create_root_signature", create_root_signature_hr);
     print_hr("serialize_1_1", serialize_1_1_hr);
     print_hr("create_root_signature_1_1", create_root_signature_1_1_hr);
+    print_hr("serialize_binding", serialize_binding_hr);
+    print_hr("deserialize_binding", deserialize_binding_hr);
+    print_hr("create_binding_root_signature", create_binding_root_signature_hr);
     print_hr("unsupported_version", unsupported_version_hr);
     print_hr("invalid_blob", invalid_blob_hr);
     std::printf("    \"blob_size\": %llu,\n",
@@ -542,6 +644,9 @@ int main() {
     std::printf("    \"blob_1_1_size\": %llu,\n",
                 static_cast<unsigned long long>(root_blob1 ? root_blob1->GetBufferSize() : 0));
     std::printf("    \"deserialized_matches\": %s,\n", deserialized_matches ? "true" : "false");
+    std::printf("    \"register_space_collision_preserved\": %s,\n",
+                register_space_collision_preserved ? "true" : "false");
+    std::printf("    \"unbounded_range_preserved\": %s,\n", unbounded_range_preserved ? "true" : "false");
     std::printf("    \"unsupported_rejected\": %s,\n", unsupported_rejected ? "true" : "false");
     std::printf("    \"invalid_blob_rejected\": %s\n", invalid_blob_rejected ? "true" : "false");
     std::printf("  }\n");
@@ -551,6 +656,14 @@ int main() {
         root_signature->Release();
     if (root_signature1)
         root_signature1->Release();
+    if (binding_root_signature)
+        binding_root_signature->Release();
+    if (binding_deserializer)
+        binding_deserializer->Release();
+    if (binding_root_blob)
+        binding_root_blob->Release();
+    if (binding_error_blob)
+        binding_error_blob->Release();
     if (invalid_deserializer)
         invalid_deserializer->Release();
     if (deserializer)

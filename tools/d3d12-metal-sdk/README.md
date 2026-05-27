@@ -70,6 +70,17 @@ bitcasts, buffer load/store, barriers, atomics, compute IDs, wave ops, and quad
 ops. Results are written to `results/probe-dxil-semantics-*.json`; the warmup
 pass is kept beside it to show the primary backend cache-miss route explicitly.
 
+For root-signature and descriptor binding coverage, the descriptor probe now
+checks root signature 1.0/1.1 parsing, all root parameter kinds, static
+samplers, register-space collisions, unbounded ranges, copied descriptors, and
+null CBV/SRV/UAV descriptors:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --no-loader \
+  --no-agility --no-caps --no-dxgi --no-resources --no-queues --no-shaders \
+  --no-render-headless --no-mini --no-windowed-present
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash
