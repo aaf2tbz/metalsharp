@@ -43,6 +43,7 @@ namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
 constexpr uint32_t kMetalShaderConverterStageInAttributeBase = 11;
 constexpr uint32_t kMetalShaderConverterVertexBufferBindPoint = 6;
+constexpr uint32_t kMetalShaderConverterVertexLayoutVersion = 2;
 
 bool DXMTD3D12AsyncPipelineCompileEnabled() {
   static int enabled = []() {
@@ -917,18 +918,24 @@ uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size);
 
 const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
   switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+    return "R32G32B32A32_TYPELESS";
   case DXGI_FORMAT_R32G32B32A32_FLOAT:
     return "R32G32B32A32_FLOAT";
   case DXGI_FORMAT_R32G32B32A32_UINT:
     return "R32G32B32A32_UINT";
   case DXGI_FORMAT_R32G32B32A32_SINT:
     return "R32G32B32A32_SINT";
+  case DXGI_FORMAT_R32G32B32_TYPELESS:
+    return "R32G32B32_TYPELESS";
   case DXGI_FORMAT_R32G32B32_FLOAT:
     return "R32G32B32_FLOAT";
   case DXGI_FORMAT_R32G32B32_UINT:
     return "R32G32B32_UINT";
   case DXGI_FORMAT_R32G32B32_SINT:
     return "R32G32B32_SINT";
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    return "R16G16B16A16_TYPELESS";
   case DXGI_FORMAT_R16G16B16A16_FLOAT:
     return "R16G16B16A16_FLOAT";
   case DXGI_FORMAT_R16G16B16A16_UNORM:
@@ -939,18 +946,24 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R16G16B16A16_SNORM";
   case DXGI_FORMAT_R16G16B16A16_SINT:
     return "R16G16B16A16_SINT";
+  case DXGI_FORMAT_R32G32_TYPELESS:
+    return "R32G32_TYPELESS";
   case DXGI_FORMAT_R32G32_FLOAT:
     return "R32G32_FLOAT";
   case DXGI_FORMAT_R32G32_UINT:
     return "R32G32_UINT";
   case DXGI_FORMAT_R32G32_SINT:
     return "R32G32_SINT";
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    return "R10G10B10A2_TYPELESS";
   case DXGI_FORMAT_R10G10B10A2_UNORM:
     return "R10G10B10A2_UNORM";
   case DXGI_FORMAT_R10G10B10A2_UINT:
     return "R10G10B10A2_UINT";
   case DXGI_FORMAT_R11G11B10_FLOAT:
     return "R11G11B10_FLOAT";
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    return "R8G8B8A8_TYPELESS";
   case DXGI_FORMAT_R8G8B8A8_UNORM:
     return "R8G8B8A8_UNORM";
   case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
@@ -961,6 +974,8 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R8G8B8A8_SNORM";
   case DXGI_FORMAT_R8G8B8A8_SINT:
     return "R8G8B8A8_SINT";
+  case DXGI_FORMAT_R16G16_TYPELESS:
+    return "R16G16_TYPELESS";
   case DXGI_FORMAT_R16G16_FLOAT:
     return "R16G16_FLOAT";
   case DXGI_FORMAT_R16G16_UNORM:
@@ -971,12 +986,16 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R16G16_SNORM";
   case DXGI_FORMAT_R16G16_SINT:
     return "R16G16_SINT";
+  case DXGI_FORMAT_R32_TYPELESS:
+    return "R32_TYPELESS";
   case DXGI_FORMAT_R32_FLOAT:
     return "R32_FLOAT";
   case DXGI_FORMAT_R32_UINT:
     return "R32_UINT";
   case DXGI_FORMAT_R32_SINT:
     return "R32_SINT";
+  case DXGI_FORMAT_R8G8_TYPELESS:
+    return "R8G8_TYPELESS";
   case DXGI_FORMAT_R8G8_UNORM:
     return "R8G8_UNORM";
   case DXGI_FORMAT_R8G8_UINT:
@@ -985,6 +1004,8 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R8G8_SNORM";
   case DXGI_FORMAT_R8G8_SINT:
     return "R8G8_SINT";
+  case DXGI_FORMAT_R16_TYPELESS:
+    return "R16_TYPELESS";
   case DXGI_FORMAT_R16_FLOAT:
     return "R16_FLOAT";
   case DXGI_FORMAT_R16_UNORM:
@@ -995,6 +1016,8 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R16_SNORM";
   case DXGI_FORMAT_R16_SINT:
     return "R16_SINT";
+  case DXGI_FORMAT_R8_TYPELESS:
+    return "R8_TYPELESS";
   case DXGI_FORMAT_R8_UNORM:
     return "R8_UNORM";
   case DXGI_FORMAT_R8_UINT:
@@ -1003,8 +1026,227 @@ const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
     return "R8_SNORM";
   case DXGI_FORMAT_R8_SINT:
     return "R8_SINT";
+  case DXGI_FORMAT_A8_UNORM:
+    return "A8_UNORM";
+  case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+    return "R9G9B9E5_SHAREDEXP";
+  case DXGI_FORMAT_R8G8_B8G8_UNORM:
+    return "R8G8_B8G8_UNORM";
+  case DXGI_FORMAT_G8R8_G8B8_UNORM:
+    return "G8R8_G8B8_UNORM";
+  case DXGI_FORMAT_B5G6R5_UNORM:
+    return "B5G6R5_UNORM";
+  case DXGI_FORMAT_B5G5R5A1_UNORM:
+    return "B5G5R5A1_UNORM";
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+    return "B8G8R8A8_UNORM";
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+    return "B8G8R8X8_UNORM";
+  case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+    return "R10G10B10_XR_BIAS_A2_UNORM";
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    return "B8G8R8A8_TYPELESS";
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    return "B8G8R8A8_UNORM_SRGB";
+  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+    return "B8G8R8X8_TYPELESS";
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    return "B8G8R8X8_UNORM_SRGB";
+  case DXGI_FORMAT_B4G4R4A4_UNORM:
+    return "B4G4R4A4_UNORM";
   default:
     return nullptr;
+  }
+}
+
+uint32_t DXGIFormatVertexByteSize(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32A32_FLOAT:
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+    return 16;
+  case DXGI_FORMAT_R32G32B32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32_FLOAT:
+  case DXGI_FORMAT_R32G32B32_UINT:
+  case DXGI_FORMAT_R32G32B32_SINT:
+    return 12;
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+  case DXGI_FORMAT_R32G32_TYPELESS:
+  case DXGI_FORMAT_R32G32_FLOAT:
+  case DXGI_FORMAT_R32G32_UINT:
+  case DXGI_FORMAT_R32G32_SINT:
+    return 8;
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+  case DXGI_FORMAT_R11G11B10_FLOAT:
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_R16G16_TYPELESS:
+  case DXGI_FORMAT_R16G16_FLOAT:
+  case DXGI_FORMAT_R16G16_UNORM:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R16G16_SNORM:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R32_TYPELESS:
+  case DXGI_FORMAT_R32_FLOAT:
+  case DXGI_FORMAT_R32_UINT:
+  case DXGI_FORMAT_R32_SINT:
+  case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+  case DXGI_FORMAT_R8G8_B8G8_UNORM:
+  case DXGI_FORMAT_G8R8_G8B8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+  case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+    return 4;
+  case DXGI_FORMAT_R8G8_TYPELESS:
+  case DXGI_FORMAT_R8G8_UNORM:
+  case DXGI_FORMAT_R8G8_UINT:
+  case DXGI_FORMAT_R8G8_SNORM:
+  case DXGI_FORMAT_R8G8_SINT:
+  case DXGI_FORMAT_R16_TYPELESS:
+  case DXGI_FORMAT_R16_FLOAT:
+  case DXGI_FORMAT_R16_UNORM:
+  case DXGI_FORMAT_R16_UINT:
+  case DXGI_FORMAT_R16_SNORM:
+  case DXGI_FORMAT_R16_SINT:
+  case DXGI_FORMAT_B5G6R5_UNORM:
+  case DXGI_FORMAT_B5G5R5A1_UNORM:
+  case DXGI_FORMAT_B4G4R4A4_UNORM:
+    return 2;
+  case DXGI_FORMAT_R8_TYPELESS:
+  case DXGI_FORMAT_R8_UNORM:
+  case DXGI_FORMAT_R8_UINT:
+  case DXGI_FORMAT_R8_SNORM:
+  case DXGI_FORMAT_R8_SINT:
+  case DXGI_FORMAT_A8_UNORM:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+dxmt::dxil::MSLScalarKind SignatureComponentToMSLScalar(
+    microsoft::D3D10_SB_REGISTER_COMPONENT_TYPE component_type) {
+  switch (component_type) {
+  case microsoft::D3D10_SB_REGISTER_COMPONENT_UINT32:
+    return dxmt::dxil::MSLScalarKind::UInt;
+  case microsoft::D3D10_SB_REGISTER_COMPONENT_SINT32:
+    return dxmt::dxil::MSLScalarKind::SInt;
+  case microsoft::D3D10_SB_REGISTER_COMPONENT_FLOAT32:
+  default:
+    return dxmt::dxil::MSLScalarKind::Float;
+  }
+}
+
+uint32_t SignatureMaskComponentCount(BYTE mask) {
+  uint32_t count = 0;
+  for (uint32_t bit = 0; bit < 4; bit++) {
+    if (mask & (1u << bit))
+      count = bit + 1;
+  }
+  return count ? count : 4;
+}
+
+uint32_t DXGIFormatComponentCount(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32A32_FLOAT:
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+  case DXGI_FORMAT_R16G16B16A16_UNORM:
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+  case DXGI_FORMAT_R16G16B16A16_SNORM:
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+  case DXGI_FORMAT_B4G4R4A4_UNORM:
+    return 4;
+  case DXGI_FORMAT_R32G32B32_TYPELESS:
+  case DXGI_FORMAT_R32G32B32_FLOAT:
+  case DXGI_FORMAT_R32G32B32_UINT:
+  case DXGI_FORMAT_R32G32B32_SINT:
+  case DXGI_FORMAT_R11G11B10_FLOAT:
+    return 3;
+  case DXGI_FORMAT_R32G32_TYPELESS:
+  case DXGI_FORMAT_R32G32_FLOAT:
+  case DXGI_FORMAT_R32G32_UINT:
+  case DXGI_FORMAT_R32G32_SINT:
+  case DXGI_FORMAT_R16G16_TYPELESS:
+  case DXGI_FORMAT_R16G16_FLOAT:
+  case DXGI_FORMAT_R16G16_UNORM:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R16G16_SNORM:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R8G8_TYPELESS:
+  case DXGI_FORMAT_R8G8_UNORM:
+  case DXGI_FORMAT_R8G8_UINT:
+  case DXGI_FORMAT_R8G8_SNORM:
+  case DXGI_FORMAT_R8G8_SINT:
+  case DXGI_FORMAT_B5G6R5_UNORM:
+  case DXGI_FORMAT_B5G5R5A1_UNORM:
+    return 2;
+  default:
+    return 1;
+  }
+}
+
+dxmt::dxil::MSLScalarKind DXGIFormatToMSLScalar(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R32G32B32A32_UINT:
+  case DXGI_FORMAT_R32G32B32_UINT:
+  case DXGI_FORMAT_R16G16B16A16_UINT:
+  case DXGI_FORMAT_R32G32_UINT:
+  case DXGI_FORMAT_R10G10B10A2_UINT:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R32_UINT:
+  case DXGI_FORMAT_R8G8_UINT:
+  case DXGI_FORMAT_R16_UINT:
+  case DXGI_FORMAT_R8_UINT:
+    return dxmt::dxil::MSLScalarKind::UInt;
+  case DXGI_FORMAT_R32G32B32A32_SINT:
+  case DXGI_FORMAT_R32G32B32_SINT:
+  case DXGI_FORMAT_R16G16B16A16_SINT:
+  case DXGI_FORMAT_R32G32_SINT:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R32_SINT:
+  case DXGI_FORMAT_R8G8_SINT:
+  case DXGI_FORMAT_R16_SINT:
+  case DXGI_FORMAT_R8_SINT:
+    return dxmt::dxil::MSLScalarKind::SInt;
+  default:
+    return dxmt::dxil::MSLScalarKind::Float;
   }
 }
 
@@ -1025,10 +1267,147 @@ std::string HexHash(size_t hash) {
   return text;
 }
 
+dxmt::dxil::MSLConvertOptions BuildDXILMSLConvertOptions(
+    ShaderType type, const void *bytecode, SIZE_T size,
+    const D3D12_INPUT_LAYOUT_DESC &input_layout,
+    const DXGI_FORMAT *rtv_formats, uint32_t num_render_targets) {
+  dxmt::dxil::MSLConvertOptions options = {};
+
+  if ((type == ShaderType::Vertex || type == ShaderType::Pixel) && bytecode &&
+      size) {
+    using namespace microsoft;
+    CSignatureParser parser;
+    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
+    uint32_t param_count = 0;
+    if (SUCCEEDED(DXBCGetInputSignature(bytecode, &parser)))
+      param_count = parser.GetParameters(&params);
+
+    for (uint32_t p = 0; p < param_count &&
+                         p < options.vertex_input_signature_valid.size();
+         p++) {
+      const auto &sig = params[p];
+      if (type == ShaderType::Vertex) {
+        options.vertex_input_register_for_signature[p] = sig.Register;
+        options.vertex_input_signature_valid[p] = true;
+        PSTRACE("DXILToMSL vertex input signature map: sig=%u reg=%u "
+                "semantic=%s%u sys=%u mask=0x%x",
+                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
+                sig.SemanticIndex, (unsigned)sig.SystemValue, sig.Mask);
+      } else {
+        options.pixel_input_register_for_signature[p] = sig.Register;
+        options.pixel_input_signature_valid[p] = true;
+        options.pixel_input_is_position[p] =
+            sig.SystemValue == D3D10_SB_NAME_POSITION;
+        PSTRACE("DXILToMSL pixel input signature map: sig=%u reg=%u "
+                "semantic=%s%u sys=%u pos=%u mask=0x%x",
+                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
+                sig.SemanticIndex, (unsigned)sig.SystemValue,
+                options.pixel_input_is_position[p] ? 1u : 0u, sig.Mask);
+      }
+    }
+  }
+
+  if ((type == ShaderType::Vertex || type == ShaderType::Pixel) && bytecode &&
+      size) {
+    using namespace microsoft;
+    CSignatureParser parser;
+    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
+    uint32_t param_count = 0;
+    if (SUCCEEDED(DXBCGetOutputSignature(bytecode, &parser)))
+      param_count = parser.GetParameters(&params);
+
+    for (uint32_t p = 0; p < param_count &&
+                         p < options.vertex_output_signature_valid.size();
+         p++) {
+      const auto &sig = params[p];
+      if (type == ShaderType::Vertex) {
+        options.vertex_output_register_for_signature[p] = sig.Register;
+        options.vertex_output_signature_valid[p] = true;
+        options.vertex_output_is_position[p] =
+            sig.SystemValue == D3D10_SB_NAME_POSITION;
+        PSTRACE("DXILToMSL vertex output signature map: sig=%u reg=%u "
+                "semantic=%s%u sys=%u pos=%u mask=0x%x",
+                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
+                sig.SemanticIndex, (unsigned)sig.SystemValue,
+                options.vertex_output_is_position[p] ? 1u : 0u, sig.Mask);
+      } else {
+        options.pixel_output_target_for_signature[p] = sig.Register;
+        options.pixel_output_signature_valid[p] = true;
+        PSTRACE("DXILToMSL pixel output signature map: sig=%u target=%u "
+                "semantic=%s%u sys=%u mask=0x%x",
+                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
+                sig.SemanticIndex, (unsigned)sig.SystemValue, sig.Mask);
+      }
+    }
+  }
+
+  if (type == ShaderType::Vertex && bytecode && size &&
+      input_layout.NumElements && input_layout.pInputElementDescs) {
+    using namespace microsoft;
+    CSignatureParser parser;
+    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
+    uint32_t param_count = 0;
+    if (SUCCEEDED(DXBCGetInputSignature(bytecode, &parser)))
+      param_count = parser.GetParameters(&params);
+
+    for (uint32_t p = 0; p < param_count; p++) {
+      const auto &sig = params[p];
+      if (sig.Register >= options.vertex_inputs.size())
+        continue;
+
+      uint32_t components = SignatureMaskComponentCount(sig.Mask);
+      for (UINT i = 0; i < input_layout.NumElements; i++) {
+        const auto &desc = input_layout.pInputElementDescs[i];
+        if (!desc.SemanticName || !sig.SemanticName)
+          continue;
+        if (desc.SemanticIndex == sig.SemanticIndex &&
+            strcasecmp(desc.SemanticName, sig.SemanticName) == 0) {
+          components = std::min<uint32_t>(
+              components, DXGIFormatComponentCount(desc.Format));
+          break;
+        }
+      }
+
+      options.vertex_inputs[sig.Register] = {
+          SignatureComponentToMSLScalar(sig.ComponentType),
+          std::max<uint32_t>(1, components), true};
+      PSTRACE("DXILToMSL vertex input type: reg=%u semantic=%s%u scalar=%u "
+              "components=%u mask=0x%x",
+              sig.Register, sig.SemanticName ? sig.SemanticName : "?",
+              sig.SemanticIndex,
+              (unsigned)options.vertex_inputs[sig.Register].scalar,
+              options.vertex_inputs[sig.Register].components, sig.Mask);
+    }
+  }
+
+  if (type == ShaderType::Pixel && rtv_formats) {
+    const uint32_t count =
+        std::min<uint32_t>(num_render_targets, options.pixel_outputs.size());
+    for (uint32_t i = 0; i < count; i++) {
+      if (rtv_formats[i] == DXGI_FORMAT_UNKNOWN)
+        continue;
+      // Keep render-target outputs vector-wide so DXIL component stores remain valid;
+      // the scalar base type is what Metal validates against integer attachments.
+      options.pixel_outputs[i] = {DXGIFormatToMSLScalar(rtv_formats[i]), 4,
+                                  true};
+      PSTRACE("DXILToMSL pixel output type: rt=%u fmt=%u scalar=%u components=%u",
+              i, (unsigned)rtv_formats[i],
+              (unsigned)options.pixel_outputs[i].scalar,
+              options.pixel_outputs[i].components);
+    }
+  }
+
+  return options;
+}
+
 size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
                                    ShaderType type,
-                                   const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+                                   const D3D12_INPUT_LAYOUT_DESC *input_layout,
+                                   const DXGI_FORMAT *rtv_formats = nullptr,
+                                   uint32_t num_render_targets = 0) {
+  constexpr size_t kDXILToMSLStageIOTypeCacheVersion = 0x4458494c53494734ull;
   size_t hash = 0;
+  hash = hash * 131 + kDXILToMSLStageIOTypeCacheVersion;
   hash = hash * 131 + (size_t)type;
   if (bytecode && size > 0) {
     const uint8_t *p = (const uint8_t *)bytecode;
@@ -1036,6 +1415,7 @@ size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
       hash = hash * 131 + p[i];
   }
   if (type == ShaderType::Vertex && input_layout) {
+    hash = hash * 131 + kMetalShaderConverterVertexLayoutVersion;
     hash = hash * 131 + input_layout->NumElements;
     for (UINT i = 0; i < input_layout->NumElements; i++) {
       const auto &el = input_layout->pInputElementDescs[i];
@@ -1051,6 +1431,12 @@ size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
       }
     }
   }
+  if (type == ShaderType::Pixel && rtv_formats) {
+    const uint32_t count = std::min<uint32_t>(num_render_targets, 8);
+    hash = hash * 131 + count;
+    for (uint32_t i = 0; i < count; i++)
+      hash = hash * 131 + (size_t)rtv_formats[i];
+  }
   return hash;
 }
 
@@ -1062,6 +1448,14 @@ bool FileExistsNonEmpty(const std::string &path) {
   long size = ftell(file);
   fclose(file);
   return size > 0;
+}
+
+bool DXMTD3D12DisableRuntimeMetalShaderConverter() {
+  static bool value = [] {
+    const char *env = std::getenv("DXMT_D3D12_DISABLE_RUNTIME_MSC");
+    return env && env[0] && std::strcmp(env, "0") != 0;
+  }();
+  return value;
 }
 
 bool ReadBinaryFile(const std::string &path, std::vector<uint8_t> &out) {
@@ -1118,6 +1512,8 @@ const char *OfflineMetalPixelFormatName(WMTPixelFormat format) {
     return "r32float";
   case WMTPixelFormatR32Uint:
     return "r32uint";
+  case WMTPixelFormatDepth16Unorm:
+    return "depth16unorm";
   case WMTPixelFormatDepth32Float:
     return "depth32float";
   case WMTPixelFormatDepth24Unorm_Stencil8:
@@ -1356,37 +1752,100 @@ bool WriteMetalShaderConverterVertexLayout(
   if (!path || !input_layout.NumElements || !input_layout.pInputElementDescs)
     return false;
 
-  FILE *file = fopen(path, "w");
-  if (!file)
-    return false;
+  struct LayoutElement {
+    const D3D12_INPUT_ELEMENT_DESC *desc;
+    const char *format_name;
+    uint32_t aligned_offset;
+    uint32_t byte_size;
+  };
 
+  std::vector<LayoutElement> elements;
+  elements.reserve(input_layout.NumElements);
   uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
-  fprintf(file, "{\"InputElements\":[");
   for (UINT i = 0; i < input_layout.NumElements; i++) {
     const auto &el = input_layout.pInputElementDescs[i];
+    const char *input_class =
+        el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            ? "PerInstanceData"
+            : "PerVertexData";
+
+    if (el.InputSlot >= WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
+      PSTRACE("MSC vertex layout invalid slot path=%s element=%u dxgi_format=%u "
+              "semantic=%s semantic_index=%u slot=%u input_class=%s",
+              path, i, (unsigned)el.Format,
+              el.SemanticName ? el.SemanticName : "", el.SemanticIndex,
+              el.InputSlot, input_class);
+      return false;
+    }
+
     const char *format_name = DXGIFormatToMetalShaderConverterName(el.Format);
     MTL_DXGI_FORMAT_DESC metal_format = {};
-    uint32_t byte_size = 16;
+    uint32_t byte_size = 0;
     if (SUCCEEDED(MTLQueryDXGIFormat(device->GetMTLDevice(), el.Format,
                                      metal_format)) &&
         metal_format.BytesPerTexel)
       byte_size = metal_format.BytesPerTexel;
+    if (!byte_size)
+      byte_size = DXGIFormatVertexByteSize(el.Format);
 
     uint32_t aligned_offset =
         el.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
             ? AlignD3D12InputOffset(append_offset[el.InputSlot], byte_size)
             : el.AlignedByteOffset;
-    if (el.InputSlot < WMT_MAX_VERTEX_BUFFER_LAYOUTS)
-      append_offset[el.InputSlot] = aligned_offset + byte_size;
+    append_offset[el.InputSlot] = aligned_offset + byte_size;
 
+    if (!format_name || !byte_size) {
+      PSTRACE("MSC vertex layout unknown format path=%s element=%u "
+              "dxgi_format=%u semantic=%s semantic_index=%u slot=%u "
+              "offset=%u byte_size=%u input_class=%s",
+              path, i, (unsigned)el.Format,
+              el.SemanticName ? el.SemanticName : "", el.SemanticIndex,
+              el.InputSlot, aligned_offset, byte_size, input_class);
+      return false;
+    }
+
+    elements.push_back({&el, format_name, aligned_offset, byte_size});
+  }
+
+  for (size_t i = 0; i < elements.size(); i++) {
+    const auto &current = elements[i];
+    uint32_t next_offset = UINT32_MAX;
+    for (size_t j = 0; j < elements.size(); j++) {
+      const auto &candidate = elements[j];
+      if (candidate.desc->InputSlot != current.desc->InputSlot ||
+          candidate.aligned_offset <= current.aligned_offset)
+        continue;
+      next_offset = std::min(next_offset, candidate.aligned_offset);
+    }
+
+    if (next_offset != UINT32_MAX &&
+        current.aligned_offset + current.byte_size > next_offset) {
+      PSTRACE("MSC vertex layout overlapping element path=%s dxgi_format=%u "
+              "format=%s semantic=%s semantic_index=%u slot=%u offset=%u "
+              "byte_size=%u next_offset=%u",
+              path, (unsigned)current.desc->Format, current.format_name,
+              current.desc->SemanticName ? current.desc->SemanticName : "",
+              current.desc->SemanticIndex, current.desc->InputSlot,
+              current.aligned_offset, current.byte_size, next_offset);
+      return false;
+    }
+  }
+
+  FILE *file = fopen(path, "w");
+  if (!file)
+    return false;
+
+  fprintf(file, "{\"InputElements\":[");
+  for (size_t i = 0; i < elements.size(); i++) {
+    const auto &entry = elements[i];
+    const auto &el = *entry.desc;
     if (i)
       fprintf(file, ",");
     fprintf(file,
             "{\"AlignedByteOffset\":%u,\"Format\":\"%s\",\"InputSlot\":%u,"
             "\"InputSlotClass\":\"%s\",\"InstanceDataStepRate\":%u,"
             "\"SemanticIndex\":%u}",
-            aligned_offset, format_name ? format_name : "R32G32B32A32_FLOAT",
-            el.InputSlot,
+            entry.aligned_offset, entry.format_name, el.InputSlot,
             el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
                 ? "PerInstanceData"
                 : "PerVertexData",
@@ -1834,7 +2293,9 @@ bool MTLD3D12PipelineState::CompileShader(
 
   size_t hash = ComputeD3D12ShaderCacheHash(
       bytecode, size, type,
-      type == ShaderType::Vertex ? &m_input_layout : nullptr);
+      type == ShaderType::Vertex ? &m_input_layout : nullptr,
+      type == ShaderType::Pixel ? m_rtv_formats : nullptr,
+      type == ShaderType::Pixel ? m_num_render_targets : 0);
   shader_timer.SetDetail("func=%s type=%u size=%zu blob=%s hash=0x%zx",
                          func_name, (unsigned)type, size,
                          DescribeShaderBlobMagic(bytecode, size), hash);
@@ -1927,11 +2388,18 @@ bool MTLD3D12PipelineState::CompileShader(
                             vertex_layout_path));
           }
 
-          FILE *mf = fopen(metallib_path, "rb");
-          FILE *ff = fopen(converter_fail_path, "rb");
-          FILE *sf = needs_stage_in ? fopen(stage_in_metallib_path, "rb")
-                                    : nullptr;
-          if (!mf) {
+          const bool disable_runtime_msc =
+              DXMTD3D12DisableRuntimeMetalShaderConverter();
+          FILE *mf = disable_runtime_msc ? nullptr : fopen(metallib_path, "rb");
+          FILE *ff = disable_runtime_msc ? nullptr : fopen(converter_fail_path, "rb");
+          FILE *sf = (!disable_runtime_msc && needs_stage_in)
+                         ? fopen(stage_in_metallib_path, "rb")
+                         : nullptr;
+          if (disable_runtime_msc) {
+            PSTRACE("  runtime MSC disabled; using internal DXIL->MSL for %s",
+                    func_name);
+            DumpShaderBlob(dxbc_path, bytecode, size);
+          } else if (!mf) {
             PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
             if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
                 type == ShaderType::Vertex)
@@ -2031,8 +2499,11 @@ bool MTLD3D12PipelineState::CompileShader(
             DumpDXILModuleSummary(module_summary_path, *module, shader_info);
             PSTRACE("  DXIL module summary written to %s", module_summary_path);
 
-            auto msl_result =
-                dxmt::dxil::DXILToMSL::convert(*module, shader_info);
+            auto msl_options = BuildDXILMSLConvertOptions(
+                type, bytecode, size, m_input_layout, m_rtv_formats,
+                m_num_render_targets);
+            auto msl_result = dxmt::dxil::DXILToMSL::convert(
+                *module, shader_info, msl_options);
             if (!msl_result) {
               PSTRACE("  DXILToMSL::convert FAILED");
               if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
@@ -2843,6 +3314,15 @@ bool MTLD3D12PipelineState::CompileImpl() {
           m_gs.size(), " as synthesized pass-through (", gs_reason, ")"));
       PSTRACE("Graphics PSO GS synthesized pass-through hash=0x%016zx detail=%s",
               gs_hash, gs_reason.c_str());
+      if (DXMTD3D12GeometryMeshPipelineEnabled() && !m_ps.empty() &&
+          m_num_render_targets > 0) {
+        Logger::warn(str::format(
+            "CreateGraphicsPipelineState: preferring real geometry mesh "
+            "conversion over synthesized GS pass-through for color PSO "
+            "bytes=",
+            m_gs.size(), " (", gs_reason, ")"));
+        m_gs_passthrough = ~0u;
+      }
     } else {
       PSTRACE("Graphics PSO GS no synthesized pass-through hash=0x%016zx detail=%s",
               gs_hash, gs_reason.c_str());
@@ -2891,6 +3371,8 @@ bool MTLD3D12PipelineState::CompileImpl() {
                 geometry_hash = geometry_hash * 131 + (unsigned char)*s;
             }
           }
+          geometry_hash =
+              geometry_hash * 131 + kMetalShaderConverterVertexLayoutVersion;
 
           const std::string base =
               BuildShaderCachePath((HexHash(geometry_hash) + ".geom").c_str());
@@ -3826,9 +4308,15 @@ d3d12_geometry_fallback_to_vs_ps:
     info.vertex_linked_functions.set(vertex_linked_handles.data());
     info.num_vertex_linked_functions =
         (uint8_t)std::min<size_t>(vertex_linked_handles.size(), UINT8_MAX);
+    if (ps_func.handle) {
+      info.fragment_linked_functions.set(vertex_linked_handles.data());
+      info.num_fragment_linked_functions = info.num_vertex_linked_functions;
+    }
     Logger::info(str::format(
         "D3D12 linked MetalShaderConverter stage-in function for VS ",
-        GetVSCacheHash(), " sidecar=", stage_in_path));
+        GetVSCacheHash(), " sidecar=", stage_in_path,
+        " vertex_linked=", (unsigned)info.num_vertex_linked_functions,
+        " fragment_linked=", (unsigned)info.num_fragment_linked_functions));
   }
 
   // D3D12 wireframe is still a rasterized fill mode; it must not be lowered to
@@ -4377,7 +4865,22 @@ d3d12_geometry_fallback_to_vs_ps:
         Logger::warn(str::format("CreateGraphicsPipelineState: using bounded "
                                  "Metal render PSO fallback for ",
                                  reason ? reason : "link failure", ": ",
-                                 err_desc ? err_desc : "unknown"));
+                                 err_desc ? err_desc : "unknown",
+                                 " vs=", GetVSCacheHash(),
+                                 " ps=", GetPSCacheHash(),
+                                 " gs=", GetGSCacheHash(),
+                                 " rts=", m_num_render_targets,
+                                 " rtv0=",
+                                 m_num_render_targets ? (unsigned)m_rtv_formats[0]
+                                                      : 0u,
+                                 " dsv=", (unsigned)m_dsv_format,
+                                 " stage_in=", m_vs_uses_stage_in ? 1u : 0u,
+                                 " msc_stage_in=",
+                                 m_vs_requires_msc_stage_in ? 1u : 0u,
+                                 " geom_mesh=",
+                                 m_uses_geometry_mesh_pipeline ? 1u : 0u,
+                                 " input_elements=",
+                                 m_input_layout.NumElements));
         m_render_pso = std::move(retry_pso);
         return true;
       }
@@ -4428,6 +4931,13 @@ d3d12_geometry_fallback_to_vs_ps:
                    std::string_view::npos ||
                err_view.find("not written by vertex shader") !=
                    std::string_view::npos) {
+      if (m_num_render_targets == 0 && m_dsv_format != DXGI_FORMAT_UNKNOWN &&
+          retry_render_pso("depth-only VS/PS varying mismatch drop fragment",
+                           [&](auto &retry_info) {
+                             retry_info.fragment_function = 0;
+                           })) {
+        return true;
+      }
       auto fallback_fs = m_device->GetDXMTDevice()
                              .queue()
                              .cmd_library

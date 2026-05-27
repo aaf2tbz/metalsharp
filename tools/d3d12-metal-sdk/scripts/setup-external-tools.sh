@@ -32,6 +32,8 @@ clone_or_update "gfxreconstruct" "https://github.com/LunarG/gfxreconstruct.git"
 clone_or_update "renderdoc" "https://github.com/baldurk/renderdoc.git"
 clone_or_update "DirectX-Headers" "https://github.com/microsoft/DirectX-Headers.git"
 clone_or_update "DirectXTK12" "https://github.com/microsoft/DirectXTK12.git"
+clone_or_update "SPIRV-Cross" "https://github.com/KhronosGroup/SPIRV-Cross.git"
+clone_or_update "SDL_shadercross" "https://github.com/libsdl-org/SDL_shadercross.git"
 
 cat <<EOF
 

@@ -86,6 +86,7 @@ public:
       D3D12_SHADER_VISIBILITY shader_visibility) const;
   uint32_t GetNumParameters() const { return m_parameters.size(); }
   uint32_t GetNumStaticSamplers() const { return m_num_static_samplers; }
+  const std::vector<RootStaticSampler> &GetStaticSamplers() const { return m_static_samplers; }
   D3D12_ROOT_SIGNATURE_FLAGS GetFlags() const { return m_flags; }
 
 private:

@@ -250,6 +250,190 @@ static const char *componentSuffix(uint32_t component) {
   }
 }
 
+static const char *mslScalarName(MSLScalarKind scalar) {
+  switch (scalar) {
+  case MSLScalarKind::UInt:
+    return "uint";
+  case MSLScalarKind::SInt:
+    return "int";
+  case MSLScalarKind::Float:
+  default:
+    return "float";
+  }
+}
+
+static MSLStageIOType normalizedIOType(MSLStageIOType type) {
+  if (!type.valid)
+    type = {MSLScalarKind::Float, 4, true};
+  if (type.components == 0)
+    type.components = 1;
+  type.components = std::min<uint32_t>(4, type.components);
+  return type;
+}
+
+static std::string mslIOTypeName(MSLStageIOType type) {
+  type = normalizedIOType(type);
+  std::string name = mslScalarName(type.scalar);
+  if (type.components > 1)
+    name += std::to_string(type.components);
+  return name;
+}
+
+static std::string mslIOZeroValue(MSLStageIOType type) {
+  type = normalizedIOType(type);
+  return mslIOTypeName(type) + "(0)";
+}
+
+static std::string scalarZeroValue(MSLScalarKind scalar) {
+  switch (scalar) {
+  case MSLScalarKind::UInt:
+    return "0u";
+  case MSLScalarKind::SInt:
+    return "0";
+  case MSLScalarKind::Float:
+  default:
+    return "0.0";
+  }
+}
+
+static std::string readIOComponent(MSLStageIOType type, const std::string &field,
+                                   uint32_t component) {
+  type = normalizedIOType(type);
+  if (component >= type.components)
+    return scalarZeroValue(type.scalar);
+  if (type.components == 1)
+    return field;
+  return field + componentSuffix(component);
+}
+
+static std::string writeIOComponent(MSLStageIOType type, const std::string &field,
+                                    uint32_t component) {
+  type = normalizedIOType(type);
+  if (type.components == 1)
+    return field;
+  return field + componentSuffix(component);
+}
+
+static MSLStageIOType vertexInputType(const MSLConvertOptions &options,
+                                      uint32_t signature_id) {
+  if (signature_id >= 16 && signature_id < 32)
+    signature_id -= 16;
+  if (signature_id < options.vertex_inputs.size() &&
+      options.vertex_inputs[signature_id].valid)
+    return normalizedIOType(options.vertex_inputs[signature_id]);
+  return {MSLScalarKind::Float, 4, true};
+}
+
+static MSLStageIOType pixelOutputType(const MSLConvertOptions &options,
+                                      uint32_t target) {
+  if (target < options.pixel_outputs.size() &&
+      options.pixel_outputs[target].valid)
+    return normalizedIOType(options.pixel_outputs[target]);
+  return {MSLScalarKind::Float, 4, true};
+}
+
+static uint32_t vertexInputRegisterForSignature(const MSLConvertOptions &options,
+                                                uint32_t signature_id) {
+  if (signature_id < options.vertex_input_signature_valid.size() &&
+      options.vertex_input_signature_valid[signature_id])
+    return options.vertex_input_register_for_signature[signature_id];
+  return signature_id;
+}
+
+static uint32_t vertexOutputRegisterForSignature(const MSLConvertOptions &options,
+                                                 uint32_t signature_id) {
+  if (signature_id < options.vertex_output_signature_valid.size() &&
+      options.vertex_output_signature_valid[signature_id])
+    return options.vertex_output_register_for_signature[signature_id];
+  return signature_id;
+}
+
+static uint32_t pixelInputRegisterForSignature(const MSLConvertOptions &options,
+                                               uint32_t signature_id) {
+  if (signature_id < options.pixel_input_signature_valid.size() &&
+      options.pixel_input_signature_valid[signature_id])
+    return options.pixel_input_register_for_signature[signature_id];
+  return signature_id;
+}
+
+static uint32_t pixelOutputTargetForSignature(const MSLConvertOptions &options,
+                                              uint32_t signature_id) {
+  if (signature_id < options.pixel_output_signature_valid.size() &&
+      options.pixel_output_signature_valid[signature_id])
+    return options.pixel_output_target_for_signature[signature_id];
+  return signature_id;
+}
+
+static bool decodeVertexLoadInputSequence(const MSLConvertOptions &options,
+                                          uint32_t seq, uint32_t &input_id,
+                                          uint32_t &component) {
+  for (uint32_t sig = 0; sig < options.vertex_input_signature_valid.size(); sig++) {
+    if (!options.vertex_input_signature_valid[sig])
+      continue;
+    const uint32_t reg = vertexInputRegisterForSignature(options, sig);
+    const uint32_t components = normalizedIOType(vertexInputType(options, reg)).components;
+    if (seq < components) {
+      input_id = sig;
+      component = seq;
+      return true;
+    }
+    seq -= components;
+  }
+  return false;
+}
+
+static bool decodePixelLoadInputSequence(const MSLConvertOptions &options,
+                                         uint32_t seq, uint32_t &input_id,
+                                         uint32_t &component) {
+  for (uint32_t sig = 0; sig < options.pixel_input_signature_valid.size(); sig++) {
+    if (!options.pixel_input_signature_valid[sig])
+      continue;
+    constexpr uint32_t kComponents = 4;
+    if (seq < kComponents) {
+      input_id = sig;
+      component = seq;
+      return true;
+    }
+    seq -= kComponents;
+  }
+  return false;
+}
+
+static bool decodeVertexStoreOutputSequence(const MSLConvertOptions &options,
+                                            uint32_t seq, uint32_t &output_id,
+                                            uint32_t &component) {
+  for (uint32_t sig = 0; sig < options.vertex_output_signature_valid.size(); sig++) {
+    if (!options.vertex_output_signature_valid[sig])
+      continue;
+    constexpr uint32_t kComponents = 4;
+    if (seq < kComponents) {
+      output_id = sig;
+      component = seq;
+      return true;
+    }
+    seq -= kComponents;
+  }
+  return false;
+}
+
+static bool decodePixelStoreOutputSequence(const MSLConvertOptions &options,
+                                           uint32_t seq, uint32_t &output_id,
+                                           uint32_t &component) {
+  for (uint32_t sig = 0; sig < options.pixel_output_signature_valid.size(); sig++) {
+    if (!options.pixel_output_signature_valid[sig])
+      continue;
+    const uint32_t target = pixelOutputTargetForSignature(options, sig);
+    const uint32_t components = normalizedIOType(pixelOutputType(options, target)).components;
+    if (seq < components) {
+      output_id = sig;
+      component = seq;
+      return true;
+    }
+    seq -= components;
+  }
+  return false;
+}
+
 static const char *componentName(uint32_t component) {
   switch (component & 3) {
   case 0: return "x";
@@ -257,6 +441,45 @@ static const char *componentName(uint32_t component) {
   case 2: return "z";
   default: return "w";
   }
+}
+
+static std::string userVaryingField(const char *base, uint32_t register_index) {
+  switch (register_index) {
+  case 0: return std::string(base) + ".v0";
+  case 1: return std::string(base) + ".v1";
+  case 2: return std::string(base) + ".v2";
+  case 3: return std::string(base) + ".v3";
+  case 4: return std::string(base) + ".v4";
+  case 5: return std::string(base) + ".v5";
+  case 6: return std::string(base) + ".v6";
+  case 7: return std::string(base) + ".v7";
+  case 8: return std::string(base) + ".v8";
+  case 9: return std::string(base) + ".v9";
+  case 10: return std::string(base) + ".v10";
+  case 11: return std::string(base) + ".v11";
+  case 12: return std::string(base) + ".v12";
+  case 13: return std::string(base) + ".v13";
+  case 14: return std::string(base) + ".v14";
+  case 15: return std::string(base) + ".v15";
+  default: return std::string(base) + ".v0";
+  }
+}
+
+static std::string pixelInputField(const MSLConvertOptions &options,
+                                   const char *base, uint32_t signature_id) {
+  if (signature_id < options.pixel_input_is_position.size() &&
+      options.pixel_input_is_position[signature_id])
+    return std::string(base) + ".position";
+  return userVaryingField(base, pixelInputRegisterForSignature(options, signature_id));
+}
+
+static std::string vertexOutputField(const MSLConvertOptions &options,
+                                     const char *base, uint32_t signature_id) {
+  if (signature_id < options.vertex_output_is_position.size() &&
+      options.vertex_output_is_position[signature_id])
+    return std::string(base) + ".position";
+  return userVaryingField(base,
+                          vertexOutputRegisterForSignature(options, signature_id));
 }
 
 static std::string varyingField(const char *base, uint32_t signature_id) {
@@ -656,11 +879,39 @@ static void collectSSATokens(const std::string &source,
   }
 }
 
+static std::string trimMSLExpr(std::string expr) {
+  size_t first = expr.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos)
+    return std::string();
+  size_t last = expr.find_last_not_of(" \t\r\n");
+  return expr.substr(first, last - first + 1);
+}
+
+static bool outerParensWrapExpr(const std::string &expr) {
+  if (expr.size() < 2 || expr.front() != '(' || expr.back() != ')')
+    return false;
+  int depth = 0;
+  for (size_t i = 0; i < expr.size(); i++) {
+    if (expr[i] == '(') {
+      depth++;
+    } else if (expr[i] == ')') {
+      depth--;
+      if (depth == 0 && i + 1 < expr.size())
+        return false;
+    }
+  }
+  return depth == 0;
+}
+
+static std::string stripBalancedOuterParens(std::string expr) {
+  expr = trimMSLExpr(std::move(expr));
+  while (outerParensWrapExpr(expr))
+    expr = trimMSLExpr(expr.substr(1, expr.size() - 2));
+  return expr;
+}
+
 static bool exprEndsWithScalarComponent(std::string expr) {
-  while (!expr.empty() &&
-         (expr.back() == ' ' || expr.back() == '\t' || expr.back() == '\n' ||
-          expr.back() == '\r' || expr.back() == ')'))
-    expr.pop_back();
+  expr = stripBalancedOuterParens(std::move(expr));
   auto ends_with = [&](const char *suffix) {
     const size_t suffix_len = std::strlen(suffix);
     return expr.size() >= suffix_len &&
@@ -668,6 +919,128 @@ static bool exprEndsWithScalarComponent(std::string expr) {
   };
   return ends_with(".x") || ends_with(".y") || ends_with(".z") ||
          ends_with(".w");
+}
+
+static bool exprContainsUnsuffixedVectorValue(const std::string &expr) {
+  auto containsUnsuffixedCast = [&](const char *needle) {
+    size_t pos = 0;
+    while ((pos = expr.find(needle, pos)) != std::string::npos) {
+      size_t cast_end = expr.find("&>", pos);
+      if (cast_end == std::string::npos)
+        return true;
+      size_t open = expr.find('(', cast_end + 2);
+      if (open == std::string::npos)
+        return true;
+      int depth = 0;
+      size_t end = std::string::npos;
+      for (size_t i = open; i < expr.size(); i++) {
+        if (expr[i] == '(')
+          depth++;
+        else if (expr[i] == ')') {
+          depth--;
+          if (depth == 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end == std::string::npos)
+        return true;
+      while (end + 1 < expr.size() &&
+             (expr[end + 1] == ' ' || expr[end + 1] == '\t' ||
+              expr[end + 1] == '\n' || expr[end + 1] == '\r' ||
+              expr[end + 1] == ')'))
+        end++;
+      if (end + 2 >= expr.size() || expr[end + 1] != '.' ||
+          (expr[end + 2] != 'x' && expr[end + 2] != 'y' &&
+           expr[end + 2] != 'z' && expr[end + 2] != 'w') ||
+          (end + 3 < expr.size() && isIdentifierChar(expr[end + 3])))
+        return true;
+      pos = end + 3;
+    }
+    return false;
+  };
+  return containsUnsuffixedCast("reinterpret_cast<device float4&>") ||
+         containsUnsuffixedCast("reinterpret_cast<device uint4&>") ||
+         containsUnsuffixedCast("reinterpret_cast<device int4&>") ||
+         containsUnsuffixedCast("reinterpret_cast<const device float4&>") ||
+         containsUnsuffixedCast("reinterpret_cast<const device uint4&>") ||
+         containsUnsuffixedCast("reinterpret_cast<const device int4&>");
+}
+
+static std::string scalarizeUnsuffixedVectorValuesInExpr(std::string expr) {
+  auto scalarizeCast = [&](const char *needle) {
+    size_t pos = 0;
+    while ((pos = expr.find(needle, pos)) != std::string::npos) {
+      size_t cast_end = expr.find("&>", pos);
+      if (cast_end == std::string::npos) {
+        pos += std::strlen(needle);
+        continue;
+      }
+      size_t open = expr.find('(', cast_end + 2);
+      if (open == std::string::npos) {
+        pos += std::strlen(needle);
+        continue;
+      }
+
+      int depth = 0;
+      size_t end = std::string::npos;
+      for (size_t i = open; i < expr.size(); i++) {
+        if (expr[i] == '(') {
+          depth++;
+        } else if (expr[i] == ')') {
+          depth--;
+          if (depth == 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end == std::string::npos) {
+        pos += std::strlen(needle);
+        continue;
+      }
+
+      auto nextNonSpace = [&](size_t index) {
+        while (index < expr.size() &&
+               (expr[index] == ' ' || expr[index] == '\t' ||
+                expr[index] == '\n' || expr[index] == '\r'))
+          index++;
+        return index;
+      };
+      auto hasComponentSuffixAt = [&](size_t index) {
+        index = nextNonSpace(index);
+        return index + 1 < expr.size() && expr[index] == '.' &&
+               (expr[index + 1] == 'x' || expr[index + 1] == 'y' ||
+                expr[index + 1] == 'z' || expr[index + 1] == 'w') &&
+               (index + 2 >= expr.size() || !isIdentifierChar(expr[index + 2]));
+      };
+
+      size_t next = nextNonSpace(end + 1);
+      bool suffixed = hasComponentSuffixAt(next);
+      while (!suffixed && next < expr.size() && expr[next] == ')') {
+        next = nextNonSpace(next + 1);
+        suffixed = hasComponentSuffixAt(next);
+      }
+      if (suffixed) {
+        pos = next + 2;
+        continue;
+      }
+
+      std::string cast_expr = expr.substr(pos, end - pos + 1);
+      std::string replacement = "(" + cast_expr + ").x";
+      expr.replace(pos, end - pos + 1, replacement);
+      pos += replacement.size();
+    }
+  };
+
+  scalarizeCast("reinterpret_cast<device float4&>");
+  scalarizeCast("reinterpret_cast<device uint4&>");
+  scalarizeCast("reinterpret_cast<device int4&>");
+  scalarizeCast("reinterpret_cast<const device float4&>");
+  scalarizeCast("reinterpret_cast<const device uint4&>");
+  scalarizeCast("reinterpret_cast<const device int4&>");
+  return expr;
 }
 
 static bool exprContainsScalarComponentAccess(const std::string &expr) {
@@ -682,6 +1055,62 @@ static bool exprContainsScalarComponentAccess(const std::string &expr) {
       continue;
     return true;
   }
+  return false;
+}
+
+static bool exprContainsUnsuffixedTextureRead(const std::string &expr) {
+  auto containsUnsuffixedCall = [&](const char *needle) {
+  size_t pos = 0;
+  while ((pos = expr.find(needle, pos)) != std::string::npos) {
+    size_t open = pos + std::strlen(needle) - 1;
+    int depth = 0;
+    size_t end = std::string::npos;
+    for (size_t i = open; i < expr.size(); i++) {
+      if (expr[i] == '(')
+        depth++;
+      else if (expr[i] == ')') {
+        depth--;
+        if (depth == 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end == std::string::npos)
+      return true;
+
+    auto nextNonSpace = [&](size_t index) {
+      while (index < expr.size() &&
+             (expr[index] == ' ' || expr[index] == '\t' ||
+              expr[index] == '\n' || expr[index] == '\r'))
+        index++;
+      return index;
+    };
+    auto hasComponentSuffixAt = [&](size_t index) {
+      index = nextNonSpace(index);
+      return index + 1 < expr.size() && expr[index] == '.' &&
+             (expr[index + 1] == 'x' || expr[index + 1] == 'y' ||
+              expr[index + 1] == 'z' || expr[index + 1] == 'w') &&
+             (index + 2 >= expr.size() || !isIdentifierChar(expr[index + 2]));
+    };
+
+    size_t next = nextNonSpace(end + 1);
+    bool suffixed = hasComponentSuffixAt(next);
+    while (!suffixed && next < expr.size() && expr[next] == ')') {
+      next = nextNonSpace(next + 1);
+      suffixed = hasComponentSuffixAt(next);
+    }
+    if (!suffixed)
+      return true;
+
+    pos = end + 1;
+  }
+  return false;
+  };
+  if (containsUnsuffixedCall(".read("))
+    return true;
+  if (containsUnsuffixedCall(".sample("))
+    return true;
   return false;
 }
 
@@ -703,7 +1132,9 @@ static bool exprLooksScalar(const std::string &expr) {
 
   // Expressions assembled from scalar swizzles, like a dot product lowered to
   // "(a.x*b.x + a.y*b.y)", are scalar even if they reference vector sources.
-  if (exprContainsScalarComponentAccess(trimmed))
+  if (!exprContainsUnsuffixedTextureRead(trimmed) &&
+      !exprContainsUnsuffixedVectorValue(trimmed) &&
+      exprContainsScalarComponentAccess(trimmed))
     return true;
 
   return false;
@@ -718,12 +1149,17 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
     const size_t len = std::strlen(prefix);
     return trimmed.size() >= len && trimmed.compare(0, len, prefix) == 0;
   };
+  if (exprLooksScalar(expr))
+    return 0;
   if (startsExpr("float4") || startsExpr("uint4") || startsExpr("int4") ||
       startsExpr("bool4") || startsExpr("vec<float, 4>") ||
       startsExpr("reinterpret_cast<device float4&>") ||
       startsExpr("reinterpret_cast<device uint4&>") ||
+      startsExpr("reinterpret_cast<const device float4&>") ||
+      startsExpr("reinterpret_cast<const device uint4&>") ||
       trimmed.find(".sample(") != std::string::npos ||
-      trimmed.find(".read(") != std::string::npos)
+      exprContainsUnsuffixedVectorValue(trimmed) ||
+      exprContainsUnsuffixedTextureRead(trimmed))
     return 4;
   if (startsExpr("float3") || startsExpr("uint3") || startsExpr("int3") ||
       startsExpr("bool3") || startsExpr("vec<float, 3>"))
@@ -731,8 +1167,6 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
   if (startsExpr("float2") || startsExpr("uint2") || startsExpr("int2") ||
       startsExpr("bool2") || startsExpr("vec<float, 2>"))
     return 2;
-  if (exprLooksScalar(expr))
-    return 0;
   if (exprEndsWithScalarComponent(expr))
     return 0;
   if (startsExpr("clamp(") || startsExpr("fma(") || startsExpr("abs(") ||
@@ -746,10 +1180,18 @@ static uint8_t inferVectorLaneCountFromExpr(const std::string &expr) {
 }
 
 static std::string scalarizeMSLExpr(const std::string &expr, uint8_t lanes) {
-  if (exprLooksScalar(expr) || inferVectorLaneCountFromExpr(expr) <= 1)
-    return expr;
-  if (lanes > 1)
-    return "(" + expr + ").x";
+  std::string scalarized_expr = scalarizeUnsuffixedVectorValuesInExpr(expr);
+  if (exprLooksScalar(scalarized_expr))
+    return scalarized_expr;
+  uint8_t inferred_lanes = inferVectorLaneCountFromExpr(scalarized_expr);
+  if (inferred_lanes > 1 || lanes > 1)
+    return "(" + scalarized_expr + ").x";
+  return scalarized_expr;
+}
+
+static std::string normalizeMSLNumericExpr(std::string expr) {
+  if (exprContainsUnsuffixedVectorValue(expr))
+    expr = scalarizeUnsuffixedVectorValuesInExpr(std::move(expr));
   return expr;
 }
 
@@ -1215,10 +1657,10 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
   os << "  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];\n";
   os << "  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];\n";
   os << "  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];\n";
-  os << "  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];\n";
-  os << "  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];\n";
-  os << "  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];\n";
-  os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
+  os << "  float4 v8 [[user(locn8)]]; float4 v9 [[user(locn9)]];\n";
+  os << "  float4 v10 [[user(locn10)]]; float4 v11 [[user(locn11)]];\n";
+  os << "  float4 v12 [[user(locn12)]]; float4 v13 [[user(locn13)]];\n";
+  os << "  float4 v14 [[user(locn14)]]; float4 v15 [[user(locn15)]];\n";
   os << "};\n\n";
 
   os << "struct output_v {\n";
@@ -1227,20 +1669,22 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
   os << "  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];\n";
   os << "  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];\n";
   os << "  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];\n";
-  os << "  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];\n";
-  os << "  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];\n";
-  os << "  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];\n";
-  os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
+  os << "  float4 v8 [[user(locn8)]]; float4 v9 [[user(locn9)]];\n";
+  os << "  float4 v10 [[user(locn10)]]; float4 v11 [[user(locn11)]];\n";
+  os << "  float4 v12 [[user(locn12)]]; float4 v13 [[user(locn13)]];\n";
+  os << "  float4 v14 [[user(locn14)]]; float4 v15 [[user(locn15)]];\n";
   os << "};\n\n";
 
   os << "struct pixel_output_v {\n";
   for (uint32_t i = 0; i < 8; i++)
-    os << "  float4 color" << i << " [[color(" << i << ")]];\n";
+    os << "  " << mslIOTypeName(pixelOutputType(ctx.options, i))
+       << " color" << i << " [[color(" << i << ")]];\n";
   os << "};\n\n";
 
   os << "struct vertex_input_v {\n";
   for (uint32_t i = 0; i < 16; i++)
-    os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
+    os << "  " << mslIOTypeName(vertexInputType(ctx.options, i)) << " a" << i
+       << " [[attribute(" << i << ")]];\n";
   os << "};\n\n";
 
   if (ctx.shader.kind == DxilShaderKind::Compute) {
@@ -1262,7 +1706,7 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     os << "  vertex_input_v vin [[stage_in]],\n";
     os << "  uint vid [[vertex_id]],\n";
     for (uint32_t i = 0; i < kMaxMSLBufferBindings; i++)
-      os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
+      os << "  const device char* buf" << i << " [[buffer(" << i << ")]],\n";
     for (uint32_t i = 0; i < kMaxMSLTextureBindings; i++)
       os << "  texture2d<float, access::sample> tex" << i
          << " [[texture(" << i << ")]],\n";
@@ -1286,7 +1730,8 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     }
     os << ") {\n";
     os << "  pixel_output_v result = {};\n";
-    os << "  result.color0 = float4(0,0,0,1);\n";
+    os << "  result.color0 = "
+       << mslIOZeroValue(pixelOutputType(ctx.options, 0)) << ";\n";
   } else {
     os << "kernel void unknown_main() {\n";
   }
@@ -1395,6 +1840,17 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     uint32_t index = literalArg(2, 0, "resource index");
     bool non_uniform = literalArg(3, 0, "non-uniform index") != 0;
     (void)non_uniform;
+    if (resource_class > 3) {
+      // Some DXIL bitcode records arrive with the recovered dx.op/global value
+      // in the first operand slot. Keep simple SM6 probes and fallback shaders
+      // on the declared t#/s# binding instead of drifting to tex1/samp1.
+      recordDiagnostic(ctx,
+                       "DXIL CreateHandle repaired shifted resource class: %u",
+                       resource_class);
+      resource_class = resource_class == 9 ? 3 : 0;
+      range_id = 0;
+      index = 0;
+    }
     ctx.next_binding++;
     std::string res_name = std::to_string(range_id);
     DXTRACE("DXIL CreateHandle: class=%u range=%u index=%u -> %s", resource_class, range_id, index, res_name.c_str());
@@ -1509,14 +1965,22 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 2) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "cbuf0"), "buf");
     auto reg_idx = asIntegerIndexExpr(scalarValueArg(1, "0"));
-    return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*64]))";
+    const char *addr = ctx.shader.kind == DxilShaderKind::Vertex
+                           ? "const device"
+                           : "device";
+    return "(reinterpret_cast<" + std::string(addr) + " float4&>(" + handle +
+           "[(" + reg_idx + ")*64]))";
   }
 
   case DXOP_BufferLoad: {
     if (args.size() < 3) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "srv0"), "buf");
     auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
-    return "(reinterpret_cast<device float4&>(" + handle + "[(" + index + ")*16]))";
+    const char *addr = ctx.shader.kind == DxilShaderKind::Vertex
+                           ? "const device"
+                           : "device";
+    return "(reinterpret_cast<" + std::string(addr) + " float4&>(" + handle +
+           "[(" + index + ")*16]))";
   }
 
   case DXOP_RawBufferLoad:
@@ -1527,7 +1991,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto index = asIntegerIndexExpr(scalarValueArg(1, "0"));
     auto elem_offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
     auto byte_offset = "((" + index + ")*4 + (" + elem_offset + "))";
-    return "(reinterpret_cast<device uint4&>(" + handle + "[" + byte_offset + "]))";
+    const char *addr = ctx.shader.kind == DxilShaderKind::Vertex
+                           ? "const device"
+                           : "device";
+    return "(reinterpret_cast<" + std::string(addr) + " uint4&>(" + handle +
+           "[" + byte_offset + "]))";
   }
 
   case DXOP_BufferStore:
@@ -1686,8 +2154,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_DerivCoarseX:
   case DXOP_DerivFineX: {
     if (args.empty()) return "0.0";
-    if (ctx.shader.kind == DxilShaderKind::Compute) {
-      recordDiagnostic(ctx, "DXIL derivative X used in compute shader; lowered to 0");
+    if (ctx.shader.kind != DxilShaderKind::Pixel) {
+      recordDiagnostic(ctx, "DXIL derivative X used outside pixel shader; lowered to 0");
       return "0.0f";
     }
     return "dfdx(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
@@ -1696,8 +2164,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_DerivCoarseY:
   case DXOP_DerivFineY: {
     if (args.empty()) return "0.0";
-    if (ctx.shader.kind == DxilShaderKind::Compute) {
-      recordDiagnostic(ctx, "DXIL derivative Y used in compute shader; lowered to 0");
+    if (ctx.shader.kind != DxilShaderKind::Pixel) {
+      recordDiagnostic(ctx, "DXIL derivative Y used outside pixel shader; lowered to 0");
       return "0.0f";
     }
     return "dfdy(dxmt_float(" + scalarValueArg(0, "0.0") + "))";
@@ -1716,8 +2184,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_AtomicBinOp: {
     if (args.size() < 4) return "0";
     auto handle = resolveBindingName(valueArg(1, "uav0"), "buf");
-    auto offset = valueArg(2, "0");
-    auto value = valueArg(3, "0");
+    auto offset = asIntegerIndexExpr(scalarValueArg(2, "0"));
+    auto value = scalarValueArg(args.size() > 6 ? 6 : args.size() - 1, "0");
     return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" +
            handle + " + (" + offset + ")), dxmt_uint(" + value +
            "), memory_order_relaxed)";
@@ -1726,7 +2194,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_AtomicCompareExchange: {
     if (args.size() < 2) return "0";
     auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
-    auto offset = valueArg(1, "0");
+    auto offset = asIntegerIndexExpr(scalarValueArg(1, "0"));
     recordDiagnostic(ctx, "DXIL AtomicCompareExchange lowered to atomic load fallback");
     return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" +
            handle + " + (" + offset + ")), memory_order_relaxed)";
@@ -1896,36 +2364,83 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_LoadInput: {
     if (args.size() < 3) return "0.0";
-    uint32_t input_id = 0;
+    uint32_t input_id = UINT32_MAX;
     uint32_t component = 0;
+    std::string row_expr = "0";
+    size_t base = 0;
+    while (base < args.size() && startsWith(valueArg(base, ""), "dx.op."))
+      base++;
+    uint32_t leading = 0;
+    if (tryLiteralArg(base, leading) && leading == DXOP_LoadInput &&
+        base + 3 < args.size())
+      base++;
+
     bool decoded = false;
-    for (size_t i = 0; i + 2 < args.size(); i++) {
-      uint32_t candidate_input = 0;
-      uint32_t candidate_row = 0;
-      uint32_t candidate_component = 0;
-      if (!tryLiteralArg(i, candidate_input) ||
-          !tryLiteralArg(i + 1, candidate_row) ||
-          !tryLiteralArg(i + 2, candidate_component) ||
-          candidate_component > 3)
-        continue;
-      input_id = candidate_input;
-      component = candidate_component;
-      decoded = true;
-      if (i != 0)
-        recordDiagnostic(ctx,
-                         "DXIL LoadInput canonicalized shifted args: start=%zu input_id=%u row=%u component=%u",
-                         i, input_id, candidate_row, component);
-      break;
+    if (base + 2 < args.size()) {
+      decoded = tryLiteralArg(base, input_id) &&
+                tryLiteralArg(base + 2, component);
+      row_expr = valueArg(base + 1, "0");
     }
+
     if (!decoded) {
-      input_id = literalArg(0, 0, "input id");
-      component = literalArg(2, 0, "input component");
+      recordDiagnostic(ctx,
+                       "DXIL LoadInput failed exact operand decode: argc=%zu base=%zu a0=%s a1=%s a2=%s",
+                       args.size(), base, valueArg(0, "<missing>").c_str(),
+                       valueArg(1, "<missing>").c_str(),
+                       valueArg(2, "<missing>").c_str());
+      return "0.0";
     }
+
+    if (component > 3 || input_id >= 32) {
+      const uint32_t seq = ctx.shader.kind == DxilShaderKind::Vertex
+                               ? ctx.vertex_load_input_counter
+                               : ctx.pixel_load_input_counter;
+      uint32_t fallback_id = 0;
+      uint32_t fallback_component = 0;
+      bool fallback_decoded = false;
+      if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        fallback_decoded = decodeVertexLoadInputSequence(
+            ctx.options, seq, fallback_id, fallback_component);
+      } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
+        fallback_decoded = decodePixelLoadInputSequence(
+            ctx.options, seq, fallback_id, fallback_component);
+      }
+      if (!fallback_decoded) {
+        fallback_id = std::min<uint32_t>(31u, seq / 4u);
+        fallback_component = seq & 3u;
+      }
+      recordDiagnostic(
+          ctx,
+          "DXIL LoadInput signature fallback: raw_input_sig=%u raw_row=%s raw_component=%u seq=%u input_sig=%u component=%u",
+          input_id, row_expr.c_str(), component, seq, fallback_id,
+          fallback_component);
+      input_id = fallback_id;
+      component = fallback_component;
+      row_expr = "0";
+    }
+
+    if (ctx.shader.kind == DxilShaderKind::Vertex)
+      ctx.vertex_load_input_counter++;
+    else if (ctx.shader.kind == DxilShaderKind::Pixel)
+      ctx.pixel_load_input_counter++;
+
+    uint32_t literal_row = 0;
+    if (!row_expr.empty() && !parseUnsignedLiteral(row_expr, literal_row)) {
+      recordDiagnostic(ctx,
+                       "DXIL LoadInput dynamic row ignored: shader_kind=%u input_sig=%u row=%s component=%u",
+                       (uint32_t)ctx.shader.kind, input_id, row_expr.c_str(),
+                       component);
+    }
+
     if (ctx.shader.kind == DxilShaderKind::Pixel) {
-      return varyingField("in", input_id) + componentSuffix(component);
+      return pixelInputField(ctx.options, "in", input_id) +
+             componentSuffix(component);
     }
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
-      return vertexInputField("vin", input_id) + componentSuffix(component);
+      const uint32_t input_register =
+          vertexInputRegisterForSignature(ctx.options, input_id);
+      return readIOComponent(vertexInputType(ctx.options, input_register),
+                             vertexInputField("vin", input_register), component);
     }
     recordDiagnostic(ctx, "DXIL LoadInput fallback: shader_kind=%u input_id=%u component=%u",
                      (uint32_t)ctx.shader.kind, input_id, component);
@@ -1934,55 +2449,88 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_StoreOutput: {
     if (args.size() < 4) return "";
-    uint32_t output_id = 0;
+    uint32_t output_id = UINT32_MAX;
     uint32_t component = 0;
     size_t value_arg = 3;
+    std::string row_expr = "0";
+    size_t base = 0;
+    while (base < args.size() && startsWith(valueArg(base, ""), "dx.op."))
+      base++;
+    uint32_t leading = 0;
+    if (tryLiteralArg(base, leading) && leading == DXOP_StoreOutput &&
+        base + 4 < args.size())
+      base++;
+
     bool decoded = false;
-    for (size_t i = 0; i + 3 < args.size(); i++) {
-      uint32_t candidate_output = 0;
-      uint32_t candidate_row = 0;
-      uint32_t candidate_component = 0;
-      if (!tryLiteralArg(i, candidate_output) ||
-          !tryLiteralArg(i + 1, candidate_row) ||
-          !tryLiteralArg(i + 2, candidate_component) ||
-          candidate_component > 3)
-        continue;
-      output_id = candidate_output;
-      component = candidate_component;
-      value_arg = i + 3;
-      decoded = true;
-      if (i != 0)
-        recordDiagnostic(ctx,
-                         "DXIL StoreOutput canonicalized shifted args: start=%zu output_id=%u row=%u component=%u",
-                         i, output_id, candidate_row, component);
-      break;
+    if (base + 3 < args.size()) {
+      decoded = tryLiteralArg(base, output_id) &&
+                tryLiteralArg(base + 2, component);
+      row_expr = valueArg(base + 1, "0");
+      value_arg = base + 3;
     }
+
     if (!decoded) {
-      output_id = literalArg(0, 0, "output id");
-      component = literalArg(2, 0, "output component");
-      value_arg = 3;
+      recordDiagnostic(ctx,
+                       "DXIL StoreOutput failed exact operand decode: argc=%zu base=%zu a0=%s a1=%s a2=%s",
+                       args.size(), base, valueArg(0, "<missing>").c_str(),
+                       valueArg(1, "<missing>").c_str(),
+                       valueArg(2, "<missing>").c_str());
+      return "";
     }
+
+    if (component > 3 || output_id >= 32) {
+      const uint32_t seq = ctx.shader.kind == DxilShaderKind::Vertex
+                               ? ctx.vertex_store_output_counter
+                               : ctx.pixel_store_output_counter;
+      uint32_t fallback_id = 0;
+      uint32_t fallback_component = 0;
+      bool fallback_decoded = false;
+      if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        fallback_decoded = decodeVertexStoreOutputSequence(
+            ctx.options, seq, fallback_id, fallback_component);
+      } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
+        fallback_decoded = decodePixelStoreOutputSequence(
+            ctx.options, seq, fallback_id, fallback_component);
+      }
+      if (!fallback_decoded) {
+        fallback_id = std::min<uint32_t>(31u, seq / 4u);
+        fallback_component = seq & 3u;
+      }
+      recordDiagnostic(
+          ctx,
+          "DXIL StoreOutput signature fallback: raw_output_sig=%u raw_row=%s raw_component=%u seq=%u output_sig=%u component=%u",
+          output_id, row_expr.c_str(), component, seq, fallback_id,
+          fallback_component);
+      output_id = fallback_id;
+      component = fallback_component;
+      row_expr = "0";
+    }
+
+    uint32_t literal_row = 0;
+    if (!row_expr.empty() && !parseUnsignedLiteral(row_expr, literal_row)) {
+      recordDiagnostic(ctx,
+                       "DXIL StoreOutput dynamic row ignored: shader_kind=%u output_sig=%u row=%s component=%u",
+                       (uint32_t)ctx.shader.kind, output_id, row_expr.c_str(),
+                       component);
+    }
+
     auto val = scalarValueArg(value_arg, "0");
 
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
-      return varyingField("out", output_id) + componentSuffix(component) + " = " + val;
+      ctx.vertex_store_output_counter++;
+      return vertexOutputField(ctx.options, "out", output_id) +
+             componentSuffix(component) + " = " + val;
     }
     if (ctx.shader.kind == DxilShaderKind::Pixel) {
-      uint32_t target = 0;
-      if (output_id > 0 || component > 3) {
-        const uint32_t sequenced = ctx.pixel_store_output_counter++;
-        target = std::min<uint32_t>(7u, sequenced >> 2);
-        const uint32_t sequenced_component = sequenced & 3u;
-        recordDiagnostic(ctx,
-                         "DXIL StoreOutput signature fallback: output_id=%u component=%u target=%u sequenced=%u",
-                         output_id, component, target, sequenced_component);
-        component = sequenced_component;
-      } else {
-        ctx.pixel_store_output_counter =
-            std::max(ctx.pixel_store_output_counter, component + 1);
-      }
-      return std::string("result.color") + std::to_string(target) +
-             componentSuffix(component) + " = " + val;
+      ctx.pixel_store_output_counter++;
+      uint32_t target = std::min<uint32_t>(
+          7u, pixelOutputTargetForSignature(ctx.options, output_id));
+      const auto out_type = pixelOutputType(ctx.options, target);
+      return writeIOComponent(out_type,
+                              std::string("result.color") +
+                                  std::to_string(target),
+                              component) +
+             " = " + val;
     }
     recordDiagnostic(ctx, "DXIL StoreOutput fallback: shader_kind=%u output_id=%u component=%u",
                      (uint32_t)ctx.shader.kind, output_id, component);
@@ -2189,7 +2737,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       return std::string("float") + std::to_string(result_lanes) + "(" +
              "dxmt_float(" + value + "))";
     }
-    return scalarValue(operand);
+    return "dxmt_float(" + scalarValue(operand) + ")";
   };
 
   auto numericOperandForResultType = [&](uint32_t operand, uint32_t result_type_id) -> std::string {
@@ -2310,9 +2858,22 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     uint32_t inferred_intrinsic_id =
         inferDXIntrinsicIdFromName(effective_callee_name);
     if (named_dxop && inferred_intrinsic_id &&
-        (!has_intrinsic_literal || intrinsic_id != inferred_intrinsic_id)) {
+        !has_intrinsic_literal) {
       intrinsic_id = inferred_intrinsic_id;
       has_intrinsic_literal = true;
+    } else if (named_dxop && inferred_intrinsic_id && has_intrinsic_literal &&
+               intrinsic_id != inferred_intrinsic_id &&
+               isKnownDXIntrinsic(intrinsic_id)) {
+      recordDiagnostic(ctx,
+                       "DXIL intrinsic name/literal mismatch: name=%u literal=%u; trusting literal",
+                       inferred_intrinsic_id, intrinsic_id);
+    } else if (named_dxop && inferred_intrinsic_id && has_intrinsic_literal &&
+               intrinsic_id != inferred_intrinsic_id &&
+               !isKnownDXIntrinsic(intrinsic_id)) {
+      recordDiagnostic(ctx,
+                       "DXIL intrinsic name/literal mismatch: name=%u literal=%u; trusting name",
+                       inferred_intrinsic_id, intrinsic_id);
+      intrinsic_id = inferred_intrinsic_id;
     }
     if (named_dxop && !has_intrinsic_literal) {
       ctx.unsupported_intrinsics++;
@@ -2324,6 +2885,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       std::vector<uint32_t> remaining_args;
       bool skipped_intrinsic_literal = false;
       bool skipped_symbol_operand = false;
+      bool saw_non_symbol_operand = false;
       for (size_t i = 0; i < call_args.size(); i++) {
         std::string arg_text = rawValue(call_args[i]);
         if (startsWith(arg_text, "dx.op.")) {
@@ -2331,11 +2893,13 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
           continue;
         }
         uint32_t literal = 0;
-        if (!skipped_intrinsic_literal &&
+        if (!saw_non_symbol_operand && !skipped_intrinsic_literal &&
             parseUnsignedLiteral(arg_text, literal) && literal == intrinsic_id) {
           skipped_intrinsic_literal = true;
+          saw_non_symbol_operand = true;
           continue;
         }
+        saw_non_symbol_operand = true;
         remaining_args.push_back(call_args[i]);
       }
       if (skipped_symbol_operand) {
@@ -2455,6 +3019,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
                " + " +
                numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      expr = normalizeMSLNumericExpr(std::move(expr));
       os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult(inferVectorLaneCountFromExpr(expr), expr);
@@ -2479,6 +3044,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
                " - " +
                numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      expr = normalizeMSLNumericExpr(std::move(expr));
       os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult(inferVectorLaneCountFromExpr(expr), expr);
@@ -2503,6 +3069,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
                " * " +
                numericOperandForResultType(inst.operands[1], inst.type_id);
       }
+      expr = normalizeMSLNumericExpr(std::move(expr));
       os << "  auto " << result << " = " << expr << ";\n";
     }
     publishResult(inferVectorLaneCountFromExpr(expr), expr);
@@ -2548,6 +3115,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
              " + " + floatOperandForResultType(inst.operands[1], inst.type_id);
     }
+    expr = normalizeMSLNumericExpr(std::move(expr));
     os << "  auto " << result << " = " << expr << ";\n";
     publishResult(0, expr);
     break;
@@ -2562,6 +3130,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
              " - " + floatOperandForResultType(inst.operands[1], inst.type_id);
     }
+    expr = normalizeMSLNumericExpr(std::move(expr));
     os << "  auto " << result << " = " << expr << ";\n";
     publishResult(0, expr);
     break;
@@ -2576,6 +3145,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
              " * " + floatOperandForResultType(inst.operands[1], inst.type_id);
     }
+    expr = normalizeMSLNumericExpr(std::move(expr));
     os << "  auto " << result << " = " << expr << ";\n";
     publishResult(0, expr);
     break;
@@ -2590,6 +3160,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       expr = floatOperandForResultType(inst.operands[0], inst.type_id) +
              " / " + floatOperandForResultType(inst.operands[1], inst.type_id);
     }
+    expr = normalizeMSLNumericExpr(std::move(expr));
     os << "  auto " << result << " = " << expr << ";\n";
     publishResult(0, expr);
     break;
@@ -2899,12 +3470,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   }
 
   case LLVMInstruction::Select: {
+    std::string expr;
     if (inst.operands.size() >= 3) {
-      os << "  auto " << result << " = " << boolValue(inst.operands[0]) << " ? "
-         << operandValueForResultType(inst.operands[1], inst.type_id) << " : "
-         << operandValueForResultType(inst.operands[2], inst.type_id) << ";\n";
+      expr = boolValue(inst.operands[0]) + " ? " +
+             operandValueForResultType(inst.operands[1], inst.type_id) + " : " +
+             operandValueForResultType(inst.operands[2], inst.type_id);
+      expr = normalizeMSLNumericExpr(std::move(expr));
+      os << "  auto " << result << " = " << expr << ";\n";
     }
-    publishResult();
+    publishResult(inferVectorLaneCountFromExpr(expr), expr);
     break;
   }
 
@@ -3219,13 +3793,20 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
 std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
                                               const DxilParsedShader &shader) {
+  static const MSLConvertOptions default_options = {};
+  return convert(module, shader, default_options);
+}
+
+std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
+                                              const DxilParsedShader &shader,
+                                              const MSLConvertOptions &options) {
   DXTRACE("DXILToMSL::convert: kind=%u sm=%u.%u functions=%zu types=%zu",
           (uint32_t)shader.kind, shader.shader_model.major, shader.shader_model.minor,
           module.functions.size(), module.types.size());
 
   std::ostringstream os;
-  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, false,
-                  false, false, false};
+  EmitContext ctx{os, module, shader, options, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0,
+                  false, false, false, false};
 
   if (module.functions.empty()) {
     DXTRACE("DXILToMSL: refusing to emit default shader for module with no functions");

@@ -103,6 +103,18 @@ static id<MTLFunction> loadFunction(id<MTLDevice> device, NSDictionary *shader, 
   return fn;
 }
 
+static NSArray *loadLinkedFunctions(id<MTLDevice> device, NSArray *shaders, NSString **errorOut) {
+  if (![shaders isKindOfClass:[NSArray class]] || [shaders count] == 0) return @[];
+  NSMutableArray *functions = [NSMutableArray array];
+  for (NSDictionary *shader in shaders) {
+    if (![shader isKindOfClass:[NSDictionary class]]) continue;
+    id<MTLFunction> fn = loadFunction(device, shader, errorOut);
+    if (!fn) return nil;
+    [functions addObject:fn];
+  }
+  return functions;
+}
+
 static NSDictionary *okResult(NSDictionary *pipeline, NSString *status, NSDictionary *extra) {
   NSMutableDictionary *result = [@{
     @"name": stringValue(pipeline, @"name", @""),
@@ -195,6 +207,17 @@ int main(int argc, const char **argv) {
         MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
         desc.vertexFunction = vertex;
         desc.fragmentFunction = fragment;
+        NSArray *vertexLinkedFunctions = loadLinkedFunctions(device, pipeline[@"vertex_linked_functions"], &errorText);
+        if (!vertexLinkedFunctions) {
+          failures += 1;
+          [results addObject:failResult(pipeline, @"vertex_linked_function_failed", errorText)];
+          continue;
+        }
+        if ([vertexLinkedFunctions count] > 0) {
+          MTLLinkedFunctions *linked = [MTLLinkedFunctions linkedFunctions];
+          linked.functions = vertexLinkedFunctions;
+          desc.vertexLinkedFunctions = linked;
+        }
         NSDictionary *d3d12 = dictValue(pipeline, @"d3d12");
         NSUInteger inputElements = d3d12 ? uintValue(d3d12, @"input_elements", 0) : 0;
         if (inputElements > 0) {
@@ -284,6 +307,30 @@ def discover_pso_manifests(roots: list[Path]) -> list[Path]:
     return sorted(set(manifests))
 
 
+def attach_inferred_stage_in_linked_function(pipeline: dict) -> dict:
+    metal = pipeline.get("metal") if isinstance(pipeline.get("metal"), dict) else {}
+    vertex = pipeline.get("vertex") if isinstance(pipeline.get("vertex"), dict) else {}
+    if pipeline.get("vertex_linked_functions"):
+        return pipeline
+    if not metal.get("uses_stage_in"):
+        return pipeline
+    metallib = vertex.get("metallib")
+    if not metallib:
+        return pipeline
+    stage_in = Path(str(metallib)).with_suffix(".stageIn.metallib")
+    if not stage_in.exists():
+        return pipeline
+    copy = dict(pipeline)
+    copy["vertex_linked_functions"] = [
+        {
+            "metallib": str(stage_in),
+            "function": "irconverter_stage_in_shader",
+            "inferred": True,
+        }
+    ]
+    return copy
+
+
 def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
     pipelines: list[dict] = []
     source_manifests: list[str] = []
@@ -294,7 +341,7 @@ def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
         source_manifests.append(str(manifest_path))
         for pipeline in manifest["pipelines"]:
             if isinstance(pipeline, dict):
-                copy = dict(pipeline)
+                copy = attach_inferred_stage_in_linked_function(dict(pipeline))
                 copy.setdefault("captured_manifest", str(manifest_path))
                 pipelines.append(copy)
                 if limit > 0 and len(pipelines) >= limit:

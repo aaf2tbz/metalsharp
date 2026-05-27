@@ -6,6 +6,7 @@
 #include <sstream>
 #include <optional>
 #include <vector>
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -32,16 +33,47 @@ struct ResourceBinding {
   std::string name;
 };
 
+enum class MSLScalarKind : uint8_t {
+  Float,
+  UInt,
+  SInt,
+};
+
+struct MSLStageIOType {
+  MSLScalarKind scalar = MSLScalarKind::Float;
+  uint32_t components = 4;
+  bool valid = false;
+};
+
+struct MSLConvertOptions {
+  std::array<MSLStageIOType, 16> vertex_inputs = {};
+  std::array<MSLStageIOType, 8> pixel_outputs = {};
+  std::array<uint32_t, 32> vertex_input_register_for_signature = {};
+  std::array<bool, 32> vertex_input_signature_valid = {};
+  std::array<uint32_t, 32> vertex_output_register_for_signature = {};
+  std::array<bool, 32> vertex_output_signature_valid = {};
+  std::array<bool, 32> vertex_output_is_position = {};
+  std::array<uint32_t, 32> pixel_input_register_for_signature = {};
+  std::array<bool, 32> pixel_input_signature_valid = {};
+  std::array<bool, 32> pixel_input_is_position = {};
+  std::array<uint32_t, 32> pixel_output_target_for_signature = {};
+  std::array<bool, 32> pixel_output_signature_valid = {};
+};
+
 class DXILToMSL {
 public:
   static std::optional<MSLShader> convert(const LLVMModule &module,
                                            const DxilParsedShader &shader);
+  static std::optional<MSLShader> convert(const LLVMModule &module,
+                                           const DxilParsedShader &shader,
+                                           const MSLConvertOptions &options);
 
 private:
   struct EmitContext {
     std::ostringstream &os;
     const LLVMModule &mod;
     const DxilParsedShader &shader;
+    const MSLConvertOptions &options;
     std::vector<std::string> value_table;
     std::vector<std::string> value_expr_table;
     std::vector<uint32_t> value_types;
@@ -58,6 +90,9 @@ private:
     bool uses_group_id = false;
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
+    uint32_t vertex_load_input_counter = 0;
+    uint32_t pixel_load_input_counter = 0;
+    uint32_t vertex_store_output_counter = 0;
     uint32_t pixel_store_output_counter = 0;
   };
 

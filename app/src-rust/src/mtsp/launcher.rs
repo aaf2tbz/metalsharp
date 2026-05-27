@@ -841,6 +841,7 @@ pub fn launch_custom_with_options(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -953,7 +954,11 @@ fn launch_dxmt_metal_with_context(
 
     let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
-    if node.id == PipelineId::M12 {
+    if node.id == PipelineId::M12
+        && std::env::var("METALSHARP_M12_LIVE_MSC_SIDECAR")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+    {
         spawn_metalshaderconverter_sidecar(appid, &home, cache_paths.as_ref());
     }
 
@@ -976,6 +981,7 @@ fn launch_dxmt_metal_with_context(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
 
     for ev in &node.env_vars {
@@ -1523,6 +1529,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
@@ -1545,14 +1552,31 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
             ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
-            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()),
-            ("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()),
-            ("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()),
+            ("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()),
+            ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()),
+            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
+            // Metal Shader Converter is an offline cache/warmup tool for this
+            // route. During live gameplay, prefer our internal DXIL->MSL path
+            // so PSO creation cannot block on or link against runtime MSC sidecars.
+            ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
+            // UE5 reaches the main viewport, but the swapchain remains black
+            // when alpha-blended final passes preserve a bad fragment alpha.
+            ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
             ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
-            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=24".to_string()),
+            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
         ];
+        if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
+            env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+            env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
+        }
         if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
             .map(|value| !value.is_empty() && value != "0")
             .unwrap_or(false)
@@ -2095,7 +2119,7 @@ mod tests {
                 env.iter().find(|(key, _)| key == "METALSHARP_CACHE_SUMMARY").map(|(_, value)| value.as_str());
 
             assert!(config.unwrap_or_default().contains("d3d11.metalSpatialUpscaleFactor=1.43"));
-            let expected_frame_rate = if pipeline_id == PipelineId::M12 { "24" } else { "60" };
+            let expected_frame_rate = "60";
             assert!(config
                 .unwrap_or_default()
                 .contains(&format!("d3d11.preferredMaxFrameRate={}", expected_frame_rate)));
@@ -2134,6 +2158,7 @@ mod tests {
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
@@ -2145,7 +2170,12 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
+        assert!(overrides.contains("winemetal"));
         assert!(overrides.contains("d3d12"));
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()),
+            Some("winemetal.so")
+        );
         let _ = std::fs::remove_dir_all(home);
     }
 

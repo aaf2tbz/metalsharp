@@ -87,6 +87,26 @@ python3 tools/d3d12-metal-sdk/scripts/replay-shader-corpus.py \
   --corpus "/path/to/shader-cache/m12/1962700"
 ```
 
+For an independent shader translation oracle, compile HLSL through
+`dxc -spirv` and then `spirv-cross --msl`:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/shadercross-oracle.py \
+  --hlsl tools/d3d12-metal-sdk/probes/shadercross_oracle/stage_io_types.hlsl \
+  --entry VSMain \
+  --profile vs_6_6
+
+python3 tools/d3d12-metal-sdk/scripts/shadercross-oracle.py \
+  --hlsl tools/d3d12-metal-sdk/probes/shadercross_oracle/stage_io_types.hlsl \
+  --entry PSMain \
+  --profile ps_6_6
+```
+
+This path is not a decompiler for captured DXIL blobs. It is a reference lane
+for hard D3D12-to-Metal typing questions, especially vertex `stage_in`
+attribute types and integer render-target outputs. Use it when DXIL-generated
+MSL compiles but Metal rejects the PSO with type mismatch errors.
+
 For a strict Winemetal ABI/export gate before any Steam or game launch:
 
 ```bash

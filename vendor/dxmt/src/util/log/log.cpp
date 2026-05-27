@@ -8,6 +8,8 @@
  * See <https://github.com/doitsujin/dxvk/blob/master/LICENSE>
  */
 
+#include <algorithm>
+#include <cstdio>
 #include <iostream>
 #include <utility>
 
@@ -17,6 +19,42 @@
 #include "util_string.hpp"
 
 namespace dxmt {
+
+namespace {
+
+bool enableWineLogOutput() {
+  const std::string value = env::getEnvVar("DXMT_ENABLE_WINE_LOG_OUTPUT");
+  return value == "1" || value == "true" || value == "TRUE";
+}
+
+std::string sanitizeLogLine(const std::string &line) {
+  constexpr size_t MaxLogLineBytes = 4096;
+  std::string sanitized;
+  sanitized.reserve(std::min(line.size(), MaxLogLineBytes) + 32);
+
+  size_t copied = 0;
+  for (unsigned char ch : line) {
+    if (copied >= MaxLogLineBytes) {
+      sanitized += "...<truncated>";
+      break;
+    }
+
+    if (ch == '\t' || ch == '\r' || (ch >= 0x20 && ch != 0x7f)) {
+      sanitized.push_back(static_cast<char>(ch));
+      copied++;
+      continue;
+    }
+
+    char escaped[5] = {};
+    std::snprintf(escaped, sizeof(escaped), "\\x%02x", ch);
+    sanitized += escaped;
+    copied += 4;
+  }
+
+  return sanitized;
+}
+
+} // namespace
 
 Logger::Logger(const std::string &fileName)
     : m_minLevel(getMinLogLevel()), m_fileName(fileName) {}
@@ -58,7 +96,8 @@ void Logger::emitMsg(LogLevel level, const std::string &message) {
 
     if (!std::exchange(m_initialized, true)) {
 #ifdef _WIN32
-      HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+      HMODULE ntdll = enableWineLogOutput() ? GetModuleHandleA("ntdll.dll")
+                                            : nullptr;
 
       if (ntdll)
         m_wineLogOutput = reinterpret_cast<PFN_wineLogOutput>(
@@ -75,7 +114,7 @@ void Logger::emitMsg(LogLevel level, const std::string &message) {
 
     while (std::getline(stream, line, '\n')) {
       std::stringstream outstream;
-      outstream << prefix << line << std::endl;
+      outstream << prefix << sanitizeLogLine(line) << std::endl;
 
       std::string adjusted = outstream.str();
 

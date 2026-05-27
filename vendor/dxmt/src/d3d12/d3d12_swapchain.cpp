@@ -31,6 +31,22 @@ static uint64_t PresentLogInterval() {
   return interval;
 }
 
+static bool LivePresentEnabled() {
+  static bool enabled = [] {
+    const char *raw = std::getenv("DXMT_D3D12_LIVE_PRESENT");
+    return raw && raw[0] && raw[0] != '0';
+  }();
+  return enabled;
+}
+
+static bool WindowHandoffEnabled() {
+  static bool enabled = [] {
+    const char *raw = std::getenv("DXMT_D3D12_REASSERT_WINDOW_HANDOFF");
+    return raw && raw[0] && raw[0] != '0';
+  }();
+  return enabled;
+}
+
 static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R8G8B8A8_UNORM: return WMTPixelFormatRGBA8Unorm;
@@ -216,10 +232,17 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
   }
   m_source_width = m_desc.Width;
   m_source_height = m_desc.Height;
+  if (m_hwnd && IsWindow(m_hwnd)) {
+    m_monitor = wsi::getWindowMonitor(m_hwnd);
+    m_window_state.style = static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
+    m_window_state.exstyle = static_cast<LONG>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
+    GetWindowRect(m_hwnd, &m_window_state.rect);
+  }
 
   auto wmt_dev = dxgi_device->GetMTLDevice();
   m_present_queue = wmt_dev.newCommandQueue(1);
   m_present_library = std::make_unique<InternalCommandLibrary>(wmt_dev);
+  ReassertWindowForHandoff("create");
   EnsureMetalView();
 
   ResizeBuffers(0, m_desc.Width, m_desc.Height, m_desc.Format, m_desc.Flags);
@@ -320,6 +343,55 @@ bool MTLD3D12SwapChain::AttachMetalViewForHWND(HWND hwnd) {
   m_native_view = candidate_view;
   m_layer = candidate_layer;
   return true;
+}
+
+void MTLD3D12SwapChain::ReassertWindowForHandoff(const char *reason) {
+  if (!WindowHandoffEnabled())
+    return;
+  if (!m_hwnd || !IsWindow(m_hwnd)) {
+    SCTRACE("ReassertWindowForHandoff skipped reason=%s hwnd=%p valid=%d",
+            reason ? reason : "unknown", (void *)m_hwnd,
+            m_hwnd ? (int)IsWindow(m_hwnd) : 0);
+    return;
+  }
+
+  RECT client = {};
+  RECT window = {};
+  GetClientRect(m_hwnd, &client);
+  GetWindowRect(m_hwnd, &window);
+
+  UINT width = client.right > client.left
+                   ? static_cast<UINT>(client.right - client.left)
+                   : (m_desc.Width ? m_desc.Width : 1280u);
+  UINT height = client.bottom > client.top
+                    ? static_cast<UINT>(client.bottom - client.top)
+                    : (m_desc.Height ? m_desc.Height : 720u);
+
+  ShowWindow(m_hwnd, SW_SHOWNORMAL);
+  if (client.right <= client.left || client.bottom <= client.top) {
+    RECT target = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
+    DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
+    AdjustWindowRectEx(&target, style, FALSE, ex_style);
+    SetWindowPos(m_hwnd, HWND_TOP, 0, 0, target.right - target.left,
+                 target.bottom - target.top,
+                 SWP_NOMOVE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+  } else {
+    SetWindowPos(m_hwnd, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+                     SWP_FRAMECHANGED);
+  }
+
+  SetForegroundWindow(m_hwnd);
+  SCTRACE("ReassertWindowForHandoff reason=%s hwnd=%p client=%ldx%ld window=%ld,%ld %ldx%ld fs_windowed=%u",
+          reason ? reason : "unknown", (void *)m_hwnd,
+          client.right - client.left, client.bottom - client.top,
+          window.left, window.top, window.right - window.left,
+          window.bottom - window.top, m_fs_desc.Windowed ? 1 : 0);
+  Logger::info(str::format("M12 reassert window handoff reason=",
+                           reason ? reason : "unknown", " hwnd=", (void *)m_hwnd,
+                           " client=", width, "x", height,
+                           " windowed=", m_fs_desc.Windowed ? 1 : 0));
 }
 
 void MTLD3D12SwapChain::ConfigureLayer() {
@@ -438,8 +510,22 @@ HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
   SCTRACE("SetFullscreenState fullscreen=%u target=%p hwnd=%p",
           fullscreen ? 1 : 0, target, m_hwnd);
+  if (!m_hwnd || !IsWindow(m_hwnd))
+    return DXGI_ERROR_INVALID_CALL;
+
   m_fs_desc.Windowed = !fullscreen;
   m_fullscreen_target = target;
+  m_monitor = wsi::getWindowMonitor(m_hwnd);
+  if (fullscreen) {
+    if (!wsi::enterFullscreenMode(m_monitor, m_hwnd, &m_window_state, false)) {
+      SCTRACE("SetFullscreenState enter fullscreen failed hwnd=%p", m_hwnd);
+      return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+    }
+  } else {
+    wsi::leaveFullscreenMode(m_hwnd, &m_window_state, false);
+  }
+  ReassertWindowForHandoff(fullscreen ? "set_fullscreen" : "set_windowed");
+  EnsureMetalView();
   return S_OK;
 }
 
@@ -508,6 +594,7 @@ MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count, UINT width, UINT height,
     m_source_width = width;
   if (m_source_height == 0)
     m_source_height = height;
+  ReassertWindowForHandoff("resize_buffers");
   ConfigureLayer();
 
   D3D12_RESOURCE_DESC res_desc = {};
@@ -571,6 +658,24 @@ MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
     SetWindowPos(m_hwnd, nullptr, 0, 0, client.right - client.left,
                  client.bottom - client.top, SWP_NOMOVE | SWP_NOZORDER |
                                              SWP_NOACTIVATE);
+    ReassertWindowForHandoff("resize_target_windowed");
+  } else if (!m_fs_desc.Windowed) {
+    m_monitor = wsi::getWindowMonitor(m_hwnd);
+    wsi::WsiMode mode{
+        new_target_params->Width,
+        new_target_params->Height,
+        {new_target_params->RefreshRate.Numerator,
+         new_target_params->RefreshRate.Denominator
+             ? new_target_params->RefreshRate.Denominator
+             : 1u},
+        32,
+        new_target_params->ScanlineOrdering ==
+                DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST ||
+            new_target_params->ScanlineOrdering ==
+                DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST};
+    wsi::setWindowMode(m_monitor, m_hwnd, mode);
+    wsi::updateFullscreenWindow(m_monitor, m_hwnd, false);
+    ReassertWindowForHandoff("resize_target_fullscreen");
   }
   return S_OK;
 }
@@ -642,6 +747,8 @@ HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
                             const DXGI_PRESENT_PARAMETERS *params) {
   m_present_count++;
+  if (m_present_count <= 8 || (m_present_count % PresentLogInterval()) == 0)
+    ReassertWindowForHandoff("present");
 
   if (!m_backbuffers[m_current_buffer]) {
     SCTRACE("SwapChain::Present sync=%u flags=0x%x NO BACKBUFFER idx=%u", sync_interval, flags, m_current_buffer);
@@ -669,16 +776,23 @@ MTLD3D12SwapChain::Present1(UINT sync_interval, UINT flags,
   if (present_wait_seq > 0)
     present_wait_seq -= 1;
   if (present_wait_seq > m_last_present_wait_seq) {
-    SCTRACE("Present waiting for render seq=%llu", (unsigned long long)present_wait_seq);
-    auto wait_begin = std::chrono::steady_clock::now();
-    dxmt_queue.WaitCPUFence(present_wait_seq);
-    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - wait_begin)
-                       .count();
-    if (wait_ms >= DXMTD3D12TimingMinMs()) {
-      SCTRACE("Present wait_cpu_fence_ms=%lld seq=%llu buffer=%u",
-              (long long)wait_ms, (unsigned long long)present_wait_seq,
-              m_current_buffer);
+    if (LivePresentEnabled()) {
+      if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
+        SCTRACE("Present live mode skipping CPU render wait seq=%llu buffer=%u",
+                (unsigned long long)present_wait_seq, m_current_buffer);
+      }
+    } else {
+      SCTRACE("Present waiting for render seq=%llu", (unsigned long long)present_wait_seq);
+      auto wait_begin = std::chrono::steady_clock::now();
+      dxmt_queue.WaitCPUFence(present_wait_seq);
+      auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - wait_begin)
+                         .count();
+      if (wait_ms >= DXMTD3D12TimingMinMs()) {
+        SCTRACE("Present wait_cpu_fence_ms=%lld seq=%llu buffer=%u",
+                (long long)wait_ms, (unsigned long long)present_wait_seq,
+                m_current_buffer);
+      }
     }
     m_last_present_wait_seq = present_wait_seq;
   }

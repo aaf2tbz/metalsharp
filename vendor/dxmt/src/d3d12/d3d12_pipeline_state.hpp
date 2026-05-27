@@ -116,6 +116,7 @@ public:
   std::string GetGSCacheHash() const;
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
+  const D3D12_INPUT_LAYOUT_DESC &GetInputLayout() const { return m_input_layout; }
   bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
   bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }

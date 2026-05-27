@@ -29,6 +29,16 @@ winemetal_log_unix_status(unsigned int code, NTSTATUS status) {
     }                                                                                                                  \
   }
 
+static bool
+winemetal_unix_call_ok(unsigned int code, void *params) {
+  NTSTATUS status = WINE_UNIX_CALL(code, params);
+  if (status) {
+    winemetal_log_unix_status(code, status);
+    return false;
+  }
+  return true;
+}
+
 #define PtrToUInt64(v) ((uint64_t)(uintptr_t)(v))
 
 static int
@@ -418,28 +428,28 @@ MTLDevice_newMeshRenderPipelineState(
   return params.ret_pso;
 }
 
-WINEMETAL_API void
+WINEMETAL_API bool
 MTLBlitCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head) {
   struct unixcall_generic_obj_cmd_noret params;
   params.encoder = encoder;
   WMT_MEMPTR_SET(params.cmd_head, cmd_head);
-  UNIX_CALL(36, &params);
+  return winemetal_unix_call_ok(36, &params);
 }
 
-WINEMETAL_API void
+WINEMETAL_API bool
 MTLComputeCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head) {
   struct unixcall_generic_obj_cmd_noret params;
   params.encoder = encoder;
   WMT_MEMPTR_SET(params.cmd_head, cmd_head);
-  UNIX_CALL(37, &params);
+  return winemetal_unix_call_ok(37, &params);
 }
 
-WINEMETAL_API void
+WINEMETAL_API bool
 MTLRenderCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head) {
   struct unixcall_generic_obj_cmd_noret params;
   params.encoder = encoder;
   WMT_MEMPTR_SET(params.cmd_head, cmd_head);
-  UNIX_CALL(38, &params);
+  return winemetal_unix_call_ok(38, &params);
 }
 
 WINEMETAL_API enum WMTPixelFormat

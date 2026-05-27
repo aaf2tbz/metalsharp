@@ -1037,7 +1037,7 @@ struct wmtcmd_blit_resolvecounters {
   uint64_t dst_offset;
 };
 
-WINEMETAL_API void MTLBlitCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
+WINEMETAL_API bool MTLBlitCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
 
 enum WMTComputeCommandType : uint16_t {
   WMTComputeCommandNop,
@@ -1161,7 +1161,7 @@ enum WMTComputeCommandType type;
   enum WMTBarrierScope scope;
 };
 
-WINEMETAL_API void MTLComputeCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
+WINEMETAL_API bool MTLComputeCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
 
 enum WMTRenderCommandType : uint16_t {
   WMTRenderCommandNop,
@@ -1592,7 +1592,7 @@ struct wmtcmd_render_dispatch_threads_per_tile {
   uint32_t height;
 };
 
-WINEMETAL_API void MTLRenderCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
+WINEMETAL_API bool MTLRenderCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd_base *cmd_head);
 
 WINEMETAL_API enum WMTPixelFormat MTLTexture_pixelFormat(obj_handle_t texture);
 WINEMETAL_API uint64_t MTLTexture_width(obj_handle_t texture);

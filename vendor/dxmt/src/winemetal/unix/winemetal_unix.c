@@ -36,6 +36,29 @@ winemetal_critical_log(void) {
   return fopen("/tmp/winemetal_debug.log", "a");
 }
 
+static bool
+winemetal_end_encoder_safely(id<MTLCommandEncoder> encoder, const char *label) {
+  if (!encoder)
+    return true;
+
+  @try {
+    [encoder endEncoding];
+    return true;
+  } @catch(NSException * exception) {
+    FILE *el = winemetal_critical_log();
+    if (el) {
+      const char *name = [[exception name] UTF8String];
+      const char *reason = [[exception reason] UTF8String];
+      fprintf(el,
+              "encoder_end_exception label=%s encoder=%p exception=%s reason=%s\n",
+              label ? label : "(null)", encoder, name ? name : "(null)",
+              reason ? reason : "(null)");
+      fclose(el);
+    }
+    return false;
+  }
+}
+
 static const char *
 winemetal_nsstring_utf8(NSString *value) {
   return value ? [value UTF8String] : "<nil>";
@@ -743,8 +766,10 @@ _MTLCommandBuffer_renderCommandEncoder(void *obj) {
 static NTSTATUS
 _MTLCommandEncoder_endEncoding(void *obj) {
   struct unixcall_generic_obj_noret *params = obj;
-  [(id<MTLCommandEncoder>)params->handle endEncoding];
-  return STATUS_SUCCESS;
+  return winemetal_end_encoder_safely((id<MTLCommandEncoder>)params->handle,
+                                      "explicit")
+             ? STATUS_SUCCESS
+             : STATUS_UNSUCCESSFUL;
 }
 
 #ifndef DXMT_NO_PRIVATE_API
@@ -1260,6 +1285,8 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
         if (dl) {
           fclose(dl);
         }
+        winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
+                                     "render_unknown_command");
         return STATUS_UNSUCCESSFUL;
       }
       case WMTRenderCommandNop:
@@ -1585,6 +1612,8 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
       if (dl) {
         fclose(dl);
       }
+      winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
+                                   "render_encode_exception");
       return STATUS_UNSUCCESSFUL;
     }
     next = next->next.ptr;

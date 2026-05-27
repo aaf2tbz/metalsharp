@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -825,6 +826,14 @@ struct ReplayState {
       return true;
 
     const auto &ds = pso->GetDepthStencilDesc();
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_B8G8R8A8_UNORM &&
+        ds.DepthEnable && ds.StencilEnable)
+      return true;
+
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT &&
+        ds.DepthEnable && ds.StencilEnable)
+      return true;
+
     return rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
            ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT;
   }
@@ -840,12 +849,140 @@ struct ReplayState {
         rtv0 == DXGI_FORMAT_R8G8B8A8_UNORM)
       return "rgba8_mrt_dsv";
     const auto &ds = pso->GetDepthStencilDesc();
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_B8G8R8A8_UNORM &&
+        ds.DepthEnable && ds.StencilEnable)
+      return "b8g8r8a8_scene_dsv_stencil_stage_in";
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT &&
+        ds.DepthEnable && ds.StencilEnable)
+      return "r11g11b10_scene_dsv_stencil_stage_in";
     if (rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
         ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT)
       return "r11g11b10_gbuffer_dsv_stencil";
     if (!has_dsv && rt_count == 1 && last_bound_vertex_buffers == 0)
       return "zero_vb_stage_in_offscreen";
     return "unknown";
+  }
+
+  bool ShouldSkipUnsafeMSCIndexedStageInDraw(
+      MTLD3D12Device *device, uint32_t index_count, uint32_t instance_count,
+      uint32_t start_index, int32_t base_vertex, uint32_t start_instance,
+      std::string &reason) const {
+    reason.clear();
+    if (!device || !pso || HasSwapchainRenderTarget() ||
+        !pso->UsesStageInVertexDescriptor() ||
+        !pso->RequiresMSCStageInFunction() || !ib.BufferLocation ||
+        !index_count || !instance_count || index_count < 4096)
+      return false;
+
+    const auto &input_layout = pso->GetInputLayout();
+    if (!input_layout.NumElements || !input_layout.pInputElementDescs)
+      return false;
+
+    auto *ib_res = device->LookupResourceByGPUAddress(ib.BufferLocation);
+    if (!ib_res && ib.BufferLocation)
+      ib_res = reinterpret_cast<MTLD3D12Resource *>(ib.BufferLocation);
+    if (!ib_res)
+      return false;
+
+    const uint32_t index_size = ib.Format == DXGI_FORMAT_R32_UINT ? 4u : 2u;
+    if (ib.Format != DXGI_FORMAT_R16_UINT && ib.Format != DXGI_FORMAT_R32_UINT)
+      return false;
+
+    D3D12_RESOURCE_DESC ib_desc = {};
+    ib_res->GetDesc(&ib_desc);
+    const uint64_t base_offset = ib.BufferLocation - ib_res->GetGPUVirtualAddress();
+    const uint64_t index_offset = base_offset + uint64_t(start_index) * index_size;
+    const uint64_t index_bytes = uint64_t(index_count) * index_size;
+    if (index_offset > ib_desc.Width || index_bytes > ib_desc.Width - index_offset) {
+      reason = str::format("index_range_oob idx=", index_count, " start=",
+                           start_index, " offset=", index_offset,
+                           " bytes=", index_bytes, " ib_width=", ib_desc.Width);
+      return true;
+    }
+
+    void *index_base = nullptr;
+    D3D12_RANGE read_range = {index_offset, index_offset + index_bytes};
+    HRESULT hr = ib_res->Map(0, &read_range, &index_base);
+    if (FAILED(hr) || !index_base)
+      return false;
+
+    uint32_t min_index = std::numeric_limits<uint32_t>::max();
+    uint32_t max_index = 0;
+    const uint8_t *index_bytes_ptr =
+        static_cast<const uint8_t *>(index_base) + index_offset;
+    if (index_size == 4) {
+      for (uint32_t i = 0; i < index_count; i++) {
+        uint32_t value = 0;
+        std::memcpy(&value, index_bytes_ptr + uint64_t(i) * index_size,
+                    sizeof(value));
+        min_index = std::min(min_index, value);
+        max_index = std::max(max_index, value);
+      }
+    } else {
+      for (uint32_t i = 0; i < index_count; i++) {
+        uint16_t value = 0;
+        std::memcpy(&value, index_bytes_ptr + uint64_t(i) * index_size,
+                    sizeof(value));
+        min_index = std::min<uint32_t>(min_index, value);
+        max_index = std::max<uint32_t>(max_index, value);
+      }
+    }
+    ib_res->Unmap(0, nullptr);
+
+    const int64_t min_vertex_id = int64_t(base_vertex) + int64_t(min_index);
+    const int64_t max_vertex_id = int64_t(base_vertex) + int64_t(max_index);
+    if (min_vertex_id < 0) {
+      reason = str::format("negative_vertex_id min=", min_vertex_id,
+                           " base=", base_vertex, " min_index=", min_index);
+      return true;
+    }
+
+    uint64_t required_per_slot[kVertexBufferSlotCount] = {};
+    for (UINT i = 0; i < input_layout.NumElements; i++) {
+      const auto &element = input_layout.pInputElementDescs[i];
+      if (element.InputSlot >= kVertexBufferSlotCount)
+        continue;
+
+      uint64_t required = uint64_t(max_vertex_id) + 1ull;
+      if (element.InputSlotClass ==
+          D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA) {
+        if (element.InstanceDataStepRate == 0) {
+          required = uint64_t(start_instance) + 1ull;
+        } else {
+          required = uint64_t(start_instance) +
+                     (uint64_t(instance_count) + element.InstanceDataStepRate - 1ull) /
+                         element.InstanceDataStepRate;
+        }
+      }
+      required_per_slot[element.InputSlot] =
+          std::max(required_per_slot[element.InputSlot], required);
+    }
+
+    for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
+      const uint64_t required = required_per_slot[slot];
+      if (!required)
+        continue;
+
+      const auto &view = vbs[slot];
+      if (!view.BufferLocation || !view.StrideInBytes) {
+        reason = str::format("missing_vb slot=", slot, " required=", required,
+                             " stride=", view.StrideInBytes);
+        return true;
+      }
+
+      const uint64_t available =
+          view.StrideInBytes ? view.SizeInBytes / view.StrideInBytes : 0;
+      if (required > available) {
+        reason = str::format("vb_range_oob slot=", slot, " required=",
+                             required, " available=", available, " size=",
+                             view.SizeInBytes, " stride=", view.StrideInBytes,
+                             " idx=", index_count, " max_index=", max_index,
+                             " base=", base_vertex, " inst=", instance_count);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   struct RenderReadbackProbe {
@@ -2347,7 +2484,8 @@ struct ReplayState {
     draw.warp_count = warp_count;
     draw.instance_count = instance_count;
     draw.vertex_per_warp = vertex_per_warp;
-    render_enc.encodeCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+    EncodeRenderCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                         "geometry_draw");
     QTRACE("EncodeGeometryDraw v=%u i=%u start=%u instance_start=%u "
            "warp=%u vertex_per_warp=%u",
            vertex_count, instance_count, start_vertex, start_instance,
@@ -2404,7 +2542,8 @@ struct ReplayState {
     draw.warp_count = warp_count;
     draw.instance_count = instance_count;
     draw.vertex_per_warp = vertex_per_warp;
-    render_enc.encodeCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+    EncodeRenderCommands(reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                         "geometry_draw_indexed");
     render_enc.useResource(ib_res->GetMTLBuffer(), WMTResourceUsageRead,
                            WMTRenderStageObject);
     QTRACE("EncodeGeometryDrawIndexed idx=%u inst=%u start=%u base=%d "
@@ -2692,6 +2831,27 @@ struct ReplayState {
     }
     render_enc_open = false;
     render_enc = WMT::RenderCommandEncoder{};
+  }
+
+  bool EncodeRenderCommands(const wmtcmd_render_nop *cmd, const char *label) {
+    if (!render_enc_open || !render_enc.handle) {
+      QTRACE("%s: skipped because render encoder is not open",
+             label ? label : "render_encode");
+      return false;
+    }
+
+    if (render_enc.encodeCommands(cmd))
+      return true;
+
+    Logger::info(str::format("M12 render encoder encode failed label=",
+                             label ? label : "render_encode",
+                             " enc=", (unsigned long long)render_enc.handle,
+                             " pso=", (void *)pso, " ",
+                             TracePsoShaderSummary(pso)));
+    QTRACE("%s: encode failed; closing poisoned render encoder",
+           label ? label : "render_encode");
+    CloseRenderEncoder();
+    return false;
   }
 
   WMTPrimitiveType GetMetalPrimitiveType() {
@@ -3142,13 +3302,17 @@ struct ReplayState {
     if (indexed) {
       params.drawIndexed.indexCountPerInstance = element_count;
       params.drawIndexed.instanceCount = instance_count;
-      params.drawIndexed.startIndexLocation = start_element;
+      // Metal already applies D3D12 StartIndexLocation through
+      // index_buffer_offset. Passing it again to the MSC stage-in helper makes
+      // linked vertex fetches walk past the intended indices.
+      params.drawIndexed.startIndexLocation = 0;
       params.drawIndexed.baseVertexLocation = base_vertex;
       params.drawIndexed.startInstanceLocation = start_instance;
     } else {
       params.draw.vertexCountPerInstance = element_count;
       params.draw.instanceCount = instance_count;
-      params.draw.startVertexLocation = start_element;
+      // Metal's vertexStart is already reflected in [[vertex_id]].
+      params.draw.startVertexLocation = 0;
       params.draw.startInstanceLocation = start_instance;
     }
 
@@ -3172,7 +3336,7 @@ struct ReplayState {
     }
 
     QTRACE("BindMSCDrawParameters: indexed=%u count=%u inst=%u start=%u "
-           "base=%d start_inst=%u index_type=%u slots=%u/%u",
+           "msc_start=0 base=%d start_inst=%u index_type=%u slots=%u/%u",
            indexed ? 1u : 0u, element_count, instance_count, start_element,
            base_vertex, start_instance, (unsigned)index_type,
            kMSCDrawArgumentsSlot, kMSCUniformsSlot);
@@ -3196,7 +3360,7 @@ struct ReplayState {
             continue;
 
           auto &view = vbs[slot];
-          const uint32_t table_slot_index = table_index++;
+          const uint32_t table_slot_index = msc_stage_in ? slot : table_index++;
           auto *res =
               view.BufferLocation
                   ? device->LookupResourceByGPUAddress(view.BufferLocation)
@@ -4166,9 +4330,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    WMTIndexTypeUInt16);
           st.LogFinalRenderSnapshot("DrawInstanced", cmd->vertex_count,
                                     cmd->instance_count, cmd->start_vertex);
-          st.render_enc.encodeCommands(
-              reinterpret_cast<const wmtcmd_render_nop *>(&draw));
-          st.MarkSwapchainWorkEncoded();
+          if (st.EncodeRenderCommands(
+                  reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                  "draw_instanced"))
+            st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format("M12 swapchain DrawInstanced encoded v=",
@@ -4224,6 +4389,20 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                     cmd->instance_count, cmd->start_index,
                                     cmd->base_vertex, st.ib.BufferLocation,
                                     true);
+        std::string unsafe_stage_in_reason;
+        if (st.ShouldSkipUnsafeMSCIndexedStageInDraw(
+                m_device, cmd->index_count, cmd->instance_count,
+                cmd->start_index, cmd->base_vertex, cmd->start_instance,
+                unsafe_stage_in_reason)) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+            Logger::warn(str::format(
+                "M12 skipping unsafe MSC indexed stage-in DrawIndexedInstanced "
+                "reason=",
+                unsafe_stage_in_reason, " pso=", (void *)st.pso, " ",
+                TracePsoShaderSummary(st.pso)));
+          }
+          break;
+        }
         if (st.ShouldSkipUnsafeMSCOffscreenPass()) {
           if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
             Logger::warn(str::format(
@@ -4390,9 +4569,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    draw.index_type);
           st.LogFinalRenderSnapshot("DrawIndexedInstanced", cmd->index_count,
                                     cmd->instance_count, cmd->start_index);
-          st.render_enc.encodeCommands(
-              reinterpret_cast<const wmtcmd_render_nop *>(&draw));
-          st.MarkSwapchainWorkEncoded();
+          if (st.EncodeRenderCommands(
+                  reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                  "draw_indexed_instanced"))
+            st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format("M12 swapchain DrawIndexedInstanced encoded idx=",
@@ -4565,8 +4745,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                      args.StartVertexLocation, 0,
                                      args.StartInstanceLocation, false,
                                      WMTIndexTypeUInt16);
-            st.render_enc.encodeCommands(
-                reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+            st.EncodeRenderCommands(
+                reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                "execute_indirect_draw");
           }
         };
 
@@ -4627,8 +4808,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                     args.StartIndexLocation, args.BaseVertexLocation,
                     args.StartInstanceLocation, true, draw.index_type);
                 if (st.render_enc_open)
-                  st.render_enc.encodeCommands(
-                      reinterpret_cast<const wmtcmd_render_nop *>(&draw));
+                  st.EncodeRenderCommands(
+                      reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                      "execute_indirect_draw_indexed");
               } else {
                 QTRACE("ExecuteIndirect DRAW_INDEXED SKIPPED idx=%u inst=%u "
                        "ib=0x%llx enc_open=%d",

@@ -5,6 +5,7 @@
 #include "dxgi_interfaces.h"
 #include "dxmt_presenter.hpp"
 #include "Metal.hpp"
+#include "wsi_window.hpp"
 #include <atomic>
 #include <array>
 #include <memory>
@@ -87,12 +88,15 @@ private:
   bool EnsureMetalView();
   bool AttachMetalViewForHWND(HWND hwnd);
   void ConfigureLayer();
+  void ReassertWindowForHandoff(const char *reason);
 
   std::atomic<uint32_t> m_refCount = {1ul};
   Com<IDXGIFactory1> m_factory;
   Com<IMTLDXGIDevice> m_dxgi_device;
   MTLD3D12Device *m_device = nullptr;
   HWND m_hwnd = nullptr;
+  wsi::DXMTWindowState m_window_state = {};
+  HMONITOR m_monitor = nullptr;
   WMT::MetalLayer m_layer = {};
   WMT::Object m_native_view;
   DXGI_SWAP_CHAIN_DESC1 m_desc = {};

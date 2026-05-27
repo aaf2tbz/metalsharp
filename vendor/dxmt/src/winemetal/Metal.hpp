@@ -321,12 +321,12 @@ public:
 
 class RenderCommandEncoder : public CommandEncoder {
 public:
-  void
+  bool
   encodeCommands(const wmtcmd_render_nop *cmd_head) {
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
   }
 
-  void
+  bool
   setVertexBuffer(Buffer buffer, uint64_t offset, uint8_t index) {
     struct wmtcmd_render_setbuffer cmd;
     cmd.type = WMTRenderCommandSetVertexBuffer;
@@ -334,10 +334,10 @@ public:
     cmd.buffer = buffer;
     cmd.offset = offset;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setFragmentBuffer(Buffer buffer, uint64_t offset, uint8_t index) {
     struct wmtcmd_render_setbuffer cmd;
     cmd.type = WMTRenderCommandSetFragmentBuffer;
@@ -345,10 +345,10 @@ public:
     cmd.buffer = buffer;
     cmd.offset = offset;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setMeshBuffer(Buffer buffer, uint64_t offset, uint8_t index) {
     struct wmtcmd_render_setbuffer cmd;
     cmd.type = WMTRenderCommandSetMeshBuffer;
@@ -356,10 +356,10 @@ public:
     cmd.buffer = buffer;
     cmd.offset = offset;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setObjectBuffer(Buffer buffer, uint64_t offset, uint8_t index) {
     struct wmtcmd_render_setbuffer cmd;
     cmd.type = WMTRenderCommandSetObjectBuffer;
@@ -367,10 +367,10 @@ public:
     cmd.buffer = buffer;
     cmd.offset = offset;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   memoryBarrier(WMTBarrierScope scope, WMTRenderStages stages_after, WMTRenderStages stages_before) {
     struct wmtcmd_render_memory_barrier cmd;
     cmd.type = WMTRenderCommandMemoryBarrier;
@@ -378,10 +378,10 @@ public:
     cmd.scope = scope;
     cmd.stages_before = stages_before;
     cmd.stages_after = stages_after;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   useResource(Resource resource, WMTResourceUsage usage, WMTRenderStages stages) {
     struct wmtcmd_render_useresource cmd;
     cmd.type = WMTRenderCommandUseResource;
@@ -389,19 +389,19 @@ public:
     cmd.resource = resource;
     cmd.usage = usage;
     cmd.stages = stages;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   };
 
-  void
+  bool
   setRenderPipelineState(RenderPipelineState pso) {
     struct wmtcmd_render_setpso cmd;
     cmd.type = WMTRenderCommandSetPSO;
     cmd.next.set(nullptr);
     cmd.pso = pso;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   drawPrimitives(WMTPrimitiveType primitive_type, uint32_t vertex_start, uint32_t vertex_count) {
     struct wmtcmd_render_draw cmd;
     cmd.type = WMTRenderCommandDraw;
@@ -411,20 +411,20 @@ public:
     cmd.vertex_count = vertex_count;
     cmd.base_instance = 0;
     cmd.instance_count = 1;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setFragmentTexture(Texture texture, uint8_t index) {
     struct wmtcmd_render_settexture cmd;
     cmd.type = WMTRenderCommandSetFragmentTexture;
     cmd.next.set(nullptr);
     cmd.texture = texture;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   };
 
-  void
+  bool
   setFragmentSamplerState(SamplerState sampler, uint8_t index) {
     struct wmtcmd_render_setsamplerstate cmd;
     cmd.type = WMTRenderCommandSetFragmentSamplerState;
@@ -432,10 +432,10 @@ public:
     cmd.next.set(nullptr);
     cmd.sampler = sampler.handle;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setFragmentBytes(const void *buf, uint64_t length, uint8_t index) {
     struct wmtcmd_render_setbytes cmd;
     cmd.type = WMTRenderCommandSetFragmentBytes;
@@ -443,10 +443,10 @@ public:
     cmd.bytes.set((void *)buf);
     cmd.length = length;
     cmd.index = index;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setRasterizerState(WMTTriangleFillMode fill_mode, WMTCullMode cull_mode,
                      WMTDepthClipMode depth_clip_mode, WMTWinding winding,
                      float depth_bias, float slope_scale,
@@ -462,10 +462,10 @@ public:
     cmd.depth_bias = depth_bias;
     cmd.scole_scale = slope_scale;
     cmd.depth_bias_clamp = depth_bias_clamp;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setBlendFactorAndStencilRef(const float color[4], uint8_t stencil_ref) {
     struct wmtcmd_render_setblendcolor cmd;
     cmd.type = WMTRenderCommandSetBlendFactorAndStencilRef;
@@ -476,50 +476,50 @@ public:
     cmd.blue = color[2];
     cmd.alpha = color[3];
     cmd.stencil_ref = stencil_ref;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setViewport(WMTViewport viewport) {
     struct wmtcmd_render_setviewport cmd;
     cmd.type = WMTRenderCommandSetViewports;
     cmd.reserved[0] = cmd.reserved[1] = cmd.reserved[2] = 0;
     cmd.next.set(nullptr);
     cmd.viewport = viewport;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setScissorRect(WMTScissorRect scissor) {
     struct wmtcmd_render_setscissorrect cmd;
     cmd.type = WMTRenderCommandSetScissorRect;
     cmd.reserved[0] = cmd.reserved[1] = cmd.reserved[2] = 0;
     cmd.next.set(nullptr);
     cmd.scissor_rect = scissor;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   setDepthStencilState(DepthStencilState state) {
     struct wmtcmd_render_setdsso cmd;
     cmd.type = WMTRenderCommandSetDSSO;
     cmd.reserved[0] = cmd.reserved[1] = cmd.reserved[2] = 0;
     cmd.next.set(nullptr);
     cmd.dsso = state.handle;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   updateFence(Fence fence, WMTRenderStages after) {
     struct wmtcmd_render_fence_op cmd;
     cmd.type = WMTRenderCommandUpdateFence;
     cmd.next.set(nullptr);
     cmd.fence = fence.handle;
     cmd.stages = after;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 
-  void
+  bool
   waitForFence(Fence fence, WMTRenderStages before) {
     struct wmtcmd_render_fence_op cmd;
     cmd.type = WMTRenderCommandWaitForFence;
@@ -527,15 +527,15 @@ public:
     cmd.next.set(nullptr);
     cmd.fence = fence.handle;
     cmd.stages = before;
-    MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
+    return MTLRenderCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)&cmd);
   }
 };
 
 class BlitCommandEncoder : public CommandEncoder {
 public:
-  void
+  bool
   encodeCommands(const wmtcmd_blit_nop *cmd_head) {
-    MTLBlitCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
+    return MTLBlitCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
   }
 
   void
@@ -572,9 +572,9 @@ public:
 
 class ComputeCommandEncoder : public CommandEncoder {
 public:
-  void
+  bool
   encodeCommands(const wmtcmd_compute_nop *cmd_head) {
-    MTLComputeCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
+    return MTLComputeCommandEncoder_encodeCommands(handle, (const wmtcmd_base *)cmd_head);
   }
 
   void
