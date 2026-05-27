@@ -69,13 +69,12 @@
       "tier": "required"
     },
     "D3D12_FEATURE_SHADER_MODEL": {
-      "current_target": "6_6",
-      "probe": "tools/d3d12-metal-sdk/probes/probe_shaders",
-      "reported": "partial",
-      "risk": "Must be backed by actual DXIL/SM6 shader path probes before treated as native.",
-      "state": "stub_risky",
-      "tier": "required",
-      "waiver": "sm6_6_partial_shader_path"
+      "current_target": "6_5",
+      "probe": "tools/d3d12-metal-sdk/probes/probe_sm66_capabilities",
+      "reported": "supported",
+      "risk": "SM 6.6 must stay unreported until the SM 6.6 compiler, descriptor, resource, sampler, 64-bit, atomic, barrier, and runtime corpus is reportable.",
+      "state": "required",
+      "tier": "required"
     }
   },
   "purpose": "Keep D3D12 feature reports aligned with executable implementation reality.",

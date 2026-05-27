@@ -211,7 +211,8 @@ int main() {
     }
 
     bool feature_level_ok = SUCCEEDED(fl_hr) && feature_levels.MaxSupportedFeatureLevel >= D3D_FEATURE_LEVEL_12_0;
-    bool shader_model_ok = SUCCEEDED(sm_hr) && shader_model.HighestShaderModel >= D3D_SHADER_MODEL_6_6;
+    bool shader_model_target_ok = SUCCEEDED(sm_hr) && shader_model.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+    bool shader_model_6_6_or_better = SUCCEEDED(sm_hr) && shader_model.HighestShaderModel >= D3D_SHADER_MODEL_6_6;
     bool binding_tier_ok = SUCCEEDED(options_hr) && options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
     bool wave_ops_ok = SUCCEEDED(options1_hr) && options1.WaveOps;
     bool atomic64_conservative = (!SUCCEEDED(options9_hr) || (!options9.AtomicInt64OnTypedResourceSupported &&
@@ -226,7 +227,7 @@ int main() {
         SUCCEEDED(stream_output_format_hr) && !(stream_output_format.Support1 & D3D12_FORMAT_SUPPORT1_SO_BUFFER);
     bool reserved_resources_unsupported = FAILED(create_reserved_resource_hr);
     bool state_objects_unsupported = FAILED(query_device5_hr) || FAILED(create_state_object_hr);
-    bool pass = SUCCEEDED(create_hr) && feature_level_ok && shader_model_ok && binding_tier_ok && wave_ops_ok &&
+    bool pass = SUCCEEDED(create_hr) && feature_level_ok && shader_model_target_ok && binding_tier_ok && wave_ops_ok &&
                 atomic64_conservative && advanced_conservative && stream_output_conservative &&
                 reserved_resources_unsupported && state_objects_unsupported;
 
@@ -249,7 +250,8 @@ int main() {
     std::printf("  \"shader_model\": {\n");
     print_hr("check", sm_hr);
     std::printf("    \"highest\": \"%s\",\n", shader_model_name(shader_model.HighestShaderModel).c_str());
-    std::printf("    \"meets_6_6\": %s\n", shader_model_ok ? "true" : "false");
+    std::printf("    \"meets_6_5\": %s,\n", shader_model_target_ok ? "true" : "false");
+    std::printf("    \"meets_6_6\": %s\n", shader_model_6_6_or_better ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"options\": {\n");
     print_hr("check", options_hr);
@@ -296,7 +298,8 @@ int main() {
     std::printf("  },\n");
     std::printf("  \"requirements\": {\n");
     std::printf("    \"feature_level_12_0_or_better\": %s,\n", feature_level_ok ? "true" : "false");
-    std::printf("    \"shader_model_6_6_or_better\": %s,\n", shader_model_ok ? "true" : "false");
+    std::printf("    \"shader_model_6_5_or_better\": %s,\n", shader_model_target_ok ? "true" : "false");
+    std::printf("    \"shader_model_6_6_or_better\": %s,\n", shader_model_6_6_or_better ? "true" : "false");
     std::printf("    \"binding_tier_3\": %s,\n", binding_tier_ok ? "true" : "false");
     std::printf("    \"wave_ops\": %s,\n", wave_ops_ok ? "true" : "false");
     std::printf("    \"atomic64_conservative\": %s,\n", atomic64_conservative ? "true" : "false");

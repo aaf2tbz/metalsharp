@@ -3,21 +3,6 @@
   "purpose": "Track explicit temporary waivers for risky D3D12 capability claims that are only partially proven by the current SDK probe suite.",
   "waivers": [
     {
-      "id": "sm6_6_partial_shader_path",
-      "kind": "risky_stub",
-      "target": "D3D12_FEATURE_SHADER_MODEL reports SM 6.6",
-      "status": "active",
-      "applies_to_profiles": [
-        "metalsharp"
-      ],
-      "justification": "Phase 14.14 proves the synthetic DXIL semantics corpus and pinned DXC SM6 compute PSO creation, but broader SM6 graphics coverage and descriptor-indexing shader cases remain pending.",
-      "expires_when": "A wave-using or descriptor-indexing SM6 shader probe passes without waiver.",
-      "evidence": [
-        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json",
-        "tools/d3d12-metal-sdk/results/probe-dxil-semantics-metalsharp.json"
-      ]
-    },
-    {
       "id": "waveops_feature_report_partial",
       "kind": "risky_stub",
       "target": "D3D12_FEATURE_D3D12_OPTIONS1 WaveOps reports supported",

@@ -24,6 +24,7 @@ REQUIRED_PROBES = [
     "probe-descriptors",
     "probe-shaders",
     "probe-dxil-semantics",
+    "probe-sm66-capabilities",
     "probe-queues",
     "probe-graphics-pso",
     "probe-compute-pso",
@@ -78,6 +79,26 @@ def get_nested(obj: dict[str, Any], *keys: str) -> Any:
             return None
         cur = cur[key]
     return cur
+
+
+def parse_shader_model(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, str):
+        return None
+    parts = value.split("_", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def shader_model_at_least(observed: Any, target: Any) -> bool:
+    observed_model = parse_shader_model(observed)
+    target_model = parse_shader_model(target)
+    if observed_model is None or target_model is None:
+        return False
+    return observed_model >= target_model
 
 
 def collect_states(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
@@ -191,6 +212,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     device_caps = results["probe-device-caps"]
     shader_probe = results["probe-shaders"]
     dxil_semantics_probe = results["probe-dxil-semantics"]
+    sm66_probe = results["probe-sm66-capabilities"]
 
     issues: list[Issue] = []
     summary: list[dict[str, Any]] = []
@@ -223,7 +245,10 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
 
     shader_model_contract = features.get("D3D12_FEATURE_SHADER_MODEL", {})
     observed_shader_model = get_nested(device_caps, "shader_model", "highest")
-    shader_model_ok = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
+    shader_model_target = shader_model_contract.get("current_target")
+    shader_model_ok = shader_model_at_least(observed_shader_model, shader_model_target)
+    sm66_reported = shader_model_at_least(observed_shader_model, "6_6")
+    sm66_reportable = bool(get_nested(sm66_probe, "summary", "sm66_reportable"))
     dxil_to_msl_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
     dxil_semantics_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok")))
     dxil_path_proven = dxil_to_msl_ok
@@ -231,13 +256,14 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
         "feature": "D3D12_FEATURE_SHADER_MODEL",
         "state": shader_model_contract.get("state"),
         "observed": observed_shader_model,
-        "target": shader_model_contract.get("current_target"),
-        "sm66_reported": shader_model_ok,
+        "target": shader_model_target,
+        "sm66_reported": sm66_reported,
+        "sm66_reportable": sm66_reportable,
         "dxil_to_msl_proven": dxil_to_msl_ok,
         "dxil_semantics_proven": dxil_semantics_ok,
         "dxil_path_proven": dxil_path_proven,
     }
-    shader_summary["compliant"] = shader_model_ok and dxil_path_proven
+    shader_summary["compliant"] = shader_model_ok and dxil_path_proven and (not sm66_reported or sm66_reportable)
     summary.append(shader_summary)
     if not shader_summary["compliant"]:
         issues.append(
@@ -245,7 +271,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
                 "error",
                 "feature_support",
                 "Shader model report advertises an unproven SM6 path",
-                f"Observed `{observed_shader_model}` with DXIL-to-MSL proof `{dxil_to_msl_ok}`.",
+                f"Observed `{observed_shader_model}` against target `{shader_model_target}` with DXIL-to-MSL proof `{dxil_to_msl_ok}` and SM 6.6 reportable `{sm66_reportable}`.",
             )
         )
 
@@ -357,6 +383,9 @@ def risky_status(target: str, results: dict[str, dict[str, Any]]) -> RiskStatus:
         used = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
         if not used:
             return RiskStatus("not_used", "Profile does not advertise SM 6.6.")
+        sm66_probe = results["probe-sm66-capabilities"]
+        if not bool(get_nested(sm66_probe, "summary", "sm66_reportable")):
+            return RiskStatus("failed", "SM 6.6 is advertised but the SM 6.6 capability audit is not reportable.")
         dxil_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
         bindless_note = str(get_nested(shader_probe, "dxmt_shader_paths", "bindless_descriptor_indexing") or "")
         if not dxil_ok:

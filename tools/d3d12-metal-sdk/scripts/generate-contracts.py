@@ -136,13 +136,12 @@ def feature_support_contract() -> dict[str, Any]:
                 "risk": "UE5 may reject the adapter if this disagrees with shader model or options queries.",
             },
             "D3D12_FEATURE_SHADER_MODEL": {
-                "state": "stub_risky",
+                "state": "required",
                 "tier": "required",
-                "reported": "partial",
-                "probe": "tools/d3d12-metal-sdk/probes/probe_shaders",
-                "waiver": "sm6_6_partial_shader_path",
-                "current_target": "6_6",
-                "risk": "Must be backed by actual DXIL/SM6 shader path probes before treated as native.",
+                "reported": "supported",
+                "probe": "tools/d3d12-metal-sdk/probes/probe_sm66_capabilities",
+                "current_target": "6_5",
+                "risk": "SM 6.6 must stay unreported until the SM 6.6 compiler, descriptor, resource, sampler, 64-bit, atomic, barrier, and runtime corpus is reportable.",
             },
             "D3D12_FEATURE_D3D12_OPTIONS": {
                 "state": "required",
@@ -348,10 +347,14 @@ def unsupported_ledger() -> dict[str, Any]:
             },
             {
                 "api": "D3D12 Shader Model 6.6 feature report",
-                "state": "waived_partial",
-                "tier": "required",
-                "reason": "SM 6.6 is a waived partial claim until descriptor indexing, wave, atomics, and 64-bit behavior are individually validated or feature-gated.",
-                "evidence": ["tools/d3d12-metal-sdk/contracts/risky-stub-ledger.json", "tools/d3d12-metal-sdk/contracts/contract-waivers.json"],
+                "state": "not_reported",
+                "tier": "unsupported",
+                "reason": "The SM 6.6 audit can compile and link the synthetic corpus, but descriptor indexing, sampler/texture, 64-bit, atomic, barrier, and root-constant cases do not yet have runtime correctness proof; the device must report SM 6.5 instead.",
+                "evidence": [
+                    "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+                    "tools/d3d12-metal-sdk/probes/probe_sm66_capabilities",
+                    "tools/d3d12-metal-sdk/contracts/feature-support-contract.json",
+                ],
             },
         ],
     }
@@ -362,13 +365,6 @@ def risky_stub_ledger() -> dict[str, Any]:
         "schema": "metalsharp.d3d12-metal.risky-stub-ledger.v1",
         "purpose": "Track startup-unblocking behavior that must be replaced or proven before broad compatibility claims.",
         "entries": [
-            {
-                "api": "D3D12_FEATURE_SHADER_MODEL reports SM 6.6",
-                "state": "stub_risky",
-                "tier": "required",
-                "risk": "Games may compile or load SM6 shaders that exceed the proven DXIL-to-Metal path.",
-                "next_probe": "tools/d3d12-metal-sdk/probes/probe_shaders",
-            },
             {
                 "api": "D3D12_FEATURE_D3D12_OPTIONS1 WaveOps reports supported",
                 "state": "stub_risky",

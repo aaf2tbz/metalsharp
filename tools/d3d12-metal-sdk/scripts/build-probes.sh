@@ -113,6 +113,10 @@ build_probe \
   -o "$OUT_DIR/probe_dxil_semantics.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_sm66_capabilities/probe_sm66_capabilities.cpp" \
+  -o "$OUT_DIR/probe_sm66_capabilities.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_graphics_pso/probe_graphics_pso.cpp" \
   -o "$OUT_DIR/probe_graphics_pso.exe"
 
@@ -181,6 +185,7 @@ echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
+echo "$OUT_DIR/probe_sm66_capabilities.exe"
 echo "$OUT_DIR/probe_graphics_pso.exe"
 echo "$OUT_DIR/probe_compute_pso.exe"
 echo "$OUT_DIR/probe_command_replay.exe"

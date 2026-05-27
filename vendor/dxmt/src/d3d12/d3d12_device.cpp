@@ -2176,8 +2176,10 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *sm = (D3D12_FEATURE_DATA_SHADER_MODEL *)feature_data;
     if (feature_data_size < sizeof(*sm))
       return E_INVALIDARG;
-    if (sm->HighestShaderModel == 0 || sm->HighestShaderModel > 0x66)
-      sm->HighestShaderModel = 0x66;
+    constexpr D3D_SHADER_MODEL kMaxProvenShaderModel = D3D_SHADER_MODEL_6_5;
+    if (sm->HighestShaderModel == 0 ||
+        sm->HighestShaderModel > kMaxProvenShaderModel)
+      sm->HighestShaderModel = kMaxProvenShaderModel;
     TRACE("  SHADER_MODEL: HighestSM=%u", (unsigned)sm->HighestShaderModel);
     return S_OK;
   }
