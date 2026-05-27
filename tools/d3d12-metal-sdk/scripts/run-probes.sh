@@ -587,6 +587,7 @@ RESOURCES_RESULT_FILE="$RESULTS_DIR/probe-resources-${PROFILE}.json"
 QUEUES_RESULT_FILE="$RESULTS_DIR/probe-queues-${PROFILE}.json"
 DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
 SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
+SHADERS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-shaders-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-${PROFILE}.json"
 GRAPHICS_PSO_RESULT_FILE="$RESULTS_DIR/probe-graphics-pso-${PROFILE}.json"
@@ -641,21 +642,34 @@ convert_dxil_shader_cache() {
     local metallib="$base.metallib"
     local reflection="$base.json"
     local layout="$base.vertex-layout.json"
+    local fail_marker="$base.msc.fail"
+    local dxbc_size
+    dxbc_size="$(wc -c < "$dxbc" | tr -d '[:space:]')"
     if [[ -s "$metallib" && -s "$reflection" ]]; then
       continue
     fi
+    rm -f "$fail_marker"
+    if [[ "$dxbc_size" -lt 256 ]]; then
+      printf 'skipped tiny or intentionally invalid DXIL container: %s bytes\n' "$dxbc_size" > "$fail_marker"
+      continue
+    fi
     if [[ -s "$layout" ]]; then
-      "$converter" -o "$metallib" "$dxbc" \
+      if ! "$converter" -o "$metallib" "$dxbc" \
         --output-reflection-file="$reflection" \
         --deployment-os=macOS \
         --minimum-os-build-version=15.0.0 \
-        --vertex-input-layout-file="$layout" >/dev/null
+        --vertex-input-layout-file="$layout" >"$fail_marker" 2>&1; then
+        continue
+      fi
     else
-      "$converter" -o "$metallib" "$dxbc" \
+      if ! "$converter" -o "$metallib" "$dxbc" \
         --output-reflection-file="$reflection" \
         --deployment-os=macOS \
-        --minimum-os-build-version=15.0.0 >/dev/null
+        --minimum-os-build-version=15.0.0 >"$fail_marker" 2>&1; then
+        continue
+      fi
     fi
+    rm -f "$fail_marker"
   done
   shopt -u nullglob
 }
@@ -951,10 +965,29 @@ if [[ "$RUN_SHADERS" == "1" ]]; then
     WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
     DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
     DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    DXMT_D3D12_TRACE=1 \
+    DXMT_D3D12_TRACE_COMPONENTS=PSO \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    D3D12_METAL_SDK_EXPECT_DXC="1" \
+    "$WINE_BIN" "$SHADERS_PROBE_EXE" > "$SHADERS_WARMUP_RESULT_FILE" || true
+  )
+  convert_dxil_shader_cache "$SHADER_CACHE_DIR"
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    DXMT_D3D12_TRACE=1 \
+    DXMT_D3D12_TRACE_COMPONENTS=PSO \
     D3D12_METAL_SDK_PROFILE="$PROFILE" \
     D3D12_METAL_SDK_EXPECT_DXC="1" \
     "$WINE_BIN" "$SHADERS_PROBE_EXE" > "$SHADERS_RESULT_FILE"
   )
+  echo "$SHADERS_WARMUP_RESULT_FILE"
   echo "$SHADERS_RESULT_FILE"
 fi
 

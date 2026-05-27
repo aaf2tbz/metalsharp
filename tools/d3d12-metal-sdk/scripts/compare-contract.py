@@ -226,7 +226,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     shader_model_ok = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
     dxil_to_msl_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
     dxil_semantics_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok")))
-    dxil_path_proven = dxil_semantics_ok or dxil_to_msl_ok
+    dxil_path_proven = dxil_to_msl_ok
     shader_summary = {
         "feature": "D3D12_FEATURE_SHADER_MODEL",
         "state": shader_model_contract.get("state"),
@@ -245,7 +245,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
                 "error",
                 "feature_support",
                 "Shader model report advertises an unproven SM6 path",
-                f"Observed `{observed_shader_model}` with DXIL proof `{dxil_path_proven}`.",
+                f"Observed `{observed_shader_model}` with DXIL-to-MSL proof `{dxil_to_msl_ok}`.",
             )
         )
 
@@ -357,12 +357,10 @@ def risky_status(target: str, results: dict[str, dict[str, Any]]) -> RiskStatus:
         used = bool(get_nested(device_caps, "requirements", "shader_model_6_6_or_better"))
         if not used:
             return RiskStatus("not_used", "Profile does not advertise SM 6.6.")
-        dxil_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok"))) or bool(
-            get_nested(shader_probe, "dxc", "dxil_to_msl")
-        )
+        dxil_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
         bindless_note = str(get_nested(shader_probe, "dxmt_shader_paths", "bindless_descriptor_indexing") or "")
         if not dxil_ok:
-            return RiskStatus("failed", "SM 6.6 is advertised but no DXIL semantics or DXIL-to-MSL path is proven.")
+            return RiskStatus("failed", "SM 6.6 is advertised but the primary DXIL-to-MSL path is not proven.")
         if "ready_for_next_shader_case" in bindless_note:
             return RiskStatus("waiver_required", "SM6 compute is proven, but broader descriptor-indexing or graphics SM6 coverage is still pending.")
         return RiskStatus("covered", "SM6 shader path is probe-covered without known gaps.")

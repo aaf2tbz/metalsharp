@@ -426,10 +426,17 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool dxil_container_trace_ok = contains(dxil_trace, "DXILContainer") || contains(trace, "DXIL container parsed");
     bool dxc_available = dxcompiler && dxil && dxc_exit_code == 0 && !dxc_dxil_blob.empty();
     bool dxc_dxil_container_ok =
-        dxc_available && contains(trace, "DXIL container parsed") && contains(dxil_trace, "DXILContainer");
+        dxc_available && (contains(trace, "DXIL blob found") || contains(trace, "DXIL container parsed") ||
+                          contains(dxil_trace, "DXILContainer"));
+    bool primary_msc_metallib_ok =
+        contains(trace, "loading cached metallib") && contains(trace, "DXIL loaded from cache OK");
+    bool debug_msl_used = contains(trace, "D3D12ShaderCompiler OK backend=DebugMSLEmitterBackend") ||
+                          contains(trace, "falling back to DebugMSLEmitterBackend") ||
+                          contains(trace, "DXILToMSL: generated") || contains(trace, "MSL generated");
+    bool primary_cache_miss = contains(trace, "compiler_primary_cache_miss") ||
+                              contains(trace, "primary MetalIR compiler did not produce a metallib");
     bool dxc_dxil_to_msl_ok =
-        dxc_available && (contains(trace, "DXILToMSL: generated") || contains(trace, "MSL generated")) &&
-        (contains(trace, "DXIL shader compiled OK") || contains(trace, "DXIL loaded from cache OK"));
+        dxc_available && dxc_dxil_container_ok && primary_msc_metallib_ok && !debug_msl_used && !primary_cache_miss;
     bool sm6_probe_explicit = FAILED(sm6_compile_hr);
     bool bindless_explicit = dxc_available;
 
@@ -442,7 +449,8 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool cache_valid = vs_metallib && ps_metallib && cs_metallib;
     bool diagnostics_valid =
         SUCCEEDED(bad_compute_pso_hr) && bad_compute_pso && failure_trace_ok && dxil_container_trace_ok;
-    bool dxc_valid = !dxc_required || (dxc_available && SUCCEEDED(dxc_compute_pso_hr) && dxc_compute_pso);
+    bool dxc_valid =
+        !dxc_required || (dxc_available && SUCCEEDED(dxc_compute_pso_hr) && dxc_compute_pso && dxc_dxil_to_msl_ok);
     bool pass = entrypoints_valid && SUCCEEDED(create_hr) && compile_valid && pso_valid && sm6_probe_explicit &&
                 bindless_explicit && dxc_valid;
 
@@ -489,7 +497,7 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     std::printf("    \"dxil_container_parse\": \"%s\",\n",
                 dxil_container_trace_ok ? "synthetic_sm6_container_parse_exercised" : "not_observed");
     std::printf("    \"dxil_to_msl\": \"%s\",\n",
-                dxc_dxil_to_msl_ok ? "proven_with_pinned_dxc_sm6_compute" : "not_proven");
+                dxc_dxil_to_msl_ok ? "proven_with_pinned_dxc_sm6_compute_primary_msc" : "not_proven");
     std::printf("    \"bindless_descriptor_indexing\": \"%s\"\n",
                 bindless_explicit ? "dxc_available_descriptor_indexing_probe_ready_for_next_shader_case" : "unknown");
     std::printf("  },\n");
@@ -519,6 +527,9 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     std::printf("    \"dxil_container_trace_ok\": %s,\n", dxil_container_trace_ok ? "true" : "false");
     std::printf("    \"dxc_dxil_container_trace_ok\": %s,\n", dxc_dxil_container_ok ? "true" : "false");
     std::printf("    \"dxc_dxil_to_msl_trace_ok\": %s,\n", dxc_dxil_to_msl_ok ? "true" : "false");
+    std::printf("    \"primary_msc_metallib_trace_ok\": %s,\n", primary_msc_metallib_ok ? "true" : "false");
+    std::printf("    \"debug_msl_backend_used\": %s,\n", debug_msl_used ? "true" : "false");
+    std::printf("    \"primary_cache_miss\": %s,\n", primary_cache_miss ? "true" : "false");
     std::printf("    \"failure_trace_ok\": %s,\n", failure_trace_ok ? "true" : "false");
     std::printf("    \"trace_excerpt_has_stage\": %s\n",
                 contains(trace, "cs_main") || contains(trace, "pso/") ? "true" : "false");
