@@ -4486,6 +4486,16 @@ d3d12_geometry_fallback_to_vs_ps:
             "D3D12 PSO input-layout skip[%u]: unsupported fmt=%u semantic=%s%u",
             i, (unsigned)el.Format, el.SemanticName ? el.SemanticName : "?",
             el.SemanticIndex);
+        Logger::warn(str::format(
+            "M12 UNKNOWN VERTEX FMT pso=", (void *)this,
+            " element=", i, " fmt=", (unsigned)el.Format,
+            " semantic=", el.SemanticName ? el.SemanticName : "?",
+            el.SemanticIndex,
+            " slot=", el.InputSlot,
+            " offset=", el.AlignedByteOffset,
+            " stride=", el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA ? "per-vertex" : "per-instance",
+            " step_rate=", el.InstanceDataStepRate,
+            " vs_hash=", GetVSCacheHash()));
         continue;
       }
 

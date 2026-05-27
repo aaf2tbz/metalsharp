@@ -133,6 +133,15 @@ static uint32_t g_swapchain_vertex_sample_logs = 0;
 static uint32_t g_swapchain_render_readback_captures = 0;
 static uint32_t g_swapchain_final_snapshot_logs = 0;
 
+static uint32_t g_quarantine_zero_vb_offscreen = 0;
+static uint32_t g_quarantine_r16_dsv = 0;
+static uint32_t g_quarantine_rgba8_mrt_dsv = 0;
+static uint32_t g_quarantine_b8g8r8a8_dsv_stencil = 0;
+static uint32_t g_quarantine_r11g11b10_dsv_stencil = 0;
+static uint32_t g_quarantine_r11g11b10_gbuffer = 0;
+static uint32_t g_quarantine_indexed_stage_in = 0;
+static uint32_t g_stage_in_snapshot_count = 0;
+
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
 }
@@ -812,30 +821,47 @@ struct ReplayState {
 
     const auto rtv0 = pso->GetRTVFormat(0);
     if (!has_dsv) {
-      return rt_count == 1 && last_bound_vertex_buffers == 0;
+      if (rt_count == 1 && last_bound_vertex_buffers == 0) {
+        __atomic_add_fetch(&g_quarantine_zero_vb_offscreen, 1, __ATOMIC_RELAXED);
+        return true;
+      }
+      return false;
     }
 
     if (!pso->RequiresMSCStageInFunction())
       return false;
 
-    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R16G16B16A16_UNORM)
+    if (rt_count == 1 && rtv0 == DXGI_FORMAT_R16G16B16A16_UNORM) {
+      __atomic_add_fetch(&g_quarantine_r16_dsv, 1, __ATOMIC_RELAXED);
       return true;
+    }
 
     if (rt_count >= 3 && pso->GetNumRenderTargets() >= 3 &&
-        rtv0 == DXGI_FORMAT_R8G8B8A8_UNORM)
+        rtv0 == DXGI_FORMAT_R8G8B8A8_UNORM) {
+      __atomic_add_fetch(&g_quarantine_rgba8_mrt_dsv, 1, __ATOMIC_RELAXED);
       return true;
+    }
 
     const auto &ds = pso->GetDepthStencilDesc();
     if (rt_count == 1 && rtv0 == DXGI_FORMAT_B8G8R8A8_UNORM &&
-        ds.DepthEnable && ds.StencilEnable)
+        ds.DepthEnable && ds.StencilEnable) {
+      __atomic_add_fetch(&g_quarantine_b8g8r8a8_dsv_stencil, 1, __ATOMIC_RELAXED);
       return true;
+    }
 
     if (rt_count == 1 && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT &&
-        ds.DepthEnable && ds.StencilEnable)
+        ds.DepthEnable && ds.StencilEnable) {
+      __atomic_add_fetch(&g_quarantine_r11g11b10_dsv_stencil, 1, __ATOMIC_RELAXED);
       return true;
+    }
 
-    return rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
-           ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT;
+    if (rt_count >= 5 && pso->GetNumRenderTargets() >= 5 &&
+        ds.StencilEnable && rtv0 == DXGI_FORMAT_R11G11B10_FLOAT) {
+      __atomic_add_fetch(&g_quarantine_r11g11b10_gbuffer, 1, __ATOMIC_RELAXED);
+      return true;
+    }
+
+    return false;
   }
 
   const char *UnsafeMSCOffscreenPassReason() const {
@@ -1282,6 +1308,53 @@ struct ReplayState {
               DescriptorSummary(desc, range.range_type)));
         }
       }
+    }
+  }
+
+  void LogStageInVertexSnapshot(const char *draw_kind, uint32_t element_count,
+                                uint32_t instance_count) {
+    if (!pso || !pso->UsesStageInVertexDescriptor())
+      return;
+    if (!HasSwapchainRenderTarget())
+      return;
+    uint32_t capture =
+        __atomic_add_fetch(&g_stage_in_snapshot_count, 1, __ATOMIC_RELAXED);
+    if (capture > 16)
+      return;
+
+    const auto &input_layout = pso->GetInputLayout();
+    Logger::info(str::format(
+        "M12 stage_in vertex snapshot #", capture, " draw=", draw_kind,
+        " elems=", element_count, " inst=", instance_count,
+        " pso=", (void *)pso,
+        " stage_in=", pso->UsesStageInVertexDescriptor(),
+        " msc_stage_in=", pso->RequiresMSCStageInFunction(),
+        " il_elements=", input_layout.NumElements,
+        " slot_mask=0x", std::hex, pso->GetIAInputSlotMask(), std::dec,
+        " bound_vbs=", last_bound_vertex_buffers,
+        " ", TracePsoShaderSummary(pso)));
+
+    for (UINT i = 0; i < input_layout.NumElements && i < 16; i++) {
+      const auto &el = input_layout.pInputElementDescs[i];
+      Logger::info(str::format(
+          "M12 stage_in il[", i, "] semantic=",
+          el.SemanticName ? el.SemanticName : "?",
+          el.SemanticIndex, " fmt=", (unsigned)el.Format,
+          " slot=", el.InputSlot,
+          " offset=", el.AlignedByteOffset,
+          " class=", el.InputSlotClass,
+          " step=", el.InstanceDataStepRate));
+    }
+
+    for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
+      if (!(pso->GetIAInputSlotMask() & (1u << slot)))
+        continue;
+      const auto &vb = vbs[slot];
+      Logger::info(str::format(
+          "M12 stage_in vb[", slot, "] gpu=0x",
+          (unsigned long long)vb.BufferLocation,
+          " size=", vb.SizeInBytes,
+          " stride=", vb.StrideInBytes));
     }
   }
 
@@ -4359,6 +4432,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    WMTIndexTypeUInt16);
           st.LogFinalRenderSnapshot("DrawInstanced", cmd->vertex_count,
                                     cmd->instance_count, cmd->start_vertex);
+          st.LogStageInVertexSnapshot("DrawInstanced", cmd->vertex_count,
+                                      cmd->instance_count);
           if (st.EncodeRenderCommands(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
                   "draw_instanced"))
@@ -4423,6 +4498,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 m_device, cmd->index_count, cmd->instance_count,
                 cmd->start_index, cmd->base_vertex, cmd->start_instance,
                 unsafe_stage_in_reason)) {
+          __atomic_add_fetch(&g_quarantine_indexed_stage_in, 1, __ATOMIC_RELAXED);
           if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
             Logger::warn(str::format(
                 "M12 skipping unsafe MSC indexed stage-in DrawIndexedInstanced "
@@ -4598,6 +4674,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                    draw.index_type);
           st.LogFinalRenderSnapshot("DrawIndexedInstanced", cmd->index_count,
                                     cmd->instance_count, cmd->start_index);
+          st.LogStageInVertexSnapshot("DrawIndexedInstanced", cmd->index_count,
+                                      cmd->instance_count);
           if (st.EncodeRenderCommands(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
                   "draw_indexed_instanced"))
