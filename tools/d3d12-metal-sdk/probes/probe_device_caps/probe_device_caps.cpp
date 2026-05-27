@@ -151,6 +151,8 @@ int main() {
     D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS9 options9 = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS11 options11 = {};
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT stream_output_format = {};
+    stream_output_format.Format = DXGI_FORMAT_R32_FLOAT;
 
     HRESULT fl_hr = E_FAIL;
     HRESULT sm_hr = E_FAIL;
@@ -162,6 +164,10 @@ int main() {
     HRESULT options7_hr = E_FAIL;
     HRESULT options9_hr = E_FAIL;
     HRESULT options11_hr = E_FAIL;
+    HRESULT stream_output_format_hr = E_FAIL;
+    HRESULT create_reserved_resource_hr = E_FAIL;
+    HRESULT query_device5_hr = E_NOINTERFACE;
+    HRESULT create_state_object_hr = E_NOINTERFACE;
 
     if (device) {
         fl_hr = device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &feature_levels, sizeof(feature_levels));
@@ -174,6 +180,34 @@ int main() {
         options7_hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7));
         options9_hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS9, &options9, sizeof(options9));
         options11_hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS11, &options11, sizeof(options11));
+        stream_output_format_hr = device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &stream_output_format,
+                                                              sizeof(stream_output_format));
+
+        D3D12_RESOURCE_DESC reserved_desc = {};
+        reserved_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        reserved_desc.Width = 4096;
+        reserved_desc.Height = 1;
+        reserved_desc.DepthOrArraySize = 1;
+        reserved_desc.MipLevels = 1;
+        reserved_desc.SampleDesc.Count = 1;
+        reserved_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ID3D12Resource* reserved_resource = nullptr;
+        create_reserved_resource_hr = device->CreateReservedResource(&reserved_desc, D3D12_RESOURCE_STATE_COMMON,
+                                                                     nullptr, IID_PPV_ARGS(&reserved_resource));
+        if (reserved_resource)
+            reserved_resource->Release();
+
+        ID3D12Device5* device5 = nullptr;
+        query_device5_hr = device->QueryInterface(IID_PPV_ARGS(&device5));
+        if (device5) {
+            D3D12_STATE_OBJECT_DESC state_object_desc = {};
+            state_object_desc.Type = D3D12_STATE_OBJECT_TYPE_COLLECTION;
+            ID3D12StateObject* state_object = nullptr;
+            create_state_object_hr = device5->CreateStateObject(&state_object_desc, IID_PPV_ARGS(&state_object));
+            if (state_object)
+                state_object->Release();
+            device5->Release();
+        }
     }
 
     bool feature_level_ok = SUCCEEDED(fl_hr) && feature_levels.MaxSupportedFeatureLevel >= D3D_FEATURE_LEVEL_12_0;
@@ -188,8 +222,13 @@ int main() {
         (!SUCCEEDED(options7_hr) || (options7.MeshShaderTier == D3D12_MESH_SHADER_TIER_NOT_SUPPORTED &&
                                      options7.SamplerFeedbackTier == D3D12_SAMPLER_FEEDBACK_TIER_NOT_SUPPORTED)) &&
         (!SUCCEEDED(options9_hr) || options9.WaveMMATier == D3D12_WAVE_MMA_TIER_NOT_SUPPORTED);
+    bool stream_output_conservative =
+        SUCCEEDED(stream_output_format_hr) && !(stream_output_format.Support1 & D3D12_FORMAT_SUPPORT1_SO_BUFFER);
+    bool reserved_resources_unsupported = FAILED(create_reserved_resource_hr);
+    bool state_objects_unsupported = FAILED(query_device5_hr) || FAILED(create_state_object_hr);
     bool pass = SUCCEEDED(create_hr) && feature_level_ok && shader_model_ok && binding_tier_ok && wave_ops_ok &&
-                atomic64_conservative && advanced_conservative;
+                atomic64_conservative && advanced_conservative && stream_output_conservative &&
+                reserved_resources_unsupported && state_objects_unsupported;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-device-caps.v1\",\n");
@@ -244,13 +283,27 @@ int main() {
     std::printf("    \"atomic64_descriptor_heap_resource\": %s\n",
                 options11.AtomicInt64OnDescriptorHeapResourceSupported ? "true" : "false");
     std::printf("  },\n");
+    std::printf("  \"unsupported_policy\": {\n");
+    print_hr("stream_output_format", stream_output_format_hr);
+    std::printf("    \"stream_output_so_buffer_advertised\": %s,\n",
+                (stream_output_format.Support1 & D3D12_FORMAT_SUPPORT1_SO_BUFFER) ? "true" : "false");
+    print_hr("create_reserved_resource", create_reserved_resource_hr);
+    print_hr("query_device5", query_device5_hr);
+    print_hr("create_state_object", create_state_object_hr);
+    std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
+    std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
+    std::printf("  },\n");
     std::printf("  \"requirements\": {\n");
     std::printf("    \"feature_level_12_0_or_better\": %s,\n", feature_level_ok ? "true" : "false");
     std::printf("    \"shader_model_6_6_or_better\": %s,\n", shader_model_ok ? "true" : "false");
     std::printf("    \"binding_tier_3\": %s,\n", binding_tier_ok ? "true" : "false");
     std::printf("    \"wave_ops\": %s,\n", wave_ops_ok ? "true" : "false");
     std::printf("    \"atomic64_conservative\": %s,\n", atomic64_conservative ? "true" : "false");
-    std::printf("    \"advanced_features_conservative\": %s\n", advanced_conservative ? "true" : "false");
+    std::printf("    \"advanced_features_conservative\": %s,\n", advanced_conservative ? "true" : "false");
+    std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
+    std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");
 

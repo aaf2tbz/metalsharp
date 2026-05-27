@@ -64,6 +64,96 @@
       "reason": "Device-side DSR factory behavior is not implemented or required for the current Metal backend.",
       "state": "unsupported",
       "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 state objects",
+      "evidence": [
+        "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+        "tools/d3d12-metal-sdk/probes/probe_device_caps"
+      ],
+      "reason": "State object creation and growth require DXR/work-graph subsystems that are not implemented; calls must fail deterministically.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 amplification shader tiers",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/feature-support-contract.json",
+        "tools/d3d12-metal-sdk/probes/probe_device_caps"
+      ],
+      "reason": "No amplification shader translation path is proven, and mesh shader tiers remain unsupported.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 node shaders",
+      "evidence": [
+        "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+        "tools/d3d12-metal-sdk/probes/probe_device_caps"
+      ],
+      "reason": "Node shaders are part of the unimplemented work graphs execution model.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 stream output",
+      "evidence": [
+        "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+        "tools/d3d12-metal-sdk/probes/probe_graphics_pso",
+        "tools/d3d12-metal-sdk/probes/probe_device_caps"
+      ],
+      "reason": "Stream output has no compute-emulation path; PSO creation and format support must not advertise it.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 sparse and reserved resources",
+      "evidence": [
+        "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+        "tools/d3d12-metal-sdk/probes/probe_device_caps"
+      ],
+      "reason": "Metal sparse backing is not implemented or probed; reserved resources must fail instead of falling back to committed allocation.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 geometry shaders outside proven emulation",
+      "evidence": [
+        "tools/d3d12-metal-sdk/probes/probe_mini_suite",
+        "tools/d3d12-metal-sdk/contracts/contract-waivers.json"
+      ],
+      "reason": "Geometry shaders are allowed only through the explicitly probed emulation path and are not a general feature claim.",
+      "state": "limited_to_proven_probe",
+      "tier": "stubbed-safe"
+    },
+    {
+      "api": "D3D12 hull/domain tessellation shaders",
+      "evidence": [
+        "tools/d3d12-metal-sdk/probes/probe_graphics_pso"
+      ],
+      "reason": "No Metal tessellation translation path is proven; hull/domain PSOs remain rejected.",
+      "state": "unsupported",
+      "tier": "unsupported"
+    },
+    {
+      "api": "D3D12 WaveOps feature report",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/risky-stub-ledger.json",
+        "tools/d3d12-metal-sdk/contracts/contract-waivers.json"
+      ],
+      "reason": "WaveOps is a waived partial claim until a real wave-intrinsic execution probe validates behavior.",
+      "state": "waived_partial",
+      "tier": "required"
+    },
+    {
+      "api": "D3D12 Shader Model 6.6 feature report",
+      "evidence": [
+        "tools/d3d12-metal-sdk/contracts/risky-stub-ledger.json",
+        "tools/d3d12-metal-sdk/contracts/contract-waivers.json"
+      ],
+      "reason": "SM 6.6 is a waived partial claim until descriptor indexing, wave, atomics, and 64-bit behavior are individually validated or feature-gated.",
+      "state": "waived_partial",
+      "tier": "required"
     }
   ],
   "purpose": "Track explicit unsupported APIs so games are not misled by optimistic success returns.",

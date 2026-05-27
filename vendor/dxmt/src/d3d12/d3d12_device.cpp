@@ -33,13 +33,14 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
     if (f) {
       fprintf(f, "!!! EXCEPTION code=0x%lx addr=%p flags=0x%lx\n",
-        ep->ExceptionRecord->ExceptionCode,
-        ep->ExceptionRecord->ExceptionAddress,
-        ep->ExceptionRecord->ExceptionFlags);
+              ep->ExceptionRecord->ExceptionCode,
+              ep->ExceptionRecord->ExceptionAddress,
+              ep->ExceptionRecord->ExceptionFlags);
 #if defined(__x86_64__) || defined(_M_X64)
       CONTEXT *ctx = ep->ContextRecord;
       fprintf(f,
-              "!!! CONTEXT rip=%p rsp=%p rbp=%p rax=%p rbx=%p rcx=%p rdx=%p r8=%p r9=%p r10=%p r11=%p\n",
+              "!!! CONTEXT rip=%p rsp=%p rbp=%p rax=%p rbx=%p rcx=%p rdx=%p "
+              "r8=%p r9=%p r10=%p r11=%p\n",
               (void *)ctx->Rip, (void *)ctx->Rsp, (void *)ctx->Rbp,
               (void *)ctx->Rax, (void *)ctx->Rbx, (void *)ctx->Rcx,
               (void *)ctx->Rdx, (void *)ctx->R8, (void *)ctx->R9,
@@ -99,18 +100,40 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void install_crash_handler() {
-  AddVectoredExceptionHandler(1, crash_handler);
-}
+void install_crash_handler() { AddVectoredExceptionHandler(1, crash_handler); }
 
 namespace dxmt {
 
-static const GUID IID_ID3D12Device11_ = {0x5405c344, 0xd457, 0x444e, {0xb4, 0xdd, 0x23, 0x66, 0xe4, 0x5a, 0xee, 0x39}};
-static const GUID IID_ID3D12Device12_ = {0x5af5c532, 0x4c91, 0x4cd0, {0xb5, 0x41, 0x15, 0xa4, 0x05, 0x39, 0x5f, 0xc5}};
-static const GUID IID_ID3D12PipelineLibrary_ = {0xc64226a8, 0x9201, 0x46af, {0xb4, 0xcc, 0x53, 0xfb, 0x9f, 0xf7, 0x41, 0x4f}};
-static const GUID IID_ID3D12PipelineLibrary1_ = {0x80eabf42, 0x2568, 0x4e5e, {0xbd, 0x82, 0xc3, 0x7f, 0x86, 0x96, 0x1d, 0xc3}};
-static const GUID IID_ID3D12StateObjectProperties1_ = {0x460caac7, 0x1d24, 0x446a, {0xa1, 0x84, 0xca, 0x67, 0xdb, 0x49, 0x41, 0x38}};
-static const GUID IID_ID3D12StateObjectProperties2_ = {0xd5e82917, 0xf0f1, 0x44cf, {0xae, 0x5e, 0xce, 0x22, 0x2d, 0xd0, 0xb8, 0x84}};
+static const GUID IID_ID3D12Device11_ = {
+    0x5405c344,
+    0xd457,
+    0x444e,
+    {0xb4, 0xdd, 0x23, 0x66, 0xe4, 0x5a, 0xee, 0x39}};
+static const GUID IID_ID3D12Device12_ = {
+    0x5af5c532,
+    0x4c91,
+    0x4cd0,
+    {0xb5, 0x41, 0x15, 0xa4, 0x05, 0x39, 0x5f, 0xc5}};
+static const GUID IID_ID3D12PipelineLibrary_ = {
+    0xc64226a8,
+    0x9201,
+    0x46af,
+    {0xb4, 0xcc, 0x53, 0xfb, 0x9f, 0xf7, 0x41, 0x4f}};
+static const GUID IID_ID3D12PipelineLibrary1_ = {
+    0x80eabf42,
+    0x2568,
+    0x4e5e,
+    {0xbd, 0x82, 0xc3, 0x7f, 0x86, 0x96, 0x1d, 0xc3}};
+static const GUID IID_ID3D12StateObjectProperties1_ = {
+    0x460caac7,
+    0x1d24,
+    0x446a,
+    {0xa1, 0x84, 0xca, 0x67, 0xdb, 0x49, 0x41, 0x38}};
+static const GUID IID_ID3D12StateObjectProperties2_ = {
+    0xd5e82917,
+    0xf0f1,
+    0x44cf,
+    {0xae, 0x5e, 0xce, 0x22, 0x2d, 0xd0, 0xb8, 0x84}};
 
 namespace {
 
@@ -264,7 +287,8 @@ static UINT64 ResourcePlacementAlignment(const D3D12_RESOURCE_DESC &desc) {
 
 static UINT64 EstimateResourceAllocationSize(const D3D12_RESOURCE_DESC &desc) {
   if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
-    return AlignTo(std::max<UINT64>(desc.Width, 1), ResourcePlacementAlignment(desc));
+    return AlignTo(std::max<UINT64>(desc.Width, 1),
+                   ResourcePlacementAlignment(desc));
 
   UINT mip_levels = std::max<UINT>(desc.MipLevels, 1);
   UINT array_size = std::max<UINT>(desc.DepthOrArraySize, 1);
@@ -282,8 +306,10 @@ static UINT64 EstimateResourceAllocationSize(const D3D12_RESOURCE_DESC &desc) {
       UINT64 depth = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
                          ? std::max<UINT64>(1, desc.DepthOrArraySize >> mip)
                          : 1;
-      UINT64 width_blocks = std::max<UINT64>(1, AlignTo(width, block_size) / block_size);
-      UINT64 rows = std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
+      UINT64 width_blocks =
+          std::max<UINT64>(1, AlignTo(width, block_size) / block_size);
+      UINT64 rows =
+          std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
       UINT64 row_pitch = AlignTo(width_blocks * bytes_per_texel,
                                  D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
       total += AlignTo(row_pitch * rows * depth,
@@ -291,13 +317,14 @@ static UINT64 EstimateResourceAllocationSize(const D3D12_RESOURCE_DESC &desc) {
     }
   }
 
-  return AlignTo(std::max<UINT64>(total, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT),
-                 ResourcePlacementAlignment(desc));
+  return AlignTo(
+      std::max<UINT64>(total, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT),
+      ResourcePlacementAlignment(desc));
 }
 
-static WMTTextureType TextureTypeForSrvView(
-    const D3D12_SHADER_RESOURCE_VIEW_DESC &desc,
-    const D3D12_RESOURCE_DESC &resource_desc) {
+static WMTTextureType
+TextureTypeForSrvView(const D3D12_SHADER_RESOURCE_VIEW_DESC &desc,
+                      const D3D12_RESOURCE_DESC &resource_desc) {
   switch (desc.ViewDimension) {
   case D3D12_SRV_DIMENSION_TEXTURE1D:
     return WMTTextureType1D;
@@ -307,9 +334,8 @@ static WMTTextureType TextureTypeForSrvView(
     return resource_desc.SampleDesc.Count > 1 ? WMTTextureType2DMultisample
                                               : WMTTextureType2D;
   case D3D12_SRV_DIMENSION_TEXTURE2DARRAY:
-    return resource_desc.SampleDesc.Count > 1
-               ? WMTTextureType2DMultisampleArray
-               : WMTTextureType2DArray;
+    return resource_desc.SampleDesc.Count > 1 ? WMTTextureType2DMultisampleArray
+                                              : WMTTextureType2DArray;
   case D3D12_SRV_DIMENSION_TEXTURECUBE:
     return WMTTextureTypeCube;
   case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY:
@@ -324,9 +350,9 @@ static WMTTextureType TextureTypeForSrvView(
   }
 }
 
-static WMTTextureType TextureTypeForUavView(
-    const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
-    const D3D12_RESOURCE_DESC &resource_desc) {
+static WMTTextureType
+TextureTypeForUavView(const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
+                      const D3D12_RESOURCE_DESC &resource_desc) {
   switch (desc.ViewDimension) {
   case D3D12_UAV_DIMENSION_TEXTURE1D:
     return WMTTextureType1D;
@@ -362,56 +388,56 @@ static void SrvViewRange(const D3D12_SHADER_RESOURCE_VIEW_DESC &desc,
   switch (desc.ViewDimension) {
   case D3D12_SRV_DIMENSION_TEXTURE1D:
     mip_start = desc.Texture1D.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.Texture1D.MipLevels == UINT32_MAX ? total_mips - mip_start
-                                               : desc.Texture1D.MipLevels);
+    mip_count = static_cast<uint16_t>(desc.Texture1D.MipLevels == UINT32_MAX
+                                          ? total_mips - mip_start
+                                          : desc.Texture1D.MipLevels);
     break;
   case D3D12_SRV_DIMENSION_TEXTURE1DARRAY:
     mip_start = desc.Texture1DArray.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.Texture1DArray.MipLevels == UINT32_MAX
-            ? total_mips - mip_start
-            : desc.Texture1DArray.MipLevels);
+    mip_count =
+        static_cast<uint16_t>(desc.Texture1DArray.MipLevels == UINT32_MAX
+                                  ? total_mips - mip_start
+                                  : desc.Texture1DArray.MipLevels);
     slice_start = desc.Texture1DArray.FirstArraySlice;
     slice_count = desc.Texture1DArray.ArraySize;
     break;
   case D3D12_SRV_DIMENSION_TEXTURE2D:
     mip_start = desc.Texture2D.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.Texture2D.MipLevels == UINT32_MAX ? total_mips - mip_start
-                                               : desc.Texture2D.MipLevels);
+    mip_count = static_cast<uint16_t>(desc.Texture2D.MipLevels == UINT32_MAX
+                                          ? total_mips - mip_start
+                                          : desc.Texture2D.MipLevels);
     slice_count = 1;
     break;
   case D3D12_SRV_DIMENSION_TEXTURE2DARRAY:
     mip_start = desc.Texture2DArray.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.Texture2DArray.MipLevels == UINT32_MAX
-            ? total_mips - mip_start
-            : desc.Texture2DArray.MipLevels);
+    mip_count =
+        static_cast<uint16_t>(desc.Texture2DArray.MipLevels == UINT32_MAX
+                                  ? total_mips - mip_start
+                                  : desc.Texture2DArray.MipLevels);
     slice_start = desc.Texture2DArray.FirstArraySlice;
     slice_count = desc.Texture2DArray.ArraySize;
     break;
   case D3D12_SRV_DIMENSION_TEXTURECUBE:
     mip_start = desc.TextureCube.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.TextureCube.MipLevels == UINT32_MAX ? total_mips - mip_start
-                                                 : desc.TextureCube.MipLevels);
+    mip_count = static_cast<uint16_t>(desc.TextureCube.MipLevels == UINT32_MAX
+                                          ? total_mips - mip_start
+                                          : desc.TextureCube.MipLevels);
     slice_count = std::min<uint16_t>(6, total_slices);
     break;
   case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY:
     mip_start = desc.TextureCubeArray.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.TextureCubeArray.MipLevels == UINT32_MAX
-            ? total_mips - mip_start
-            : desc.TextureCubeArray.MipLevels);
+    mip_count =
+        static_cast<uint16_t>(desc.TextureCubeArray.MipLevels == UINT32_MAX
+                                  ? total_mips - mip_start
+                                  : desc.TextureCubeArray.MipLevels);
     slice_start = desc.TextureCubeArray.First2DArrayFace;
     slice_count = desc.TextureCubeArray.NumCubes * 6;
     break;
   case D3D12_SRV_DIMENSION_TEXTURE3D:
     mip_start = desc.Texture3D.MostDetailedMip;
-    mip_count = static_cast<uint16_t>(
-        desc.Texture3D.MipLevels == UINT32_MAX ? total_mips - mip_start
-                                               : desc.Texture3D.MipLevels);
+    mip_count = static_cast<uint16_t>(desc.Texture3D.MipLevels == UINT32_MAX
+                                          ? total_mips - mip_start
+                                          : desc.Texture3D.MipLevels);
     slice_count = 1;
     break;
   default:
@@ -465,10 +491,8 @@ static void UavViewRange(const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
 
 static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
                                         MTLD3D12Resource *resource,
-                                        DXGI_FORMAT format,
-                                        WMTTextureType type,
-                                        uint16_t mip_start,
-                                        uint16_t mip_count,
+                                        DXGI_FORMAT format, WMTTextureType type,
+                                        uint16_t mip_start, uint16_t mip_count,
                                         uint16_t slice_start,
                                         uint16_t slice_count) {
   if (!descriptor || !resource || resource->IsBuffer())
@@ -506,17 +530,18 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
         "fmt=%u type=%u mip=%u+%u slice=%u+%u",
         (void *)descriptor, (void *)resource,
         (unsigned long long)descriptor->metal_texture_view.handle,
-        (unsigned long long)gpu_id, (unsigned)format, (unsigned)type,
-        mip_start, mip_count, slice_start, slice_count);
+        (unsigned long long)gpu_id, (unsigned)format, (unsigned)type, mip_start,
+        mip_count, slice_start, slice_count);
 }
 
-}
+} // namespace
 
 class MTLD3D12InfoQueue : public ID3D12InfoQueue {
 public:
   virtual ~MTLD3D12InfoQueue() = default;
 
-  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject) override {
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
+                                           void **ppvObject) override {
     if (!ppvObject)
       return E_POINTER;
     *ppvObject = nullptr;
@@ -544,21 +569,38 @@ public:
 
   void STDMETHODCALLTYPE ClearStoredMessages() override {}
 
-  HRESULT STDMETHODCALLTYPE GetMessage(UINT64, D3D12_MESSAGE *, SIZE_T *length) override {
+  HRESULT STDMETHODCALLTYPE GetMessage(UINT64, D3D12_MESSAGE *,
+                                       SIZE_T *length) override {
     if (length)
       *length = 0;
     return DXGI_ERROR_NOT_FOUND;
   }
 
-  UINT64 STDMETHODCALLTYPE GetNumMessagesAllowedByStorageFilter() override { return 0; }
-  UINT64 STDMETHODCALLTYPE GetNumMessagesDeniedByStorageFilter() override { return 0; }
+  UINT64 STDMETHODCALLTYPE GetNumMessagesAllowedByStorageFilter() override {
+    return 0;
+  }
+  UINT64 STDMETHODCALLTYPE GetNumMessagesDeniedByStorageFilter() override {
+    return 0;
+  }
   UINT64 STDMETHODCALLTYPE GetNumStoredMessages() override { return 0; }
-  UINT64 STDMETHODCALLTYPE GetNumStoredMessagesAllowedByRetrievalFilter() override { return 0; }
-  UINT64 STDMETHODCALLTYPE GetNumMessagesDiscardedByMessageCountLimit() override { return 0; }
-  UINT64 STDMETHODCALLTYPE GetMessageCountLimit() override { return m_messageCountLimit; }
+  UINT64 STDMETHODCALLTYPE
+  GetNumStoredMessagesAllowedByRetrievalFilter() override {
+    return 0;
+  }
+  UINT64 STDMETHODCALLTYPE
+  GetNumMessagesDiscardedByMessageCountLimit() override {
+    return 0;
+  }
+  UINT64 STDMETHODCALLTYPE GetMessageCountLimit() override {
+    return m_messageCountLimit;
+  }
 
-  HRESULT STDMETHODCALLTYPE AddStorageFilterEntries(D3D12_INFO_QUEUE_FILTER *) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE GetStorageFilter(D3D12_INFO_QUEUE_FILTER *, SIZE_T *length) override {
+  HRESULT STDMETHODCALLTYPE
+  AddStorageFilterEntries(D3D12_INFO_QUEUE_FILTER *) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetStorageFilter(D3D12_INFO_QUEUE_FILTER *,
+                                             SIZE_T *length) override {
     if (length)
       *length = 0;
     return S_OK;
@@ -566,36 +608,72 @@ public:
   void STDMETHODCALLTYPE ClearStorageFilter() override {}
   HRESULT STDMETHODCALLTYPE PushEmptyStorageFilter() override { return S_OK; }
   HRESULT STDMETHODCALLTYPE PushCopyOfStorageFilter() override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE PushStorageFilter(D3D12_INFO_QUEUE_FILTER *) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE
+  PushStorageFilter(D3D12_INFO_QUEUE_FILTER *) override {
+    return S_OK;
+  }
   void STDMETHODCALLTYPE PopStorageFilter() override {}
   UINT STDMETHODCALLTYPE GetStorageFilterStackSize() override { return 0; }
 
-  HRESULT STDMETHODCALLTYPE AddRetrievalFilterEntries(D3D12_INFO_QUEUE_FILTER *) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE GetRetrievalFilter(D3D12_INFO_QUEUE_FILTER *, SIZE_T *length) override {
+  HRESULT STDMETHODCALLTYPE
+  AddRetrievalFilterEntries(D3D12_INFO_QUEUE_FILTER *) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetRetrievalFilter(D3D12_INFO_QUEUE_FILTER *,
+                                               SIZE_T *length) override {
     if (length)
       *length = 0;
     return S_OK;
   }
   void STDMETHODCALLTYPE ClearRetrievalFilter() override {}
   HRESULT STDMETHODCALLTYPE PushEmptyRetrievalFilter() override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE PushCopyOfRetrievalFilter() override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE PushRetrievalFilter(D3D12_INFO_QUEUE_FILTER *) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE PushCopyOfRetrievalFilter() override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE
+  PushRetrievalFilter(D3D12_INFO_QUEUE_FILTER *) override {
+    return S_OK;
+  }
   void STDMETHODCALLTYPE PopRetrievalFilter() override {}
   UINT STDMETHODCALLTYPE GetRetrievalFilterStackSize() override { return 0; }
 
-  HRESULT STDMETHODCALLTYPE AddMessage(D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY, D3D12_MESSAGE_ID,
+  HRESULT STDMETHODCALLTYPE AddMessage(D3D12_MESSAGE_CATEGORY,
+                                       D3D12_MESSAGE_SEVERITY, D3D12_MESSAGE_ID,
                                        const char *) override {
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE AddApplicationMessage(D3D12_MESSAGE_SEVERITY, const char *) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE SetBreakOnCategory(D3D12_MESSAGE_CATEGORY, WINBOOL) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY, WINBOOL) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE SetBreakOnID(D3D12_MESSAGE_ID, WINBOOL) override { return S_OK; }
-  WINBOOL STDMETHODCALLTYPE GetBreakOnCategory(D3D12_MESSAGE_CATEGORY) override { return FALSE; }
-  WINBOOL STDMETHODCALLTYPE GetBreakOnSeverity(D3D12_MESSAGE_SEVERITY) override { return FALSE; }
-  WINBOOL STDMETHODCALLTYPE GetBreakOnID(D3D12_MESSAGE_ID) override { return FALSE; }
-  void STDMETHODCALLTYPE SetMuteDebugOutput(WINBOOL mute) override { m_muteDebugOutput = mute; }
-  WINBOOL STDMETHODCALLTYPE GetMuteDebugOutput() override { return m_muteDebugOutput; }
+  HRESULT STDMETHODCALLTYPE AddApplicationMessage(D3D12_MESSAGE_SEVERITY,
+                                                  const char *) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetBreakOnCategory(D3D12_MESSAGE_CATEGORY,
+                                               WINBOOL) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY,
+                                               WINBOOL) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetBreakOnID(D3D12_MESSAGE_ID, WINBOOL) override {
+    return S_OK;
+  }
+  WINBOOL STDMETHODCALLTYPE
+  GetBreakOnCategory(D3D12_MESSAGE_CATEGORY) override {
+    return FALSE;
+  }
+  WINBOOL STDMETHODCALLTYPE
+  GetBreakOnSeverity(D3D12_MESSAGE_SEVERITY) override {
+    return FALSE;
+  }
+  WINBOOL STDMETHODCALLTYPE GetBreakOnID(D3D12_MESSAGE_ID) override {
+    return FALSE;
+  }
+  void STDMETHODCALLTYPE SetMuteDebugOutput(WINBOOL mute) override {
+    m_muteDebugOutput = mute;
+  }
+  WINBOOL STDMETHODCALLTYPE GetMuteDebugOutput() override {
+    return m_muteDebugOutput;
+  }
 
 private:
   std::atomic<ULONG> m_refCount = 1;
@@ -607,8 +685,7 @@ struct D3D12ProgramIdentifierCompat {
   UINT64 OpaqueData[4];
 };
 
-struct ID3D12StateObjectProperties1Compat
-    : public ID3D12StateObjectProperties {
+struct ID3D12StateObjectProperties1Compat : public ID3D12StateObjectProperties {
   virtual D3D12ProgramIdentifierCompat *STDMETHODCALLTYPE GetProgramIdentifier(
       D3D12ProgramIdentifierCompat *ret, LPCWSTR program_name) = 0;
 };
@@ -628,8 +705,9 @@ static bool has_format_capability(FormatCapability capabilities,
   return (static_cast<int>(capabilities) & static_cast<int>(capability)) != 0;
 }
 
-static FormatCapability query_format_capability(
-    const FormatCapabilityInspector &inspector, WMTPixelFormat format) {
+static FormatCapability
+query_format_capability(const FormatCapabilityInspector &inspector,
+                        WMTPixelFormat format) {
   format = ORIGINAL_FORMAT(format);
   auto iter = inspector.textureCapabilities.find(format);
   if (iter == inspector.textureCapabilities.end())
@@ -637,35 +715,13 @@ static FormatCapability query_format_capability(
   return iter->second;
 }
 
-static bool format_is_stream_output_compatible(DXGI_FORMAT format) {
-  switch (format) {
-  case DXGI_FORMAT_R32_FLOAT:
-  case DXGI_FORMAT_R32_UINT:
-  case DXGI_FORMAT_R32_SINT:
-  case DXGI_FORMAT_R32G32_FLOAT:
-  case DXGI_FORMAT_R32G32_UINT:
-  case DXGI_FORMAT_R32G32_SINT:
-  case DXGI_FORMAT_R32G32B32_FLOAT:
-  case DXGI_FORMAT_R32G32B32_UINT:
-  case DXGI_FORMAT_R32G32B32_SINT:
-  case DXGI_FORMAT_R32G32B32A32_FLOAT:
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-    return true;
-  default:
-    return false;
-  }
-}
-
-template <typename T>
-static size_t pipeline_stream_payload_offset() {
+template <typename T> static size_t pipeline_stream_payload_offset() {
   size_t offset = sizeof(UINT);
   size_t alignment = alignof(T);
   return (offset + alignment - 1) & ~(alignment - 1);
 }
 
-template <typename T>
-static size_t pipeline_stream_subobject_size() {
+template <typename T> static size_t pipeline_stream_subobject_size() {
   size_t size = pipeline_stream_payload_offset<T>() + sizeof(T);
   size_t alignment = alignof(void *);
   return (size + alignment - 1) & ~(alignment - 1);
@@ -982,30 +1038,44 @@ convert_rasterizer_desc2(const D3D12RasterizerDesc2 &desc2) {
 
 class MTLD3D12CommandSignature : public ComObject<ID3D12CommandSignature> {
 public:
-  MTLD3D12CommandSignature(MTLD3D12Device *device, const D3D12_COMMAND_SIGNATURE_DESC &desc)
+  MTLD3D12CommandSignature(MTLD3D12Device *device,
+                           const D3D12_COMMAND_SIGNATURE_DESC &desc)
       : m_device(device), m_desc(desc) {
     if (desc.pArgumentDescs && desc.NumArgumentDescs) {
       m_argument_descs.assign(desc.pArgumentDescs,
-                             desc.pArgumentDescs + desc.NumArgumentDescs);
+                              desc.pArgumentDescs + desc.NumArgumentDescs);
       m_desc.pArgumentDescs = m_argument_descs.data();
     }
     m_device->AddRef();
   }
   ~MTLD3D12CommandSignature() { m_device->Release(); }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
-    if (!ppv) return E_POINTER;
+    if (!ppv)
+      return E_POINTER;
     if (riid == IID_IUnknown || riid == IID_ID3D12Object ||
         riid == IID_ID3D12DeviceChild || riid == IID_ID3D12CommandSignature) {
-      *ppv = ref(this); return S_OK;
+      *ppv = ref(this);
+      return S_OK;
     }
     return E_NOINTERFACE;
   }
-  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override { return E_NOTIMPL; }
-  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT, const void *) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID, const IUnknown *) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override {
+    return E_NOTIMPL;
+  }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT,
+                                           const void *) override {
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,
+                                                    const IUnknown *) override {
+    return S_OK;
+  }
   HRESULT STDMETHODCALLTYPE SetName(LPCWSTR) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE GetDevice(REFIID riid, void **device) override { return m_device->QueryInterface(riid, device); }
+  HRESULT STDMETHODCALLTYPE GetDevice(REFIID riid, void **device) override {
+    return m_device->QueryInterface(riid, device);
+  }
   const D3D12_COMMAND_SIGNATURE_DESC &GetDesc() const { return m_desc; }
+
 private:
   MTLD3D12Device *m_device;
   D3D12_COMMAND_SIGNATURE_DESC m_desc;
@@ -1013,26 +1083,25 @@ private:
 };
 
 struct ID3D12PipelineLibraryCompat : public ID3D12DeviceChild {
-  virtual HRESULT STDMETHODCALLTYPE StorePipeline(LPCWSTR name,
-                                                  ID3D12PipelineState *pipeline) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  StorePipeline(LPCWSTR name, ID3D12PipelineState *pipeline) = 0;
   virtual HRESULT STDMETHODCALLTYPE LoadGraphicsPipeline(
-      LPCWSTR name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
-      REFIID riid, void **pipeline_state) = 0;
+      LPCWSTR name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc, REFIID riid,
+      void **pipeline_state) = 0;
   virtual HRESULT STDMETHODCALLTYPE LoadComputePipeline(
-      LPCWSTR name, const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc,
-      REFIID riid, void **pipeline_state) = 0;
+      LPCWSTR name, const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc, REFIID riid,
+      void **pipeline_state) = 0;
   virtual SIZE_T STDMETHODCALLTYPE GetSerializedSize() = 0;
   virtual HRESULT STDMETHODCALLTYPE Serialize(void *data, SIZE_T data_size) = 0;
 };
 
 struct ID3D12PipelineLibrary1Compat : public ID3D12PipelineLibraryCompat {
-  virtual HRESULT STDMETHODCALLTYPE LoadPipeline(
-      LPCWSTR name, const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
-      REFIID riid, void **pipeline_state) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  LoadPipeline(LPCWSTR name, const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
+               REFIID riid, void **pipeline_state) = 0;
 };
 
-class MTLD3D12PipelineLibrary
-    : public ComObject<ID3D12PipelineLibrary1Compat> {
+class MTLD3D12PipelineLibrary : public ComObject<ID3D12PipelineLibrary1Compat> {
 public:
   MTLD3D12PipelineLibrary(MTLD3D12Device *device, const void *blob,
                           SIZE_T blob_size)
@@ -1065,7 +1134,8 @@ public:
   HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override {
     return E_NOTIMPL;
   }
-  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT, const void *) override {
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT,
+                                           const void *) override {
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,
@@ -1078,8 +1148,8 @@ public:
     return m_device->QueryInterface(riid, device);
   }
 
-  HRESULT STDMETHODCALLTYPE StorePipeline(LPCWSTR name,
-                                          ID3D12PipelineState *pipeline) override {
+  HRESULT STDMETHODCALLTYPE
+  StorePipeline(LPCWSTR name, ID3D12PipelineState *pipeline) override {
     if (!pipeline)
       return E_POINTER;
     auto key = key_from_name(name);
@@ -1094,8 +1164,8 @@ public:
   }
 
   HRESULT STDMETHODCALLTYPE LoadGraphicsPipeline(
-      LPCWSTR name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
-      REFIID riid, void **pipeline_state) override {
+      LPCWSTR name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc, REFIID riid,
+      void **pipeline_state) override {
     if (!pipeline_state)
       return E_POINTER;
     *pipeline_state = nullptr;
@@ -1110,8 +1180,8 @@ public:
   }
 
   HRESULT STDMETHODCALLTYPE LoadComputePipeline(
-      LPCWSTR name, const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc,
-      REFIID riid, void **pipeline_state) override {
+      LPCWSTR name, const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc, REFIID riid,
+      void **pipeline_state) override {
     if (!pipeline_state)
       return E_POINTER;
     *pipeline_state = nullptr;
@@ -1142,9 +1212,9 @@ public:
     return S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE LoadPipeline(
-      LPCWSTR name, const D3D12_PIPELINE_STATE_STREAM_DESC *desc, REFIID riid,
-      void **pipeline_state) override {
+  HRESULT STDMETHODCALLTYPE
+  LoadPipeline(LPCWSTR name, const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
+               REFIID riid, void **pipeline_state) override {
     if (!pipeline_state)
       return E_POINTER;
     *pipeline_state = nullptr;
@@ -1193,8 +1263,8 @@ public:
     }
     for (size_t i = 0; i < sizeof(m_shader_identifier); i++)
       m_shader_identifier[i] = static_cast<uint8_t>(0xA5u ^ (i * 17u));
-    TRACE("StateObject create type=%u subobjects=%zu base=%p",
-          (unsigned)m_type, m_subobject_types.size(), base);
+    TRACE("StateObject create type=%u subobjects=%zu base=%p", (unsigned)m_type,
+          m_subobject_types.size(), base);
   }
 
   virtual ~MTLD3D12StateObject() {
@@ -1222,9 +1292,7 @@ public:
     return S_OK;
   }
 
-  ULONG STDMETHODCALLTYPE AddRef() override {
-    return ++m_ref_count;
-  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++m_ref_count; }
 
   ULONG STDMETHODCALLTYPE Release() override {
     ULONG count = --m_ref_count;
@@ -1236,7 +1304,8 @@ public:
   HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override {
     return E_NOTIMPL;
   }
-  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT, const void *) override {
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT,
+                                           const void *) override {
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,
@@ -1280,12 +1349,14 @@ public:
     if (!ret)
       return nullptr;
     for (size_t i = 0; i < 4; i++) {
-      uint64_t word = 0x4d313250524f4755ull ^ (uint64_t)i * 0x9e3779b97f4a7c15ull;
+      uint64_t word =
+          0x4d313250524f4755ull ^ (uint64_t)i * 0x9e3779b97f4a7c15ull;
       if (program_name) {
         for (const WCHAR *p = program_name; *p; p++)
           word = (word ^ (uint16_t)*p) * 1099511628211ull;
       }
-      word ^= ((uint64_t)m_type << 48) ^ ((uint64_t)m_subobject_types.size() << 32);
+      word ^=
+          ((uint64_t)m_type << 48) ^ ((uint64_t)m_subobject_types.size() << 32);
       ret->OpaqueData[i] = word;
     }
     return ret;
@@ -1293,7 +1364,8 @@ public:
 
   HRESULT STDMETHODCALLTYPE GetGlobalRootSignatureForProgram(
       LPCWSTR program_name, REFIID, void **root_signature) override {
-    TRACE("StateObjectProperties2::GetGlobalRootSignatureForProgram program=%ls -> E_NOINTERFACE",
+    TRACE("StateObjectProperties2::GetGlobalRootSignatureForProgram "
+          "program=%ls -> E_NOINTERFACE",
           program_name ? program_name : L"(null)");
     if (!root_signature)
       return E_POINTER;
@@ -1303,7 +1375,8 @@ public:
 
   HRESULT STDMETHODCALLTYPE GetGlobalRootSignatureForShader(
       LPCWSTR export_name, REFIID, void **root_signature) override {
-    TRACE("StateObjectProperties2::GetGlobalRootSignatureForShader export=%ls -> E_NOINTERFACE",
+    TRACE("StateObjectProperties2::GetGlobalRootSignatureForShader export=%ls "
+          "-> E_NOINTERFACE",
           export_name ? export_name : L"(null)");
     if (!root_signature)
       return E_POINTER;
@@ -1321,14 +1394,14 @@ private:
   UINT64 m_pipeline_stack_size = 0;
 };
 
-class MTLD3D12ShaderCacheSession
-    : public ComObject<ID3D12ShaderCacheSession> {
+class MTLD3D12ShaderCacheSession : public ComObject<ID3D12ShaderCacheSession> {
 public:
   MTLD3D12ShaderCacheSession(MTLD3D12Device *device,
                              const D3D12_SHADER_CACHE_SESSION_DESC &desc)
       : m_device(device), m_desc(desc) {
     m_device->AddRef();
-    TRACE("ShaderCacheSession create mode=%u flags=0x%x max_bytes=%u max_entries=%u version=%llu",
+    TRACE("ShaderCacheSession create mode=%u flags=0x%x max_bytes=%u "
+          "max_entries=%u version=%llu",
           (unsigned)m_desc.Mode, (unsigned)m_desc.Flags,
           m_desc.MaximumInMemoryCacheSizeBytes,
           m_desc.MaximumInMemoryCacheEntries,
@@ -1342,8 +1415,7 @@ public:
       return E_POINTER;
     *ppv = nullptr;
     if (riid == IID_IUnknown || riid == IID_ID3D12Object ||
-        riid == IID_ID3D12DeviceChild ||
-        riid == IID_ID3D12ShaderCacheSession) {
+        riid == IID_ID3D12DeviceChild || riid == IID_ID3D12ShaderCacheSession) {
       *ppv = ref(this);
       return S_OK;
     }
@@ -1353,7 +1425,8 @@ public:
   HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override {
     return E_NOTIMPL;
   }
-  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT, const void *) override {
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT,
+                                           const void *) override {
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,
@@ -1386,7 +1459,8 @@ public:
     }
     if (*value_size < required) {
       *value_size = required;
-      TRACE("ShaderCacheSession FindValue buffer too small key_size=%u required=%u",
+      TRACE("ShaderCacheSession FindValue buffer too small key_size=%u "
+            "required=%u",
             key_size, required);
       return HRESULT_FROM_WIN32(ERROR_MORE_DATA);
     }
@@ -1467,7 +1541,8 @@ static int g_watcher_restore_count = 0;
 
 static bool device_vtable_watcher_enabled() {
   char value[8] = {};
-  DWORD len = GetEnvironmentVariableA("DXMT_D3D12_VTABLE_WATCHER", value, sizeof(value));
+  DWORD len = GetEnvironmentVariableA("DXMT_D3D12_VTABLE_WATCHER", value,
+                                      sizeof(value));
   return len > 0 && len < sizeof(value) && value[0] == '1';
 }
 
@@ -1476,36 +1551,44 @@ static void device_vtable_watcher() {
   int snapshot_count = 0;
   while (g_device_watcher_running.load()) {
     if (g_device_this) {
-      void *current = *(void**)g_device_this;
-      uint64_t current_m_device = *((uint64_t*)((char*)g_device_this + 8));
+      void *current = *(void **)g_device_this;
+      uint64_t current_m_device = *((uint64_t *)((char *)g_device_this + 8));
       bool vtable_bad = (current != g_device_expected_vtable);
-      bool m_device_bad = (g_device_expected_m_device != 0 && current_m_device != g_device_expected_m_device);
+      bool m_device_bad = (g_device_expected_m_device != 0 &&
+                           current_m_device != g_device_expected_m_device);
       if (vtable_bad || m_device_bad) {
         g_watcher_restore_count++;
         FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
         if (f) {
-          fprintf(f, "!!! CORRUPTION #%d after %d checks: this=%p vtable_expected=%p vtable_now=%p m_device_expected=0x%llx m_device_now=0x%llx watcher_tid=%lu\n",
-            g_watcher_restore_count, check_count,
-            g_device_this, g_device_expected_vtable, current,
-            (unsigned long long)g_device_expected_m_device, (unsigned long long)current_m_device,
-            (unsigned long)GetCurrentThreadId());
+          fprintf(f,
+                  "!!! CORRUPTION #%d after %d checks: this=%p "
+                  "vtable_expected=%p vtable_now=%p m_device_expected=0x%llx "
+                  "m_device_now=0x%llx watcher_tid=%lu\n",
+                  g_watcher_restore_count, check_count, g_device_this,
+                  g_device_expected_vtable, current,
+                  (unsigned long long)g_device_expected_m_device,
+                  (unsigned long long)current_m_device,
+                  (unsigned long)GetCurrentThreadId());
           unsigned char *raw = (unsigned char *)g_device_this;
           fprintf(f, "!!! DEVICE DUMP [0x00-0x3F]:");
           for (int i = 0; i < 64; i += 8) {
-            fprintf(f, " %02x%02x%02x%02x%02x%02x%02x%02x",
-              raw[i], raw[i+1], raw[i+2], raw[i+3], raw[i+4], raw[i+5], raw[i+6], raw[i+7]);
+            fprintf(f, " %02x%02x%02x%02x%02x%02x%02x%02x", raw[i], raw[i + 1],
+                    raw[i + 2], raw[i + 3], raw[i + 4], raw[i + 5], raw[i + 6],
+                    raw[i + 7]);
           }
           fprintf(f, "\n!!! DEVICE DUMP [0x40-0x7F]:");
           for (int i = 64; i < 128; i += 8) {
-            fprintf(f, " %02x%02x%02x%02x%02x%02x%02x%02x",
-              raw[i], raw[i+1], raw[i+2], raw[i+3], raw[i+4], raw[i+5], raw[i+6], raw[i+7]);
+            fprintf(f, " %02x%02x%02x%02x%02x%02x%02x%02x", raw[i], raw[i + 1],
+                    raw[i + 2], raw[i + 3], raw[i + 4], raw[i + 5], raw[i + 6],
+                    raw[i + 7]);
           }
           fprintf(f, "\n");
           fclose(f);
         }
-        *(void**)g_device_this = g_device_expected_vtable;
+        *(void **)g_device_this = g_device_expected_vtable;
         if (g_device_expected_m_device != 0) {
-          *((uint64_t*)((char*)g_device_this + 8)) = g_device_expected_m_device;
+          *((uint64_t *)((char *)g_device_this + 8)) =
+              g_device_expected_m_device;
         }
         check_count = 0;
         continue;
@@ -1516,7 +1599,8 @@ static void device_vtable_watcher() {
         FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
         if (f) {
           fprintf(f, "watcher snapshot #%d: vtable=%p m_device=0x%llx OK\n",
-            snapshot_count, current, (unsigned long long)current_m_device);
+                  snapshot_count, current,
+                  (unsigned long long)current_m_device);
           fclose(f);
         }
       }
@@ -1531,18 +1615,19 @@ MTLD3D12Device::MTLD3D12Device(std::unique_ptr<Device> &&device,
   m_format_inspector.Inspect(GetMTLDevice());
   if (m_adapter)
     m_adapter->AddRef();
-  m_expected_vtable = *(void**)this;
-	  g_device_this = (void*)this;
-	  g_device_expected_vtable = m_expected_vtable;
-	  g_device_expected_m_device = (uint64_t)m_device.get();
-	  TRACE("M12 feature contract build=full_caps_current_pipeline_20260517");
-	  TRACE("Device ctor: this=%p vtable=%p m_device=%p sizeof=%zu",
-	    (void*)this, m_expected_vtable, (void*)m_device.get(), sizeof(MTLD3D12Device));
+  m_expected_vtable = *(void **)this;
+  g_device_this = (void *)this;
+  g_device_expected_vtable = m_expected_vtable;
+  g_device_expected_m_device = (uint64_t)m_device.get();
+  TRACE("M12 feature contract build=full_caps_current_pipeline_20260517");
+  TRACE("Device ctor: this=%p vtable=%p m_device=%p sizeof=%zu", (void *)this,
+        m_expected_vtable, (void *)m_device.get(), sizeof(MTLD3D12Device));
   extern void *g_d3d12_device_addr;
   extern size_t g_d3d12_device_size;
-  g_d3d12_device_addr = (void*)this;
+  g_d3d12_device_addr = (void *)this;
   g_d3d12_device_size = sizeof(MTLD3D12Device);
-  TRACE("Device ctor: registered device guard at %p size=%zu", g_d3d12_device_addr, g_d3d12_device_size);
+  TRACE("Device ctor: registered device guard at %p size=%zu",
+        g_d3d12_device_addr, g_d3d12_device_size);
   if (device_vtable_watcher_enabled()) {
     g_device_watcher_running.store(true);
     std::thread watcher(device_vtable_watcher);
@@ -1558,32 +1643,32 @@ MTLD3D12Device::~MTLD3D12Device() {
     g_device_expected_vtable = nullptr;
     g_device_expected_m_device = 0;
   }
-  void *current_vt = *(void**)this;
+  void *current_vt = *(void **)this;
   FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
   if (f) {
     fprintf(f, "Device REAL DTOR this=%p vtable=%p expected=%p m_refCount=%u\n",
-      (void*)this, current_vt, m_expected_vtable, m_refCount.load());
+            (void *)this, current_vt, m_expected_vtable, m_refCount.load());
     fclose(f);
   }
   Logger::info("D3D12 device destroyed");
 }
 
 void MTLD3D12Device::CheckVtable(const char *where) {
-  void *current = *(void**)this;
+  void *current = *(void **)this;
   if (current != m_expected_vtable) {
-    TRACE("VTABLE CORRUPTION at %s: expected=%p got=%p this=%p — AUTO-RESTORING", where, m_expected_vtable, current, (void*)this);
-    *(void**)this = m_expected_vtable;
+    TRACE(
+        "VTABLE CORRUPTION at %s: expected=%p got=%p this=%p — AUTO-RESTORING",
+        where, m_expected_vtable, current, (void *)this);
+    *(void **)this = m_expected_vtable;
   }
 }
 
-WMT::Device MTLD3D12Device::GetMTLDevice() {
-  return m_device->device();
-}
+WMT::Device MTLD3D12Device::GetMTLDevice() { return m_device->device(); }
 
 Device &MTLD3D12Device::GetDXMTDevice() { return *m_device; }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::QueryInterface(REFIID riid, void **ppvObject) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::QueryInterface(REFIID riid,
+                                                         void **ppvObject) {
   if (!ppvObject)
     return E_POINTER;
   *ppvObject = nullptr;
@@ -1606,18 +1691,21 @@ MTLD3D12Device::QueryInterface(REFIID riid, void **ppvObject) {
 
   if (riid == IID_ID3D12InfoQueue) {
     *ppvObject = new MTLD3D12InfoQueue();
-    TRACE("D3D12Device::QI(%s) -> S_OK (noop info queue)", str::format(riid).c_str());
+    TRACE("D3D12Device::QI(%s) -> S_OK (noop info queue)",
+          str::format(riid).c_str());
     return S_OK;
   }
 
   if (riid == __uuidof(IMTLDXGIDevice) && m_dxgi_device) {
-    TRACE("D3D12Device::QI(%s) -> delegating to dxgi_device", str::format(riid).c_str());
+    TRACE("D3D12Device::QI(%s) -> delegating to dxgi_device",
+          str::format(riid).c_str());
     return m_dxgi_device->QueryInterface(riid, ppvObject);
   }
 
   if (m_dxgi_device) {
     if (riid == IID_IDXGIDevice) {
-      TRACE("D3D12Device::QI(%s) -> delegating DXGI to dxgi_device", str::format(riid).c_str());
+      TRACE("D3D12Device::QI(%s) -> delegating DXGI to dxgi_device",
+            str::format(riid).c_str());
       return m_dxgi_device->QueryInterface(riid, ppvObject);
     }
   }
@@ -1638,11 +1726,12 @@ ULONG STDMETHODCALLTYPE MTLD3D12Device::AddRef() {
 ULONG STDMETHODCALLTYPE MTLD3D12Device::Release() {
   CheckVtable("Release");
   uint32_t rc = --m_refCount;
-  if (rc <= 1) TRACE("Device::Release rc=%u this=%p", rc, (void*)this);
+  if (rc <= 1)
+    TRACE("Device::Release rc=%u this=%p", rc, (void *)this);
   if (!rc) {
     uint32_t rp = --m_refPrivate;
     if (!rp) {
-      TRACE("Device::Release DELETING this=%p", (void*)this);
+      TRACE("Device::Release DELETING this=%p", (void *)this);
       m_refPrivate += 0x80000000;
       delete this;
     }
@@ -1650,15 +1739,16 @@ ULONG STDMETHODCALLTYPE MTLD3D12Device::Release() {
   return rc;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::GetPrivateData(REFGUID guid, UINT *data_size, void *data) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetPrivateData(REFGUID guid,
+                                                         UINT *data_size,
+                                                         void *data) {
   TRACE("GetPrivateData E_NOTIMPL");
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::SetPrivateData(REFGUID guid, UINT data_size,
-                               const void *data) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetPrivateData(REFGUID guid,
+                                                         UINT data_size,
+                                                         const void *data) {
   return S_OK;
 }
 
@@ -1667,15 +1757,12 @@ MTLD3D12Device::SetPrivateDataInterface(REFGUID guid, const IUnknown *data) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetName(LPCWSTR name) {
-  return S_OK;
-}
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetName(LPCWSTR name) { return S_OK; }
 
 UINT STDMETHODCALLTYPE MTLD3D12Device::GetNodeCount() { return 1; }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CreateCommandQueue(const D3D12_COMMAND_QUEUE_DESC *desc,
-                                    REFIID riid, void **command_queue) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandQueue(
+    const D3D12_COMMAND_QUEUE_DESC *desc, REFIID riid, void **command_queue) {
   TRACE("CreateCommandQueue type=%u", desc ? desc->Type : 0xFF);
   if (!desc || !command_queue)
     return E_POINTER;
@@ -1688,10 +1775,8 @@ MTLD3D12Device::CreateCommandQueue(const D3D12_COMMAND_QUEUE_DESC *desc,
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE type,
-                                        REFIID riid,
-                                        void **command_allocator) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandAllocator(
+    D3D12_COMMAND_LIST_TYPE type, REFIID riid, void **command_allocator) {
   TRACE("CreateCommandAllocator type=%u", type);
   if (!command_allocator)
     return E_POINTER;
@@ -1711,12 +1796,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     return E_POINTER;
   InitReturnPtr(pipeline_state);
 
-  TRACE("CreateGraphicsPSO ENTER: VS=%p(%zu) PS=%p(%zu) NumRT=%u DSV=%u Topo=%u",
-        desc->VS.pShaderBytecode, desc->VS.BytecodeLength,
-        desc->PS.pShaderBytecode, desc->PS.BytecodeLength,
-        desc->NumRenderTargets, (unsigned)desc->DSVFormat,
-        (unsigned)desc->PrimitiveTopologyType);
-  TRACE("CreateGraphicsPSO SHADERS: VS_HASH=0x%llx PS_HASH=0x%llx DS_HASH=0x%llx HS_HASH=0x%llx GS_HASH=0x%llx IL=%u",
+  TRACE(
+      "CreateGraphicsPSO ENTER: VS=%p(%zu) PS=%p(%zu) NumRT=%u DSV=%u Topo=%u",
+      desc->VS.pShaderBytecode, desc->VS.BytecodeLength,
+      desc->PS.pShaderBytecode, desc->PS.BytecodeLength, desc->NumRenderTargets,
+      (unsigned)desc->DSVFormat, (unsigned)desc->PrimitiveTopologyType);
+  TRACE("CreateGraphicsPSO SHADERS: VS_HASH=0x%llx PS_HASH=0x%llx "
+        "DS_HASH=0x%llx HS_HASH=0x%llx GS_HASH=0x%llx IL=%u",
         desc->VS.pShaderBytecode
             ? (unsigned long long)DXMTD3D12Hash64(desc->VS.pShaderBytecode,
                                                   desc->VS.BytecodeLength)
@@ -1750,13 +1836,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
   bool compiled = pso->RequestCompile(false);
   auto failure_stage = pso->GetCompileFailureStage();
   auto failure_detail = pso->GetCompileFailureDetail();
-  TRACE("CreateGraphicsPSO: compile=%d pending=%d VS=%p PS=%p stage=%s detail=%s",
-        compiled, pso->IsCompilePending(), desc->VS.pShaderBytecode,
-        desc->PS.pShaderBytecode, failure_stage.c_str(),
-        failure_detail.c_str());
+  TRACE(
+      "CreateGraphicsPSO: compile=%d pending=%d VS=%p PS=%p stage=%s detail=%s",
+      compiled, pso->IsCompilePending(), desc->VS.pShaderBytecode,
+      desc->PS.pShaderBytecode, failure_stage.c_str(), failure_detail.c_str());
   if (!compiled && !pso->IsCompilePending()) {
-    Logger::warn(str::format("CreateGraphicsPipelineState: shader compilation deferred/failed at ",
-                             failure_stage, ": ", failure_detail));
+    Logger::warn(str::format(
+        "CreateGraphicsPipelineState: shader compilation deferred/failed at ",
+        failure_stage, ": ", failure_detail));
     const bool unsupported_pso_state =
         failure_stage.rfind("pso/unsupported_", 0) == 0 ||
         failure_stage.rfind("pso/metal_", 0) == 0;
@@ -1806,8 +1893,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
         compiled, pso->IsCompilePending(), desc->CS.pShaderBytecode,
         failure_stage.c_str(), failure_detail.c_str());
   if (!compiled && !pso->IsCompilePending()) {
-    Logger::warn(str::format("CreateComputePipelineState: shader compilation deferred/failed at ",
-                             failure_stage, ": ", failure_detail));
+    Logger::warn(str::format(
+        "CreateComputePipelineState: shader compilation deferred/failed at ",
+        failure_stage, ": ", failure_detail));
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
   if (FAILED(hr))
@@ -1815,11 +1903,11 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandList(
-    UINT node_mask, D3D12_COMMAND_LIST_TYPE type,
-    ID3D12CommandAllocator *command_allocator,
-    ID3D12PipelineState *initial_pipeline_state, REFIID riid,
-    void **command_list) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12Device::CreateCommandList(UINT node_mask, D3D12_COMMAND_LIST_TYPE type,
+                                  ID3D12CommandAllocator *command_allocator,
+                                  ID3D12PipelineState *initial_pipeline_state,
+                                  REFIID riid, void **command_list) {
   TRACE("CreateCommandList type=%u", type);
   if (!command_list)
     return E_POINTER;
@@ -1834,13 +1922,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandList(
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
-                                    void *feature_data,
-                                    UINT feature_data_size) {
-  TRACE("CheckFeatureSupport this=%p feature=%u data=%p size=%u", (void*)this, (unsigned)feature, feature_data, feature_data_size);
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
+    D3D12_FEATURE feature, void *feature_data, UINT feature_data_size) {
+  TRACE("CheckFeatureSupport this=%p feature=%u data=%p size=%u", (void *)this,
+        (unsigned)feature, feature_data, feature_data_size);
   if ((UINT_PTR)feature_data > 0 && (UINT_PTR)feature_data < 0x10000) {
-    TRACE("!!! SUSPICIOUS CheckFeatureSupport: feature_data=%p looks like row_pitch (small int), this=%p — probable vtable slot 13 collision (ReadFromSubresource->CheckFeatureSupport)", feature_data, (void*)this);
+    TRACE("!!! SUSPICIOUS CheckFeatureSupport: feature_data=%p looks like "
+          "row_pitch (small int), this=%p — probable vtable slot 13 collision "
+          "(ReadFromSubresource->CheckFeatureSupport)",
+          feature_data, (void *)this);
   }
   switch ((UINT)feature) {
   case D3D12_FEATURE_D3D12_OPTIONS: {
@@ -1861,14 +1951,18 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     opts->StandardSwizzle64KBSupported = FALSE;
     opts->CrossNodeSharingTier = D3D12_CROSS_NODE_SHARING_TIER_NOT_SUPPORTED;
     opts->CrossAdapterRowMajorTextureSupported = FALSE;
-    opts->VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation = TRUE;
+    opts->VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation =
+        TRUE;
     opts->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
-    TRACE("  OPTIONS: DoubleFP=%d LogicOp=%d TiledTier=%u BindingTier=%u PSStencilRef=%d TypedUAV=%d ROV=%d ConsRaster=%u VAbit=%u HeapTier=%u",
-          opts->DoublePrecisionFloatShaderOps, opts->OutputMergerLogicOp,
-          opts->TiledResourcesTier, opts->ResourceBindingTier,
-          opts->PSSpecifiedStencilRefSupported, opts->TypedUAVLoadAdditionalFormats,
-          opts->ROVsSupported, opts->ConservativeRasterizationTier,
-          opts->MaxGPUVirtualAddressBitsPerResource, opts->ResourceHeapTier);
+    TRACE(
+        "  OPTIONS: DoubleFP=%d LogicOp=%d TiledTier=%u BindingTier=%u "
+        "PSStencilRef=%d TypedUAV=%d ROV=%d ConsRaster=%u VAbit=%u HeapTier=%u",
+        opts->DoublePrecisionFloatShaderOps, opts->OutputMergerLogicOp,
+        opts->TiledResourcesTier, opts->ResourceBindingTier,
+        opts->PSSpecifiedStencilRefSupported,
+        opts->TypedUAVLoadAdditionalFormats, opts->ROVsSupported,
+        opts->ConservativeRasterizationTier,
+        opts->MaxGPUVirtualAddressBitsPerResource, opts->ResourceHeapTier);
     return S_OK;
   }
   case D3D12_FEATURE_ARCHITECTURE: {
@@ -1887,12 +1981,13 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
       return E_INVALIDARG;
     fl->MaxSupportedFeatureLevel = D3D_FEATURE_LEVEL_9_1;
     for (UINT i = 0; i < fl->NumFeatureLevels; i++) {
-	      if (fl->pFeatureLevelsRequested[i] <= D3D_FEATURE_LEVEL_12_1 &&
-	          fl->pFeatureLevelsRequested[i] > fl->MaxSupportedFeatureLevel) {
+      if (fl->pFeatureLevelsRequested[i] <= D3D_FEATURE_LEVEL_12_1 &&
+          fl->pFeatureLevelsRequested[i] > fl->MaxSupportedFeatureLevel) {
         fl->MaxSupportedFeatureLevel = fl->pFeatureLevelsRequested[i];
       }
     }
-    TRACE("  FEATURE_LEVELS: MaxSupported=%u (from %u requested)", (unsigned)fl->MaxSupportedFeatureLevel, fl->NumFeatureLevels);
+    TRACE("  FEATURE_LEVELS: MaxSupported=%u (from %u requested)",
+          (unsigned)fl->MaxSupportedFeatureLevel, fl->NumFeatureLevels);
     return S_OK;
   }
   case D3D12_FEATURE_FORMAT_SUPPORT: {
@@ -1905,15 +2000,15 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
 
     if (fmt->Format == DXGI_FORMAT_UNKNOWN) {
       fmt->Support1 = D3D12_FORMAT_SUPPORT1_BUFFER;
-      fmt->Support2 = (D3D12_FORMAT_SUPPORT2)(
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_ADD |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_BITWISE_OPS |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_COMPARE_STORE_OR_COMPARE_EXCHANGE |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_EXCHANGE |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_SIGNED_MIN_OR_MAX |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_UNSIGNED_MIN_OR_MAX |
-          D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD |
-          D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+      fmt->Support2 =
+          (D3D12_FORMAT_SUPPORT2)(D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_ADD |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_BITWISE_OPS |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_COMPARE_STORE_OR_COMPARE_EXCHANGE |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_EXCHANGE |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_SIGNED_MIN_OR_MAX |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_UNSIGNED_MIN_OR_MAX |
+                                  D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD |
+                                  D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
       TRACE("  FORMAT_SUPPORT: format=%u Support1=0x%x Support2=0x%x",
             (unsigned)fmt->Format, (unsigned)fmt->Support1,
             (unsigned)fmt->Support2);
@@ -1931,34 +2026,35 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     D3D12_FORMAT_SUPPORT2 support2 = D3D12_FORMAT_SUPPORT2_NONE;
 
     if (metal_format.PixelFormat) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(
-          support1 | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
-          D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
-          D3D12_FORMAT_SUPPORT1_SHADER_GATHER |
-          D3D12_FORMAT_SUPPORT1_MULTISAMPLE_LOAD |
-          D3D12_FORMAT_SUPPORT1_TEXTURE1D |
-          D3D12_FORMAT_SUPPORT1_TEXTURE2D |
-          D3D12_FORMAT_SUPPORT1_TEXTURE3D |
-          D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
-          D3D12_FORMAT_SUPPORT1_MIP |
-          D3D12_FORMAT_SUPPORT1_CAST_WITHIN_BIT_LAYOUT);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 | D3D12_FORMAT_SUPPORT1_SHADER_LOAD |
+                                  D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
+                                  D3D12_FORMAT_SUPPORT1_SHADER_GATHER |
+                                  D3D12_FORMAT_SUPPORT1_MULTISAMPLE_LOAD |
+                                  D3D12_FORMAT_SUPPORT1_TEXTURE1D |
+                                  D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                                  D3D12_FORMAT_SUPPORT1_TEXTURE3D |
+                                  D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
+                                  D3D12_FORMAT_SUPPORT1_MIP |
+                                  D3D12_FORMAT_SUPPORT1_CAST_WITHIN_BIT_LAYOUT);
 
-      if (!(metal_format.Flag & (MTL_DXGI_FORMAT_BC |
-                                 MTL_DXGI_FORMAT_DEPTH_PLANER |
-                                 MTL_DXGI_FORMAT_STENCIL_PLANER))) {
-        support1 = (D3D12_FORMAT_SUPPORT1)(support1 |
-                                           D3D12_FORMAT_SUPPORT1_BUFFER);
+      if (!(metal_format.Flag &
+            (MTL_DXGI_FORMAT_BC | MTL_DXGI_FORMAT_DEPTH_PLANER |
+             MTL_DXGI_FORMAT_STENCIL_PLANER))) {
+        support1 =
+            (D3D12_FORMAT_SUPPORT1)(support1 | D3D12_FORMAT_SUPPORT1_BUFFER);
       }
 
       if (metal_format.Flag & MTL_DXGI_FORMAT_BACKBUFFER) {
-        support1 = (D3D12_FORMAT_SUPPORT1)(support1 |
-                                           D3D12_FORMAT_SUPPORT1_DISPLAY);
+        support1 =
+            (D3D12_FORMAT_SUPPORT1)(support1 | D3D12_FORMAT_SUPPORT1_DISPLAY);
       }
     }
 
     if (metal_format.AttributeFormat) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(support1 |
-                                         D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 |
+                                  D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER);
     }
 
     if (metal_format.PixelFormat == WMTPixelFormatR32Uint ||
@@ -1976,67 +2072,70 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     }
 
     if (has_format_capability(capability, FormatCapability::Blend)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(support1 |
-                                         D3D12_FORMAT_SUPPORT1_BLENDABLE);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 | D3D12_FORMAT_SUPPORT1_BLENDABLE);
     }
 
     if (has_format_capability(capability, FormatCapability::DepthStencil)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(
-          support1 | D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL |
-          D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE_COMPARISON |
-          D3D12_FORMAT_SUPPORT1_SHADER_GATHER_COMPARISON);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 |
+                                  D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL |
+                                  D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE_COMPARISON |
+                                  D3D12_FORMAT_SUPPORT1_SHADER_GATHER_COMPARISON);
     }
 
     if (has_format_capability(capability, FormatCapability::Resolve)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(
-          support1 | D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RESOLVE);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 |
+                                  D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RESOLVE);
     }
 
     if (has_format_capability(capability, FormatCapability::MSAA)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(
-          support1 | D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RENDERTARGET);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 |
+                                  D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RENDERTARGET);
     }
 
     if (has_format_capability(capability, FormatCapability::Write)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(
-          support1 | D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW);
+      support1 =
+          (D3D12_FORMAT_SUPPORT1)(support1 |
+                                  D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW);
     }
 
-    if (format_is_stream_output_compatible(fmt->Format)) {
-      support1 = (D3D12_FORMAT_SUPPORT1)(support1 |
-                                         D3D12_FORMAT_SUPPORT1_SO_BUFFER);
-    }
-
-    if (has_format_capability(capability, FormatCapability::TextureBufferRead)) {
+    if (has_format_capability(capability,
+                              FormatCapability::TextureBufferRead)) {
       support2 = (D3D12_FORMAT_SUPPORT2)(support2 |
                                          D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD);
     }
 
-    if (has_format_capability(capability, FormatCapability::TextureBufferWrite)) {
+    if (has_format_capability(capability,
+                              FormatCapability::TextureBufferWrite)) {
       support2 = (D3D12_FORMAT_SUPPORT2)(support2 |
                                          D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
     }
 
     if (has_format_capability(capability,
                               FormatCapability::TextureBufferReadWrite)) {
-      support2 = (D3D12_FORMAT_SUPPORT2)(
-          support2 | D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD |
-          D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+      support2 = (D3D12_FORMAT_SUPPORT2)(support2 |
+                                         D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD |
+                                         D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
     }
 
     if (has_format_capability(capability, FormatCapability::Atomic)) {
-      support2 = (D3D12_FORMAT_SUPPORT2)(
-          support2 | D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_ADD |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_BITWISE_OPS |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_COMPARE_STORE_OR_COMPARE_EXCHANGE |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_EXCHANGE |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_SIGNED_MIN_OR_MAX |
-          D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_UNSIGNED_MIN_OR_MAX);
+      support2 =
+          (D3D12_FORMAT_SUPPORT2)(support2 |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_ADD |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_BITWISE_OPS |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_COMPARE_STORE_OR_COMPARE_EXCHANGE |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_EXCHANGE |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_SIGNED_MIN_OR_MAX |
+                                  D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_UNSIGNED_MIN_OR_MAX);
     }
 
     if (has_format_capability(capability, FormatCapability::Blend)) {
-      support2 = (D3D12_FORMAT_SUPPORT2)(
-          support2 | D3D12_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP);
+      support2 =
+          (D3D12_FORMAT_SUPPORT2)(support2 |
+                                  D3D12_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP);
     }
 
     if (has_format_capability(capability, FormatCapability::Sparse)) {
@@ -2047,12 +2146,12 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     fmt->Support1 = support1;
     fmt->Support2 = support2;
     TRACE("  FORMAT_SUPPORT: format=%u Support1=0x%x Support2=0x%x",
-          (unsigned)fmt->Format, (unsigned)fmt->Support1, (unsigned)fmt->Support2);
+          (unsigned)fmt->Format, (unsigned)fmt->Support1,
+          (unsigned)fmt->Support2);
     return S_OK;
   }
   case D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS: {
-    auto *ms =
-        (D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS *)feature_data;
+    auto *ms = (D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS *)feature_data;
     if (feature_data_size < sizeof(*ms))
       return E_INVALIDARG;
     ms->NumQualityLevels = 1;
@@ -2127,9 +2226,9 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     auto *sc = (D3D12_FEATURE_DATA_SHADER_CACHE *)feature_data;
     if (feature_data_size < sizeof(*sc))
       return E_INVALIDARG;
-    sc->SupportFlags = (D3D12_SHADER_CACHE_SUPPORT_FLAGS)(
-        D3D12_SHADER_CACHE_SUPPORT_SINGLE_PSO |
-        D3D12_SHADER_CACHE_SUPPORT_LIBRARY);
+    sc->SupportFlags =
+        (D3D12_SHADER_CACHE_SUPPORT_FLAGS)(D3D12_SHADER_CACHE_SUPPORT_SINGLE_PSO |
+                                           D3D12_SHADER_CACHE_SUPPORT_LIBRARY);
     TRACE("  SHADER_CACHE: SupportFlags=0x%x", (unsigned)sc->SupportFlags);
     return S_OK;
   }
@@ -2142,9 +2241,12 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     o->WriteBufferImmediateSupportFlags = D3D12_COMMAND_LIST_SUPPORT_FLAG_NONE;
     o->ViewInstancingTier = D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
     o->BarycentricsSupported = FALSE;
-    TRACE("  OPTIONS3: CopyQueueTS=%d CastFullyTyped=%d WriteBufImm=0x%x ViewInstTier=%u Bary=%d",
-          o->CopyQueueTimestampQueriesSupported, o->CastingFullyTypedFormatSupported,
-          o->WriteBufferImmediateSupportFlags, o->ViewInstancingTier, o->BarycentricsSupported);
+    TRACE("  OPTIONS3: CopyQueueTS=%d CastFullyTyped=%d WriteBufImm=0x%x "
+          "ViewInstTier=%u Bary=%d",
+          o->CopyQueueTimestampQueriesSupported,
+          o->CastingFullyTypedFormatSupported,
+          o->WriteBufferImmediateSupportFlags, o->ViewInstancingTier,
+          o->BarycentricsSupported);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS4: {
@@ -2152,7 +2254,8 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
     o->MSAA64KBAlignedTextureSupported = FALSE;
-    o->SharedResourceCompatibilityTier = D3D12_SHARED_RESOURCE_COMPATIBILITY_TIER_0;
+    o->SharedResourceCompatibilityTier =
+        D3D12_SHARED_RESOURCE_COMPATIBILITY_TIER_0;
     o->Native16BitShaderOpsSupported = FALSE;
     return S_OK;
   }
@@ -2206,10 +2309,11 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
       return E_INVALIDARG;
     o->MeshShaderPipelineStatsSupported = FALSE;
     o->MeshShaderSupportsFullRangeRenderTargetArrayIndex = FALSE;
-    o->AtomicInt64OnTypedResourceSupported = TRUE;
-    o->AtomicInt64OnGroupSharedSupported = TRUE;
+    o->AtomicInt64OnTypedResourceSupported = FALSE;
+    o->AtomicInt64OnGroupSharedSupported = FALSE;
     o->DerivativesInMeshAndAmplificationShadersSupported = FALSE;
-    TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d Atomic64GroupShared=%d",
+    TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d "
+          "Atomic64GroupShared=%d",
           o->MeshShaderPipelineStatsSupported,
           o->MeshShaderSupportsFullRangeRenderTargetArrayIndex,
           o->AtomicInt64OnTypedResourceSupported,
@@ -2228,7 +2332,7 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS11 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->AtomicInt64OnDescriptorHeapResourceSupported = TRUE;
+    o->AtomicInt64OnDescriptorHeapResourceSupported = FALSE;
     TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d",
           o->AtomicInt64OnDescriptorHeapResourceSupported);
     return S_OK;
@@ -2336,8 +2440,8 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
       p->Supported = TRUE;
     } else {
       MTL_DXGI_FORMAT_DESC metal_format;
-      p->Supported = SUCCEEDED(MTLQueryDXGIFormat(GetMTLDevice(), p->Format,
-                                                  metal_format));
+      p->Supported = SUCCEEDED(
+          MTLQueryDXGIFormat(GetMTLDevice(), p->Format, metal_format));
     }
     TRACE("  PLACED_RESOURCE_SUPPORT: format=%u dimension=%u supported=%d",
           (unsigned)p->Format, (unsigned)p->Dimension, p->Supported);
@@ -2481,8 +2585,7 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     o->MaxGroupSharedMemoryPerGroupAS = 0;
     o->MaxGroupSharedMemoryPerGroupMS = 0;
     TRACE("  OPTIONS_PREVIEW: MaxGroupSharedCS=%u AS=%u MS=%u",
-          o->MaxGroupSharedMemoryPerGroupCS,
-          o->MaxGroupSharedMemoryPerGroupAS,
+          o->MaxGroupSharedMemoryPerGroupCS, o->MaxGroupSharedMemoryPerGroupAS,
           o->MaxGroupSharedMemoryPerGroupMS);
     return S_OK;
   }
@@ -2505,14 +2608,17 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
     return S_OK;
   }
   case D3D12_FEATURE_PROTECTED_RESOURCE_SESSION_SUPPORT: {
-    auto *p = (D3D12_FEATURE_DATA_PROTECTED_RESOURCE_SESSION_SUPPORT *)feature_data;
+    auto *p =
+        (D3D12_FEATURE_DATA_PROTECTED_RESOURCE_SESSION_SUPPORT *)feature_data;
     if (feature_data_size < sizeof(*p))
       return E_INVALIDARG;
     p->Support = D3D12_PROTECTED_RESOURCE_SESSION_SUPPORT_FLAG_NONE;
     return S_OK;
   }
   default:
-    TRACE("CheckFeatureSupport UNHANDLED feature=%u size=%u -> zeroing and returning S_OK", feature, feature_data_size);
+    TRACE("CheckFeatureSupport UNHANDLED feature=%u size=%u -> zeroing and "
+          "returning S_OK",
+          feature, feature_data_size);
     if (feature_data && feature_data_size > 0)
       memset(feature_data, 0, feature_data_size);
     return S_OK;
@@ -2521,23 +2627,27 @@ MTLD3D12Device::CheckFeatureSupport(D3D12_FEATURE feature,
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
-                                      REFIID riid, void **descriptor_heap) {
+                                     REFIID riid, void **descriptor_heap) {
   if (!desc || !descriptor_heap)
     return E_POINTER;
   CheckVtable("CreateDescriptorHeap");
-  TRACE("CreateDescriptorHeap type=%u num=%u starting", desc->Type, desc->NumDescriptors);
+  TRACE("CreateDescriptorHeap type=%u num=%u starting", desc->Type,
+        desc->NumDescriptors);
   InitReturnPtr(descriptor_heap);
 
-  TRACE("CreateDescriptorHeap: about to allocate %u bytes for object", (unsigned)sizeof(MTLD3D12DescriptorHeap));
+  TRACE("CreateDescriptorHeap: about to allocate %u bytes for object",
+        (unsigned)sizeof(MTLD3D12DescriptorHeap));
   void *raw = HeapAlloc(GetProcessHeap(), 0, sizeof(MTLD3D12DescriptorHeap));
   TRACE("CreateDescriptorHeap: HeapAlloc returned %p", raw);
   if (!raw) {
     TRACE("CreateDescriptorHeap: HeapAlloc for object FAILED");
     return E_OUTOFMEMORY;
   }
-  TRACE("CreateDescriptorHeap: about to placement-new, sizeof=%u", (unsigned)sizeof(MTLD3D12DescriptorHeap));
+  TRACE("CreateDescriptorHeap: about to placement-new, sizeof=%u",
+        (unsigned)sizeof(MTLD3D12DescriptorHeap));
   MTLD3D12DescriptorHeap *heap = new (raw) MTLD3D12DescriptorHeap(this, *desc);
-  TRACE("CreateDescriptorHeap: heap=%p data=%p", (void *)heap, heap->GetDescriptors());
+  TRACE("CreateDescriptorHeap: heap=%p data=%p", (void *)heap,
+        heap->GetDescriptors());
   HRESULT hr = heap->QueryInterface(riid, descriptor_heap);
   if (FAILED(hr)) {
     heap->~MTLD3D12DescriptorHeap();
@@ -2552,19 +2662,19 @@ UINT STDMETHODCALLTYPE MTLD3D12Device::GetDescriptorHandleIncrementSize(
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateRootSignature(
-    UINT node_mask, const void *bytecode, SIZE_T bytecode_length,
-    REFIID riid, void **root_signature) {
+    UINT node_mask, const void *bytecode, SIZE_T bytecode_length, REFIID riid,
+    void **root_signature) {
   TRACE("CreateRootSignature len=%llu", (unsigned long long)bytecode_length);
   if (!bytecode || !root_signature)
     return E_POINTER;
   InitReturnPtr(root_signature);
 
-  auto rs =
-      new MTLD3D12RootSignature(this, bytecode, bytecode_length);
+  auto rs = new MTLD3D12RootSignature(this, bytecode, bytecode_length);
   HRESULT hr = rs->QueryInterface(riid, root_signature);
   if (FAILED(hr))
     rs->Release();
-  TRACE("CreateRootSignature DONE hr=0x%lx rs=%p out=%p", hr, (void*)rs, root_signature ? *root_signature : nullptr);
+  TRACE("CreateRootSignature DONE hr=0x%lx rs=%p out=%p", hr, (void *)rs,
+        root_signature ? *root_signature : nullptr);
   return hr;
 }
 
@@ -2585,9 +2695,11 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateConstantBufferView(
 void STDMETHODCALLTYPE MTLD3D12Device::CreateShaderResourceView(
     ID3D12Resource *resource, const D3D12_SHADER_RESOURCE_VIEW_DESC *desc,
     D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
-  TRACE("CreateShaderResourceView res=%p handle=0x%llx device=%p", (void*)resource, (unsigned long long)descriptor.ptr, (void*)this);
-  if ((void*)resource == (void*)this) {
-    TRACE("!!! LEAK DETECTED: CreateShaderResourceView called with device pointer as resource!");
+  TRACE("CreateShaderResourceView res=%p handle=0x%llx device=%p",
+        (void *)resource, (unsigned long long)descriptor.ptr, (void *)this);
+  if ((void *)resource == (void *)this) {
+    TRACE("!!! LEAK DETECTED: CreateShaderResourceView called with device "
+          "pointer as resource!");
   }
   CheckVtable("CreateShaderResourceView");
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
@@ -2604,9 +2716,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateShaderResourceView(
         uint16_t mip_start = 0, mip_count = 1, slice_start = 0, slice_count = 1;
         SrvViewRange(*desc, resource_desc, mip_start, mip_count, slice_start,
                      slice_count);
-        CreateDescriptorTextureView(
-            d, dxmt_res, desc->Format, TextureTypeForSrvView(*desc, resource_desc),
-            mip_start, mip_count, slice_start, slice_count);
+        CreateDescriptorTextureView(d, dxmt_res, desc->Format,
+                                    TextureTypeForSrvView(*desc, resource_desc),
+                                    mip_start, mip_count, slice_start,
+                                    slice_count);
       }
     }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -2617,9 +2730,13 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateUnorderedAccessView(
     ID3D12Resource *resource, ID3D12Resource *counter_resource,
     const D3D12_UNORDERED_ACCESS_VIEW_DESC *desc,
     D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
-  TRACE("CreateUnorderedAccessView res=%p counter=%p handle=0x%llx device=%p", (void*)resource, (void*)counter_resource, (unsigned long long)descriptor.ptr, (void*)this);
-  if ((void*)resource == (void*)this || (void*)counter_resource == (void*)this) {
-    TRACE("!!! LEAK DETECTED: CreateUnorderedAccessView called with device pointer as resource!");
+  TRACE("CreateUnorderedAccessView res=%p counter=%p handle=0x%llx device=%p",
+        (void *)resource, (void *)counter_resource,
+        (unsigned long long)descriptor.ptr, (void *)this);
+  if ((void *)resource == (void *)this ||
+      (void *)counter_resource == (void *)this) {
+    TRACE("!!! LEAK DETECTED: CreateUnorderedAccessView called with device "
+          "pointer as resource!");
   }
   CheckVtable("CreateUnorderedAccessView");
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
@@ -2637,9 +2754,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateUnorderedAccessView(
         uint16_t mip_start = 0, mip_count = 1, slice_start = 0, slice_count = 1;
         UavViewRange(*desc, resource_desc, mip_start, mip_count, slice_start,
                      slice_count);
-        CreateDescriptorTextureView(
-            d, dxmt_res, desc->Format, TextureTypeForUavView(*desc, resource_desc),
-            mip_start, mip_count, slice_start, slice_count);
+        CreateDescriptorTextureView(d, dxmt_res, desc->Format,
+                                    TextureTypeForUavView(*desc, resource_desc),
+                                    mip_start, mip_count, slice_start,
+                                    slice_count);
       }
     }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -2649,9 +2767,11 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateUnorderedAccessView(
 void STDMETHODCALLTYPE MTLD3D12Device::CreateRenderTargetView(
     ID3D12Resource *resource, const D3D12_RENDER_TARGET_VIEW_DESC *desc,
     D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
-  TRACE("CreateRenderTargetView res=%p device=%p", (void*)resource, (void*)this);
-  if ((void*)resource == (void*)this) {
-    TRACE("!!! LEAK DETECTED: CreateRenderTargetView called with device pointer as resource!");
+  TRACE("CreateRenderTargetView res=%p device=%p", (void *)resource,
+        (void *)this);
+  if ((void *)resource == (void *)this) {
+    TRACE("!!! LEAK DETECTED: CreateRenderTargetView called with device "
+          "pointer as resource!");
   }
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
   if (d) {
@@ -2661,8 +2781,9 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateRenderTargetView(
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     auto *dxmt_res = static_cast<MTLD3D12Resource *>(resource);
     TRACE("CreateRenderTargetView desc=%p res=%p tex=%llu fmt=%u dim=%u",
-          (void*)d, (void*)resource,
-          dxmt_res ? (unsigned long long)dxmt_res->GetMTLTexture().handle : 0ull,
+          (void *)d, (void *)resource,
+          dxmt_res ? (unsigned long long)dxmt_res->GetMTLTexture().handle
+                   : 0ull,
           desc ? (unsigned)desc->Format : 0u,
           desc ? (unsigned)desc->ViewDimension : 0u);
   }
@@ -2671,9 +2792,11 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateRenderTargetView(
 void STDMETHODCALLTYPE MTLD3D12Device::CreateDepthStencilView(
     ID3D12Resource *resource, const D3D12_DEPTH_STENCIL_VIEW_DESC *desc,
     D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
-  TRACE("CreateDepthStencilView res=%p device=%p", (void*)resource, (void*)this);
-  if ((void*)resource == (void*)this) {
-    TRACE("!!! LEAK DETECTED: CreateDepthStencilView called with device pointer as resource!");
+  TRACE("CreateDepthStencilView res=%p device=%p", (void *)resource,
+        (void *)this);
+  if ((void *)resource == (void *)this) {
+    TRACE("!!! LEAK DETECTED: CreateDepthStencilView called with device "
+          "pointer as resource!");
   }
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
   if (d) {
@@ -2684,9 +2807,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateDepthStencilView(
   }
 }
 
-void STDMETHODCALLTYPE
-MTLD3D12Device::CreateSampler(const D3D12_SAMPLER_DESC *desc,
-                              D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
+void STDMETHODCALLTYPE MTLD3D12Device::CreateSampler(
+    const D3D12_SAMPLER_DESC *desc, D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
   auto *d = reinterpret_cast<D3D12Descriptor *>(descriptor.ptr);
   if (d && desc) {
     d->sampler = *desc;
@@ -2694,67 +2816,74 @@ MTLD3D12Device::CreateSampler(const D3D12_SAMPLER_DESC *desc,
 
     WMTSamplerInfo info = {};
     switch (desc->Filter) {
-      case D3D12_FILTER_MIN_MAG_MIP_POINT:
-        info.min_filter = WMTSamplerMinMagFilterNearest;
-        info.mag_filter = WMTSamplerMinMagFilterNearest;
-        info.mip_filter = WMTSamplerMipFilterNearest;
-        break;
-      case D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR:
-        info.min_filter = WMTSamplerMinMagFilterNearest;
-        info.mag_filter = WMTSamplerMinMagFilterNearest;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        break;
-      case D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT:
-        info.min_filter = WMTSamplerMinMagFilterNearest;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterNearest;
-        break;
-      case D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR:
-        info.min_filter = WMTSamplerMinMagFilterNearest;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        break;
-      case D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterNearest;
-        info.mip_filter = WMTSamplerMipFilterNearest;
-        break;
-      case D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterNearest;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        break;
-      case D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterNearest;
-        break;
-      case D3D12_FILTER_MIN_MAG_MIP_LINEAR:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        break;
-      case D3D12_FILTER_ANISOTROPIC:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        info.max_anisotroy = desc->MaxAnisotropy;
-        break;
-      default:
-        info.min_filter = WMTSamplerMinMagFilterLinear;
-        info.mag_filter = WMTSamplerMinMagFilterLinear;
-        info.mip_filter = WMTSamplerMipFilterLinear;
-        break;
+    case D3D12_FILTER_MIN_MAG_MIP_POINT:
+      info.min_filter = WMTSamplerMinMagFilterNearest;
+      info.mag_filter = WMTSamplerMinMagFilterNearest;
+      info.mip_filter = WMTSamplerMipFilterNearest;
+      break;
+    case D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR:
+      info.min_filter = WMTSamplerMinMagFilterNearest;
+      info.mag_filter = WMTSamplerMinMagFilterNearest;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      break;
+    case D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT:
+      info.min_filter = WMTSamplerMinMagFilterNearest;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterNearest;
+      break;
+    case D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR:
+      info.min_filter = WMTSamplerMinMagFilterNearest;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      break;
+    case D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterNearest;
+      info.mip_filter = WMTSamplerMipFilterNearest;
+      break;
+    case D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterNearest;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      break;
+    case D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterNearest;
+      break;
+    case D3D12_FILTER_MIN_MAG_MIP_LINEAR:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      break;
+    case D3D12_FILTER_ANISOTROPIC:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      info.max_anisotroy = desc->MaxAnisotropy;
+      break;
+    default:
+      info.min_filter = WMTSamplerMinMagFilterLinear;
+      info.mag_filter = WMTSamplerMinMagFilterLinear;
+      info.mip_filter = WMTSamplerMipFilterLinear;
+      break;
     }
 
-    auto map_addr = [](D3D12_TEXTURE_ADDRESS_MODE mode) -> WMTSamplerAddressMode {
+    auto map_addr =
+        [](D3D12_TEXTURE_ADDRESS_MODE mode) -> WMTSamplerAddressMode {
       switch (mode) {
-        case D3D12_TEXTURE_ADDRESS_MODE_WRAP: return WMTSamplerAddressModeRepeat;
-        case D3D12_TEXTURE_ADDRESS_MODE_MIRROR: return WMTSamplerAddressModeMirrorRepeat;
-        case D3D12_TEXTURE_ADDRESS_MODE_CLAMP: return WMTSamplerAddressModeClampToEdge;
-        case D3D12_TEXTURE_ADDRESS_MODE_BORDER: return WMTSamplerAddressModeClampToBorderColor;
-        case D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE: return WMTSamplerAddressModeMirrorClampToEdge;
-        default: return WMTSamplerAddressModeClampToEdge;
+      case D3D12_TEXTURE_ADDRESS_MODE_WRAP:
+        return WMTSamplerAddressModeRepeat;
+      case D3D12_TEXTURE_ADDRESS_MODE_MIRROR:
+        return WMTSamplerAddressModeMirrorRepeat;
+      case D3D12_TEXTURE_ADDRESS_MODE_CLAMP:
+        return WMTSamplerAddressModeClampToEdge;
+      case D3D12_TEXTURE_ADDRESS_MODE_BORDER:
+        return WMTSamplerAddressModeClampToBorderColor;
+      case D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE:
+        return WMTSamplerAddressModeMirrorClampToEdge;
+      default:
+        return WMTSamplerAddressModeClampToEdge;
       }
     };
     info.s_address_mode = map_addr(desc->AddressU);
@@ -2795,8 +2924,7 @@ MTLD3D12Device::CreateSampler(const D3D12_SAMPLER_DESC *desc,
 void STDMETHODCALLTYPE MTLD3D12Device::CopyDescriptors(
     UINT dst_descriptor_range_count,
     const D3D12_CPU_DESCRIPTOR_HANDLE *dst_descriptor_range_offsets,
-    const UINT *dst_descriptor_range_sizes,
-    UINT src_descriptor_range_count,
+    const UINT *dst_descriptor_range_sizes, UINT src_descriptor_range_count,
     const D3D12_CPU_DESCRIPTOR_HANDLE *src_descriptor_range_offsets,
     const UINT *src_descriptor_range_sizes,
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
@@ -2814,14 +2942,15 @@ void STDMETHODCALLTYPE MTLD3D12Device::CopyDescriptors(
 
   UINT src_range = 0;
   UINT src_offset = 0;
-  for (UINT dst_range = 0; dst_range < dst_descriptor_range_count; dst_range++) {
+  for (UINT dst_range = 0; dst_range < dst_descriptor_range_count;
+       dst_range++) {
     UINT dst_count =
         dst_descriptor_range_sizes ? dst_descriptor_range_sizes[dst_range] : 1;
     for (UINT dst_offset = 0; dst_offset < dst_count; dst_offset++) {
       while (src_range < src_descriptor_range_count) {
-        UINT src_count =
-            src_descriptor_range_sizes ? src_descriptor_range_sizes[src_range]
-                                       : 1;
+        UINT src_count = src_descriptor_range_sizes
+                             ? src_descriptor_range_sizes[src_range]
+                             : 1;
         if (src_offset < src_count)
           break;
         src_range++;
@@ -2835,10 +2964,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::CopyDescriptors(
         return;
       }
 
-      auto *dst = descriptor_at(dst_descriptor_range_offsets[dst_range],
-                                dst_offset);
-      auto *src = descriptor_at(src_descriptor_range_offsets[src_range],
-                                src_offset);
+      auto *dst =
+          descriptor_at(dst_descriptor_range_offsets[dst_range], dst_offset);
+      auto *src =
+          descriptor_at(src_descriptor_range_offsets[src_range], src_offset);
       if (src->resource && (void *)src->resource == (void *)this) {
         TRACE("!!! CopyDescriptors: src descriptor at %p has device pointer as "
               "resource! copying to dst %p",
@@ -2863,11 +2992,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::CopyDescriptorsSimple(
                   descriptor_heap_type);
 }
 
-D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE
+D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
 MTLD3D12Device::GetResourceAllocationInfo(
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
-    UINT resource_desc_count,
-    const D3D12_RESOURCE_DESC *resource_descs) {
+    UINT resource_desc_count, const D3D12_RESOURCE_DESC *resource_descs) {
   TRACE("GetResourceAllocationInfo visible=0x%x count=%u descs=%p ret=%p",
         visible_mask, resource_desc_count, (void *)resource_descs,
         (void *)__ret);
@@ -2885,7 +3013,8 @@ MTLD3D12Device::GetResourceAllocationInfo(
     UINT64 size = EstimateResourceAllocationSize(resource_descs[i]);
     __ret->Alignment = std::max<UINT64>(__ret->Alignment, alignment);
     cursor = AlignTo(cursor, alignment);
-    TRACE("GetResourceAllocationInfo[%u] dim=%u fmt=%u %llux%u size=%llu align=%llu offset=%llu",
+    TRACE("GetResourceAllocationInfo[%u] dim=%u fmt=%u %llux%u size=%llu "
+          "align=%llu offset=%llu",
           i, resource_descs[i].Dimension, resource_descs[i].Format,
           (unsigned long long)resource_descs[i].Width, resource_descs[i].Height,
           (unsigned long long)size, (unsigned long long)alignment,
@@ -2899,8 +3028,7 @@ MTLD3D12Device::GetResourceAllocationInfo(
   return __ret;
 }
 
-static D3D12_RESOURCE_ALLOCATION_INFO *
-FillResourceAllocationInfoWithSideband(
+static D3D12_RESOURCE_ALLOCATION_INFO *FillResourceAllocationInfoWithSideband(
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
     UINT resource_desc_count, const D3D12_RESOURCE_DESC *resource_descs,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
@@ -2927,19 +3055,20 @@ FillResourceAllocationInfoWithSideband(
   }
 
   __ret->SizeInBytes = AlignTo(cursor, __ret->Alignment);
-  TRACE("GetResourceAllocationInfo sideband visible=0x%x count=%u -> size=%llu align=%llu",
+  TRACE("GetResourceAllocationInfo sideband visible=0x%x count=%u -> size=%llu "
+        "align=%llu",
         visible_mask, resource_desc_count,
         (unsigned long long)__ret->SizeInBytes,
         (unsigned long long)__ret->Alignment);
   return __ret;
 }
 
-D3D12_HEAP_PROPERTIES* STDMETHODCALLTYPE
+D3D12_HEAP_PROPERTIES *STDMETHODCALLTYPE
 MTLD3D12Device::GetCustomHeapProperties(D3D12_HEAP_PROPERTIES *__ret,
                                         UINT node_mask,
                                         D3D12_HEAP_TYPE heap_type) {
-  TRACE("GetCustomHeapProperties node=0x%x heap_type=%u ret=%p",
-        node_mask, heap_type, (void *)__ret);
+  TRACE("GetCustomHeapProperties node=0x%x heap_type=%u ret=%p", node_mask,
+        heap_type, (void *)__ret);
   __ret->Type = heap_type;
   __ret->CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
   __ret->MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
@@ -2953,40 +3082,44 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource(
     const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
     void **resource) {
-  TRACE("CreateCommittedResource dim=%u fmt=%u width=%llu state=0x%x heap_type=%u", desc ? desc->Dimension : 0xFF, desc ? desc->Format : 0, desc ? desc->Width : 0, initial_state, heap_properties ? heap_properties->Type : 0xFF);
+  TRACE("CreateCommittedResource dim=%u fmt=%u width=%llu state=0x%x "
+        "heap_type=%u",
+        desc ? desc->Dimension : 0xFF, desc ? desc->Format : 0,
+        desc ? desc->Width : 0, initial_state,
+        heap_properties ? heap_properties->Type : 0xFF);
   CheckVtable("CreateCommittedResource");
   if (!desc || !resource)
     return E_POINTER;
   InitReturnPtr(resource);
 
-  auto res = new MTLD3D12Resource(this, *desc, initial_state,
-                                  heap_properties ? *heap_properties
-                                                  : D3D12_HEAP_PROPERTIES{},
-                                  heap_flags);
+  auto res = new MTLD3D12Resource(
+      this, *desc, initial_state,
+      heap_properties ? *heap_properties : D3D12_HEAP_PROPERTIES{}, heap_flags);
   if (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
       desc->Width >= (64ull << 20)) {
-    Logger::info(str::format("M12 large committed buffer width=", desc->Width,
-                             " heap_type=",
-                             heap_properties ? heap_properties->Type : 0,
-                             " flags=0x", (unsigned)heap_flags));
+    Logger::info(
+        str::format("M12 large committed buffer width=", desc->Width,
+                    " heap_type=", heap_properties ? heap_properties->Type : 0,
+                    " flags=0x", (unsigned)heap_flags));
   }
   HRESULT hr = res->QueryInterface(riid, resource);
-  TRACE("CreateCommittedResource res_obj=%p out=%p hr=0x%lx", (void*)res, resource ? *resource : nullptr, hr);
-  if (resource && *resource == (void*)this) {
-    TRACE("!!! LEAK DETECTED: CreateCommittedResource returned device pointer %p as resource!", (void*)this);
+  TRACE("CreateCommittedResource res_obj=%p out=%p hr=0x%lx", (void *)res,
+        resource ? *resource : nullptr, hr);
+  if (resource && *resource == (void *)this) {
+    TRACE("!!! LEAK DETECTED: CreateCommittedResource returned device pointer "
+          "%p as resource!",
+          (void *)this);
   }
   if (FAILED(hr))
     res->Release();
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CreateHeap(const D3D12_HEAP_DESC *desc, REFIID riid,
-                           void **heap) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateHeap(
+    const D3D12_HEAP_DESC *desc, REFIID riid, void **heap) {
   TRACE("CreateHeap size=%llu type=%u flags=0x%x",
-    desc ? (unsigned long long)desc->SizeInBytes : 0,
-    desc ? desc->Properties.Type : 0xFF,
-    desc ? desc->Flags : 0);
+        desc ? (unsigned long long)desc->SizeInBytes : 0,
+        desc ? desc->Properties.Type : 0xFF, desc ? desc->Flags : 0);
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
@@ -3019,9 +3152,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
     const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
     void **resource) {
   TRACE("CreatePlacedResource heap=%p offset=%llu dim=%u fmt=%u w=%llu",
-    (void*)heap, (unsigned long long)heap_offset,
-    desc ? desc->Dimension : 0, desc ? desc->Format : 0,
-    desc ? desc->Width : 0);
+        (void *)heap, (unsigned long long)heap_offset,
+        desc ? desc->Dimension : 0, desc ? desc->Format : 0,
+        desc ? desc->Width : 0);
   if (!desc || !resource || !heap)
     return E_POINTER;
   InitReturnPtr(resource);
@@ -3043,29 +3176,29 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
     }
     if (heap_offset > heap_desc.SizeInBytes ||
         info.SizeInBytes > heap_desc.SizeInBytes - heap_offset) {
-      Logger::warn(str::format("CreatePlacedResource out of heap bounds offset=",
-                               heap_offset, " size=", info.SizeInBytes,
-                               " heap_size=", heap_desc.SizeInBytes));
+      Logger::warn(str::format(
+          "CreatePlacedResource out of heap bounds offset=", heap_offset,
+          " size=", info.SizeInBytes, " heap_size=", heap_desc.SizeInBytes));
       return E_INVALIDARG;
     }
   }
 
-  auto heap_buffer = mt_heap ? mt_heap->GetMTLBuffer() : WMT::Reference<WMT::Buffer>{};
-  bool use_heap_backing =
-      mt_heap && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
-      heap_buffer.handle != NULL_OBJECT_HANDLE;
+  auto heap_buffer =
+      mt_heap ? mt_heap->GetMTLBuffer() : WMT::Reference<WMT::Buffer>{};
+  bool use_heap_backing = mt_heap &&
+                          desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+                          heap_buffer.handle != NULL_OBJECT_HANDLE;
   if (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
       desc->Width >= (64ull << 20)) {
-    Logger::info(str::format("M12 large placed buffer width=", desc->Width,
-                             " heap_offset=", heap_offset,
-                             " heap_backing=", use_heap_backing ? 1 : 0,
-                             " heap_gpu=0x",
-                             (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0)));
+    Logger::info(str::format(
+        "M12 large placed buffer width=", desc->Width, " heap_offset=",
+        heap_offset, " heap_backing=", use_heap_backing ? 1 : 0, " heap_gpu=0x",
+        (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0)));
   }
   auto res = use_heap_backing
                  ? new MTLD3D12Resource(this, *desc, initial_state, heap_props,
-                                        heap_flags,
-                                        heap_buffer, mt_heap->GetCPUAddress(),
+                                        heap_flags, heap_buffer,
+                                        mt_heap->GetCPUAddress(),
                                         mt_heap->GetGPUAddress(), heap_offset)
                  : new MTLD3D12Resource(this, *desc, initial_state, heap_props,
                                         heap_flags);
@@ -3081,18 +3214,17 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
     const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
     void **resource) {
-  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu (fallback to committed)", desc ? desc->Dimension : 0, desc ? desc->Format : 0, desc ? desc->Width : 0);
+  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu -> E_NOTIMPL",
+        desc ? static_cast<unsigned>(desc->Dimension) : 0,
+        desc ? static_cast<unsigned>(desc->Format) : 0,
+        desc ? desc->Width : 0);
   CheckVtable("CreateReservedResource");
-  if (!desc || !resource)
+  if (!resource)
     return E_POINTER;
   InitReturnPtr(resource);
-  D3D12_HEAP_PROPERTIES heap_props = {};
-  heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
-  auto res = new MTLD3D12Resource(this, *desc, initial_state, heap_props);
-  HRESULT hr = res->QueryInterface(riid, resource);
-  if (FAILED(hr))
-    res->Release();
-  return hr;
+  if (!desc)
+    return E_INVALIDARG;
+  return E_NOTIMPL;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateSharedHandle(
@@ -3101,20 +3233,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateSharedHandle(
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::OpenSharedHandle(HANDLE handle, REFIID riid, void **object) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::OpenSharedHandle(HANDLE handle,
+                                                           REFIID riid,
+                                                           void **object) {
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::OpenSharedHandleByName(const WCHAR *name, DWORD access,
-                                       HANDLE *handle) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::OpenSharedHandleByName(
+    const WCHAR *name, DWORD access, HANDLE *handle) {
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::MakeResident(UINT object_count,
-                             ID3D12Pageable *const *objects) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::MakeResident(
+    UINT object_count, ID3D12Pageable *const *objects) {
   TRACE("MakeResident count=%u objects=%p", object_count, (void *)objects);
   return S_OK;
 }
@@ -3125,15 +3256,17 @@ MTLD3D12Device::Evict(UINT object_count, ID3D12Pageable *const *objects) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CreateFence(UINT64 initial_value, D3D12_FENCE_FLAGS flags,
-                              REFIID riid, void **fence) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateFence(UINT64 initial_value,
+                                                      D3D12_FENCE_FLAGS flags,
+                                                      REFIID riid,
+                                                      void **fence) {
   if (!fence)
     return E_POINTER;
   InitReturnPtr(fence);
 
   auto f = new MTLD3D12Fence(this, initial_value, flags);
-  TRACE("CreateFence init=%llu fence=%p", (unsigned long long)initial_value, (void *)f);
+  TRACE("CreateFence init=%llu fence=%p", (unsigned long long)initial_value,
+        (void *)f);
   HRESULT hr = f->QueryInterface(riid, fence);
   if (FAILED(hr))
     f->Release();
@@ -3150,7 +3283,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
     UINT sub_resource_count, UINT64 base_offset,
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT *layouts, UINT *row_count,
     UINT64 *row_size, UINT64 *total_bytes) {
-  TRACE("GetCopyableFootprints desc=%p first=%u count=%u base=%llu layouts=%p rows=%p row_size=%p total=%p",
+  TRACE("GetCopyableFootprints desc=%p first=%u count=%u base=%llu layouts=%p "
+        "rows=%p row_size=%p total=%p",
         (void *)desc, first_sub_resource, sub_resource_count,
         (unsigned long long)base_offset, (void *)layouts, (void *)row_count,
         (void *)row_size, (void *)total_bytes);
@@ -3184,9 +3318,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
         depth = 1;
     }
 
-    UINT bytes_per_texel = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
-                               ? 1
-                               : FormatBytesPerTexel(format);
+    UINT bytes_per_texel =
+        desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+            ? 1
+            : FormatBytesPerTexel(format);
     UINT block_size = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
                           ? 1
                           : FormatBlockSize(format);
@@ -3194,9 +3329,10 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
         desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
             ? width
             : std::max<UINT64>(1, AlignTo(width, block_size) / block_size);
-    UINT64 rows = desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
-                      ? 1
-                      : std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
+    UINT64 rows =
+        desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+            ? 1
+            : std::max<UINT64>(1, AlignTo(height, block_size) / block_size);
     UINT64 unaligned_row_size = width_blocks * bytes_per_texel;
     UINT64 aligned_row_pitch =
         AlignTo(unaligned_row_size, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
@@ -3206,11 +3342,11 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
     if (layouts) {
       layouts[i].Offset = offset;
       layouts[i].Footprint.Format = format;
-      layouts[i].Footprint.Width =
-          static_cast<UINT>(std::min<UINT64>(desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
-                                                 ? width
-                                                 : width_blocks * block_size,
-                                             UINT32_MAX));
+      layouts[i].Footprint.Width = static_cast<UINT>(std::min<UINT64>(
+          desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+              ? width
+              : width_blocks * block_size,
+          UINT32_MAX));
       layouts[i].Footprint.Height = static_cast<UINT>(
           desc && desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
               ? height
@@ -3231,9 +3367,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
     *total_bytes = last_end - base_offset;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::CreateQueryHeap(const D3D12_QUERY_HEAP_DESC *desc,
-                                 REFIID riid, void **heap) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
+    const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **heap) {
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
@@ -3245,20 +3380,20 @@ MTLD3D12Device::CreateQueryHeap(const D3D12_QUERY_HEAP_DESC *desc,
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE
-MTLD3D12Device::SetStablePowerState(WINBOOL enable) {
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetStablePowerState(WINBOOL enable) {
   TRACE("SetStablePowerState enable=%d", enable);
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandSignature(
-    const D3D12_COMMAND_SIGNATURE_DESC *desc,
-    ID3D12RootSignature *root_signature, REFIID riid,
-     void **command_signature) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12Device::CreateCommandSignature(const D3D12_COMMAND_SIGNATURE_DESC *desc,
+                                       ID3D12RootSignature *root_signature,
+                                       REFIID riid, void **command_signature) {
   if (!command_signature)
     return E_POINTER;
   InitReturnPtr(command_signature);
-  TRACE("CreateCommandSignature stride=%u num_args=%u", desc ? desc->ByteStride : 0, desc ? desc->NumArgumentDescs : 0);
+  TRACE("CreateCommandSignature stride=%u num_args=%u",
+        desc ? desc->ByteStride : 0, desc ? desc->NumArgumentDescs : 0);
   if (!desc)
     return E_INVALIDARG;
   auto *obj = new MTLD3D12CommandSignature(this, *desc);
@@ -3271,18 +3406,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandSignature(
 void STDMETHODCALLTYPE MTLD3D12Device::GetResourceTiling(
     ID3D12Resource *resource, UINT *total_tile_count,
     D3D12_PACKED_MIP_INFO *packed_mip_info,
-    D3D12_TILE_SHAPE *standard_tile_shape,
-    UINT *sub_resource_tiling_count, UINT first_sub_resource_tiling,
+    D3D12_TILE_SHAPE *standard_tile_shape, UINT *sub_resource_tiling_count,
+    UINT first_sub_resource_tiling,
     D3D12_SUBRESOURCE_TILING *sub_resource_tilings) {}
 
-LUID* STDMETHODCALLTYPE MTLD3D12Device::GetAdapterLuid(LUID *__ret) {
+LUID *STDMETHODCALLTYPE MTLD3D12Device::GetAdapterLuid(LUID *__ret) {
   TRACE("GetAdapterLuid ret=%p", (void *)__ret);
   *__ret = {};
   return __ret;
 }
 
 void MTLD3D12Device::RegisterResource(MTLD3D12Resource *res) {
-  if (!res) return;
+  if (!res)
+    return;
   D3D12_GPU_VIRTUAL_ADDRESS addr = res->GetGPUVirtualAddress();
   if (addr) {
     std::lock_guard<std::mutex> lock(m_resource_mutex);
@@ -3291,7 +3427,8 @@ void MTLD3D12Device::RegisterResource(MTLD3D12Resource *res) {
 }
 
 void MTLD3D12Device::UnregisterResource(MTLD3D12Resource *res) {
-  if (!res) return;
+  if (!res)
+    return;
   D3D12_GPU_VIRTUAL_ADDRESS addr = res->GetGPUVirtualAddress();
   if (addr) {
     std::lock_guard<std::mutex> lock(m_resource_mutex);
@@ -3299,8 +3436,10 @@ void MTLD3D12Device::UnregisterResource(MTLD3D12Resource *res) {
   }
 }
 
-MTLD3D12Resource *MTLD3D12Device::LookupResourceByGPUAddress(D3D12_GPU_VIRTUAL_ADDRESS addr) {
-  if (!addr) return nullptr;
+MTLD3D12Resource *
+MTLD3D12Device::LookupResourceByGPUAddress(D3D12_GPU_VIRTUAL_ADDRESS addr) {
+  if (!addr)
+    return nullptr;
   std::lock_guard<std::mutex> lock(m_resource_mutex);
   auto it = m_resources_by_gpu_addr.find(addr);
   if (it != m_resources_by_gpu_addr.end())
@@ -3336,7 +3475,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
     ID3D12Fence *const *fences, const UINT64 *values, UINT fence_count,
     D3D12_MULTIPLE_FENCE_WAIT_FLAGS flags, HANDLE event) {
   TRACE("SetEventOnMultipleFenceCompletion count=%u flags=0x%x event=%p",
-    fence_count, flags, (void*)(uintptr_t)event);
+        fence_count, flags, (void *)(uintptr_t)event);
   if (!fences || !values || !event)
     return E_POINTER;
 
@@ -3378,7 +3517,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetResidencyPriority(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
     const D3D12_PIPELINE_STATE_STREAM_DESC *desc, REFIID riid,
     void **ppPipelineState) {
-  TRACE("ID3D12Device2::CreatePipelineState ENTER: size=%zu", desc ? desc->SizeInBytes : 0);
+  TRACE("ID3D12Device2::CreatePipelineState ENTER: size=%zu",
+        desc ? desc->SizeInBytes : 0);
 
   if (!desc || !desc->pPipelineStateSubobjectStream || !ppPipelineState)
     return E_INVALIDARG;
@@ -3466,7 +3606,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
                                           &graphics_desc.StreamOutput))
         return E_INVALIDARG;
       is_compute = false;
-      advanced = advance_pipeline_stream<D3D12_STREAM_OUTPUT_DESC>(&stream, end);
+      advanced =
+          advance_pipeline_stream<D3D12_STREAM_OUTPUT_DESC>(&stream, end);
       break;
     }
     case 8: { // BLEND
@@ -3498,7 +3639,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
                                           &graphics_desc.DepthStencilState))
         return E_INVALIDARG;
       is_compute = false;
-      advanced = advance_pipeline_stream<D3D12_DEPTH_STENCIL_DESC>(&stream, end);
+      advanced =
+          advance_pipeline_stream<D3D12_DEPTH_STENCIL_DESC>(&stream, end);
       break;
     }
     case 12: { // INPUT_LAYOUT
@@ -3514,8 +3656,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
                                           &graphics_desc.IBStripCutValue))
         return E_INVALIDARG;
       is_compute = false;
-      advanced =
-          advance_pipeline_stream<D3D12_INDEX_BUFFER_STRIP_CUT_VALUE>(&stream, end);
+      advanced = advance_pipeline_stream<D3D12_INDEX_BUFFER_STRIP_CUT_VALUE>(
+          &stream, end);
       break;
     }
     case 14: { // PRIMITIVE_TOPOLOGY
@@ -3579,7 +3721,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
         return E_INVALIDARG;
       graphics_desc.Flags = flags;
       compute_desc.Flags = flags;
-      advanced = advance_pipeline_stream<D3D12_PIPELINE_STATE_FLAGS>(&stream, end);
+      advanced =
+          advance_pipeline_stream<D3D12_PIPELINE_STATE_FLAGS>(&stream, end);
       break;
     }
     case 21: { // DEPTH_STENCIL1
@@ -3608,7 +3751,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
         return E_INVALIDARG;
       graphics_desc.DepthStencilState =
           convert_depth_stencil_desc2(depth_stencil);
-      TRACE("CreatePipelineState: depth-stencil2 depth=%d stencil=%d depth_bounds=%d",
+      TRACE("CreatePipelineState: depth-stencil2 depth=%d stencil=%d "
+            "depth_bounds=%d",
             depth_stencil.DepthEnable, depth_stencil.StencilEnable,
             depth_stencil.DepthBoundsTestEnable);
       is_compute = false;
@@ -3620,7 +3764,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
       if (!read_pipeline_stream_subobject(subobject, end, &rasterizer))
         return E_INVALIDARG;
       graphics_desc.RasterizerState = convert_rasterizer_desc1(rasterizer);
-      TRACE("CreatePipelineState: rasterizer1 fill=%u cull=%u depth_bias=%g forced_samples=%u conservative=%u",
+      TRACE("CreatePipelineState: rasterizer1 fill=%u cull=%u depth_bias=%g "
+            "forced_samples=%u conservative=%u",
             rasterizer.FillMode, rasterizer.CullMode, rasterizer.DepthBias,
             rasterizer.ForcedSampleCount, rasterizer.ConservativeRaster);
       is_compute = false;
@@ -3632,7 +3777,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
       if (!read_pipeline_stream_subobject(subobject, end, &rasterizer))
         return E_INVALIDARG;
       graphics_desc.RasterizerState = convert_rasterizer_desc2(rasterizer);
-      TRACE("CreatePipelineState: rasterizer2 fill=%u cull=%u depth_bias=%g line_mode=%u forced_samples=%u conservative=%u",
+      TRACE("CreatePipelineState: rasterizer2 fill=%u cull=%u depth_bias=%g "
+            "line_mode=%u forced_samples=%u conservative=%u",
             rasterizer.FillMode, rasterizer.CullMode, rasterizer.DepthBias,
             rasterizer.LineRasterizationMode, rasterizer.ForcedSampleCount,
             rasterizer.ConservativeRaster);
@@ -3647,8 +3793,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
       if (root_signature.pShaderBytecode && root_signature.BytecodeLength) {
         if (created_stream_root_signature)
           created_stream_root_signature->Release();
-        created_stream_root_signature = new MTLD3D12RootSignature(
-            this, root_signature.pShaderBytecode, root_signature.BytecodeLength);
+        created_stream_root_signature =
+            new MTLD3D12RootSignature(this, root_signature.pShaderBytecode,
+                                      root_signature.BytecodeLength);
         graphics_desc.pRootSignature = created_stream_root_signature;
         compute_desc.pRootSignature = created_stream_root_signature;
         TRACE("CreatePipelineState: serialized root signature bytes=%zu -> %p",
@@ -3659,12 +3806,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
       advanced = advance_pipeline_stream<D3D12_SHADER_BYTECODE>(&stream, end);
       break;
     }
-    case 24: // AS
+    case 24:   // AS
     case 25: { // MS
       D3D12_SHADER_BYTECODE shader = {};
       if (!read_pipeline_stream_subobject(subobject, end, &shader))
         return E_INVALIDARG;
-      TRACE("CreatePipelineState: mesh/amplification shader subobject type=%u ignored",
+      TRACE("CreatePipelineState: mesh/amplification shader subobject type=%u "
+            "ignored",
             type);
       is_compute = false;
       advanced = advance_pipeline_stream<D3D12_SHADER_BYTECODE>(&stream, end);
@@ -3673,8 +3821,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
     default:
       TRACE("CreatePipelineState: unknown subobject type %u at offset=%zu",
             type,
-            static_cast<size_t>(subobject -
-                                (uint8_t *)desc->pPipelineStateSubobjectStream));
+            static_cast<size_t>(
+                subobject - (uint8_t *)desc->pPipelineStateSubobjectStream));
       return E_INVALIDARG;
     }
 
@@ -3684,12 +3832,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineState(
 
   if (has_cs && is_compute) {
     compute_desc.pRootSignature = graphics_desc.pRootSignature;
-    TRACE("ID3D12Device2::CreatePipelineState -> delegating to CreateComputePSO CS=%p", compute_desc.CS.pShaderBytecode);
+    TRACE("ID3D12Device2::CreatePipelineState -> delegating to "
+          "CreateComputePSO CS=%p",
+          compute_desc.CS.pShaderBytecode);
     return CreateComputePipelineState(&compute_desc, riid, ppPipelineState);
   }
 
-  TRACE("ID3D12Device2::CreatePipelineState -> delegating to CreateGraphicsPSO VS=%p PS=%p NumRT=%u",
-        graphics_desc.VS.pShaderBytecode, graphics_desc.PS.pShaderBytecode, graphics_desc.NumRenderTargets);
+  TRACE("ID3D12Device2::CreatePipelineState -> delegating to CreateGraphicsPSO "
+        "VS=%p PS=%p NumRT=%u",
+        graphics_desc.VS.pShaderBytecode, graphics_desc.PS.pShaderBytecode,
+        graphics_desc.NumRenderTargets);
   return CreateGraphicsPipelineState(&graphics_desc, riid, ppPipelineState);
 }
 
@@ -3708,9 +3860,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::OpenExistingHeapFromFileMapping(
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::EnqueueMakeResident(
     D3D12_RESIDENCY_FLAGS flags, UINT num_objects,
-    ID3D12Pageable *const *objects, ID3D12Fence *fence,
-    UINT64 fence_value) {
-  TRACE("ID3D12Device3::EnqueueMakeResident -> S_OK (delegating to MakeResident)");
+    ID3D12Pageable *const *objects, ID3D12Fence *fence, UINT64 fence_value) {
+  TRACE("ID3D12Device3::EnqueueMakeResident -> S_OK (delegating to "
+        "MakeResident)");
   HRESULT hr = MakeResident(num_objects, objects);
   if (SUCCEEDED(hr) && fence) {
     fence->Signal(fence_value);
@@ -3721,10 +3873,10 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::EnqueueMakeResident(
 /*** ID3D12Device4 ***/
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandList1(
     UINT node_mask, D3D12_COMMAND_LIST_TYPE type,
-    D3D12_COMMAND_LIST_FLAGS flags, REFIID riid,
-    void **command_list) {
+    D3D12_COMMAND_LIST_FLAGS flags, REFIID riid, void **command_list) {
   TRACE("ID3D12Device4::CreateCommandList1 -> delegating to CreateCommandList");
-  return CreateCommandList(node_mask, type, nullptr, nullptr, riid, command_list);
+  return CreateCommandList(node_mask, type, nullptr, nullptr, riid,
+                           command_list);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateProtectedResourceSession(
@@ -3735,24 +3887,26 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateProtectedResourceSession(
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource1(
-    const D3D12_HEAP_PROPERTIES *heap_properties,
-    D3D12_HEAP_FLAGS heap_flags, const D3D12_RESOURCE_DESC *desc,
+    const D3D12_HEAP_PROPERTIES *heap_properties, D3D12_HEAP_FLAGS heap_flags,
+    const D3D12_RESOURCE_DESC *desc,
     D3D12_RESOURCE_STATES initial_resource_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
-    ID3D12ProtectedResourceSession *protected_session,
-    REFIID riid_resource, void **resource) {
+    ID3D12ProtectedResourceSession *protected_session, REFIID riid_resource,
+    void **resource) {
   if (protected_session) {
-    TRACE("ID3D12Device4::CreateCommittedResource1 -> E_NOTIMPL (protected session)");
+    TRACE("ID3D12Device4::CreateCommittedResource1 -> E_NOTIMPL (protected "
+          "session)");
     return E_NOTIMPL;
   }
   return CreateCommittedResource(heap_properties, heap_flags, desc,
-      initial_resource_state, optimized_clear_value, riid_resource, resource);
+                                 initial_resource_state, optimized_clear_value,
+                                 riid_resource, resource);
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateHeap1(
-    const D3D12_HEAP_DESC *desc,
-    ID3D12ProtectedResourceSession *protected_session,
-    REFIID riid, void **heap) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12Device::CreateHeap1(const D3D12_HEAP_DESC *desc,
+                            ID3D12ProtectedResourceSession *protected_session,
+                            REFIID riid, void **heap) {
   if (protected_session) {
     TRACE("ID3D12Device4::CreateHeap1 -> E_NOTIMPL (protected session)");
     return E_NOTIMPL;
@@ -3763,16 +3917,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateHeap1(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource1(
     const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
-    ID3D12ProtectedResourceSession *protected_session,
-    REFIID riid, void **resource) {
-  if (protected_session) {
-    TRACE("ID3D12Device4::CreateReservedResource1 -> E_NOTIMPL (protected session)");
-    return E_NOTIMPL;
-  }
-  return CreateReservedResource(desc, initial_state, optimized_clear_value, riid, resource);
+    ID3D12ProtectedResourceSession *protected_session, REFIID riid,
+    void **resource) {
+  TRACE("ID3D12Device4::CreateReservedResource1 -> E_NOTIMPL");
+  return CreateReservedResource(desc, initial_state, optimized_clear_value,
+                                riid, resource);
 }
 
-D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE MTLD3D12Device::GetResourceAllocationInfo1(
+D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
+MTLD3D12Device::GetResourceAllocationInfo1(
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
     UINT resource_descs_count, const D3D12_RESOURCE_DESC *resource_descs,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
@@ -3797,7 +3950,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::RemoveDevice() {
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::EnumerateMetaCommands(
     UINT *meta_commands_count, D3D12_META_COMMAND_DESC *descs) {
   TRACE("ID3D12Device5::EnumerateMetaCommands -> E_NOTIMPL");
-  if (meta_commands_count) *meta_commands_count = 0;
+  if (meta_commands_count)
+    *meta_commands_count = 0;
   return E_NOTIMPL;
 }
 
@@ -3810,18 +3964,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::EnumerateMetaCommandParameters(
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateMetaCommand(
-    REFGUID command_id, UINT node_mask,
-    const void *creation_parameters_data,
-    SIZE_T creation_parameters_data_size_in_bytes,
-    REFIID riid, void **meta_command) {
+    REFGUID command_id, UINT node_mask, const void *creation_parameters_data,
+    SIZE_T creation_parameters_data_size_in_bytes, REFIID riid,
+    void **meta_command) {
   TRACE("ID3D12Device5::CreateMetaCommand -> E_NOTIMPL");
   return E_NOTIMPL;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateStateObject(
-    const D3D12_STATE_OBJECT_DESC *desc, REFIID riid,
-    void **state_object) {
-  TRACE("ID3D12Device5::CreateStateObject type=%u subobjects=%u",
+    const D3D12_STATE_OBJECT_DESC *desc, REFIID riid, void **state_object) {
+  TRACE("ID3D12Device5::CreateStateObject type=%u subobjects=%u -> E_NOTIMPL",
         desc ? (unsigned)desc->Type : 0xFFFFFFFFu,
         desc ? desc->NumSubobjects : 0);
   if (!state_object)
@@ -3829,21 +3981,11 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateStateObject(
   *state_object = nullptr;
   if (!desc || (desc->NumSubobjects && !desc->pSubobjects))
     return E_INVALIDARG;
-
-  for (UINT i = 0; i < desc->NumSubobjects; i++) {
-    TRACE("  state subobject[%u] type=%u desc=%p", i,
-          (unsigned)desc->pSubobjects[i].Type, desc->pSubobjects[i].pDesc);
-  }
-
-  auto object = new MTLD3D12StateObject(this, desc);
-  HRESULT hr = object->QueryInterface(riid, state_object);
-  object->Release();
-  TRACE("ID3D12Device5::CreateStateObject EXIT hr=0x%lx object=%p", hr,
-        state_object ? *state_object : nullptr);
-  return hr;
+  return E_NOTIMPL;
 }
 
-void STDMETHODCALLTYPE MTLD3D12Device::GetRaytracingAccelerationStructurePrebuildInfo(
+void STDMETHODCALLTYPE
+MTLD3D12Device::GetRaytracingAccelerationStructurePrebuildInfo(
     const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *desc,
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO *info) {
   TRACE("ID3D12Device5::GetRaytracingAccelerationStructurePrebuildInfo");
@@ -3852,53 +3994,43 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetRaytracingAccelerationStructurePrebuil
   }
 }
 
-D3D12_DRIVER_MATCHING_IDENTIFIER_STATUS STDMETHODCALLTYPE MTLD3D12Device::CheckDriverMatchingIdentifier(
+D3D12_DRIVER_MATCHING_IDENTIFIER_STATUS STDMETHODCALLTYPE
+MTLD3D12Device::CheckDriverMatchingIdentifier(
     D3D12_SERIALIZED_DATA_TYPE serialized_data_type,
-    const D3D12_SERIALIZED_DATA_DRIVER_MATCHING_IDENTIFIER *identifier_to_check) {
+    const D3D12_SERIALIZED_DATA_DRIVER_MATCHING_IDENTIFIER
+        *identifier_to_check) {
   TRACE("ID3D12Device5::CheckDriverMatchingIdentifier -> UNRECOGNIZED");
   return D3D12_DRIVER_MATCHING_IDENTIFIER_UNRECOGNIZED;
 }
 
 /*** ID3D12Device6 ***/
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetBackgroundProcessingMode(
-    D3D12_BACKGROUND_PROCESSING_MODE mode,
-    D3D12_MEASUREMENTS_ACTION action, HANDLE event,
-    WINBOOL *further_measurements_desired) {
+    D3D12_BACKGROUND_PROCESSING_MODE mode, D3D12_MEASUREMENTS_ACTION action,
+    HANDLE event, WINBOOL *further_measurements_desired) {
   TRACE("ID3D12Device6::SetBackgroundProcessingMode -> E_NOTIMPL");
   return E_NOTIMPL;
 }
 
 /*** ID3D12Device7 ***/
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::AddToStateObject(
-    const D3D12_STATE_OBJECT_DESC *addition,
-    ID3D12StateObject *state_object_to_grow_from,
-    REFIID riid, void **new_state_object) {
-  TRACE("ID3D12Device7::AddToStateObject type=%u subobjects=%u base=%p",
+HRESULT STDMETHODCALLTYPE
+MTLD3D12Device::AddToStateObject(const D3D12_STATE_OBJECT_DESC *addition,
+                                 ID3D12StateObject *state_object_to_grow_from,
+                                 REFIID riid, void **new_state_object) {
+  TRACE("ID3D12Device7::AddToStateObject type=%u subobjects=%u base=%p -> "
+        "E_NOTIMPL",
         addition ? (unsigned)addition->Type : 0xFFFFFFFFu,
-        addition ? addition->NumSubobjects : 0,
-        state_object_to_grow_from);
+        addition ? addition->NumSubobjects : 0, state_object_to_grow_from);
   if (!new_state_object)
     return E_POINTER;
   *new_state_object = nullptr;
   if (!addition || (addition->NumSubobjects && !addition->pSubobjects))
     return E_INVALIDARG;
-
-  for (UINT i = 0; i < addition->NumSubobjects; i++) {
-    TRACE("  add state subobject[%u] type=%u desc=%p", i,
-          (unsigned)addition->pSubobjects[i].Type, addition->pSubobjects[i].pDesc);
-  }
-
-  auto object = new MTLD3D12StateObject(this, addition, state_object_to_grow_from);
-  HRESULT hr = object->QueryInterface(riid, new_state_object);
-  object->Release();
-  TRACE("ID3D12Device7::AddToStateObject EXIT hr=0x%lx object=%p", hr,
-        new_state_object ? *new_state_object : nullptr);
-  return hr;
+  return E_NOTIMPL;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateProtectedResourceSession1(
-    const D3D12_PROTECTED_RESOURCE_SESSION_DESC1 *desc,
-    REFIID riid, void **session) {
+    const D3D12_PROTECTED_RESOURCE_SESSION_DESC1 *desc, REFIID riid,
+    void **session) {
   TRACE("ID3D12Device7::CreateProtectedResourceSession1 -> E_NOTIMPL");
   return E_NOTIMPL;
 }
@@ -3906,7 +4038,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateProtectedResourceSession1(
 /*** ID3D12Device8 ***/
 static const int MAX_DESCS = 256;
 
-D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE MTLD3D12Device::GetResourceAllocationInfo2(
+D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
+MTLD3D12Device::GetResourceAllocationInfo2(
     D3D12_RESOURCE_ALLOCATION_INFO *__ret, UINT visible_mask,
     UINT resource_descs_count, const D3D12_RESOURCE_DESC1 *resource_descs,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
@@ -3922,32 +4055,33 @@ D3D12_RESOURCE_ALLOCATION_INFO* STDMETHODCALLTYPE MTLD3D12Device::GetResourceAll
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource2(
-    const D3D12_HEAP_PROPERTIES *heap_properties,
-    D3D12_HEAP_FLAGS heap_flags, const D3D12_RESOURCE_DESC1 *desc,
+    const D3D12_HEAP_PROPERTIES *heap_properties, D3D12_HEAP_FLAGS heap_flags,
+    const D3D12_RESOURCE_DESC1 *desc,
     D3D12_RESOURCE_STATES initial_resource_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
-    ID3D12ProtectedResourceSession *protected_session,
-    REFIID riid_resource, void **resource) {
+    ID3D12ProtectedResourceSession *protected_session, REFIID riid_resource,
+    void **resource) {
   if (protected_session) {
-    TRACE("ID3D12Device8::CreateCommittedResource2 -> E_NOTIMPL (protected session)");
+    TRACE("ID3D12Device8::CreateCommittedResource2 -> E_NOTIMPL (protected "
+          "session)");
     return E_NOTIMPL;
   }
   D3D12_RESOURCE_DESC desc_compat;
   memcpy(&desc_compat, desc, sizeof(D3D12_RESOURCE_DESC));
   return CreateCommittedResource(heap_properties, heap_flags, &desc_compat,
-      initial_resource_state, optimized_clear_value, riid_resource, resource);
+                                 initial_resource_state, optimized_clear_value,
+                                 riid_resource, resource);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource1(
-    ID3D12Heap *heap, UINT64 heap_offset,
-    const D3D12_RESOURCE_DESC1 *desc,
+    ID3D12Heap *heap, UINT64 heap_offset, const D3D12_RESOURCE_DESC1 *desc,
     D3D12_RESOURCE_STATES initial_state,
-    const D3D12_CLEAR_VALUE *optimized_clear_value,
-    REFIID riid, void **resource) {
+    const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
+    void **resource) {
   D3D12_RESOURCE_DESC desc_compat;
   memcpy(&desc_compat, desc, sizeof(D3D12_RESOURCE_DESC));
-  return CreatePlacedResource(heap, heap_offset, &desc_compat,
-      initial_state, optimized_clear_value, riid, resource);
+  return CreatePlacedResource(heap, heap_offset, &desc_compat, initial_state,
+                              optimized_clear_value, riid, resource);
 }
 
 void STDMETHODCALLTYPE MTLD3D12Device::CreateSamplerFeedbackUnorderedAccessView(
@@ -3964,19 +4098,18 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints1(
   D3D12_RESOURCE_DESC desc_compat;
   memcpy(&desc_compat, resource_desc, sizeof(D3D12_RESOURCE_DESC));
   GetCopyableFootprints(&desc_compat, first_subresource, subresources_count,
-      base_offset, layouts, rows_count, row_size_in_bytes, total_bytes);
+                        base_offset, layouts, rows_count, row_size_in_bytes,
+                        total_bytes);
 }
 
 /*** ID3D12Device9 ***/
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateShaderCacheSession(
-    const D3D12_SHADER_CACHE_SESSION_DESC *desc, REFIID riid,
-    void **session) {
+    const D3D12_SHADER_CACHE_SESSION_DESC *desc, REFIID riid, void **session) {
   if (!desc || !session)
     return E_POINTER;
   InitReturnPtr(session);
   TRACE("ID3D12Device9::CreateShaderCacheSession mode=%u flags=0x%x riid=%s",
-        (unsigned)desc->Mode, (unsigned)desc->Flags,
-        str::format(riid).c_str());
+        (unsigned)desc->Mode, (unsigned)desc->Flags, str::format(riid).c_str());
   auto *cache = new MTLD3D12ShaderCacheSession(this, *desc);
   HRESULT hr = cache->QueryInterface(riid, session);
   if (FAILED(hr))
@@ -3986,77 +4119,70 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateShaderCacheSession(
   return hr;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12Device::ShaderCacheControl(
-    D3D12_SHADER_CACHE_KIND_FLAGS kinds,
-    D3D12_SHADER_CACHE_CONTROL_FLAGS control) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12Device::ShaderCacheControl(D3D12_SHADER_CACHE_KIND_FLAGS kinds,
+                                   D3D12_SHADER_CACHE_CONTROL_FLAGS control) {
   TRACE("ID3D12Device9::ShaderCacheControl kinds=0x%x control=0x%x -> S_OK",
         (unsigned)kinds, (unsigned)control);
   return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandQueue1(
-    const D3D12_COMMAND_QUEUE_DESC *desc, REFIID creator_id,
-    REFIID riid, void **command_queue) {
-  TRACE("ID3D12Device9::CreateCommandQueue1 -> delegating to CreateCommandQueue");
+    const D3D12_COMMAND_QUEUE_DESC *desc, REFIID creator_id, REFIID riid,
+    void **command_queue) {
+  TRACE(
+      "ID3D12Device9::CreateCommandQueue1 -> delegating to CreateCommandQueue");
   return CreateCommandQueue(desc, riid, command_queue);
 }
 
 /*** ID3D12Device10 ***/
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource3(
-    const D3D12_HEAP_PROPERTIES *heap_properties,
-    D3D12_HEAP_FLAGS heap_flags, const D3D12_RESOURCE_DESC1 *desc,
-    D3D12_BARRIER_LAYOUT initial_layout,
+    const D3D12_HEAP_PROPERTIES *heap_properties, D3D12_HEAP_FLAGS heap_flags,
+    const D3D12_RESOURCE_DESC1 *desc, D3D12_BARRIER_LAYOUT initial_layout,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
     ID3D12ProtectedResourceSession *protected_session,
-    UINT32 castable_formats_count,
-    DXGI_FORMAT *castable_formats,
+    UINT32 castable_formats_count, DXGI_FORMAT *castable_formats,
     REFIID riid_resource, void **resource) {
   if (protected_session) {
-    TRACE("ID3D12Device10::CreateCommittedResource3 -> E_NOTIMPL (protected session)");
+    TRACE("ID3D12Device10::CreateCommittedResource3 -> E_NOTIMPL (protected "
+          "session)");
     return E_NOTIMPL;
   }
-  TRACE("ID3D12Device10::CreateCommittedResource3 -> delegating to CreateCommittedResource2");
-  return CreateCommittedResource2(heap_properties, heap_flags, desc,
-      (D3D12_RESOURCE_STATES)initial_layout, optimized_clear_value,
-      protected_session, riid_resource, resource);
+  TRACE("ID3D12Device10::CreateCommittedResource3 -> delegating to "
+        "CreateCommittedResource2");
+  return CreateCommittedResource2(
+      heap_properties, heap_flags, desc, (D3D12_RESOURCE_STATES)initial_layout,
+      optimized_clear_value, protected_session, riid_resource, resource);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource2(
-    ID3D12Heap *heap, UINT64 heap_offset,
-    const D3D12_RESOURCE_DESC1 *desc,
+    ID3D12Heap *heap, UINT64 heap_offset, const D3D12_RESOURCE_DESC1 *desc,
     D3D12_BARRIER_LAYOUT initial_layout,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
-    UINT32 castable_formats_count,
-    DXGI_FORMAT *castable_formats,
-    REFIID riid, void **resource) {
-  TRACE("ID3D12Device10::CreatePlacedResource2 -> delegating to CreatePlacedResource1");
+    UINT32 castable_formats_count, DXGI_FORMAT *castable_formats, REFIID riid,
+    void **resource) {
+  TRACE("ID3D12Device10::CreatePlacedResource2 -> delegating to "
+        "CreatePlacedResource1");
   return CreatePlacedResource1(heap, heap_offset, desc,
-      (D3D12_RESOURCE_STATES)initial_layout, optimized_clear_value,
-      riid, resource);
+                               (D3D12_RESOURCE_STATES)initial_layout,
+                               optimized_clear_value, riid, resource);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource2(
-    const D3D12_RESOURCE_DESC *desc,
-    D3D12_BARRIER_LAYOUT initial_layout,
+    const D3D12_RESOURCE_DESC *desc, D3D12_BARRIER_LAYOUT initial_layout,
     const D3D12_CLEAR_VALUE *optimized_clear_value,
     ID3D12ProtectedResourceSession *protected_session,
-    UINT32 castable_formats_count,
-    DXGI_FORMAT *castable_formats,
-    REFIID riid, void **resource) {
-  if (protected_session) {
-    TRACE("ID3D12Device10::CreateReservedResource2 -> E_NOTIMPL (protected session)");
-    return E_NOTIMPL;
-  }
-  TRACE("ID3D12Device10::CreateReservedResource2 -> delegating to CreateReservedResource");
-  return CreateReservedResource(desc,
-      (D3D12_RESOURCE_STATES)initial_layout, optimized_clear_value,
-      riid, resource);
+    UINT32 castable_formats_count, DXGI_FORMAT *castable_formats, REFIID riid,
+    void **resource) {
+  TRACE("ID3D12Device10::CreateReservedResource2 -> E_NOTIMPL");
+  return CreateReservedResource(desc, (D3D12_RESOURCE_STATES)initial_layout,
+                                optimized_clear_value, riid, resource);
 }
 
 /*** ID3D12Device11Compat ***/
-void STDMETHODCALLTYPE MTLD3D12Device::CreateSampler2(
-    const D3D12SamplerDesc2Compat *desc,
-    D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
+void STDMETHODCALLTYPE
+MTLD3D12Device::CreateSampler2(const D3D12SamplerDesc2Compat *desc,
+                               D3D12_CPU_DESCRIPTOR_HANDLE descriptor) {
   if (!desc) {
     TRACE("ID3D12Device11::CreateSampler2 -> ignored null desc");
     return;
@@ -4079,7 +4205,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateSampler2(
             : desc->FloatBorderColor[i];
   }
 
-  TRACE("ID3D12Device11::CreateSampler2 flags=0x%x -> delegating to CreateSampler",
+  TRACE("ID3D12Device11::CreateSampler2 flags=0x%x -> delegating to "
+        "CreateSampler",
         (unsigned)desc->Flags);
   CreateSampler(&compat, descriptor);
 }
@@ -4092,11 +4219,11 @@ MTLD3D12Device::GetResourceAllocationInfo3(
     const UINT32 *num_castable_formats,
     const DXGI_FORMAT *const *castable_formats,
     D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) {
-  TRACE("ID3D12Device12::GetResourceAllocationInfo3 count=%u castable_counts=%p castable_formats=%p -> delegating",
+  TRACE("ID3D12Device12::GetResourceAllocationInfo3 count=%u "
+        "castable_counts=%p castable_formats=%p -> delegating",
         resource_descs_count, num_castable_formats, castable_formats);
   return GetResourceAllocationInfo2(__ret, visible_mask, resource_descs_count,
-                                    resource_descs,
-                                    resource_allocation_info1);
+                                    resource_descs, resource_allocation_info1);
 }
 
 } // namespace dxmt

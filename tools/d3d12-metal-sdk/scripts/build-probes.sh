@@ -61,7 +61,7 @@ build_probe \
   "$SDK_DIR/probes/probe_loader/probe_loader.cpp" \
   -o "$OUT_DIR/probe_loader.exe"
 
-for dll in D3D12Core.dll d3d12SDKLayers.dll; do
+for dll in D3D12Core.dll d3d12SDKLayers.dll D3D12StateObjectCompiler.dll; do
   if [[ ! -f "$AGILITY_BIN/$dll" ]]; then
     echo "Missing Agility SDK DLL: $AGILITY_BIN/$dll" >&2
     exit 2
@@ -70,7 +70,7 @@ for dll in D3D12Core.dll d3d12SDKLayers.dll; do
   cp "$AGILITY_BIN/$dll" "$OUT_DIR/D3D12/x64/$dll"
 done
 
-for optional in D3D12StateObjectCompiler.dll d3dconfig.exe; do
+for optional in D3D12StateObjectCompiler.exe d3dconfig.exe; do
   if [[ -f "$AGILITY_BIN/$optional" ]]; then
     cp "$AGILITY_BIN/$optional" "$OUT_DIR/D3D12/$optional"
     cp "$AGILITY_BIN/$optional" "$OUT_DIR/D3D12/x64/$optional"

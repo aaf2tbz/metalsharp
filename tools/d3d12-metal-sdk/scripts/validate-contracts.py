@@ -26,12 +26,21 @@ DECLARED_TIERS = {"required", "emulated", "stubbed-safe", "unsupported"}
 
 REQUIRED_UNSUPPORTED_APIS = {
     "D3D12 ray tracing tiers",
+    "D3D12 state objects",
     "D3D12 mesh shader tiers",
+    "D3D12 amplification shader tiers",
     "D3D12 sampler feedback tier",
     "D3D12 work graphs",
+    "D3D12 node shaders",
     "D3D12 video encode/decode/process APIs",
     "D3D12 protected resource sessions",
     "D3D12 DSR",
+    "D3D12 stream output",
+    "D3D12 sparse and reserved resources",
+    "D3D12 geometry shaders outside proven emulation",
+    "D3D12 hull/domain tessellation shaders",
+    "D3D12 WaveOps feature report",
+    "D3D12 Shader Model 6.6 feature report",
 }
 
 

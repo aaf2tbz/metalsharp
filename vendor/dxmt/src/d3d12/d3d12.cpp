@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr UINT kD3D12AgilitySDKVersion = 620;
+constexpr UINT kD3D12AgilitySDKVersion = 619;
 
 constexpr GUID kCLSID_D3D12SDKConfiguration = {
     0x7cda6aca,
@@ -688,25 +688,47 @@ public:
   HRESULT STDMETHODCALLTYPE StorePipelineStateDesc(
       const void *key, UINT key_size, UINT version,
       const D3D12_PIPELINE_STATE_STREAM_DESC *desc) override {
-    if (!key || !key_size || !desc)
+    if (!key || !key_size || !desc || !desc->pPipelineStateSubobjectStream ||
+        !desc->SizeInBytes)
       return E_INVALIDARG;
-    m_pipeline_versions[MakeKey(key, key_size)] = version;
+    auto key_bytes = MakeKey(key, key_size);
+    auto &entry = m_pipeline_descs[key_bytes];
+    entry.version = version;
+    auto *stream =
+        static_cast<const uint8_t *>(desc->pPipelineStateSubobjectStream);
+    entry.stream.assign(stream, stream + desc->SizeInBytes);
     TraceAgility("StateObjectDatabase::StorePipelineStateDesc key_size=%u "
                  "version=%u bytes=%zu",
                  key_size, version, desc->SizeInBytes);
     return S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE FindPipelineStateDesc(const void *key,
-                                                  UINT key_size,
-                                                  D3D12PipelineStateFuncCompat,
-                                                  void *) override {
-    TraceAgility("StateObjectDatabase::FindPipelineStateDesc key_size=%u -> "
-                 "not materialized",
-                 key_size);
+  HRESULT STDMETHODCALLTYPE FindPipelineStateDesc(
+      const void *key, UINT key_size, D3D12PipelineStateFuncCompat callback,
+      void *context) override {
     if (!key || !key_size)
       return E_INVALIDARG;
-    return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    if (!callback)
+      return E_POINTER;
+
+    auto key_bytes = MakeKey(key, key_size);
+    auto entry = m_pipeline_descs.find(key_bytes);
+    if (entry == m_pipeline_descs.end()) {
+      TraceAgility("StateObjectDatabase::FindPipelineStateDesc key_size=%u -> "
+                   "not found",
+                   key_size);
+      return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    }
+
+    D3D12_PIPELINE_STATE_STREAM_DESC desc = {};
+    desc.SizeInBytes = entry->second.stream.size();
+    desc.pPipelineStateSubobjectStream = entry->second.stream.data();
+    callback(entry->first.data(), static_cast<UINT>(entry->first.size()),
+             entry->second.version, &desc, context);
+    TraceAgility("StateObjectDatabase::FindPipelineStateDesc key_size=%u -> "
+                 "hit version=%u bytes=%zu",
+                 key_size, entry->second.version, desc.SizeInBytes);
+    return S_OK;
   }
 
   HRESULT STDMETHODCALLTYPE StoreStateObjectDesc(
@@ -714,22 +736,21 @@ public:
       const D3D12_STATE_OBJECT_DESC *desc, const void *, UINT) override {
     if (!key || !key_size || !desc)
       return E_INVALIDARG;
-    m_state_object_versions[MakeKey(key, key_size)] = version;
     TraceAgility("StateObjectDatabase::StoreStateObjectDesc key_size=%u "
-                 "version=%u subobjects=%u",
+                 "version=%u subobjects=%u -> E_NOTIMPL",
                  key_size, version, desc->NumSubobjects);
-    return S_OK;
+    return E_NOTIMPL;
   }
 
   HRESULT STDMETHODCALLTYPE FindStateObjectDesc(const void *key, UINT key_size,
                                                 D3D12StateObjectFuncCompat,
                                                 void *) override {
-    TraceAgility("StateObjectDatabase::FindStateObjectDesc key_size=%u -> not "
-                 "materialized",
+    TraceAgility("StateObjectDatabase::FindStateObjectDesc key_size=%u -> "
+                 "E_NOTIMPL",
                  key_size);
     if (!key || !key_size)
       return E_INVALIDARG;
-    return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    return E_NOTIMPL;
   }
 
   HRESULT STDMETHODCALLTYPE FindObjectVersion(const void *key, UINT key_size,
@@ -737,20 +758,20 @@ public:
     if (!key || !key_size || !version)
       return E_INVALIDARG;
     auto key_bytes = MakeKey(key, key_size);
-    auto pipeline = m_pipeline_versions.find(key_bytes);
-    if (pipeline != m_pipeline_versions.end()) {
-      *version = pipeline->second;
-      return S_OK;
-    }
-    auto state_object = m_state_object_versions.find(key_bytes);
-    if (state_object != m_state_object_versions.end()) {
-      *version = state_object->second;
+    auto pipeline = m_pipeline_descs.find(key_bytes);
+    if (pipeline != m_pipeline_descs.end()) {
+      *version = pipeline->second.version;
       return S_OK;
     }
     return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
   }
 
 private:
+  struct PipelineDescEntry {
+    UINT version = 0;
+    std::vector<uint8_t> stream;
+  };
+
   static std::vector<uint8_t> MakeKey(const void *key, UINT key_size) {
     auto *bytes = static_cast<const uint8_t *>(key);
     return std::vector<uint8_t>(bytes, bytes + key_size);
@@ -759,8 +780,7 @@ private:
   std::atomic<ULONG> m_ref = {1};
   bool m_has_application_desc = false;
   D3D12ApplicationDescCompat m_application_desc = {};
-  std::map<std::vector<uint8_t>, UINT> m_pipeline_versions;
-  std::map<std::vector<uint8_t>, UINT> m_state_object_versions;
+  std::map<std::vector<uint8_t>, PipelineDescEntry> m_pipeline_descs;
 };
 
 class MTLD3D12StateObjectDatabaseFactory final
@@ -1617,9 +1637,8 @@ static HRESULT DXMTCreateDXGIFactory1(REFIID riid, void **factory) {
       GetProcAddress(dxgi, "CreateDXGIFactory1"));
   if (!proc) {
     auto gle = GetLastError();
-    DXMTD3D12Trace("Entry",
-                   "GetProcAddress(dxgi!CreateDXGIFactory1) failed gle=%lu",
-                   gle);
+    DXMTD3D12Trace(
+        "Entry", "GetProcAddress(dxgi!CreateDXGIFactory1) failed gle=%lu", gle);
     return HRESULT_FROM_WIN32(gle);
   }
 

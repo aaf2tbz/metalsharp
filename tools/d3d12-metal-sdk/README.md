@@ -333,16 +333,30 @@ regression before Steam is launched.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 
-`build-probes.sh` copies the Agility SDK 1.619.3 DLLs into `out/bin/D3D12/` before building `probe_agility_ue5.exe`. Override `AGILITY_BIN` when testing a different extracted SDK:
+`build-probes.sh` copies the Agility SDK 1.619.3 payload into `out/bin/D3D12/` and `out/bin/D3D12/x64/` before building `probe_agility_ue5.exe`: `D3D12Core.dll`, `d3d12SDKLayers.dll`, `D3D12StateObjectCompiler.dll`, `dxil.dll`, and optional tools such as `D3D12StateObjectCompiler.exe` and `d3dconfig.exe` when present. Override `AGILITY_BIN` when testing a different extracted SDK:
 
 ```bash
 AGILITY_BIN=/path/to/agility/build/native/bin/x64 \
   tools/d3d12-metal-sdk/scripts/build-probes.sh
 ```
 
-The Agility probe exports `D3D12SDKVersion=619` and `D3D12SDKPath=".\\D3D12\\"`, then records app-local Agility DLL discovery, D3D12 device creation, and modern `ID3D12Device*` QueryInterface behavior as JSON.
+The Agility probe exports `D3D12SDKVersion=619` and `D3D12SDKPath=".\\D3D12\\"`, then records app-local Agility DLL discovery, D3D12 device creation, modern `ID3D12Device*` QueryInterface behavior, `ID3D12DeviceConfiguration` root-signature serialization/deserialization, shader cache store/find, pipeline-state descriptor database store/find, and deterministic rejection for unsupported state-object cache paths as JSON.
 
-The device capability probe uses the same Agility export pattern and records UE5-relevant `CheckFeatureSupport` results: feature levels, shader model, resource binding tier, wave ops, atomic64, raytracing, mesh shader, sampler feedback, and other advanced feature gates.
+Run just the Agility phase gate with:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --agility-only
+```
+
+The device capability probe uses the same Agility export pattern and records UE5-relevant `CheckFeatureSupport` results: feature levels, shader model, resource binding tier, wave ops, atomic64, raytracing, mesh shader, sampler feedback, stream output, reserved resources, state objects, and other advanced feature gates. Its unsupported-policy section is paired with `contracts/unsupported-api-ledger.json` so advanced features are either proven, explicitly waived, or honestly rejected.
+
+Run just the unsupported-policy phase gate with:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --caps-only
+```
 
 The DXGI factory probe records factory creation, `IDXGIFactory*` QueryInterface behavior through `IDXGIFactory7`, adapter enumeration, GPU-preference enumeration when available, LUID lookup, output enumeration, and stable adapter description fields.
 
