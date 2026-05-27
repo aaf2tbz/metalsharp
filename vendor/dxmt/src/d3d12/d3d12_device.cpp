@@ -1793,7 +1793,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
                                                   desc->CS.BytecodeLength)
             : 0ull,
         (void *)desc->pRootSignature);
-  bool compiled = pso->RequestCompile(true);
+  bool compiled = pso->RequestCompile(false);
   auto failure_stage = pso->GetCompileFailureStage();
   auto failure_detail = pso->GetCompileFailureDetail();
   TRACE("CreateComputePSO: compile=%d pending=%d CS=%p stage=%s detail=%s",

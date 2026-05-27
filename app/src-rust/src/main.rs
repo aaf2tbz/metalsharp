@@ -358,7 +358,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             match parse_request_appid(&body) {
                 Ok(id) => {
-                    let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
+                    let launch_method = body.get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
                         Some(pipeline) => Some(pipeline),
