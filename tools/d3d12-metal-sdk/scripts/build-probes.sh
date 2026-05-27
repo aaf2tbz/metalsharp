@@ -121,6 +121,14 @@ build_probe \
   -o "$OUT_DIR/probe_compute_pso.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_command_replay/probe_command_replay.cpp" \
+  -o "$OUT_DIR/probe_command_replay.exe"
+
+build_probe \
+  "$SDK_DIR/probes/probe_barriers_render_pass/probe_barriers_render_pass.cpp" \
+  -o "$OUT_DIR/probe_barriers_render_pass.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_render_headless/probe_render_headless.cpp" \
   -o "$OUT_DIR/probe_render_headless.exe"
 
@@ -171,6 +179,8 @@ echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
 echo "$OUT_DIR/probe_graphics_pso.exe"
 echo "$OUT_DIR/probe_compute_pso.exe"
+echo "$OUT_DIR/probe_command_replay.exe"
+echo "$OUT_DIR/probe_barriers_render_pass.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
 echo "$OUT_DIR/probe_subnautica_stress_game.exe"

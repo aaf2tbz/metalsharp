@@ -23,6 +23,8 @@ RUN_SHADERS=1
 RUN_DXIL_SEMANTICS=0
 RUN_GRAPHICS_PSO=1
 RUN_COMPUTE_PSO=1
+RUN_COMMAND_REPLAY=1
+RUN_BARRIERS_RENDER_PASS=1
 RUN_RENDER_HEADLESS=1
 RUN_MINI=1
 RUN_PRESENT_WINDOWED=0
@@ -73,6 +75,12 @@ Options:
   --graphics-pso-only   Run only the graphics PSO matrix probe.
   --no-compute-pso      Skip probe_compute_pso.
   --compute-pso-only    Run only the compute PSO matrix probe.
+  --no-command-replay   Skip probe_command_replay.
+  --command-replay-only Run only the command recording/replay probe.
+  --no-barriers-render-pass
+                        Skip probe_barriers_render_pass.
+  --barriers-render-pass-only
+                        Run only the resource barrier/render-pass probe.
   --no-render-headless  Skip probe_render_headless.
   --no-mini             Skip one-purpose D3D12 mini-app probes.
   --mini-only           Run only one-purpose D3D12 mini-app probes.
@@ -170,6 +178,8 @@ while [[ $# -gt 0 ]]; do
       RUN_RENDER_HEADLESS=0
       RUN_GRAPHICS_PSO=0
       RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
       shift
@@ -190,6 +200,8 @@ while [[ $# -gt 0 ]]; do
       RUN_DXIL_SEMANTICS=0
       RUN_GRAPHICS_PSO=1
       RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -211,6 +223,54 @@ while [[ $# -gt 0 ]]; do
       RUN_DXIL_SEMANTICS=0
       RUN_GRAPHICS_PSO=0
       RUN_COMPUTE_PSO=1
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
+    --no-command-replay)
+      RUN_COMMAND_REPLAY=0
+      shift
+      ;;
+    --command-replay-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=1
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
+    --no-barriers-render-pass)
+      RUN_BARRIERS_RENDER_PASS=0
+      shift
+      ;;
+    --barriers-render-pass-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=1
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -236,6 +296,8 @@ while [[ $# -gt 0 ]]; do
       RUN_RENDER_HEADLESS=0
       RUN_GRAPHICS_PSO=0
       RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
       RUN_MINI=1
       RUN_PRESENT_WINDOWED=0
       shift
@@ -300,6 +362,8 @@ SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 DXIL_SEMANTICS_PROBE_EXE="$SDK_DIR/out/bin/probe_dxil_semantics.exe"
 GRAPHICS_PSO_PROBE_EXE="$SDK_DIR/out/bin/probe_graphics_pso.exe"
 COMPUTE_PSO_PROBE_EXE="$SDK_DIR/out/bin/probe_compute_pso.exe"
+COMMAND_REPLAY_PROBE_EXE="$SDK_DIR/out/bin/probe_command_replay.exe"
+BARRIERS_RENDER_PASS_PROBE_EXE="$SDK_DIR/out/bin/probe_barriers_render_pass.exe"
 RENDER_HEADLESS_PROBE_EXE="$SDK_DIR/out/bin/probe_render_headless.exe"
 PRESENT_WINDOWED_PROBE_EXE="$SDK_DIR/out/bin/probe_present_windowed.exe"
 
@@ -342,7 +406,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -372,6 +436,8 @@ DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PR
 DXIL_SEMANTICS_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-${PROFILE}.json"
 GRAPHICS_PSO_RESULT_FILE="$RESULTS_DIR/probe-graphics-pso-${PROFILE}.json"
 COMPUTE_PSO_RESULT_FILE="$RESULTS_DIR/probe-compute-pso-${PROFILE}.json"
+COMMAND_REPLAY_RESULT_FILE="$RESULTS_DIR/probe-command-replay-${PROFILE}.json"
+BARRIERS_RENDER_PASS_RESULT_FILE="$RESULTS_DIR/probe-barriers-render-pass-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
 PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
 
@@ -768,6 +834,34 @@ if [[ "$RUN_COMPUTE_PSO" == "1" ]]; then
     "$WINE_BIN" "$COMPUTE_PSO_PROBE_EXE" > "$COMPUTE_PSO_RESULT_FILE"
   )
   echo "$COMPUTE_PSO_RESULT_FILE"
+fi
+
+if [[ "$RUN_COMMAND_REPLAY" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$COMMAND_REPLAY_PROBE_EXE" > "$COMMAND_REPLAY_RESULT_FILE"
+  )
+  echo "$COMMAND_REPLAY_RESULT_FILE"
+fi
+
+if [[ "$RUN_BARRIERS_RENDER_PASS" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$BARRIERS_RENDER_PASS_PROBE_EXE" > "$BARRIERS_RENDER_PASS_RESULT_FILE"
+  )
+  echo "$BARRIERS_RENDER_PASS_RESULT_FILE"
 fi
 
 if [[ "$RUN_RENDER_HEADLESS" == "1" ]]; then

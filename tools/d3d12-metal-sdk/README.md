@@ -101,6 +101,28 @@ tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
   --compute-pso-only
 ```
 
+For command recording/replay coverage, run the command replay probe. It
+validates command-list close/reset/reuse ordering, multiple command lists in a
+single queue execute, ExecuteIndirect dispatch behavior, and records
+command-signature root constants, bundle draw replay, graphics indirect replay,
+and predication support status explicitly:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --command-replay-only
+```
+
+For resource barrier and render-pass coverage, run the barrier/render-pass
+probe. It validates render pass clear/store across pass splits, copy to
+shader-resource transition visibility, UAV-to-UAV visibility, present
+transition roundtrips, and readback visibility after render, compute, and copy
+work. It also records MSAA resolve support status explicitly:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --barriers-render-pass-only
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash
