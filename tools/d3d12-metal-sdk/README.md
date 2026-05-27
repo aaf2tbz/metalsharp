@@ -123,6 +123,20 @@ tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
   --barriers-render-pass-only
 ```
 
+For resource, view, and format coverage, run the phase 14.9 probe. It validates
+committed and placed resources, default/upload/readback heap behavior,
+buffer GPU virtual addresses, 1D/2D/3D/array/mip/MSAA texture creation,
+CBV/SRV/UAV/RTV/DSV creation and binding, `GetResourceAllocationInfo`,
+`GetCopyableFootprints`, common color/depth/integer/normalized/sRGB format
+support, and typeless view-time typing. Sparse/reserved resources are recorded
+as unsupported unless they are explicitly feature-gated and backed by Metal
+sparse APIs:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --resource-views-formats-only
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash
