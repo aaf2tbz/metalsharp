@@ -91,6 +91,16 @@ tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
   --graphics-pso-only
 ```
 
+For compute PSO coverage, run the compute matrix probe. It validates
+descriptor-table CBV/SRV reads, UAV writes, 32-bit atomics, and
+dispatch-indirect argument layout and bounds handling. It also records compute
+texture-sampler and append/consume counter support status explicitly:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --compute-pso-only
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash
