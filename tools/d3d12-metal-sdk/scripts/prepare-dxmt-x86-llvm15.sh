@@ -28,9 +28,15 @@ meson setup "${BUILD_DIR}" "${DXMT_DIR}" --reconfigure \
   -Dnative_llvm_path="${LLVM_DIR}"
 
 ninja -C "${BUILD_DIR}" \
+  src/dxgi/dxgi.dll \
+  src/dxgi/dxgi_dxmt.dll \
   src/winemetal/unix/winemetal.so \
   src/winemetal/winemetal.dll \
   src/d3d12/d3d12.dll
 
 echo "x86_64 LLVM ready: ${LLVM_DIR}"
+echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi.dll"
+echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi_dxmt.dll"
+echo "rebuilt: ${BUILD_DIR}/src/d3d12/d3d12.dll"
+echo "rebuilt: ${BUILD_DIR}/src/winemetal/winemetal.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/unix/winemetal.so"
