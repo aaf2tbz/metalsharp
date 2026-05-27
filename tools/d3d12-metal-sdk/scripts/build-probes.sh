@@ -113,6 +113,10 @@ build_probe \
   -o "$OUT_DIR/probe_dxil_semantics.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_graphics_pso/probe_graphics_pso.cpp" \
+  -o "$OUT_DIR/probe_graphics_pso.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_render_headless/probe_render_headless.cpp" \
   -o "$OUT_DIR/probe_render_headless.exe"
 
@@ -161,6 +165,7 @@ echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
+echo "$OUT_DIR/probe_graphics_pso.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
 echo "$OUT_DIR/probe_subnautica_stress_game.exe"

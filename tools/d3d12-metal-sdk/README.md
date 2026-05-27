@@ -81,6 +81,16 @@ tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --no-loader \
   --no-render-headless --no-mini --no-windowed-present
 ```
 
+For graphics PSO coverage, run the matrix probe. It validates vertex-only,
+vertex/pixel, depth-only, color-only, color+depth, MSAA, blend, write-mask,
+multi-render-target pixel outputs, cached PSO blob behavior, complex input
+layouts, and explicit rejection of stream output and HS/DS tessellation:
+
+```bash
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp \
+  --graphics-pso-only
+```
+
 Before launching Steam or a game, run the game-safe preflight:
 
 ```bash

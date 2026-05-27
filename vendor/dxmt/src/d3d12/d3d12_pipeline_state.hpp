@@ -173,6 +173,7 @@ private:
   DXGI_FORMAT m_dsv_format = DXGI_FORMAT_UNKNOWN;
   UINT m_sample_mask = UINT_MAX;
   UINT m_sample_count = 1;
+  std::vector<uint8_t> m_cached_pso_blob;
 
   WMT::Reference<WMT::RenderPipelineState> m_render_pso;
   WMT::Reference<WMT::ComputePipelineState> m_compute_pso;

@@ -21,6 +21,7 @@ RUN_QUEUES=1
 RUN_DESCRIPTORS=1
 RUN_SHADERS=1
 RUN_DXIL_SEMANTICS=0
+RUN_GRAPHICS_PSO=1
 RUN_RENDER_HEADLESS=1
 RUN_MINI=1
 RUN_PRESENT_WINDOWED=0
@@ -67,6 +68,8 @@ Options:
   --no-shaders          Skip probe_shaders.
   --dxil-semantics      Run the DXIL semantic opcode-group probe.
   --semantic-only       Run only the DXIL semantic opcode-group probe.
+  --no-graphics-pso     Skip probe_graphics_pso.
+  --graphics-pso-only   Run only the graphics PSO matrix probe.
   --no-render-headless  Skip probe_render_headless.
   --no-mini             Skip one-purpose D3D12 mini-app probes.
   --mini-only           Run only one-purpose D3D12 mini-app probes.
@@ -162,6 +165,27 @@ while [[ $# -gt 0 ]]; do
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=1
       RUN_RENDER_HEADLESS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
+    --no-graphics-pso)
+      RUN_GRAPHICS_PSO=0
+      shift
+      ;;
+    --graphics-pso-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_GRAPHICS_PSO=1
+      RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
       shift
@@ -246,6 +270,7 @@ QUEUES_PROBE_EXE="$SDK_DIR/out/bin/probe_queues.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
 SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 DXIL_SEMANTICS_PROBE_EXE="$SDK_DIR/out/bin/probe_dxil_semantics.exe"
+GRAPHICS_PSO_PROBE_EXE="$SDK_DIR/out/bin/probe_graphics_pso.exe"
 RENDER_HEADLESS_PROBE_EXE="$SDK_DIR/out/bin/probe_render_headless.exe"
 PRESENT_WINDOWED_PROBE_EXE="$SDK_DIR/out/bin/probe_present_windowed.exe"
 
@@ -288,7 +313,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -316,6 +341,7 @@ DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
 SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
 DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-${PROFILE}.json"
+GRAPHICS_PSO_RESULT_FILE="$RESULTS_DIR/probe-graphics-pso-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
 PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
 
@@ -682,6 +708,21 @@ if [[ "$RUN_DXIL_SEMANTICS" == "1" ]]; then
   )
   echo "$DXIL_SEMANTICS_WARMUP_RESULT_FILE"
   echo "$DXIL_SEMANTICS_RESULT_FILE"
+fi
+
+if [[ "$RUN_GRAPHICS_PSO" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$GRAPHICS_PSO_PROBE_EXE" > "$GRAPHICS_PSO_RESULT_FILE"
+  )
+  echo "$GRAPHICS_PSO_RESULT_FILE"
 fi
 
 if [[ "$RUN_RENDER_HEADLESS" == "1" ]]; then

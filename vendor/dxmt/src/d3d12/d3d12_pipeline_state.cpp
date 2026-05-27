@@ -47,6 +47,42 @@ constexpr uint32_t kMetalShaderConverterStageInAttributeBase = 11;
 constexpr uint32_t kMetalShaderConverterVertexBufferBindPoint = 6;
 constexpr uint32_t kMetalShaderConverterVertexLayoutVersion = 2;
 
+class PipelineStateBlob : public ID3DBlob {
+public:
+  explicit PipelineStateBlob(std::vector<uint8_t> data)
+      : m_data(std::move(data)) {}
+  virtual ~PipelineStateBlob() = default;
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = nullptr;
+    if (riid == IID_IUnknown || riid == IID_ID3D10Blob ||
+        riid == __uuidof(ID3DBlob)) {
+      *ppv = this;
+      AddRef();
+      return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++m_ref_count; }
+
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG ref = --m_ref_count;
+    if (!ref)
+      delete this;
+    return ref;
+  }
+
+  LPVOID STDMETHODCALLTYPE GetBufferPointer() override { return m_data.data(); }
+  SIZE_T STDMETHODCALLTYPE GetBufferSize() override { return m_data.size(); }
+
+private:
+  std::atomic<ULONG> m_ref_count = 1;
+  std::vector<uint8_t> m_data;
+};
+
 bool DXMTD3D12AsyncPipelineCompileEnabled() {
   static int enabled = []() {
     const char *value = std::getenv("DXMT_ASYNC_PIPELINE_COMPILE");
@@ -4468,6 +4504,7 @@ d3d12_geometry_fallback_to_vs_ps:
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
+    uint32_t slot_step_rate[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t max_slot = 0;
     uint32_t d3d_stage_in_slot_mask = 0;
     bool slot_per_vertex[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
@@ -4630,6 +4667,10 @@ d3d12_geometry_fallback_to_vs_ps:
         max_slot = metal_buffer_slot + 1;
       slot_per_vertex[metal_buffer_slot] =
           (el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA);
+      slot_step_rate[metal_buffer_slot] =
+          el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+              ? std::max<UINT>(1, el.InstanceDataStepRate)
+              : 1;
       if (use_msc_vertex_fetch && el.InputSlot < 32)
         d3d_stage_in_slot_mask |= 1u << el.InputSlot;
 
@@ -4776,9 +4817,11 @@ d3d12_geometry_fallback_to_vs_ps:
       vtx_desc.layouts[s].step_function =
           slot_per_vertex[s] ? WMTVertexStepFunctionPerVertex
                              : WMTVertexStepFunctionPerInstance;
-      vtx_desc.layouts[s].step_rate = 1;
-      PSTRACE("D3D12 PSO input-layout slot[%u]: stride=%u step=%u", s,
-              slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function);
+      vtx_desc.layouts[s].step_rate =
+          slot_per_vertex[s] ? 1 : std::max<uint32_t>(1, slot_step_rate[s]);
+      PSTRACE("D3D12 PSO input-layout slot[%u]: stride=%u step=%u rate=%u", s,
+              slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function,
+              vtx_desc.layouts[s].step_rate);
     }
     if (m_vs_uses_stage_in && attribute_count > 0) {
       std::stringstream attr_summary;
@@ -5180,6 +5223,26 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
   m_dsv_format = desc.DSVFormat;
   m_sample_mask = desc.SampleMask;
   m_sample_count = desc.SampleDesc.Count ? desc.SampleDesc.Count : 1;
+  m_cached_pso_blob.clear();
+  if (desc.CachedPSO.pCachedBlob && desc.CachedPSO.CachedBlobSizeInBytes) {
+    auto *begin = static_cast<const uint8_t *>(desc.CachedPSO.pCachedBlob);
+    m_cached_pso_blob.assign(begin,
+                             begin + desc.CachedPSO.CachedBlobSizeInBytes);
+  } else {
+    const char marker[] = "DXMT-D3D12-GRAPHICS-PSO-CACHE-v1";
+    m_cached_pso_blob.assign(marker, marker + sizeof(marker) - 1);
+    const uint32_t fields[] = {
+        static_cast<uint32_t>(m_topology),
+        static_cast<uint32_t>(m_num_render_targets),
+        static_cast<uint32_t>(m_dsv_format),
+        static_cast<uint32_t>(m_sample_mask),
+        static_cast<uint32_t>(m_sample_count),
+        static_cast<uint32_t>(m_strip_cut_value),
+    };
+    const auto *field_bytes = reinterpret_cast<const uint8_t *>(fields);
+    m_cached_pso_blob.insert(m_cached_pso_blob.end(), field_bytes,
+                             field_bytes + sizeof(fields));
+  }
 }
 
 void MTLD3D12PipelineState::SetComputeDesc(
@@ -5245,7 +5308,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::GetDevice(REFIID riid,
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12PipelineState::GetCachedBlob(ID3DBlob **blob) {
-  return E_NOTIMPL;
+  if (!blob)
+    return E_POINTER;
+  *blob = nullptr;
+  if (m_cached_pso_blob.empty())
+    return E_FAIL;
+  *blob = new PipelineStateBlob(m_cached_pso_blob);
+  return S_OK;
 }
 
 } // namespace dxmt

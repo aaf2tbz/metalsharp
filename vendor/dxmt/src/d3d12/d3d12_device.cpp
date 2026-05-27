@@ -1757,12 +1757,18 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
   if (!compiled && !pso->IsCompilePending()) {
     Logger::warn(str::format("CreateGraphicsPipelineState: shader compilation deferred/failed at ",
                              failure_stage, ": ", failure_detail));
+    const bool unsupported_pso_state =
+        failure_stage.rfind("pso/unsupported_", 0) == 0 ||
+        failure_stage.rfind("pso/metal_", 0) == 0;
     char strict_fail[8] = {};
-    if (GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
+    const bool strict_deferred =
+        GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
                                 sizeof(strict_fail)) > 0 &&
-        strict_fail[0] && strict_fail[0] != '0') {
-      Logger::warn("CreateGraphicsPipelineState: failing PSO creation because "
-                   "DXMT_D3D12_FAIL_DEFERRED_PSO is enabled");
+        strict_fail[0] && strict_fail[0] != '0';
+    if (unsupported_pso_state || strict_deferred) {
+      Logger::warn(str::format(
+          "CreateGraphicsPipelineState: failing PSO creation for stage ",
+          failure_stage, strict_deferred ? " strict=1" : ""));
       pso->Release();
       return E_FAIL;
     }
