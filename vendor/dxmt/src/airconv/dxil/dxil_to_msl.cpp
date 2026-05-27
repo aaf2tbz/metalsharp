@@ -918,7 +918,8 @@ static bool exprEndsWithScalarComponent(std::string expr) {
            expr.compare(expr.size() - suffix_len, suffix_len, suffix) == 0;
   };
   return ends_with(".x") || ends_with(".y") || ends_with(".z") ||
-         ends_with(".w");
+         ends_with(".w") || ends_with(".r") || ends_with(".g") ||
+         ends_with(".b") || ends_with(".a");
 }
 
 static bool exprContainsUnsuffixedVectorValue(const std::string &expr) {
@@ -1049,7 +1050,9 @@ static bool exprContainsScalarComponentAccess(const std::string &expr) {
       continue;
     char component = expr[pos + 1];
     if (component != 'x' && component != 'y' &&
-        component != 'z' && component != 'w')
+        component != 'z' && component != 'w' &&
+        component != 'r' && component != 'g' &&
+        component != 'b' && component != 'a')
       continue;
     if (pos + 2 < expr.size() && isIdentifierChar(expr[pos + 2]))
       continue;
@@ -1090,7 +1093,9 @@ static bool exprContainsUnsuffixedTextureRead(const std::string &expr) {
       index = nextNonSpace(index);
       return index + 1 < expr.size() && expr[index] == '.' &&
              (expr[index + 1] == 'x' || expr[index + 1] == 'y' ||
-              expr[index + 1] == 'z' || expr[index + 1] == 'w') &&
+              expr[index + 1] == 'z' || expr[index + 1] == 'w' ||
+              expr[index + 1] == 'r' || expr[index + 1] == 'g' ||
+              expr[index + 1] == 'b' || expr[index + 1] == 'a') &&
              (index + 2 >= expr.size() || !isIdentifierChar(expr[index + 2]));
     };
 
@@ -3597,8 +3602,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
                                  ? ctx.value_types[inst.operands[0]]
                                  : 0;
       lanes = resolvedVectorLaneCount(resolvedVectorLaneCount, inst.operands[0], 0);
+      uint8_t expr_lanes = inferVectorLaneCountFromExpr(agg);
       if (lanes <= 1)
-        lanes = inferVectorLaneCountFromExpr(agg);
+        lanes = expr_lanes;
+      else if (expr_lanes <= 1 && exprLooksScalar(agg))
+        lanes = expr_lanes;
       bool aggregate_like =
           agg_type_id < ctx.mod.types.size() &&
           (ctx.mod.types[agg_type_id].kind == LLVMType::Struct ||
