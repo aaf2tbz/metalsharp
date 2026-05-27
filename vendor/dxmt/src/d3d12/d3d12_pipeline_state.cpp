@@ -1,5 +1,7 @@
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_root_signature.hpp"
+#include "d3d12_shader_compiler.hpp"
 #include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_env.hpp"
@@ -1404,7 +1406,8 @@ size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
                                    ShaderType type,
                                    const D3D12_INPUT_LAYOUT_DESC *input_layout,
                                    const DXGI_FORMAT *rtv_formats = nullptr,
-                                   uint32_t num_render_targets = 0) {
+                                   uint32_t num_render_targets = 0,
+                                   size_t root_signature_hash = 0) {
   constexpr size_t kDXILToMSLStageIOTypeCacheVersion = 0x4458494c53494734ull;
   size_t hash = 0;
   hash = hash * 131 + kDXILToMSLStageIOTypeCacheVersion;
@@ -1437,7 +1440,27 @@ size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
     for (uint32_t i = 0; i < count; i++)
       hash = hash * 131 + (size_t)rtv_formats[i];
   }
+  hash = hash * 131 + root_signature_hash;
   return hash;
+}
+
+D3D12ShaderCompilerStage D3D12CompilerStageFromShaderType(ShaderType type) {
+  switch (type) {
+  case ShaderType::Vertex:
+    return D3D12ShaderCompilerStage::Vertex;
+  case ShaderType::Pixel:
+    return D3D12ShaderCompilerStage::Pixel;
+  case ShaderType::Geometry:
+    return D3D12ShaderCompilerStage::Geometry;
+  case ShaderType::Hull:
+    return D3D12ShaderCompilerStage::Hull;
+  case ShaderType::Domain:
+    return D3D12ShaderCompilerStage::Domain;
+  case ShaderType::Compute:
+    return D3D12ShaderCompilerStage::Compute;
+  default:
+    return D3D12ShaderCompilerStage::Unknown;
+  }
 }
 
 bool FileExistsNonEmpty(const std::string &path) {
@@ -1453,6 +1476,14 @@ bool FileExistsNonEmpty(const std::string &path) {
 bool DXMTD3D12DisableRuntimeMetalShaderConverter() {
   static bool value = [] {
     const char *env = std::getenv("DXMT_D3D12_DISABLE_RUNTIME_MSC");
+    return env && env[0] && std::strcmp(env, "0") != 0;
+  }();
+  return value;
+}
+
+bool DXMTD3D12AllowDebugMSLEmitterBackend() {
+  static bool value = [] {
+    const char *env = std::getenv("DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND");
     return env && env[0] && std::strcmp(env, "0") != 0;
   }();
   return value;
@@ -1889,9 +1920,10 @@ const char *DxilShaderKindName(dxmt::dxil::DxilShaderKind kind) {
   }
 }
 
-void DumpDXILModuleSummary(const char *path,
-                           const dxmt::dxil::LLVMModule &module,
-                           const dxmt::dxil::DxilParsedShader &shader_info) {
+[[maybe_unused]] void
+DumpDXILModuleSummary(const char *path,
+                      const dxmt::dxil::LLVMModule &module,
+                      const dxmt::dxil::DxilParsedShader &shader_info) {
   if (!path)
     return;
   EnsureShaderCacheDir();
@@ -1944,13 +1976,13 @@ void DumpDXILModuleSummary(const char *path,
   fclose(df);
 }
 
-void DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
-                           SIZE_T bytecode_size, const char *dxbc_path,
-                           const char *module_summary_path,
-                           const char *msl_path,
-                           const dxmt::dxil::LLVMModule &module,
-                           const dxmt::dxil::DxilParsedShader &shader_info,
-                           const dxmt::dxil::MSLShader &msl_result) {
+[[maybe_unused]] void
+DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
+                      SIZE_T bytecode_size, const char *dxbc_path,
+                      const char *module_summary_path, const char *msl_path,
+                      const dxmt::dxil::LLVMModule &module,
+                      const dxmt::dxil::DxilParsedShader &shader_info,
+                      const dxmt::dxil::MSLShader &msl_result) {
   if (!path)
     return;
 
@@ -2120,15 +2152,36 @@ std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
 }
 
 std::string MTLD3D12PipelineState::GetVSCacheHash() const {
-  return ShaderBytecodeDigest(m_vs, ShaderType::Vertex, &m_input_layout);
+  if (m_vs.empty())
+    return "0";
+  const size_t root_signature_hash =
+      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
+                 : 0;
+  return HexHash(ComputeD3D12ShaderCacheHash(
+      m_vs.data(), m_vs.size(), ShaderType::Vertex, &m_input_layout, nullptr,
+      0, root_signature_hash));
 }
 
 std::string MTLD3D12PipelineState::GetPSCacheHash() const {
-  return ShaderBytecodeDigest(m_ps, ShaderType::Pixel, nullptr);
+  if (m_ps.empty())
+    return "0";
+  const size_t root_signature_hash =
+      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
+                 : 0;
+  return HexHash(ComputeD3D12ShaderCacheHash(
+      m_ps.data(), m_ps.size(), ShaderType::Pixel, nullptr, m_rtv_formats,
+      m_num_render_targets, root_signature_hash));
 }
 
 std::string MTLD3D12PipelineState::GetGSCacheHash() const {
-  return ShaderBytecodeDigest(m_gs, ShaderType::Geometry, nullptr);
+  if (m_gs.empty())
+    return "0";
+  const size_t root_signature_hash =
+      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
+                 : 0;
+  return HexHash(ComputeD3D12ShaderCacheHash(
+      m_gs.data(), m_gs.size(), ShaderType::Geometry, nullptr, nullptr, 0,
+      root_signature_hash));
 }
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
@@ -2291,11 +2344,15 @@ bool MTLD3D12PipelineState::CompileShader(
   if (type == ShaderType::Vertex)
     m_vs_stage_in_attribute_order.clear();
 
+  const size_t root_signature_hash =
+      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
+                 : 0;
   size_t hash = ComputeD3D12ShaderCacheHash(
       bytecode, size, type,
       type == ShaderType::Vertex ? &m_input_layout : nullptr,
       type == ShaderType::Pixel ? m_rtv_formats : nullptr,
-      type == ShaderType::Pixel ? m_num_render_targets : 0);
+      type == ShaderType::Pixel ? m_num_render_targets : 0,
+      root_signature_hash);
   shader_timer.SetDetail("func=%s type=%u size=%zu blob=%s hash=0x%zx",
                          func_name, (unsigned)type, size,
                          DescribeShaderBlobMagic(bytecode, size), hash);
@@ -2437,6 +2494,7 @@ bool MTLD3D12PipelineState::CompileShader(
           if (sf)
             fclose(sf);
 
+          std::string converter_failure;
           if (ff) {
             fseek(ff, 0, SEEK_END);
             long fail_size = ftell(ff);
@@ -2450,13 +2508,26 @@ bool MTLD3D12PipelineState::CompileShader(
             fclose(ff);
             if (fail_text.empty())
               fail_text = "metal-shaderconverter failed";
+            converter_failure = fail_text;
             if (ShouldFallbackFromMetalShaderConverter(fail_text, type)) {
+              if (!disable_runtime_msc &&
+                  !DXMTD3D12AllowDebugMSLEmitterBackend()) {
+                DumpShaderBlob(dxbc_path, bytecode, size);
+                return RecordCompileFailure(
+                    "shader/external_metal_shader_converter",
+                    str::format(func_name,
+                                " metal-shaderconverter failed and "
+                                "DebugMSLEmitterBackend is disabled; set "
+                                "DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND=1 to use "
+                                "the debug MSL fallback: ",
+                                fail_text, "; dxbc ", dxbc_path));
+              }
               PSTRACE("  external converter failed for %s but is eligible for "
                       "DXIL->MSL fallback: %s",
                       func_name, fail_text.c_str());
               Logger::warn(str::format(
                   "metal-shaderconverter failed for ", func_name,
-                  "; falling back to internal DXIL->MSL: ", fail_text));
+                  "; falling back to DebugMSLEmitterBackend: ", fail_text));
             } else {
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure(
@@ -2467,38 +2538,6 @@ bool MTLD3D12PipelineState::CompileShader(
           }
 
           if (!mf) {
-            auto container = dxmt::dxil::DXILContainer::parse(blob, blob_size);
-            if (!container) {
-              PSTRACE("  DXILContainer::parse FAILED for %s", func_name);
-              return RecordCompileFailure(
-                  "shader/dxil_container_parse",
-                  str::format(func_name,
-                              " DXIL container parse failed; dumped ",
-                              dxbc_path));
-            }
-
-            auto &shader_info = container->shader();
-            PSTRACE("  DXIL container parsed: kind=%u sm=%u.%u bc_size=%u",
-                    (uint32_t)shader_info.kind, shader_info.shader_model.major,
-                    shader_info.shader_model.minor, shader_info.bitcode.size);
-
-            auto module = dxmt::dxil::BitcodeReader::parse(
-                shader_info.bitcode.data, shader_info.bitcode.size);
-            if (!module) {
-              PSTRACE("  BitcodeReader::parse FAILED");
-              DumpShaderBlob(dxbc_path, bytecode, size);
-              return RecordCompileFailure(
-                  "shader/bitcode_parse",
-                  str::format(func_name, " DXIL bitcode parse failed; dumped ",
-                              dxbc_path));
-            }
-
-            PSTRACE("  Bitcode parsed: types=%zu functions=%zu constants=%zu",
-                    module->types.size(), module->functions.size(),
-                    module->constants.size());
-            DumpDXILModuleSummary(module_summary_path, *module, shader_info);
-            PSTRACE("  DXIL module summary written to %s", module_summary_path);
-
             auto msl_options = BuildDXILMSLConvertOptions(
                 type, bytecode, size, m_input_layout, m_rtv_formats,
                 m_num_render_targets);
@@ -2516,67 +2555,87 @@ bool MTLD3D12PipelineState::CompileShader(
                       (unsigned)pt.ViewportArrayIndexReg,
                       (unsigned)pt.ViewportArrayIndexComponent);
             }
-            auto msl_result = dxmt::dxil::DXILToMSL::convert(
-                *module, shader_info, msl_options);
-            if (!msl_result) {
-              PSTRACE("  DXILToMSL::convert FAILED");
-              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-                  type == ShaderType::Vertex)
-                Logger::warn(str::format("DIAG ", func_name,
-                                         " DXILToMSL FAILED hash=",
-                                         HexHash(hash)));
+
+            const bool allow_debug_msl_backend =
+                disable_runtime_msc || DXMTD3D12AllowDebugMSLEmitterBackend();
+            if (!allow_debug_msl_backend) {
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure(
-                  "shader/dxil_to_msl",
+                  "shader/compiler_primary_cache_miss",
                   str::format(func_name,
-                              " DXIL to MSL conversion failed; module ",
-                              module_summary_path, "; dxbc ", dxbc_path));
+                              " primary MetalIR compiler did not produce a "
+                              "metallib and DebugMSLEmitterBackend is disabled; "
+                              "set DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND=1 for "
+                              "the debug MSL fallback; metallib ",
+                              metallib_path, "; reflection ", reflection_path,
+                              "; dxbc ", dxbc_path,
+                              converter_failure.empty()
+                                  ? std::string()
+                                  : str::format("; converter failure ",
+                                                converter_failure)));
             }
-
-            PSTRACE("  MSL generated: %zu bytes, entry=%s "
-                    "unsupported_intrinsics=%u unsupported_opcodes=%u",
-                    msl_result->source.size(), msl_result->entry_point.c_str(),
-                    msl_result->unsupported_intrinsics,
-                    msl_result->unsupported_opcodes);
 
             char msl_path[256];
             char msl_error_path[256];
             snprintf(msl_path, sizeof(msl_path), "%s.msl", cache_path.c_str());
             snprintf(msl_error_path, sizeof(msl_error_path), "%s.msl.err.txt",
                      cache_path.c_str());
-            DumpShaderText(msl_path, msl_result->source.c_str());
-            PSTRACE("  MSL source written to %s", msl_path);
-            DumpDXILCompileReport(dxil_report_path, func_name, hash, size,
-                                  dxbc_path, module_summary_path, msl_path,
-                                  *module, shader_info, *msl_result);
-            PSTRACE("  DXIL compile report written to %s", dxil_report_path);
 
-            WMT::Reference<WMT::Error> compile_err;
-            auto library = wmt_device.newLibraryWithSource(
-                msl_result->source.c_str(), msl_result->source.size(),
-                compile_err);
+            D3D12ShaderCompileRequest compiler_request = {};
+            compiler_request.metal_device = wmt_device;
+            compiler_request.stage = D3D12CompilerStageFromShaderType(type);
+            compiler_request.dxil_container = blob;
+            compiler_request.dxil_container_size = blob_size;
+            compiler_request.original_bytecode_hash = hash;
+            compiler_request.original_bytecode_size = size;
+            compiler_request.requested_entry_point = func_name ? func_name : "";
+            compiler_request.cache_key = HexHash(hash);
+            compiler_request.root_signature_hash = HexHash(root_signature_hash);
+            compiler_request.converter_options_hash = "dxil-msl-stageio-v4";
+            compiler_request.metal_device_family = "runtime-device";
+            compiler_request.allow_debug_msl_backend = allow_debug_msl_backend;
+            compiler_request.prefer_debug_msl_backend = true;
+            compiler_request.msl_options = msl_options;
+            compiler_request.paths.dxbc = dxbc_path;
+            compiler_request.paths.module_summary = module_summary_path;
+            compiler_request.paths.dxil_report = dxil_report_path;
+            compiler_request.paths.msl = msl_path;
+            compiler_request.paths.msl_error = msl_error_path;
+            compiler_request.paths.metallib = metallib_path;
+            compiler_request.paths.reflection = reflection_path;
+            compiler_request.paths.stage_input_layout = vertex_layout_path;
 
-            if (compile_err.handle) {
-              auto err_desc_string = compile_err.description().getUTF8String();
-              const char *err_desc =
-                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-              DumpShaderText(msl_error_path, err_desc ? err_desc : "unknown");
-              PSTRACE("  newLibraryWithSource FAILED: %s",
-                      err_desc ? err_desc : "unknown");
-              Logger::err(str::format("DXIL MSL compilation failed for ",
-                                      func_name, ": ",
-                                      err_desc ? err_desc : "unknown error"));
+            D3D12ShaderCompiler compiler;
+            auto compiled_shader = compiler.Compile(compiler_request);
+            if (!compiled_shader.success) {
+              PSTRACE("  D3D12ShaderCompiler FAILED backend=%s diagnostics=%s",
+                      compiled_shader.backend_name.c_str(),
+                      compiled_shader.diagnostics.c_str());
+              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
+                  type == ShaderType::Vertex)
+                Logger::warn(str::format("DIAG ", func_name,
+                                         " D3D12ShaderCompiler FAILED hash=",
+                                         HexHash(hash), " backend=",
+                                         compiled_shader.backend_name,
+                                         " diagnostics=",
+                                         compiled_shader.diagnostics));
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure(
-                  "shader/metal_library_source",
-                  str::format(func_name, " MSL compile failed: ",
-                              err_desc ? err_desc : "unknown", "; msl ",
-                              msl_path, "; error ", msl_error_path, "; dxbc ",
-                              dxbc_path));
+                  "shader/d3d12_shader_compiler",
+                  str::format(func_name, " ",
+                              compiled_shader.backend_name,
+                              " failed; diagnostics ",
+                              compiled_shader.diagnostics, "; module ",
+                              module_summary_path, "; dxbc ", dxbc_path));
             }
 
-            PSTRACE("  Metal library compiled OK from source lib_handle=%llu",
-                    (unsigned long long)library.handle);
+            out_func = compiled_shader.function;
+            PSTRACE("  D3D12ShaderCompiler OK backend=%s entry=%s "
+                    "debug_msl=%u function=%llu",
+                    compiled_shader.backend_name.c_str(),
+                    compiled_shader.entry_point.c_str(),
+                    compiled_shader.used_debug_msl_backend ? 1u : 0u,
+                    (unsigned long long)out_func.handle);
 
             const char *dump_msl = std::getenv("DXMT_DUMP_MSL");
             if (dump_msl && dump_msl[0] && strcmp(dump_msl, "0") != 0) {
@@ -2586,76 +2645,28 @@ bool MTLD3D12PipelineState::CompileShader(
                       .c_str());
               FILE *df = fopen(dump_path.c_str(), "w");
               if (df) {
-                fwrite(msl_result->source.c_str(), 1, msl_result->source.size(),
-                       df);
+                auto msl_text = ReadTextFile(msl_path);
+                fwrite(msl_text.c_str(), 1, msl_text.size(), df);
                 fclose(df);
               }
             }
 
-            const char *entry_name = msl_result->entry_point.c_str();
-            if (strcmp(entry_name, "cs_main") != 0 &&
-                strcmp(entry_name, "vs_main") != 0 &&
-                strcmp(entry_name, "ps_main") != 0) {
-              switch (shader_info.kind) {
-              case dxmt::dxil::DxilShaderKind::Compute:
-                entry_name = "cs_main";
-                break;
-              case dxmt::dxil::DxilShaderKind::Vertex:
-                entry_name = "vs_main";
-                break;
-              case dxmt::dxil::DxilShaderKind::Pixel:
-                entry_name = "ps_main";
-                break;
-              default:
-                break;
-              }
+            {
+              std::lock_guard<std::mutex> lock(s_shader_mutex);
+              s_shader_cache[hash] = out_func;
             }
 
-            out_func = library.newFunction(entry_name);
-            PSTRACE("  newFunction(%s) on lib=%llu -> func_handle=%llu",
-                    entry_name, (unsigned long long)library.handle,
-                    (unsigned long long)out_func.handle);
-            if (!out_func.handle) {
-              PSTRACE("  newFunction(%s) returned null, trying alternatives",
-                      entry_name);
-              out_func = library.newFunction("main");
-              if (!out_func.handle)
-                out_func = library.newFunction("cs_main");
-              if (!out_func.handle)
-                out_func = library.newFunction("vs_main");
-              if (!out_func.handle)
-                out_func = library.newFunction("ps_main");
+            if (type == ShaderType::Vertex) {
+              m_vs_uses_stage_in = true;
+              m_vs_requires_msc_stage_in = false;
             }
 
-              if (out_func.handle) {
-                PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
-                {
-                  std::lock_guard<std::mutex> lock(s_shader_mutex);
-                  s_shader_cache[hash] = out_func;
-                }
-
-              if (type == ShaderType::Vertex) {
-                m_vs_uses_stage_in = true;
-                m_vs_requires_msc_stage_in = false;
-              }
-
-              if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
-                m_threadgroup_size.width = msl_result->tg_size[0];
-                m_threadgroup_size.height = msl_result->tg_size[1];
-                m_threadgroup_size.depth = msl_result->tg_size[2];
-              }
-              return true;
-            } else {
-              PSTRACE("  newFunction returned null for all entry points");
-              Logger::err(str::format(
-                  "DXIL: failed to get function from compiled library for ",
-                  func_name));
-              return RecordCompileFailure(
-                  "shader/metal_function_lookup",
-                  str::format(func_name,
-                              " function lookup failed after MSL compile; msl ",
-                              msl_path));
+            if (type == ShaderType::Compute) {
+              m_threadgroup_size.width = compiled_shader.threadgroup_size[0];
+              m_threadgroup_size.height = compiled_shader.threadgroup_size[1];
+              m_threadgroup_size.depth = compiled_shader.threadgroup_size[2];
             }
+            return true;
           }
 
           PSTRACE("  loading cached metallib from %s", metallib_path);
@@ -4270,8 +4281,8 @@ d3d12_geometry_fallback_to_vs_ps:
       m_input_layout.NumElements > 0 &&
       m_input_layout.pInputElementDescs &&
       !DXMTD3D12ForceDiagnosticFullscreen()) {
-    const std::string stage_in_path = OfflineShaderStageInMetallibPath(
-        m_vs.data(), m_vs.size(), ShaderType::Vertex, &m_input_layout);
+    const std::string stage_in_path =
+        BuildShaderCachePath((GetVSCacheHash() + ".stageIn.metallib").c_str());
     std::vector<uint8_t> stage_in_data;
     if (!ReadBinaryFile(stage_in_path, stage_in_data)) {
       return RecordCompileFailure(

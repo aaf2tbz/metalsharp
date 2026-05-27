@@ -4,6 +4,7 @@
 #include "d3d12.h"
 #include "Metal.hpp"
 #include <atomic>
+#include <cstddef>
 #include <vector>
 
 namespace dxmt {
@@ -88,6 +89,7 @@ public:
   uint32_t GetNumStaticSamplers() const { return m_num_static_samplers; }
   const std::vector<RootStaticSampler> &GetStaticSamplers() const { return m_static_samplers; }
   D3D12_ROOT_SIGNATURE_FLAGS GetFlags() const { return m_flags; }
+  size_t GetBlobHash() const { return m_blob_hash; }
 
 private:
   void Parse(const void *blob, SIZE_T blob_size);
@@ -97,6 +99,7 @@ private:
   std::vector<RootStaticSampler> m_static_samplers;
   uint32_t m_num_static_samplers = 0;
   D3D12_ROOT_SIGNATURE_FLAGS m_flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+  size_t m_blob_hash = 0;
   std::atomic<uint32_t> m_refCount = {1ul};
 };
 

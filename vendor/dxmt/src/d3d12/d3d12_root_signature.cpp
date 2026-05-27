@@ -3,6 +3,7 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include <cstring>
+#include <iomanip>
 
 namespace dxmt {
 
@@ -287,10 +288,16 @@ MTLD3D12RootSignature::MTLD3D12RootSignature(MTLD3D12Device *device,
                                              const void *blob, SIZE_T blob_size)
     : m_device(device) {
   m_device->AddRef();
+  if (blob && blob_size) {
+    const uint8_t *bytes = reinterpret_cast<const uint8_t *>(blob);
+    for (SIZE_T i = 0; i < blob_size; i++)
+      m_blob_hash = m_blob_hash * 131 + bytes[i];
+  }
   Parse(blob, blob_size);
   Logger::info(str::format("D3D12RootSignature: ", m_parameters.size(),
                             " params, ", m_num_static_samplers,
-                            " static samplers, flags=", m_flags));
+                            " static samplers, flags=", m_flags,
+                            " hash=0x", std::hex, m_blob_hash, std::dec));
 }
 
 MTLD3D12RootSignature::~MTLD3D12RootSignature() { m_device->Release(); }
