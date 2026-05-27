@@ -1810,7 +1810,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (arg < args.size()) {
       uint32_t idx = args[arg];
       uint32_t type_id = idx < ctx.value_types.size() ? ctx.value_types[idx] : 0;
-      if (isPointerTypeId(type_id, ctx.mod) || isPointerLikeMSLExpr(value)) {
+      if (isPointerTypeId(type_id, ctx.mod) || isPointerLikeMSLExpr(value) ||
+          ctx.pointer_slots.find(idx) != ctx.pointer_slots.end()) {
         recordDiagnostic(ctx,
                          "DXIL intrinsic %u pointer operand used as scalar: %s",
                          intrinsic_id, value.c_str());

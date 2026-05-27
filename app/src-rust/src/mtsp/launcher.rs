@@ -1566,6 +1566,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
+            ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
         ];
         if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
             .map(|value| !value.is_empty() && value != "0")
