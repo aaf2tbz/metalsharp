@@ -281,6 +281,8 @@ pub struct SteamRuntimeDiagnostic {
     pub recipe_missing_dlls: Vec<String>,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub recipe_env: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d3d12_sdk: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -599,6 +601,9 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+        let _ = crate::setup::prepare_game(appid)?;
+    }
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let mut manifest = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)?;
@@ -1546,6 +1551,16 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         recipe_name: recipe.map(|r| r.name),
         recipe_missing_dlls: missing_check_dlls,
         recipe_env,
+        d3d12_sdk: if pipeline == crate::mtsp::engine::PipelineId::M12 {
+            Some(crate::d3d12_runtime_doctor::latest_cached_report(appid).unwrap_or_else(|| {
+                json!({
+                    "sdkAvailability": crate::d3d12_runtime_doctor::sdk_availability(),
+                    "summary": "No cached D3D12 SDK runtime doctor report for this appid yet.",
+                })
+            }))
+        } else {
+            None
+        },
     };
     json!({"ok": true, "report": report})
 }
@@ -1700,7 +1715,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs"][..],
+            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
@@ -4553,6 +4568,7 @@ mod tests {
         let m12 = default_components_for(RuntimeProfile::M12);
         let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m12_ids.contains(&"gpu_vendor_stubs"));
+        assert!(m12_ids.contains(&"corefonts"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);

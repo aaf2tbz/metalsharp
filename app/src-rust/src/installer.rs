@@ -7,6 +7,20 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase15");
+const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
+const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
+const DXMT_REQUIRED_PE: &[&str] = &[
+    "d3d10core.dll",
+    "d3d11.dll",
+    "d3d12.dll",
+    "dxgi.dll",
+    "dxgi_dxmt.dll",
+    "winemetal.dll",
+    "nvapi64.dll",
+    "nvngx.dll",
+];
+
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp_bundle.tar.zst",
     "metalsharp_bundle2.tar.zst",
@@ -25,6 +39,7 @@ const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
 const LINUX_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp_bundle.tar.zst",
     "metalsharp_bundle2.tar.zst",
+    "dxmt.tar.zst",
     "dxvk.tar.zst",
     "mono-x86.tar.zst",
     "goldberg.tar.zst",
@@ -106,6 +121,7 @@ fn run_install_all() {
                 ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
+                ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
                 ("DXVK Runtime", Box::new(install_dxvk_fallback)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
                 ("Offline EAC Mode", Box::new(install_eac_toggle)),
@@ -517,9 +533,9 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
 }
 
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
-    let dxmt_dir = home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt");
+    let dxmt_dir = dxmt_runtime_dir_for_home(home);
 
-    if dxmt_runtime_ready(&dxmt_dir) {
+    if dxmt_runtime_current_for_dir(&dxmt_dir) {
         return Ok(false);
     }
 
@@ -549,6 +565,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
             }
         }
 
+        write_dxmt_runtime_manifest(&dxmt_dir, "bundled:dxmt.tar.zst")?;
         let _ = fs::remove_dir_all(&tmp);
     } else {
         let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
@@ -565,22 +582,84 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
                     }
                 }
             }
+            write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
 
-    if dxmt_runtime_ready(&dxmt_dir) {
+    if dxmt_runtime_current_for_dir(&dxmt_dir) {
         Ok(true)
     } else {
-        Err("DXMT Metal runtime not found — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/".into())
+        Err(format!(
+            "DXMT Metal runtime {} not installed — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/",
+            DXMT_BUNDLED_RUNTIME_VERSION
+        ))
     }
+}
+
+fn dxmt_runtime_dir_for_home(home: &Path) -> PathBuf {
+    home.join(".metalsharp").join("runtime").join("wine").join("lib").join("dxmt")
+}
+
+pub fn dxmt_runtime_current_for_home(home: &Path) -> bool {
+    dxmt_runtime_current_for_dir(&dxmt_runtime_dir_for_home(home))
+}
+
+pub fn dxmt_runtime_current_for_ms_dir(ms_dir: &Path) -> bool {
+    dxmt_runtime_current_for_dir(&ms_dir.join("runtime").join("wine").join("lib").join("dxmt"))
+}
+
+pub fn dxmt_runtime_status() -> Value {
+    let home = dirs::home_dir().unwrap_or_default();
+    let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+    let installed_version = dxmt_runtime_installed_version(&dxmt_dir);
+    let files_ready = dxmt_runtime_ready(&dxmt_dir);
+    let current = files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
+
+    json!({
+        "current": current,
+        "filesReady": files_ready,
+        "installedVersion": installed_version,
+        "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
+        "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
+    })
+}
+
+fn dxmt_runtime_current_for_dir(dxmt_dir: &Path) -> bool {
+    dxmt_runtime_ready(dxmt_dir)
+        && dxmt_runtime_installed_version(dxmt_dir).as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION)
+}
+
+fn dxmt_runtime_installed_version(dxmt_dir: &Path) -> Option<String> {
+    let manifest = fs::read_to_string(dxmt_dir.join(DXMT_RUNTIME_MANIFEST)).ok()?;
+    let value: Value = serde_json::from_str(&manifest).ok()?;
+    let schema = value.get("schema").and_then(|v| v.as_str())?;
+    if schema != DXMT_RUNTIME_SCHEMA {
+        return None;
+    }
+    value.get("version").and_then(|v| v.as_str()).map(str::to_string)
+}
+
+fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), String> {
+    let installed_at =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+    let manifest = json!({
+        "schema": DXMT_RUNTIME_SCHEMA,
+        "version": DXMT_BUNDLED_RUNTIME_VERSION,
+        "source": source,
+        "installedAtUnix": installed_at,
+        "requiredFiles": {
+            "x86_64-unix": ["winemetal.so"],
+            "x86_64-windows": DXMT_REQUIRED_PE,
+        },
+    });
+    fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
+        .map_err(|e| format!("write DXMT runtime manifest: {}", e))
 }
 
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
     let pe_dir = dxmt_dir.join("x86_64-windows");
-    let required_pe =
-        ["d3d10core.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"];
     file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
-        && required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
+        && DXMT_REQUIRED_PE.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
 }
 
 fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -1242,6 +1321,7 @@ mod tests {
         for expected in [
             "metalsharp_bundle.tar.zst",
             "metalsharp_bundle2.tar.zst",
+            "dxmt.tar.zst",
             "dxvk.tar.zst",
             "mono-x86.tar.zst",
             "goldberg.tar.zst",
@@ -1251,6 +1331,25 @@ mod tests {
         ] {
             assert!(linux_assets.contains(&expected), "missing linux bundle asset {}", expected);
         }
+    }
+
+    #[test]
+    fn dxmt_readiness_requires_current_bundled_manifest() {
+        let home = test_home("dxmt-current-manifest");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files(&dxmt_dir);
+
+        assert!(dxmt_runtime_ready(&dxmt_dir));
+        assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
+
+        write_dxmt_runtime_manifest(&dxmt_dir, "test").expect("write current DXMT manifest");
+        assert!(dxmt_runtime_current_for_dir(&dxmt_dir));
+
+        fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), br#"{"schema":"metalsharp.dxmt-runtime.v1","version":"old"}"#)
+            .expect("write stale manifest");
+        assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
+
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
@@ -1286,5 +1385,16 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
         ))
+    }
+
+    fn write_dxmt_runtime_files(dxmt_dir: &Path) {
+        let unix_dir = dxmt_dir.join("x86_64-unix");
+        let pe_dir = dxmt_dir.join("x86_64-windows");
+        fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
+        fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
+        fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        for dll in DXMT_REQUIRED_PE {
+            fs::write(pe_dir.join(dll), b"dll").expect("write DXMT DLL");
+        }
     }
 }

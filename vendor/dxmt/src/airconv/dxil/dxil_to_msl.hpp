@@ -1,0 +1,116 @@
+#pragma once
+
+#include "llvm_bitcode.hpp"
+#include "dxil_container.hpp"
+#include <string>
+#include <sstream>
+#include <optional>
+#include <vector>
+#include <array>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace dxmt::dxil {
+
+struct MSLShader {
+  std::string source;
+  std::string entry_point;
+  uint32_t tg_size[3] = {1, 1, 1};
+  uint32_t num_uavs = 0;
+  uint32_t num_srvs = 0;
+  uint32_t num_cbuffers = 0;
+  uint32_t num_samplers = 0;
+  uint32_t unsupported_intrinsics = 0;
+  uint32_t unsupported_opcodes = 0;
+  std::vector<std::string> diagnostics;
+};
+
+struct ResourceBinding {
+  uint32_t register_space;
+  uint32_t register_index;
+  uint32_t count;
+  enum class Kind { SRV, UAV, CBuffer, Sampler } kind;
+  std::string name;
+};
+
+enum class MSLScalarKind : uint8_t {
+  Float,
+  UInt,
+  SInt,
+};
+
+struct MSLStageIOType {
+  MSLScalarKind scalar = MSLScalarKind::Float;
+  uint32_t components = 4;
+  bool valid = false;
+};
+
+struct MSLConvertOptions {
+  std::array<MSLStageIOType, 16> vertex_inputs = {};
+  std::array<MSLStageIOType, 8> pixel_outputs = {};
+  std::array<uint32_t, 32> vertex_input_register_for_signature = {};
+  std::array<bool, 32> vertex_input_signature_valid = {};
+  std::array<uint32_t, 32> vertex_output_register_for_signature = {};
+  std::array<bool, 32> vertex_output_signature_valid = {};
+  std::array<bool, 32> vertex_output_is_position = {};
+  std::array<uint32_t, 32> pixel_input_register_for_signature = {};
+  std::array<bool, 32> pixel_input_signature_valid = {};
+  std::array<bool, 32> pixel_input_is_position = {};
+  std::array<uint32_t, 32> pixel_output_target_for_signature = {};
+  std::array<bool, 32> pixel_output_signature_valid = {};
+  uint8_t gs_passthrough_rtai_reg = 255;
+  uint8_t gs_passthrough_rtai_comp = 255;
+  uint8_t gs_passthrough_vpai_reg = 255;
+  uint8_t gs_passthrough_vpai_comp = 255;
+};
+
+class DXILToMSL {
+public:
+  static std::optional<MSLShader> convert(const LLVMModule &module,
+                                           const DxilParsedShader &shader);
+  static std::optional<MSLShader> convert(const LLVMModule &module,
+                                           const DxilParsedShader &shader,
+                                           const MSLConvertOptions &options);
+
+private:
+  struct EmitContext {
+    std::ostringstream &os;
+    const LLVMModule &mod;
+    const DxilParsedShader &shader;
+    const MSLConvertOptions &options;
+    std::vector<std::string> value_table;
+    std::vector<std::string> value_expr_table;
+    std::vector<uint32_t> value_types;
+    std::vector<uint8_t> value_vector_lanes;
+    std::unordered_map<std::string, std::string> local_values;
+    std::unordered_set<uint32_t> pointer_slots;
+    std::unordered_set<uint32_t> emitted_values;
+    std::vector<ResourceBinding> resource_bindings;
+    std::vector<std::string> diagnostics;
+    uint32_t next_binding = 0;
+    uint32_t unsupported_intrinsics = 0;
+    uint32_t unsupported_opcodes = 0;
+    bool uses_thread_id = false;
+    bool uses_group_id = false;
+    bool uses_group_thread_id = false;
+    bool uses_group_size = false;
+    uint32_t vertex_load_input_counter = 0;
+    uint32_t pixel_load_input_counter = 0;
+    uint32_t vertex_store_output_counter = 0;
+    uint32_t pixel_store_output_counter = 0;
+  };
+
+  static std::string getTypeName(const LLVMType &t, const LLVMModule &mod);
+  static std::string getVectorTypeName(const LLVMType &elem_type, uint32_t count, const LLVMModule &mod);
+  static uint32_t getTypeSize(const LLVMType &t, const LLVMModule &mod);
+  static std::string emitValue(uint32_t idx);
+  static std::string emitConstant(const std::vector<uint64_t> &ops, uint32_t type_id, const LLVMModule &mod);
+  static void emitFunctionPrologue(EmitContext &ctx);
+  static void emitBindings(EmitContext &ctx);
+  static void emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, uint32_t &value_counter);
+  static std::string translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic_id,
+                                           const std::vector<uint32_t> &args);
+  static void recordDiagnostic(EmitContext &ctx, const char *fmt, ...);
+};
+
+}

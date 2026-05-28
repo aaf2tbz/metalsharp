@@ -19,6 +19,7 @@
 
 mod anticheat;
 mod bottles;
+mod d3d12_runtime_doctor;
 mod installer;
 mod launch;
 mod launcher_evidence;
@@ -357,7 +358,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             match parse_request_appid(&body) {
                 Ok(id) => {
-                    let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("steam");
+                    let launch_method = body
+                        .get("launchMethod")
+                        .or_else(|| body.get("pipeline"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
                         Some(pipeline) => Some(pipeline),
@@ -717,6 +722,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/runtime-doctor") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_runtime_doctor(&body))
+        },
+        (Method::Post, "/steam/d3d12-runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, d3d12_runtime_doctor::handle_steam_d3d12_runtime_doctor(&body))
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);

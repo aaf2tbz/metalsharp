@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
 
@@ -174,16 +174,21 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
-    let deployed_sources: Vec<String> = if node.uses_winedllpath_routing() {
+    let deployed_sources: Vec<String> = if !recipe.dlls.is_empty() {
+        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+        if node.uses_winedllpath_routing() {
+            if let Some(game_dir) = recipe.game_dir.as_ref() {
+                cleanup_legacy_injections(game_dir)?;
+            }
+        }
+        deploy_recipe_dlls(&recipe)?;
+        sources
+    } else {
         validate_recipe_runtime(&recipe)?;
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_legacy_injections(game_dir)?;
         }
         node.winedllpath_dirs.iter().map(|d| d.to_string()).collect()
-    } else {
-        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
-        deploy_recipe_dlls(&recipe)?;
-        sources
     };
 
     Ok(serde_json::json!({
@@ -217,15 +222,509 @@ pub fn prepare_steam_pipeline_env(
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
-    if !node.uses_winedllpath_routing() && !recipe.dlls.is_empty() {
+    if !recipe.dlls.is_empty() {
+        if node.uses_winedllpath_routing() {
+            if let Some(game_dir) = recipe.game_dir.as_ref() {
+                cleanup_legacy_injections(game_dir)?;
+            }
+        }
         deploy_recipe_dlls(&recipe)?;
     } else if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = home.join(".metalsharp").join("prefix-steam");
+    stage_app_compat_config(appid, node.id, &prefix, recipe.game_dir.as_deref())?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
+}
+
+fn stage_app_compat_config(
+    appid: u32,
+    pipeline_id: PipelineId,
+    prefix: &Path,
+    game_dir: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if appid == 1962700 && pipeline_id == PipelineId::M12 {
+        stage_subnautica2_ue5_cache_reset(prefix)?;
+        stage_subnautica2_nanite_config(prefix)?;
+        if let Some(game_dir) = game_dir.filter(|_| should_stage_subnautica2_movie_codec_compat()) {
+            if let Err(error) = stage_subnautica2_movie_codec_compat(game_dir) {
+                let _ = write_subnautica2_movie_compat_status(game_dir, "skipped", &error.to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stage_subnautica2_ue5_cache_reset(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut users = wine_user_dirs(prefix);
+    if users.is_empty() {
+        let user_name = std::env::var("USER").unwrap_or_else(|_| "steamuser".to_string());
+        users.push(prefix.join("drive_c").join("users").join(user_name));
+    }
+
+    for user_dir in users {
+        let saved_dir = user_dir.join("AppData").join("Local").join("Subnautica2").join("Saved");
+        let marker_dir = saved_dir.join("MetalSharp");
+        let marker = marker_dir.join("subnautica2-ue5-cache-reset-v1.ok");
+        if marker.exists() {
+            continue;
+        }
+
+        for cache_dir in [
+            saved_dir.join("DerivedDataCache"),
+            saved_dir.join("PipelineCaches"),
+            saved_dir.join("ShaderDebugInfo"),
+            saved_dir.join("Temp"),
+        ] {
+            if cache_dir.exists() {
+                std::fs::remove_dir_all(cache_dir)?;
+            }
+        }
+
+        std::fs::create_dir_all(&marker_dir)?;
+        std::fs::write(
+            marker,
+            "MetalSharp Subnautica 2 UE5 cache reset\nreason=PassLoadingScreenWindowBackToGame No Window\nversion=1\n",
+        )?;
+    }
+    Ok(())
+}
+
+fn stage_subnautica2_nanite_config(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let engine_block = concat!(
+        "; BEGIN MetalSharp UE5 Nanite guard\n",
+        "[SystemSettings]\n",
+        "r.Nanite=0\n",
+        "r.Nanite.ProjectEnabled=0\n",
+        "r.Nanite.AllowTessellation=0\n",
+        "r.Nanite.Tessellation=0\n",
+        "r.Nanite.SkinnedMeshes=0\n",
+        "r.Nanite.AsyncRasterization=0\n",
+        "r.GeometryCollection.Nanite=0\n",
+        "r.RayTracing=0\n",
+        "r.Lumen.HardwareRayTracing=0\n",
+        "r.Shadow.Virtual.Enable=0\n",
+        "\n",
+        "[/Script/Engine.RendererSettings]\n",
+        "r.Nanite.ProjectEnabled=False\n",
+        "; END MetalSharp UE5 Nanite guard\n",
+    );
+    let scalability_block = concat!(
+        "; BEGIN MetalSharp low quality guard\n",
+        "[ScalabilityGroups]\n",
+        "sg.ResolutionQuality=50.000000\n",
+        "sg.ViewDistanceQuality=0\n",
+        "sg.AntiAliasingQuality=0\n",
+        "sg.ShadowQuality=0\n",
+        "sg.GlobalIlluminationQuality=0\n",
+        "sg.ReflectionQuality=0\n",
+        "sg.PostProcessQuality=0\n",
+        "sg.TextureQuality=0\n",
+        "sg.EffectsQuality=0\n",
+        "sg.FoliageQuality=0\n",
+        "sg.ShadingQuality=0\n",
+        "\n",
+        "[/Script/Subnautica2.SubnauticaGameUserSettings]\n",
+        "bUseVSync=False\n",
+        "FrameRateLimit=24.000000\n",
+        "FullscreenMode=2\n",
+        "LastConfirmedFullscreenMode=2\n",
+        "PreferredFullscreenMode=2\n",
+        "ResolutionSizeX=1280\n",
+        "ResolutionSizeY=720\n",
+        "LastUserConfirmedResolutionSizeX=1280\n",
+        "LastUserConfirmedResolutionSizeY=720\n",
+        "; END MetalSharp low quality guard\n",
+    );
+
+    let mut users = wine_user_dirs(prefix);
+    if users.is_empty() {
+        let user_name = std::env::var("USER").unwrap_or_else(|_| "steamuser".to_string());
+        users.push(prefix.join("drive_c").join("users").join(user_name));
+    }
+
+    for user_dir in users {
+        for platform_dir in ["Windows", "WindowsNoEditor"] {
+            let config_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("Engine.ini");
+            write_marked_config_block(
+                &config_path,
+                "; BEGIN MetalSharp UE5 Nanite guard",
+                "; END MetalSharp UE5 Nanite guard",
+                engine_block,
+            )?;
+            let game_user_settings_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("GameUserSettings.ini");
+            write_marked_config_block(
+                &game_user_settings_path,
+                "; BEGIN MetalSharp low quality guard",
+                "; END MetalSharp low quality guard",
+                scalability_block,
+            )?;
+            let scalability_path = user_dir
+                .join("AppData")
+                .join("Local")
+                .join("Subnautica2")
+                .join("Saved")
+                .join("Config")
+                .join(platform_dir)
+                .join("Scalability.ini");
+            write_marked_config_block(
+                &scalability_path,
+                "; BEGIN MetalSharp low quality guard",
+                "; END MetalSharp low quality guard",
+                scalability_block,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn subnautica2_movie_files(game_dir: &Path) -> Vec<PathBuf> {
+    let movies_dir = game_dir.join("Subnautica2").join("Content").join("Movies");
+    let Ok(entries) = std::fs::read_dir(movies_dir) else {
+        return Vec::new();
+    };
+    let mut movies: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4") || ext.eq_ignore_ascii_case("mov"))
+        })
+        .collect();
+    movies.sort();
+    movies
+}
+
+fn ffmpeg_binary() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("METALSHARP_FFMPEG_PATH") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    find_executable_on_path("ffmpeg")
+}
+
+fn ffprobe_binary() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("METALSHARP_FFPROBE_PATH") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for candidate in ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    find_executable_on_path("ffprobe")
+}
+
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
+}
+
+fn env_flag_enabled(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn should_stage_subnautica2_movie_codec_compat() -> bool {
+    env_flag_enabled(std::env::var("METALSHARP_SUBNAUTICA2_TRANSCODE_MOVIES").ok().as_deref())
+}
+
+fn ffmpeg_has_encoder(ffmpeg: &Path, encoder: &str) -> bool {
+    Command::new(ffmpeg)
+        .arg("-hide_banner")
+        .arg("-encoders")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .is_some_and(|stdout| stdout.contains(encoder))
+}
+
+fn movie_is_wine_friendly(ffprobe: &Path, movie: &Path) -> bool {
+    let video = Command::new(ffprobe)
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=codec_name,pix_fmt")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(movie)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    let Some(video) = video else {
+        return false;
+    };
+    let mut video_lines = video.lines();
+    let codec = video_lines.next().unwrap_or_default();
+    let pix_fmt = video_lines.next().unwrap_or_default();
+    if codec != "h264" || pix_fmt != "yuv420p" {
+        return false;
+    }
+
+    let audio = Command::new(ffprobe)
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("a")
+        .arg("-show_entries")
+        .arg("stream=codec_name")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(movie)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .unwrap_or_default();
+
+    audio.lines().all(|codec| codec == "aac")
+}
+
+fn transcode_subnautica2_movie(
+    ffmpeg: &Path,
+    movie: &Path,
+    backup: &Path,
+    use_videotoolbox: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = movie.with_extension("mp4.metalsharp-h264.tmp");
+    let mut command = Command::new(ffmpeg);
+    command
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-y")
+        .arg("-i")
+        .arg(backup)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("0:a?")
+        .arg("-c:v");
+
+    if use_videotoolbox {
+        command.arg("h264_videotoolbox").arg("-allow_sw").arg("1").arg("-b:v").arg("12000k");
+    } else {
+        command.arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("23").arg("-threads").arg("4");
+    }
+
+    let status = command
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("160k")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg("-f")
+        .arg("mp4")
+        .arg(&tmp)
+        .status()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("ffmpeg failed to transcode Subnautica 2 movie {}", movie.display()).into());
+    }
+    std::fs::rename(&tmp, movie)?;
+    Ok(())
+}
+
+fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let movies = subnautica2_movie_files(game_dir);
+    if movies.is_empty() {
+        return Ok(());
+    }
+
+    let marker_dir = game_dir.join(".metalsharp").join("media");
+    let marker = marker_dir.join("subnautica2-h264-movies-v1.ok");
+    if marker.exists() {
+        return Ok(());
+    }
+
+    let ffmpeg = ffmpeg_binary().ok_or("ffmpeg not found for Subnautica 2 movie compatibility transcode")?;
+    let ffprobe = ffprobe_binary().ok_or("ffprobe not found for Subnautica 2 movie compatibility probe")?;
+    let use_videotoolbox =
+        std::env::var("METALSHARP_MOVIE_TRANSCODER").map(|value| value != "software").unwrap_or(true)
+            && ffmpeg_has_encoder(&ffmpeg, "h264_videotoolbox");
+    let backup_dir = game_dir.join(".metalsharp").join("originals").join("movies");
+    std::fs::create_dir_all(&backup_dir)?;
+    std::fs::create_dir_all(&marker_dir)?;
+
+    let mut converted = Vec::new();
+    let mut skipped = Vec::new();
+    for movie in movies {
+        if movie_is_wine_friendly(&ffprobe, &movie) {
+            skipped.push(movie);
+            continue;
+        }
+
+        let Some(file_name) = movie.file_name() else {
+            continue;
+        };
+        let backup = backup_dir.join(file_name);
+        if !backup.exists() {
+            std::fs::copy(&movie, &backup)?;
+        }
+
+        transcode_subnautica2_movie(&ffmpeg, &movie, &backup, use_videotoolbox)?;
+        converted.push(movie);
+    }
+
+    let mut marker_text = String::from("MetalSharp Subnautica 2 movie compatibility transcode\n");
+    marker_text
+        .push_str("codec=h264\npix_fmt=yuv420p\naudio=preserve_optional_aac\nsource=Content/Movies/*.{mp4,mov}\n");
+    marker_text.push_str(&format!("encoder={}\n", if use_videotoolbox { "h264_videotoolbox" } else { "libx264" }));
+    marker_text.push_str(&format!("converted={}\n", converted.len()));
+    marker_text.push_str(&format!("already_compatible={}\n", skipped.len()));
+    std::fs::write(marker, marker_text)?;
+    Ok(())
+}
+
+fn write_subnautica2_movie_compat_status(game_dir: &Path, status: &str, detail: &str) -> std::io::Result<()> {
+    let marker_dir = game_dir.join(".metalsharp").join("media");
+    std::fs::create_dir_all(&marker_dir)?;
+    std::fs::write(
+        marker_dir.join("subnautica2-h264-movies-v1.status"),
+        format!("status={}\ndetail={}\n", status, detail.replace('\n', " ")),
+    )
+}
+
+fn wine_user_dirs(prefix: &Path) -> Vec<PathBuf> {
+    let users_root = prefix.join("drive_c").join("users");
+    let Ok(entries) = std::fs::read_dir(users_root) else {
+        return Vec::new();
+    };
+    let mut users = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if name == "public" || name == "all users" || name == "default" {
+            continue;
+        }
+        users.push(path);
+    }
+    users
+}
+
+fn write_marked_config_block(
+    path: &Path,
+    start_marker: &str,
+    end_marker: &str,
+    block: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let without_old_block = match (existing.find(start_marker), existing.find(end_marker)) {
+        (Some(start), Some(end)) if end >= start => {
+            let end = end + end_marker.len();
+            format!("{}{}", &existing[..start], &existing[end..])
+        },
+        _ => existing,
+    };
+
+    let mut next = without_old_block.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str(block);
+    std::fs::write(path, next)?;
+    Ok(())
+}
+
+fn stage_dxmt_nvidia_driver_shims(
+    node: &PipelineNode,
+    ms_root: &Path,
+    prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if node.backend != "dxmt" {
+        return Ok(());
+    }
+
+    let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+    let wine_builtin_dir = ms_root.join("lib").join("wine").join("x86_64-windows");
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    std::fs::create_dir_all(&system32)?;
+    if node.id == PipelineId::M12 {
+        std::fs::create_dir_all(&wine_builtin_dir)?;
+    }
+
+    let shims: &[&str] = if node.id == PipelineId::M12 {
+        &[
+            "d3d12.dll",
+            "d3d11.dll",
+            "dxgi.dll",
+            "dxgi_dxmt.dll",
+            "d3d10core.dll",
+            "winemetal.dll",
+            "nvapi64.dll",
+            "nvngx.dll",
+        ]
+    } else {
+        &["nvapi64.dll", "nvngx.dll"]
+    };
+
+    for shim in shims {
+        let src = dxmt_dir.join(shim);
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = system32.join(shim);
+        if dst.exists() && files_match(&src, &dst) {
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+
+        if node.id == PipelineId::M12 {
+            let builtin_dst = wine_builtin_dir.join(shim);
+            if builtin_dst.exists() && files_match(&src, &builtin_dst) {
+                continue;
+            }
+            std::fs::copy(&src, builtin_dst)?;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
@@ -331,14 +830,18 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
-    if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
+    if recipe.dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
+        if node.uses_winedllpath_routing() {
+            cleanup_legacy_injections(game_dir)?;
+        }
         deploy_recipe_dlls(&recipe)?;
     }
 
     let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
@@ -346,7 +849,7 @@ pub fn launch_custom_with_options(
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
-    let cache_paths = build_cache_paths(&home, node, launch_id);
+    let cache_paths = build_cache_paths(&home, node, launch_id, Some(game_dir));
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
         .env("WINEPREFIX", &prefix_str)
@@ -365,6 +868,7 @@ pub fn launch_custom_with_options(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -459,10 +963,14 @@ fn launch_dxmt_metal_with_context(
         prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    stage_app_compat_config(appid, node.id, &prefix, Some(game_dir))?;
+    stage_dxmt_nvidia_driver_shims(node, &ms_root, &prefix)?;
 
     if node.uses_winedllpath_routing() {
-        validate_recipe_runtime(&recipe)?;
         cleanup_legacy_injections(game_dir)?;
+    }
+    if recipe.dlls.is_empty() {
+        validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
     }
@@ -471,8 +979,15 @@ fn launch_dxmt_metal_with_context(
     let runtime_lib_key =
         crate::platform::runtime_library_env(&ms_root).map(|(key, _)| key).unwrap_or("LD_LIBRARY_PATH");
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
+    if node.id == PipelineId::M12
+        && std::env::var("METALSHARP_M12_LIVE_MSC_SIDECAR")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+    {
+        spawn_metalshaderconverter_sidecar(appid, &home, cache_paths.as_ref());
+    }
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -493,17 +1008,23 @@ fn launch_dxmt_metal_with_context(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
     }
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    for (key, value) in app_compat_env_pairs(appid, node.id) {
+        cmd.env(key, value);
+    }
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
 
+    let launch_args = super::recipe::effective_launch_args(appid, node);
+    let launch_arg_refs: Vec<&str> = launch_args.iter().map(|arg| arg.as_str()).collect();
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
@@ -513,12 +1034,182 @@ fn launch_dxmt_metal_with_context(
             prefix: &prefix,
             cwd: exe_dir,
             exe_name: &exe_name,
-            args: &node.launch_args,
+            args: &launch_arg_refs,
             cache_paths: cache_paths.as_ref(),
         },
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
+}
+
+fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
+    let tool_candidates = [
+        PathBuf::from("/usr/local/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/homebrew/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/metal-shaderconverter/bin/metal-shaderconverter"),
+    ];
+    let Some(tool_path) = tool_candidates.into_iter().find(|path| path.exists()) else {
+        return;
+    };
+
+    let log_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.pipeline))
+        .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
+    let cache_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.shader))
+        .unwrap_or_else(|| PathBuf::from("/tmp/dxmt_shader_cache"));
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".msc.fail") || name.ends_with(".msc.lock") {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let launch_start = SystemTime::now();
+        let max_active_compiles = 4usize;
+
+        while Instant::now() < deadline {
+            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                let mut pending = Vec::new();
+                let mut active_locks = 0usize;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|ext| ext.to_str()) == Some("lock")
+                        && path.file_name().and_then(|name| name.to_str()).map(|name| name.ends_with(".msc.lock"))
+                            == Some(true)
+                    {
+                        active_locks += 1;
+                    }
+                    if path.extension().and_then(|ext| ext.to_str()) != Some("dxbc") {
+                        continue;
+                    }
+                    let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+                        continue;
+                    };
+                    if modified + Duration::from_secs(2) < launch_start {
+                        continue;
+                    }
+                    pending.push((modified, path));
+                }
+
+                pending.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+
+                for (_modified, path) in pending {
+                    if active_locks >= max_active_compiles {
+                        break;
+                    }
+                    let metallib_path = path.with_extension("metallib");
+                    let reflection_path = path.with_extension("json");
+                    let vertex_layout_path = path.with_extension("vertex-layout.json");
+                    let is_geometry_mesh_shader = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.ends_with(".geom.gsmesh.dxbc"))
+                        .unwrap_or(false);
+                    let use_gs_ts_emulation = vertex_layout_path.exists() && !is_geometry_mesh_shader;
+                    let stage_in_path = path.with_extension("stageIn.metallib");
+                    let fail_path = path.with_extension("msc.fail");
+                    if metallib_path.exists()
+                        && reflection_path.exists()
+                        && (!use_gs_ts_emulation || stage_in_path.exists())
+                    {
+                        continue;
+                    }
+                    if fail_path.exists() {
+                        continue;
+                    }
+
+                    let lock_path = path.with_extension("msc.lock");
+                    let lock_file = OpenOptions::new().write(true).create_new(true).open(&lock_path);
+                    let Ok(_lock_guard) = lock_file else {
+                        continue;
+                    };
+                    active_locks += 1;
+
+                    let tool_path = tool_path.clone();
+                    let log_path = log_path.clone();
+                    std::thread::spawn(move || {
+                        let mut log = OpenOptions::new().create(true).append(true).open(&log_path).ok();
+                        if let Some(log) = log.as_mut() {
+                            let _ = writeln!(log, "compile_start dxbc={}", path.display());
+                        }
+
+                        let mut command = Command::new(&tool_path);
+                        command
+                            .arg("-o")
+                            .arg(&metallib_path)
+                            .arg(&path)
+                            .arg(format!("--output-reflection-file={}", reflection_path.display()))
+                            .arg("--deployment-os=macOS")
+                            .arg("--minimum-os-build-version=15.0.0");
+                        if use_gs_ts_emulation {
+                            command
+                                .arg("--enable-gs-ts-emulation")
+                                .arg("--vertex-stage-in")
+                                .arg(format!("--vertex-input-layout-file={}", vertex_layout_path.display()));
+                        }
+                        let output = command.output();
+
+                        match output {
+                            Ok(result) => {
+                                let stdout_text = String::from_utf8_lossy(&result.stdout);
+                                let stderr_text = String::from_utf8_lossy(&result.stderr);
+                                if result.status.success() {
+                                    let _ = std::fs::remove_file(&fail_path);
+                                } else {
+                                    let failure_summary = if stderr_text.trim().is_empty() {
+                                        format!("metal-shaderconverter failed with {}", result.status)
+                                    } else {
+                                        stderr_text.trim().to_string()
+                                    };
+                                    let _ = std::fs::write(&fail_path, failure_summary);
+                                }
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(
+                                        log,
+                                        "compile_end dxbc={} status={} metallib={} reflection={} gs_ts_emulation={}",
+                                        path.display(),
+                                        result.status,
+                                        metallib_path.exists(),
+                                        reflection_path.exists(),
+                                        use_gs_ts_emulation
+                                    );
+                                    if !stdout_text.is_empty() {
+                                        let _ = log.write_all(stdout_text.as_bytes());
+                                    }
+                                    if !stderr_text.is_empty() {
+                                        let _ = log.write_all(stderr_text.as_bytes());
+                                    }
+                                }
+                            },
+                            Err(err) => {
+                                let _ = std::fs::write(
+                                    &fail_path,
+                                    format!("metal-shaderconverter invocation failed: {}", err),
+                                );
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(log, "compile_error dxbc={} err={}", path.display(), err);
+                                }
+                            },
+                        }
+
+                        let _ = std::fs::remove_file(&lock_path);
+                    });
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -566,7 +1257,7 @@ fn launch_wine_bare_with_context(
         cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(game_dir));
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     for (key, value) in extra_env {
         cmd.env(key, value);
@@ -697,7 +1388,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         .env("MONO_ENV_OPTIONS", "--runtime=v4.0")
         .env("MONO_PATH", dir.to_string_lossy().to_string());
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    let cache_paths = build_cache_paths(&home, node, appid, Some(dir));
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &home.join(".metalsharp").join("runtime").join("wine"));
 
     for ev in &node.env_vars {
@@ -747,7 +1438,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     let manifest: serde_json::Value = match serde_json::from_str(&manifest_str) {
         Ok(v) => v,
         Err(_) => {
-            let _ = std::fs::remove_dir_all(&injection_dir);
+            let _ = std::fs::remove_file(&manifest_path);
+            let _ = std::fs::remove_dir(&injection_dir);
             return Ok(());
         },
     };
@@ -755,7 +1447,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     let dlls = match manifest.get("dlls").and_then(|d| d.as_array()) {
         Some(d) => d,
         None => {
-            let _ = std::fs::remove_dir_all(&injection_dir);
+            let _ = std::fs::remove_file(&manifest_path);
+            let _ = std::fs::remove_dir(&injection_dir);
             return Ok(());
         },
     };
@@ -797,15 +1490,43 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
     }
 
     if !any_copy_failed {
-        let _ = std::fs::remove_dir_all(&injection_dir);
+        let _ = std::fs::remove_file(&manifest_path);
+        let originals_dir = injection_dir.join("originals");
+        let _ = std::fs::remove_dir(&originals_dir);
+        let _ = std::fs::remove_dir(&injection_dir);
     }
     Ok(())
 }
 
-fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
+fn path_looks_external_volume(path: &Path) -> bool {
+    path.starts_with(Path::new("/Volumes")) || path.to_string_lossy().starts_with("//Volumes/")
+}
+
+fn normalize_host_cache_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(stripped) = text.strip_prefix("//Volumes/") {
+        return PathBuf::from(format!("/Volumes/{}", stripped));
+    }
+    path
+}
+
+fn preferred_cache_root(home: &Path, game_dir: Option<&Path>) -> PathBuf {
+    if let Some(game_dir) = game_dir {
+        if path_looks_external_volume(game_dir) {
+            let root = normalize_host_cache_path(game_dir.join(".metalsharp-cache"));
+            if std::fs::create_dir_all(&root).is_ok() {
+                return root;
+            }
+        }
+    }
+    home.join(".metalsharp")
+}
+
+fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32, game_dir: Option<&Path>) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
-    let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
-    let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
+    let cache_root = preferred_cache_root(home, game_dir);
+    let shader_base = cache_root.join("shader-cache").join(subdir).join(appid.to_string());
+    let pipeline_base = cache_root.join("pipeline-cache").join(subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
@@ -817,7 +1538,8 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
 
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
-    let cache_paths = build_cache_paths(home, node, appid);
+    let game_dir = crate::setup::resolve_game_dir(appid);
+    let cache_paths = build_cache_paths(home, node, appid, game_dir.as_deref());
     let appid_string = appid.to_string();
     let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
 
@@ -834,15 +1556,82 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
     }
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
+    env.extend(app_compat_env_pairs(appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
             env.push((key, value));
         }
     }
     env
+}
+
+fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    if appid == 1962700 && pipeline_id == PipelineId::M12 {
+        let mut env = vec![
+            ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
+            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Queue,SwapChain,Presenter,PSO".to_string()),
+            ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
+            ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+            ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
+            ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
+            ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
+            ("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()),
+            ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()),
+            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
+            // Metal Shader Converter is an offline cache/warmup tool for this
+            // route. During live gameplay, prefer our internal DXIL->MSL path
+            // so PSO creation cannot block on or link against runtime MSC sidecars.
+            ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
+            // UE5 reaches the main viewport, but the swapchain remains black
+            // when alpha-blended final passes preserve a bad fragment alpha.
+            ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
+            ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
+            ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
+            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
+            ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
+        ];
+        if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
+            env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+            env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
+        }
+        return env;
+    }
+    Vec::new()
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -1330,6 +2119,23 @@ mod tests {
     }
 
     #[test]
+    fn external_volume_detection_matches_volumes_prefix_only() {
+        assert!(path_looks_external_volume(Path::new("/Volumes/AverySSD/Subnautica2")));
+        assert!(!path_looks_external_volume(Path::new("/Users/alexmondello/Dev/metalsharp")));
+        assert!(!path_looks_external_volume(Path::new("/tmp/Subnautica2")));
+    }
+
+    #[test]
+    fn preferred_cache_root_falls_back_to_home_for_non_external_paths() {
+        let home = test_dir("cache-root-home");
+        let game_dir = home.join("Games").join("Subnautica2");
+
+        let root = preferred_cache_root(&home, Some(&game_dir));
+
+        assert_eq!(root, home.join(".metalsharp"));
+    }
+
+    #[test]
     fn dxmt_family_env_uses_seventy_percent_upscale_and_cache_paths() {
         for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
             let home = test_dir(&format!("dxmt-env-{:?}", pipeline_id));
@@ -1341,7 +2147,10 @@ mod tests {
                 env.iter().find(|(key, _)| key == "METALSHARP_CACHE_SUMMARY").map(|(_, value)| value.as_str());
 
             assert!(config.unwrap_or_default().contains("d3d11.metalSpatialUpscaleFactor=1.43"));
-            assert!(config.unwrap_or_default().contains("d3d11.preferredMaxFrameRate=60"));
+            let expected_frame_rate = "60";
+            assert!(config
+                .unwrap_or_default()
+                .contains(&format!("d3d11.preferredMaxFrameRate={}", expected_frame_rate)));
             assert!(summary.unwrap_or_default().contains("/shader-cache/"));
             assert!(summary.unwrap_or_default().contains("/pipeline-cache/"));
             assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
@@ -1377,6 +2186,7 @@ mod tests {
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
         assert!(keys.contains("DXMT_CONFIG_FILE"));
+        assert!(keys.contains("DXMT_WINEMETAL_UNIXLIB"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
@@ -1388,7 +2198,12 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
+        assert!(overrides.contains("winemetal"));
         assert!(overrides.contains("d3d12"));
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()),
+            Some("winemetal.so")
+        );
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -1455,6 +2270,29 @@ mod tests {
     }
 
     #[test]
+    fn m12_stages_winemetal_to_wine_builtin_x64_dir() {
+        let home = test_dir("m12-winemetal-builtin");
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let prefix = home.join(".metalsharp").join("prefix-steam");
+        let dxmt_dir = ms_root.join("lib").join("dxmt").join("x86_64-windows");
+        std::fs::create_dir_all(&dxmt_dir).unwrap();
+        std::fs::write(dxmt_dir.join("winemetal.dll"), b"dxmt descriptor export dll").unwrap();
+        std::fs::write(dxmt_dir.join("d3d12.dll"), b"d3d12").unwrap();
+
+        stage_dxmt_nvidia_driver_shims(get_pipeline(PipelineId::M12), &ms_root, &prefix).unwrap();
+
+        assert_eq!(
+            std::fs::read(ms_root.join("lib").join("wine").join("x86_64-windows").join("winemetal.dll")).unwrap(),
+            b"dxmt descriptor export dll"
+        );
+        assert_eq!(
+            std::fs::read(prefix.join("drive_c").join("windows").join("system32").join("winemetal.dll")).unwrap(),
+            b"dxmt descriptor export dll"
+        );
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn cleanup_legacy_injections_restores_backups_within_game_dir() {
         let game_dir = test_dir("cleanup-restore");
         let injection_dir = game_dir.join(".metalsharp");
@@ -1508,7 +2346,43 @@ mod tests {
         cleanup_legacy_injections(&game_dir).unwrap();
 
         assert!(!outside_path.exists());
-        assert!(!injection_dir.exists());
+        assert!(!injection_dir.join("injections.json").exists());
+        let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
+    fn cleanup_legacy_injections_preserves_non_injection_state() {
+        let game_dir = test_dir("cleanup-preserve-media");
+        let injection_dir = game_dir.join(".metalsharp");
+        let originals_dir = injection_dir.join("originals");
+        let media_dir = injection_dir.join("media");
+        let movie_backup_dir = originals_dir.join("movies");
+        std::fs::create_dir_all(&movie_backup_dir).unwrap();
+        std::fs::create_dir_all(&media_dir).unwrap();
+
+        let original_dll = game_dir.join("dxgi.dll");
+        let backup_dll = originals_dir.join("dxgi.dll");
+        std::fs::write(&backup_dll, b"original-dxgi-content").unwrap();
+        std::fs::write(media_dir.join("subnautica2-h264-movies-v1.ok"), b"ready").unwrap();
+        std::fs::write(movie_backup_dir.join("intro.mp4"), b"movie").unwrap();
+
+        let manifest = serde_json::json!({
+            "appid": 1234,
+            "dlls": [{
+                "filename": "dxgi.dll",
+                "dest_path": original_dll.to_string_lossy().to_string(),
+                "backup_path": backup_dll.to_string_lossy().to_string(),
+            }]
+        });
+        std::fs::write(injection_dir.join("injections.json"), serde_json::to_string_pretty(&manifest).unwrap())
+            .unwrap();
+
+        cleanup_legacy_injections(&game_dir).unwrap();
+
+        assert_eq!(std::fs::read(&original_dll).unwrap(), b"original-dxgi-content");
+        assert!(media_dir.join("subnautica2-h264-movies-v1.ok").exists());
+        assert!(movie_backup_dir.join("intro.mp4").exists());
+        assert!(!injection_dir.join("injections.json").exists());
         let _ = std::fs::remove_dir_all(&game_dir);
     }
 
@@ -1556,6 +2430,65 @@ mod tests {
         let exe_path = game_dir.join("Engine").join("Binaries").join("Win64").join("Game-Win64-Shipping.exe");
 
         assert_eq!(launch_working_dir(&game_dir, &exe_path), exe_path.parent().unwrap());
+    }
+
+    #[test]
+    fn subnautica_movie_files_discovers_movie_assets_only() {
+        let game_dir = test_dir("subnautica-movies");
+        let movies_dir = game_dir.join("Subnautica2").join("Content").join("Movies");
+        std::fs::create_dir_all(&movies_dir).expect("create movies dir");
+        std::fs::write(movies_dir.join("B.mp4"), b"b").expect("write b");
+        std::fs::write(movies_dir.join("a.MP4"), b"a").expect("write a");
+        std::fs::write(movies_dir.join("c.mov"), b"c").expect("write c");
+        std::fs::write(movies_dir.join("ignore.webm"), b"x").expect("write ignore");
+
+        let movies = subnautica2_movie_files(&game_dir);
+
+        assert_eq!(movies.len(), 3);
+        assert_eq!(movies[0].file_name().unwrap().to_string_lossy(), "B.mp4");
+        assert_eq!(movies[1].file_name().unwrap().to_string_lossy(), "a.MP4");
+        assert_eq!(movies[2].file_name().unwrap().to_string_lossy(), "c.mov");
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn subnautica_movie_transcode_flag_is_explicit_opt_in() {
+        for value in [None, Some(""), Some("0"), Some("false"), Some("off"), Some("no")] {
+            assert!(!env_flag_enabled(value));
+        }
+        for value in [Some("1"), Some("true"), Some("TRUE"), Some("yes"), Some("on")] {
+            assert!(env_flag_enabled(value));
+        }
+    }
+
+    #[test]
+    fn subnautica_cache_reset_removes_ue5_cache_once_and_preserves_config() {
+        let prefix = test_dir("subnautica-cache-reset");
+        let user_dir = prefix.join("drive_c").join("users").join("steamuser");
+        let saved_dir = user_dir.join("AppData").join("Local").join("Subnautica2").join("Saved");
+        let config_dir = saved_dir.join("Config").join("Windows");
+        let ddc_dir = saved_dir.join("DerivedDataCache");
+        let pipeline_dir = saved_dir.join("PipelineCaches");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&ddc_dir).unwrap();
+        std::fs::create_dir_all(&pipeline_dir).unwrap();
+        std::fs::write(config_dir.join("GameUserSettings.ini"), b"user config").unwrap();
+        std::fs::write(ddc_dir.join("stale.bin"), b"stale").unwrap();
+        std::fs::write(pipeline_dir.join("stale.bin"), b"stale").unwrap();
+
+        stage_subnautica2_ue5_cache_reset(&prefix).unwrap();
+
+        assert!(!ddc_dir.exists());
+        assert!(!pipeline_dir.exists());
+        assert_eq!(std::fs::read(config_dir.join("GameUserSettings.ini")).unwrap(), b"user config");
+        assert!(saved_dir.join("MetalSharp").join("subnautica2-ue5-cache-reset-v1.ok").exists());
+
+        std::fs::create_dir_all(&ddc_dir).unwrap();
+        std::fs::write(ddc_dir.join("rebuilt.bin"), b"rebuilt").unwrap();
+        stage_subnautica2_ue5_cache_reset(&prefix).unwrap();
+
+        assert_eq!(std::fs::read(ddc_dir.join("rebuilt.bin")).unwrap(), b"rebuilt");
+        let _ = std::fs::remove_dir_all(prefix);
     }
 
     #[test]

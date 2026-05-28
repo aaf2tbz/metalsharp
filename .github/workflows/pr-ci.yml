@@ -116,7 +116,47 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install clang-format
-        run: brew install clang-format
+        run: brew install clang-format zstd
+
+      - name: D3D12 Metal SDK contracts
+        run: |
+          prepare_d3d12_mini_probe_runtime() {
+            mkdir -p app/bundles "$HOME/.metalsharp/runtime/wine/lib/dxmt"
+            for asset in metalsharp_bundle.tar.zst metalsharp_bundle2.tar.zst dxmt.tar.zst; do
+              if [ ! -s "app/bundles/$asset" ]; then
+                curl -fL -o "app/bundles/$asset" "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/$asset"
+              fi
+            done
+
+            tmp_bundle="$(mktemp -d)"
+            tar --use-compress-program=unzstd -xf app/bundles/metalsharp_bundle.tar.zst -C "$tmp_bundle"
+            wine_source="$tmp_bundle/wine-11.5"
+            if [ ! -d "$wine_source" ]; then
+              wine_source="$tmp_bundle/wine"
+            fi
+            mkdir -p "$HOME/.metalsharp/runtime/wine"
+            cp -R "$wine_source"/. "$HOME/.metalsharp/runtime/wine/"
+            tar --use-compress-program=unzstd -xf app/bundles/metalsharp_bundle2.tar.zst -C "$HOME/.metalsharp/runtime"
+
+            tmp_dxmt="$(mktemp -d)"
+            tar --use-compress-program=unzstd -xf app/bundles/dxmt.tar.zst -C "$tmp_dxmt"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows"
+            cp -R "$tmp_dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
+            cp -R "$tmp_dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
+          }
+
+          python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
+          python3 tools/d3d12-metal-sdk/scripts/validate-probe-matrix.py
+          if ! git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > /tmp/metalsharp-pr-files.txt; then
+            echo "Unable to diff PR files from the current checkout; assuming D3D12 Metal SDK touch."
+            echo "tools/d3d12-metal-sdk" > /tmp/metalsharp-pr-files.txt
+          fi
+          if grep -E '^(vendor/dxmt/src/d3d12|vendor/dxmt/src/airconv|vendor/dxmt/src/winemetal|tools/d3d12-metal-sdk)/' /tmp/metalsharp-pr-files.txt >/dev/null; then
+            echo "D3D12 Metal SDK touch detected; running required mini-probe gate."
+            prepare_d3d12_mini_probe_runtime
+            tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp --mini-only
+          fi
 
       - name: Format check
         run: find src include tests tools \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) -print0 | xargs -0 clang-format --dry-run --Werror
