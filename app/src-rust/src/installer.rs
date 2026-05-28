@@ -7,7 +7,7 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
-pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = "d3d12-sdk-pr119-phase15";
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase15");
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const DXMT_REQUIRED_PE: &[&str] = &[

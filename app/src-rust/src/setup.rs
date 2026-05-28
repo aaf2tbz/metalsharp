@@ -822,15 +822,6 @@ fn find_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<Pa
         home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("D3D12"),
     );
     candidates.push(
-        home.join("Dev")
-            .join("metalsharp-pr119-sdk")
-            .join("tools")
-            .join("d3d12-metal-sdk")
-            .join("out")
-            .join("bin")
-            .join("D3D12"),
-    );
-    candidates.push(
         home.join("repos")
             .join("metalsharp")
             .join("tools")
@@ -892,14 +883,6 @@ fn find_agility_fetch_script(home: &Path) -> Option<PathBuf> {
 
     candidates.push(
         home.join("Dev")
-            .join("metalsharp-pr119-sdk")
-            .join("tools")
-            .join("d3d12-metal-sdk")
-            .join("scripts")
-            .join("fetch-agility.sh"),
-    );
-    candidates.push(
-        home.join("Dev")
             .join("metalsharp")
             .join("tools")
             .join("d3d12-metal-sdk")
@@ -922,19 +905,6 @@ fn push_agility_script_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
 }
 
 fn push_cached_agility_package_candidates(candidates: &mut Vec<PathBuf>, home: &Path, package_version: &str) {
-    candidates.push(
-        home.join("Dev")
-            .join("metalsharp-pr119-sdk")
-            .join("tools")
-            .join("d3d12-metal-sdk")
-            .join("out")
-            .join("agility")
-            .join(package_version)
-            .join("build")
-            .join("native")
-            .join("bin")
-            .join("x64"),
-    );
     candidates.push(
         home.join("Dev")
             .join("metalsharp")
@@ -1016,15 +986,6 @@ fn find_dxil_dll(home: &Path) -> Option<PathBuf> {
     }
     candidates.push(
         home.join("Dev")
-            .join("metalsharp-pr119-sdk")
-            .join("tools")
-            .join("d3d12-metal-sdk")
-            .join("out")
-            .join("bin")
-            .join("dxil.dll"),
-    );
-    candidates.push(
-        home.join("Dev")
             .join("metalsharp")
             .join("tools")
             .join("d3d12-metal-sdk")
@@ -1073,14 +1034,6 @@ fn find_dxc_fetch_script(home: &Path) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         push_dxc_script_candidates(&mut candidates, &resources);
     }
-    candidates.push(
-        home.join("Dev")
-            .join("metalsharp-pr119-sdk")
-            .join("tools")
-            .join("d3d12-metal-sdk")
-            .join("scripts")
-            .join("fetch-dxc.sh"),
-    );
     candidates.push(
         home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("scripts").join("fetch-dxc.sh"),
     );
