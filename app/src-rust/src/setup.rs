@@ -818,8 +818,6 @@ fn find_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<Pa
         push_cached_agility_package_candidates(&mut candidates, home, package_version);
     }
 
-    candidates
-        .push(PathBuf::from("/Volumes/AverySSD/metalsharp/metal-api-table/agility-sdk/extracted/build/native/bin/x64"));
     candidates.push(
         home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("D3D12"),
     );
