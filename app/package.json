@@ -33,7 +33,7 @@
     "@biomejs/biome": "^2.4.15",
     "@types/node": "^22.0.0",
     "@vitejs/plugin-vue": "^6.0.7",
-    "electron": "^39.8.10",
+    "electron": "^42.3.0",
     "electron-builder": "^26.0.0",
     "prettier": "^3.8.3",
     "typescript": "^5.7.0",
