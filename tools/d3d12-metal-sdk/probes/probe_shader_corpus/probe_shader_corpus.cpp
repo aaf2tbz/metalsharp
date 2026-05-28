@@ -640,8 +640,11 @@ void cs_root_constants(uint3 id : SV_DispatchThreadID) {
     std::printf("  ]\n");
     std::printf("}\n");
 
+    std::fflush(stdout);
+    // Wine/MinGW can assert during late CRT condition-variable teardown after
+    // the DXMT worker stack has already produced the contract JSON.
+    TerminateProcess(GetCurrentProcess(), pass ? 0u : 1u);
     safe_release(root);
     safe_release(device);
-    std::fflush(stdout);
-    return pass ? 0 : 1;
+    return 0;
 }
