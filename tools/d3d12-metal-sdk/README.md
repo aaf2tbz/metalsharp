@@ -261,8 +261,11 @@ tools/d3d12-metal-sdk/scripts/preflight-before-game.sh \
 ```
 
 This command does not launch Steam or the game. It validates the Winemetal route
-layout, runs the existing D3D12 Wine probes, and replays any dumped `.dxbc`
-shader corpus through MetalShaderConverter. If no shader corpus exists yet, it
+layout, runs the existing D3D12 Wine probes against the game-local staged DLLs,
+and replays any dumped `.dxbc` shader corpus through MetalShaderConverter. The
+probe runner supplies a probe-local Wine wrapper and `MS_ROOT` context, so a
+missing or broken host `mscompatdb` rules file cannot block probes for a game
+that already has its D3D12/DXMT DLLs staged. If no shader corpus exists yet, it
 fails with a clear capture-needed message instead of using the game as the
 debugger.
 
@@ -425,6 +428,7 @@ The `--dxmt-runtime` directory should contain:
 x86_64-windows/
   d3d12.dll
   dxgi.dll
+  dxgi_dxmt.dll
   d3d11.dll
   d3d10core.dll
   winemetal.dll

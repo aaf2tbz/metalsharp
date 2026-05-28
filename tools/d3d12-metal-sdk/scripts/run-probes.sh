@@ -12,6 +12,7 @@ SHADER_CACHE_DIR="${DXMT_SHADER_CACHE_PATH:-}"
 METAL_SHADER_CONVERTER="${METAL_SHADER_CONVERTER:-}"
 AGILITY_SDK_VERSION="${AGILITY_SDK_VERSION:-}"
 AGILITY_SDK_PATH="${AGILITY_SDK_PATH:-}"
+GAME_DIR=""
 RUN_LOADER=1
 RUN_AGILITY=1
 RUN_CAPS=1
@@ -63,6 +64,7 @@ Options:
   --prefix PATH         WINEPREFIX path.
   --dxmt-runtime PATH   Runtime root containing x86_64-windows/ and x86_64-unix/.
   --results-dir PATH    Result output directory.
+  --game-dir PATH       Optional game Win64 directory containing staged DXMT DLLs.
   --agility-sdk-version N
                         Override exported D3D12SDKVersion for Agility-sensitive probes.
   --agility-sdk-path REL
@@ -147,6 +149,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --results-dir)
       RESULTS_DIR="$2"
+      shift 2
+      ;;
+    --game-dir)
+      GAME_DIR="$2"
       shift 2
       ;;
     --agility-sdk-version)
@@ -678,6 +684,13 @@ UNIX_DIR="$DXMT_RUNTIME/x86_64-unix"
 RUNTIME_LIB_DIR="$(dirname "$DXMT_RUNTIME")"
 WINE_RUNTIME_ROOT="$(dirname "$RUNTIME_LIB_DIR")"
 WINE_UNIX_DIR="$RUNTIME_LIB_DIR/wine/x86_64-unix"
+if [[ -n "$GAME_DIR" ]]; then
+  if [[ ! -d "$GAME_DIR" ]]; then
+    echo "Game DLL directory does not exist: $GAME_DIR" >&2
+    exit 2
+  fi
+  WINDOWS_DIR="$GAME_DIR"
+fi
 DXMT_DYLD_LIBRARY_PATH="$WINE_UNIX_DIR:$UNIX_DIR:${DYLD_LIBRARY_PATH:-}"
 DXMT_WINEMETAL_UNIXLIB_NAME="winemetal.so"
 PROBE_EXE="$SDK_DIR/out/bin/probe_loader.exe"
@@ -760,6 +773,38 @@ mkdir -p "$RESULTS_DIR"
 if [[ -z "$SHADER_CACHE_DIR" ]]; then
   SHADER_CACHE_DIR="$RESULTS_DIR/shader-cache-$PROFILE"
 fi
+
+if [[ -z "${MS_ROOT:-}" ]]; then
+  if [[ -f "$WINE_RUNTIME_ROOT/etc/mscompatdb_rules.toml" ]]; then
+    export MS_ROOT="$WINE_RUNTIME_ROOT"
+  else
+    PROBE_MSCOMPATDB_ROOT="$RESULTS_DIR/mscompatdb-probe-root"
+    mkdir -p "$PROBE_MSCOMPATDB_ROOT/etc"
+    cat > "$PROBE_MSCOMPATDB_ROOT/etc/mscompatdb_rules.toml" <<'EOF_MSCOMPATDB_RULES'
+version = 1
+
+[rules.0]
+desc = "D3D12 Metal SDK probe no-op rule"
+
+[rules.0.match]
+type = "path_suffix"
+suffix = '\\__metalsharp_probe_never_matches__.exe'
+EOF_MSCOMPATDB_RULES
+    export MS_ROOT="$PROBE_MSCOMPATDB_ROOT"
+  fi
+fi
+
+REAL_WINE_BIN="$WINE_BIN"
+PROBE_WINE_WRAPPER="$RESULTS_DIR/wine-probe-wrapper.sh"
+cat > "$PROBE_WINE_WRAPPER" <<'EOF_WINE_WRAPPER'
+#!/usr/bin/env bash
+set -o pipefail
+"$D3D12_METAL_SDK_REAL_WINE" "$@" 2> >(grep -v -E '^(mscompatdb:|mscompatdb:error:|mscompatdb:warn:|mscompatdb:trace:)' >&2)
+exit $?
+EOF_WINE_WRAPPER
+chmod +x "$PROBE_WINE_WRAPPER"
+export D3D12_METAL_SDK_REAL_WINE="$REAL_WINE_BIN"
+WINE_BIN="$PROBE_WINE_WRAPPER"
 RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
 CAPS_RESULT_FILE="$RESULTS_DIR/probe-device-caps-${PROFILE}.json"
@@ -1007,10 +1052,12 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
 {
   "schema": "metalsharp.d3d12-metal.host-runtime.v1",
   "profile": "$PROFILE",
-  "wine": "$WINE_BIN",
+  "wine": "$REAL_WINE_BIN",
   "prefix": "$WINE_PREFIX",
   "dxmt_runtime": "$DXMT_RUNTIME",
   "windows_runtime": "$WINDOWS_DIR",
+  "game_dir": "$GAME_DIR",
+  "ms_root": "${MS_ROOT:-}",
   "unix_runtime": "$UNIX_DIR",
   "wine_runtime": "$WINE_RUNTIME_ROOT",
   "wine_unix_runtime": "$WINE_UNIX_DIR",
