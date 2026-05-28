@@ -22,6 +22,7 @@ REQUIRED_GROUPS = {
     "graphics_pso_state_matrix": ["probe-graphics-pso", "probe-mini-graphics-pso"],
     "compute_pso_dispatch": ["probe-compute-pso", "probe-mini-compute-dispatch", "probe-mini-compute-first-use-dispatch"],
     "dxil_opcode_groups": ["probe-dxil-semantics", "probe-mini-dxil-texture-color-output"],
+    "synthetic_shader_corpus": ["probe-shader-corpus"],
     "sm66_capability_audit": ["probe-sm66-capabilities"],
     "waveops_capability_audit": ["probe-wave-ops"],
     "shader_reflection_argument_binding": ["probe-shaders", "probe-reflection-abi"],

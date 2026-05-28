@@ -21,6 +21,7 @@ RUN_QUEUES=1
 RUN_DESCRIPTORS=1
 RUN_SHADERS=1
 RUN_DXIL_SEMANTICS=1
+RUN_SHADER_CORPUS=1
 RUN_SM66_CAPABILITIES=1
 RUN_WAVE_OPS=1
 RUN_REFLECTION_ABI=1
@@ -79,6 +80,8 @@ Options:
   --no-shaders          Skip probe_shaders.
   --dxil-semantics      Run the DXIL semantic opcode-group probe.
   --semantic-only       Run only the DXIL semantic opcode-group probe.
+  --no-shader-corpus    Skip the synthetic shader corpus probe.
+  --shader-corpus-only  Run only the synthetic shader corpus probe.
   --no-sm66-capabilities
                         Skip the SM 6.6 capability audit probe.
   --sm66-capabilities-only
@@ -172,6 +175,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -199,6 +203,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -226,6 +231,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -269,6 +275,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=1
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -278,6 +285,34 @@ while [[ $# -gt 0 ]]; do
       RUN_COMMAND_REPLAY=0
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
+    --no-shader-corpus)
+      RUN_SHADER_CORPUS=0
+      shift
+      ;;
+    --shader-corpus-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=1
+      RUN_SM66_CAPABILITIES=0
+      RUN_WAVE_OPS=0
+      RUN_REFLECTION_ABI=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
       shift
@@ -296,6 +331,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=1
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -323,6 +359,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=1
       RUN_REFLECTION_ABI=0
@@ -350,6 +387,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=1
@@ -377,6 +415,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -404,6 +443,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -431,6 +471,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -458,6 +499,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -485,6 +527,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -520,6 +563,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -548,6 +592,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -575,6 +620,7 @@ while [[ $# -gt 0 ]]; do
       RUN_DESCRIPTORS=0
       RUN_SHADERS=0
       RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
       RUN_SM66_CAPABILITIES=0
       RUN_WAVE_OPS=0
       RUN_REFLECTION_ABI=0
@@ -643,6 +689,7 @@ QUEUES_PROBE_EXE="$SDK_DIR/out/bin/probe_queues.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
 SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 DXIL_SEMANTICS_PROBE_EXE="$SDK_DIR/out/bin/probe_dxil_semantics.exe"
+SHADER_CORPUS_PROBE_EXE="$SDK_DIR/out/bin/probe_shader_corpus.exe"
 SM66_CAPABILITIES_PROBE_EXE="$SDK_DIR/out/bin/probe_sm66_capabilities.exe"
 WAVE_OPS_PROBE_EXE="$SDK_DIR/out/bin/probe_wave_ops.exe"
 REFLECTION_ABI_PROBE_EXE="$SDK_DIR/out/bin/probe_reflection_abi.exe"
@@ -693,7 +740,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SHADER_CORPUS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -722,6 +769,8 @@ SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
 SHADERS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-shaders-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-${PROFILE}.json"
+SHADER_CORPUS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-shader-corpus-warmup-${PROFILE}.json"
+SHADER_CORPUS_RESULT_FILE="$RESULTS_DIR/probe-shader-corpus-${PROFILE}.json"
 SM66_CAPABILITIES_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-sm66-capabilities-warmup-${PROFILE}.json"
 SM66_CAPABILITIES_RESULT_FILE="$RESULTS_DIR/probe-sm66-capabilities-${PROFILE}.json"
 WAVE_OPS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-wave-ops-warmup-${PROFILE}.json"
@@ -1144,6 +1193,35 @@ if [[ "$RUN_DXIL_SEMANTICS" == "1" ]]; then
   )
   echo "$DXIL_SEMANTICS_WARMUP_RESULT_FILE"
   echo "$DXIL_SEMANTICS_RESULT_FILE"
+fi
+
+if [[ "$RUN_SHADER_CORPUS" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    D3D12_METAL_SDK_SHADER_CORPUS_MODE="warmup" \
+    "$WINE_BIN" "$SHADER_CORPUS_PROBE_EXE" > "$SHADER_CORPUS_WARMUP_RESULT_FILE" || true
+  )
+  convert_dxil_shader_cache "$SHADER_CACHE_DIR"
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    DXMT_SHADER_CACHE_PATH="$SHADER_CACHE_DIR" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$SHADER_CORPUS_PROBE_EXE" > "$SHADER_CORPUS_RESULT_FILE"
+  )
+  echo "$SHADER_CORPUS_WARMUP_RESULT_FILE"
+  echo "$SHADER_CORPUS_RESULT_FILE"
 fi
 
 if [[ "$RUN_SM66_CAPABILITIES" == "1" ]]; then

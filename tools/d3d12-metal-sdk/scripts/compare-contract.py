@@ -24,6 +24,7 @@ REQUIRED_PROBES = [
     "probe-descriptors",
     "probe-shaders",
     "probe-dxil-semantics",
+    "probe-shader-corpus",
     "probe-sm66-capabilities",
     "probe-wave-ops",
     "probe-reflection-abi",
@@ -215,6 +216,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     device_caps = results["probe-device-caps"]
     shader_probe = results["probe-shaders"]
     dxil_semantics_probe = results["probe-dxil-semantics"]
+    shader_corpus_probe = results["probe-shader-corpus"]
     sm66_probe = results["probe-sm66-capabilities"]
     wave_probe = results["probe-wave-ops"]
     reflection_probe = results["probe-reflection-abi"]
@@ -256,6 +258,7 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     sm66_reportable = bool(get_nested(sm66_probe, "summary", "sm66_reportable"))
     dxil_to_msl_ok = bool(get_nested(shader_probe, "dxc", "dxil_to_msl"))
     dxil_semantics_ok = bool(dxil_semantics_probe.get("pass", dxil_semantics_probe.get("ok")))
+    synthetic_corpus_ok = bool(get_nested(shader_corpus_probe, "summary", "synthetic_shader_corpus_proven"))
     dxil_path_proven = dxil_to_msl_ok
     shader_summary = {
         "feature": "D3D12_FEATURE_SHADER_MODEL",
@@ -266,9 +269,12 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
         "sm66_reportable": sm66_reportable,
         "dxil_to_msl_proven": dxil_to_msl_ok,
         "dxil_semantics_proven": dxil_semantics_ok,
+        "synthetic_shader_corpus_proven": synthetic_corpus_ok,
         "dxil_path_proven": dxil_path_proven,
     }
-    shader_summary["compliant"] = shader_model_ok and dxil_path_proven and (not sm66_reported or sm66_reportable)
+    shader_summary["compliant"] = (
+        shader_model_ok and dxil_path_proven and synthetic_corpus_ok and (not sm66_reported or sm66_reportable)
+    )
     summary.append(shader_summary)
     if not shader_summary["compliant"]:
         issues.append(
@@ -276,7 +282,16 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
                 "error",
                 "feature_support",
                 "Shader model report advertises an unproven SM6 path",
-                f"Observed `{observed_shader_model}` against target `{shader_model_target}` with DXIL-to-MSL proof `{dxil_to_msl_ok}` and SM 6.6 reportable `{sm66_reportable}`.",
+                f"Observed `{observed_shader_model}` against target `{shader_model_target}` with DXIL-to-MSL proof `{dxil_to_msl_ok}`, synthetic corpus `{synthetic_corpus_ok}`, and SM 6.6 reportable `{sm66_reportable}`.",
+            )
+        )
+    if dxil_semantics_ok and not dxil_path_proven:
+        issues.append(
+            Issue(
+                "error",
+                "feature_support",
+                "DXIL semantic coverage cannot substitute for primary DXIL-to-MSL proof",
+                "The opcode semantic probe passed, but shader compliance requires the primary DXIL-to-MSL path.",
             )
         )
 
@@ -357,6 +372,39 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
                 "feature_support",
                 "Shader reflection descriptor ABI is not proven",
                 "Expected primary compiler reflection to match root signature bindings with deterministic mismatch diagnostics.",
+            )
+        )
+
+    corpus_summary = get_nested(shader_corpus_probe, "summary") or {}
+    corpus_required_fields = [
+        "sm50_baseline",
+        "sm60_to_sm66_progression",
+        "resource_indexing",
+        "uav_writes",
+        "typed_and_structured_buffers",
+        "texture_sampling",
+        "root_constants",
+        "waveops_compile_link",
+        "unsupported_feature_rejection",
+    ]
+    corpus_missing = [field for field in corpus_required_fields if not bool(corpus_summary.get(field))]
+    corpus_compliant = bool(corpus_summary.get("synthetic_shader_corpus_proven")) and not corpus_missing
+    summary.append(
+        {
+            "feature": "D3D12_SYNTHETIC_SHADER_CORPUS",
+            "state": "required",
+            "missing_fields": corpus_missing,
+            "title_captures_gating": bool(corpus_summary.get("title_captures_gating")),
+            "compliant": corpus_compliant and not bool(corpus_summary.get("title_captures_gating")),
+        }
+    )
+    if not corpus_compliant or bool(corpus_summary.get("title_captures_gating")):
+        issues.append(
+            Issue(
+                "error",
+                "feature_support",
+                "Synthetic shader corpus is incomplete",
+                f"Missing required corpus fields: {', '.join(corpus_missing)}.",
             )
         )
 
@@ -574,6 +622,15 @@ def main() -> int:
     waivers = load_waivers(contracts_dir, args.profile)
 
     issues: list[Issue] = []
+    for target, waiver in waivers.items():
+        issues.append(
+            Issue(
+                "error",
+                "waiver",
+                f"Active waiver `{waiver.get('id', target)}` is not allowed in the strict Phase 15 gate",
+                "Remove the waiver or replace it with probe-backed contract proof.",
+            )
+        )
 
     probe_issues, probe_summary = check_required_probes(results)
     issues.extend(probe_issues)

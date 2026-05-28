@@ -71,6 +71,24 @@
       "risk": "SM 6.6 must stay unreported until the SM 6.6 compiler, descriptor, resource, sampler, 64-bit, atomic, barrier, and runtime corpus is reportable.",
       "state": "required",
       "tier": "required"
+    },
+    "D3D12_SYNTHETIC_SHADER_CORPUS": {
+      "probe": "tools/d3d12-metal-sdk/probes/probe_shader_corpus",
+      "reported": "supported",
+      "required_fields": [
+        "sm50_baseline",
+        "sm60_to_sm66_progression",
+        "resource_indexing",
+        "uav_writes",
+        "typed_and_structured_buffers",
+        "texture_sampling",
+        "root_constants",
+        "waveops_compile_link",
+        "unsupported_feature_rejection"
+      ],
+      "risk": "Game captures must remain diagnostic; shader support claims require synthetic corpus coverage.",
+      "state": "required",
+      "tier": "required"
     }
   },
   "purpose": "Keep D3D12 feature reports aligned with executable implementation reality.",

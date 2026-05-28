@@ -113,6 +113,10 @@ build_probe \
   -o "$OUT_DIR/probe_dxil_semantics.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_shader_corpus/probe_shader_corpus.cpp" \
+  -o "$OUT_DIR/probe_shader_corpus.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_sm66_capabilities/probe_sm66_capabilities.cpp" \
   -o "$OUT_DIR/probe_sm66_capabilities.exe"
 
@@ -193,6 +197,7 @@ echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
+echo "$OUT_DIR/probe_shader_corpus.exe"
 echo "$OUT_DIR/probe_sm66_capabilities.exe"
 echo "$OUT_DIR/probe_wave_ops.exe"
 echo "$OUT_DIR/probe_reflection_abi.exe"
