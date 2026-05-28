@@ -76,6 +76,7 @@ if ! download_asset "metalsharp_linux_runtime2.tar.zst" "$BUNDLE_DIR/metalsharp_
 fi
 
 for asset in \
+  dxmt.tar.zst \
   dxvk.tar.zst \
   mono-x86.tar.zst \
   goldberg.tar.zst \

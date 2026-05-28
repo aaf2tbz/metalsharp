@@ -5,16 +5,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let config_path = home.join(".metalsharp").join("setup.json");
+    let dxmt_runtime = crate::installer::dxmt_runtime_status();
+    let dxmt_current = dxmt_runtime.get("current").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if config_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
             if let Ok(cfg) = serde_json::from_str::<Map<String, Value>>(&contents) {
+                let saved_completed = cfg.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
                 return json!({
                     "ok": true,
-                    "completed": cfg.get("completed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "completed": saved_completed && dxmt_current,
+                    "savedCompleted": saved_completed,
                     "step": cfg.get("step").and_then(|v| v.as_u64()).unwrap_or(0),
                     "deviceName": cfg.get("deviceName").and_then(|v| v.as_str()).unwrap_or(""),
                     "steamApiKeySet": cfg.get("steamApiKeySet").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "runtimeMigrationRequired": saved_completed && !dxmt_current,
+                    "dxmtRuntime": dxmt_runtime,
                 });
             }
         }
@@ -23,9 +29,12 @@ pub fn state() -> Value {
     json!({
         "ok": true,
         "completed": false,
+        "savedCompleted": false,
         "step": 0,
         "deviceName": "",
         "steamApiKeySet": false,
+        "runtimeMigrationRequired": false,
+        "dxmtRuntime": dxmt_runtime,
     })
 }
 
@@ -98,7 +107,8 @@ pub fn dependencies() -> Value {
         let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
             || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
         let host_runtime = host_runtime_installed(&home);
-        let all_ok = tar && curl && host_runtime && (metalsharp_wine || wine);
+        let dxmt_runtime = crate::installer::dxmt_runtime_current_for_home(&home);
+        let all_ok = tar && curl && host_runtime && dxmt_runtime && (metalsharp_wine || wine);
 
         return json!({
             "ok": true,
@@ -146,6 +156,14 @@ pub fn dependencies() -> Value {
                     "installCmd": "metalsharp-setup-host-runtime",
                 },
                 {
+                    "id": "dxmt_runtime",
+                    "name": "DXMT Metal Runtime",
+                    "desc": format!("Bundled D3D10/D3D11/D3D12-to-Metal runtime ({}) used by DXMT launch routes.", crate::installer::DXMT_BUNDLED_RUNTIME_VERSION),
+                    "installed": dxmt_runtime,
+                    "required": true,
+                    "installCmd": "metalsharp-setup-dxmt",
+                },
+                {
                     "id": "mono",
                     "name": "Mono Runtime",
                     "desc": "Optional runtime for XNA/FNA games.",
@@ -175,8 +193,9 @@ pub fn dependencies() -> Value {
     let metalsharp_wine = check_path(&home.join(".metalsharp/runtime/wine/bin/wine"))
         || check_path(&home.join(".metalsharp/runtime/wine/bin/metalsharp-wine"));
     let host_runtime = host_runtime_installed(&home);
+    let dxmt_runtime = crate::installer::dxmt_runtime_current_for_home(&home);
 
-    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine && host_runtime;
+    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine && host_runtime && dxmt_runtime;
 
     json!({
         "ok": true,
@@ -222,6 +241,14 @@ pub fn dependencies() -> Value {
                 "installed": host_runtime,
                 "required": true,
                 "installCmd": "metalsharp-setup-host-runtime",
+            },
+            {
+                "id": "dxmt_runtime",
+                "name": "DXMT Metal Runtime",
+                "desc": format!("Bundled D3D10/D3D11/D3D12-to-Metal runtime ({}) used by DXMT launch routes.", crate::installer::DXMT_BUNDLED_RUNTIME_VERSION),
+                "installed": dxmt_runtime,
+                "required": true,
+                "installCmd": "metalsharp-setup-dxmt",
             },
             {
                 "id": "mono",

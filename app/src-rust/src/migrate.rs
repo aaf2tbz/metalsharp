@@ -117,6 +117,10 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         return false;
     }
 
+    if !crate::installer::dxmt_runtime_current_for_ms_dir(ms_dir) {
+        return false;
+    }
+
     if crate::platform::current() == crate::platform::HostPlatform::Linux {
         return true;
     }
@@ -126,15 +130,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("dxgi_dxmt.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvapi64.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
-        runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),
@@ -679,6 +674,22 @@ mod tests {
     }
 
     #[test]
+    fn missing_dxmt_manifest_requests_repair() {
+        let home = test_dir("missing-dxmt-manifest");
+        let ms_dir = home.join(".metalsharp");
+        write_runtime_core(&ms_dir);
+
+        fs::remove_file(
+            ms_dir.join("runtime").join("wine").join("lib").join("dxmt").join("metalsharp-dxmt-runtime.json"),
+        )
+        .expect("remove DXMT manifest");
+
+        assert!(!runtime_core_ready(&ms_dir));
+        assert!(runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
         let ms_dir = home.join(".metalsharp");
@@ -787,6 +798,16 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
         }
+
+        fs::write(
+            runtime_wine.join("lib").join("dxmt").join("metalsharp-dxmt-runtime.json"),
+            serde_json::to_string_pretty(&json!({
+                "schema": "metalsharp.dxmt-runtime.v1",
+                "version": crate::installer::DXMT_BUNDLED_RUNTIME_VERSION,
+            }))
+            .expect("serialize DXMT manifest"),
+        )
+        .expect("write DXMT manifest");
     }
 
     fn write_host_runtime(ms_dir: &Path) {

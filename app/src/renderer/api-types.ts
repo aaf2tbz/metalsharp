@@ -93,9 +93,18 @@ interface BackendResponse {
 interface SetupState {
   ok: boolean;
   completed: boolean;
+  savedCompleted?: boolean;
   step: number;
   deviceName: string;
   steamApiKeySet: boolean;
+  runtimeMigrationRequired?: boolean;
+  dxmtRuntime?: {
+    current: boolean;
+    filesReady: boolean;
+    installedVersion?: string | null;
+    requiredVersion: string;
+    manifestPath: string;
+  };
 }
 
 interface Dependency {
