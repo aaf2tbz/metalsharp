@@ -803,5 +803,9 @@ int main() {
     std::printf("  ]\n");
     std::printf("}\n");
 
-    return pass ? 0 : 1;
+    std::fflush(stdout);
+    // Wine/MinGW can assert during late CRT condition-variable teardown after
+    // the DXMT worker stack has already produced the contract JSON.
+    TerminateProcess(GetCurrentProcess(), pass ? 0u : 1u);
+    return 0;
 }
