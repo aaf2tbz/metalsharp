@@ -127,7 +127,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         game_dir,
         exe_name: exe_path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()),
         exe_path,
-        launch_args: node.launch_args.iter().map(|arg| arg.to_string()).collect(),
+        launch_args: effective_launch_args(appid, node),
         env: node
             .env_vars
             .iter()
@@ -139,6 +139,46 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         anti_cheat_status,
         warnings,
     })
+}
+
+pub fn effective_launch_args(appid: u32, node: &PipelineNode) -> Vec<String> {
+    let mut launch_args: Vec<String> = node.launch_args.iter().map(|arg| arg.to_string()).collect();
+    if appid == 1962700 && node.id == PipelineId::M12 {
+        launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-NOSPLASH"));
+    }
+    append_app_launch_args(appid, node.id, &mut launch_args);
+    launch_args
+}
+
+fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Vec<String>) {
+    if appid == 1962700 && pipeline == PipelineId::M12 {
+        let dpcvars = [
+            "r.Nanite=0",
+            "r.Nanite.ProjectEnabled=0",
+            "r.Nanite.AllowTessellation=0",
+            "r.Nanite.Tessellation=0",
+            "r.Nanite.SkinnedMeshes=0",
+            "r.Nanite.AsyncRasterization=0",
+            "r.GeometryCollection.Nanite=0",
+            "r.RayTracing=0",
+            "r.Lumen.HardwareRayTracing=0",
+            "r.Shadow.Virtual.Enable=0",
+            "r.ShaderPipelineCache.Enabled=0",
+            "r.ShaderPipelineCache.StartupMode=0",
+            "r.PSOPrecaching=0",
+            "D3D12.PSOPrecache.KeepLowLevel=0",
+            "D3D12.PSO.KeepUsedPSOsInLowLevelCache=0",
+            "r.PSOPrecache.Resources=0",
+        ]
+        .join(",");
+        launch_args.push("-NoShaderPipelineCache".into());
+        launch_args.push(format!("-dpcvars={}", dpcvars));
+        launch_args.push("-NoNanite".into());
+        launch_args.push(
+            "-ExecCmds=r.Nanite 0;r.Nanite.ProjectEnabled 0;r.Nanite.Tessellation 0;r.GeometryCollection.Nanite 0"
+                .into(),
+        );
+    }
 }
 
 pub fn build_custom_launch_recipe(
@@ -556,6 +596,7 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M10, super::pe::D3dApi::D3D10)
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
+            | (PipelineId::M13, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }
@@ -614,6 +655,8 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("crashhandler")
         && !lower.contains("server")
         && !lower.contains("steamwebhelper")
+        && !lower.contains("start_protected")
+        && !lower.contains("easyanticheat")
 }
 
 fn score_exe_candidate(path: &Path, name: &str, dir_name: &str) -> i32 {
