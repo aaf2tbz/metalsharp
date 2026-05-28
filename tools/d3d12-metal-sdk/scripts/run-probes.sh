@@ -1070,6 +1070,7 @@ cat > "$RESULTS_DIR/host-runtime-${PROFILE}.json" <<EOF
   "required_windows_dlls": [
     "$WINDOWS_DIR/d3d12.dll",
     "$WINDOWS_DIR/dxgi.dll",
+    "$WINDOWS_DIR/dxgi_dxmt.dll",
     "$WINDOWS_DIR/d3d11.dll",
     "$WINDOWS_DIR/d3d10core.dll",
     "$WINDOWS_DIR/winemetal.dll"

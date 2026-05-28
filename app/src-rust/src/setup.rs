@@ -920,7 +920,7 @@ fn extract_agility_package(package_file: &Path, package_dir: &Path) -> Result<()
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let Some(enclosed) = entry.enclosed_name().map(PathBuf::from) else {
+        let Some(enclosed) = entry.enclosed_name() else {
             continue;
         };
         if !is_agility_runtime_payload(&enclosed) {
