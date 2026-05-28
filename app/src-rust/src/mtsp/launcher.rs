@@ -251,8 +251,10 @@ fn stage_app_compat_config(
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         stage_subnautica2_ue5_cache_reset(prefix)?;
         stage_subnautica2_nanite_config(prefix)?;
-        if let Some(game_dir) = game_dir {
-            stage_subnautica2_movie_codec_compat(game_dir)?;
+        if let Some(game_dir) = game_dir.filter(|_| should_stage_subnautica2_movie_codec_compat()) {
+            if let Err(error) = stage_subnautica2_movie_codec_compat(game_dir) {
+                let _ = write_subnautica2_movie_compat_status(game_dir, "skipped", &error.to_string());
+            }
         }
     }
     Ok(())
@@ -426,7 +428,7 @@ fn ffmpeg_binary() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    Some(PathBuf::from("ffmpeg"))
+    find_executable_on_path("ffmpeg")
 }
 
 fn ffprobe_binary() -> Option<PathBuf> {
@@ -442,7 +444,23 @@ fn ffprobe_binary() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    Some(PathBuf::from("ffprobe"))
+    find_executable_on_path("ffprobe")
+}
+
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
+}
+
+fn env_flag_enabled(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn should_stage_subnautica2_movie_codec_compat() -> bool {
+    env_flag_enabled(std::env::var("METALSHARP_SUBNAUTICA2_TRANSCODE_MOVIES").ok().as_deref())
 }
 
 fn ffmpeg_has_encoder(ffmpeg: &Path, encoder: &str) -> bool {
@@ -594,6 +612,15 @@ fn stage_subnautica2_movie_codec_compat(game_dir: &Path) -> Result<(), Box<dyn s
     marker_text.push_str(&format!("already_compatible={}\n", skipped.len()));
     std::fs::write(marker, marker_text)?;
     Ok(())
+}
+
+fn write_subnautica2_movie_compat_status(game_dir: &Path, status: &str, detail: &str) -> std::io::Result<()> {
+    let marker_dir = game_dir.join(".metalsharp").join("media");
+    std::fs::create_dir_all(&marker_dir)?;
+    std::fs::write(
+        marker_dir.join("subnautica2-h264-movies-v1.status"),
+        format!("status={}\ndetail={}\n", status, detail.replace('\n', " ")),
+    )
 }
 
 fn wine_user_dirs(prefix: &Path) -> Vec<PathBuf> {
@@ -2422,6 +2449,16 @@ mod tests {
         assert_eq!(movies[1].file_name().unwrap().to_string_lossy(), "a.MP4");
         assert_eq!(movies[2].file_name().unwrap().to_string_lossy(), "c.mov");
         let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn subnautica_movie_transcode_flag_is_explicit_opt_in() {
+        for value in [None, Some(""), Some("0"), Some("false"), Some("off"), Some("no")] {
+            assert!(!env_flag_enabled(value));
+        }
+        for value in [Some("1"), Some("true"), Some("TRUE"), Some("yes"), Some("on")] {
+            assert!(env_flag_enabled(value));
+        }
     }
 
     #[test]
