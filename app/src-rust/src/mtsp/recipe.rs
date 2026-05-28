@@ -609,6 +609,7 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M10, super::pe::D3dApi::D3D10)
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
+            | (PipelineId::M13, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }
@@ -667,6 +668,8 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("crashhandler")
         && !lower.contains("server")
         && !lower.contains("steamwebhelper")
+        && !lower.contains("start_protected")
+        && !lower.contains("easyanticheat")
 }
 
 fn score_exe_candidate(path: &Path, name: &str, dir_name: &str) -> i32 {
