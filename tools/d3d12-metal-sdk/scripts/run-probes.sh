@@ -713,7 +713,7 @@ fi
 
 mkdir -p "$SDK_DIR/out/bin"
 
-for dll in d3d12.dll dxgi.dll d3d11.dll d3d10core.dll winemetal.dll; do
+for dll in d3d12.dll dxgi.dll dxgi_dxmt.dll d3d11.dll d3d10core.dll winemetal.dll; do
   if [[ ! -f "$WINDOWS_DIR/$dll" ]]; then
     echo "Missing DXMT Windows runtime DLL: $WINDOWS_DIR/$dll" >&2
     exit 2
