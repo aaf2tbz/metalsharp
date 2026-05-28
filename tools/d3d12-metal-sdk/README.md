@@ -91,6 +91,7 @@ probe, and comparison sequence:
 
 ```bash
 tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py --profile metalsharp
 python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
 python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --profile metalsharp
 tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
