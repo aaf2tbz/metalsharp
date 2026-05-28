@@ -25,18 +25,14 @@
       "tier": "required"
     },
     "D3D12_FEATURE_D3D12_OPTIONS1": {
-      "probe": "tools/d3d12-metal-sdk/probes/probe_device_caps",
-      "reported": "supported",
+      "probe": "tools/d3d12-metal-sdk/probes/probe_wave_ops",
+      "reported": "partial",
       "required_fields": [
-        "WaveOps",
-        "WaveLaneCountMin",
-        "WaveLaneCountMax",
         "Int64ShaderOps"
       ],
-      "risk": "Current Subnautica evidence reports wave ops but atomic64 remains unsupported.",
-      "state": "stub_risky",
-      "tier": "required",
-      "waiver": "waveops_feature_report_partial"
+      "risk": "WaveOps must stay unreported until compute-first DXIL wave probes execute and validate results.",
+      "state": "required",
+      "tier": "required"
     },
     "D3D12_FEATURE_D3D12_OPTIONS11": {
       "probe": "tools/d3d12-metal-sdk/probes/probe_device_caps",

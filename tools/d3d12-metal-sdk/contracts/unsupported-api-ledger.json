@@ -138,12 +138,13 @@
     {
       "api": "D3D12 WaveOps feature report",
       "evidence": [
-        "tools/d3d12-metal-sdk/contracts/risky-stub-ledger.json",
-        "tools/d3d12-metal-sdk/contracts/contract-waivers.json"
+        "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+        "tools/d3d12-metal-sdk/probes/probe_wave_ops",
+        "tools/d3d12-metal-sdk/contracts/feature-support-contract.json"
       ],
-      "reason": "WaveOps is a waived partial claim until a real wave-intrinsic execution probe validates behavior.",
-      "state": "waived_partial",
-      "tier": "required"
+      "reason": "The WaveOps audit compiles the compute-first DXIL wave corpus, but wave intrinsic runtime correctness is not proven; the device must report WaveOps false.",
+      "state": "not_reported",
+      "tier": "unsupported"
     },
     {
       "api": "D3D12 Shader Model 6.6 feature report",

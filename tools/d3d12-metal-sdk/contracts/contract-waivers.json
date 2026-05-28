@@ -1,22 +1,5 @@
 {
   "schema": "metalsharp.d3d12-metal.contract-waivers.v1",
   "purpose": "Track explicit temporary waivers for risky D3D12 capability claims that are only partially proven by the current SDK probe suite.",
-  "waivers": [
-    {
-      "id": "waveops_feature_report_partial",
-      "kind": "risky_stub",
-      "target": "D3D12_FEATURE_D3D12_OPTIONS1 WaveOps reports supported",
-      "status": "active",
-      "applies_to_profiles": [
-        "metalsharp"
-      ],
-      "justification": "Phase 4 proves the reported WaveOps fields and Phase 14.14 proves an SM6 DXIL path exists, but no probe yet executes a real wave-intrinsic shader and validates the result.",
-      "expires_when": "A wave-intrinsic shader probe executes successfully and validates output.",
-      "evidence": [
-        "tools/d3d12-metal-sdk/results/probe-device-caps-metalsharp.json",
-        "tools/d3d12-metal-sdk/results/probe-shaders-metalsharp.json",
-        "tools/d3d12-metal-sdk/results/probe-dxil-semantics-metalsharp.json"
-      ]
-    }
-  ]
+  "waivers": []
 }

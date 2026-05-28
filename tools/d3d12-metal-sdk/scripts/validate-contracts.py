@@ -125,7 +125,7 @@ def validate_feature_support(path: Path, data: dict[str, Any], waiver_ids: set[s
 
 def validate_waivers(path: Path, data: dict[str, Any], errors: list[str]) -> None:
     waivers = data.get("waivers")
-    require(isinstance(waivers, list) and len(waivers) > 0, f"{path}: waivers must be non-empty", errors)
+    require(isinstance(waivers, list), f"{path}: waivers must be a list", errors)
     if isinstance(waivers, list):
         for i, waiver in enumerate(waivers):
             require(isinstance(waiver, dict), f"{path}: waivers[{i}] must be object", errors)

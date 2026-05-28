@@ -25,6 +25,8 @@ REQUIRED_PROBES = [
     "probe-shaders",
     "probe-dxil-semantics",
     "probe-sm66-capabilities",
+    "probe-wave-ops",
+    "probe-reflection-abi",
     "probe-queues",
     "probe-graphics-pso",
     "probe-compute-pso",
@@ -174,6 +176,7 @@ def check_unsupported(results: dict[str, dict[str, Any]], ledger: dict[str, Any]
         "D3D12 ray tracing tiers": advanced.get("raytracing_tier"),
         "D3D12 mesh shader tiers": advanced.get("mesh_shader_tier"),
         "D3D12 sampler feedback tier": advanced.get("sampler_feedback_tier"),
+        "D3D12 WaveOps feature report": 1 if get_nested(device_caps, "options1", "wave_ops") else 0,
     }
 
     issues: list[Issue] = []
@@ -213,6 +216,8 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     shader_probe = results["probe-shaders"]
     dxil_semantics_probe = results["probe-dxil-semantics"]
     sm66_probe = results["probe-sm66-capabilities"]
+    wave_probe = results["probe-wave-ops"]
+    reflection_probe = results["probe-reflection-abi"]
 
     issues: list[Issue] = []
     summary: list[dict[str, Any]] = []
@@ -300,12 +305,16 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
     options1_contract = features.get("D3D12_FEATURE_D3D12_OPTIONS1", {})
     options1 = get_nested(device_caps, "options1") or {}
     missing = [field for field in options1_contract.get("required_fields", []) if not field_to_options1_value(options1, field)]
-    compliant = not missing
+    waveops_reported = bool(options1.get("wave_ops"))
+    waveops_reportable = bool(get_nested(wave_probe, "summary", "waveops_reportable"))
+    compliant = not missing and (not waveops_reported or waveops_reportable)
     summary.append(
         {
             "feature": "D3D12_FEATURE_D3D12_OPTIONS1",
             "state": options1_contract.get("state"),
             "missing_fields": missing,
+            "waveops_reported": waveops_reported,
+            "waveops_reportable": waveops_reportable,
             "compliant": compliant,
         }
     )
@@ -314,8 +323,40 @@ def check_feature_contract(results: dict[str, dict[str, Any]], contract: dict[st
             Issue(
                 "error",
                 "feature_support",
-                "D3D12 options1 contract is missing required fields",
-                f"Missing fields: {', '.join(missing)}.",
+                "D3D12 options1 contract is missing required fields or advertises unproven WaveOps",
+                f"Missing fields: {', '.join(missing)}; WaveOps reported `{waveops_reported}` reportable `{waveops_reportable}`.",
+            )
+        )
+
+    reflection_ok = bool(get_nested(reflection_probe, "summary", "reflected_bindings_match_root_signature")) and bool(
+        get_nested(reflection_probe, "summary", "negative_mismatch_failures_deterministic")
+    )
+    summary.append(
+        {
+            "feature": "D3D12_SHADER_REFLECTION_DESCRIPTOR_ABI",
+            "state": "required",
+            "reflected_bindings_match_root_signature": bool(
+                get_nested(reflection_probe, "summary", "reflected_bindings_match_root_signature")
+            ),
+            "descriptor_table_indexing_validated": bool(
+                get_nested(reflection_probe, "summary", "descriptor_table_indexing_validated")
+            ),
+            "graphics_compute_same_descriptor_abi": bool(
+                get_nested(reflection_probe, "summary", "graphics_compute_same_descriptor_abi")
+            ),
+            "negative_mismatch_failures_deterministic": bool(
+                get_nested(reflection_probe, "summary", "negative_mismatch_failures_deterministic")
+            ),
+            "compliant": reflection_ok,
+        }
+    )
+    if not reflection_ok:
+        issues.append(
+            Issue(
+                "error",
+                "feature_support",
+                "Shader reflection descriptor ABI is not proven",
+                "Expected primary compiler reflection to match root signature bindings with deterministic mismatch diagnostics.",
             )
         )
 
@@ -398,10 +439,10 @@ def risky_status(target: str, results: dict[str, dict[str, Any]]) -> RiskStatus:
         used = bool(get_nested(device_caps, "options1", "wave_ops"))
         if not used:
             return RiskStatus("not_used", "Profile does not advertise WaveOps.")
-        wave_probe_hr = str(get_nested(shader_probe, "compile", "ps_6_0_wave_probe") or "")
-        if wave_probe_hr == "0x00000000":
-            return RiskStatus("covered", "A wave-capable shader compile path is explicitly proven.")
-        return RiskStatus("waiver_required", "WaveOps is advertised, but no probe yet executes and validates a wave-intrinsic shader path.")
+        wave_probe = results["probe-wave-ops"]
+        if bool(get_nested(wave_probe, "summary", "waveops_reportable")):
+            return RiskStatus("covered", "WaveOps is probe-covered without known runtime gaps.")
+        return RiskStatus("failed", "WaveOps is advertised, but the WaveOps audit is not reportable.")
 
     if target == "IDXGIFactory7 RegisterAdaptersChangedEvent":
         observed = str(get_nested(dxgi_probe, "edge_cases", "RegisterAdaptersChangedEvent") or "")

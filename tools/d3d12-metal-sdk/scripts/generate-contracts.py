@@ -152,13 +152,12 @@ def feature_support_contract() -> dict[str, Any]:
                 "risk": "Over-reporting can push games into unimplemented render paths.",
             },
             "D3D12_FEATURE_D3D12_OPTIONS1": {
-                "state": "stub_risky",
+                "state": "required",
                 "tier": "required",
-                "reported": "supported",
-                "probe": "tools/d3d12-metal-sdk/probes/probe_device_caps",
-                "waiver": "waveops_feature_report_partial",
-                "required_fields": ["WaveOps", "WaveLaneCountMin", "WaveLaneCountMax", "Int64ShaderOps"],
-                "risk": "Current Subnautica evidence reports wave ops but atomic64 remains unsupported.",
+                "reported": "partial",
+                "probe": "tools/d3d12-metal-sdk/probes/probe_wave_ops",
+                "required_fields": ["Int64ShaderOps"],
+                "risk": "WaveOps must stay unreported until compute-first DXIL wave probes execute and validate results.",
             },
             "D3D12_FEATURE_D3D12_OPTIONS9": {
                 "state": "stub_safe",
@@ -340,10 +339,14 @@ def unsupported_ledger() -> dict[str, Any]:
             },
             {
                 "api": "D3D12 WaveOps feature report",
-                "state": "waived_partial",
-                "tier": "required",
-                "reason": "WaveOps is a waived partial claim until a real wave-intrinsic execution probe validates behavior.",
-                "evidence": ["tools/d3d12-metal-sdk/contracts/risky-stub-ledger.json", "tools/d3d12-metal-sdk/contracts/contract-waivers.json"],
+                "state": "not_reported",
+                "tier": "unsupported",
+                "reason": "The WaveOps audit compiles the compute-first DXIL wave corpus, but wave intrinsic runtime correctness is not proven; the device must report WaveOps false.",
+                "evidence": [
+                    "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+                    "tools/d3d12-metal-sdk/probes/probe_wave_ops",
+                    "tools/d3d12-metal-sdk/contracts/feature-support-contract.json",
+                ],
             },
             {
                 "api": "D3D12 Shader Model 6.6 feature report",
@@ -365,13 +368,6 @@ def risky_stub_ledger() -> dict[str, Any]:
         "schema": "metalsharp.d3d12-metal.risky-stub-ledger.v1",
         "purpose": "Track startup-unblocking behavior that must be replaced or proven before broad compatibility claims.",
         "entries": [
-            {
-                "api": "D3D12_FEATURE_D3D12_OPTIONS1 WaveOps reports supported",
-                "state": "stub_risky",
-                "tier": "required",
-                "risk": "Wave intrinsic support must be verified through shader probes, not only feature reports.",
-                "next_probe": "tools/d3d12-metal-sdk/probes/probe_device_caps",
-            },
             {
                 "api": "IDXGIFactory7 RegisterAdaptersChangedEvent",
                 "state": "stub_risky",

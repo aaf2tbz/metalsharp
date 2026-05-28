@@ -117,6 +117,14 @@ build_probe \
   -o "$OUT_DIR/probe_sm66_capabilities.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_wave_ops/probe_wave_ops.cpp" \
+  -o "$OUT_DIR/probe_wave_ops.exe"
+
+build_probe \
+  "$SDK_DIR/probes/probe_reflection_abi/probe_reflection_abi.cpp" \
+  -o "$OUT_DIR/probe_reflection_abi.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_graphics_pso/probe_graphics_pso.cpp" \
   -o "$OUT_DIR/probe_graphics_pso.exe"
 
@@ -186,6 +194,8 @@ echo "$OUT_DIR/probe_descriptors.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
 echo "$OUT_DIR/probe_sm66_capabilities.exe"
+echo "$OUT_DIR/probe_wave_ops.exe"
+echo "$OUT_DIR/probe_reflection_abi.exe"
 echo "$OUT_DIR/probe_graphics_pso.exe"
 echo "$OUT_DIR/probe_compute_pso.exe"
 echo "$OUT_DIR/probe_command_replay.exe"
