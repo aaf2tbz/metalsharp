@@ -847,6 +847,17 @@ fn agility_bin_matches(dir: &Path, required_version: Option<u32>) -> bool {
 }
 
 fn fetch_agility_sdk_bin(home: &Path, package_version: &str, required_version: Option<u32>) -> Option<PathBuf> {
+    if let Some(path) = fetch_agility_sdk_bin_with_script(home, package_version, required_version) {
+        return Some(path);
+    }
+    fetch_agility_sdk_bin_native(home, package_version, required_version).ok()
+}
+
+fn fetch_agility_sdk_bin_with_script(
+    home: &Path,
+    package_version: &str,
+    required_version: Option<u32>,
+) -> Option<PathBuf> {
     let script = find_agility_fetch_script(home)?;
     let output = std::process::Command::new("bash").arg(&script).arg("--version").arg(package_version).output().ok()?;
     if !output.status.success() {
@@ -857,11 +868,89 @@ fn fetch_agility_sdk_bin(home: &Path, package_version: &str, required_version: O
         .map(str::trim)
         .rfind(|line| !line.is_empty())
         .map(PathBuf::from)?;
-    if agility_bin_matches(&path, required_version) {
-        Some(path)
-    } else {
-        None
+    agility_bin_matches(&path, required_version).then_some(path)
+}
+
+fn fetch_agility_sdk_bin_native(
+    home: &Path,
+    package_version: &str,
+    required_version: Option<u32>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let package_dir = agility_user_package_dir(home, package_version);
+    let bin_dir = package_dir.join("build").join("native").join("bin").join("x64");
+    if agility_bin_matches(&bin_dir, required_version) {
+        return Ok(bin_dir);
     }
+
+    let download_dir = home.join(".metalsharp").join("cache").join("downloads");
+    std::fs::create_dir_all(&download_dir)?;
+    let package_file = download_dir.join(format!("Microsoft.Direct3D.D3D12.{}.nupkg", package_version));
+    download_agility_package(package_version, &package_file)?;
+    extract_agility_package(&package_file, &package_dir)?;
+
+    if agility_bin_matches(&bin_dir, required_version) {
+        Ok(bin_dir)
+    } else {
+        Err(format!("Agility package {} did not contain matching x64 payload", package_version).into())
+    }
+}
+
+fn download_agility_package(package_version: &str, package_file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/{}", package_version);
+    let config =
+        ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION"))).build();
+    let agent = ureq::Agent::new_with_config(config);
+    let resp = agent.get(&url).call().map_err(|err| format!("Agility SDK download failed: {}", err))?;
+    let tmp_file = package_file.with_extension("nupkg.tmp");
+    let mut input = resp.into_body().into_reader();
+    let mut output = std::fs::File::create(&tmp_file)?;
+    std::io::copy(&mut input, &mut output)?;
+    std::fs::rename(tmp_file, package_file)?;
+    Ok(())
+}
+
+fn extract_agility_package(package_file: &Path, package_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(package_file)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let tmp_dir = package_dir.with_extension("extracting");
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir)?;
+    }
+    std::fs::create_dir_all(&tmp_dir)?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(enclosed) = entry.enclosed_name().map(PathBuf::from) else {
+            continue;
+        };
+        if !is_agility_runtime_payload(&enclosed) {
+            continue;
+        }
+        let dest = tmp_dir.join(enclosed);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dest)?;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&dest)?;
+        std::io::copy(&mut entry, &mut out)?;
+    }
+
+    if package_dir.exists() {
+        std::fs::remove_dir_all(package_dir)?;
+    }
+    std::fs::rename(tmp_dir, package_dir)?;
+    Ok(())
+}
+
+fn is_agility_runtime_payload(path: &Path) -> bool {
+    let mut parts = path.iter().filter_map(|part| part.to_str());
+    matches!(parts.next(), Some("build"))
+        && matches!(parts.next(), Some("native"))
+        && matches!(parts.next(), Some("bin"))
+        && matches!(parts.next(), Some("x64"))
 }
 
 fn find_agility_fetch_script(home: &Path) -> Option<PathBuf> {
@@ -905,6 +994,8 @@ fn push_agility_script_candidates(candidates: &mut Vec<PathBuf>, start: &Path) {
 }
 
 fn push_cached_agility_package_candidates(candidates: &mut Vec<PathBuf>, home: &Path, package_version: &str) {
+    candidates
+        .push(agility_user_package_dir(home, package_version).join("build").join("native").join("bin").join("x64"));
     candidates.push(
         home.join("Dev")
             .join("metalsharp")
@@ -918,6 +1009,10 @@ fn push_cached_agility_package_candidates(candidates: &mut Vec<PathBuf>, home: &
             .join("bin")
             .join("x64"),
     );
+}
+
+fn agility_user_package_dir(home: &Path, package_version: &str) -> PathBuf {
+    home.join(".metalsharp").join("runtime").join("redist").join("agility").join(package_version)
 }
 
 fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
@@ -1596,4 +1691,40 @@ fn check_brew(formula: &str) -> bool {
 fn check_rosetta() -> bool {
     PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
         || std::process::Command::new("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agility_cache_candidates_include_user_runtime_redist() {
+        let home = PathBuf::from("/Users/tester");
+        let mut candidates = Vec::new();
+        push_cached_agility_package_candidates(&mut candidates, &home, "1.614.1");
+
+        assert_eq!(
+            candidates.first(),
+            Some(
+                &home
+                    .join(".metalsharp")
+                    .join("runtime")
+                    .join("redist")
+                    .join("agility")
+                    .join("1.614.1")
+                    .join("build")
+                    .join("native")
+                    .join("bin")
+                    .join("x64")
+            )
+        );
+    }
+
+    #[test]
+    fn agility_package_extraction_keeps_runtime_bin_payloads_only() {
+        assert!(is_agility_runtime_payload(Path::new("build/native/bin/x64/D3D12Core.dll")));
+        assert!(!is_agility_runtime_payload(Path::new("build/native/bin/win32/D3D12Core.dll")));
+        assert!(!is_agility_runtime_payload(Path::new("build/native/include/d3d12.h")));
+        assert!(!is_agility_runtime_payload(Path::new("../build/native/bin/x64/D3D12Core.dll")));
+    }
 }
