@@ -86,6 +86,79 @@ semantic corpus, run:
 tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
 ```
 
+For the final strict D3D12 SDK gate, run the full rebuild, contract, layout,
+probe, and comparison sequence:
+
+```bash
+tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
+python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --profile metalsharp
+tools/d3d12-metal-sdk/scripts/run-probes.sh --profile metalsharp
+python3 tools/d3d12-metal-sdk/scripts/compare-contract.py --profile metalsharp
+python3 tools/d3d12-metal-sdk/scripts/validate-probe-matrix.py
+```
+
+The strict gate is the merge authority for the SDK. It does not require a game
+launch or a title capture. Captures from Subnautica-class titles remain useful
+diagnostics, but they cannot replace probe results or contract fields.
+
+The current honest shader feature posture is:
+
+- `dxil_to_msl_proven: true`: the primary DXIL path produces reloadable Metal
+  shader artifacts through the Metal Shader Converter / Metal IR cache path.
+- `dxil_semantics_proven: true`: the reduced SM6 opcode groups execute through
+  D3D12 and validate UAV readbacks.
+- `synthetic_shader_corpus_proven: true`: the required synthetic shader corpus
+  covers SM5 baseline, SM6 progression, resources, UAV writes, typed and
+  structured buffers, texture sampling, root constants, WaveOps compile/link
+  gating, and unsupported feature rejection.
+- Shader Model 6.5 is the reported compliant shader model.
+- Shader Model 6.6 is not reported until the SM 6.6 probe corpus proves the
+  required compile, link, reflection, binding, and runtime behavior.
+- WaveOps are not reported until `probe-wave-ops` proves the runtime behavior
+  that feature reporting would advertise.
+
+`dxil_semantics_proven` is supporting evidence only. It must not substitute for
+`dxil_to_msl_proven`, and the contract comparator fails if shader compliance
+depends only on semantic coverage.
+
+The default required probe groups prove:
+
+- `probe-loader`: the Wine process resolves the intended DXMT D3D12/DXGI route.
+- `probe-agility-ue5`: app-local Agility SDK negotiation and modern device
+  interface behavior.
+- `probe-device-caps`: feature reporting, unsupported advanced features, and
+  conservative capability denial.
+- `probe-dxgi-factory`: factory, adapter, output, GPU-preference, and LUID
+  behavior.
+- `probe-resources`: committed resources, heaps, upload/readback, and basic
+  resource behavior.
+- `probe-queues`: command queue and fence execution.
+- `probe-descriptors`: descriptor heaps, root signatures, descriptor copies,
+  static samplers, and null descriptors.
+- `probe-shaders`: shader entry points, root signatures, argument binding, and
+  primary DXIL-to-MSL proof.
+- `probe-dxil-semantics`: reduced SM6 opcode semantics with runtime readback.
+- `probe-shader-corpus`: the permanent synthetic shader proof harness.
+- `probe-sm66-capabilities`: SM 6.6 audit and reporting denial/proof.
+- `probe-wave-ops`: WaveOps audit and reporting denial/proof.
+- `probe-reflection-abi`: reflected shader bindings against the descriptor and
+  root-signature ABI.
+- `probe-graphics-pso`: graphics PSO matrix behavior and unsupported-stage
+  rejection.
+- `probe-compute-pso`: compute PSO matrix behavior.
+- `probe-command-replay`: command-list, indirect, bundle, and replay behavior.
+- `probe-barriers-render-pass`: barrier, render-pass, UAV, present, and
+  readback visibility.
+- `probe-resource-views-formats`: resource/view/format coverage.
+- `probe-mini-suite`: focused one-purpose D3D12 runtime mini-apps.
+
+During warmup passes, `compiler_primary_cache_miss` can appear while the probe
+is intentionally dumping cache inputs for conversion. Treat it as a failure only
+when it appears in the final required pass or when `compare-contract.py` reports
+that `dxil_to_msl_proven` is false. The final comparator is the stable summary:
+it must report `pass: true`, `issues: 0`, and all required probes passing.
+
 Windowed present and indexed-texture headless render checks are useful
 diagnostics, but they are not hard gates in the default matrix. Enable the
 headless render proof explicitly when investigating render output:
