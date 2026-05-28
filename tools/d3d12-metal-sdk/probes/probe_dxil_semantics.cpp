@@ -312,12 +312,12 @@ static CaseResult run_case(ID3D12Device* device, const SemanticCase& semantic_ca
     ID3D12Resource* readback = nullptr;
 
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
-    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     hr = device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue));
     if (SUCCEEDED(hr))
-        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator));
+        hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
     if (SUCCEEDED(hr))
-        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, allocator, nullptr, IID_PPV_ARGS(&list));
+        hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&list));
     if (SUCCEEDED(hr)) {
         D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -473,7 +473,10 @@ int main() {
     std::printf("  ]\n");
     std::printf("}\n");
 
-    safe_release(device);
     std::fflush(stdout);
+    // Wine/MinGW can assert during late CRT condition-variable teardown after
+    // the DXMT worker stack has already produced the contract JSON.
+    TerminateProcess(GetCurrentProcess(), ok ? 0u : 3u);
+    safe_release(device);
     return 0;
 }
