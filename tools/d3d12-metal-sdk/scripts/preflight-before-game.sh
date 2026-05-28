@@ -85,10 +85,11 @@ fi
 python3 "$SDK_DIR/scripts/preflight-runtime-layout.py" "${RUNTIME_ARGS[@]}"
 
 if [[ "$RUN_PROBES" == "1" ]]; then
-  "$SDK_DIR/scripts/run-probes.sh" \
-    --profile metalsharp \
-    --results-dir "$RESULTS_DIR" \
-    --no-windowed-present
+  PROBE_ARGS=(--profile metalsharp --results-dir "$RESULTS_DIR" --no-windowed-present)
+  if [[ -n "$GAME_DIR" ]]; then
+    PROBE_ARGS+=(--game-dir "$GAME_DIR")
+  fi
+  "$SDK_DIR/scripts/run-probes.sh" "${PROBE_ARGS[@]}"
 fi
 
 REPLAY_ARGS=(--profile "$PROFILE" --results-dir "$RESULTS_DIR")
