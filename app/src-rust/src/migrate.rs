@@ -367,7 +367,8 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp = std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}", std::process::id()));
+    let tmp =
+        std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{}", std::process::id(), temp_suffix()));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
@@ -426,6 +427,10 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         bottles_tmp,
         compatdata_tmp,
     }
+}
+
+fn temp_suffix() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
