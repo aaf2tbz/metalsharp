@@ -22,6 +22,7 @@ struct MSLShader {
   uint32_t num_samplers = 0;
   uint32_t unsupported_intrinsics = 0;
   uint32_t unsupported_opcodes = 0;
+  uint32_t unresolved_ssa_count = 0;
   std::vector<std::string> diagnostics;
 };
 

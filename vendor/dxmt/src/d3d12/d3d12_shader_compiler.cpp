@@ -175,6 +175,7 @@ std::string BuildCompileReport(const D3D12ShaderCompileRequest &request,
   text += str::format("unsupported_intrinsics=", msl.unsupported_intrinsics,
                       "\n");
   text += str::format("unsupported_opcodes=", msl.unsupported_opcodes, "\n");
+  text += str::format("unresolved_ssa_count=", msl.unresolved_ssa_count, "\n");
   text += str::format("dxbc=", request.paths.dxbc, "\n");
   text += str::format("module=", request.paths.module_summary, "\n");
   text += str::format("msl=", request.paths.msl, "\n");
@@ -288,6 +289,12 @@ DebugMSLEmitterBackend::Compile(const D3D12ShaderCompileRequest &request) {
         str::format("DXILToMSL rejected unsupported semantics: intrinsics=",
                     msl->unsupported_intrinsics, " opcodes=",
                     msl->unsupported_opcodes, "\n");
+    return output;
+  }
+  if (msl->unresolved_ssa_count > 0) {
+    output.diagnostics =
+        str::format("DXILToMSL rejected unresolved SSA references: count=",
+                    msl->unresolved_ssa_count, "\n");
     return output;
   }
   for (const auto &diagnostic : msl->diagnostics) {

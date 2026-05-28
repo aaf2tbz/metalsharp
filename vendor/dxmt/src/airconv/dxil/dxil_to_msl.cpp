@@ -3845,10 +3845,26 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   case LLVMInstruction::PHI: {
     std::string expr;
     if (!inst.operands.empty()) {
-      expr = resolvedExpr(resolvedExpr, inst.operands[0], 0);
-      if (isFunctionLikeSymbol(expr))
+      for (size_t pi = 0; pi + 1 < inst.operands.size() && expr.empty(); pi += 2) {
+        uint32_t incoming_val = inst.operands[pi];
+        bool incoming_emitted = ctx.emitted_values.find(incoming_val) != ctx.emitted_values.end();
+        if (incoming_val < ctx.value_expr_table.size() && !ctx.value_expr_table[incoming_val].empty()) {
+          uint32_t alias_idx = 0;
+          if (parseSSAName(ctx.value_expr_table[incoming_val], alias_idx))
+            incoming_emitted = incoming_emitted || ctx.emitted_values.find(alias_idx) != ctx.emitted_values.end();
+        }
+        if (incoming_emitted || incoming_val < ctx.value_table.size()) {
+          std::string candidate = resolvedExpr(resolvedExpr, incoming_val, 0);
+          if (!isFunctionLikeSymbol(candidate)) {
+            expr = candidate;
+          }
+        }
+      }
+      if (expr.empty()) {
         expr = defaultValueForTypeId(inst.type_id, ctx.mod);
-      os << "  auto " << result << " = " << expr << "; // phi first incoming\n";
+        recordDiagnostic(ctx, "DXIL PHI has no emitted incoming value for v%u, using default", result_slot);
+      }
+      os << "  auto " << result << " = " << expr << "; // phi\n";
     } else {
       expr = "0";
       os << "  auto " << result << " = 0; // empty phi\n";
@@ -4212,10 +4228,11 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   result.tg_size[2] = 1;
   result.unsupported_intrinsics = ctx.unsupported_intrinsics;
   result.unsupported_opcodes = ctx.unsupported_opcodes;
+  result.unresolved_ssa_count = static_cast<uint32_t>(unresolved_ssa.size());
   result.diagnostics = ctx.diagnostics;
 
-  DXTRACE("DXILToMSL: generated %zu bytes of MSL unsupported_intrinsics=%u unsupported_opcodes=%u",
-          result.source.size(), ctx.unsupported_intrinsics, ctx.unsupported_opcodes);
+  DXTRACE("DXILToMSL: generated %zu bytes of MSL unsupported_intrinsics=%u unsupported_opcodes=%u unresolved_ssa=%u",
+          result.source.size(), ctx.unsupported_intrinsics, ctx.unsupported_opcodes, result.unresolved_ssa_count);
 
   return result;
 }

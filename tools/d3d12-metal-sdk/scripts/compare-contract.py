@@ -645,12 +645,31 @@ def main() -> int:
     issues.extend(risky_issues)
 
     native_issues, native_entries = check_native_metal_coverage(
-        [
-            ("d3d12-metal-contract.json", d3d12_contract),
-            ("feature-support-contract.json", feature_support),
-        ]
+            [
+                ("d3d12-metal-contract.json", d3d12_contract),
+                ("feature-support-contract.json", feature_support),
+            ]
     )
     issues.extend(native_issues)
+
+    manifest_path = contracts_dir / "dxmt-runtime-manifest.json"
+    manifest_issue = None
+    if manifest_path.exists():
+        manifest = load_json(manifest_path)
+        artifacts = manifest.get("artifacts", {})
+        zero_hash = "0" * 64
+        placeholder = all(
+            entry.get("sha256", "") == zero_hash for entry in artifacts.values()
+        )
+        if placeholder:
+            manifest_issue = Issue(
+                "error",
+                "runtime_manifest",
+                "DXMT runtime manifest contains placeholder hashes",
+                "Regenerate manifest from a coherent DXMT build: verify-runtime-manifest.py --generate",
+            )
+            issues.append(manifest_issue)
+    manifest_summary = {"checked": manifest_path.exists(), "placeholder": manifest_issue is not None}
 
     summary = {
         "schema": "metalsharp.d3d12-metal.contract-comparison.v1",
@@ -665,6 +684,7 @@ def main() -> int:
         "feature_checks": feature_summary,
         "risky_stub_checks": risky_summary,
         "native_metal_entries": native_entries,
+        "runtime_manifest": manifest_summary,
         "issues": [issue.__dict__ for issue in issues],
     }
 
