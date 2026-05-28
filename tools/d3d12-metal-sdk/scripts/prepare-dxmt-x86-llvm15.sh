@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 DXMT_DIR="${ROOT_DIR}/vendor/dxmt"
 BUILD_DIR="${DXMT_DIR}/build-metalsharp-x64"
+WINE_ROOT="${METALSHARP_WINE_ROOT:-${HOME}/.metalsharp/runtime/wine}"
 TOOLCHAIN_ROOT="${METALSHARP_X86_LLVM_ROOT:-/Volumes/AverySSD/toolchains}"
 LLVM_NAME="clang+llvm-15.0.7-x86_64-apple-darwin21.0"
 LLVM_DIR="${TOOLCHAIN_ROOT}/${LLVM_NAME}"
@@ -24,8 +25,36 @@ if ! file "${LLVM_DIR}/bin/llvm-config" | grep -q 'x86_64'; then
   exit 1
 fi
 
-meson setup "${BUILD_DIR}" "${DXMT_DIR}" --reconfigure \
-  -Dnative_llvm_path="${LLVM_DIR}"
+if [[ ! -x "${WINE_ROOT}/bin/winebuild" ]]; then
+  echo "error: ${WINE_ROOT}/bin/winebuild not found; install the MetalSharp Wine runtime first" >&2
+  exit 1
+fi
+
+if [[ -f "${BUILD_DIR}/meson-info/intro-machines.json" ]] &&
+  ! python3 - "${BUILD_DIR}/meson-info/intro-machines.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    machines = json.load(handle)
+host = machines.get("host", {})
+raise SystemExit(0 if host.get("system") == "windows" and host.get("cpu_family") == "x86_64" else 1)
+PY
+then
+  rm -rf "${BUILD_DIR}"
+fi
+
+if [[ -f "${BUILD_DIR}/build.ninja" ]]; then
+  meson setup "${BUILD_DIR}" "${DXMT_DIR}" --reconfigure \
+    --cross-file "${DXMT_DIR}/build-win64.txt" \
+    -Dnative_llvm_path="${LLVM_DIR}" \
+    -Dwine_install_path="${WINE_ROOT}"
+else
+  meson setup "${BUILD_DIR}" "${DXMT_DIR}" \
+    --cross-file "${DXMT_DIR}/build-win64.txt" \
+    -Dnative_llvm_path="${LLVM_DIR}" \
+    -Dwine_install_path="${WINE_ROOT}"
+fi
 
 ninja -C "${BUILD_DIR}" \
   src/dxgi/dxgi.dll \
