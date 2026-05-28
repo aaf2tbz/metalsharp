@@ -565,6 +565,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
             }
         }
 
+        ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
         write_dxmt_runtime_manifest(&dxmt_dir, "bundled:dxmt.tar.zst")?;
         let _ = fs::remove_dir_all(&tmp);
     } else {
@@ -582,6 +583,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
                     }
                 }
             }
+            ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
             write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
@@ -590,7 +592,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err(format!(
-            "DXMT Metal runtime {} not installed — bundle dxmt.tar.zst or place files in ~/metalsharp/runtime/dxmt/",
+            "DXMT Metal runtime {} not installed — bundle dxmt.tar.zst or place files in ~/.metalsharp/runtime/dxmt/",
             DXMT_BUNDLED_RUNTIME_VERSION
         ))
     }
@@ -654,6 +656,20 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
     });
     fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
         .map_err(|e| format!("write DXMT runtime manifest: {}", e))
+}
+
+fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
+    let pe_dir = dxmt_dir.join("x86_64-windows");
+    let dxgi = pe_dir.join("dxgi.dll");
+    let dxgi_dxmt = pe_dir.join("dxgi_dxmt.dll");
+
+    if !file_nonempty(&dxgi_dxmt) && file_nonempty(&dxgi) {
+        fs::copy(&dxgi, &dxgi_dxmt).map_err(|e| {
+            format!("copy legacy DXMT dxgi.dll to dxgi_dxmt.dll: {} -> {}: {}", dxgi.display(), dxgi_dxmt.display(), e)
+        })?;
+    }
+
+    Ok(())
 }
 
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
@@ -1349,6 +1365,31 @@ mod tests {
             .expect("write stale manifest");
         assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
 
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_install_normalizes_legacy_bundle_dxgi_bridge() {
+        let home = test_home("dxmt-legacy-dxgi-bridge");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        let unix_dir = dxmt_dir.join("x86_64-unix");
+        let pe_dir = dxmt_dir.join("x86_64-windows");
+        fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
+        fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
+        fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        for dll in DXMT_REQUIRED_PE.iter().copied().filter(|dll| *dll != "dxgi_dxmt.dll") {
+            fs::write(pe_dir.join(dll), dll.as_bytes()).expect("write DXMT DLL");
+        }
+
+        assert!(!dxmt_runtime_ready(&dxmt_dir));
+
+        ensure_dxmt_runtime_compat_files(&dxmt_dir).expect("normalize legacy DXMT bundle");
+
+        assert!(dxmt_runtime_ready(&dxmt_dir));
+        assert_eq!(
+            fs::read(pe_dir.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"),
+            fs::read(pe_dir.join("dxgi.dll")).expect("read dxgi")
+        );
         let _ = fs::remove_dir_all(home);
     }
 
