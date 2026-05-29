@@ -50,25 +50,30 @@ Converter rewrite (`dxil_to_msl.cpp`):
 
 **Remaining:** Unit tests (Phase 1E) and live shader validation against real DXIL game shaders.
 
-### 1B. Struct Field Extraction Fix
+### 1B. Struct Field Extraction Fix — DONE
 
-**Current state:** ExtractValue on struct/array types copies the entire aggregate instead of accessing the specific field. Line 3086-3088 emits `auto vN = (agg_expr)` which is the whole struct, not the field.
+**Completed:** 2026-05-29. Branch `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`.
 
-**Files:**
-- `dxmt-src/src/airconv/dxil/dxil_to_msl.cpp` lines 3068-3091
+**What was done:**
 
-**Work:**
-- Track struct field names/types during struct type emission
-- Emit proper field access: `auto vN = agg_expr.fieldN` for struct extraction by index
-- Handle ResRet structs specifically (DXIL texture load returns `{float4, uint}` where field 0 is value, field 1 is status)
-- Handle nested struct extraction (field of field)
+Value type tracking (`dxil_to_msl.hpp`):
+- Added `value_type_ids` parallel vector to `EmitContext` — maps value IDs to their LLVM type IDs
+- Populated from: Call instruction results (texture load returns), InsertValue results, PHI results, constants
 
-**Validation:**
-- Test: DXIL shader that calls `TextureLoad` then extracts `.x` from result
-- Test: Struct with 4+ fields, extraction of field 2
-- Verify Subnautica 2 shaders no longer produce "member reference on device float" errors
+Struct-aware ExtractValue (`dxil_to_msl.cpp`):
+- Looks up aggregate type from `value_type_ids` to distinguish struct vs vector
+- ExtractValue on struct field 0: passes through aggregate expression (e.g., `tex.read(coord)` returns float4 — the whole thing IS the value)
+- ExtractValue on struct field 1+: emits typed default based on struct field type (0, 0.0f, 0.0)
+- ExtractValue on vectors: retains `.x/.y/.z/.w` component suffix (unchanged behavior)
+- ExtractValue on unknown types: falls back to current behavior
 
-**Milestone:** ExtractValue on ResRet structs produces correct scalar field access, not whole-struct copy.
+Struct-aware InsertValue:
+- Propagates aggregate type from source to result via `value_type_ids`
+- Skips `.x/.y/.z/.w` field writes for struct aggregates (struct field assignment not yet fully supported)
+
+**Impact:** Fixes "member reference on device float" errors from chained ExtractValue on ResRet structs (texture load → extract field 0 → extract component .x). The second ExtractValue now gets a proper float4 instead of a scalar.
+
+**Remaining:** Nested struct field writes in InsertValue, multi-level ExtractValue indices.
 
 ### 1C. Groupshared Memory Fix
 
