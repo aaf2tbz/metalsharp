@@ -96,6 +96,11 @@ static std::optional<std::vector<uint8_t>> extractDXILFromDXBC(const uint8_t *da
     return std::nullopt;
 }
 
+static std::string g_msl_dump_dir;
+static int g_msl_compile_ok = 0;
+static int g_msl_compile_fail = 0;
+static int g_msl_compile_skip = 0;
+
 static bool runConverterTest(const TestCase &tc) {
     auto raw = readBinaryFile(tc.path);
     if (!raw) {
@@ -177,6 +182,20 @@ static bool runConverterTest(const TestCase &tc) {
         snprintf(buf, sizeof(buf), "%u unsupported opcodes", msl->unsupported_opcodes);
     }
 
+    if (!g_msl_dump_dir.empty()) {
+        std::string stem = tc.path;
+        auto slash = stem.rfind('/');
+        if (slash != std::string::npos) stem = stem.substr(slash + 1);
+        auto dot = stem.rfind('.');
+        if (dot != std::string::npos) stem = stem.substr(0, dot);
+        std::string msl_path = g_msl_dump_dir + "/" + stem + ".metal";
+        std::ofstream msl_file(msl_path);
+        if (msl_file.is_open()) {
+            msl_file << msl->source;
+            msl_file.close();
+        }
+    }
+
     report_pass(tc.name);
     return true;
 }
@@ -215,9 +234,18 @@ int main(int argc, char **argv) {
     fprintf(stdout, "=== DXIL Converter Test Suite ===\n\n");
 
     std::string cache_dir;
-    if (argc > 1) {
-        cache_dir = argv[1];
-    } else {
+    bool compile_metal = false;
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--dump-msl" && i + 1 < argc) {
+            g_msl_dump_dir = argv[++i];
+        } else if (arg == "--compile-metal") {
+            compile_metal = true;
+        } else if (cache_dir.empty()) {
+            cache_dir = arg;
+        }
+    }
+    if (cache_dir.empty()) {
         const char *home = getenv("HOME");
         if (home) {
             cache_dir = std::string(home) +
@@ -284,6 +312,28 @@ int main(int argc, char **argv) {
 
     fprintf(stdout, "\n=== Results: %d pass, %d fail, %d skip (total %zu) ===\n",
             g_pass, g_fail, g_skip, tests.size());
+
+    if (compile_metal && !g_msl_dump_dir.empty()) {
+        fprintf(stdout, "\n=== Metal Compilation Test ===\n");
+        fs::create_directories(g_msl_dump_dir + "/errors");
+        for (const auto &entry : fs::directory_iterator(g_msl_dump_dir)) {
+            if (entry.path().extension() != ".metal") continue;
+            auto stem = entry.path().stem().string();
+            std::string cmd = "xcrun -sdk macosx metal -std=metal3.0 -Wno-unused-variable "
+                "-Wno-unused-function -Wno-implicit-function-declaration "
+                "-Wno-incompatible-pointer-types -Wno-int-conversion "
+                "-c " + entry.path().string() + " -o /dev/null 2>" +
+                g_msl_dump_dir + "/errors/" + stem + ".err";
+            int ret = system(cmd.c_str());
+            if (ret == 0) {
+                g_msl_compile_ok++;
+            } else {
+                g_msl_compile_fail++;
+                fprintf(stdout, "  [METAL FAIL] %s\n", stem.c_str());
+            }
+        }
+        fprintf(stdout, "\n=== Metal: %d ok, %d fail ===\n", g_msl_compile_ok, g_msl_compile_fail);
+    }
 
     return g_fail > 0 ? 1 : 0;
 }

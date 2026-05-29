@@ -575,8 +575,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (arg >= args.size())
       return fallback;
     uint32_t idx = args[arg];
-    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-      return ctx.value_table[idx];
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+      const auto &v = ctx.value_table[idx];
+      if (v.find('.') != std::string::npos) return fallback;
+      return v;
+    }
     return fallback;
   };
 
@@ -1137,8 +1140,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   std::string result = emitValue(value_counter);
 
   auto getValue = [&](uint32_t idx) -> std::string {
-    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-      return ctx.value_table[idx];
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+      const auto &v = ctx.value_table[idx];
+      if (v.find('.') != std::string::npos) return emitValue(idx);
+      return v;
+    }
     return emitValue(idx);
   };
 
@@ -1204,13 +1210,17 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         os << "  " << translated << ";\n";
       }
     } else {
-      os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+      ensureValueTable(value_counter);
+      if (inst.type_id != 0) {
+        os << "  auto " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+      } else {
+        os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+      }
       for (size_t i = 0; i < call_args.size(); i++) {
         if (i) os << ", ";
         os << getValue(call_args[i]);
       }
       os << ")\n";
-      ensureValueTable(value_counter);
       ctx.value_table[value_counter] = result;
       ctx.value_type_ids[value_counter] = inst.type_id;
     }
@@ -1519,7 +1529,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       case 14: cmp_str = "true"; break; // UNO (either NaN)
       case 15: cmp_str = "true"; break; // TRUE
       }
-      if (pred == 7) {
+      if (pred == 0) {
+        os << "  auto " << result << " = false; // fcmp false\n";
+      } else if (pred == 15) {
+        os << "  auto " << result << " = true; // fcmp true\n";
+      } else if (pred == 7) {
         os << "  bool " << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << ")); // fcmp ord\n";
       } else if (pred == 14) {
         os << "  bool " << result << " = (isnan(" << lhs << ") || isnan(" << rhs << ")); // fcmp uno\n";
@@ -1703,9 +1717,27 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     if (ctx.value_type_ids.size() <= val_idx)
       ctx.value_type_ids.resize(val_idx + 1, 0);
     if (val_idx < ctx.value_table.size()) {
-      ctx.value_table[val_idx] = module.constants[i].constant_data.empty()
-        ? "const_" + std::to_string(i)
-        : module.constants[i].constant_data;
+      std::string cdata = module.constants[i].constant_data;
+      if (cdata.substr(0, 4) == "agg(") {
+        uint32_t tid = module.constants[i].type_id;
+        std::string args = cdata.substr(4, cdata.size() - 5);
+        if (tid < module.types.size()) {
+          auto &ty = module.types[tid];
+          if (ty.kind == LLVMType::Vector && !ty.subtypes.empty()) {
+            std::string elem = getTypeName(ty.subtypes[0], module);
+            uint32_t count = ty.subtypes[0].bit_width > 0 ? ty.bit_width / ty.subtypes[0].bit_width : 4;
+            ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
+          } else if (ty.kind == LLVMType::Struct) {
+            ctx.value_table[val_idx] = "{" + args + "}";
+          } else {
+            ctx.value_table[val_idx] = cdata;
+          }
+        } else {
+          ctx.value_table[val_idx] = cdata;
+        }
+      } else {
+        ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(i) : cdata;
+      }
       ctx.value_type_ids[val_idx] = module.constants[i].type_id;
     }
   }
@@ -1857,17 +1889,27 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   uint32_t value_counter = fn.instruction_start_value;
 
   auto resolveValue = [&](uint32_t idx) -> std::string {
-    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-      return ctx.value_table[idx];
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+      const auto &v = ctx.value_table[idx];
+      if (v.find('.') != std::string::npos) return emitValue(idx);
+      return v;
+    }
     return emitValue(idx);
   };
 
-  // Emit blocks with CFG-based control flow
+  // Emit blocks with switch-based state machine (Metal doesn't support goto)
+  bool needs_dispatch = fn.blocks.size() > 1;
+  if (needs_dispatch) {
+    os << "  int _block_state = 0;\n";
+    os << "  for (;;) {\n";
+    os << "    switch (_block_state) {\n";
+  }
+
   for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
     auto &block = fn.blocks[bi];
 
-    if (bi > 0) {
-      os << "bb" << bi << ":;\n";
+    if (needs_dispatch) {
+      os << "    case " << bi << ":\n";
     }
 
     for (size_t ii = 0; ii < block.instructions.size(); ii++) {
@@ -1902,7 +1944,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
                 if (inc.pred_block_idx == (uint32_t)bi) {
                   std::string phi_name = emitValue(pi.result_slot);
                   std::string val = resolveValue(inc.value_id);
-                  os << "  " << phi_name << " = " << val << "; // phi from bb" << bi << "\n";
+                  os << "    " << phi_name << " = " << val << "; // phi from bb" << bi << "\n";
                 }
               }
             }
@@ -1913,48 +1955,60 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
       // Emit terminator
       if (inst.opcode == LLVMInstruction::Ret) {
         if (ctx.shader.kind == DxilShaderKind::Vertex) {
-          os << "  return out;\n";
+          os << "    return out;\n";
         } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
           if (!inst.operands.empty()) {
             std::string ret = resolveValue(inst.operands[0]);
-            os << "  result.color0 = float4(" << ret << ");\n";
+            os << "    result.color0 = float4(" << ret << ");\n";
           }
-          os << "  return result;\n";
+          os << "    return result;\n";
         } else {
           if (!inst.operands.empty()) {
             std::string ret = resolveValue(inst.operands[0]);
-            os << "  return " << ret << ";\n";
+            os << "    return " << ret << ";\n";
           } else {
-            os << "  return;\n";
+            os << "    return;\n";
           }
         }
       } else if (inst.opcode == LLVMInstruction::Br) {
         if (inst.operands.size() == 1) {
           uint32_t target = inst.operands[0];
-          if (target != bi + 1) {
-            os << "  goto bb" << target << ";\n";
+          if (needs_dispatch) {
+            os << "    _block_state = " << target << "; continue;\n";
           }
         } else if (inst.operands.size() >= 3) {
           std::string cond = resolveValue(inst.operands[0]);
           uint32_t true_bb = inst.operands[1];
           uint32_t false_bb = inst.operands[2];
-          os << "  if (" << cond << ") { goto bb" << true_bb << "; } else { goto bb" << false_bb << "; }\n";
+          if (needs_dispatch) {
+            os << "    if (" << cond << ") { _block_state = " << true_bb << "; continue; } else { _block_state = " << false_bb << "; continue; }\n";
+          }
         }
       } else if (inst.opcode == LLVMInstruction::Switch) {
         if (inst.operands.size() >= 2) {
           std::string cond = resolveValue(inst.operands[0]);
           uint32_t default_bb = inst.operands[1];
-          os << "  switch (" << cond << ") {\n";
+          os << "    switch (" << cond << ") {\n";
           for (size_t j = 2; j + 1 < inst.operands.size(); j += 2) {
-            os << "    case " << inst.operands[j] << ": goto bb" << inst.operands[j + 1] << ";\n";
+            if (needs_dispatch) {
+              os << "      case " << inst.operands[j] << ": _block_state = " << inst.operands[j + 1] << "; continue;\n";
+            }
           }
-          os << "    default: goto bb" << default_bb << ";\n";
-          os << "  }\n";
+          if (needs_dispatch) {
+            os << "      default: _block_state = " << default_bb << "; continue;\n";
+          }
+          os << "    }\n";
         }
       } else if (inst.opcode == LLVMInstruction::Unreachable) {
-        os << "  // unreachable\n";
+        os << "    // unreachable\n";
       }
     }
+  }
+
+  if (needs_dispatch) {
+    os << "    }\n";
+    os << "    break;\n";
+    os << "  }\n";
   }
 
   os << "}\n";

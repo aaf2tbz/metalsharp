@@ -772,6 +772,7 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
           memcpy(&f, &raw, sizeof(f));
           char buf[64];
           snprintf(buf, sizeof(buf), "%.9gf", (double)f);
+          { std::string _s = buf; _s.pop_back(); if (_s.find('.') == std::string::npos) _s += ".0"; _s += 'f'; strncpy(buf, _s.c_str(), sizeof(buf)); buf[sizeof(buf)-1] = 0; }
           v.constant_data = buf;
         } else if (cur_type < ctx.module.types.size() &&
                    ctx.module.types[cur_type].kind == LLVMType::Double) {
