@@ -1122,9 +1122,38 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
   }
 
-  case LLVMInstruction::Add: {
+  case LLVMInstruction::Add:
+  case LLVMInstruction::Sub:
+  case LLVMInstruction::Mul:
+  case LLVMInstruction::UDiv:
+  case LLVMInstruction::SDiv:
+  case LLVMInstruction::URem:
+  case LLVMInstruction::SRem:
+  case LLVMInstruction::And:
+  case LLVMInstruction::Or:
+  case LLVMInstruction::Xor:
+  case LLVMInstruction::Shl:
+  case LLVMInstruction::LShr:
+  case LLVMInstruction::AShr: {
     ensureValueTable(value_counter);
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " + " << getValue(inst.operands[1]) << ";\n";
+    const char *op_str = "+";
+    switch (inst.opcode) {
+    case LLVMInstruction::Add: op_str = "+"; break;
+    case LLVMInstruction::Sub: op_str = "-"; break;
+    case LLVMInstruction::Mul: op_str = "*"; break;
+    case LLVMInstruction::UDiv: op_str = "/"; break;
+    case LLVMInstruction::SDiv: op_str = "/"; break;
+    case LLVMInstruction::URem: op_str = "%"; break;
+    case LLVMInstruction::SRem: op_str = "%"; break;
+    case LLVMInstruction::And: op_str = "&"; break;
+    case LLVMInstruction::Or: op_str = "|"; break;
+    case LLVMInstruction::Xor: op_str = "^"; break;
+    case LLVMInstruction::Shl: op_str = "<<"; break;
+    case LLVMInstruction::LShr: op_str = ">>"; break;
+    case LLVMInstruction::AShr: op_str = ">>"; break;
+    default: break;
+    }
+    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " " << op_str << " " << getValue(inst.operands[1]) << ";\n";
     ctx.value_table[value_counter] = result;
     if (inst.operands.size() >= 1 && inst.operands[0] < ctx.value_type_ids.size())
       ctx.value_type_ids[value_counter] = ctx.value_type_ids[inst.operands[0]];
@@ -1313,11 +1342,97 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
   }
 
-  case LLVMInstruction::URem:
-  case LLVMInstruction::SRem: {
+  case LLVMInstruction::FAdd:
+  case LLVMInstruction::FSub:
+  case LLVMInstruction::FMul:
+  case LLVMInstruction::FDiv:
+  case LLVMInstruction::FRem: {
     ensureValueTable(value_counter);
-    os << "  auto " << result << " = " << getValue(inst.operands[0]) << " % " << getValue(inst.operands[1]) << ";\n";
-    ctx.value_table[value_counter] = result;
+    const char *fop_str = "+";
+    switch (inst.opcode) {
+    case LLVMInstruction::FAdd: fop_str = "+"; break;
+    case LLVMInstruction::FSub: fop_str = "-"; break;
+    case LLVMInstruction::FMul: fop_str = "*"; break;
+    case LLVMInstruction::FDiv: fop_str = "/"; break;
+    case LLVMInstruction::FRem: fop_str = "%"; break;
+    default: break;
+    }
+    if (inst.operands.size() >= 2) {
+      os << "  auto " << result << " = " << getValue(inst.operands[0]) << " " << fop_str << " " << getValue(inst.operands[1]) << ";\n";
+      ctx.value_table[value_counter] = result;
+      if (inst.operands[0] < ctx.value_type_ids.size())
+        ctx.value_type_ids[value_counter] = ctx.value_type_ids[inst.operands[0]];
+    }
+    value_counter++;
+    break;
+  }
+
+  case LLVMInstruction::BitCast: {
+    ensureValueTable(value_counter);
+    if (inst.operands.size() >= 1) {
+      std::string val = getValue(inst.operands[0]);
+      if (inst.type_id > 0 && inst.type_id < ctx.mod.types.size() &&
+          inst.operands[0] < ctx.value_type_ids.size()) {
+        auto &dst_type = ctx.mod.types[inst.type_id];
+        auto src_type_id = ctx.value_type_ids[inst.operands[0]];
+        if (src_type_id > 0 && src_type_id < ctx.mod.types.size()) {
+          auto &src_type = ctx.mod.types[src_type_id];
+          std::string dst_name = getTypeName(dst_type, ctx.mod);
+          std::string src_name = getTypeName(src_type, ctx.mod);
+          if (dst_name != src_name && !dst_name.empty() && !src_name.empty()) {
+            os << "  auto " << result << " = reinterpret_cast<" << dst_name << ">(" << val << "); // bitcast\n";
+          } else {
+            os << "  auto " << result << " = " << val << "; // bitcast same type\n";
+          }
+        } else {
+          os << "  auto " << result << " = " << val << "; // bitcast\n";
+        }
+      } else {
+        os << "  auto " << result << " = " << val << "; // bitcast\n";
+      }
+      ctx.value_table[value_counter] = result;
+      if (inst.operands[0] < ctx.value_type_ids.size())
+        ctx.value_type_ids[value_counter] = ctx.value_type_ids[inst.operands[0]];
+    }
+    value_counter++;
+    break;
+  }
+
+  case LLVMInstruction::FCmp: {
+    ensureValueTable(value_counter);
+    if (inst.operands.size() >= 3) {
+      uint32_t pred = inst.operands[0];
+      auto lhs = getValue(inst.operands[1]);
+      auto rhs = getValue(inst.operands[2]);
+      const char *cmp_str = "false";
+      switch (pred) {
+      case 0: cmp_str = "false"; break; // FALSE
+      case 1: cmp_str = "=="; break;    // OEQ
+      case 2: cmp_str = ">"; break;     // OGT
+      case 3: cmp_str = ">="; break;    // OGE
+      case 4: cmp_str = "<"; break;     // OLT
+      case 5: cmp_str = "<="; break;    // OLE
+      case 6: cmp_str = "!="; break;    // ONE
+      case 7: cmp_str = "true"; break;  // ORD (both not NaN)
+      case 8: cmp_str = "=="; break;    // UEQ
+      case 9: cmp_str = ">="; break;    // UGT (actually > with unordered)
+      case 10: cmp_str = ">="; break;   // UGE
+      case 11: cmp_str = "<"; break;    // ULT (actually < with unordered)
+      case 12: cmp_str = "<="; break;   // ULE
+      case 13: cmp_str = "!="; break;   // UNE
+      case 14: cmp_str = "true"; break; // UNO (either NaN)
+      case 15: cmp_str = "true"; break; // TRUE
+      }
+      if (pred == 7) {
+        os << "  bool " << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << ")); // fcmp ord\n";
+      } else if (pred == 14) {
+        os << "  bool " << result << " = (isnan(" << lhs << ") || isnan(" << rhs << ")); // fcmp uno\n";
+      } else {
+        os << "  auto " << result << " = " << lhs << " " << cmp_str << " " << rhs << "; // fcmp " << pred << "\n";
+      }
+      ctx.value_table[value_counter] = result;
+      ctx.value_type_ids[value_counter] = inst.type_id;
+    }
     value_counter++;
     break;
   }
@@ -1497,6 +1612,18 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
         : module.constants[i].constant_data;
       ctx.value_type_ids[val_idx] = module.constants[i].type_id;
     }
+  }
+
+  for (auto &decl_fn : module.functions) {
+    if (!decl_fn.is_declaration || decl_fn.name.empty())
+      continue;
+    if (ctx.value_table.size() <= decl_fn.value_id)
+      ctx.value_table.resize(decl_fn.value_id + 1);
+    if (ctx.value_type_ids.size() <= decl_fn.value_id)
+      ctx.value_type_ids.resize(decl_fn.value_id + 1, 0);
+    ctx.value_table[decl_fn.value_id] = decl_fn.name;
+    ctx.value_type_ids[decl_fn.value_id] = decl_fn.type_id;
+    DXTRACE("DXIL function declaration: value=%u name=%s", decl_fn.value_id, decl_fn.name.c_str());
   }
 
   DXTRACE("DXILToMSL: entry function has %zu blocks", fn.blocks.size());

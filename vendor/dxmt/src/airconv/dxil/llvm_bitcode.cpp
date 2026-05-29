@@ -1598,8 +1598,18 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
         function_name_refs.push_back(
             {pending.value_id, (uint32_t)ops[1], (uint32_t)ops[2]});
       }
-      if (!is_declaration)
+      if (!is_declaration) {
         pending_functions.push_back(pending);
+      } else {
+        LLVMFunction decl;
+        decl.value_id = pending.value_id;
+        decl.type_id = fn_type;
+        decl.param_count = pending.param_count;
+        decl.is_declaration = true;
+        module.functions.push_back(decl);
+        if (!decl.name.empty())
+          module.function_map[decl.name] = module.functions.size() - 1;
+      }
       DXTRACE("DXIL module function: value=%u type=%u params=%u decl=%u pending=%zu",
               pending.value_id, pending.type_id, pending.param_count,
               is_declaration ? 1 : 0, pending_functions.size());
