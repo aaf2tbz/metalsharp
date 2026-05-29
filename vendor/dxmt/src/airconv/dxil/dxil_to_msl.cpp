@@ -1147,6 +1147,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         agg_is_struct = true;
       }
 
+      uint32_t result_type_id = 0;
       if (agg_is_struct) {
         if (idx == 0) {
           os << "  auto " << result << " = " << agg
@@ -1169,6 +1170,9 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
           os << "  auto " << result << " = " << default_val
              << "; // extractvalue struct field " << idx << " (default)\n";
         }
+        if (agg_type_id < ctx.mod.types.size() &&
+            idx < ctx.mod.types[agg_type_id].type_refs.size())
+          result_type_id = ctx.mod.types[agg_type_id].type_refs[idx];
       } else if (idx < 4) {
         os << "  auto " << result << " = (" << agg << ")"
            << componentSuffix(idx) << "; // extractvalue\n";
@@ -1177,6 +1181,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
            << "); // extractvalue idx=" << idx << "\n";
       }
       ctx.value_table[value_counter] = result;
+      ctx.value_type_ids[value_counter] = result_type_id;
     }
     value_counter++;
     break;
@@ -1375,6 +1380,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   emitFunctionPrologue(ctx);
 
   ctx.value_table.resize(256);
+  ctx.value_type_ids.resize(256, 0);
 
   for (size_t i = 0; i < module.constants.size(); i++) {
     uint32_t val_idx = module.constants[i].id;
