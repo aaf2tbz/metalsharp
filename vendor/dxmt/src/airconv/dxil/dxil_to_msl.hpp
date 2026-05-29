@@ -6,9 +6,7 @@
 #include <sstream>
 #include <optional>
 #include <vector>
-#include <array>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace dxmt::dxil {
 
@@ -22,7 +20,6 @@ struct MSLShader {
   uint32_t num_samplers = 0;
   uint32_t unsupported_intrinsics = 0;
   uint32_t unsupported_opcodes = 0;
-  uint32_t unresolved_ssa_count = 0;
   std::vector<std::string> diagnostics;
 };
 
@@ -34,58 +31,19 @@ struct ResourceBinding {
   std::string name;
 };
 
-enum class MSLScalarKind : uint8_t {
-  Float,
-  UInt,
-  SInt,
-};
-
-struct MSLStageIOType {
-  MSLScalarKind scalar = MSLScalarKind::Float;
-  uint32_t components = 4;
-  bool valid = false;
-};
-
-struct MSLConvertOptions {
-  std::array<MSLStageIOType, 16> vertex_inputs = {};
-  std::array<MSLStageIOType, 8> pixel_outputs = {};
-  std::array<uint32_t, 32> vertex_input_register_for_signature = {};
-  std::array<bool, 32> vertex_input_signature_valid = {};
-  std::array<uint32_t, 32> vertex_output_register_for_signature = {};
-  std::array<bool, 32> vertex_output_signature_valid = {};
-  std::array<bool, 32> vertex_output_is_position = {};
-  std::array<uint32_t, 32> pixel_input_register_for_signature = {};
-  std::array<bool, 32> pixel_input_signature_valid = {};
-  std::array<bool, 32> pixel_input_is_position = {};
-  std::array<uint32_t, 32> pixel_output_target_for_signature = {};
-  std::array<bool, 32> pixel_output_signature_valid = {};
-  uint8_t gs_passthrough_rtai_reg = 255;
-  uint8_t gs_passthrough_rtai_comp = 255;
-  uint8_t gs_passthrough_vpai_reg = 255;
-  uint8_t gs_passthrough_vpai_comp = 255;
-};
-
 class DXILToMSL {
 public:
   static std::optional<MSLShader> convert(const LLVMModule &module,
                                            const DxilParsedShader &shader);
-  static std::optional<MSLShader> convert(const LLVMModule &module,
-                                           const DxilParsedShader &shader,
-                                           const MSLConvertOptions &options);
 
 private:
   struct EmitContext {
     std::ostringstream &os;
     const LLVMModule &mod;
     const DxilParsedShader &shader;
-    const MSLConvertOptions &options;
     std::vector<std::string> value_table;
-    std::vector<std::string> value_expr_table;
-    std::vector<uint32_t> value_types;
-    std::vector<uint8_t> value_vector_lanes;
+    std::vector<uint32_t> value_type_ids;
     std::unordered_map<std::string, std::string> local_values;
-    std::unordered_set<uint32_t> pointer_slots;
-    std::unordered_set<uint32_t> emitted_values;
     std::vector<ResourceBinding> resource_bindings;
     std::vector<std::string> diagnostics;
     uint32_t next_binding = 0;
@@ -95,10 +53,6 @@ private:
     bool uses_group_id = false;
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
-    uint32_t vertex_load_input_counter = 0;
-    uint32_t pixel_load_input_counter = 0;
-    uint32_t vertex_store_output_counter = 0;
-    uint32_t pixel_store_output_counter = 0;
   };
 
   static std::string getTypeName(const LLVMType &t, const LLVMModule &mod);
