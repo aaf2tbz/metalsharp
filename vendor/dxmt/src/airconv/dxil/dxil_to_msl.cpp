@@ -581,7 +581,17 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   };
 
   auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
-    std::string text = valueArg(arg, "");
+    if (arg >= args.size())
+      return fallback;
+    uint32_t idx = args[arg];
+    std::string text;
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
+      text = ctx.value_table[idx];
+    else {
+      for (auto &c : ctx.mod.constants) {
+        if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+      }
+    }
     uint32_t value = 0;
     if (parseUnsignedLiteral(text, value))
       return value;
