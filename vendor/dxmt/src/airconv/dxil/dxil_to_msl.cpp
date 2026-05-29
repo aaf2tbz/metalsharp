@@ -72,8 +72,15 @@ enum DXIntrinsicOpcode {
   DXOP_RenderTargetGetSampleCount = 77,
   DXOP_Texture2DMSGetSamplePositionLegacy = 97,
   DXOP_RenderTargetGetSamplePositionLegacy = 98,
-  DXOP_NumPrimitives = 109,
-  DXOP_NumOutputVertices = 110,
+  DXOP_CycleCounterLegacy = 109,
+  DXOP_WaveIsFirstLane = 110,
+  DXOP_WaveGetLaneIndex = 111,
+  DXOP_WaveGetLaneCount = 112,
+  DXOP_WaveAnyTrue = 113,
+  DXOP_WaveAllTrue = 114,
+  DXOP_WaveReadLaneAt = 117,
+  DXOP_WaveReadLaneFirst = 118,
+  DXOP_QuadReadLaneAt = 122,
   DXOP_LegacyF16ToF32 = 131,
   DXOP_LegacyF32ToF16 = 132,
 };
@@ -326,8 +333,20 @@ static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
   if (strncmp(s, "splitDouble", 11) == 0) return DXOP_SplitDouble;
   if (strncmp(s, "legacyF16ToF32", 14) == 0) return DXOP_LegacyF16ToF32;
   if (strncmp(s, "legacyF32ToF16", 14) == 0) return DXOP_LegacyF32ToF16;
-  if (strncmp(s, "numPrimitives", 13) == 0) return DXOP_NumPrimitives;
-  if (strncmp(s, "numOutputVertices", 17) == 0) return DXOP_NumOutputVertices;
+  if (strncmp(s, "waveReadLaneFirst", 17) == 0) return DXOP_WaveReadLaneFirst;
+  if (strncmp(s, "waveReadLaneAt", 14) == 0) return DXOP_WaveReadLaneAt;
+  if (strncmp(s, "waveIsFirstLane", 15) == 0) return DXOP_WaveIsFirstLane;
+  if (strncmp(s, "waveGetLaneIndex", 16) == 0) return DXOP_WaveGetLaneIndex;
+  if (strncmp(s, "waveGetLaneCount", 16) == 0) return DXOP_WaveGetLaneCount;
+  if (strncmp(s, "waveAnyTrue", 11) == 0) return DXOP_WaveAnyTrue;
+  if (strncmp(s, "waveAllTrue", 11) == 0) return DXOP_WaveAllTrue;
+  if (strncmp(s, "quadReadLaneAt", 14) == 0) return DXOP_QuadReadLaneAt;
+  if (strncmp(s, "sample.", 7) == 0) return DXOP_TextureSample;
+  if (strncmp(s, "textureLoad.", 12) == 0) return DXOP_TextureLoad;
+  if (strncmp(s, "threadIdInGroup", 15) == 0) return DXOP_ThreadIDInGroup;
+  if (strncmp(s, "unaryBits.", 10) == 0) return DXOP_Unary;
+  if (strncmp(s, "isSpecialFloat", 14) == 0) return 0;
+  if (strncmp(s, "cycleCounterLegacy", 18) == 0) return DXOP_CycleCounterLegacy;
   return 0;
 }
 
@@ -891,8 +910,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RenderTargetGetSampleCount:
     return "1";
 
-  case DXOP_NumPrimitives:
-  case DXOP_NumOutputVertices:
+  case DXOP_CycleCounterLegacy:
     return "0";
 
   case DXOP_Barrier: {
@@ -1059,6 +1077,40 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_LegacyF32ToF16: {
     if (args.size() < 2) return "0";
     return "as_type<uint>(half(" + valueArg(1, "0.0") + "))";
+  }
+
+  case DXOP_WaveReadLaneFirst: {
+    if (args.size() < 2) return "0";
+    return "simd_broadcast_first(" + valueArg(1, "0") + ")";
+  }
+
+  case DXOP_WaveReadLaneAt: {
+    if (args.size() < 3) return "0";
+    return "simd_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+  }
+
+  case DXOP_WaveIsFirstLane:
+    return "simd_is_first()";
+
+  case DXOP_WaveGetLaneIndex:
+    return "simd_lane_id()";
+
+  case DXOP_WaveGetLaneCount:
+    return "simd_lane_count()";
+
+  case DXOP_WaveAnyTrue: {
+    if (args.size() < 2) return "0";
+    return "simd_any(" + valueArg(1, "0") + ") ? 1 : 0";
+  }
+
+  case DXOP_WaveAllTrue: {
+    if (args.size() < 2) return "0";
+    return "simd_all(" + valueArg(1, "0") + ") ? 1 : 0";
+  }
+
+  case DXOP_QuadReadLaneAt: {
+    if (args.size() < 3) return "0";
+    return "quad_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
   }
 
   default:
