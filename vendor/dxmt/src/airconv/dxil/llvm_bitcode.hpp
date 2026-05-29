@@ -116,6 +116,7 @@ struct LLVMFunction {
   std::vector<LLVMType> param_types;
   LLVMType return_type;
   std::vector<LLVMBasicBlock> blocks;
+  std::vector<uint32_t> block_value_ids;
   std::vector<std::string> attributes;
 };
 
