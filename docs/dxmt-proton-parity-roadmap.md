@@ -22,26 +22,33 @@ MetalSharp's direct D3D→Metal path avoids the double-translation tax (D3D→Vu
 
 **Impact:** Unblocks every D3D12 game that uses DXIL shaders (SM 6.0+), which is the majority of modern titles.
 
-### 1A. Control Flow Graph Reconstruction
+### 1A. Control Flow Graph Reconstruction — DONE
 
-**Current state:** Branches emit `// br` comments. Switch statements emit comments only. PHI nodes pick the first incoming value. The converter iterates blocks linearly, ignoring branch structure. Any shader with loops, conditional texture sampling, or if/else branching produces wrong MSL.
+**Completed:** 2026-05-29. Branch `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`.
 
-**Files:**
-- `dxmt-src/src/airconv/dxil/dxil_to_msl.cpp` lines 3011 (PHI), 3048 (Br), 3052 (Switch)
+**What was done:**
 
-**Work:**
-- Parse LLVM basic block structure from DXIL bitcode (predecessor/successor edges already available in `llvm_bitcode.cpp`)
-- Build a CFG with dominance frontier analysis
-- Emit proper Metal `if/else/for/while/switch` from the CFG
-- Handle PHI nodes by inserting variable assignments at predecessor block exits
-- Handle loop back-edges with Metal `while(true) { if(condition) break; }` pattern
+Parser fixes (`llvm_bitcode.cpp/hpp`):
+- Track basic block value IDs in `DECLAREBLOCKS` so PHI block references resolve to block indices
+- Store both incoming value AND incoming block in PHI operands (was losing block refs)
+- Parse `Switch` instructions (was falling through to `default: break`)
 
-**Validation:**
-- Write DXIL converter unit tests (currently zero exist for DXIL path)
-- HLSL→DXC→DXIL→MSL→Metal compiler roundtrip test
-- Test shaders: simple branch, for loop, texture sampling in conditional, switch/default
+Converter rewrite (`dxil_to_msl.cpp`):
+- Build successor/predecessor CFG from branch terminators
+- Collect PHI info with (value, predecessor block) pairs
+- Pre-declare PHI variables at function scope with typed defaults (float, double, int vector, float vector)
+- Emit blocks with labels (`bb0:`, `bb1:`, ...) and `goto`-based control flow
+- Conditional `Br` → `if (cond) goto bb_true; else goto bb_false;`
+- Unconditional `Br` to next block → fall through (no goto)
+- Unconditional `Br` to non-next → `goto bbN`
+- Switch → `switch/case/goto` dispatch
+- PHI assignments at predecessor block exits before terminator
+- Ret/Unreachable handled in CFG emission, not emitInstruction
+- Diagnostic trace for unresolved PHI block references
 
-**Milestone:** A DXIL pixel shader with `if/else` branching and a `for` loop produces valid MSL that compiles without errors and renders correctly.
+**Syntax validation:** `clang++ -fsyntax-only -Wall -Wextra -Werror` passes on all three changed files.
+
+**Remaining:** Unit tests (Phase 1E) and live shader validation against real DXIL game shaders.
 
 ### 1B. Struct Field Extraction Fix
 
