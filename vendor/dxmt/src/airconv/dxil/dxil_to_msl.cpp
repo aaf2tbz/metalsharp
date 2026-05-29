@@ -74,6 +74,8 @@ enum DXIntrinsicOpcode {
   DXOP_RenderTargetGetSamplePositionLegacy = 98,
   DXOP_NumPrimitives = 109,
   DXOP_NumOutputVertices = 110,
+  DXOP_LegacyF16ToF32 = 131,
+  DXOP_LegacyF32ToF16 = 132,
 };
 
 enum DXILMathOpcode {
@@ -97,16 +99,30 @@ enum DXILMathOpcode {
   DXILOP_Round_ni = 27,
   DXILOP_Round_pi = 28,
   DXILOP_Round_z = 29,
+  DXILOP_Bfrev = 30,
+  DXILOP_Countbits = 31,
+  DXILOP_FirstbitLo = 32,
+  DXILOP_FirstbitHi = 33,
+  DXILOP_FirstbitSHi = 34,
   DXILOP_FMax = 35,
   DXILOP_FMin = 36,
   DXILOP_IMax = 37,
   DXILOP_IMin = 38,
   DXILOP_UMax = 39,
   DXILOP_UMin = 40,
+  DXILOP_IMul = 41,
+  DXILOP_UMul = 42,
+  DXILOP_UDiv = 43,
+  DXILOP_UAddc = 44,
+  DXILOP_USubb = 45,
   DXILOP_FMad = 46,
   DXILOP_Fma = 47,
   DXILOP_IMad = 48,
   DXILOP_UMad = 49,
+  DXILOP_Msad = 50,
+  DXILOP_Ibfe = 51,
+  DXILOP_Ubfe = 52,
+  DXILOP_Bfi = 53,
 };
 
 static const char *kMetalHeader = R"(#include <metal_stdlib>
@@ -251,72 +267,68 @@ static std::string resolveBindingName(const std::string &handle, const char *tar
   return handle;
 }
 
-static bool isKnownDXIntrinsic(uint32_t intrinsic_id) {
-  switch (intrinsic_id) {
-  case DXOP_LoadInput:
-  case DXOP_StoreOutput:
-  case DXOP_CreateHandle:
-  case DXOP_CreateHandleForLib:
-  case DXOP_AnnotateHandle:
-  case DXOP_CreateHandleFromBinding:
-  case DXOP_CreateHandleFromHeap:
-  case DXOP_CBufferLoad:
-  case DXOP_CBufferLoadLegacy:
-  case DXOP_ThreadId:
-  case DXOP_GroupId:
-  case DXOP_ThreadIDInGroup:
-  case DXOP_FlattenedThreadIDInGroup:
-  case DXOP_BufferLoad:
-  case DXOP_BufferStore:
-  case DXOP_TextureLoad:
-  case DXOP_TextureStore:
-  case DXOP_TextureStoreSample:
-  case DXOP_TextureGather:
-  case DXOP_TextureGatherCmp:
-  case DXOP_TextureGatherRaw:
-  case DXOP_TextureSample:
-  case DXOP_TextureSampleBias:
-  case DXOP_TextureSampleLevel:
-  case DXOP_TextureSampleGrad:
-  case DXOP_TextureSampleCmp:
-  case DXOP_TextureSampleCmpLevelZero:
-  case DXOP_TextureSampleCmpLevel:
-  case DXOP_BufferUpdateCounter:
-  case DXOP_CheckAccessFullyMapped:
-  case DXOP_GetDimensions:
-  case DXOP_Barrier:
-  case DXOP_Unary:
-  case DXOP_Binary:
-  case DXOP_Tertiary:
-  case DXOP_Dot2:
-  case DXOP_Dot3:
-  case DXOP_Dot4:
-  case DXOP_MakeDouble:
-  case DXOP_SplitDouble:
-  case DXOP_RawBufferLoad:
-  case DXOP_RawBufferStore:
-  case DXOP_RawBufferVectorLoad:
-  case DXOP_RawBufferVectorStore:
-  case DXOP_RawBufferLoadLegacy:
-  case DXOP_RawBufferStoreLegacy:
-  case DXOP_AtomicBinOp:
-  case DXOP_AtomicCompareExchange:
-  case DXOP_DerivCoarseX:
-  case DXOP_DerivCoarseY:
-  case DXOP_DerivFineX:
-  case DXOP_DerivFineY:
-  case DXOP_CalcLOD:
-  case DXOP_Texture2DMSGetSamplePosition:
-  case DXOP_RenderTargetGetSamplePosition:
-  case DXOP_RenderTargetGetSampleCount:
-  case DXOP_Texture2DMSGetSamplePositionLegacy:
-  case DXOP_RenderTargetGetSamplePositionLegacy:
-  case DXOP_NumPrimitives:
-  case DXOP_NumOutputVertices:
-    return true;
-  default:
-    return false;
-  }
+static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
+  if (name.size() < 6 || name[0] != 'd' || name[1] != 'x' || name[2] != '.' || name[3] != 'o' || name[4] != 'p' || name[5] != '.')
+    return 0;
+  const char *s = name.c_str() + 6;
+  if (strncmp(s, "loadInput.", 10) == 0) return DXOP_LoadInput;
+  if (strncmp(s, "storeOutput.", 12) == 0) return DXOP_StoreOutput;
+  if (strncmp(s, "createHandleFromBinding", 23) == 0) return DXOP_CreateHandleFromBinding;
+  if (strncmp(s, "createHandleFromHeap", 20) == 0) return DXOP_CreateHandleFromHeap;
+  if (strncmp(s, "createHandleForLib", 18) == 0) return DXOP_CreateHandleForLib;
+  if (strncmp(s, "createHandle", 12) == 0) return DXOP_CreateHandle;
+  if (strncmp(s, "annotateHandle", 14) == 0) return DXOP_AnnotateHandle;
+  if (strncmp(s, "cbufferLoadLegacy.", 18) == 0) return DXOP_CBufferLoadLegacy;
+  if (strncmp(s, "cbufferLoad.", 12) == 0) return DXOP_CBufferLoad;
+  if (strncmp(s, "threadIdInGroup", 15) == 0) return DXOP_ThreadIDInGroup;
+  if (strncmp(s, "flattenedThreadIdInGroup", 24) == 0) return DXOP_FlattenedThreadIDInGroup;
+  if (strncmp(s, "threadId", 8) == 0) return DXOP_ThreadId;
+  if (strncmp(s, "groupId", 7) == 0) return DXOP_GroupId;
+  if (strncmp(s, "bufferLoad.", 11) == 0) return DXOP_BufferLoad;
+  if (strncmp(s, "bufferStore.", 12) == 0) return DXOP_BufferStore;
+  if (strncmp(s, "bufferUpdateCounter", 19) == 0) return DXOP_BufferUpdateCounter;
+  if (strncmp(s, "textureStoreSample.", 19) == 0) return DXOP_TextureStoreSample;
+  if (strncmp(s, "textureStore.", 13) == 0) return DXOP_TextureStore;
+  if (strncmp(s, "textureLoad.", 12) == 0) return DXOP_TextureLoad;
+  if (strncmp(s, "textureGatherCmp.", 17) == 0) return DXOP_TextureGatherCmp;
+  if (strncmp(s, "textureGatherRaw.", 17) == 0) return DXOP_TextureGatherRaw;
+  if (strncmp(s, "textureGather.", 14) == 0) return DXOP_TextureGather;
+  if (strncmp(s, "sampleCmpLevelZero.", 19) == 0) return DXOP_TextureSampleCmpLevelZero;
+  if (strncmp(s, "sampleCmpLevel.", 15) == 0) return DXOP_TextureSampleCmpLevel;
+  if (strncmp(s, "sampleCmp.", 10) == 0) return DXOP_TextureSampleCmp;
+  if (strncmp(s, "sampleGrad.", 11) == 0) return DXOP_TextureSampleGrad;
+  if (strncmp(s, "sampleLevel.", 12) == 0) return DXOP_TextureSampleLevel;
+  if (strncmp(s, "sampleBias.", 10) == 0) return DXOP_TextureSampleBias;
+  if (strncmp(s, "sample.", 7) == 0) return DXOP_TextureSample;
+  if (strncmp(s, "unary.", 6) == 0) return DXOP_Unary;
+  if (strncmp(s, "binary.", 7) == 0) return DXOP_Binary;
+  if (strncmp(s, "tertiary.", 9) == 0) return DXOP_Tertiary;
+  if (strncmp(s, "dot2.", 5) == 0) return DXOP_Dot2;
+  if (strncmp(s, "dot3.", 5) == 0) return DXOP_Dot3;
+  if (strncmp(s, "dot4.", 5) == 0) return DXOP_Dot4;
+  if (strncmp(s, "barrier", 7) == 0) return DXOP_Barrier;
+  if (strncmp(s, "checkAccessFullyMapped", 22) == 0) return DXOP_CheckAccessFullyMapped;
+  if (strncmp(s, "getDimensions", 13) == 0) return DXOP_GetDimensions;
+  if (strncmp(s, "rawBufferLoadLegacy", 19) == 0) return DXOP_RawBufferLoadLegacy;
+  if (strncmp(s, "rawBufferStoreLegacy", 20) == 0) return DXOP_RawBufferStoreLegacy;
+  if (strncmp(s, "rawBufferVectorLoad", 19) == 0) return DXOP_RawBufferVectorLoad;
+  if (strncmp(s, "rawBufferVectorStore", 20) == 0) return DXOP_RawBufferVectorStore;
+  if (strncmp(s, "rawBufferLoad", 13) == 0) return DXOP_RawBufferLoad;
+  if (strncmp(s, "rawBufferStore", 14) == 0) return DXOP_RawBufferStore;
+  if (strncmp(s, "atomicCompareExchange", 21) == 0) return DXOP_AtomicCompareExchange;
+  if (strncmp(s, "atomicBinOp", 11) == 0) return DXOP_AtomicBinOp;
+  if (strncmp(s, "derivCoarseX", 12) == 0) return DXOP_DerivCoarseX;
+  if (strncmp(s, "derivCoarseY", 12) == 0) return DXOP_DerivCoarseY;
+  if (strncmp(s, "derivFineX", 10) == 0) return DXOP_DerivFineX;
+  if (strncmp(s, "derivFineY", 10) == 0) return DXOP_DerivFineY;
+  if (strncmp(s, "calculateLOD", 12) == 0 || strncmp(s, "calcLOD", 7) == 0) return DXOP_CalcLOD;
+  if (strncmp(s, "makeDouble", 10) == 0) return DXOP_MakeDouble;
+  if (strncmp(s, "splitDouble", 11) == 0) return DXOP_SplitDouble;
+  if (strncmp(s, "legacyF16ToF32", 14) == 0) return DXOP_LegacyF16ToF32;
+  if (strncmp(s, "legacyF32ToF16", 14) == 0) return DXOP_LegacyF32ToF16;
+  if (strncmp(s, "numPrimitives", 13) == 0) return DXOP_NumPrimitives;
+  if (strncmp(s, "numOutputVertices", 17) == 0) return DXOP_NumOutputVertices;
+  return 0;
 }
 
 void DXILToMSL::recordDiagnostic(EmitContext &ctx, const char *fmt, ...) {
@@ -912,6 +924,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     case DXILOP_Round_ni: return "floor(" + x + ")";
     case DXILOP_Round_pi: return "ceil(" + x + ")";
     case DXILOP_Round_z: return "trunc(" + x + ")";
+    case DXILOP_Bfrev: return "reverse_bits(" + x + ")";
+    case DXILOP_Countbits: return "popcount(" + x + ")";
+    case DXILOP_FirstbitLo: return "ctz(" + x + ")";
+    case DXILOP_FirstbitHi: return "clz(" + x + ")";
+    case DXILOP_FirstbitSHi: return "((" + x + ") < 0 ? clz(~(" + x + ")) : clz(" + x + "))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown unary opcode: %u", op);
@@ -931,6 +948,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     case DXILOP_IMin: return "min(" + a + ", " + b + ")";
     case DXILOP_UMax: return "max((uint)(" + a + "), (uint)(" + b + "))";
     case DXILOP_UMin: return "min((uint)(" + a + "), (uint)(" + b + "))";
+    case DXILOP_IMul: return "mul24(" + a + ", " + b + ")";
+    case DXILOP_UMul: return "mul24((uint)(" + a + "), (uint)(" + b + "))";
+    case DXILOP_UDiv: return "((uint)(" + a + ") / (uint)(" + b + "))";
+    case DXILOP_UAddc: return "((" + a + ") + (" + b + "))";
+    case DXILOP_USubb: return "((" + a + ") - (" + b + "))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown binary opcode: %u", op);
@@ -949,6 +971,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     case DXILOP_Fma: return "fma(" + a + ", " + b + ", " + c + ")";
     case DXILOP_IMad:
     case DXILOP_UMad: return "((" + a + ") * (" + b + ") + (" + c + "))";
+    case DXILOP_Msad: return "((" + a + ") & (" + b + ")) ^ (" + c + ")";
+    case DXILOP_Ibfe: return "extract_bits(" + a + ", " + b + ", " + c + ")";
+    case DXILOP_Ubfe: return "extract_bits((uint)(" + a + "), (uint)(" + b + "), (uint)(" + c + "))";
+    case DXILOP_Bfi: return "insert_bits((uint)(" + b + "), (uint)(" + a + "), (uint)(" + c + "))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown tertiary opcode: %u", op);
@@ -1025,6 +1051,16 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     return "";
   }
 
+  case DXOP_LegacyF16ToF32: {
+    if (args.size() < 2) return "0.0f";
+    return "as_type<float>(half(" + valueArg(1, "0") + "))";
+  }
+
+  case DXOP_LegacyF32ToF16: {
+    if (args.size() < 2) return "0";
+    return "as_type<uint>(half(" + valueArg(1, "0.0") + "))";
+  }
+
   default:
     ctx.unsupported_intrinsics++;
     recordDiagnostic(ctx, "DXIL unknown intrinsic: %u", intrinsic_id);
@@ -1071,26 +1107,24 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     for (size_t i = 2; i < inst.operands.size(); i++)
       call_args.push_back(inst.operands[i]);
 
-    uint32_t intrinsic_id = 0;
-    bool has_intrinsic_literal = false;
-    if (call_args.size() > 0) {
-      std::string id_str = getValue(call_args[0]);
-      has_intrinsic_literal = parseUnsignedLiteral(id_str, intrinsic_id);
-    }
+    std::string callee_name = callee < ctx.value_table.size() ? ctx.value_table[callee] : "";
+    uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
 
-    bool named_dxop = callee < ctx.value_table.size() && ctx.value_table[callee].substr(0, 5) == "dx.op";
-    if (named_dxop && !has_intrinsic_literal) {
+    if (intrinsic_id != 0 && call_args.empty()) {
       ctx.unsupported_intrinsics++;
-      std::string id_str = call_args.empty() ? "<missing>" : getValue(call_args[0]);
-      recordDiagnostic(ctx, "DXIL intrinsic id is not a literal: %s", id_str.c_str());
-      os << "  // dx.op call without literal intrinsic id\n";
+      os << "  // dx.op." << callee_name.substr(6) << " with no arguments\n";
       ensureValueTable(value_counter);
       ctx.value_table[value_counter] = result;
       ctx.value_type_ids[value_counter] = inst.type_id;
-    } else if (has_intrinsic_literal && (named_dxop || isKnownDXIntrinsic(intrinsic_id))) {
-      std::vector<uint32_t> remaining_args(call_args.begin() + 1, call_args.end());
+    } else if (intrinsic_id != 0) {
+      std::vector<uint32_t> fn_args;
+      if (intrinsic_id == DXOP_Unary || intrinsic_id == DXOP_Binary || intrinsic_id == DXOP_Tertiary) {
+        fn_args = call_args;
+      } else {
+        fn_args.assign(call_args.begin() + 1, call_args.end());
+      }
 
-      std::string translated = translateDXIntrinsic(ctx, intrinsic_id, remaining_args);
+      std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
 
       if (inst.type_id == 0) {
         if (!translated.empty())
@@ -1108,7 +1142,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         os << "  " << translated << ";\n";
       }
     } else {
-      os << "  // call " << getValue(callee) << "(";
+      os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
       for (size_t i = 0; i < call_args.size(); i++) {
         if (i) os << ", ";
         os << getValue(call_args[i]);
