@@ -534,6 +534,13 @@ static void applyFunctionNamesFromStrtab(
                 name.c_str());
       }
     }
+
+    for (auto &gv : module.globals) {
+      if (gv.value_id == ref.value_id && gv.name.empty()) {
+        gv.name = name;
+        DXTRACE("DXIL strtab global name: value=%u name=%s", gv.value_id, name.c_str());
+      }
+    }
   }
 }
 
@@ -606,14 +613,18 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
     case kTypeCode_Pointer: {
       t.kind = LLVMType::Pointer;
       if (ops.size() > 1) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[1]);
       }
+      if (ops.size() > 2)
+        t.address_space = (uint32_t)ops[2];
       ctx.module.types.push_back(t);
       break;
     }
     case kTypeCode_OpaquePointer: {
       t.kind = LLVMType::Pointer;
+      if (ops.size() > 1)
+        t.address_space = (uint32_t)ops[1];
       ctx.module.types.push_back(t);
       break;
     }
@@ -639,7 +650,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
                           ? 2
                           : 1;
       for (size_t i = first_type; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -667,7 +678,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
       t.kind = LLVMType::Function;
       t.bit_width = ops.size() > 1 ? (uint32_t)ops[1] : 0;
       for (size_t i = 2; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -677,7 +688,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
       t.kind = LLVMType::Function;
       t.bit_width = ops.size() > 1 ? (uint32_t)ops[1] : 0;
       for (size_t i = 3; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -1419,8 +1430,24 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
               pending.value_id, pending.type_id, pending.param_count,
               is_declaration ? 1 : 0, pending_functions.size());
     } else if (rec_code == kModuleCode_GlobalVar) {
-      next_function_value_id++;
-      next_module_value_id++;
+      LLVMGlobal gv;
+      gv.value_id = next_function_value_id++;
+      if (next_module_value_id < next_function_value_id)
+        next_module_value_id = next_function_value_id;
+      if (ops.size() > 1)
+        gv.type_id = (uint32_t)ops[1];
+      if (ops.size() > 2)
+        gv.is_constant = (ops[2] & 1) != 0;
+      if (gv.type_id < module.types.size() &&
+          module.types[gv.type_id].kind == LLVMType::Pointer)
+        gv.address_space = module.types[gv.type_id].address_space;
+      if (use_strtab_names && ops.size() > 4) {
+        function_name_refs.push_back(
+            {gv.value_id, (uint32_t)ops[3], (uint32_t)ops[4]});
+      }
+      module.globals.push_back(gv);
+      DXTRACE("DXIL module global: value=%u type=%u addr_space=%u",
+              gv.value_id, gv.type_id, gv.address_space);
     }
   }
 

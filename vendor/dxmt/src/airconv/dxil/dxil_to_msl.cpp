@@ -1322,6 +1322,82 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
   }
 
+  case LLVMInstruction::Alloca: {
+    std::string storage_class = "thread";
+    if (inst.type_id > 0 && inst.type_id < ctx.mod.types.size()) {
+      auto &ptr_type = ctx.mod.types[inst.type_id];
+      if (ptr_type.kind == LLVMType::Pointer && ptr_type.address_space == 3)
+        storage_class = "threadgroup";
+    }
+    std::string alloca_name = "alloca_" + std::to_string(value_counter);
+    os << "  " << storage_class << " char " << alloca_name << "[256];\n";
+    ensureValueTable(value_counter);
+    ctx.value_table[value_counter] = "(" + storage_class + " char*)&" + alloca_name;
+    if (ctx.value_type_ids.size() <= value_counter)
+      ctx.value_type_ids.resize(value_counter + 1, 0);
+    ctx.value_type_ids[value_counter] = inst.type_id;
+    value_counter++;
+    break;
+  }
+
+  case LLVMInstruction::Load: {
+    if (inst.operands.size() < 1) {
+      ensureValueTable(value_counter);
+      ctx.value_table[value_counter] = "0";
+      value_counter++;
+      break;
+    }
+    auto ptr_expr = getValue(inst.operands[0]);
+    std::string loaded_type = "int";
+    if (inst.type_id > 0 && inst.type_id < ctx.mod.types.size()) {
+      loaded_type = getTypeName(ctx.mod.types[inst.type_id], ctx.mod);
+    }
+    std::string load_expr = "*(" + loaded_type + "*)(" + ptr_expr + ")";
+    ensureValueTable(value_counter);
+    ctx.value_table[value_counter] = load_expr;
+    if (ctx.value_type_ids.size() <= value_counter)
+      ctx.value_type_ids.resize(value_counter + 1, 0);
+    ctx.value_type_ids[value_counter] = inst.type_id;
+    recordDiagnostic(ctx, "DXIL generic load: ptr=%s type=%s", emitValue(inst.operands[0]).c_str(), loaded_type.c_str());
+    value_counter++;
+    break;
+  }
+
+  case LLVMInstruction::Store: {
+    if (inst.operands.size() < 2) {
+      break;
+    }
+    auto ptr_expr = getValue(inst.operands[0]);
+    auto val_expr = getValue(inst.operands[1]);
+    os << "  *(" << ptr_expr << ") = " << val_expr << "; // store\n";
+    break;
+  }
+
+  case LLVMInstruction::GetElementPtr: {
+    if (inst.operands.empty()) {
+      ensureValueTable(value_counter);
+      ctx.value_table[value_counter] = "0";
+      value_counter++;
+      break;
+    }
+    auto base_expr = getValue(inst.operands[0]);
+    std::string gep_expr = base_expr;
+    for (size_t i = 1; i < inst.operands.size(); i++) {
+      auto idx_expr = getValue(inst.operands[i]);
+      if (isZeroLiteral(idx_expr))
+        continue;
+      gep_expr = gep_expr + " + " + idx_expr;
+    }
+    ensureValueTable(value_counter);
+    ctx.value_table[value_counter] = gep_expr;
+    if (ctx.value_type_ids.size() <= value_counter)
+      ctx.value_type_ids.resize(value_counter + 1, 0);
+    ctx.value_type_ids[value_counter] = inst.type_id;
+    recordDiagnostic(ctx, "DXIL gep: base=%s result=%s indices=%zu", emitValue(inst.operands[0]).c_str(), emitValue(value_counter).c_str(), inst.operands.size() - 1);
+    value_counter++;
+    break;
+  }
+
   case LLVMInstruction::Invoke: {
     os << "  // invoke\n";
     break;
@@ -1378,6 +1454,33 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   auto &fn = *entry_fn;
 
   emitFunctionPrologue(ctx);
+
+  // Emit global variable declarations (groupshared/threadgroup)
+  for (auto &gv : module.globals) {
+    if (gv.address_space == 3) {
+      std::string gv_name = gv.name.empty() ? "gvar_" + std::to_string(gv.value_id) : escapeName(gv.name);
+      uint32_t array_size = 256;
+      if (gv.type_id < module.types.size()) {
+        auto &ptr_type = module.types[gv.type_id];
+        if (ptr_type.kind == LLVMType::Pointer && !ptr_type.type_refs.empty()) {
+          uint32_t pointee_type_id = ptr_type.type_refs[0];
+          if (pointee_type_id < module.types.size())
+            array_size = getTypeSize(module.types[pointee_type_id], module);
+          if (array_size == 0) array_size = 256;
+        }
+      }
+      os << "  threadgroup char " << gv_name << "[" << array_size << "]; // groupshared\n";
+      if (gv.value_id < 256 || ctx.value_table.size() > gv.value_id) {
+        if (ctx.value_table.size() <= gv.value_id)
+          ctx.value_table.resize(gv.value_id + 1);
+        ctx.value_table[gv.value_id] = "(threadgroup char*)&" + gv_name;
+        if (ctx.value_type_ids.size() <= gv.value_id)
+          ctx.value_type_ids.resize(gv.value_id + 1, 0);
+        ctx.value_type_ids[gv.value_id] = gv.type_id;
+      }
+      DXTRACE("DXIL groupshared global: value=%u name=%s size=%u", gv.value_id, gv_name.c_str(), array_size);
+    }
+  }
 
   ctx.value_table.resize(256);
   ctx.value_type_ids.resize(256, 0);

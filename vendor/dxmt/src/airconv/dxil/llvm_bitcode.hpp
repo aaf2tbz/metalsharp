@@ -21,6 +21,7 @@ struct LLVMType {
     Function,
   } kind;
   uint32_t bit_width = 0;
+  uint32_t address_space = 0;
   std::vector<LLVMType> subtypes;
   std::vector<uint32_t> type_refs;
 };
@@ -120,10 +121,19 @@ struct LLVMFunction {
   std::vector<std::string> attributes;
 };
 
+struct LLVMGlobal {
+  uint32_t value_id = 0;
+  uint32_t type_id = 0;
+  uint32_t address_space = 0;
+  std::string name;
+  bool is_constant = false;
+};
+
 struct LLVMModule {
   std::vector<LLVMType> types;
   std::vector<LLVMValue> constants;
   std::vector<LLVMFunction> functions;
+  std::vector<LLVMGlobal> globals;
   std::unordered_map<std::string, size_t> function_map;
   std::string source_filename;
   std::string target_triple;
