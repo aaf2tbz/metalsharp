@@ -137,6 +137,7 @@ struct LLVMModule {
   std::unordered_map<std::string, size_t> function_map;
   std::string source_filename;
   std::string target_triple;
+  uint32_t num_threads[3] = {1, 1, 1};
 };
 
 class BitcodeReader {

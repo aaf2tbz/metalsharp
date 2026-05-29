@@ -1739,9 +1739,9 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   MSLShader result;
   result.source = os.str();
   result.entry_point = shader.entry_point;
-  result.tg_size[0] = 1;
-  result.tg_size[1] = 1;
-  result.tg_size[2] = 1;
+  result.tg_size[0] = module.num_threads[0];
+  result.tg_size[1] = module.num_threads[1];
+  result.tg_size[2] = module.num_threads[2];
   result.unsupported_intrinsics = ctx.unsupported_intrinsics;
   result.unsupported_opcodes = ctx.unsupported_opcodes;
   result.diagnostics = ctx.diagnostics;
