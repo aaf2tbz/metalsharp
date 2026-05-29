@@ -1774,7 +1774,12 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
             inc.value_id = inst.operands[j];
             uint32_t pred_block_val_id = inst.operands[j + 1];
             auto it = block_value_to_index.find(pred_block_val_id);
-            inc.pred_block_idx = (it != block_value_to_index.end()) ? it->second : UINT32_MAX;
+            if (it == block_value_to_index.end()) {
+              DXTRACE("DXIL PHI: cannot resolve block value %u to index", pred_block_val_id);
+              inc.pred_block_idx = UINT32_MAX;
+            } else {
+              inc.pred_block_idx = it->second;
+            }
             pi.incoming.push_back(inc);
           }
           phi_info_per_block[(uint32_t)bi].push_back(pi);
@@ -1803,7 +1808,13 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
       if (pi.type_id > 0 && pi.type_id < module.types.size()) {
         auto &ty = module.types[pi.type_id];
         if (ty.kind == LLVMType::Float) default_val = "0.0f";
-        else if (ty.kind == LLVMType::Vector) default_val = "float4(0)";
+        else if (ty.kind == LLVMType::Double) default_val = "0.0";
+        else if (ty.kind == LLVMType::Vector) {
+          if (!ty.subtypes.empty() && ty.subtypes[0].kind == LLVMType::Integer)
+            default_val = "uint4(0)";
+          else
+            default_val = "float4(0)";
+        }
       }
       os << "  auto " << name << " = " << default_val << "; // phi pre-decl\n";
     }
