@@ -485,6 +485,11 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(value))
         return "(" + value + ").x";
+    if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(value)) {
+        std::string type_name = emitTypeName(target);
+        if (!type_name.empty() && type_name != "auto")
+            return type_name + "(" + value + ")";
+    }
     if (value == "inf" || value == "+inf")
         return "INFINITY";
     if (value == "-inf")
@@ -499,6 +504,157 @@ static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
     if (idx < ctx.value_types.size() && DXILIRBuilder::isVectorType(ctx.value_types[idx]))
         return "any(" + value + " != " + defaultForType(ctx.value_types[idx]) + ")";
     return value;
+}
+
+static bool usableType(const MSLType &t) {
+    return t.kind != MSLTypeKind::Unknown && t.kind != MSLTypeKind::Void &&
+           t.kind != MSLTypeKind::Struct;
+}
+
+static MSLType valueTypeOrUnknown(const LowerContext &ctx, uint32_t idx) {
+    if (idx < ctx.value_types.size()) return ctx.value_types[idx];
+    return {};
+}
+
+static MSLType promoteNumericType(const MSLType &a, const MSLType &b, MSLType fallback) {
+    if (DXILIRBuilder::isVectorType(a)) return a;
+    if (DXILIRBuilder::isVectorType(b)) return b;
+    if (DXILIRBuilder::isFloatType(a)) return a;
+    if (DXILIRBuilder::isFloatType(b)) return b;
+    if (usableType(a)) return a;
+    if (usableType(b)) return b;
+    return fallback;
+}
+
+static uint32_t literalFromValue(const LowerContext &ctx, uint32_t idx, uint32_t fallback) {
+    std::string text;
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
+        text = ctx.value_table[idx];
+    else {
+        for (auto &c : ctx.mod.constants)
+            if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+        if (text.empty() && ctx.current_fn)
+            for (auto &c : ctx.current_fn->constants)
+                if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+    }
+    uint32_t value = 0;
+    if (parseUnsignedLiteral(text, value)) return value;
+    return fallback;
+}
+
+static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
+                                          const std::vector<uint32_t> &args,
+                                          MSLType declared = {}) {
+    switch (intrinsic_id) {
+    case DXOP_CreateHandle:
+    case DXOP_CreateHandleForLib:
+    case DXOP_AnnotateHandle:
+    case DXOP_CreateHandleFromBinding:
+    case DXOP_CreateHandleFromHeap:
+        return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    case DXOP_TextureStore:
+    case DXOP_BufferStore:
+    case DXOP_RawBufferStore:
+    case DXOP_Barrier:
+    case 225:
+    case 1026:
+        return {MSLTypeKind::Void, 0, {}};
+    case DXOP_CBufferLoad:
+    case DXOP_CBufferLoadLegacy:
+    case DXOP_BufferLoad:
+    case DXOP_TextureLoad:
+    case DXOP_TextureSample:
+    case DXOP_TextureSampleBias:
+    case DXOP_TextureSampleLevel:
+    case DXOP_TextureSampleGrad:
+    case DXOP_TextureGather:
+    case DXOP_TextureGatherCmp:
+    case DXOP_TextureGatherRaw:
+        return {MSLTypeKind::Float4, 0, {}};
+    case DXOP_RawBufferLoad:
+    case 303:
+    case 1025:
+    case DXOP_GetDimensions:
+        return {MSLTypeKind::UInt4, 0, {}};
+    case DXOP_TextureSampleCmp:
+    case DXOP_TextureSampleCmpLevelZero:
+    case DXOP_TextureSampleCmpLevel:
+    case DXOP_CalcLOD:
+    case DXOP_Dot2:
+    case DXOP_Dot3:
+    case DXOP_Dot4:
+    case DXOP_LegacyF16ToF32:
+        return {MSLTypeKind::Float, 0, {}};
+    case DXOP_CheckAccessFullyMapped:
+    case DXOP_WaveIsFirstLane:
+    case DXOP_WaveAnyTrue:
+    case DXOP_WaveAllTrue:
+        return {MSLTypeKind::Bool, 0, {}};
+    case DXOP_ThreadId:
+    case DXOP_GroupId:
+    case DXOP_ThreadIDInGroup:
+    case DXOP_FlattenedThreadIDInGroup:
+    case DXOP_BufferUpdateCounter:
+    case DXOP_AtomicBinOp:
+    case DXOP_AtomicCompareExchange:
+    case DXOP_WaveGetLaneIndex:
+    case DXOP_WaveGetLaneCount:
+    case DXOP_LegacyF32ToF16:
+        return {MSLTypeKind::UInt, 0, {}};
+    case DXOP_DerivCoarseX:
+    case DXOP_DerivCoarseY:
+    case DXOP_DerivFineX:
+    case DXOP_DerivFineY:
+        return args.empty() ? MSLType{MSLTypeKind::Float, 0, {}} : valueTypeOrUnknown(ctx, args[0]);
+    case DXOP_WaveReadLaneAt:
+    case DXOP_WaveReadLaneFirst:
+    case DXOP_QuadReadLaneAt:
+        return args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : declared;
+    case DXOP_Unary: {
+        uint32_t op = args.empty() ? 0xFFFFFFFFu : literalFromValue(ctx, args[0], 0xFFFFFFFFu);
+        MSLType operand = args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : declared;
+        switch (op) {
+        case DXILOP_IsNaN:
+        case DXILOP_IsInf:
+        case DXILOP_IsFinite:
+            return {MSLTypeKind::Bool, 0, {}};
+        case DXILOP_Countbits:
+        case DXILOP_FirstbitLo:
+        case DXILOP_FirstbitHi:
+        case DXILOP_FirstbitSHi:
+            if (DXILIRBuilder::isVectorType(operand))
+                return DXILIRBuilder::vectorOfType({MSLTypeKind::Int, 0, {}}, DXILIRBuilder::vectorWidth(operand));
+            return {MSLTypeKind::Int, 0, {}};
+        default:
+            return usableType(operand) ? operand : MSLType{MSLTypeKind::Float, 0, {}};
+        }
+    }
+    case DXOP_Binary: {
+        uint32_t op = args.empty() ? 0xFFFFFFFFu : literalFromValue(ctx, args[0], 0xFFFFFFFFu);
+        MSLType a = args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : MSLType{};
+        MSLType b = args.size() > 2 ? valueTypeOrUnknown(ctx, args[2]) : MSLType{};
+        MSLType promoted = promoteNumericType(a, b, {MSLTypeKind::Int, 0, {}});
+        if (op == DXILOP_UMax || op == DXILOP_UMin || op == DXILOP_UMul || op == DXILOP_UDiv ||
+            op == DXILOP_UAddc || op == DXILOP_USubb)
+            return DXILIRBuilder::isVectorType(promoted)
+                ? DXILIRBuilder::vectorOfType({MSLTypeKind::UInt, 0, {}}, DXILIRBuilder::vectorWidth(promoted))
+                : MSLType{MSLTypeKind::UInt, 0, {}};
+        return promoted;
+    }
+    case DXOP_Tertiary: {
+        MSLType a = args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : MSLType{};
+        MSLType b = args.size() > 2 ? valueTypeOrUnknown(ctx, args[2]) : MSLType{};
+        MSLType c = args.size() > 3 ? valueTypeOrUnknown(ctx, args[3]) : MSLType{};
+        return promoteNumericType(promoteNumericType(a, b, declared), c, {MSLTypeKind::Int, 0, {}});
+    }
+    case DXOP_LoadInput:
+        return {MSLTypeKind::Float, 0, {}};
+    case DXOP_StoreOutput:
+        return {MSLTypeKind::Void, 0, {}};
+    default:
+        break;
+    }
+    return declared;
 }
 
 static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
@@ -924,8 +1080,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto inferred = inferTypeFromExpr(expr);
             if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
         }
+        std::string assigned = coerceResolvedValue(expr, type);
         if (ctx.predeclared_names.find(name) != ctx.predeclared_names.end()) {
-            std::string assigned = coerceResolvedValue(expr, type);
             uint32_t source_id = 0;
             if (assigned == expr && parseEmittedValueName(expr, source_id) &&
                 source_id < ctx.value_types.size() &&
@@ -939,9 +1095,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         }
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
-            os << "  " << emitTypeName(type) << " " << name << " = " << expr << ";\n";
+            os << "  " << emitTypeName(type) << " " << name << " = " << assigned << ";\n";
         else
-            os << "  auto " << name << " = " << expr << ";\n";
+            os << "  auto " << name << " = " << assigned << ";\n";
     };
 
     auto promoteType = [](const MSLType &a, const MSLType &b) -> MSLType {
@@ -1097,7 +1253,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 fn_args.assign(call_args.begin() + 1, call_args.end());
 
             std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
-            MSLType result_type = bestType(getTypeForInst(inst.type_id), translated);
+            MSLType result_type = inferDXIntrinsicResultType(
+                ctx, intrinsic_id, fn_args, bestType(getTypeForInst(inst.type_id), translated));
             ensureValueTable(value_counter);
             ctx.value_types[value_counter] = result_type;
 
@@ -1106,6 +1263,20 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     os << "  " << translated << ";\n";
                     ctx.value_table[value_counter] = translated;
                 }
+            } else if (result_type.kind == MSLTypeKind::Void || exprLooksSideEffectOnly(translated)) {
+                if (!translated.empty())
+                    os << "  " << translated << ";\n";
+                MSLType fallback_type = getTypeForInst(inst.type_id);
+                if (!isUsableType(fallback_type))
+                    fallback_type = {MSLTypeKind::Int, 0, {}};
+                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end()) {
+                    os << "  " << result << " = " << defaultForType(fallback_type) << ";\n";
+                } else {
+                    os << "  " << emitTypeName(fallback_type) << " " << result
+                       << " = " << defaultForType(fallback_type) << ";\n";
+                }
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = fallback_type;
             } else if (translated.find('=') == std::string::npos) {
                 if (!translated.empty() && translated[0] != ' ') {
                     bool is_resource_handle = startsWith(translated, "buf") ||
@@ -1132,6 +1303,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         } else {
             ensureValueTable(value_counter);
             MSLType result_type = getTypeForInst(inst.type_id);
+            if (!isUsableType(result_type))
+                result_type = {MSLTypeKind::Int, 0, {}};
             if (inst.type_id != 0) {
                 if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
                     os << "  " << result << " = " << defaultForType(result_type) << "; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
@@ -1752,6 +1925,40 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         case LLVMInstruction::GetElementPtr:
         case LLVMInstruction::IntToPtr:
             return {MSLTypeKind::DeviceCharPtr, 0, {}};
+        case LLVMInstruction::Add: case LLVMInstruction::Sub: case LLVMInstruction::Mul:
+        case LLVMInstruction::UDiv: case LLVMInstruction::SDiv:
+        case LLVMInstruction::URem: case LLVMInstruction::SRem:
+        case LLVMInstruction::And: case LLVMInstruction::Or: case LLVMInstruction::Xor:
+        case LLVMInstruction::Shl: case LLVMInstruction::LShr: case LLVMInstruction::AShr:
+        case LLVMInstruction::FAdd: case LLVMInstruction::FSub:
+        case LLVMInstruction::FMul: case LLVMInstruction::FDiv: case LLVMInstruction::FRem: {
+            MSLType declared = DXILIRBuilder::resolveType(inst.type_id, module);
+            MSLType lhs = inst.operands.size() > 0 && inst.operands[0] < ctx.value_types.size()
+                ? ctx.value_types[inst.operands[0]]
+                : MSLType{};
+            MSLType rhs = inst.operands.size() > 1 && inst.operands[1] < ctx.value_types.size()
+                ? ctx.value_types[inst.operands[1]]
+                : MSLType{};
+            MSLType fallback = (inst.opcode == LLVMInstruction::FAdd ||
+                                inst.opcode == LLVMInstruction::FSub ||
+                                inst.opcode == LLVMInstruction::FMul ||
+                                inst.opcode == LLVMInstruction::FDiv ||
+                                inst.opcode == LLVMInstruction::FRem)
+                ? MSLType{MSLTypeKind::Float, 0, {}}
+                : MSLType{MSLTypeKind::Int, 0, {}};
+            MSLType result = promoteNumericType(lhs, rhs, usableType(declared) ? declared : fallback);
+            if (inst.opcode != LLVMInstruction::FAdd &&
+                inst.opcode != LLVMInstruction::FSub &&
+                inst.opcode != LLVMInstruction::FMul &&
+                inst.opcode != LLVMInstruction::FDiv &&
+                inst.opcode != LLVMInstruction::FRem) {
+                if (result.kind == MSLTypeKind::Float2) return {MSLTypeKind::Int2, 0, {}};
+                if (result.kind == MSLTypeKind::Float3) return {MSLTypeKind::Int3, 0, {}};
+                if (result.kind == MSLTypeKind::Float4) return {MSLTypeKind::Int4, 0, {}};
+                if (DXILIRBuilder::isFloatType(result)) return {MSLTypeKind::Int, 0, {}};
+            }
+            return result;
+        }
         case LLVMInstruction::Call: {
             if (!inst.operands.empty()) {
                 uint32_t callee = inst.operands[0];
@@ -1760,33 +1967,17 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                 if (decl_it != ctx.function_decls.end()) callee_name = decl_it->second;
                 else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
                 uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
-                switch (intrinsic_id) {
-                case DXOP_CBufferLoad:
-                case DXOP_CBufferLoadLegacy:
-                case DXOP_BufferLoad:
-                case DXOP_TextureLoad:
-                case DXOP_TextureSample:
-                case DXOP_TextureSampleBias:
-                case DXOP_TextureSampleLevel:
-                case DXOP_TextureSampleGrad:
-                case DXOP_TextureGather:
-                case 74:
-                case 223:
-                    return {MSLTypeKind::Float4, 0, {}};
-                case DXOP_RawBufferLoad:
-                case 303:
-                case 1025:
-                case DXOP_GetDimensions:
-                    return {MSLTypeKind::UInt4, 0, {}};
-                case DXOP_TextureSampleCmp:
-                case DXOP_TextureSampleCmpLevelZero:
-                case 224:
-                case DXOP_CalcLOD:
-                    return {MSLTypeKind::Float, 0, {}};
-                case DXOP_CheckAccessFullyMapped:
-                    return {MSLTypeKind::Bool, 0, {}};
-                default:
-                    break;
+                if (intrinsic_id != 0 && inst.operands.size() > 2) {
+                    std::vector<uint32_t> fn_args;
+                    if (intrinsic_id == DXOP_Unary || intrinsic_id == DXOP_Binary ||
+                        intrinsic_id == DXOP_Tertiary)
+                        fn_args.assign(inst.operands.begin() + 2, inst.operands.end());
+                    else
+                        fn_args.assign(inst.operands.begin() + 3, inst.operands.end());
+                    MSLType declared = DXILIRBuilder::resolveType(inst.type_id, module);
+                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared);
+                    if (inferred.kind != MSLTypeKind::Unknown && inferred.kind != MSLTypeKind::Void)
+                        return inferred;
                 }
             }
             break;
