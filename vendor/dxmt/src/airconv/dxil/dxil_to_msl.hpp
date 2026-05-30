@@ -46,10 +46,12 @@ private:
     std::unordered_map<std::string, std::string> local_values;
     std::vector<ResourceBinding> resource_bindings;
     std::vector<std::string> diagnostics;
+    std::unordered_map<uint32_t, std::string> function_decls;
     uint32_t next_binding = 0;
     uint32_t unsupported_intrinsics = 0;
     uint32_t unsupported_opcodes = 0;
     uint32_t instruction_start_value = 0;
+    const LLVMFunction *current_fn = nullptr;
     bool uses_thread_id = false;
     bool uses_group_id = false;
     bool uses_group_thread_id = false;

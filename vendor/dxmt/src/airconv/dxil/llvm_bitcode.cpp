@@ -726,7 +726,8 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
   return false;
 }
 
-static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
+static bool parseConstantsBlock(ParseContext &ctx, std::vector<LLVMValue> &target,
+                                uint32_t &next_value_id,
                                 uint32_t abbrev_len, uint32_t end_bit) {
   uint32_t cur_type = 0;
   while (!ctx.reader.atEnd() && ctx.reader.tell() < end_bit) {
@@ -788,7 +789,7 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
       } else if (rec_code == kConstantsCode_Undefined) {
         v.constant_data = "0";
       }
-      ctx.module.constants.push_back(v);
+      target.push_back(v);
       break;
     }
     case kConstantsCode_Aggregate: {
@@ -802,6 +803,11 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
           v.constant_data += ",";
         uint32_t value_id = (uint32_t)ops[i];
         auto constant = findConstantById(ctx.module, value_id);
+        if (!constant) {
+          for (auto &tc : target) {
+            if (tc.id == value_id) { constant = &tc; break; }
+          }
+        }
         if (constant && !constant->constant_data.empty()) {
           v.constant_data += constant->constant_data;
         } else {
@@ -809,7 +815,7 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
         }
       }
       v.constant_data += ")";
-      ctx.module.constants.push_back(v);
+      target.push_back(v);
       break;
     }
     default:
@@ -900,6 +906,10 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       type_id = (uint32_t)record[slot++];
     } else if (auto constant = findConstantById(ctx.module, value_id)) {
       type_id = constant->type_id;
+    } else {
+      for (auto &c : fn.constants) {
+        if (c.id == value_id) { type_id = c.type_id; break; }
+      }
     }
 
     return value_id;
@@ -931,7 +941,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         ParseContext const_ctx{ctx.reader, ctx.module,
                                getBlockAbbrevs(ctx, header.block_id),
                                ctx.block_infos};
-        parseConstantsBlock(const_ctx, function_next_value,
+        parseConstantsBlock(const_ctx, fn.constants, function_next_value,
                             header.new_abbrev_len, header.end_bit);
         next_value = function_next_value;
         fn.instruction_start_value = next_value;
@@ -1501,7 +1511,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
         ParseContext const_ctx{reader, module,
                                getBlockAbbrevs(ctx, header.block_id),
                                ctx.block_infos};
-        parseConstantsBlock(const_ctx, next_module_value_id,
+        parseConstantsBlock(const_ctx, module.constants, next_module_value_id,
                             header.new_abbrev_len, header.end_bit);
         break;
       }

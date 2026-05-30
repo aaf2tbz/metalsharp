@@ -594,6 +594,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
       for (auto &c : ctx.mod.constants) {
         if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
       }
+      if (text.empty() && ctx.current_fn) {
+        for (auto &c : ctx.current_fn->constants) {
+          if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+        }
+      }
     }
     uint32_t value = 0;
     if (parseUnsignedLiteral(text, value))
@@ -1151,6 +1156,14 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
         break;
       }
     }
+    if (ctx.current_fn) {
+      for (auto &c : ctx.current_fn->constants) {
+        if (c.id == idx) {
+          if (!c.constant_data.empty()) return c.constant_data;
+          break;
+        }
+      }
+    }
     return emitValue(idx);
   };
 
@@ -1181,7 +1194,13 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     for (size_t i = 2; i < inst.operands.size(); i++)
       call_args.push_back(inst.operands[i]);
 
-    std::string callee_name = callee < ctx.value_table.size() ? ctx.value_table[callee] : "";
+    std::string callee_name;
+    auto decl_it = ctx.function_decls.find(callee);
+    if (decl_it != ctx.function_decls.end()) {
+      callee_name = decl_it->second;
+    } else if (callee < ctx.value_table.size()) {
+      callee_name = ctx.value_table[callee];
+    }
     uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
 
     if (intrinsic_id != 0 && call_args.empty()) {
@@ -1653,7 +1672,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
           module.functions.size(), module.types.size());
 
   std::ostringstream os;
-  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, 0, 0, 0, false, false,
+  EmitContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr, false, false,
                   false, false};
 
   if (module.functions.empty()) {
@@ -1683,6 +1702,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   }
 
   auto &fn = *entry_fn;
+  ctx.current_fn = entry_fn;
 
   emitFunctionPrologue(ctx);
 
@@ -1716,37 +1736,42 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   ctx.value_table.resize(256);
   ctx.value_type_ids.resize(256, 0);
 
-  for (size_t i = 0; i < module.constants.size(); i++) {
-    uint32_t val_idx = module.constants[i].id;
-    if (ctx.value_table.size() <= val_idx)
-      ctx.value_table.resize(val_idx + 1);
-    if (ctx.value_type_ids.size() <= val_idx)
-      ctx.value_type_ids.resize(val_idx + 1, 0);
-    if (val_idx < ctx.value_table.size()) {
-      std::string cdata = module.constants[i].constant_data;
-      if (cdata.substr(0, 4) == "agg(") {
-        uint32_t tid = module.constants[i].type_id;
-        std::string args = cdata.substr(4, cdata.size() - 5);
-        if (tid < module.types.size()) {
-          auto &ty = module.types[tid];
-          if (ty.kind == LLVMType::Vector && !ty.subtypes.empty()) {
-            std::string elem = getTypeName(ty.subtypes[0], module);
-            uint32_t count = ty.subtypes[0].bit_width > 0 ? ty.bit_width / ty.subtypes[0].bit_width : 4;
-            ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
-          } else if (ty.kind == LLVMType::Struct) {
-            ctx.value_table[val_idx] = "{" + args + "}";
+  auto loadConstants = [&](const std::vector<LLVMValue> &consts) {
+    for (size_t i = 0; i < consts.size(); i++) {
+      uint32_t val_idx = consts[i].id;
+      if (ctx.value_table.size() <= val_idx)
+        ctx.value_table.resize(val_idx + 1);
+      if (ctx.value_type_ids.size() <= val_idx)
+        ctx.value_type_ids.resize(val_idx + 1, 0);
+      if (val_idx < ctx.value_table.size()) {
+        std::string cdata = consts[i].constant_data;
+        if (cdata.substr(0, 4) == "agg(") {
+          uint32_t tid = consts[i].type_id;
+          std::string args = cdata.substr(4, cdata.size() - 5);
+          if (tid < module.types.size()) {
+            auto &ty = module.types[tid];
+            if (ty.kind == LLVMType::Vector && !ty.subtypes.empty()) {
+              std::string elem = getTypeName(ty.subtypes[0], module);
+              uint32_t count = ty.subtypes[0].bit_width > 0 ? ty.bit_width / ty.subtypes[0].bit_width : 4;
+              ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
+            } else if (ty.kind == LLVMType::Struct) {
+              ctx.value_table[val_idx] = "{" + args + "}";
+            } else {
+              ctx.value_table[val_idx] = cdata;
+            }
           } else {
             ctx.value_table[val_idx] = cdata;
           }
         } else {
-          ctx.value_table[val_idx] = cdata;
+          ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(i) : cdata;
         }
-      } else {
-        ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(i) : cdata;
+        ctx.value_type_ids[val_idx] = consts[i].type_id;
       }
-      ctx.value_type_ids[val_idx] = module.constants[i].type_id;
     }
-  }
+  };
+
+  loadConstants(module.constants);
+  loadConstants(fn.constants);
 
   for (auto &decl_fn : module.functions) {
     if (!decl_fn.is_declaration || decl_fn.name.empty())
@@ -1757,6 +1782,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
       ctx.value_type_ids.resize(decl_fn.value_id + 1, 0);
     ctx.value_table[decl_fn.value_id] = decl_fn.name;
     ctx.value_type_ids[decl_fn.value_id] = decl_fn.type_id;
+    ctx.function_decls[decl_fn.value_id] = decl_fn.name;
     DXTRACE("DXIL function declaration: value=%u name=%s", decl_fn.value_id, decl_fn.name.c_str());
   }
 
@@ -1905,6 +1931,14 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
       if (c.id == idx) {
         if (!c.constant_data.empty()) return c.constant_data;
         break;
+      }
+    }
+    if (ctx.current_fn) {
+      for (auto &c : ctx.current_fn->constants) {
+        if (c.id == idx) {
+          if (!c.constant_data.empty()) return c.constant_data;
+          break;
+        }
       }
     }
     return emitValue(idx);
