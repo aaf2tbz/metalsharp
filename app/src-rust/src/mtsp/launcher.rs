@@ -1553,6 +1553,176 @@ pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
     false
 }
 
+fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
+    let tool_candidates = [
+        PathBuf::from("/usr/local/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/homebrew/bin/metal-shaderconverter"),
+        PathBuf::from("/opt/metal-shaderconverter/bin/metal-shaderconverter"),
+    ];
+    let Some(tool_path) = tool_candidates.into_iter().find(|path| path.exists()) else {
+        return;
+    };
+
+    let log_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.pipeline))
+        .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
+    let cache_dir = cache_paths
+        .map(|cache| PathBuf::from(&cache.shader))
+        .unwrap_or_else(|| PathBuf::from("/tmp/dxmt_shader_cache"));
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".msc.fail") || name.ends_with(".msc.lock") {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let launch_start = SystemTime::now();
+        let max_active_compiles = 4usize;
+
+        while Instant::now() < deadline {
+            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                let mut pending = Vec::new();
+                let mut active_locks = 0usize;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|ext| ext.to_str()) == Some("lock")
+                        && path.file_name().and_then(|name| name.to_str()).map(|name| name.ends_with(".msc.lock"))
+                            == Some(true)
+                    {
+                        active_locks += 1;
+                    }
+                    if path.extension().and_then(|ext| ext.to_str()) != Some("dxbc") {
+                        continue;
+                    }
+                    let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+                        continue;
+                    };
+                    if modified + Duration::from_secs(2) < launch_start {
+                        continue;
+                    }
+                    pending.push((modified, path));
+                }
+
+                pending.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+
+                for (_modified, path) in pending {
+                    if active_locks >= max_active_compiles {
+                        break;
+                    }
+                    let metallib_path = path.with_extension("metallib");
+                    let reflection_path = path.with_extension("json");
+                    let vertex_layout_path = path.with_extension("vertex-layout.json");
+                    let is_geometry_mesh_shader = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.ends_with(".geom.gsmesh.dxbc"))
+                        .unwrap_or(false);
+                    let use_gs_ts_emulation = vertex_layout_path.exists() && !is_geometry_mesh_shader;
+                    let stage_in_path = path.with_extension("stageIn.metallib");
+                    let fail_path = path.with_extension("msc.fail");
+                    if metallib_path.exists()
+                        && reflection_path.exists()
+                        && (!use_gs_ts_emulation || stage_in_path.exists())
+                    {
+                        continue;
+                    }
+                    if fail_path.exists() {
+                        continue;
+                    }
+
+                    let lock_path = path.with_extension("msc.lock");
+                    let lock_file = OpenOptions::new().write(true).create_new(true).open(&lock_path);
+                    let Ok(_lock_guard) = lock_file else {
+                        continue;
+                    };
+                    active_locks += 1;
+
+                    let tool_path = tool_path.clone();
+                    let log_path = log_path.clone();
+                    std::thread::spawn(move || {
+                        let mut log = OpenOptions::new().create(true).append(true).open(&log_path).ok();
+                        if let Some(log) = log.as_mut() {
+                            let _ = writeln!(log, "compile_start dxbc={}", path.display());
+                        }
+
+                        let mut command = Command::new(&tool_path);
+                        command
+                            .arg("-o")
+                            .arg(&metallib_path)
+                            .arg(&path)
+                            .arg(format!("--output-reflection-file={}", reflection_path.display()))
+                            .arg("--deployment-os=macOS")
+                            .arg("--minimum-os-build-version=15.0.0");
+                        if use_gs_ts_emulation {
+                            command
+                                .arg("--enable-gs-ts-emulation")
+                                .arg("--vertex-stage-in")
+                                .arg(format!("--vertex-input-layout-file={}", vertex_layout_path.display()));
+                        }
+                        let output = command.output();
+
+                        match output {
+                            Ok(result) => {
+                                let stdout_text = String::from_utf8_lossy(&result.stdout);
+                                let stderr_text = String::from_utf8_lossy(&result.stderr);
+                                if result.status.success() {
+                                    let _ = std::fs::remove_file(&fail_path);
+                                } else {
+                                    let failure_summary = if stderr_text.trim().is_empty() {
+                                        format!("metal-shaderconverter failed with {}", result.status)
+                                    } else {
+                                        stderr_text.trim().to_string()
+                                    };
+                                    let _ = std::fs::write(&fail_path, failure_summary);
+                                }
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(
+                                        log,
+                                        "compile_end dxbc={} status={} metallib={} reflection={} gs_ts_emulation={}",
+                                        path.display(),
+                                        result.status,
+                                        metallib_path.exists(),
+                                        reflection_path.exists(),
+                                        use_gs_ts_emulation
+                                    );
+                                    if !stdout_text.is_empty() {
+                                        let _ = log.write_all(stdout_text.as_bytes());
+                                    }
+                                    if !stderr_text.is_empty() {
+                                        let _ = log.write_all(stderr_text.as_bytes());
+                                    }
+                                }
+                            },
+                            Err(err) => {
+                                let _ = std::fs::write(
+                                    &fail_path,
+                                    format!("metal-shaderconverter invocation failed: {}", err),
+                                );
+                                if let Some(log) = log.as_mut() {
+                                    let _ = writeln!(log, "compile_error dxbc={} err={}", path.display(), err);
+                                }
+                            },
+                        }
+
+                        let _ = std::fs::remove_file(&lock_path);
+                    });
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1825,176 +1995,6 @@ mod tests {
     }
 
     fn unique_suffix() -> u128 {
-         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
-     }
- }
-
-fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
-    let tool_candidates = [
-        PathBuf::from("/usr/local/bin/metal-shaderconverter"),
-        PathBuf::from("/opt/homebrew/bin/metal-shaderconverter"),
-        PathBuf::from("/opt/metal-shaderconverter/bin/metal-shaderconverter"),
-    ];
-    let Some(tool_path) = tool_candidates.into_iter().find(|path| path.exists()) else {
-        return;
-    };
-
-    let log_dir = cache_paths
-        .map(|cache| PathBuf::from(&cache.pipeline))
-        .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
-    let _ = std::fs::create_dir_all(&log_dir);
-    let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
-    let cache_dir = cache_paths
-        .map(|cache| PathBuf::from(&cache.shader))
-        .unwrap_or_else(|| PathBuf::from("/tmp/dxmt_shader_cache"));
-    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if name.ends_with(".msc.fail") || name.ends_with(".msc.lock") {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
     }
-
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(180);
-        let launch_start = SystemTime::now();
-        let max_active_compiles = 4usize;
-
-        while Instant::now() < deadline {
-            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-                let mut pending = Vec::new();
-                let mut active_locks = 0usize;
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|ext| ext.to_str()) == Some("lock")
-                        && path.file_name().and_then(|name| name.to_str()).map(|name| name.ends_with(".msc.lock"))
-                            == Some(true)
-                    {
-                        active_locks += 1;
-                    }
-                    if path.extension().and_then(|ext| ext.to_str()) != Some("dxbc") {
-                        continue;
-                    }
-                    let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
-                        continue;
-                    };
-                    if modified + Duration::from_secs(2) < launch_start {
-                        continue;
-                    }
-                    pending.push((modified, path));
-                }
-
-                pending.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-
-                for (_modified, path) in pending {
-                    if active_locks >= max_active_compiles {
-                        break;
-                    }
-                    let metallib_path = path.with_extension("metallib");
-                    let reflection_path = path.with_extension("json");
-                    let vertex_layout_path = path.with_extension("vertex-layout.json");
-                    let is_geometry_mesh_shader = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(|name| name.ends_with(".geom.gsmesh.dxbc"))
-                        .unwrap_or(false);
-                    let use_gs_ts_emulation = vertex_layout_path.exists() && !is_geometry_mesh_shader;
-                    let stage_in_path = path.with_extension("stageIn.metallib");
-                    let fail_path = path.with_extension("msc.fail");
-                    if metallib_path.exists()
-                        && reflection_path.exists()
-                        && (!use_gs_ts_emulation || stage_in_path.exists())
-                    {
-                        continue;
-                    }
-                    if fail_path.exists() {
-                        continue;
-                    }
-
-                    let lock_path = path.with_extension("msc.lock");
-                    let lock_file = OpenOptions::new().write(true).create_new(true).open(&lock_path);
-                    let Ok(_lock_guard) = lock_file else {
-                        continue;
-                    };
-                    active_locks += 1;
-
-                    let tool_path = tool_path.clone();
-                    let log_path = log_path.clone();
-                    std::thread::spawn(move || {
-                        let mut log = OpenOptions::new().create(true).append(true).open(&log_path).ok();
-                        if let Some(log) = log.as_mut() {
-                            let _ = writeln!(log, "compile_start dxbc={}", path.display());
-                        }
-
-                        let mut command = Command::new(&tool_path);
-                        command
-                            .arg("-o")
-                            .arg(&metallib_path)
-                            .arg(&path)
-                            .arg(format!("--output-reflection-file={}", reflection_path.display()))
-                            .arg("--deployment-os=macOS")
-                            .arg("--minimum-os-build-version=15.0.0");
-                        if use_gs_ts_emulation {
-                            command
-                                .arg("--enable-gs-ts-emulation")
-                                .arg("--vertex-stage-in")
-                                .arg(format!("--vertex-input-layout-file={}", vertex_layout_path.display()));
-                        }
-                        let output = command.output();
-
-                        match output {
-                            Ok(result) => {
-                                let stdout_text = String::from_utf8_lossy(&result.stdout);
-                                let stderr_text = String::from_utf8_lossy(&result.stderr);
-                                if result.status.success() {
-                                    let _ = std::fs::remove_file(&fail_path);
-                                } else {
-                                    let failure_summary = if stderr_text.trim().is_empty() {
-                                        format!("metal-shaderconverter failed with {}", result.status)
-                                    } else {
-                                        stderr_text.trim().to_string()
-                                    };
-                                    let _ = std::fs::write(&fail_path, failure_summary);
-                                }
-                                if let Some(log) = log.as_mut() {
-                                    let _ = writeln!(
-                                        log,
-                                        "compile_end dxbc={} status={} metallib={} reflection={} gs_ts_emulation={}",
-                                        path.display(),
-                                        result.status,
-                                        metallib_path.exists(),
-                                        reflection_path.exists(),
-                                        use_gs_ts_emulation
-                                    );
-                                    if !stdout_text.is_empty() {
-                                        let _ = log.write_all(stdout_text.as_bytes());
-                                    }
-                                    if !stderr_text.is_empty() {
-                                        let _ = log.write_all(stderr_text.as_bytes());
-                                    }
-                                }
-                            },
-                            Err(err) => {
-                                let _ = std::fs::write(
-                                    &fail_path,
-                                    format!("metal-shaderconverter invocation failed: {}", err),
-                                );
-                                if let Some(log) = log.as_mut() {
-                                    let _ = writeln!(log, "compile_error dxbc={} err={}", path.display(), err);
-                                }
-                            },
-                        }
-
-                        let _ = std::fs::remove_file(&lock_path);
-                    });
-                }
-            }
-
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    });
 }
