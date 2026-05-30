@@ -1,0 +1,1520 @@
+#include "msl_lowering.hpp"
+#include <cstdio>
+#include <cstring>
+#include <cstdarg>
+#include <algorithm>
+#include <map>
+#include <set>
+
+namespace dxmt::dxil {
+
+enum DXIntrinsicOpcode {
+  DXOP_LoadInput = 4,
+  DXOP_StoreOutput = 5,
+  DXOP_CreateHandle = 57,
+  DXOP_CreateHandleForLib = 160,
+  DXOP_AnnotateHandle = 216,
+  DXOP_CreateHandleFromBinding = 217,
+  DXOP_CreateHandleFromHeap = 218,
+  DXOP_CBufferLoad = 58,
+  DXOP_CBufferLoadLegacy = 59,
+  DXOP_ThreadId = 93,
+  DXOP_GroupId = 94,
+  DXOP_ThreadIDInGroup = 95,
+  DXOP_FlattenedThreadIDInGroup = 96,
+  DXOP_BufferLoad = 68,
+  DXOP_BufferStore = 69,
+  DXOP_TextureLoad = 66,
+  DXOP_TextureStore = 67,
+  DXOP_TextureGather = 73,
+  DXOP_TextureSample = 60,
+  DXOP_TextureSampleBias = 61,
+  DXOP_TextureSampleLevel = 62,
+  DXOP_TextureSampleGrad = 63,
+  DXOP_TextureSampleCmp = 64,
+  DXOP_TextureSampleCmpLevelZero = 65,
+  DXOP_Barrier = 80,
+  DXOP_Unary = 13,
+  DXOP_Binary = 14,
+  DXOP_Tertiary = 15,
+  DXOP_Dot2 = 54,
+  DXOP_Dot3 = 55,
+  DXOP_Dot4 = 56,
+  DXOP_RawBufferLoad = 139,
+  DXOP_RawBufferStore = 140,
+  DXOP_BufferUpdateCounter = 70,
+  DXOP_CheckAccessFullyMapped = 71,
+  DXOP_GetDimensions = 72,
+  DXOP_AtomicBinOp = 78,
+  DXOP_AtomicCompareExchange = 79,
+  DXOP_DerivCoarseX = 83,
+  DXOP_DerivCoarseY = 84,
+  DXOP_DerivFineX = 85,
+  DXOP_DerivFineY = 86,
+  DXOP_CalcLOD = 81,
+  DXOP_LegacyF16ToF32 = 131,
+  DXOP_LegacyF32ToF16 = 132,
+  DXOP_WaveIsFirstLane = 110,
+  DXOP_WaveGetLaneIndex = 111,
+  DXOP_WaveGetLaneCount = 112,
+  DXOP_WaveAnyTrue = 113,
+  DXOP_WaveAllTrue = 114,
+  DXOP_WaveReadLaneAt = 117,
+  DXOP_WaveReadLaneFirst = 118,
+  DXOP_QuadReadLaneAt = 122,
+  DXOP_TextureStoreSample = 225,
+  DXOP_TextureSampleCmpLevel = 224,
+  DXOP_TextureGatherCmp = 74,
+  DXOP_TextureGatherRaw = 223,
+};
+
+enum DXILMathOpcode {
+  DXILOP_FAbs = 6, DXILOP_Saturate = 7, DXILOP_IsNaN = 8, DXILOP_IsInf = 9,
+  DXILOP_IsFinite = 10, DXILOP_Cos = 12, DXILOP_Sin = 13, DXILOP_Tan = 14,
+  DXILOP_Acos = 15, DXILOP_Asin = 16, DXILOP_Atan = 17,
+  DXILOP_Exp = 21, DXILOP_Frc = 22, DXILOP_Log = 23,
+  DXILOP_Sqrt = 24, DXILOP_Rsqrt = 25,
+  DXILOP_Round_ne = 26, DXILOP_Round_ni = 27, DXILOP_Round_pi = 28, DXILOP_Round_z = 29,
+  DXILOP_Bfrev = 30, DXILOP_Countbits = 31,
+  DXILOP_FirstbitLo = 32, DXILOP_FirstbitHi = 33, DXILOP_FirstbitSHi = 34,
+  DXILOP_FMax = 35, DXILOP_FMin = 36, DXILOP_IMax = 37, DXILOP_IMin = 38,
+  DXILOP_UMax = 39, DXILOP_UMin = 40,
+  DXILOP_IMul = 41, DXILOP_UMul = 42, DXILOP_UDiv = 43,
+  DXILOP_UAddc = 44, DXILOP_USubb = 45,
+  DXILOP_FMad = 46, DXILOP_Fma = 47, DXILOP_IMad = 48, DXILOP_UMad = 49,
+  DXILOP_Ibfe = 51, DXILOP_Ubfe = 52, DXILOP_Bfi = 53,
+};
+
+static const char *kMetalHeader = R"(#include <metal_stdlib>
+using namespace metal;
+
+)";
+
+static std::string emitValue(uint32_t idx) {
+    if (idx == 0xFFFFFFFF) return "undef";
+    return "v" + std::to_string(idx);
+}
+
+static bool startsWith(const std::string &text, const char *prefix) {
+    return text.rfind(prefix, 0) == 0;
+}
+
+static bool parseUnsignedLiteral(const std::string &text, uint32_t &value) {
+    if (text.empty()) return false;
+    char *end = nullptr;
+    unsigned long parsed = std::strtoul(text.c_str(), &end, 10);
+    if (!end || *end != '\0') return false;
+    value = (uint32_t)parsed;
+    return true;
+}
+
+static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
+    std::vector<std::string> values;
+    bool is_agg = startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
+    bool is_brace = !text.empty() && text[0] == '{' && text.back() == '}';
+    if (!is_agg && !is_brace) return values;
+    size_t start = is_agg ? 4 : 1;
+    while (start < text.size() - 1) {
+        size_t comma = text.find(',', start);
+        size_t end_pos = comma == std::string::npos ? text.size() - 1 : comma;
+        std::string val = text.substr(start, end_pos - start);
+        while (!val.empty() && (val.front() == ' ' || val.front() == '\t'))
+            val.erase(val.begin());
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+            val.pop_back();
+        if (!val.empty()) values.push_back(val);
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return values;
+}
+
+static std::string ensureScalarIndex(const std::string &val) {
+    if (startsWith(val, "agg(")) {
+        auto parts = parseAggregateLiteral(val);
+        return parts.empty() ? "0" : parts[0];
+    }
+    return val;
+}
+
+static const char *componentSuffix(uint32_t component) {
+    switch (component & 3) {
+    case 0: return ".x"; case 1: return ".y"; case 2: return ".z"; default: return ".w";
+    }
+}
+
+static const char *componentName(uint32_t component) {
+    switch (component & 3) {
+    case 0: return "x"; case 1: return "y"; case 2: return "z"; default: return "w";
+    }
+}
+
+static std::string varyingField(const char *base, uint32_t sig_id) {
+    if (sig_id == 0) return std::string(base) + ".position";
+    if (sig_id <= 8) return std::string(base) + ".v" + std::to_string(sig_id - 1);
+    return std::string(base) + ".v7";
+}
+
+static std::string vertexInputField(const char *base, uint32_t sig_id) {
+    if (sig_id <= 15) return std::string(base) + ".a" + std::to_string(sig_id);
+    return std::string(base) + ".a0";
+}
+
+static std::string escapeName(const std::string &s) {
+    if (s.empty()) return "_";
+    std::string r;
+    for (char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_')
+            r += c;
+        else r += '_';
+    }
+    if (!r.empty() && r[0] >= '0' && r[0] <= '9') r = "_" + r;
+    return r;
+}
+
+static const char *bindingPrefixForClass(uint32_t resource_class) {
+    switch (resource_class) {
+    case 0: case 1: return "tex";
+    case 2: return "buf";
+    case 3: return "samp";
+    default: return "buf";
+    }
+}
+
+static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
+    if (name.size() < 6 || name[0] != 'd' || name[1] != 'x' || name[2] != '.' || name[3] != 'o' || name[4] != 'p' || name[5] != '.')
+        return 0;
+    const char *s = name.c_str() + 6;
+    if (strncmp(s, "loadInput.", 10) == 0) return 4;
+    if (strncmp(s, "storeOutput.", 12) == 0) return 5;
+    if (strncmp(s, "createHandleFromBinding", 23) == 0) return 217;
+    if (strncmp(s, "createHandleFromHeap", 20) == 0) return 218;
+    if (strncmp(s, "createHandleForLib", 18) == 0) return 160;
+    if (strncmp(s, "createHandle", 12) == 0) return 57;
+    if (strncmp(s, "annotateHandle", 14) == 0) return 216;
+    if (strncmp(s, "cbufferLoadLegacy.", 18) == 0) return 59;
+    if (strncmp(s, "cbufferLoad.", 12) == 0) return 58;
+    if (strncmp(s, "threadIdInGroup", 15) == 0) return 95;
+    if (strncmp(s, "flattenedThreadIdInGroup", 24) == 0) return 96;
+    if (strncmp(s, "threadId", 8) == 0) return 93;
+    if (strncmp(s, "groupId", 7) == 0) return 94;
+    if (strncmp(s, "bufferLoad.", 11) == 0) return 68;
+    if (strncmp(s, "bufferStore.", 12) == 0) return 69;
+    if (strncmp(s, "bufferUpdateCounter", 19) == 0) return 70;
+    if (strncmp(s, "textureStoreSample.", 19) == 0) return 225;
+    if (strncmp(s, "textureStore.", 13) == 0) return 67;
+    if (strncmp(s, "textureLoad.", 12) == 0) return 66;
+    if (strncmp(s, "textureGatherCmp.", 17) == 0) return 74;
+    if (strncmp(s, "textureGatherRaw.", 17) == 0) return 223;
+    if (strncmp(s, "textureGather.", 14) == 0) return 73;
+    if (strncmp(s, "sampleCmpLevelZero.", 19) == 0) return 65;
+    if (strncmp(s, "sampleCmpLevel.", 15) == 0) return 224;
+    if (strncmp(s, "sampleCmp.", 10) == 0) return 64;
+    if (strncmp(s, "sampleGrad.", 11) == 0) return 63;
+    if (strncmp(s, "sampleLevel.", 12) == 0) return 62;
+    if (strncmp(s, "sampleBias.", 10) == 0) return 61;
+    if (strncmp(s, "sample.", 7) == 0) return 60;
+    if (strncmp(s, "unaryBits.", 10) == 0) return 13;
+    if (strncmp(s, "unary.", 6) == 0) return 13;
+    if (strncmp(s, "binary.", 7) == 0) return 14;
+    if (strncmp(s, "tertiary.", 9) == 0) return 15;
+    if (strncmp(s, "dot2.", 5) == 0) return 54;
+    if (strncmp(s, "dot3.", 5) == 0) return 55;
+    if (strncmp(s, "dot4.", 5) == 0) return 56;
+    if (strncmp(s, "barrier", 7) == 0) return 80;
+    if (strncmp(s, "checkAccessFullyMapped", 22) == 0) return 71;
+    if (strncmp(s, "getDimensions", 13) == 0) return 72;
+    if (strncmp(s, "rawBufferLoadLegacy", 19) == 0) return 1025;
+    if (strncmp(s, "rawBufferStoreLegacy", 20) == 0) return 1026;
+    if (strncmp(s, "rawBufferVectorLoad", 19) == 0) return 303;
+    if (strncmp(s, "rawBufferVectorStore", 20) == 0) return 304;
+    if (strncmp(s, "rawBufferLoad", 13) == 0) return 139;
+    if (strncmp(s, "rawBufferStore", 14) == 0) return 140;
+    if (strncmp(s, "atomicCompareExchange", 21) == 0) return 79;
+    if (strncmp(s, "atomicBinOp", 11) == 0) return 78;
+    if (strncmp(s, "derivCoarseX", 12) == 0) return 83;
+    if (strncmp(s, "derivCoarseY", 12) == 0) return 84;
+    if (strncmp(s, "derivFineX", 10) == 0) return 85;
+    if (strncmp(s, "derivFineY", 10) == 0) return 86;
+    if (strncmp(s, "calculateLOD", 12) == 0 || strncmp(s, "calcLOD", 7) == 0) return 81;
+    if (strncmp(s, "makeDouble", 10) == 0) return 101;
+    if (strncmp(s, "splitDouble", 11) == 0) return 102;
+    if (strncmp(s, "legacyF16ToF32", 14) == 0) return 131;
+    if (strncmp(s, "legacyF32ToF16", 14) == 0) return 132;
+    if (strncmp(s, "waveReadLaneFirst", 17) == 0) return 118;
+    if (strncmp(s, "waveReadLaneAt", 14) == 0) return 117;
+    if (strncmp(s, "waveIsFirstLane", 15) == 0) return 110;
+    if (strncmp(s, "waveGetLaneIndex", 16) == 0) return 111;
+    if (strncmp(s, "waveGetLaneCount", 16) == 0) return 112;
+    if (strncmp(s, "waveAnyTrue", 11) == 0) return 113;
+    if (strncmp(s, "waveAllTrue", 11) == 0) return 114;
+    if (strncmp(s, "quadReadLaneAt", 14) == 0) return 122;
+    if (strncmp(s, "isSpecialFloat", 14) == 0) return 0;
+    if (strncmp(s, "cycleCounterLegacy", 18) == 0) return 109;
+    if (strncmp(s, "texture2DMSGetSamplePosition", 27) == 0) return 75;
+    if (strncmp(s, "renderTargetGetSamplePosition", 29) == 0) return 76;
+    if (strncmp(s, "renderTargetGetSampleCount", 26) == 0) return 77;
+    return 0;
+}
+
+static std::string emitTypeName(const MSLType &t) {
+    if (t.kind == MSLTypeKind::Struct || t.kind == MSLTypeKind::Unknown)
+        return "auto";
+    return DXILIRBuilder::mslTypeName(t);
+}
+
+static std::string defaultForType(const MSLType &t) {
+    switch (t.kind) {
+    case MSLTypeKind::Bool: return "false";
+    case MSLTypeKind::Float: return "0.0f";
+    case MSLTypeKind::Float2: return "float2(0.0f)";
+    case MSLTypeKind::Float3: return "float3(0.0f)";
+    case MSLTypeKind::Float4: return "float4(0.0f)";
+    case MSLTypeKind::Int: return "0";
+    case MSLTypeKind::Int2: return "int2(0)";
+    case MSLTypeKind::Int3: return "int3(0)";
+    case MSLTypeKind::Int4: return "int4(0)";
+    case MSLTypeKind::UInt: return "0u";
+    case MSLTypeKind::UInt2: return "uint2(0)";
+    case MSLTypeKind::UInt3: return "uint3(0)";
+    case MSLTypeKind::UInt4: return "uint4(0)";
+    default: return "0";
+    }
+}
+
+static std::string typedDecl(const std::string &name, const MSLType &t) {
+    return emitTypeName(t) + " " + name;
+}
+
+struct LowerContext {
+    std::ostringstream &os;
+    const LLVMModule &mod;
+    const DxilParsedShader &shader;
+    std::vector<std::string> value_table;
+    std::vector<MSLType> value_types;
+    std::vector<ValueRole> value_roles;
+    std::unordered_map<uint32_t, std::string> buffer_origin;
+    std::string last_buffer_handle;
+    std::unordered_map<std::string, std::string> local_values;
+    std::vector<std::string> diagnostics;
+    std::unordered_map<uint32_t, std::string> function_decls;
+    uint32_t next_binding = 0;
+    uint32_t unsupported_intrinsics = 0;
+    uint32_t unsupported_opcodes = 0;
+    uint32_t instruction_start_value = 0;
+    const LLVMFunction *current_fn = nullptr;
+    bool uses_thread_id = false;
+    bool uses_group_id = false;
+    bool uses_group_thread_id = false;
+    bool uses_group_size = false;
+};
+
+static void recordDiagnostic(LowerContext &ctx, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    char buf[512];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    ctx.diagnostics.push_back(buf);
+}
+
+static void emitBindings(LowerContext &ctx) {
+    auto &os = ctx.os;
+    if (ctx.shader.kind == DxilShaderKind::Compute) {
+        ctx.uses_thread_id = true;
+        ctx.uses_group_id = true;
+        ctx.uses_group_thread_id = true;
+        ctx.uses_group_size = true;
+    }
+    os << "\n";
+}
+
+static void emitFunctionPrologue(LowerContext &ctx) {
+    auto &os = ctx.os;
+    os << kMetalHeader;
+
+    os << "struct input_v {\n";
+    os << "  float4 position [[position]];\n";
+    os << "  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];\n";
+    os << "  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];\n";
+    os << "  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];\n";
+    os << "  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];\n";
+    os << "  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];\n";
+    os << "  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];\n";
+    os << "  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];\n";
+    os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
+    os << "};\n\n";
+
+    os << "struct output_v {\n";
+    os << "  float4 position [[position]];\n";
+    os << "  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];\n";
+    os << "  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];\n";
+    os << "  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];\n";
+    os << "  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];\n";
+    os << "  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];\n";
+    os << "  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];\n";
+    os << "  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];\n";
+    os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
+    os << "};\n\n";
+
+    os << "struct vertex_input_v {\n";
+    for (uint32_t i = 0; i < 16; i++)
+        os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
+    os << "};\n\n";
+
+    if (ctx.shader.kind == DxilShaderKind::Compute) {
+        os << "kernel void cs_main(\n";
+        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
+        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
+        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
+        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]],\n";
+        os << "  texture2d<float, access::read_write> tex0 [[texture(0)]],\n";
+        os << "  texture2d<float, access::read_write> tex1 [[texture(1)]],\n";
+        os << "  texture2d<float, access::read_write> tex2 [[texture(2)]],\n";
+        os << "  texture2d<float, access::read_write> tex3 [[texture(3)]],\n";
+        os << "  texture2d<float, access::read_write> tex4 [[texture(4)]],\n";
+        os << "  texture2d<float, access::read_write> tex5 [[texture(5)]],\n";
+        os << "  texture2d<float, access::read_write> tex6 [[texture(6)]],\n";
+        os << "  texture2d<float, access::read_write> tex7 [[texture(7)]],\n";
+        os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
+        os << "  sampler samp2 [[sampler(2)]],\n  sampler samp3 [[sampler(3)]],\n";
+        os << "  uint3 dtid [[thread_position_in_grid]],\n";
+        os << "  uint3 gtid [[thread_position_in_threadgroup]],\n";
+        os << "  uint3 ggid [[threadgroup_position_in_grid]],\n";
+        os << "  uint3 gsz [[threads_per_threadgroup]]\n) {\n";
+    } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        os << "vertex output_v vs_main(\n";
+        os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
+        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
+        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
+        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
+        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]]\n) {\n";
+        os << "  output_v out = {};\n";
+    } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
+        os << "fragment float4 ps_main(\n";
+        os << "  input_v in [[stage_in]],\n";
+        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
+        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
+        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
+        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]],\n";
+        os << "  texture2d<float, access::sample> tex0 [[texture(0)]],\n";
+        os << "  texture2d<float, access::sample> tex1 [[texture(1)]],\n";
+        os << "  texture2d<float, access::sample> tex2 [[texture(2)]],\n";
+        os << "  texture2d<float, access::sample> tex3 [[texture(3)]],\n";
+        os << "  texture2d<float, access::sample> tex4 [[texture(4)]],\n";
+        os << "  texture2d<float, access::sample> tex5 [[texture(5)]],\n";
+        os << "  texture2d<float, access::sample> tex6 [[texture(6)]],\n";
+        os << "  texture2d<float, access::sample> tex7 [[texture(7)]],\n";
+        os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
+        os << "  sampler samp2 [[sampler(2)]],\n  sampler samp3 [[sampler(3)]]\n) {\n";
+        os << "  float4 result = float4(0,0,0,1);\n";
+    } else {
+        os << "kernel void unknown_main() {\n";
+    }
+}
+
+static std::string resolveValue(LowerContext &ctx, uint32_t idx) {
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+        const auto &v = ctx.value_table[idx];
+        if (v.find('.') != std::string::npos && !startsWith(v, "dx."))
+            return v;
+        if (startsWith(v, "agg(")) {
+            auto parts = parseAggregateLiteral(v);
+            std::string args;
+            for (size_t p = 0; p < parts.size(); p++) {
+                if (p) args += ",";
+                args += parts[p];
+            }
+            return "int" + std::to_string(parts.size()) + "(" + args + ")";
+        }
+        return v;
+    }
+    for (auto &c : ctx.mod.constants) {
+        if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+    }
+    if (ctx.current_fn) {
+        for (auto &c : ctx.current_fn->constants) {
+            if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+        }
+    }
+    return emitValue(idx);
+}
+
+static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
+    if (startsWith(handle, "agg(")) {
+        auto parts = parseAggregateLiteral(handle);
+        uint32_t lower_bound = 0;
+        if (!parts.empty()) parseUnsignedLiteral(parts[0], lower_bound);
+        return std::string(target_prefix) + std::to_string(lower_bound);
+    }
+    for (auto *prefix : {"tex", "buf", "samp"}) {
+        if (startsWith(handle, prefix)) {
+            return std::string(target_prefix) + std::string(handle.c_str() + std::strlen(prefix));
+        }
+    }
+    return handle;
+}
+
+static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id,
+                                          const std::vector<uint32_t> &args) {
+    auto valueArg = [&](size_t arg, const char *fallback) -> std::string {
+        if (arg >= args.size()) return fallback;
+        uint32_t idx = args[arg];
+        if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+            const auto &v = ctx.value_table[idx];
+            if (v.find('.') != std::string::npos) return fallback;
+            return v;
+        }
+        return fallback;
+    };
+
+    auto handleArg = [&](size_t arg, const char *prefix, const char *fallback) -> std::string {
+        if (arg >= args.size()) return fallback;
+        uint32_t idx = args[arg];
+        auto it = ctx.buffer_origin.find(idx);
+        if (it != ctx.buffer_origin.end()) return it->second;
+        return resolveBindingName(valueArg(arg, fallback), prefix);
+    };
+
+    auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
+        if (arg >= args.size()) return fallback;
+        uint32_t idx = args[arg];
+        std::string text;
+        if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
+            text = ctx.value_table[idx];
+        else {
+            for (auto &c : ctx.mod.constants)
+                if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+            if (text.empty() && ctx.current_fn)
+                for (auto &c : ctx.current_fn->constants)
+                    if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+        }
+        uint32_t value = 0;
+        if (parseUnsignedLiteral(text, value)) return value;
+        return fallback;
+    };
+
+    switch (intrinsic_id) {
+    case DXOP_CreateHandle: {
+        if (args.size() < 4) return "0";
+        uint32_t resource_class = literalArg(0, 0, "resource class");
+        uint32_t range_id = literalArg(1, 0, "range id");
+        ctx.next_binding++;
+        return std::string(bindingPrefixForClass(resource_class)) + std::to_string(range_id);
+    }
+    case DXOP_CreateHandleForLib: case DXOP_AnnotateHandle: {
+        auto handle = valueArg(0, "tex0");
+        if (startsWith(handle, "agg(")) handle = resolveBindingName(handle, "buf");
+        return handle;
+    }
+    case DXOP_CreateHandleFromBinding: {
+        auto binding = valueArg(0, "");
+        auto bvals = parseAggregateLiteral(binding);
+        uint32_t lower_bound = 0, resource_class = 0;
+        if (bvals.size() > 0) parseUnsignedLiteral(bvals[0], lower_bound);
+        if (bvals.size() > 3) parseUnsignedLiteral(bvals[3], resource_class);
+        uint32_t index = args.size() >= 2 ? literalArg(1, 0, "idx") : 0;
+        return std::string(bindingPrefixForClass(resource_class)) + std::to_string(lower_bound + index);
+    }
+    case DXOP_CreateHandleFromHeap: {
+        uint32_t heap_index = literalArg(0, 0, "heap");
+        bool sampler = args.size() >= 2 && literalArg(1, 0, "samp") != 0;
+        return std::string(sampler ? "samp" : "tex") + std::to_string(heap_index);
+    }
+    case DXOP_ThreadId: {
+        ctx.uses_thread_id = true;
+        uint32_t c = args.empty() ? 0 : literalArg(0, 0, "comp");
+        if (c == 0) return "(int)dtid.x"; if (c == 1) return "(int)dtid.y"; return "(int)dtid.z";
+    }
+    case DXOP_GroupId: {
+        ctx.uses_group_id = true;
+        uint32_t c = args.empty() ? 0 : literalArg(0, 0, "comp");
+        if (c == 0) return "(int)ggid.x"; if (c == 1) return "(int)ggid.y"; return "(int)ggid.z";
+    }
+    case DXOP_ThreadIDInGroup: {
+        ctx.uses_group_thread_id = true;
+        uint32_t c = args.empty() ? 0 : literalArg(0, 0, "comp");
+        if (c == 0) return "(int)gtid.x"; if (c == 1) return "(int)gtid.y"; return "(int)gtid.z";
+    }
+    case DXOP_FlattenedThreadIDInGroup:
+        ctx.uses_group_thread_id = true; ctx.uses_group_size = true;
+        return "(int)(gtid.x + gtid.y * gsz.x + gtid.z * gsz.x * gsz.y)";
+    case DXOP_CBufferLoad: case DXOP_CBufferLoadLegacy: {
+        if (args.size() < 2) return "float4(0)";
+        auto handle = handleArg(0, "buf", "buf0");
+        ctx.last_buffer_handle = handle;
+        auto reg = ensureScalarIndex(valueArg(1, "0"));
+        return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg + ")*64]))";
+    }
+    case DXOP_BufferLoad: {
+        if (args.size() < 3) return "float4(0)";
+        auto handle = handleArg(0, "buf", "buf0");
+        ctx.last_buffer_handle = handle;
+        auto idx = ensureScalarIndex(valueArg(1, "0"));
+        return "(reinterpret_cast<device float4&>(" + handle + "[(" + idx + ")*16]))";
+    }
+    case DXOP_RawBufferLoad: case 303: case 1025: {
+        if (args.size() < 3) return "uint4(0)";
+        auto handle = handleArg(0, "buf", "buf0");
+        ctx.last_buffer_handle = handle;
+        auto idx = ensureScalarIndex(valueArg(1, "0"));
+        auto off = ensureScalarIndex(valueArg(2, "0"));
+        return "(reinterpret_cast<device uint4&>(" + handle + "[((" + idx + ")*4 + (" + off + "))]))";
+    }
+    case DXOP_BufferStore: case DXOP_RawBufferStore: case 1026: {
+        if (args.size() < 4) return "";
+        auto handle = handleArg(0, "buf", "buf0");
+        auto idx = ensureScalarIndex(valueArg(1, "0"));
+        auto off = ensureScalarIndex(valueArg(2, "0"));
+        std::string base = "((" + idx + ")*4 + (" + off + "))";
+        std::ostringstream store;
+        uint32_t vc = std::min<uint32_t>(4, (uint32_t)args.size() - 3);
+        for (uint32_t i = 0; i < vc; i++) {
+            if (i) store << ";\n  ";
+            store << "reinterpret_cast<device uint&>(" << handle << "[(" << base << ") + " << (i*4)
+                  << "]) = (uint)(" << valueArg(3+i, "0") << ")";
+        }
+        return store.str();
+    }
+    case 304: {
+        if (args.size() < 4) return "";
+        auto handle = handleArg(0, "buf", "buf0");
+        auto idx = ensureScalarIndex(valueArg(1, "0"));
+        auto off = ensureScalarIndex(valueArg(2, "0"));
+        auto val = valueArg(3, "uint4(0)");
+        std::string base = "((" + idx + ")*4 + (" + off + "))";
+        std::ostringstream store;
+        for (uint32_t i = 0; i < 4; i++) {
+            if (i) store << ";\n  ";
+            store << "reinterpret_cast<device uint&>(" << handle << "[(" << base << ") + " << (i*4)
+                  << "]) = (uint)(" << val << componentSuffix(i) << ")";
+        }
+        return store.str();
+    }
+    case DXOP_TextureLoad: {
+        if (args.size() < 3) return "float4(0)";
+        auto handle = handleArg(0, "tex", "tex0");
+        ctx.last_buffer_handle = handle;
+        auto cx = ensureScalarIndex(valueArg(2, "0"));
+        auto cy = ensureScalarIndex(valueArg(3, "0"));
+        return handle + ".read(uint2(" + cx + ", " + cy + "))";
+    }
+    case DXOP_TextureStore: case 225: {
+        if (args.size() < 6) return "";
+        auto handle = handleArg(0, "tex", "tex0");
+        auto cx = ensureScalarIndex(valueArg(1, "0"));
+        auto cy = ensureScalarIndex(valueArg(2, "0"));
+        size_t vb = intrinsic_id == 225 ? 5 : 4;
+        return handle + ".write(float4(" + valueArg(vb, "0.0") + ", " + valueArg(vb+1, "0.0") +
+               ", " + valueArg(vb+2, "0.0") + ", " + valueArg(vb+3, "0.0") +
+               "), uint2(" + cx + ", " + cy + "))";
+    }
+    case DXOP_TextureSample: case DXOP_TextureSampleBias:
+    case DXOP_TextureSampleLevel: case DXOP_TextureSampleGrad: {
+        if (args.size() < 4) return "float4(0)";
+        auto handle = handleArg(0, "tex", "tex0");
+        auto samp = handleArg(1, "samp", "samp0");
+        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
+        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        return handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + "))";
+    }
+    case DXOP_TextureGather: case 74: case 223: {
+        if (args.size() < 4) return "float4(0)";
+        auto handle = handleArg(0, "tex", "tex0");
+        auto samp = handleArg(1, "samp", "samp0");
+        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
+        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        uint32_t ch = args.size() > 8 ? literalArg(8, 0, "ch") : 0;
+        return handle + ".gather(" + samp + ", float2(" + cx + ", " + cy + "), component::" + componentName(ch) + ")";
+    }
+    case DXOP_TextureSampleCmp: case DXOP_TextureSampleCmpLevelZero: case 224: {
+        if (args.size() < 5) return "0.0";
+        auto handle = handleArg(0, "tex", "tex0");
+        auto samp = handleArg(1, "samp", "samp0");
+        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
+        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cmp = valueArg(4, "0.0");
+        return "((" + handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + ")).r) < (" + cmp + ") ? 1.0 : 0.0)";
+    }
+    case 70: return "0";
+    case 71: return "true";
+    case 72: {
+        auto handle = handleArg(0, "tex", "tex0");
+        return "uint4(" + handle + ".get_width(), " + handle + ".get_height(), 1, 1)";
+    }
+    case 83: case 85: return "dfdx(" + valueArg(0, "0.0") + ")";
+    case 84: case 86: return "dfdy(" + valueArg(0, "0.0") + ")";
+    case 81: {
+        if (args.size() < 4) return "0.0";
+        auto handle = handleArg(0, "tex", "tex0");
+        auto samp = handleArg(1, "samp", "samp0");
+        return handle + ".calculate_unclamped_lod(" + samp + ", float2(" + ensureScalarIndex(valueArg(2, "0.0")) + ", " + ensureScalarIndex(valueArg(3, "0.0")) + "))";
+    }
+    case 78: {
+        if (args.size() < 4) return "0";
+        auto handle = handleArg(1, "buf", "buf0");
+        auto off = ensureScalarIndex(valueArg(2, "0"));
+        auto val = ensureScalarIndex(valueArg(3, "0"));
+        return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off + ")), (uint)(" + val + "), memory_order_relaxed)";
+    }
+    case 79: {
+        if (args.size() < 2) return "0";
+        auto handle = handleArg(0, "buf", "buf0");
+        return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + ensureScalarIndex(valueArg(1, "0")) + ")), memory_order_relaxed)";
+    }
+    case 75: case 76: case 97: case 98: return "0.5";
+    case 77: return "1";
+    case 109: return "0";
+    case 80: return "threadgroup_barrier(mem_flags::mem_threadgroup)";
+    case DXOP_Unary: {
+        if (args.size() < 2) return "0";
+        uint32_t op = literalArg(0, 0xFFFFFFFFu, "unary");
+        auto x = valueArg(1, "0.0");
+        switch (op) {
+        case DXILOP_FAbs: return "abs(" + x + ")";
+        case DXILOP_Saturate: return "clamp(" + x + ", 0.0, 1.0)";
+        case DXILOP_IsNaN: return "isnan(" + x + ")";
+        case DXILOP_IsInf: return "isinf(" + x + ")";
+        case DXILOP_IsFinite: return "isfinite(" + x + ")";
+        case DXILOP_Cos: return "cos(" + x + ")";
+        case DXILOP_Sin: return "sin(" + x + ")";
+        case DXILOP_Tan: return "tan(" + x + ")";
+        case DXILOP_Acos: return "acos(" + x + ")";
+        case DXILOP_Asin: return "asin(" + x + ")";
+        case DXILOP_Atan: return "atan(" + x + ")";
+        case DXILOP_Exp: return "exp2(" + x + ")";
+        case DXILOP_Frc: return "fract(" + x + ")";
+        case DXILOP_Log: return "log2(" + x + ")";
+        case DXILOP_Sqrt: return "sqrt(" + x + ")";
+        case DXILOP_Rsqrt: return "rsqrt(" + x + ")";
+        case DXILOP_Round_ne: return "rint(" + x + ")";
+        case DXILOP_Round_ni: return "floor(" + x + ")";
+        case DXILOP_Round_pi: return "ceil(" + x + ")";
+        case DXILOP_Round_z: return "trunc(" + x + ")";
+        case DXILOP_Bfrev: return "reverse_bits(" + x + ")";
+        case DXILOP_Countbits: return "popcount(" + x + ")";
+        case DXILOP_FirstbitLo: return "ctz(" + x + ")";
+        case DXILOP_FirstbitHi: return "clz(" + x + ")";
+        case DXILOP_FirstbitSHi: return "((" + x + ") < 0 ? clz(~(" + x + ")) : clz(" + x + "))";
+        default: ctx.unsupported_intrinsics++; return x;
+        }
+    }
+    case DXOP_Binary: {
+        if (args.size() < 3) return "0";
+        uint32_t op = literalArg(0, 0xFFFFFFFFu, "binary");
+        auto a = valueArg(1, "0"), b = valueArg(2, "0");
+        switch (op) {
+        case DXILOP_FMax: case DXILOP_IMax: return "max(" + a + ", " + b + ")";
+        case DXILOP_FMin: case DXILOP_IMin: return "min(" + a + ", " + b + ")";
+        case DXILOP_UMax: return "max((uint)(" + a + "), (uint)(" + b + "))";
+        case DXILOP_UMin: return "min((uint)(" + a + "), (uint)(" + b + "))";
+        case DXILOP_IMul: return "mul24(" + a + ", " + b + ")";
+        case DXILOP_UMul: return "mul24((uint)(" + a + "), (uint)(" + b + "))";
+        case DXILOP_UDiv: return "((uint)(" + a + ") / (uint)(" + b + "))";
+        case DXILOP_UAddc: return "((" + a + ") + (" + b + "))";
+        case DXILOP_USubb: return "((" + a + ") - (" + b + "))";
+        default: ctx.unsupported_intrinsics++; return a;
+        }
+    }
+    case DXOP_Tertiary: {
+        if (args.size() < 4) return "0";
+        uint32_t op = literalArg(0, 0xFFFFFFFFu, "tertiary");
+        auto a = valueArg(1, "0"), b = valueArg(2, "0"), c = valueArg(3, "0");
+        switch (op) {
+        case DXILOP_FMad: case DXILOP_Fma: return "fma(" + a + ", " + b + ", " + c + ")";
+        case DXILOP_IMad: case DXILOP_UMad: return "((" + a + ") * (" + b + ") + (" + c + "))";
+        case DXILOP_Ibfe: return "extract_bits(" + a + ", " + b + ", " + c + ")";
+        case DXILOP_Ubfe: return "extract_bits((uint)(" + a + "), (uint)(" + b + "), (uint)(" + c + "))";
+        case DXILOP_Bfi: return "insert_bits((uint)(" + b + "), (uint)(" + a + "), (uint)(" + c + "))";
+        default: ctx.unsupported_intrinsics++; return a;
+        }
+    }
+    case DXOP_Dot2: {
+        if (args.size() < 4) return "0.0";
+        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(2,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(3,"0.0") + "))";
+    }
+    case DXOP_Dot3: {
+        if (args.size() < 6) return "0.0";
+        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(3,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(4,"0.0") + ") + (" + valueArg(2,"0.0") + ")*(" + valueArg(5,"0.0") + "))";
+    }
+    case DXOP_Dot4: {
+        if (args.size() < 8) return "0.0";
+        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(4,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(5,"0.0") + ") + (" + valueArg(2,"0.0") + ")*(" + valueArg(6,"0.0") + ") + (" + valueArg(3,"0.0") + ")*(" + valueArg(7,"0.0") + "))";
+    }
+    case DXOP_LoadInput: {
+        if (args.size() < 3) return "0.0";
+        uint32_t input_id = literalArg(0, 0, "input");
+        uint32_t comp = literalArg(2, 0, "comp");
+        if (ctx.shader.kind == DxilShaderKind::Pixel) return varyingField("in", input_id) + componentSuffix(comp);
+        if (ctx.shader.kind == DxilShaderKind::Vertex) return vertexInputField("vin", input_id) + componentSuffix(comp);
+        return "0.0";
+    }
+    case DXOP_StoreOutput: {
+        if (args.size() < 4) return "";
+        uint32_t output_id = literalArg(0, 0, "output");
+        uint32_t comp = literalArg(2, 0, "comp");
+        auto val = valueArg(3, "float4(0)");
+        if (ctx.shader.kind == DxilShaderKind::Vertex) return varyingField("out", output_id) + componentSuffix(comp) + " = " + val;
+        if (ctx.shader.kind == DxilShaderKind::Pixel) return std::string("result") + componentSuffix(comp) + " = " + val;
+        return "";
+    }
+    case 131: return "as_type<float>(half(" + valueArg(1, "0") + "))";
+    case 132: return "as_type<uint>(half(" + valueArg(1, "0.0") + "))";
+    case 118: return "simd_broadcast_first(" + valueArg(1, "0") + ")";
+    case 117: return "simd_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    case 110: return "simd_is_first()";
+    case 111: return "simd_lane_id()";
+    case 112: return "simd_lane_count()";
+    case 113: return "simd_any(" + valueArg(1, "0") + ") ? 1 : 0";
+    case 114: return "simd_all(" + valueArg(1, "0") + ") ? 1 : 0";
+    case 122: return "quad_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    default:
+        ctx.unsupported_intrinsics++;
+        break;
+    }
+    return "0";
+}
+
+static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst, uint32_t &value_counter) {
+    auto &os = ctx.os;
+    std::string result = emitValue(value_counter);
+
+    auto getValue = [&](uint32_t idx) -> std::string {
+        if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
+            const auto &v = ctx.value_table[idx];
+            if (v.find('.') != std::string::npos && !startsWith(v, "dx.")) return v;
+            if (startsWith(v, "agg(")) {
+                auto parts = parseAggregateLiteral(v);
+                uint32_t tid = idx < ctx.value_types.size() ? 0 : 0;
+                std::string args;
+                for (size_t p = 0; p < parts.size(); p++) { if (p) args += ","; args += parts[p]; }
+                return "int" + std::to_string(parts.size()) + "(" + args + ")";
+            }
+            return v;
+        }
+        for (auto &c : ctx.mod.constants)
+            if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+        if (ctx.current_fn)
+            for (auto &c : ctx.current_fn->constants)
+                if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+        return emitValue(idx);
+    };
+
+    auto ensureValueTable = [&](uint32_t needed) {
+        if (ctx.value_table.size() <= needed) ctx.value_table.resize(needed + 1);
+        if (ctx.value_types.size() <= needed) ctx.value_types.resize(needed + 1);
+        if (ctx.value_roles.size() <= needed) ctx.value_roles.resize(needed + 1);
+    };
+
+    auto getTypeForInst = [&](uint32_t type_id) -> MSLType {
+        if (type_id > 0 && type_id < ctx.mod.types.size())
+            return DXILIRBuilder::resolveType(type_id, ctx.mod);
+        return {MSLTypeKind::Unknown, 0, {}};
+    };
+
+    auto emitTypedLine = [&](const MSLType &type, const std::string &name, const std::string &expr) {
+        if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
+            type.kind != MSLTypeKind::Struct)
+            os << "  " << emitTypeName(type) << " " << name << " = " << expr << ";\n";
+        else
+            os << "  auto " << name << " = " << expr << ";\n";
+    };
+
+    switch (inst.opcode) {
+    case LLVMInstruction::Ret:
+        if (ctx.shader.kind == DxilShaderKind::Vertex) os << "  return out;\n";
+        else if (ctx.shader.kind == DxilShaderKind::Pixel) os << "  return result;\n";
+        else os << "  return;\n";
+        break;
+
+    case LLVMInstruction::Call: {
+        if (inst.operands.empty()) break;
+        uint32_t callee = inst.operands[0];
+        std::vector<uint32_t> call_args;
+        for (size_t i = 2; i < inst.operands.size(); i++) call_args.push_back(inst.operands[i]);
+
+        std::string callee_name;
+        auto decl_it = ctx.function_decls.find(callee);
+        if (decl_it != ctx.function_decls.end()) callee_name = decl_it->second;
+        else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
+        uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
+
+        if (intrinsic_id != 0 && call_args.empty()) {
+            ctx.unsupported_intrinsics++;
+            ensureValueTable(value_counter);
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+        } else if (intrinsic_id != 0) {
+            std::vector<uint32_t> fn_args;
+            if (intrinsic_id == 13 || intrinsic_id == 14 || intrinsic_id == 15)
+                fn_args = call_args;
+            else
+                fn_args.assign(call_args.begin() + 1, call_args.end());
+
+            std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
+            MSLType result_type = getTypeForInst(inst.type_id);
+            ensureValueTable(value_counter);
+            ctx.value_types[value_counter] = result_type;
+
+            if (inst.type_id == 0) {
+                if (!translated.empty()) {
+                    os << "  " << translated << ";\n";
+                    ctx.value_table[value_counter] = translated;
+                }
+            } else if (translated.find('=') == std::string::npos) {
+                if (!translated.empty() && translated[0] != ' ') {
+                    emitTypedLine(result_type, result, translated);
+                    ctx.value_table[value_counter] = result;
+                    if (!ctx.last_buffer_handle.empty()) {
+                        ctx.buffer_origin[value_counter] = ctx.last_buffer_handle;
+                        ctx.last_buffer_handle.clear();
+                    }
+                } else if (!translated.empty()) {
+                    os << "  " << translated << ";\n";
+                    ctx.value_table[value_counter] = translated;
+                }
+            } else {
+                os << "  " << translated << ";\n";
+                ctx.value_table[value_counter] = translated;
+            }
+        } else {
+            ensureValueTable(value_counter);
+            MSLType result_type = getTypeForInst(inst.type_id);
+            if (inst.type_id != 0) {
+                os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+            } else {
+                os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+            }
+            for (size_t i = 0; i < call_args.size(); i++) {
+                if (i) os << ", ";
+                os << getValue(call_args[i]);
+            }
+            os << ")\n";
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Add: case LLVMInstruction::Sub: case LLVMInstruction::Mul:
+    case LLVMInstruction::UDiv: case LLVMInstruction::SDiv:
+    case LLVMInstruction::URem: case LLVMInstruction::SRem:
+    case LLVMInstruction::And: case LLVMInstruction::Or: case LLVMInstruction::Xor:
+    case LLVMInstruction::Shl: case LLVMInstruction::LShr: case LLVMInstruction::AShr: {
+        ensureValueTable(value_counter);
+        const char *op_str = "+";
+        switch (inst.opcode) {
+        case LLVMInstruction::Add: op_str = "+"; break;
+        case LLVMInstruction::Sub: op_str = "-"; break;
+        case LLVMInstruction::Mul: op_str = "*"; break;
+        case LLVMInstruction::UDiv: case LLVMInstruction::SDiv: op_str = "/"; break;
+        case LLVMInstruction::URem: case LLVMInstruction::SRem: op_str = "%"; break;
+        case LLVMInstruction::And: op_str = "&"; break;
+        case LLVMInstruction::Or: op_str = "|"; break;
+        case LLVMInstruction::Xor: op_str = "^"; break;
+        case LLVMInstruction::Shl: op_str = "<<"; break;
+        case LLVMInstruction::LShr: case LLVMInstruction::AShr: op_str = ">>"; break;
+        default: break;
+        }
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (result_type.kind == MSLTypeKind::Unknown && inst.operands.size() >= 1)
+            result_type = ctx.value_types.size() > inst.operands[0] ? ctx.value_types[inst.operands[0]] : result_type;
+        std::string expr = getValue(inst.operands[0]) + " " + std::string(op_str) + " " + getValue(inst.operands[1]);
+        emitTypedLine(result_type, result, expr);
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = result_type;
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::ExtractValue: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 2) {
+            auto agg = getValue(inst.operands[0]);
+            uint32_t idx = inst.operands[1];
+            uint32_t agg_type_id = (inst.operands[0] < ctx.value_types.size())
+                ? 0 : 0;
+
+            bool is_struct = false;
+            if (inst.operands[0] < ctx.value_types.size()) {
+                auto &agg_type = ctx.value_types[inst.operands[0]];
+                is_struct = (agg_type.kind == MSLTypeKind::Struct);
+            }
+
+            if (is_struct) {
+                if (idx == 0) {
+                    emitTypedLine(result_type, result, agg);
+                } else {
+                    emitTypedLine(result_type, result, defaultForType(result_type));
+                }
+            } else if (DXILIRBuilder::isVectorType(result_type) == false && idx < 4) {
+                const char *suffix[] = {".x", ".y", ".z", ".w"};
+                std::string expr = "(" + agg + ")" + suffix[idx];
+                auto scalar = DXILIRBuilder::scalarType(
+                    inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : result_type);
+                emitTypedLine(result_type.kind == MSLTypeKind::Unknown ? scalar : result_type, result, expr);
+            } else {
+                emitTypedLine(result_type, result, agg);
+            }
+        } else {
+            emitTypedLine(result_type, result, "0");
+        }
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = result_type;
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::InsertValue: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        auto agg = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
+        emitTypedLine(result_type, result, agg);
+        if (inst.operands.size() >= 3 && inst.operands[2] < 4) {
+            os << "  " << result << componentSuffix(inst.operands[2]) << " = " << getValue(inst.operands[1]) << ";\n";
+        }
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = result_type;
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::ExtractElement: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 2) {
+            auto vec = getValue(inst.operands[0]);
+            auto idx = getValue(inst.operands[1]);
+            uint32_t idx_val = 0;
+            std::string expr;
+            if (parseUnsignedLiteral(idx, idx_val) && idx_val < 4)
+                expr = vec + componentSuffix(idx_val);
+            else
+                expr = vec + "[" + idx + "]";
+            auto scalar = result_type.kind == MSLTypeKind::Unknown
+                ? DXILIRBuilder::scalarType(inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : result_type)
+                : result_type;
+            emitTypedLine(scalar, result, expr);
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = scalar;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::InsertElement: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 3) {
+            auto vec = getValue(inst.operands[0]);
+            auto elem = getValue(inst.operands[1]);
+            auto idx = getValue(inst.operands[2]);
+            emitTypedLine(result_type, result, vec);
+            uint32_t idx_val = 0;
+            if (parseUnsignedLiteral(idx, idx_val) && idx_val < 4)
+                os << "  " << result << componentSuffix(idx_val) << " = " << elem << ";\n";
+            else
+                os << "  " << result << "[" + idx + "] = " << elem << ";\n";
+        } else {
+            emitTypedLine(result_type, result, inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)");
+        }
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = result_type;
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::ShuffleVector: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        auto lhs = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
+        auto rhs = inst.operands.size() >= 2 ? getValue(inst.operands[1]) : "float4(0)";
+        auto mask = inst.operands.size() >= 3 ? getValue(inst.operands[2]) : "";
+        auto mask_values = parseAggregateLiteral(mask);
+        if (mask_values.empty()) {
+            uint32_t si = 0;
+            if (parseUnsignedLiteral(mask, si)) mask_values.push_back(mask);
+        }
+        if (!mask_values.empty()) {
+            std::vector<std::string> components;
+            for (auto &mv : mask_values) {
+                uint32_t index = 0;
+                if (!parseUnsignedLiteral(mv, index) || index == 0xFFFFFFFFu)
+                    components.push_back("0.0f");
+                else if (index < 4)
+                    components.push_back("(" + lhs + ")" + componentSuffix(index));
+                else
+                    components.push_back("(" + rhs + ")" + componentSuffix(index - 4));
+            }
+            std::string type_name = emitTypeName(result_type);
+            std::string expr = type_name + "(";
+            for (size_t i = 0; i < components.size(); i++) {
+                if (i) expr += ", ";
+                expr += components[i];
+            }
+            expr += ")";
+            emitTypedLine(result_type, result, expr);
+        } else {
+            emitTypedLine(result_type, result, lhs);
+        }
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = result_type;
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Unreachable:
+        os << "  // unreachable\n";
+        break;
+
+    case LLVMInstruction::FNeg: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1) {
+            result_type = ctx.value_types.size() > inst.operands[0] ? ctx.value_types[inst.operands[0]] : result_type;
+            emitTypedLine(result_type, result, "-(" + getValue(inst.operands[0]) + ")");
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::FAdd: case LLVMInstruction::FSub:
+    case LLVMInstruction::FMul: case LLVMInstruction::FDiv: case LLVMInstruction::FRem: {
+        ensureValueTable(value_counter);
+        const char *fop = "+";
+        switch (inst.opcode) {
+        case LLVMInstruction::FAdd: fop = "+"; break;
+        case LLVMInstruction::FSub: fop = "-"; break;
+        case LLVMInstruction::FMul: fop = "*"; break;
+        case LLVMInstruction::FDiv: fop = "/"; break;
+        case LLVMInstruction::FRem: fop = "%"; break;
+        default: break;
+        }
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1 && inst.operands[0] < ctx.value_types.size())
+            result_type = ctx.value_types[inst.operands[0]];
+        if (inst.operands.size() >= 2) {
+            emitTypedLine(result_type, result, getValue(inst.operands[0]) + std::string(" ") + fop + " " + getValue(inst.operands[1]));
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::BitCast: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1) {
+            std::string val = getValue(inst.operands[0]);
+            auto src_type = inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : MSLType{};
+            auto dst_type = result_type;
+            std::string src_name = emitTypeName(src_type);
+            std::string dst_name = emitTypeName(dst_type);
+            if (src_name != dst_name && !src_name.empty() && !dst_name.empty() &&
+                src_type.kind != MSLTypeKind::Unknown && dst_type.kind != MSLTypeKind::Unknown) {
+                emitTypedLine(result_type, result, "reinterpret_cast<" + dst_name + ">(" + val + ")");
+            } else {
+                emitTypedLine(result_type, result, val);
+            }
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::ZExt: case LLVMInstruction::SExt: case LLVMInstruction::Trunc:
+    case LLVMInstruction::FPToUI: case LLVMInstruction::FPToSI:
+    case LLVMInstruction::UIToFP: case LLVMInstruction::SIToFP:
+    case LLVMInstruction::FPTrunc: case LLVMInstruction::FPExt:
+    case LLVMInstruction::PtrToInt: case LLVMInstruction::IntToPtr: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1) {
+            std::string val = getValue(inst.operands[0]);
+            std::string dst_name = emitTypeName(result_type);
+            emitTypedLine(result_type, result, "static_cast<" + dst_name + ">(" + val + ")");
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::FCmp: case LLVMInstruction::ICmp: {
+        ensureValueTable(value_counter);
+        if (inst.operands.size() >= 3) {
+            uint32_t pred = inst.operands[0];
+            auto lhs = getValue(inst.operands[1]);
+            auto rhs = getValue(inst.operands[2]);
+            const char *cmp = "==";
+            if (pred == 0) { os << "  bool " << result << " = false;\n"; }
+            else if (pred >= 15) { os << "  bool " << result << " = true;\n"; }
+            else if (pred == 7) { os << "  bool " << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << "));\n"; }
+            else if (pred == 14) { os << "  bool " << result << " = (isnan(" << lhs << ") || isnan(" << rhs << "));\n"; }
+            else {
+                if (pred == 1 || pred == 8) cmp = "==";
+                else if (pred == 2 || pred == 9) cmp = ">";
+                else if (pred == 3 || pred == 10) cmp = ">=";
+                else if (pred == 4 || pred == 11) cmp = "<";
+                else if (pred == 5 || pred == 12) cmp = "<=";
+                else if (pred == 6 || pred == 13) cmp = "!=";
+                os << "  bool " << result << " = (" << lhs << " " << cmp << " " << rhs << ");\n";
+            }
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = {MSLTypeKind::Bool, 0, {}};
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Select: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 3) {
+            auto cond = getValue(inst.operands[0]);
+            auto tv = getValue(inst.operands[1]);
+            auto fv = getValue(inst.operands[2]);
+            emitTypedLine(result_type, result, "(" + cond + " ? " + tv + " : " + fv + ")");
+            ctx.value_table[value_counter] = result;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Alloca: {
+        std::string storage_class = "thread";
+        if (inst.type_id > 0 && inst.type_id < ctx.mod.types.size()) {
+            auto &ptr_type = ctx.mod.types[inst.type_id];
+            if (ptr_type.kind == LLVMType::Pointer && ptr_type.address_space == 3)
+                storage_class = "threadgroup";
+        }
+        std::string alloca_name = "alloca_" + std::to_string(value_counter);
+        os << "  " << storage_class << " char " << alloca_name << "[256];\n";
+        ensureValueTable(value_counter);
+        ctx.value_table[value_counter] = "(" + storage_class + " char*)&" + alloca_name;
+        ctx.value_types[value_counter] = {MSLTypeKind::DeviceCharPtr, 0, {}};
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Load: {
+        ensureValueTable(value_counter);
+        MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1) {
+            auto ptr = getValue(inst.operands[0]);
+            std::string type_name = emitTypeName(result_type);
+            std::string expr = "*(" + type_name + "*)(" + ptr + ")";
+            emitTypedLine(result_type, result, expr);
+            ctx.value_table[value_counter] = expr;
+            ctx.value_types[value_counter] = result_type;
+        }
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Store: {
+        if (inst.operands.size() >= 2) {
+            auto ptr = getValue(inst.operands[0]);
+            auto val = getValue(inst.operands[1]);
+            os << "  *(" << ptr << ") = " << val << ";\n";
+        }
+        break;
+    }
+
+    case LLVMInstruction::GetElementPtr: {
+        ensureValueTable(value_counter);
+        if (inst.operands.empty()) {
+            ctx.value_table[value_counter] = "0";
+            value_counter++;
+            break;
+        }
+        auto base = getValue(inst.operands[0]);
+        std::string gep = base;
+        for (size_t i = 1; i < inst.operands.size(); i++) {
+            auto idx = getValue(inst.operands[i]);
+            if (idx != "0" && idx != "0.0" && idx != "0.0f")
+                gep += " + " + idx;
+        }
+        ctx.value_table[value_counter] = gep;
+        ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::PHI: {
+        ensureValueTable(value_counter);
+        ctx.value_table[value_counter] = result;
+        ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+        value_counter++;
+        break;
+    }
+
+    case LLVMInstruction::Invoke:
+        os << "  // invoke\n";
+        break;
+
+    default:
+        ctx.unsupported_opcodes++;
+        os << "  // unhandled opcode " << (int)inst.opcode << "\n";
+        ensureValueTable(value_counter);
+        ctx.value_table[value_counter] = result;
+        value_counter++;
+        break;
+    }
+}
+
+std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
+                                                   const DxilParsedShader &shader) {
+    if (module.functions.empty()) return std::nullopt;
+
+    std::ostringstream os;
+    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
+                    false, false, false, false};
+
+    const LLVMFunction *entry_fn = nullptr;
+    for (auto &fn : module.functions) {
+        if (!fn.blocks.empty() && !shader.entry_point.empty() && fn.name == shader.entry_point) {
+            entry_fn = &fn; break;
+        }
+    }
+    if (!entry_fn) {
+        for (auto it = module.functions.rbegin(); it != module.functions.rend(); ++it) {
+            if (!it->blocks.empty()) { entry_fn = &*it; break; }
+        }
+    }
+    if (!entry_fn) return std::nullopt;
+
+    auto &fn = *entry_fn;
+    ctx.current_fn = entry_fn;
+    emitFunctionPrologue(ctx);
+
+    for (auto &gv : module.globals) {
+        if (gv.address_space == 3) {
+            std::string gv_name = gv.name.empty() ? "gvar_" + std::to_string(gv.value_id) : escapeName(gv.name);
+            os << "  threadgroup char " << gv_name << "[256];\n";
+            if (ctx.value_table.size() <= gv.value_id) ctx.value_table.resize(gv.value_id + 1);
+            ctx.value_table[gv.value_id] = "(threadgroup char*)&" + gv_name;
+            if (ctx.value_types.size() <= gv.value_id) ctx.value_types.resize(gv.value_id + 1);
+            ctx.value_types[gv.value_id] = {MSLTypeKind::ThreadgroupCharPtr, 0, {}};
+        }
+    }
+
+    ctx.value_table.resize(256);
+    ctx.value_types.resize(256);
+
+    auto loadConstants = [&](const std::vector<LLVMValue> &consts) {
+        for (auto &c : consts) {
+            uint32_t val_idx = c.id;
+            if (ctx.value_table.size() <= val_idx) ctx.value_table.resize(val_idx + 1);
+            if (ctx.value_types.size() <= val_idx) ctx.value_types.resize(val_idx + 1);
+            std::string cdata = c.constant_data;
+            if (startsWith(cdata, "agg(")) {
+                uint32_t tid = c.type_id;
+                std::string args = cdata.substr(4, cdata.size() - 5);
+                if (tid < module.types.size()) {
+                    auto &ty = module.types[tid];
+                    if (ty.kind == LLVMType::Vector && !ty.subtypes.empty()) {
+                        std::string elem = DXILIRBuilder::mslTypeName(DXILIRBuilder::resolveType(
+                            ty.subtypes.empty() ? 0 : tid, module));
+                        uint32_t count = ty.bit_width;
+                        ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
+                        ctx.value_types[val_idx] = DXILIRBuilder::resolveType(tid, module);
+                        continue;
+                    }
+                }
+            }
+            ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(val_idx) : cdata;
+            ctx.value_types[val_idx] = DXILIRBuilder::resolveType(c.type_id, module);
+        }
+    };
+
+    loadConstants(module.constants);
+    loadConstants(fn.constants);
+
+    for (auto &dfn : module.functions) {
+        if (!dfn.is_declaration || dfn.name.empty()) continue;
+        if (ctx.value_table.size() <= dfn.value_id) ctx.value_table.resize(dfn.value_id + 1);
+        if (ctx.value_types.size() <= dfn.value_id) ctx.value_types.resize(dfn.value_id + 1);
+        ctx.value_table[dfn.value_id] = dfn.name;
+        ctx.value_types[dfn.value_id] = {MSLTypeKind::Unknown, 0, {}};
+        ctx.function_decls[dfn.value_id] = dfn.name;
+    }
+
+    std::map<uint32_t, uint32_t> block_value_to_index;
+    for (size_t i = 0; i < fn.block_value_ids.size(); i++)
+        block_value_to_index[fn.block_value_ids[i]] = (uint32_t)i;
+
+    std::map<uint32_t, std::set<uint32_t>> successors;
+    struct TerminatorInfo { enum Kind { None, Br, Switch, Ret, Unreachable } kind = None; std::vector<uint32_t> operands; };
+    std::vector<TerminatorInfo> terminators(fn.blocks.size());
+
+    for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
+        auto &block = fn.blocks[bi];
+        if (block.instructions.empty()) continue;
+        auto &last = block.instructions.back();
+        if (last.opcode == LLVMInstruction::Br) {
+            terminators[bi].kind = TerminatorInfo::Br;
+            terminators[bi].operands = last.operands;
+            if (last.operands.size() == 1) successors[(uint32_t)bi].insert(last.operands[0]);
+            else if (last.operands.size() >= 3) { successors[(uint32_t)bi].insert(last.operands[1]); successors[(uint32_t)bi].insert(last.operands[2]); }
+        } else if (last.opcode == LLVMInstruction::Switch) {
+            terminators[bi].kind = TerminatorInfo::Switch;
+            terminators[bi].operands = last.operands;
+            if (last.operands.size() >= 2) {
+                successors[(uint32_t)bi].insert(last.operands[1]);
+                for (size_t j = 2; j + 1 < last.operands.size(); j += 2)
+                    successors[(uint32_t)bi].insert(last.operands[j + 1]);
+            }
+        } else if (last.opcode == LLVMInstruction::Ret) {
+            terminators[bi].kind = TerminatorInfo::Ret; terminators[bi].operands = last.operands;
+        } else if (last.opcode == LLVMInstruction::Unreachable) {
+            terminators[bi].kind = TerminatorInfo::Unreachable;
+        }
+    }
+
+    std::map<uint32_t, std::set<uint32_t>> predecessors;
+    for (auto &[from, succs] : successors)
+        for (uint32_t to : succs) predecessors[to].insert(from);
+
+    struct PhiIncoming { uint32_t value_id; uint32_t pred_block_idx; };
+    struct PhiInfo { uint32_t result_slot; uint32_t type_id; std::vector<PhiIncoming> incoming; };
+    std::map<uint32_t, std::vector<PhiInfo>> phi_info_per_block;
+
+    {
+        uint32_t vc = fn.instruction_start_value;
+        for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
+            for (auto &inst : fn.blocks[bi].instructions) {
+                if (inst.opcode == LLVMInstruction::PHI) {
+                    PhiInfo pi; pi.result_slot = vc; pi.type_id = inst.type_id;
+                    for (size_t j = 0; j + 1 < inst.operands.size(); j += 2) {
+                        PhiIncoming inc; inc.value_id = inst.operands[j];
+                        uint32_t pbv = inst.operands[j + 1];
+                        auto it = block_value_to_index.find(pbv);
+                        inc.pred_block_idx = it == block_value_to_index.end() ? UINT32_MAX : it->second;
+                        pi.incoming.push_back(inc);
+                    }
+                    phi_info_per_block[(uint32_t)bi].push_back(pi);
+                }
+                switch (inst.opcode) {
+                case LLVMInstruction::Ret: case LLVMInstruction::Br:
+                case LLVMInstruction::Switch: case LLVMInstruction::Unreachable:
+                case LLVMInstruction::Store: break;
+                default: vc++; break;
+                }
+            }
+        }
+    }
+
+    for (auto &[bi, phis] : phi_info_per_block) {
+        for (auto &pi : phis) {
+            std::string name = emitValue(pi.result_slot);
+            MSLType phi_type = DXILIRBuilder::resolveType(pi.type_id, module);
+            std::string dv = defaultForType(phi_type);
+            os << "  " << typedDecl(name, phi_type) << " = " << dv << "; // phi pre-decl\n";
+        }
+    }
+
+    uint32_t value_counter = fn.instruction_start_value;
+    ctx.instruction_start_value = fn.instruction_start_value;
+
+    bool needs_dispatch = fn.blocks.size() > 1;
+    if (needs_dispatch) {
+        os << "  int _block_state = 0;\n  for (;;) {\n    switch (_block_state) {\n";
+    }
+
+    for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
+        auto &block = fn.blocks[bi];
+        if (needs_dispatch) os << "    case " << bi << ": {\n";
+
+        for (size_t ii = 0; ii < block.instructions.size(); ii++) {
+            auto &inst = block.instructions[ii];
+            bool is_terminator = (inst.opcode == LLVMInstruction::Br ||
+                                   inst.opcode == LLVMInstruction::Switch ||
+                                   inst.opcode == LLVMInstruction::Ret ||
+                                   inst.opcode == LLVMInstruction::Unreachable);
+
+            if (inst.opcode == LLVMInstruction::PHI) {
+                ctx.value_table.resize(std::max((size_t)value_counter + 1, ctx.value_table.size()));
+                ctx.value_types.resize(std::max((size_t)value_counter + 1, ctx.value_types.size()));
+                ctx.value_table[value_counter] = emitValue(value_counter);
+                ctx.value_types[value_counter] = DXILIRBuilder::resolveType(inst.type_id, module);
+                value_counter++;
+                continue;
+            }
+
+            if (!is_terminator) {
+                emitTypedInstruction(ctx, inst, value_counter);
+                continue;
+            }
+
+            auto succ_it = successors.find((uint32_t)bi);
+            if (succ_it != successors.end()) {
+                for (uint32_t succ : succ_it->second) {
+                    auto phi_it = phi_info_per_block.find(succ);
+                    if (phi_it != phi_info_per_block.end()) {
+                        for (auto &pi : phi_it->second) {
+                            for (auto &inc : pi.incoming) {
+                                if (inc.pred_block_idx == (uint32_t)bi) {
+                                    os << "    " << emitValue(pi.result_slot) << " = " << resolveValue(ctx, inc.value_id) << ";\n";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (inst.opcode == LLVMInstruction::Ret) {
+                if (ctx.shader.kind == DxilShaderKind::Vertex) os << "    return out;\n";
+                else if (ctx.shader.kind == DxilShaderKind::Pixel) {
+                    if (!inst.operands.empty()) os << "    result.color0 = float4(" << resolveValue(ctx, inst.operands[0]) << ");\n";
+                    os << "    return result;\n";
+                } else {
+                    if (!inst.operands.empty()) os << "    return " << resolveValue(ctx, inst.operands[0]) << ";\n";
+                    else os << "    return;\n";
+                }
+            } else if (inst.opcode == LLVMInstruction::Br) {
+                if (inst.operands.size() == 1 && needs_dispatch) {
+                    os << "    _block_state = " << inst.operands[0] << "; continue;\n";
+                } else if (inst.operands.size() >= 3 && needs_dispatch) {
+                    os << "    if (" << resolveValue(ctx, inst.operands[0]) << ") { _block_state = " << inst.operands[1] << "; continue; } else { _block_state = " << inst.operands[2] << "; continue; }\n";
+                }
+            } else if (inst.opcode == LLVMInstruction::Switch) {
+                if (inst.operands.size() >= 2) {
+                    os << "    { int _sv = (int)(" << resolveValue(ctx, inst.operands[0]) << ");\n";
+                    for (size_t j = 2; j + 1 < inst.operands.size(); j += 2)
+                        os << "    if (_sv == " << inst.operands[j] << ") { _block_state = " << inst.operands[j+1] << "; continue; }\n";
+                    os << "    _block_state = " << inst.operands[1] << "; continue; }\n";
+                }
+            } else if (inst.opcode == LLVMInstruction::Unreachable) {
+                os << "    // unreachable\n";
+            }
+
+            if (needs_dispatch) os << "    }\n";
+        }
+    }
+
+    if (needs_dispatch) os << "    }\n    break;\n  }\n";
+    os << "}\n";
+
+    TypedMSLShader result;
+    result.source = os.str();
+    result.entry_point = shader.entry_point;
+    result.tg_size[0] = module.num_threads[0];
+    result.tg_size[1] = module.num_threads[1];
+    result.tg_size[2] = module.num_threads[2];
+    result.unsupported_intrinsics = ctx.unsupported_intrinsics;
+    result.unsupported_opcodes = ctx.unsupported_opcodes;
+    result.diagnostics = ctx.diagnostics;
+
+    return std::optional<TypedMSLShader>(std::in_place, std::move(result));
+}
+
+}

@@ -254,8 +254,11 @@ int main(int argc, char **argv) {
     }
 
     std::string built_in_dir;
-    if (argc > 2) {
-        built_in_dir = argv[2];
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--built-in" && i + 1 < argc) {
+            built_in_dir = argv[++i];
+        }
     }
 
     std::vector<TestCase> tests;
