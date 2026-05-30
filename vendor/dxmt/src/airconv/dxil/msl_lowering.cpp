@@ -663,6 +663,27 @@ static MSLType typeForResolvedValueName(const LowerContext &ctx, const std::stri
     return {};
 }
 
+static bool exprContainsPointerTypedValue(const LowerContext &ctx, const std::string &value) {
+    size_t pos = value.find('v');
+    while (pos != std::string::npos) {
+        bool start_ok = pos == 0 ||
+            (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_');
+        size_t end = pos + 1;
+        while (end < value.size() && std::isdigit((unsigned char)value[end]))
+            end++;
+        bool has_digits = end > pos + 1;
+        bool end_ok = end >= value.size() ||
+            (!std::isalnum((unsigned char)value[end]) && value[end] != '_');
+        if (start_ok && has_digits && end_ok) {
+            MSLType type = typeForResolvedValueName(ctx, value.substr(pos, end - pos));
+            if (typeLooksResourceHandle(type))
+                return true;
+        }
+        pos = value.find('v', pos + 1);
+    }
+    return false;
+}
+
 static MSLType typeForResolvedExpression(const LowerContext &ctx, const std::string &value) {
     MSLType direct = typeForResolvedValueName(ctx, value);
     if (isUsableMSLType(direct))
@@ -840,6 +861,14 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
     MSLType source_type = typeForResolvedExpression(ctx, value);
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        exprContainsPointerTypedValue(ctx, value) &&
+        value.find("*(") == std::string::npos &&
+        value.find("reinterpret_cast") == std::string::npos &&
+        value.find('[') == std::string::npos)
+        return defaultForType(target);
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         typeLooksResourceHandle(source_type))
         return defaultForType(target);
 
@@ -982,6 +1011,16 @@ static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
     if (exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
         exprLooksSideEffectOnly(value))
         return "false";
+    std::string stripped_value = stripEnclosingParens(value);
+    if (startsWith(stripped_value, "int2(")) return "any(" + value + " != int2(0))";
+    if (startsWith(stripped_value, "int3(")) return "any(" + value + " != int3(0))";
+    if (startsWith(stripped_value, "int4(")) return "any(" + value + " != int4(0))";
+    if (startsWith(stripped_value, "uint2(")) return "any(" + value + " != uint2(0))";
+    if (startsWith(stripped_value, "uint3(")) return "any(" + value + " != uint3(0))";
+    if (startsWith(stripped_value, "uint4(")) return "any(" + value + " != uint4(0))";
+    if (startsWith(stripped_value, "float2(")) return "any(" + value + " != float2(0.0f))";
+    if (startsWith(stripped_value, "float3(")) return "any(" + value + " != float3(0.0f))";
+    if (startsWith(stripped_value, "float4(")) return "any(" + value + " != float4(0.0f))";
     MSLType condition_type = idx < ctx.value_types.size() ? ctx.value_types[idx] : MSLType{};
     MSLType resolved_type = typeForResolvedExpression(ctx, value);
     if (isUsableMSLType(resolved_type))
@@ -1527,6 +1566,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_BufferStore: case DXOP_RawBufferStore: case 1026: {
         if (args.size() < 4) return "";
         auto handle = handleArg(0, "buf", "buf0");
+        if (!startsWith(handle, "buf"))
+            return "";
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
         std::string base = "(((int)(" + idx + "))*4 + ((int)(" + off + ")))";
@@ -1565,12 +1606,14 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_TextureStore: case 225: {
         if (args.size() < 6) return "";
         auto handle = handleArg(0, "tex", "tex0");
-        auto cx = ensureScalarIndex(valueArg(1, "0"));
-        auto cy = ensureScalarIndex(valueArg(2, "0"));
+        auto cx = ensureScalarIndex(numericArg(1, "0"));
+        auto cy = ensureScalarIndex(numericArg(2, "0"));
         size_t vb = intrinsic_id == 225 ? 5 : 4;
-        return handle + ".write(float4(" + numericArg(vb, "0.0") + ", " + numericArg(vb+1, "0.0") +
-               ", " + numericArg(vb+2, "0.0") + ", " + numericArg(vb+3, "0.0") +
-               "), uint2(" + cx + ", " + cy + "))";
+        std::string value = "float4(" + numericArg(vb, "0.0") + ", " + numericArg(vb+1, "0.0") +
+                            ", " + numericArg(vb+2, "0.0") + ", " + numericArg(vb+3, "0.0") + ")";
+        if (startsWith(handle, "buf"))
+            return "reinterpret_cast<device float4&>(" + handle + "[(((int)(" + cy + "))*4096 + ((int)(" + cx + "))*16)]) = " + value;
+        return handle + ".write(" + value + ", uint2((uint)(" + cx + "), (uint)(" + cy + ")))";
     }
     case DXOP_TextureSample: case DXOP_TextureSampleBias:
     case DXOP_TextureSampleLevel: case DXOP_TextureSampleGrad: {
@@ -2100,6 +2143,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 if (!translated.empty()) {
                     os << "  " << translated << ";\n";
                     ctx.value_table[value_counter] = translated;
+                } else {
+                    if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
+                        os << "  " << result << " = 0; // void call placeholder\n";
+                    else
+                        os << "  int " << result << " = 0; // void call placeholder\n";
+                    ctx.value_table[value_counter] = result;
+                    ctx.value_types[value_counter] = {MSLTypeKind::Int, 0, {}};
                 }
             } else if (result_type.kind == MSLTypeKind::Void || exprLooksSideEffectOnly(translated)) {
                 if (!translated.empty())
