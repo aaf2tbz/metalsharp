@@ -705,8 +705,8 @@ static bool exprLooksScalarMathCall(const std::string &value) {
     std::string stripped = stripEnclosingParens(value);
     static const char *math_calls[] = {
         "abs(", "acos(", "asin(", "atan(", "ceil(", "cos(", "exp(", "fabs(",
-        "floor(", "log(", "rint(", "round(", "rsqrt(", "sin(", "sqrt(",
-        "tan(", "trunc("
+        "floor(", "log(", "log2(", "rint(", "round(", "rsqrt(", "sin(",
+        "sqrt(", "tan(", "trunc("
     };
     for (const char *call : math_calls)
         if (startsWith(stripped, call))
@@ -1675,8 +1675,10 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "binary");
         auto a = numericArg(1, "0"), b = numericArg(2, "0");
         switch (op) {
-        case DXILOP_FMax: case DXILOP_IMax: return "max(" + a + ", " + b + ")";
-        case DXILOP_FMin: case DXILOP_IMin: return "min(" + a + ", " + b + ")";
+        case DXILOP_FMax: return "max(static_cast<float>(" + a + "), static_cast<float>(" + b + "))";
+        case DXILOP_FMin: return "min(static_cast<float>(" + a + "), static_cast<float>(" + b + "))";
+        case DXILOP_IMax: return "max(static_cast<int>(" + a + "), static_cast<int>(" + b + "))";
+        case DXILOP_IMin: return "min(static_cast<int>(" + a + "), static_cast<int>(" + b + "))";
         case DXILOP_UMax: return "max((uint)(" + a + "), (uint)(" + b + "))";
         case DXILOP_UMin: return "min((uint)(" + a + "), (uint)(" + b + "))";
         case DXILOP_IMul: return "mul24(" + a + ", " + b + ")";
@@ -1873,6 +1875,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 assigned = scalarized != expr ? scalarized :
                     (exprLooksVectorValue(expr) ? "(" + expr + ").x" : expr);
             }
+            type = declared_type;
             os << "  " << name << " = " << assigned << ";\n";
             return;
         }
@@ -2136,6 +2139,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     } else {
                         emitTypedLine(result_type, result, translated);
                         ctx.value_table[value_counter] = result;
+                        ctx.value_types[value_counter] = result_type;
                     }
                     if (!ctx.last_buffer_handle.empty()) {
                         ctx.buffer_origin[value_counter] = ctx.last_buffer_handle;
