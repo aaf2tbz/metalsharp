@@ -756,8 +756,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (ctx.shader.kind == DxilShaderKind::Pixel) return std::string("result") + componentSuffix(comp) + " = " + val;
         return "";
     }
-    case 131: return "as_type<float>(half(" + valueArg(1, "0") + "))";
-    case 132: return "as_type<uint>(half(" + valueArg(1, "0.0") + "))";
+    case 131: return "static_cast<float>(half(" + valueArg(1, "0") + "))";
+    case 132: return "static_cast<uint>(half(" + valueArg(1, "0.0") + "))";
     case 118: return "simd_broadcast_first(" + valueArg(1, "0") + ")";
     case 117: return "simd_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
     case 110: return "simd_is_first()";
@@ -814,6 +814,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     };
 
     auto inferTypeFromExpr = [](const std::string &expr) -> MSLType {
+        if (startsWith(expr, "buf"))
+            return {MSLTypeKind::DeviceCharPtr, 0, {}};
         if (expr.find("reinterpret_cast<device float4&>") != std::string::npos)
             return {MSLTypeKind::Float4, 0, {}};
         if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos)
@@ -872,6 +874,111 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         return a;
     };
 
+    auto isPointerType = [](const MSLType &t) -> bool {
+        return t.kind == MSLTypeKind::DeviceCharPtr || t.kind == MSLTypeKind::ThreadgroupCharPtr;
+    };
+
+    auto isUsableType = [](const MSLType &t) -> bool {
+        return t.kind != MSLTypeKind::Unknown && t.kind != MSLTypeKind::Void &&
+               t.kind != MSLTypeKind::Struct;
+    };
+
+    auto valueType = [&](uint32_t idx) -> MSLType {
+        if (idx < ctx.value_types.size()) return ctx.value_types[idx];
+        return {};
+    };
+
+    auto operandType = [&](uint32_t idx) -> MSLType {
+        MSLType tracked = valueType(idx);
+        MSLType inferred = inferTypeFromExpr(getValue(idx));
+        if (isUsableType(inferred) &&
+            (!isUsableType(tracked) || DXILIRBuilder::isVectorType(inferred)))
+            return inferred;
+        return tracked;
+    };
+
+    auto demotePointerType = [&](MSLType t, MSLTypeKind scalar_kind = MSLTypeKind::Int) -> MSLType {
+        if (!isPointerType(t)) return t;
+        return {scalar_kind, 0, {}};
+    };
+
+    auto integerTypeFor = [](MSLType t) -> MSLType {
+        switch (t.kind) {
+        case MSLTypeKind::Float2: return {MSLTypeKind::Int2, 0, {}};
+        case MSLTypeKind::Float3: return {MSLTypeKind::Int3, 0, {}};
+        case MSLTypeKind::Float4: return {MSLTypeKind::Int4, 0, {}};
+        case MSLTypeKind::Float:
+        case MSLTypeKind::Half:
+        case MSLTypeKind::Double:
+            return {MSLTypeKind::Int, 0, {}};
+        default:
+            return t;
+        }
+    };
+
+    auto castExpr = [&](const std::string &expr, const MSLType &target) -> std::string {
+        std::string type_name = emitTypeName(target);
+        if (type_name.empty() || type_name == "auto" || type_name == "void") return expr;
+        if (DXILIRBuilder::isVectorType(target))
+            return type_name + "(" + expr + ")";
+        return "static_cast<" + type_name + ">(" + expr + ")";
+    };
+
+    auto coerceOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
+        std::string value = getValue(idx);
+        MSLType source = operandType(idx);
+        if ((startsWith(value, "tex") || startsWith(value, "samp") || startsWith(value, "buf")) &&
+            (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
+            return defaultForType(target);
+        if (!isUsableType(target) || target.kind == source.kind)
+            return value;
+
+        if (isPointerType(source)) {
+            if (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target))
+                return defaultForType(target);
+            return value;
+        }
+
+        if (source.kind == MSLTypeKind::Unknown &&
+            (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
+            return castExpr(value, target);
+        if (DXILIRBuilder::isIntType(source) && DXILIRBuilder::isFloatType(target))
+            return castExpr(value, target);
+        if (DXILIRBuilder::isFloatType(source) && DXILIRBuilder::isIntType(target))
+            return castExpr(value, target);
+        if (DXILIRBuilder::isVectorType(source) && DXILIRBuilder::isVectorType(target) &&
+            source.kind != target.kind)
+            return castExpr(value, target);
+        return value;
+    };
+
+    auto chooseBinaryType = [&](const MSLType &declared, const MSLType &lhs,
+                                const MSLType &rhs, MSLTypeKind pointer_scalar) -> MSLType {
+        MSLType result_type = demotePointerType(declared, pointer_scalar);
+        MSLType op0 = demotePointerType(lhs, pointer_scalar);
+        MSLType op1 = demotePointerType(rhs, pointer_scalar);
+
+        if (DXILIRBuilder::isVectorType(op0)) result_type = op0;
+        else if (DXILIRBuilder::isVectorType(op1)) result_type = op1;
+        else if (DXILIRBuilder::isFloatType(op0) || DXILIRBuilder::isFloatType(op1))
+            result_type = {pointer_scalar == MSLTypeKind::Float ? MSLTypeKind::Float : MSLTypeKind::Float, 0, {}};
+        else if (isUsableType(op0)) result_type = op0;
+        else if (isUsableType(op1)) result_type = op1;
+
+        if (!isUsableType(result_type)) result_type = {pointer_scalar, 0, {}};
+        return result_type;
+    };
+
+    auto pointerAddressSpace = [&](uint32_t idx) -> const char * {
+        MSLType type = valueType(idx);
+        if (type.kind == MSLTypeKind::ThreadgroupCharPtr)
+            return "threadgroup";
+        std::string value = getValue(idx);
+        if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup"))
+            return "threadgroup";
+        return "device";
+    };
+
     switch (inst.opcode) {
     case LLVMInstruction::Ret:
         if (ctx.shader.kind == DxilShaderKind::Vertex) os << "  return out;\n";
@@ -915,8 +1022,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 }
             } else if (translated.find('=') == std::string::npos) {
                 if (!translated.empty() && translated[0] != ' ') {
-                    emitTypedLine(result_type, result, translated);
-                    ctx.value_table[value_counter] = result;
+                    bool is_resource_handle = startsWith(translated, "buf") ||
+                                              startsWith(translated, "tex") ||
+                                              startsWith(translated, "samp");
+                    if (is_resource_handle) {
+                        ctx.value_table[value_counter] = translated;
+                    } else {
+                        emitTypedLine(result_type, result, translated);
+                        ctx.value_table[value_counter] = result;
+                    }
                     if (!ctx.last_buffer_handle.empty()) {
                         ctx.buffer_origin[value_counter] = ctx.last_buffer_handle;
                         ctx.last_buffer_handle.clear();
@@ -970,21 +1084,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         default: break;
         }
         MSLType result_type = getTypeForInst(inst.type_id);
-        auto demotePointer = [](MSLType t) -> MSLType {
-            if (t.kind == MSLTypeKind::DeviceCharPtr || t.kind == MSLTypeKind::ThreadgroupCharPtr)
-                return {MSLTypeKind::Int, 0, {}};
-            return t;
-        };
-        result_type = demotePointer(result_type);
-        if (inst.operands.size() >= 2) {
-            MSLType op0 = demotePointer(inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : MSLType{});
-            MSLType op1 = demotePointer(inst.operands[1] < ctx.value_types.size() ? ctx.value_types[inst.operands[1]] : MSLType{});
-            if (DXILIRBuilder::isVectorType(op0)) result_type = op0;
-            else if (DXILIRBuilder::isVectorType(op1)) result_type = op1;
-            else if (op0.kind != MSLTypeKind::Unknown && op0.kind != MSLTypeKind::Struct) result_type = op0;
-            else if (op1.kind != MSLTypeKind::Unknown && op1.kind != MSLTypeKind::Struct) result_type = op1;
-        }
-        std::string expr = getValue(inst.operands[0]) + " " + std::string(op_str) + " " + getValue(inst.operands[1]);
+        if (inst.operands.size() >= 2)
+            result_type = chooseBinaryType(result_type, operandType(inst.operands[0]),
+                                           operandType(inst.operands[1]), MSLTypeKind::Int);
+        result_type = integerTypeFor(result_type);
+        std::string expr = coerceOperand(inst.operands[0], result_type) + " " +
+                           std::string(op_str) + " " +
+                           coerceOperand(inst.operands[1], result_type);
         emitTypedLine(result_type, result, expr);
         ctx.value_table[value_counter] = result;
         ctx.value_types[value_counter] = result_type;
@@ -1176,18 +1282,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         default: break;
         }
         MSLType result_type = getTypeForInst(inst.type_id);
-        if (result_type.kind == MSLTypeKind::DeviceCharPtr || result_type.kind == MSLTypeKind::ThreadgroupCharPtr)
-            result_type = {MSLTypeKind::Float, 0, {}};
         if (inst.operands.size() >= 2) {
-            MSLType op0 = inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : MSLType{};
-            MSLType op1 = inst.operands[1] < ctx.value_types.size() ? ctx.value_types[inst.operands[1]] : MSLType{};
-            if (op0.kind == MSLTypeKind::DeviceCharPtr || op0.kind == MSLTypeKind::ThreadgroupCharPtr) op0 = {MSLTypeKind::Unknown, 0, {}};
-            if (op1.kind == MSLTypeKind::DeviceCharPtr || op1.kind == MSLTypeKind::ThreadgroupCharPtr) op1 = {MSLTypeKind::Unknown, 0, {}};
-            if (DXILIRBuilder::isVectorType(op0)) result_type = op0;
-            else if (DXILIRBuilder::isVectorType(op1)) result_type = op1;
-            else if (op0.kind != MSLTypeKind::Unknown && op0.kind != MSLTypeKind::Struct) result_type = op0;
-            else if (op1.kind != MSLTypeKind::Unknown && op1.kind != MSLTypeKind::Struct) result_type = op1;
-            emitTypedLine(result_type, result, getValue(inst.operands[0]) + std::string(" ") + fop + " " + getValue(inst.operands[1]));
+            result_type = chooseBinaryType(result_type, operandType(inst.operands[0]),
+                                           operandType(inst.operands[1]), MSLTypeKind::Float);
+            std::string lhs = coerceOperand(inst.operands[0], result_type);
+            std::string rhs = coerceOperand(inst.operands[1], result_type);
+            std::string expr = inst.opcode == LLVMInstruction::FRem
+                ? "fmod(" + lhs + ", " + rhs + ")"
+                : lhs + std::string(" ") + fop + " " + rhs;
+            emitTypedLine(result_type, result, expr);
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
@@ -1202,11 +1305,30 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             std::string val = getValue(inst.operands[0]);
             auto src_type = inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : MSLType{};
             auto dst_type = result_type;
+            if (!isUsableType(dst_type)) {
+                if (isUsableType(src_type)) {
+                    dst_type = src_type;
+                    result_type = src_type;
+                } else {
+                    dst_type = {MSLTypeKind::UInt, 0, {}};
+                    result_type = dst_type;
+                }
+            }
             std::string src_name = emitTypeName(src_type);
             std::string dst_name = emitTypeName(dst_type);
+            if (isPointerType(src_type) || isPointerType(dst_type)) {
+                ctx.value_table[value_counter] = val;
+                ctx.value_types[value_counter] = dst_type;
+                value_counter++;
+                break;
+            }
             if (src_name != dst_name && !src_name.empty() && !dst_name.empty() &&
-                src_type.kind != MSLTypeKind::Unknown && dst_type.kind != MSLTypeKind::Unknown) {
-                emitTypedLine(result_type, result, "reinterpret_cast<" + dst_name + ">(" + val + ")");
+                src_type.kind != MSLTypeKind::Unknown && dst_type.kind != MSLTypeKind::Unknown &&
+                DXILIRBuilder::typeBitWidth(src_type) == DXILIRBuilder::typeBitWidth(dst_type)) {
+                emitTypedLine(result_type, result, "as_type<" + dst_name + ">(" + val + ")");
+            } else if (src_name != dst_name && !src_name.empty() && !dst_name.empty() &&
+                       src_type.kind != MSLTypeKind::Unknown && dst_type.kind != MSLTypeKind::Unknown) {
+                emitTypedLine(result_type, result, castExpr(val, dst_type));
             } else {
                 emitTypedLine(result_type, result, val);
             }
@@ -1262,8 +1384,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         ensureValueTable(value_counter);
         if (inst.operands.size() >= 3) {
             uint32_t pred = inst.operands[0];
-            auto lhs = getValue(inst.operands[1]);
-            auto rhs = getValue(inst.operands[2]);
+            MSLType lhs_type = operandType(inst.operands[1]);
+            MSLType rhs_type = operandType(inst.operands[2]);
+            MSLType cmp_type = chooseBinaryType(
+                inst.opcode == LLVMInstruction::FCmp ? MSLType{MSLTypeKind::Float, 0, {}}
+                                                      : MSLType{MSLTypeKind::Int, 0, {}},
+                lhs_type, rhs_type,
+                inst.opcode == LLVMInstruction::FCmp ? MSLTypeKind::Float : MSLTypeKind::Int);
+            auto lhs = coerceOperand(inst.operands[1], cmp_type);
+            auto rhs = coerceOperand(inst.operands[2], cmp_type);
             const char *cmp = "==";
             if (pred == 0) { os << "  bool " << result << " = false;\n"; }
             else if (pred >= 15) { os << "  bool " << result << " = true;\n"; }
@@ -1289,12 +1418,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         ensureValueTable(value_counter);
         MSLType result_type = getTypeForInst(inst.type_id);
         if (inst.operands.size() >= 3) {
-            auto cond = getValue(inst.operands[0]);
-            auto tv = getValue(inst.operands[1]);
-            auto fv = getValue(inst.operands[2]);
-            MSLType tv_type = inst.operands[1] < ctx.value_types.size() ? ctx.value_types[inst.operands[1]] : MSLType{};
-            if (DXILIRBuilder::isVectorType(tv_type)) result_type = tv_type;
-            else if (tv_type.kind != MSLTypeKind::Unknown && tv_type.kind != MSLTypeKind::Struct) result_type = tv_type;
+            auto cond = coerceOperand(inst.operands[0], {MSLTypeKind::Bool, 0, {}});
+            MSLType tv_type = operandType(inst.operands[1]);
+            MSLType fv_type = operandType(inst.operands[2]);
+            result_type = chooseBinaryType(result_type, tv_type, fv_type, MSLTypeKind::Int);
+            auto tv = coerceOperand(inst.operands[1], result_type);
+            auto fv = coerceOperand(inst.operands[2], result_type);
             emitTypedLine(result_type, result, "(" + cond + " ? " + tv + " : " + fv + ")");
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
@@ -1324,10 +1453,16 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         MSLType result_type = getTypeForInst(inst.type_id);
         if (inst.operands.size() >= 1) {
             auto ptr = getValue(inst.operands[0]);
+            auto ptr_type = valueType(inst.operands[0]);
+            if (!isUsableType(result_type))
+                result_type = {MSLTypeKind::UInt, 0, {}};
             std::string type_name = emitTypeName(result_type);
-            std::string expr = "*(" + type_name + "*)(" + ptr + ")";
+            std::string expr = defaultForType(result_type);
+            if (isPointerType(ptr_type))
+                expr = "*((" + std::string(pointerAddressSpace(inst.operands[0])) + " " +
+                       type_name + "*)(" + ptr + "))";
             emitTypedLine(result_type, result, expr);
-            ctx.value_table[value_counter] = expr;
+            ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
         value_counter++;
@@ -1338,7 +1473,16 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (inst.operands.size() >= 2) {
             auto ptr = getValue(inst.operands[0]);
             auto val = getValue(inst.operands[1]);
-            os << "  *(" << ptr << ") = " << val << ";\n";
+            auto ptr_type = valueType(inst.operands[0]);
+            auto val_type = valueType(inst.operands[1]);
+            if (isPointerType(ptr_type)) {
+                std::string type_name = emitTypeName(val_type);
+                if (type_name.empty() || type_name == "auto" || type_name == "void") type_name = "uint";
+                os << "  *((" << pointerAddressSpace(inst.operands[0]) << " " << type_name
+                   << "*)(" << ptr << ")) = " << val << ";\n";
+            } else {
+                os << "  // skipped store through non-pointer " << ptr << "\n";
+            }
         }
         break;
     }
