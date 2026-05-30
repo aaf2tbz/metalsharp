@@ -117,8 +117,24 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
     std::vector<std::string> values;
     bool is_agg = startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
     bool is_brace = !text.empty() && text[0] == '{' && text.back() == '}';
-    if (!is_agg && !is_brace) return values;
     size_t start = is_agg ? 4 : 1;
+    if (!is_agg && !is_brace) {
+        static const char *ctors[] = {
+            "float2(", "float3(", "float4(",
+            "int2(", "int3(", "int4(",
+            "uint2(", "uint3(", "uint4(",
+            "half2(", "half3(", "half4("
+        };
+        bool is_ctor = false;
+        for (auto *ctor : ctors) {
+            if (startsWith(text, ctor) && text.back() == ')') {
+                start = std::strlen(ctor);
+                is_ctor = true;
+                break;
+            }
+        }
+        if (!is_ctor) return values;
+    }
     while (start < text.size() - 1) {
         size_t comma = text.find(',', start);
         size_t end_pos = comma == std::string::npos ? text.size() - 1 : comma;
@@ -135,10 +151,11 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
 }
 
 static std::string ensureScalarIndex(const std::string &val) {
-    if (startsWith(val, "agg(")) {
-        auto parts = parseAggregateLiteral(val);
-        return parts.empty() ? "0" : parts[0];
-    }
+    auto parts = parseAggregateLiteral(val);
+    if (!parts.empty()) return parts[0];
+    if (startsWith(val, "buf") || startsWith(val, "tex") || startsWith(val, "samp") ||
+        val.find("char*") != std::string::npos || val.find("char *") != std::string::npos)
+        return "0";
     return val;
 }
 
@@ -288,6 +305,101 @@ static std::string defaultForType(const MSLType &t) {
     }
 }
 
+static MSLType aggregateFallbackType(const std::vector<std::string> &parts) {
+    bool has_float = false;
+    bool has_unsigned = false;
+    for (const auto &part : parts) {
+        if (part.find('.') != std::string::npos || part.find('f') != std::string::npos ||
+            part.find("inf") != std::string::npos || part.find("nan") != std::string::npos) {
+            has_float = true;
+            break;
+        }
+        if (!part.empty() && part.back() == 'u')
+            has_unsigned = true;
+    }
+
+    size_t count = std::min<size_t>(std::max<size_t>(parts.size(), 1), 4);
+    if (has_float) {
+        switch (count) {
+        case 2: return {MSLTypeKind::Float2, 0, {}};
+        case 3: return {MSLTypeKind::Float3, 0, {}};
+        case 4: return {MSLTypeKind::Float4, 0, {}};
+        default: return {MSLTypeKind::Float, 0, {}};
+        }
+    }
+    if (has_unsigned) {
+        switch (count) {
+        case 2: return {MSLTypeKind::UInt2, 0, {}};
+        case 3: return {MSLTypeKind::UInt3, 0, {}};
+        case 4: return {MSLTypeKind::UInt4, 0, {}};
+        default: return {MSLTypeKind::UInt, 0, {}};
+        }
+    }
+    switch (count) {
+    case 2: return {MSLTypeKind::Int2, 0, {}};
+    case 3: return {MSLTypeKind::Int3, 0, {}};
+    case 4: return {MSLTypeKind::Int4, 0, {}};
+    default: return {MSLTypeKind::Int, 0, {}};
+    }
+}
+
+static bool isAggregateLiteralText(const std::string &text) {
+    return startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
+}
+
+static std::string aggregateConstructor(const std::string &literal, MSLType type = {}) {
+    auto parts = parseAggregateLiteral(literal);
+    if (parts.empty()) return literal;
+    if (!DXILIRBuilder::isVectorType(type))
+        type = aggregateFallbackType(parts);
+
+    std::string type_name = emitTypeName(type);
+    if (type_name.empty() || type_name == "auto")
+        type_name = emitTypeName(aggregateFallbackType(parts));
+
+    std::string args;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i) args += ", ";
+        args += parts[i];
+    }
+    return type_name + "(" + args + ")";
+}
+
+static std::string normalizeAggregateExpressions(const std::string &expr, MSLType preferred_type = {}) {
+    if (isAggregateLiteralText(expr))
+        return aggregateConstructor(expr, preferred_type);
+
+    std::string out;
+    size_t pos = 0;
+    while (pos < expr.size()) {
+        size_t start = expr.find("agg(", pos);
+        if (start == std::string::npos) {
+            out += expr.substr(pos);
+            break;
+        }
+        out += expr.substr(pos, start - pos);
+        int depth = 0;
+        size_t end = start;
+        for (; end < expr.size(); end++) {
+            if (expr[end] == '(') depth++;
+            else if (expr[end] == ')') {
+                depth--;
+                if (depth == 0) {
+                    end++;
+                    break;
+                }
+            }
+        }
+        if (depth != 0) {
+            out += expr.substr(start);
+            break;
+        }
+        out += aggregateConstructor(expr.substr(start, end - start));
+        pos = end;
+    }
+    return out;
+}
+
 static std::string typedDecl(const std::string &name, const MSLType &t) {
     return emitTypeName(t) + " " + name;
 }
@@ -411,26 +523,23 @@ static std::string resolveValue(LowerContext &ctx, uint32_t idx) {
         const auto &v = ctx.value_table[idx];
         if (startsWith(v, "dx.")) {
             // function name, not a resolvable value
+        } else if (startsWith(v, "agg(")) {
+            MSLType type = idx < ctx.value_types.size() ? ctx.value_types[idx] : MSLType{};
+            return aggregateConstructor(v, type);
         } else if (v.find('.') != std::string::npos) {
             return v;
-        } else if (startsWith(v, "agg(")) {
-            auto parts = parseAggregateLiteral(v);
-            std::string args;
-            for (size_t p = 0; p < parts.size(); p++) {
-                if (p) args += ",";
-                args += parts[p];
-            }
-            return "int" + std::to_string(parts.size()) + "(" + args + ")";
         } else {
             return v;
         }
     }
     for (auto &c : ctx.mod.constants) {
-        if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+        if (c.id == idx && !c.constant_data.empty())
+            return normalizeAggregateExpressions(c.constant_data, DXILIRBuilder::resolveType(c.type_id, ctx.mod));
     }
     if (ctx.current_fn) {
         for (auto &c : ctx.current_fn->constants) {
-            if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+            if (c.id == idx && !c.constant_data.empty())
+                return normalizeAggregateExpressions(c.constant_data, DXILIRBuilder::resolveType(c.type_id, ctx.mod));
         }
     }
     return emitValue(idx);
@@ -469,11 +578,12 @@ static bool exprLooksVectorValue(const std::string &value) {
 }
 
 static std::string coerceResolvedValue(const std::string &value, const MSLType &target) {
+    std::string resolved = normalizeAggregateExpressions(value, target);
     if (target.kind == MSLTypeKind::Bool) {
-        if (exprLooksResourceHandle(value) || exprLooksSideEffectOnly(value)) return "false";
-        return value;
+        if (exprLooksResourceHandle(resolved) || exprLooksSideEffectOnly(resolved)) return "false";
+        return resolved;
     }
-    if (exprLooksResourceHandle(value) &&
+    if (exprLooksResourceHandle(resolved) &&
         target.kind != MSLTypeKind::DeviceCharPtr &&
         target.kind != MSLTypeKind::ThreadgroupCharPtr &&
         target.kind != MSLTypeKind::Texture2D &&
@@ -483,28 +593,28 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     }
     if ((target.kind == MSLTypeKind::DeviceCharPtr ||
          target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
-        !exprLooksResourceHandle(value) &&
-        value.find("char*") == std::string::npos &&
-        value.find("char *") == std::string::npos &&
-        value.find("thread") == std::string::npos &&
-        value.find("device") == std::string::npos) {
+        !exprLooksResourceHandle(resolved) &&
+        resolved.find("char*") == std::string::npos &&
+        resolved.find("char *") == std::string::npos &&
+        resolved.find("thread") == std::string::npos &&
+        resolved.find("device") == std::string::npos) {
         return defaultForType(target);
     }
-    if (exprLooksSideEffectOnly(value))
+    if (exprLooksSideEffectOnly(resolved))
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
-        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(value))
-        return "(" + value + ").x";
-    if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(value)) {
+        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved))
+        return "(" + resolved + ").x";
+    if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(resolved)) {
         std::string type_name = emitTypeName(target);
         if (!type_name.empty() && type_name != "auto")
-            return type_name + "(" + value + ")";
+            return type_name + "(" + resolved + ")";
     }
-    if (value == "inf" || value == "+inf")
+    if (resolved == "inf" || resolved == "+inf")
         return "INFINITY";
-    if (value == "-inf")
+    if (resolved == "-inf")
         return "-INFINITY";
-    return value;
+    return resolved;
 }
 
 static bool exprEndsWithComponent(const std::string &value) {
@@ -1039,22 +1149,22 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             const auto &v = ctx.value_table[idx];
             if (startsWith(v, "dx.")) {
                 // function name, not a value — fall through to constants/emitValue
+            } else if (startsWith(v, "agg(")) {
+                MSLType type = idx < ctx.value_types.size() ? ctx.value_types[idx] : MSLType{};
+                return aggregateConstructor(v, type);
             } else if (v.find('.') != std::string::npos) {
                 return v;
-            } else if (startsWith(v, "agg(")) {
-                auto parts = parseAggregateLiteral(v);
-                std::string args;
-                for (size_t p = 0; p < parts.size(); p++) { if (p) args += ","; args += parts[p]; }
-                return "int" + std::to_string(parts.size()) + "(" + args + ")";
             } else {
                 return v;
             }
         }
         for (auto &c : ctx.mod.constants)
-            if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+            if (c.id == idx && !c.constant_data.empty())
+                return normalizeAggregateExpressions(c.constant_data, DXILIRBuilder::resolveType(c.type_id, ctx.mod));
         if (ctx.current_fn)
             for (auto &c : ctx.current_fn->constants)
-                if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
+                if (c.id == idx && !c.constant_data.empty())
+                    return normalizeAggregateExpressions(c.constant_data, DXILIRBuilder::resolveType(c.type_id, ctx.mod));
         return emitValue(idx);
     };
 
@@ -1880,21 +1990,13 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
             if (ctx.value_types.size() <= val_idx) ctx.value_types.resize(val_idx + 1);
             std::string cdata = c.constant_data;
             if (startsWith(cdata, "agg(")) {
-                uint32_t tid = c.type_id;
-                std::string args = cdata.substr(4, cdata.size() - 5);
-                if (tid < module.types.size()) {
-                    auto &ty = module.types[tid];
-                    if (ty.kind == LLVMType::Vector && !ty.subtypes.empty()) {
-                        std::string elem = DXILIRBuilder::mslTypeName(DXILIRBuilder::resolveType(
-                            ty.subtypes.empty() ? 0 : tid, module));
-                        uint32_t count = ty.bit_width;
-                        ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
-                        ctx.value_types[val_idx] = DXILIRBuilder::resolveType(tid, module);
-                        continue;
-                    }
-                }
+                MSLType type = DXILIRBuilder::resolveType(c.type_id, module);
+                ctx.value_table[val_idx] = aggregateConstructor(cdata, type);
+                ctx.value_types[val_idx] = type;
+                continue;
             }
-            ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(val_idx) : cdata;
+            ctx.value_table[val_idx] = cdata.empty() ? "const_" + std::to_string(val_idx)
+                                                     : normalizeAggregateExpressions(cdata);
             ctx.value_types[val_idx] = DXILIRBuilder::resolveType(c.type_id, module);
         }
     };
