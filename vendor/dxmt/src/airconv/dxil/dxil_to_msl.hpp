@@ -43,6 +43,8 @@ private:
     const DxilParsedShader &shader;
     std::vector<std::string> value_table;
     std::vector<uint32_t> value_type_ids;
+    std::unordered_map<uint32_t, std::string> buffer_origin;
+    std::string last_buffer_handle;
     std::unordered_map<std::string, std::string> local_values;
     std::vector<ResourceBinding> resource_bindings;
     std::vector<std::string> diagnostics;
