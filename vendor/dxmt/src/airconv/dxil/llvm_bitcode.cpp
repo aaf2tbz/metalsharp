@@ -1234,19 +1234,18 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                           ? LLVMInstruction::ExtractValue
                           : rec_code == kFuncCode_InstInsertVal
                                 ? LLVMInstruction::InsertValue
-                                : LLVMInstruction::PHI;
-        if (ops.size() > 1) inst.type_id = (uint32_t)ops[1];
+                                 : LLVMInstruction::PHI;
         if (rec_code == kFuncCode_InstExtractVal) {
           if (ops.size() > 1)
             inst.operands.push_back(value(ops[1]));
-          for (size_t i = 3; i < ops.size(); i++)
+          for (size_t i = 2; i < ops.size(); i++)
             inst.operands.push_back((uint32_t)ops[i]);
         } else if (rec_code == kFuncCode_InstInsertVal) {
           if (ops.size() > 1)
             inst.operands.push_back(value(ops[1]));
-          if (ops.size() > 3)
-            inst.operands.push_back(value(ops[3]));
-          for (size_t i = 5; i < ops.size(); i++)
+          if (ops.size() > 2)
+            inst.operands.push_back(value(ops[2]));
+          for (size_t i = 3; i < ops.size(); i++)
             inst.operands.push_back((uint32_t)ops[i]);
         } else {
           if (ops.size() > 1)

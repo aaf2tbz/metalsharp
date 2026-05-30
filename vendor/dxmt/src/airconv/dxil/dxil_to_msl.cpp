@@ -1187,7 +1187,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
   auto getValue = [&](uint32_t idx) -> std::string {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
       const auto &v = ctx.value_table[idx];
-      if (v.find('.') != std::string::npos) return emitValue(idx);
+      if (v.find('.') != std::string::npos && !startsWith(v, "dx."))
+        return v;
       if (startsWith(v, "agg(")) {
         auto parts = parseAggregateLiteral(v);
         uint32_t tid = idx < ctx.value_type_ids.size() ? ctx.value_type_ids[idx] : 0;
@@ -1284,8 +1285,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
 
       if (inst.type_id == 0) {
-        if (!translated.empty())
+        ensureValueTable(value_counter);
+        if (!translated.empty()) {
           os << "  " << translated << ";\n";
+          ctx.value_table[value_counter] = translated;
+        }
+        ctx.value_type_ids[value_counter] = inst.type_id;
       } else if (translated.find('=') == std::string::npos) {
         ensureValueTable(value_counter);
         if (!translated.empty() && translated[0] != ' ') {
@@ -1298,9 +1303,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
           }
         } else if (!translated.empty()) {
           os << "  " << translated << ";\n";
+          ctx.value_table[value_counter] = translated;
         }
       } else {
         os << "  " << translated << ";\n";
+        ensureValueTable(value_counter);
+        ctx.value_table[value_counter] = translated;
       }
     } else {
       ensureValueTable(value_counter);
@@ -1410,6 +1418,9 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
       ctx.value_table[value_counter] = result;
       ctx.value_type_ids[value_counter] = result_type_id;
+    } else {
+      os << "  auto " << result << " = 0; // extractvalue short\n";
+      ctx.value_table[value_counter] = result;
     }
     value_counter++;
     break;
@@ -1988,7 +1999,8 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   auto resolveValue = [&](uint32_t idx) -> std::string {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
       const auto &v = ctx.value_table[idx];
-      if (v.find('.') != std::string::npos) return emitValue(idx);
+      if (v.find('.') != std::string::npos && !startsWith(v, "dx."))
+        return v;
       if (startsWith(v, "agg(")) {
         auto parts = parseAggregateLiteral(v);
         std::string args;
