@@ -1,440 +1,552 @@
-# D3D12 Pipeline Complete Roadmap
+# D3D12 / DXMT Pipeline Completion Roadmap
 
-**Created:** 2026-05-30
-**Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`
-**PR:** #129
+**Updated:** 2026-05-30  
+**Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
+**PR:** #129  
+**Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
+**Current PR head:** `0062505` (`[codex] Phase 12A: dispatch value predeclaration`)
 
 ---
 
 ## Mission
 
-Complete the D3D12→Metal translation pipeline so that every DXBC/DXIL shader compiles to valid Metal with zero errors, no missed shaders, and accurate PSO/ABI runtime behavior. The end state is Subnautica Below Zero rendering correctly end-to-end through DXMT + MetalSharp.
+Complete the D3D12 to Metal pipeline so DXMT can run D3D12 titles through MetalSharp with valid shader translation, correct root-signature/descriptor binding, correct PSO ABI behavior, and visible rendering. The immediate target corpus is the 766-shader Subnautica Below Zero trace in this workspace.
 
-## Hard Constraint: Preserve the 765
+The roadmap has two tracks:
 
-The old converter (`DXILToMSL::convert`) passes **765/766** shaders. This represents months of accumulated fixes across Phases 0–9. Every phase in this roadmap must:
-
-1. **Never regress the old converter.** It stays in `d3d12_pipeline_state.cpp` as the production path until the new lowering matches or exceeds it.
-2. **Learn from the old converter.** When the new lowering fails on a shader the old one passes, diff the two MSL outputs. The old converter's output is ground truth for that shader.
-3. **Match first, then exceed.** The new lowering must reach 765/766 pass rate before it replaces the old converter. Only then do we add features the old converter can't support.
-
-The 765 shaders that already compile are the foundation. We build on top of them, not around them.
+1. **Translator correctness:** make `MSLLowering::lower()` generate valid Metal for the whole corpus.
+2. **Runtime correctness:** prove the compiled shaders bind to the right D3D12 resources and render correctly through DXMT/WMT.
 
 ---
 
-## Current State (Phase 10E, commit `277c330`)
+## Non-Negotiable Constraint
+
+The old converter, `DXILToMSL::convert()`, currently compiles **765/766** shaders and remains the production path until the typed lowering matches or exceeds it.
+
+- Do not regress the old converter.
+- Do not route production D3D12 through the new typed lowering until it reaches parity.
+- Use old-converter MSL output as ground truth when a shader passes old lowering and fails new lowering.
+- Keep experimental typed-lowering fixes contained to `msl_lowering.cpp`, `dxil_ir.*`, `llvm_bitcode.*`, `dxil_container.*`, and explicit test harness code unless a runtime phase requires D3D12 integration.
+
+---
+
+## Current State
+
+Validation command:
+
+```bash
+./BUILD.sh && ./RUN.sh
+```
+
+Latest staged validation:
+
+```text
+DXIL Lowering: 766 pass, 0 fail, 0 skip
+Metal: 97 ok, 669 fail
+```
 
 | Metric | Old Converter (`DXILToMSL`) | New Typed Lowering (`MSLLowering`) |
-|--------|----------------------------|----------------------------------|
-| DXIL parse | 766/766 (100%) | 766/766 (100%) |
-| Metal compile | **765/766** (99.9%) | **16/766** (2.1%) |
-| Total Metal errors | ~0 | 12,963 |
-| Corpus | Subnautica 2 (766 shaders) | Same |
+|---|---:|---:|
+| DXIL parse/lower | 766/766 | 766/766 |
+| Metal compile | 765/766 | 97/766 |
+| Production status | Active | Experimental |
+| Current role | Runtime ground truth | Future typed architecture |
 
-The old converter is production-quality. The new typed lowering is the future architecture but needs to close the gap.
+Recent progress:
+
+| Commit | Phase | Result |
+|---|---|---|
+| `87141bb` | Phase 11A typed operand coercion groundwork | New lowering moved to 75/766 Metal passes |
+| `0062505` | Phase 12A dispatch value predeclaration | New lowering moved to 97/766 Metal passes |
+
+Important Metal limits observed during validation:
+
+- `[[buffer(N)]]` is valid only for `N <= 30`.
+- Compute `texture2d<float, access::read_write>` declarations are limited to 8 textures.
+- Wide placeholder binding declarations can make every shader fail; binding expansion must respect Metal limits and eventually use argument buffers or access-specific texture declarations.
 
 ---
 
-## Architecture Overview
+## Architecture
 
+```text
+Game D3D12 calls
+    |
+    v
+DXMT Wine DLL layer
+    |
+    +-- d3d12_pipeline_state.cpp
+    |     |
+    |     +-- DXILToMSL::convert()    old converter, production, 765/766
+    |     +-- MSLLowering::lower()    typed lowering, experimental, 97/766
+    |
+    +-- Shared parser/lowering support
+          |
+          +-- dxil_container.cpp
+          +-- llvm_bitcode.cpp
+          +-- dxil_ir.cpp/hpp
+          +-- msl_lowering.cpp/hpp
+    |
+    v
+Metal compiler -> metallib -> WMT / Metal runtime
 ```
-Game (D3D12 calls)
-    │
-    ▼
-DXMT (Wine DLL layer)
-    │
-    ├── d3d12.dll ─── d3d12_pipeline_state.cpp
-    │                    │
-    │                    ├── DXILToMSL::convert()    ← OLD: production, 765/766 pass
-    │                    └── MSLLowering::lower()     ← NEW: typed IR, 16/766 pass
-    │
-    │   Shared infrastructure:
-    │     ├── llvm_bitcode.cpp        Bitcode parser (both use this)
-    │     ├── dxil_container.cpp      DXIL container parser (both use this)
-    │     ├── dxil_ir.hpp/cpp         MSLType system, DXILIRBuilder (new only)
-    │     └── msl_lowering.hpp/cpp    Typed lowering pass (new only)
-    │
-    ▼
-Metal Compiler (xcrun metal)
-    │
-    ▼
-Metallib → loaded into GPU via WMT
-```
 
 ---
 
-## Error Analysis (New Typed Lowering, 766 Shaders)
+## Current Error Buckets
 
-| # | Error Category | Count | Root Cause | Fix Strategy |
-|---|---------------|-------|------------|-------------|
-| 1 | `device char *` vs `int`/`float` binary | 390+221+72=683 | DXIL pointers are integers; Metal's aren't. Buffer refs used in arithmetic. | Expression coercion: wrap pointer operands in `static_cast<int>` when used in integer ops |
-| 2 | `subscripted value not array` | 349 | Indexing a scalar value (expression resolves to non-vector) | Type-aware subscript: only emit `[N]` when operand is confirmed vector/array/pointer |
-| 3 | `float` vs `int` binary | 334+69=403 | Mixed-type arithmetic without casts | Expression coercion: `static_cast<float>(int_val)` in float ops |
-| 4 | `undeclared tex8+` | 995 | Compute shaders reference >8 textures; Metal limits read_write textures to 8 | Argument buffer binding for textures beyond tex7 |
-| 5 | `undeclared v39/v76/v77/v10/v7/agg` | 326+73=399 | Value numbering gaps; constants not in value_table | Fix constant resolution in getValue/resolveValue |
-| 6 | `indirection requires pointer operand` | 92+82=174 | Dereferencing a scalar (Load of non-pointer expression) | Track which values are actual pointers vs scalars |
-| 7 | `reinterpret_cast` errors | 93+81=174 | Invalid reinterpret_cast between incompatible types | Only emit reinterpret_cast when source and dest are same size |
-| 8 | `device char* = int` / `= float` | 87+74=161 | IntToPtr/BitCast emitting pointer type for scalar expressions | Pass through raw values, don't wrap in pointer casts |
-| 9 | `as_type cast half→float` | 81 | as_type requires same bit width | Use static_cast for half↔float |
-| 10 | `float vs float` binary | 75 | Likely an expression resolving to a struct/function not a scalar | Investigate specific cases |
-| 11 | `texture2d subscript operator` | 121 | `.read()` result subscripted instead of using component access | Use `.read()[coord]` or proper texture sample patterns |
+These are the current high-signal categories after `0062505`.
+
+| Category | Approx Count | What It Means | Roadmap Owner |
+|---|---:|---|---|
+| `int4/uint4/float4` assigned to scalar | ~950 | Vector operations are still choosing scalar result slots or PHI/predecl types | Phase 12B / 12C |
+| `subscripted value is not an array, pointer, or vector` | ~530 | Scalar expression is being indexed; component extraction needs type guard | Phase 12C |
+| `member reference base type 'int'/'float' is not a structure or union` | ~320 | A value was scalarized too early, then later used as `.x/.y/.z/.w` | Phase 12B |
+| undeclared `vNN` and `agg` | ~1,700 total across many names | Value numbering, constants, aggregate literals, or function params are missing from the value table | Phase 12A / 12D |
+| `int` with `texture2d<..., read_write>` | ~150 | Resource handles are leaking into numeric arithmetic/PHI values | Phase 12E |
+| texture/buffer binding limits | still present | `tex8+` and large descriptor tables need argument-buffer design | Phase 13 |
+| pointer arithmetic / scalar pointer use | still present | `device char* + int`, invalid load/store shape | Phase 11B / 12F |
 
 ---
 
-## Phase Plan
+## Phase 11: Finish Expression And Pointer Coercion
 
-### Phase 11: Expression Coercion Pass
+**Goal:** remove remaining invalid scalar/pointer arithmetic and unsafe casts.  
+**Target:** 125+ Metal passes before deeper value work; no regression below 97.
 
-**Goal:** Eliminate categories 1, 3, 6, 8 (683+403+174+161 = 1,421 errors)
-**Target:** 200+/766 Metal pass
-**Method:** Diff-driven — compare new lowering output against old converter output for each of the 765 passing shaders. The old converter's MSL is ground truth.
+### 11B: Pointer Arithmetic Normalization
 
-The typed lowering currently emits correct declarations but incorrect expressions. When building expressions like `v77 + v75` where v77 is `device char*` and v75 is `int`, Metal rejects it. The fix: when building any binary expression, check operand types and insert casts.
+Current symptoms:
 
-**Validation approach:**
-- For every shader where old converter passes and new lowering fails: diff the two MSL outputs
-- Catalog the patterns the old converter uses that the new one doesn't
-- Implement those patterns in the new lowering, not by copying strings, but by understanding the type coercion rules
+- `device char *` participates in integer expressions.
+- GEP and pointer-like handles sometimes flow into scalar math.
+- Load/store sites still sometimes treat scalars as pointers or pointers as scalars.
 
-**Files:** `msl_lowering.cpp`
+Work:
 
-#### 11A: Typed Expression Builder
+- Introduce a single helper for pointer offset expressions:
+  - pointer result: `ptr + offset`
+  - scalar arithmetic result: default numeric value, not pointer text
+- In `GetElementPtr`, keep pointer role and address space.
+- In `Load` and `Store`, dereference only confirmed pointer values.
+- In binary ops, never emit raw resource/pointer handles into numeric expressions.
 
-Replace raw string concatenation in binary ops with a coercion-aware builder:
+Gate:
+
+- `device char *` binary errors below 25.
+- No new old-converter diff.
+
+### 11C: Cast Correctness Cleanup
+
+Work:
+
+- `as_type<T>` only when source/destination bit widths match.
+- `static_cast<T>` for numeric scalar conversions.
+- Vector-to-scalar conversion uses explicit lane selection, normally `.x`.
+- Scalar-to-vector conversion uses typed constructors, e.g. `int4(v)`.
+- Avoid `static_cast<int>(texture)` and `static_cast<int>(sampler)` entirely.
+
+Gate:
+
+- No `static_cast from 'float4' to 'int'` class errors.
+- No direct texture/sampler numeric casts.
+
+---
+
+## Phase 12: Typed Value Resolution
+
+**Goal:** eliminate undeclared values and stop scalar/vector type drift.  
+**Target:** 250+ Metal passes.
+
+This is the critical next phase. The current failures are less about individual syntax and more about the typed lowering not owning every SSA value's role, type, and lifetime.
+
+### 12A: Value Table Completeness
+
+Status:
+
+- Started in `0062505` with dispatch-mode predeclaration.
+- Still incomplete for low IDs (`v3`, `v6`, `v7`, `v10`, `v15`, `v16`, `v17`), high drift IDs (`v454` vs `v354`), and aggregate literals (`agg`).
+
+Work:
+
+- Build a pre-pass over the whole function before emission.
+- Assign every instruction result its exact SSA slot once.
+- Populate `value_table`, `value_types`, and `value_roles` for:
+  - module constants
+  - function constants
+  - aggregate constants
+  - globals
+  - declarations
+  - function parameters
+  - all instruction result IDs
+- Add a debug-only report for unresolved value IDs before Metal emission.
+
+Gate:
+
+- `use of undeclared identifier 'agg'` = 0.
+- Low-ID undeclared values (`v3` through `v17`) = 0.
+
+### 12B: Intrinsic Result Type Pre-Inference
+
+Current issue:
+
+Some DXIL intrinsics have opaque LLVM result types but known MSL expression shapes. If these are predeclared as `int`, later `.x` access fails.
+
+Work:
+
+- Add a pure function:
 
 ```cpp
-std::string coerceOperand(uint32_t val_id, MSLType target_type) {
-    auto val = getValue(val_id);
-    auto val_type = val_id < ctx.value_types.size() ? ctx.value_types[val_id] : MSLType{};
-    if (val_type.kind == MSLTypeKind::DeviceCharPtr || val_type.kind == MSLTypeKind::ThreadgroupCharPtr) {
-        if (target_type.kind == MSLTypeKind::Int || target_type.kind == MSLTypeKind::UInt)
-            return "static_cast<int>(" + val + ")";
-        if (target_type.kind == MSLTypeKind::Float)
-            return "static_cast<float>(" + val + ")";
-    }
-    if (val_type.kind == MSLTypeKind::Int && target_type.kind == MSLTypeKind::Float)
-        return "static_cast<float>(" + val + ")";
-    if (val_type.kind == MSLTypeKind::Float && target_type.kind == MSLTypeKind::Int)
-        return "static_cast<int>(" + val + ")";
-    return val;
-}
+MSLType inferIntrinsicResultType(uint32_t intrinsic_id, const LLVMInstruction &inst);
 ```
 
-Apply this in:
-- Integer binary ops (Add/Sub/Mul/Div/Rem/And/Or/Xor/Shl/Shr)
-- Float binary ops (FAdd/FSub/FMul/FDiv/FRem)
-- Comparison ops (FCmp/ICmp)
-- Select condition/true/false values
+- Known mappings:
+  - `CBufferLoad`, `CBufferLoadLegacy`, `BufferLoad`, `TextureLoad`, `TextureSample*`, `TextureGather*` -> `float4`
+  - `RawBufferLoad`, raw vector load, `GetDimensions` -> `uint4`
+  - `TextureSampleCmp*`, `CalcLOD` -> `float`
+  - `CheckAccessFullyMapped` -> `bool`
+  - `CreateHandle*`, `AnnotateHandle` -> resource role, not numeric type
 
-#### 11B: Pointer-Aware GEP and Load
+Gate:
 
-GEP expressions should not be used as arithmetic operands. Track pointer values separately:
-- GEP results: store the pointer expression but mark as `DeviceCharPtr`
-- Load: when loading from a pointer, emit `*(target_type*)(ptr_expr)` only if the operand is confirmed pointer type
-- Store: same pointer check
+- `member reference base type 'int'/'float'` reduced by 80%.
 
-#### 11C: Cast Correctness
+### 12C: Vector/Scalar Flow Rules
 
-- `BitCast`: only emit `reinterpret_cast` when source and dest have same bit width
-- `ZExt/SExt/Trunc/FPConvert`: emit `static_cast<target>(val)` with correct types
-- `as_type`: only emit when bit widths match; fall back to `static_cast` otherwise
+Current issue:
 
-**Gate:** 200+/766 Metal pass, `device char *` binary errors < 50, `float vs int` errors < 50
+Operations such as `v424 = v423 / int4(v298)` assign vector results into scalar predeclared variables.
 
----
+Work:
 
-### Phase 12: Value Resolution and Undeclared Identifiers
+- Binary result type selection must preserve vector type if either operand is vector.
+- If a result slot is scalar but expression is vector, emit lane extraction:
+  - `v = (expr).x`
+- If result slot is vector but expression is scalar, emit splat:
+  - `v = int4(expr)`
+- For branch conditions:
+  - scalar: `if (v)`
+  - vector numeric: `if (any(v != typeN(0)))`
+  - vector bool: `if (any(v))`
 
-**Goal:** Eliminate category 5 (399 errors) and `undeclared vNN` entirely
-**Target:** 350+/766 Metal pass
+Gate:
 
-#### 12A: Constant Pool Resolution
+- `assigning to 'int' from incompatible type 'int4/uint4/float4'` below 25.
+- `subscripted value is not an array, pointer, or vector` below 100.
 
-The `getValue` function falls through to constants when value_table is empty. But constants with IDs below `instruction_start_value` (function params, globals) aren't always populated. Fix:
-- Pre-populate value_table with ALL constants from both module-level and function-level
-- Map function parameter value IDs to their MSL parameter names
-- Map global variable value IDs to their allocated names
+### 12D: Aggregate Literal Handling
 
-#### 12B: Function Parameter Mapping
+Current issue:
 
-DXIL functions have parameters (root signature entries, system values, resource bindings). Map them:
-- `dtid` → `dtid` (thread_position_in_grid)
-- `gtid` → `gtid` (thread_position_in_threadgroup)
-- `ggid` → `ggid` (threadgroup_position_in_grid)
-- Buffer/texture parameters → `bufN`/`texN`
-- Vertex input → `vin.aN`
+`agg(...)` still escapes into emitted Metal.
 
-#### 12C: PHI Value Pre-Declaration
+Work:
 
-PHI nodes create values that need pre-declaration before the switch/case dispatch. Verify all PHI result slots are pre-declared with correct types.
+- Convert aggregate constants at load time into typed MSL constructors.
+- Preserve aggregate element types:
+  - int aggregate -> `intN(...)`
+  - uint aggregate -> `uintN(...)`
+  - float aggregate -> `floatN(...)`
+- For struct-like aggregates, emit local temp only if the type is real and addressable.
 
-**Gate:** `undeclared identifier` errors = 0, `use of undeclared identifier 'agg'` = 0
+Gate:
 
----
+- `undeclared identifier 'agg'` = 0.
 
-### Phase 13: Texture and Binding Architecture
+### 12E: Resource Handle Role Isolation
 
-**Goal:** Eliminate categories 4, 11 (995+121 = 1,116 errors)
-**Target:** 550+/766 Metal pass
+Current issue:
 
-#### 13A: Argument Buffer Binding for Textures
+Textures and samplers leak into arithmetic, comparisons, and PHI assignments.
 
-Metal limits `texture2d<float, access::read_write>` to 8 bindings. DXIL shaders reference up to tex22+. Solution:
-- Use `array<texture2d<float, access::read_write>, N>` in an argument buffer for textures beyond slot 7
-- Or: use `texture2d<float, access::read>` for SRV textures (most don't need write access)
-- Map DXIL `CreateHandle` texture bindings to the correct Metal binding strategy
+Work:
 
-#### 13B: Texture Sample/Read Patterns
+- Track `ValueRole` aggressively:
+  - `BufferHandle`
+  - `TextureHandle`
+  - `SamplerHandle`
+  - `ThreadID`
+  - `Constant`
+  - `Generic`
+- Numeric contexts must coerce resource handles to safe defaults, never to raw handle text.
+- Texture contexts must reject numeric fallback and preserve handle text.
+- PHI involving resource + numeric should become numeric default unless the PHI is explicitly a handle.
 
-- `.sample()` → correct sampler + coordinate + LOD patterns
-- `.read()` → correct `uint2` coordinate patterns
-- `.gather()` → component select patterns
-- `.write()` → UAV write patterns
-- Buffer load/store → `reinterpret_cast<device T&>(buf[offset])` patterns
+Gate:
 
-#### 13C: Root Signature → Binding Mapping
+- `invalid operands to binary expression ('int' and 'texture2d...')` = 0.
+- No assignment from `sampler`/`texture2d` into scalar variables.
 
-- Parse root signature from DXBC container metadata
-- Map root constants, descriptor tables, static samplers to Metal bindings
-- Verify CBV/SRV/UAV byte offsets match
+### 12F: Function Parameter And Low-ID Mapping
 
-**Gate:** `undeclared identifier 'texN'` errors = 0, `subscript operator` errors < 20
+Current issue:
 
----
+Low `vNN` identifiers often represent function params, root entries, or parser-relative values that were never mapped.
 
-### Phase 14: Intrinsic Translation Completeness
+Work:
 
-**Goal:** Every DXIL intrinsic produces valid Metal
-**Target:** 700+/766 Metal pass
+- Inspect `LLVMFunction` parameter metadata from `llvm_bitcode.cpp`.
+- Map parameter IDs before instruction emission.
+- For unknown pointer params, map by role:
+  - CBV/SRV/UAV buffers -> `bufN`
+  - textures -> `texN`
+  - samplers -> `sampN`
+  - system values -> `dtid`, `gtid`, `ggid`, `vid`, `vin`
 
-With expression coercion (Phase 11), value resolution (Phase 12), and texture bindings (Phase 13), most intrinsic translations should already work. This phase handles remaining edge cases.
+Gate:
 
-#### 14A: Texture Operations
-
-- TextureLoad all dimensions, all return types
-- TextureStore write patterns
-- TextureGather component selection
-- TextureSampleLevel/Grad/Bias/Cmp variants
-- BufferLoad/BufferStore structured and raw
-- Texture2DMS multisample
-
-#### 14B: Compute-Specific
-
-- `CreateHandleFromHeap` — descriptor heap dynamic indexing
-- `AnnotateHandle` — handle metadata
-- `Barrier` — group/shared/global barrier
-- Group shared memory (threadgroup) operations
-
-#### 14C: Arithmetic and Utility
-
-- `dot`, `cross`, `normalize`, `length` — vector width preservation
-- `clamp`, `saturate`, `lerp` — type consistency
-- `isfinite`, `isnan`, `isinf` — Metal equivalents
-- `fma`, `mad` — fused multiply-add
-- `countbits`, `firstbitlow`, `firstbithigh` — bit ops
-- `umad`, `imax`, `umin` — integer intrinsics
-
-**Gate:** `unknown intrinsic` diagnostics = 0 for all IDs in Subnautica 2 corpus
+- Generic `use of undeclared identifier 'vNN'` reduced by 90%.
 
 ---
 
-### Phase 15: Pipeline Correctness — PSO and ABI
+## Phase 13: Binding And Descriptor Architecture
 
-**Goal:** MSL that compiles also produces correct visual output
-**Target:** Subnautica 2 shows nonzero pixel readback + recognizable rendering
+**Goal:** stop relying on wide placeholder resource declarations and implement D3D12-style binding correctly.  
+**Target:** 450+ Metal passes.
 
-This phase ensures the compiled Metal shaders are *semantically correct*, not just syntactically valid.
+### 13A: Root Signature Extraction
 
-#### 15A: Root Signature → Metal Binding Verification
+Work:
 
-- Audit root parameter → Metal buffer/texture binding
-- Verify descriptor table offsets match between D3D12 and Metal
-- Check CBV/SRV/UAV byte offsets
-- Verify constant buffer sizing and alignment
+- Parse root signature data from DXBC/DXIL container chunks.
+- Record descriptor table ranges:
+  - CBV
+  - SRV
+  - UAV
+  - Sampler
+- Preserve register space, lower bound, count, and visibility.
 
-#### 15B: Render Pipeline State
+Gate:
 
-- Render target format mapping (DXGI_FORMAT → MTLPixelFormat)
-- Depth-stencil state creation and binding
-- Viewport and scissor rect mapping
-- Blend state mapping
-- Rasterizer state mapping
+- Per-shader binding manifest emitted in test output.
 
-#### 15C: Command Buffer Correctness
+### 13B: Metal Binding Plan
 
-- Draw call mapping (DrawInstanced, DrawIndexedInstanced)
-- Dispatch mapping (Dispatch, DispatchThreadGroup)
-- Resource barrier → Metal sync
-- Copy/Clear operations
+Observed limits:
 
-#### 15D: Vertex Input Pipeline
+- `[[buffer(N)]]` max is 30.
+- `texture2d<..., access::read_write>` max is 8.
+- Blindly declaring `tex0..tex31` as read/write fails every shader.
 
-- Vertex buffer strides and offsets
-- Input layout → Metal vertex descriptor
-- `LoadInput` intrinsic reads correct vertex attributes
-- Index buffer format mapping
+Work:
 
-**Gate:** Subnautica 2 readback: `nonzero_pixels > 0` on multiple consecutive frames. At least one recognizable rendered element. No crash during 60-second gameplay.
+- Buffers:
+  - Keep direct `buf0..buf30` only as a temporary compatibility layer.
+  - Move large descriptor tables into argument buffers.
+- Textures:
+  - SRV textures should use `access::sample` or `access::read`.
+  - UAV textures should use `access::read_write`.
+  - More than eight UAV-style textures require argument-buffer strategy or per-shader access narrowing.
+- Samplers:
+  - Declare only needed static/dynamic samplers.
+  - Map sampler descriptor ranges to `sampN`.
 
----
+Gate:
 
-### Phase 16: Runtime Infrastructure
+- No binding-limit compiler errors.
+- No undeclared `bufN`/`texN`/`sampN` caused by descriptor table width.
 
-**Goal:** Multiple games running independently
-**Target:** 5+ D3D12 games reaching main menu
+### 13C: Handle Translation
 
-#### 16A: Per-Game Prefix Isolation
+Work:
 
-- Per-appid Wine prefix: `~/.metalsharp/compatdata/<appid>/pfx/`
-- Template from `prefix-steam` base
+- `CreateHandle`
+- `CreateHandleForLib`
+- `CreateHandleFromBinding`
+- `CreateHandleFromHeap`
+- `AnnotateHandle`
 
-#### 16B: Redistributable Auto-Install
+All must return typed handle records internally, not just strings. Final string emission should happen only at texture/buffer operation sites.
 
-- Central DLL cache: `~/.metalsharp/runtime/redist/`
-- Auto-install VC++ / DirectX / XNA on first game launch
+Gate:
 
-#### 16C: Compat Config Expansion
-
-- Extend `mtsp-rules.toml` with full flag system
-- Mine Proton's game fix database for applicable patterns
-- Target: 200+ game entries
-
----
-
-### Phase 17: Steam Bridge
-
-**Goal:** Full Steam functionality
-**Target:** Overlay, achievements, cloud saves working
-
-#### 17A: Vendor Proton lsteamclient
-
-- Vendor Proton `lsteamclient/` source
-- Build both `steamclient64.dll` (PE) and `lsteamclient.dylib` (macOS native)
-- Adapt build for arm64 macOS
-
-#### 17B: Steam API Integration
-
-- ISteamUser, ISteamFriends, ISteamUserStats
-- ISteamRemoteStorage (cloud saves)
-- Callback flow through bridge
+- Resource handle values do not appear in arithmetic or generic PHI paths.
 
 ---
 
-## Dependency Graph
+## Phase 14: Texture, Buffer, And Intrinsic Completeness
 
-```
-Phase 11 (Expression Coercion)          ── NEXT
-  │
-  ├── Phase 12 (Value Resolution)        ── can parallel with 11C
-  │     │
-  │     └── Phase 13 (Texture Bindings)
-  │           │
-  │           └── Phase 14 (Intrinsics)
-  │                 │
-  │                 └── Phase 15 (PSO/ABI Correctness)
-  │
-  ├── Phase 16 (Runtime Infrastructure)  ── parallel with 14-15
-  │
-  └── Phase 17 (Steam Bridge)            ── after Phase 15
+**Goal:** every DXIL intrinsic in the corpus emits valid, typed Metal.  
+**Target:** 650+ Metal passes.
 
-Phase 10 (complete) ← we are here
-```
+### 14A: Texture Operations
 
----
+Work:
 
-## Success Metrics
+- `TextureLoad`: dimensions, mip, array slice, multisample.
+- `TextureStore`: UAV writes, sample index variants.
+- `TextureSample`: bias, level, grad.
+- `TextureSampleCmp`: comparison samplers and depth textures.
+- `TextureGather`: component selection and compare gather.
 
-| Metric | Now (10E) | After 11 | After 13 | After 14 | After 15 |
-|--------|-----------|----------|----------|----------|----------|
-| DXIL parse | 766/766 | 766/766 | 766/766 | 766/766 | 766/766 |
-| Metal compile | 16/766 | 200+/766 | 550+/766 | 700+/766 | 766/766 |
-| Metal errors | 12,963 | < 3,000 | < 500 | < 50 | 0 |
-| `device char*` binary | 683 | < 50 | 0 | 0 | 0 |
-| `float vs int` | 403 | < 50 | 0 | 0 | 0 |
-| `undeclared identifier` | 1,394 | < 200 | 0 | 0 | 0 |
-| Recognizable rendering | No | No | No | Maybe | Yes |
-| Games reaching menu | 0 | 0 | 1-2 | 3-5 | 5+ |
+Gate:
 
----
+- No invalid `.sample`, `.read`, `.write`, or `.gather` calls.
 
-## Key Files
+### 14B: Buffer Operations
 
-| File | Role | Status |
-|------|------|--------|
-| `src/airconv/dxil/llvm_bitcode.cpp` | Bitcode parser | Stable (shared) |
-| `src/airconv/dxil/dxil_container.cpp` | DXIL container parser | Stable (shared) |
-| `src/airconv/dxil/dxil_to_msl.cpp` | Old converter | Production (765/766) — fallback |
-| `src/airconv/dxil/dxil_ir.hpp` | MSLType system | Active development |
-| `src/airconv/dxil/dxil_ir.cpp` | DXILIRBuilder | Active development |
-| `src/airconv/dxil/msl_lowering.cpp` | Typed lowering | Active development (16/766) |
-| `src/d3d12/d3d12_pipeline_state.cpp` | PSO creation, shader compile entry | DXBC dump added |
-| `tests/dxil/test_phase10.cpp` | Test harness (DXBC + Metal compile) | Working |
+Work:
 
-## Key Paths
+- Raw buffer load/store.
+- Structured buffer load/store.
+- Byte-address buffer offsets.
+- Correct vector width and component masks.
+- Atomic buffer operations.
 
-| Path | Purpose |
-|------|---------|
-| `/Volumes/AverySSD/metalsharp/dxmt-src/` | Dev tree (compile from here) |
-| `/Volumes/AverySSD/metalsharp/metalsharp-repo/` | Git repo (push from here) |
-| `/tmp/dxil_corpus_full/` | 766-shader DXBC corpus |
-| `/tmp/dxmt_shader_cache/` | Live game shader dump |
-| `/Users/alexmondello/.metalsharp/` | Live MetalSharp install (internal SSD) |
-| `/Users/alexmondello/Dev/metalsharp/` | Live MetalSharp source (internal SSD) |
+Gate:
+
+- No invalid pointer dereference or scalar subscript errors from buffer operations.
+
+### 14C: Math And Utility Intrinsics
+
+Work:
+
+- `dot2/3/4`
+- `fma`, `mad`, `umad`
+- `firstbitlow`, `firstbithigh`, `countbits`
+- `isnan`, `isinf`, `isfinite`
+- derivatives
+- wave and quad operations
+- barriers
+
+Gate:
+
+- `unsupported_intrinsics` = 0 for all shaders in the corpus.
 
 ---
 
-## Validation Protocol
+## Phase 15: Old/New Converter Parity
 
-After every phase:
+**Goal:** typed lowering reaches or exceeds old converter compile rate.  
+**Target:** 765/766 Metal passes.
 
-1. Build: `c++ -std=c++20 -I src -I include -DDXMT_PAGE_SIZE=4096 -DNOMINMAX -Wno-everything -fblocks -framework Foundation -L/opt/homebrew/opt/llvm@15/lib -lLLVM-15 -o /tmp/test_phaseNN tests/dxil/test_phase10.cpp src/airconv/dxil/dxil_ir.cpp src/airconv/dxil/msl_lowering.cpp src/airconv/dxil/llvm_bitcode.cpp src/airconv/dxil/dxil_container.cpp`
-2. Run: `/tmp/test_phaseNN /tmp/dxil_corpus_full /tmp/metal-test-NN`
-3. DXIL parse: 766/766 must hold
-4. Metal compile: measure pass rate
-5. Error census: `rg "error:" errors/*.err --no-filename | sed 's/.*error: //' | sort | uniq -c | sort -rn`
-6. Gate: pass rate must meet phase target
-7. Commit: `git add && git commit && git push origin codex/beta7-dxmt-cohesion`
+Work:
 
-### Commit Discipline
+- Generate old converter MSL and new typed MSL side by side for all 766 shaders.
+- For every shader where old passes and new fails:
+  - diff MSL
+  - classify root cause
+  - add typed lowering fix
+  - rerun full corpus
+- Maintain a scoreboard:
+  - shader hash
+  - old result
+  - new result
+  - first error
+  - owning phase
+  - fixed commit
 
-- One commit per sub-phase
-- Format: `[codex] Phase NN: description — metric delta`
-- Push to `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp` only
-- Never push to `aaf2tbz/dxmt` fork
-- Copy files from `dxmt-src/` to `metalsharp-repo/vendor/dxmt/` before committing
+Gate:
 
----
-
-## Old Converter Integration Strategy
-
-The old converter (`DXILToMSL::convert`) passes 765/766. It remains the production path in `d3d12_pipeline_state.cpp`. The new typed lowering (`MSLLowering::lower`) is being developed alongside it.
-
-**Preservation rule:** The old converter is never modified or removed until the new lowering proves it can match 765/766 on its own. Both converters coexist. The old converter's output serves as the reference implementation.
-
-Integration strategy:
-
-1. **Now through Phase 14:** Both converters exist. Old is production, new is development. Every new lowering change is validated by diffing against old converter output.
-2. **Phase 15:** When new converter reaches 765+/766 AND passes a manual review of 50+ shader diffs showing semantic equivalence, switch the production path.
-3. **Phase 16+:** Remove old converter code only after 2+ weeks of stable new converter in production.
-
-The switch point is in `d3d12_pipeline_state.cpp` line ~433:
-```cpp
-// Current: auto msl_result = dxmt::dxil::DXILToMSL::convert(*module, shader_info);
-// Future:  auto msl_result = dxmt::dxil::MSLLowering::lower(*module, shader_info);
-```
-
-### Diff-Driven Development Protocol
-
-For every shader where old passes and new fails:
-
-1. Get old MSL: `cat /tmp/dxmt_shader_cache/<hash>.msl`
-2. Get new MSL: `cat /tmp/metal-test-NN/<hash>.metal`
-3. Diff: identify what pattern the old converter uses that the new one doesn't
-4. Implement: add the missing type coercion/binding/emission pattern to the new lowering
-5. Verify: recompile and confirm the shader now passes
-
-This ensures the new lowering learns from 765 working examples rather than guessing.
+- `MSLLowering` compiles at least 765/766.
+- No production path change yet.
 
 ---
 
-*This roadmap replaces `MetalSharp Final Roadmap.md` as the authoritative plan for the D3D12 pipeline. The goal is zero Metal compilation errors, zero missed shaders, and accurate PSO/ABI runtime behavior across all D3D12 games.*
+## Phase 16: Runtime PSO And ABI Correctness
+
+**Goal:** compiled shaders bind and execute correctly in DXMT.  
+**Target:** visible rendering in Subnautica Below Zero.
+
+### 16A: Root Signature To Metal ABI
+
+Work:
+
+- Verify root constants, CBV/SRV/UAV tables, static samplers.
+- Align constant buffer offsets and sizes.
+- Confirm Metal argument indices match generated MSL.
+
+Gate:
+
+- Shader reflection/binding manifest matches runtime PSO setup.
+
+### 16B: Graphics Pipeline State
+
+Work:
+
+- Input layout -> Metal vertex descriptor.
+- Render target formats.
+- Depth/stencil formats and state.
+- Blend state.
+- Rasterizer/cull/scissor/viewport state.
+
+Gate:
+
+- Draw calls produce nonzero pixels without validation errors.
+
+### 16C: Compute Pipeline State
+
+Work:
+
+- Threadgroup size from metadata.
+- UAV and SRV binding.
+- Barriers and resource state transitions.
+- Dispatch dimensions.
+
+Gate:
+
+- Compute shaders compile and dispatch without Metal validation failures.
+
+---
+
+## Phase 17: Runtime Proof And Game Bring-Up
+
+**Goal:** prove the D3D12 pipeline works beyond compiler acceptance.  
+**Target:** Subnautica Below Zero reaches recognizable rendering; then expand to more games.
+
+Work:
+
+- Add runtime logging for:
+  - selected converter path
+  - shader hash
+  - PSO creation success/failure
+  - Metal library creation
+  - binding manifest
+  - draw/dispatch call counts
+- Capture first-frame and 60-second traces.
+- Confirm:
+  - nonzero pixel readback
+  - stable frame loop
+  - no shader compile spam after cache warmup
+  - no crash on menu/gameplay transition
+
+Gate:
+
+- Subnautica Below Zero shows recognizable rendering for 60 seconds.
+
+---
+
+## Phase 18: Production Switch
+
+**Goal:** safely replace the old converter only after parity and runtime proof.
+
+Work:
+
+- Add feature flag:
+  - old converter default
+  - typed lowering opt-in
+  - per-game override
+- Add fallback:
+  - if typed lowering fails, compile old converter output
+  - log the fallback hash and reason
+- Add cache versioning so old/new MSL outputs do not collide.
+- Add CI or local corpus gate for the 766-shader set.
+
+Gate:
+
+- Typed lowering default only after:
+  - 765/766 or better compile parity
+  - Subnautica Below Zero visible rendering proof
+  - no old converter regression
+
+---
+
+## Immediate Next Actions
+
+1. Implement Phase 12B: central intrinsic result type inference.
+2. Implement Phase 12C: vector/scalar assignment and condition rules.
+3. Implement Phase 12D: aggregate literal conversion so `agg` never reaches Metal.
+4. Implement Phase 12F: function parameter/low-ID mapping for `v3..v17`.
+5. Rerun `./BUILD.sh && ./RUN.sh` after each patch and commit only if Metal pass count does not regress below 97.
+
+Expected next milestone: **150+ Metal passes** with vector/scalar and low-ID fixes, before argument-buffer binding work.
