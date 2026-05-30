@@ -4,7 +4,7 @@
 **Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
 **PR:** #129  
 **Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
-**Current PR head:** latest local Phase 14 hardening pass, pending push (`(chore) Harden Phase 14 validation state`)
+**Current PR head:** `fb91810` (`(chore) Harden Phase 14 validation state`)
 
 ---
 
@@ -66,7 +66,7 @@ Recent progress:
 | `98cb26f` | Phase 13C typed handle records | New lowering moved to 184/766; unsupported simd helper buckets cleared |
 | `31916dc` | Phase 14 typed lowering advance | Pointer/resource alias coercion, buffer offset scalarization, math intrinsic cast hardening, vector operand scalarization moved new lowering to 432/766 |
 | latest local Phase 14 completion pass | Vector width reconstruction, scalar math/cast guards, scalar-to-vector operand coercion, opcode-prefixed annotate handling, and all-produced dispatch predeclaration | New lowering moved to 735/766 |
-| latest local Phase 14 hardening pass | PR CI green on `223debf`; local `./BUILD.sh && ./RUN.sh` rerun stable at DXIL 766/766 and Metal 735/766 | No Phase 14 regression; Phase 15 can start from a green baseline |
+| `fb91810` | Phase 14 hardening | PR CI green on `223debf`; local `./BUILD.sh && ./RUN.sh` rerun stable at DXIL 766/766 and Metal 735/766; no Phase 14 regression |
 
 Important Metal limits observed during validation:
 
