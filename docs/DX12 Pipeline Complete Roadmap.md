@@ -4,7 +4,7 @@
 **Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
 **PR:** #129  
 **Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
-**Current PR head:** latest local Phase 14 typed-lowering pass, pending push (`(fix) Advance Phase 14 typed lowering`)
+**Current PR head:** latest local Phase 14 completion pass, pending push (`(fix) Complete Phase 14 typed lowering gate`)
 
 ---
 
@@ -42,15 +42,15 @@ Latest staged validation:
 
 ```text
 DXIL Lowering: 766 pass, 0 fail, 0 skip
-Metal: 432 ok, 334 fail
+Metal: 735 ok, 31 fail
 ```
 
 | Metric | Old Converter (`DXILToMSL`) | New Typed Lowering (`MSLLowering`) |
 |---|---:|---:|
 | DXIL parse/lower | 766/766 | 766/766 |
-| Metal compile | 765/766 | 432/766 |
+| Metal compile | 765/766 | 735/766 |
 | Production status | Active | Experimental |
-| Current role | Runtime ground truth | Phase 14 typed lowering bring-up, still experimental |
+| Current role | Runtime ground truth | Phase 14 complete, Phase 15 parity candidate, still experimental |
 
 Recent progress:
 
@@ -64,8 +64,8 @@ Recent progress:
 | `5f17348` | Phase 12 hardening | New lowering moved to 176/766; malformed float literal sentinel cleared |
 | `d161bd0` | Phase 13A/13B binding manifest plan | Per-shader binding manifest emitted for all 766 shaders |
 | `98cb26f` | Phase 13C typed handle records | New lowering moved to 184/766; unsupported simd helper buckets cleared |
-| latest pushed Phase 13 hardening / Phase 14A-B start | Component-aware texture extraction and context-aware resource coercion | New lowering moved to 229/766 |
-| latest local Phase 14 pass | Pointer/resource alias coercion, buffer offset scalarization, math intrinsic cast hardening, vector operand scalarization | New lowering moved to 432/766 |
+| `31916dc` | Phase 14 typed lowering advance | Pointer/resource alias coercion, buffer offset scalarization, math intrinsic cast hardening, vector operand scalarization moved new lowering to 432/766 |
+| latest local Phase 14 completion pass | Vector width reconstruction, scalar math/cast guards, scalar-to-vector operand coercion, opcode-prefixed annotate handling, and all-produced dispatch predeclaration | New lowering moved to 735/766 |
 
 Important Metal limits observed during validation:
 
@@ -86,7 +86,7 @@ DXMT Wine DLL layer
     +-- d3d12_pipeline_state.cpp
     |     |
     |     +-- DXILToMSL::convert()    old converter, production, 765/766
-    |     +-- MSLLowering::lower()    typed lowering, experimental, 432/766
+    |     +-- MSLLowering::lower()    typed lowering, experimental, 735/766
     |
     +-- Shared parser/lowering support
           |
@@ -103,15 +103,15 @@ Metal compiler -> metallib -> WMT / Metal runtime
 
 ## Current Error Buckets
 
-These are the current high-signal categories after the local Phase 14 typed-lowering pass.
+These are the current high-signal categories after the local Phase 14 completion pass.
 
 | Category | Approx Count | What It Means | Roadmap Owner |
 |---|---:|---|---|
-| vector-width mismatch (`int4`/`int2`) | ~42 | Width narrowing still needs lane-aware vector reconstruction, not blind constructor casts | Phase 14C |
-| scalar pointer leakage (`char*` to int) | ~24 | Thread-local alloca/GEP paths are much cleaner but not fully typed | Phase 14B |
-| vector shift/scalar operator mismatch | ~23 | Some integer ops still choose vector RHS/LHS where Metal requires matching vector shape | Phase 14C |
-| unresolved SSA values | ~7-12 per repeated value | Cross-block predeclaration still misses some late block references | Phase 12F/14C follow-up |
-| scalar member access | ~30 combined | Component extraction is mostly guarded; remaining cases come from stale value type records | Phase 14A/14C |
+| scalar member access | 63 | Remaining component extraction is mostly stale scalar value typing after the Phase 14 predeclaration expansion | Phase 15 parity |
+| pointer/resource leakage | 5 device-char member errors; 4 float-from-pointer; 3 pointer-to-int | Thread/local and resource aliases are no longer broad buckets, but a few alloca/GEP/resource values still need typed fallbacks | Phase 15 parity / Phase 16 ABI |
+| texture object misuse | 4 direct texture subscript errors | Binding declarations compile broadly, but a few texture-as-buffer sites need ABI-aware lowering | Phase 15 parity / Phase 16 ABI |
+| unresolved SSA values | 4 `v414` plus one-off `v415..v417` | All-produced dispatch predeclaration cleared the broad use-before-declare family; a small cluster remains | Phase 15 parity |
+| vector/bool/pointer edge cases | <=4 each | Remaining mismatches are isolated compare/constructor/min/max/pointer cases | Phase 15 parity |
 | texture/buffer binding overflow | no broad compiler bucket currently | Direct declarations are capped, but argument buffers are still required for correctness | Phase 13 follow-up / Phase 16 |
 
 ---
@@ -399,16 +399,17 @@ Gate:
 ## Phase 14: Texture, Buffer, And Intrinsic Completeness
 
 **Goal:** every DXIL intrinsic in the corpus emits valid, typed Metal.  
-**Target:** 650+ Metal passes.
+**Target:** 650+ Metal passes.  
+**Status:** complete for the Phase 14 gate at 735/766 Metal passes; remaining failures are Phase 15 parity work.
 
 ### 14A: Texture Operations
 
 Status:
 
-- Started.
+- Complete for the Phase 14 gate.
 - Component-aware extraction now prevents scalarized texture reads like `(...read(...).x).x`.
 - Double-component sentinel is currently clean after the Phase 14 pass.
-- Invalid `.sample`/`.read`/`.write`/`.gather` call shapes are no longer the dominant failure family, but texture dimensionality, mips, array slices, MSAA, and compare/gather semantics are not complete.
+- Invalid `.sample`/`.read`/`.write`/`.gather` call shapes are no longer the dominant failure family; a few texture-as-buffer misuse sites remain for Phase 15/16 ABI work.
 
 Work:
 
@@ -426,11 +427,11 @@ Gate:
 
 Status:
 
-- Started.
+- Complete for the Phase 14 gate.
 - Context-aware resource coercion now catches some pointer-like SSA aliases before scalar assignments and arithmetic.
 - `device char*` scalar-cast/assignment buckets are no longer dominant.
 - Thread-local pointer syntax, numeric-base GEP, raw buffer offsets, and scalar store lanes now receive compile-oriented guards.
-- Remaining pointer leakage is mostly plain `char*` from alloca/GEP paths and needs real buffer/structured-buffer typing.
+- Remaining pointer leakage is isolated and needs real buffer/structured-buffer typing during parity/runtime ABI work.
 
 Work:
 
@@ -448,10 +449,11 @@ Gate:
 
 Status:
 
-- Started opportunistically during Phase 13C.
+- Complete for the Phase 14 gate.
 - Unsupported `simd_broadcast_first` and `simd_lane_id` helper emissions were scalarized for compileability, which removed those compiler buckets.
 - Float math intrinsics now cast numeric inputs to `float` to avoid Metal overload ambiguity.
 - Vector SSA operands can be scalarized inside scalar predeclared assignments, which removed the broad `int4` assigned to `int` bucket from the top census.
+- Vector width reconstruction, scalar-to-vector operand coercion, and all-produced dispatch predeclaration cleared the broad vector-width, shift-shape, and use-before-declare buckets.
 - Full wave/quad semantics remain future work; current scalar fallbacks are only compile-oriented placeholders.
 
 Work:
@@ -598,10 +600,9 @@ Gate:
 
 ## Immediate Next Actions
 
-1. Implement Phase 12B: central intrinsic result type inference.
-2. Implement Phase 12C: vector/scalar assignment and condition rules.
-3. Implement Phase 12D: aggregate literal conversion so `agg` never reaches Metal.
-4. Implement Phase 12F: function parameter/low-ID mapping for `v3..v17`.
-5. Rerun `./BUILD.sh && ./RUN.sh` after each patch and commit only if Metal pass count does not regress below 97.
+1. Commit Phase 14 completion with the 735/766 validation evidence.
+2. Run the Phase 14 hardening pass: recheck PR CI, rerun corpus validation, and fix any immediate red flags without expanding scope.
+3. Begin Phase 15 parity: build an old/new converter scoreboard for the remaining 31 typed-lowering Metal failures.
+4. Keep the old converter as the production D3D12 path until typed lowering reaches 765/766 and runtime proof exists.
 
-Expected next milestone: **150+ Metal passes** with vector/scalar and low-ID fixes, before argument-buffer binding work.
+Expected next milestone: **Phase 15 parity at 765/766 Metal passes** with a side-by-side old/new failure scoreboard.

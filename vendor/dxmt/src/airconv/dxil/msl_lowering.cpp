@@ -701,6 +701,27 @@ static bool exprLooksSideEffectOnly(const std::string &value) {
            value.find("threadgroup_barrier(") != std::string::npos;
 }
 
+static bool exprLooksScalarMathCall(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    static const char *math_calls[] = {
+        "abs(", "acos(", "asin(", "atan(", "ceil(", "cos(", "exp(", "fabs(",
+        "floor(", "log(", "rint(", "round(", "rsqrt(", "sin(", "sqrt(",
+        "tan(", "trunc("
+    };
+    for (const char *call : math_calls)
+        if (startsWith(stripped, call))
+            return true;
+    return false;
+}
+
+static bool exprLooksScalarCast(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    return startsWith(stripped, "static_cast<int>(") ||
+           startsWith(stripped, "static_cast<uint>(") ||
+           startsWith(stripped, "static_cast<float>(") ||
+           startsWith(stripped, "static_cast<bool>(");
+}
+
 static bool exprLooksVectorValue(const std::string &value) {
     if (exprEndsWithComponent(value))
         return false;
@@ -785,7 +806,8 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         (exprContainsRawResourceHandle(resolved) || exprContainsPointerSyntax(resolved)))
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
-        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved))
+        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved) &&
+        !exprLooksScalarMathCall(resolved) && !exprLooksScalarCast(resolved))
         return "(" + resolved + ").x";
     if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(resolved)) {
         std::string type_name = emitTypeName(target);
@@ -807,7 +829,10 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         splitTrailingComponentAccess(value, component_base)) {
         MSLType base_type = typeForResolvedValueName(ctx, component_base);
         if ((isUsableMSLType(base_type) && !DXILIRBuilder::isVectorType(base_type)) ||
-            (!isUsableMSLType(base_type) && exprLooksScalarLiteral(component_base))) {
+            (!isUsableMSLType(base_type) &&
+             (exprLooksScalarLiteral(component_base) ||
+              exprLooksScalarMathCall(component_base) ||
+              exprLooksScalarCast(component_base)))) {
             return coerceResolvedValue(ctx, component_base, target);
         }
     }
@@ -881,6 +906,32 @@ static std::string componentAccess(const std::string &value, uint32_t component,
         !exprLooksVectorValue(value))
         return value;
     return "(" + value + ")" + componentSuffix(component);
+}
+
+static std::string coerceVectorWidth(const std::string &value, const MSLType &source_type,
+                                     const MSLType &target_type) {
+    if (!DXILIRBuilder::isVectorType(source_type) || !DXILIRBuilder::isVectorType(target_type))
+        return value;
+    std::string target_name = emitTypeName(target_type);
+    if (target_name.empty() || target_name == "auto")
+        return value;
+
+    uint32_t target_width = DXILIRBuilder::vectorWidth(target_type);
+    uint32_t source_width = DXILIRBuilder::vectorWidth(source_type);
+    MSLType scalar = DXILIRBuilder::scalarType(target_type);
+    std::string zero = defaultForType(scalar);
+
+    std::ostringstream expr;
+    expr << target_name << "(";
+    for (uint32_t i = 0; i < target_width; i++) {
+        if (i) expr << ", ";
+        if (i < source_width)
+            expr << componentAccess(value, i, source_type);
+        else
+            expr << zero;
+    }
+    expr << ")";
+    return expr.str();
 }
 
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr) {
@@ -1173,10 +1224,17 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     switch (intrinsic_id) {
     case DXOP_CreateHandle:
     case DXOP_CreateHandleForLib:
-    case DXOP_AnnotateHandle:
     case DXOP_CreateHandleFromBinding:
     case DXOP_CreateHandleFromHeap:
         return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    case DXOP_AnnotateHandle: {
+        if (!args.empty()) {
+            MSLType annotated = valueTypeOrUnknown(ctx, args[0]);
+            if (usableType(annotated))
+                return annotated;
+        }
+        return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    }
     case DXOP_TextureStore:
     case DXOP_BufferStore:
     case DXOP_RawBufferStore:
@@ -1735,6 +1793,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return {MSLTypeKind::RWTexture2D, 0, {}};
         if (startsWith(expr, "samp"))
             return {MSLTypeKind::Sampler, 0, {}};
+        if (exprLooksScalarMathCall(expr))
+            return {MSLTypeKind::Float, 0, {}};
         if (expr.find("reinterpret_cast<device float4&>") != std::string::npos)
             return {MSLTypeKind::Float4, 0, {}};
         if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos)
@@ -1755,8 +1815,16 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return {MSLTypeKind::Float4, 0, {}};
         if (expr.find("uint4(") == 0 || expr.find("(uint4(") != std::string::npos)
             return {MSLTypeKind::UInt4, 0, {}};
+        if (expr.find("uint3(") == 0 || expr.find("(uint3(") != std::string::npos)
+            return {MSLTypeKind::UInt3, 0, {}};
+        if (expr.find("uint2(") == 0 || expr.find("(uint2(") != std::string::npos)
+            return {MSLTypeKind::UInt2, 0, {}};
         if (expr.find("int4(") == 0 || expr.find("(int4(") != std::string::npos)
             return {MSLTypeKind::Int4, 0, {}};
+        if (expr.find("int3(") == 0 || expr.find("(int3(") != std::string::npos)
+            return {MSLTypeKind::Int3, 0, {}};
+        if (expr.find("int2(") == 0 || expr.find("(int2(") != std::string::npos)
+            return {MSLTypeKind::Int2, 0, {}};
         if (expr.find("float2(") == 0)
             return {MSLTypeKind::Float2, 0, {}};
         if (expr.find("float3(") == 0)
@@ -1784,6 +1852,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             if (pre_it != ctx.predeclared_types.end())
                 declared_type = pre_it->second;
             std::string assigned = coerceResolvedValue(ctx, expr, declared_type);
+            if (DXILIRBuilder::isVectorType(declared_type)) {
+                MSLType assigned_type = inferTypeFromExpr(assigned);
+                if (DXILIRBuilder::isVectorType(assigned_type) &&
+                    assigned_type.kind != declared_type.kind)
+                    assigned = coerceVectorWidth(assigned, assigned_type, declared_type);
+            }
             uint32_t source_id = 0;
             if (assigned == expr && parseEmittedValueName(expr, source_id) &&
                 source_id < ctx.value_types.size() &&
@@ -1803,6 +1877,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return;
         }
         std::string assigned = coerceResolvedValue(ctx, expr, type);
+        if (DXILIRBuilder::isVectorType(type)) {
+            MSLType assigned_type = inferTypeFromExpr(assigned);
+            if (DXILIRBuilder::isVectorType(assigned_type) &&
+                assigned_type.kind != type.kind)
+                assigned = coerceVectorWidth(assigned, assigned_type, type);
+        }
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << assigned << ";\n";
@@ -1902,6 +1982,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (source.kind == MSLTypeKind::Unknown &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
             return castExpr(value, target);
+        if (!DXILIRBuilder::isVectorType(source) && DXILIRBuilder::isVectorType(target) &&
+            ((DXILIRBuilder::isIntType(source) && DXILIRBuilder::isIntType(target)) ||
+             (DXILIRBuilder::isFloatType(source) && DXILIRBuilder::isFloatType(target)) ||
+             (DXILIRBuilder::isIntType(source) && DXILIRBuilder::isFloatType(target)) ||
+             (DXILIRBuilder::isFloatType(source) && DXILIRBuilder::isIntType(target))))
+            return castExpr(value, target);
         if (DXILIRBuilder::isIntType(source) && DXILIRBuilder::isFloatType(target))
             return castExpr(value, target);
         if (DXILIRBuilder::isFloatType(source) && DXILIRBuilder::isIntType(target))
@@ -1912,7 +1998,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return castExpr("(" + value + ").x", target);
         if (DXILIRBuilder::isVectorType(source) && DXILIRBuilder::isVectorType(target) &&
             source.kind != target.kind)
-            return castExpr(value, target);
+            return coerceVectorWidth(value, source, target);
         return value;
     };
 
@@ -1967,6 +2053,18 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (decl_it != ctx.function_decls.end()) callee_name = decl_it->second;
         else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
         uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
+        bool opcode_prefixed_intrinsic = false;
+        if (intrinsic_id == 0 && !call_args.empty()) {
+            uint32_t opcode = literalFromValue(ctx, call_args[0], 0);
+            switch (opcode) {
+            case DXOP_AnnotateHandle:
+                intrinsic_id = opcode;
+                opcode_prefixed_intrinsic = true;
+                break;
+            default:
+                break;
+            }
+        }
 
         if (intrinsic_id != 0 && call_args.empty()) {
             ctx.unsupported_intrinsics++;
@@ -1975,7 +2073,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
         } else if (intrinsic_id != 0) {
             std::vector<uint32_t> fn_args;
-            if (intrinsic_id == 13 || intrinsic_id == 14 || intrinsic_id == 15)
+            if (opcode_prefixed_intrinsic)
+                fn_args.assign(call_args.begin() + 1, call_args.end());
+            else if (intrinsic_id == 13 || intrinsic_id == 14 || intrinsic_id == 15)
                 fn_args = call_args;
             else
                 fn_args.assign(call_args.begin() + 1, call_args.end());
@@ -2098,6 +2198,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (inst.operands.size() >= 2)
             result_type = chooseBinaryType(result_type, operandType(inst.operands[0]),
                                            operandType(inst.operands[1]), MSLTypeKind::Int);
+        auto pre_it = ctx.predeclared_types.find(result);
+        if (pre_it != ctx.predeclared_types.end() &&
+            DXILIRBuilder::isVectorType(pre_it->second) &&
+            (DXILIRBuilder::isFloatType(pre_it->second) || DXILIRBuilder::isIntType(pre_it->second)))
+            result_type = pre_it->second;
         result_type = integerTypeFor(result_type);
         std::string expr = coerceOperand(inst.operands[0], result_type) + " " +
                            std::string(op_str) + " " +
@@ -3020,9 +3125,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     static_type = resultTypeForPredecl(inst);
                     ctx.value_types[vc] = static_type;
                 }
-                if (produces_value &&
-                    (cross_block_values.find(vc) != cross_block_values.end() ||
-                     phi_result_values.find(vc) != phi_result_values.end())) {
+                if (produces_value) {
                     MSLType pre_type = static_type;
                     std::string name = emitValue(vc);
                     if (ctx.value_table.size() <= vc) ctx.value_table.resize(vc + 1);
@@ -3076,6 +3179,9 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                                     MSLType phi_type = pi.result_slot < ctx.value_types.size()
                                         ? ctx.value_types[pi.result_slot]
                                         : DXILIRBuilder::resolveType(pi.type_id, module);
+                                    auto phi_pre_it = ctx.predeclared_types.find(emitValue(pi.result_slot));
+                                    if (phi_pre_it != ctx.predeclared_types.end())
+                                        phi_type = phi_pre_it->second;
                                     std::string incoming = hasEmittableValue(ctx, inc.value_id)
                                         ? resolveValue(ctx, inc.value_id)
                                         : defaultForType(phi_type);
