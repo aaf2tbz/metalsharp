@@ -255,16 +255,16 @@ static std::string vectorComponent(const std::string &vector, uint32_t index) {
 
 static const char *bindingPrefixForClass(uint32_t resource_class) {
   switch (resource_class) {
-  case 0: return "srv";
-  case 1: return "uav";
-  case 2: return "cbuf";
+  case 0: return "tex";
+  case 1: return "tex";
+  case 2: return "buf";
   case 3: return "samp";
   default: return "buf";
   }
 }
 
 static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
-  const char *prefixes[] = {"srv", "uav", "cbuf", "buf", "tex", "samp"};
+  const char *prefixes[] = {"tex", "buf", "samp"};
   for (auto *prefix : prefixes) {
     if (startsWith(handle, prefix)) {
       const char *suffix = handle.c_str() + std::strlen(prefix);
@@ -620,13 +620,13 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_CreateHandleForLib: {
-    auto handle = valueArg(0, "srv0");
+    auto handle = valueArg(0, "tex0");
     DXTRACE("DXIL CreateHandleForLib: %s", handle.c_str());
     return handle;
   }
 
   case DXOP_AnnotateHandle: {
-    auto handle = valueArg(0, "srv0");
+    auto handle = valueArg(0, "tex0");
     DXTRACE("DXIL AnnotateHandle: %s", handle.c_str());
     return handle;
   }
@@ -663,7 +663,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     bool non_uniform = args.size() >= 3 &&
                        literalArg(2, 0, "heap non-uniform index") != 0;
     (void)non_uniform;
-    std::string res_name = std::string(sampler_heap ? "samp" : "srv") +
+    std::string res_name = std::string(sampler_heap ? "samp" : "tex") +
                            std::to_string(heap_index);
     DXTRACE("DXIL CreateHandleFromHeap: heap_index=%u sampler=%d -> %s",
             heap_index, sampler_heap, res_name.c_str());
@@ -712,14 +712,14 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_CBufferLoad:
   case DXOP_CBufferLoadLegacy: {
     if (args.size() < 2) return "float4(0)";
-    auto handle = resolveBindingName(valueArg(0, "cbuf0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "buf0"), "buf");
     auto reg_idx = valueArg(1, "0");
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*64]))";
   }
 
   case DXOP_BufferLoad: {
     if (args.size() < 3) return "float4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
     auto index = valueArg(1, "0");
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + index + ")*16]))";
   }
@@ -728,7 +728,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferVectorLoad:
   case DXOP_RawBufferLoadLegacy: {
     if (args.size() < 3) return "uint4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
     auto index = valueArg(1, "0");
     auto elem_offset = valueArg(2, "0");
     auto byte_offset = "((" + index + ")*4 + (" + elem_offset + "))";
@@ -739,7 +739,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferStore:
   case DXOP_RawBufferStoreLegacy: {
     if (args.size() < 4) return "";
-    auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
     auto index = valueArg(1, "0");
     auto elem_offset = valueArg(2, "0");
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
@@ -757,7 +757,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_RawBufferVectorStore: {
     if (args.size() < 4) return "";
-    auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
     auto index = valueArg(1, "0");
     auto elem_offset = valueArg(2, "0");
     auto value = valueArg(3, "uint4(0)");
@@ -775,7 +775,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_TextureLoad: {
     if (args.size() < 3) return "float4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto coord_x = valueArg(2, "0");
     auto coord_y = valueArg(3, "0");
     auto coord = "uint2(" + coord_x + ", " + coord_y + ")";
@@ -785,7 +785,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureStore:
   case DXOP_TextureStoreSample: {
     if (args.size() < 6) return "";
-    auto handle = resolveBindingName(valueArg(0, "uav0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto coord_x = valueArg(1, "0");
     auto coord_y = valueArg(2, "0");
     size_t value_base = intrinsic_id == DXOP_TextureStoreSample ? 5 : 4;
@@ -806,7 +806,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureSampleLevel:
   case DXOP_TextureSampleGrad: {
     if (args.size() < 4) return "float4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
     auto coord_x = valueArg(2, "0.0");
     auto coord_y = valueArg(3, "0.0");
@@ -825,7 +825,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureGatherCmp:
   case DXOP_TextureGatherRaw: {
     if (args.size() < 4) return "float4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
     auto coord_x = valueArg(2, "0.0");
     auto coord_y = valueArg(3, "0.0");
@@ -843,7 +843,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureSampleCmpLevelZero:
   case DXOP_TextureSampleCmpLevel: {
     if (args.size() < 5) return "0.0";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
     auto coord_x = valueArg(2, "0.0");
     auto coord_y = valueArg(3, "0.0");
@@ -863,7 +863,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_GetDimensions: {
     if (args.empty()) return "uint4(0)";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     return "uint4(" + handle + ".get_width(), " + handle +
            ".get_height(), 1, 1)";
   }
@@ -882,7 +882,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_CalcLOD: {
     if (args.size() < 4) return "0.0";
-    auto handle = resolveBindingName(valueArg(0, "srv0"), "tex");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
     auto coord_x = valueArg(2, "0.0");
     auto coord_y = valueArg(3, "0.0");
@@ -892,7 +892,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_AtomicBinOp: {
     if (args.size() < 4) return "0";
-    auto handle = resolveBindingName(valueArg(1, "uav0"), "buf");
+    auto handle = resolveBindingName(valueArg(1, "tex0"), "buf");
     auto offset = valueArg(2, "0");
     auto value = valueArg(3, "0");
     return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" +
@@ -902,7 +902,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_AtomicCompareExchange: {
     if (args.size() < 2) return "0";
-    auto handle = resolveBindingName(valueArg(0, "uav0"), "buf");
+    auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
     auto offset = valueArg(1, "0");
     recordDiagnostic(ctx, "DXIL AtomicCompareExchange lowered to atomic load fallback");
     return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" +
@@ -1144,6 +1144,12 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       const auto &v = ctx.value_table[idx];
       if (v.find('.') != std::string::npos) return emitValue(idx);
       return v;
+    }
+    for (auto &c : ctx.mod.constants) {
+      if (c.id == idx) {
+        if (!c.constant_data.empty()) return c.constant_data;
+        break;
+      }
     }
     return emitValue(idx);
   };
@@ -1529,8 +1535,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       case 14: cmp_str = "true"; break; // UNO (either NaN)
       case 15: cmp_str = "true"; break; // TRUE
       }
-      if (pred == 0) {
-        os << "  auto " << result << " = false; // fcmp false\n";
+      if (pred == 0 || pred > 15) {
+        os << "  auto " << result << " = false; // fcmp false pred=" << pred << "\n";
       } else if (pred == 15) {
         os << "  auto " << result << " = true; // fcmp true\n";
       } else if (pred == 7) {
@@ -1887,12 +1893,19 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
   }
 
   uint32_t value_counter = fn.instruction_start_value;
+  ctx.instruction_start_value = fn.instruction_start_value;
 
   auto resolveValue = [&](uint32_t idx) -> std::string {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
       const auto &v = ctx.value_table[idx];
       if (v.find('.') != std::string::npos) return emitValue(idx);
       return v;
+    }
+    for (auto &c : ctx.mod.constants) {
+      if (c.id == idx) {
+        if (!c.constant_data.empty()) return c.constant_data;
+        break;
+      }
     }
     return emitValue(idx);
   };
@@ -1909,7 +1922,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     auto &block = fn.blocks[bi];
 
     if (needs_dispatch) {
-      os << "    case " << bi << ":\n";
+      os << "    case " << bi << ": {\n";
     }
 
     for (size_t ii = 0; ii < block.instructions.size(); ii++) {
@@ -1988,19 +2001,22 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
         if (inst.operands.size() >= 2) {
           std::string cond = resolveValue(inst.operands[0]);
           uint32_t default_bb = inst.operands[1];
-          os << "    switch (" << cond << ") {\n";
-          for (size_t j = 2; j + 1 < inst.operands.size(); j += 2) {
-            if (needs_dispatch) {
-              os << "      case " << inst.operands[j] << ": _block_state = " << inst.operands[j + 1] << "; continue;\n";
+          if (inst.operands.size() > 4) {
+            os << "    { int _sv = (int)(" << cond << ");\n";
+            for (size_t j = 2; j + 1 < inst.operands.size(); j += 2) {
+              os << "    if (_sv == " << inst.operands[j] << ") { _block_state = " << inst.operands[j + 1] << "; continue; }\n";
             }
+            os << "    _block_state = " << default_bb << "; continue; }\n";
+          } else {
+            os << "    _block_state = " << default_bb << "; continue;\n";
           }
-          if (needs_dispatch) {
-            os << "      default: _block_state = " << default_bb << "; continue;\n";
-          }
-          os << "    }\n";
         }
       } else if (inst.opcode == LLVMInstruction::Unreachable) {
         os << "    // unreachable\n";
+      }
+
+      if (needs_dispatch) {
+        os << "    }\n";
       }
     }
   }
