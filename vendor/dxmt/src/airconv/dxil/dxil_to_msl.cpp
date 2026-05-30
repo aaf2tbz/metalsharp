@@ -231,13 +231,21 @@ static bool startsWith(const std::string &text, const char *prefix) {
 
 static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
   std::vector<std::string> values;
-  if (!startsWith(text, "agg(") || text.size() < 5 || text.back() != ')')
+  bool is_agg = startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
+  bool is_brace = !text.empty() && text[0] == '{' && text.back() == '}';
+  if (!is_agg && !is_brace)
     return values;
-  size_t start = 4;
+  size_t start = is_agg ? 4 : 1;
   while (start < text.size() - 1) {
     size_t comma = text.find(',', start);
     size_t end = comma == std::string::npos ? text.size() - 1 : comma;
-    values.push_back(text.substr(start, end - start));
+    std::string val = text.substr(start, end - start);
+    while (!val.empty() && (val.front() == ' ' || val.front() == '\t'))
+      val.erase(val.begin());
+    while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+      val.pop_back();
+    if (!val.empty())
+      values.push_back(val);
     if (comma == std::string::npos)
       break;
     start = comma + 1;
@@ -247,6 +255,14 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
 
 static bool isZeroLiteral(const std::string &text) {
   return text == "0" || text == "0.0" || text == "0.0f" || text == "false";
+}
+
+static std::string ensureScalarIndex(const std::string &val) {
+  if (startsWith(val, "agg(")) {
+    auto parts = parseAggregateLiteral(val);
+    return parts.empty() ? "0" : parts[0];
+  }
+  return val;
 }
 
 static std::string vectorComponent(const std::string &vector, uint32_t index) {
@@ -264,6 +280,12 @@ static const char *bindingPrefixForClass(uint32_t resource_class) {
 }
 
 static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
+  if (startsWith(handle, "agg(")) {
+    auto parts = parseAggregateLiteral(handle);
+    uint32_t lower_bound = 0;
+    if (parts.size() > 0) parseUnsignedLiteral(parts[0], lower_bound);
+    return std::string(target_prefix) + std::to_string(lower_bound);
+  }
   const char *prefixes[] = {"tex", "buf", "samp"};
   for (auto *prefix : prefixes) {
     if (startsWith(handle, prefix)) {
@@ -626,12 +648,16 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
 
   case DXOP_CreateHandleForLib: {
     auto handle = valueArg(0, "tex0");
+    if (startsWith(handle, "agg("))
+      handle = resolveBindingName(handle, "buf");
     DXTRACE("DXIL CreateHandleForLib: %s", handle.c_str());
     return handle;
   }
 
   case DXOP_AnnotateHandle: {
     auto handle = valueArg(0, "tex0");
+    if (startsWith(handle, "agg("))
+      handle = resolveBindingName(handle, "buf");
     DXTRACE("DXIL AnnotateHandle: %s", handle.c_str());
     return handle;
   }
@@ -718,14 +744,14 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_CBufferLoadLegacy: {
     if (args.size() < 2) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "buf0"), "buf");
-    auto reg_idx = valueArg(1, "0");
+    auto reg_idx = ensureScalarIndex(valueArg(1, "0"));
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*64]))";
   }
 
   case DXOP_BufferLoad: {
     if (args.size() < 3) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
-    auto index = valueArg(1, "0");
+    auto index = ensureScalarIndex(valueArg(1, "0"));
     return "(reinterpret_cast<device float4&>(" + handle + "[(" + index + ")*16]))";
   }
 
@@ -734,8 +760,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferLoadLegacy: {
     if (args.size() < 3) return "uint4(0)";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = ensureScalarIndex(valueArg(1, "0"));
+    auto elem_offset = ensureScalarIndex(valueArg(2, "0"));
     auto byte_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     return "(reinterpret_cast<device uint4&>(" + handle + "[" + byte_offset + "]))";
   }
@@ -745,8 +771,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferStoreLegacy: {
     if (args.size() < 4) return "";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = ensureScalarIndex(valueArg(1, "0"));
+    auto elem_offset = ensureScalarIndex(valueArg(2, "0"));
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     std::ostringstream store;
     uint32_t value_count = std::min<uint32_t>(4, (uint32_t)args.size() - 3);
@@ -763,8 +789,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_RawBufferVectorStore: {
     if (args.size() < 4) return "";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
-    auto index = valueArg(1, "0");
-    auto elem_offset = valueArg(2, "0");
+    auto index = ensureScalarIndex(valueArg(1, "0"));
+    auto elem_offset = ensureScalarIndex(valueArg(2, "0"));
     auto value = valueArg(3, "uint4(0)");
     std::string base_offset = "((" + index + ")*4 + (" + elem_offset + "))";
     std::ostringstream store;
@@ -781,8 +807,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureLoad: {
     if (args.size() < 3) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
-    auto coord_x = valueArg(2, "0");
-    auto coord_y = valueArg(3, "0");
+    auto coord_x = ensureScalarIndex(valueArg(2, "0"));
+    auto coord_y = ensureScalarIndex(valueArg(3, "0"));
     auto coord = "uint2(" + coord_x + ", " + coord_y + ")";
     return handle + ".read(" + coord + ")";
   }
@@ -791,8 +817,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_TextureStoreSample: {
     if (args.size() < 6) return "";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
-    auto coord_x = valueArg(1, "0");
-    auto coord_y = valueArg(2, "0");
+    auto coord_x = ensureScalarIndex(valueArg(1, "0"));
+    auto coord_y = ensureScalarIndex(valueArg(2, "0"));
     size_t value_base = intrinsic_id == DXOP_TextureStoreSample ? 5 : 4;
     auto value_x = valueArg(value_base + 0, "0.0");
     auto value_y = valueArg(value_base + 1, "0.0");
@@ -813,8 +839,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 4) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = ensureScalarIndex(valueArg(2, "0.0"));
+    auto coord_y = ensureScalarIndex(valueArg(3, "0.0"));
     auto coord = "float2(" + coord_x + ", " + coord_y + ")";
     if (intrinsic_id == DXOP_TextureSampleGrad) {
       recordDiagnostic(ctx, "DXIL SampleGrad lowered without explicit gradients");
@@ -832,8 +858,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 4) return "float4(0)";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = ensureScalarIndex(valueArg(2, "0.0"));
+    auto coord_y = ensureScalarIndex(valueArg(3, "0.0"));
     uint32_t channel = args.size() > 8 ? literalArg(8, 0, "gather channel") : 0;
     if (intrinsic_id == DXOP_TextureGatherCmp) {
       recordDiagnostic(ctx, "DXIL TextureGatherCmp lowered without explicit compare");
@@ -850,8 +876,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 5) return "0.0";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = ensureScalarIndex(valueArg(2, "0.0"));
+    auto coord_y = ensureScalarIndex(valueArg(3, "0.0"));
     auto compare = valueArg(4, "0.0");
     auto sample = handle + ".sample(" + sampler + ", float2(" + coord_x +
                   ", " + coord_y + ")).r";
@@ -889,8 +915,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     if (args.size() < 4) return "0.0";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "tex");
     auto sampler = resolveBindingName(valueArg(1, "samp0"), "samp");
-    auto coord_x = valueArg(2, "0.0");
-    auto coord_y = valueArg(3, "0.0");
+    auto coord_x = ensureScalarIndex(valueArg(2, "0.0"));
+    auto coord_y = ensureScalarIndex(valueArg(3, "0.0"));
     return handle + ".calculate_unclamped_lod(" + sampler + ", float2(" +
            coord_x + ", " + coord_y + "))";
   }
@@ -898,8 +924,8 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_AtomicBinOp: {
     if (args.size() < 4) return "0";
     auto handle = resolveBindingName(valueArg(1, "tex0"), "buf");
-    auto offset = valueArg(2, "0");
-    auto value = valueArg(3, "0");
+    auto offset = ensureScalarIndex(valueArg(2, "0"));
+    auto value = ensureScalarIndex(valueArg(3, "0"));
     return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" +
            handle + " + (" + offset + ")), (uint)(" + value +
            "), memory_order_relaxed)";
@@ -908,7 +934,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   case DXOP_AtomicCompareExchange: {
     if (args.size() < 2) return "0";
     auto handle = resolveBindingName(valueArg(0, "tex0"), "buf");
-    auto offset = valueArg(1, "0");
+    auto offset = ensureScalarIndex(valueArg(1, "0"));
     recordDiagnostic(ctx, "DXIL AtomicCompareExchange lowered to atomic load fallback");
     return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" +
            handle + " + (" + offset + ")), memory_order_relaxed)";
@@ -1148,6 +1174,30 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
       const auto &v = ctx.value_table[idx];
       if (v.find('.') != std::string::npos) return emitValue(idx);
+      if (startsWith(v, "agg(")) {
+        auto parts = parseAggregateLiteral(v);
+        uint32_t tid = idx < ctx.value_type_ids.size() ? ctx.value_type_ids[idx] : 0;
+        if (tid < ctx.mod.types.size()) {
+          auto &ty = ctx.mod.types[tid];
+          if (ty.kind == LLVMType::Struct && !ty.subtypes.empty() && !parts.empty()) {
+            std::string args;
+            for (size_t p = 0; p < parts.size(); p++) {
+              if (p) args += ",";
+              args += parts[p];
+            }
+            if (ty.subtypes[0].kind == LLVMType::Integer) {
+              return "int" + std::to_string(parts.size()) + "(" + args + ")";
+            }
+            return "int" + std::to_string(parts.size()) + "(" + args + ")";
+          }
+        }
+        std::string args;
+        for (size_t p = 0; p < parts.size(); p++) {
+          if (p) args += ",";
+          args += parts[p];
+        }
+        return "int" + std::to_string(parts.size()) + "(" + args + ")";
+      }
       return v;
     }
     for (auto &c : ctx.mod.constants) {
@@ -1754,8 +1804,6 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
               std::string elem = getTypeName(ty.subtypes[0], module);
               uint32_t count = ty.subtypes[0].bit_width > 0 ? ty.bit_width / ty.subtypes[0].bit_width : 4;
               ctx.value_table[val_idx] = elem + std::to_string(count) + "(" + args + ")";
-            } else if (ty.kind == LLVMType::Struct) {
-              ctx.value_table[val_idx] = "{" + args + "}";
             } else {
               ctx.value_table[val_idx] = cdata;
             }
@@ -1923,6 +1971,15 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
       const auto &v = ctx.value_table[idx];
       if (v.find('.') != std::string::npos) return emitValue(idx);
+      if (startsWith(v, "agg(")) {
+        auto parts = parseAggregateLiteral(v);
+        std::string args;
+        for (size_t p = 0; p < parts.size(); p++) {
+          if (p) args += ",";
+          args += parts[p];
+        }
+        return "int" + std::to_string(parts.size()) + "(" + args + ")";
+      }
       return v;
     }
     for (auto &c : ctx.mod.constants) {
