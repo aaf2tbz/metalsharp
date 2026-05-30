@@ -4,7 +4,7 @@
 **Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
 **PR:** #129  
 **Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
-**Current PR head:** latest pushed `codex/beta7-dxmt-cohesion` commit (`(fix) Harden Phase 13 and start Phase 14`)
+**Current PR head:** latest local Phase 14 typed-lowering pass, pending push (`(fix) Advance Phase 14 typed lowering`)
 
 ---
 
@@ -42,15 +42,15 @@ Latest staged validation:
 
 ```text
 DXIL Lowering: 766 pass, 0 fail, 0 skip
-Metal: 229 ok, 537 fail
+Metal: 432 ok, 334 fail
 ```
 
 | Metric | Old Converter (`DXILToMSL`) | New Typed Lowering (`MSLLowering`) |
 |---|---:|---:|
 | DXIL parse/lower | 766/766 | 766/766 |
-| Metal compile | 765/766 | 229/766 |
+| Metal compile | 765/766 | 432/766 |
 | Production status | Active | Experimental |
-| Current role | Runtime ground truth | Phase 14 typed lowering bring-up |
+| Current role | Runtime ground truth | Phase 14 typed lowering bring-up, still experimental |
 
 Recent progress:
 
@@ -65,6 +65,7 @@ Recent progress:
 | `d161bd0` | Phase 13A/13B binding manifest plan | Per-shader binding manifest emitted for all 766 shaders |
 | `98cb26f` | Phase 13C typed handle records | New lowering moved to 184/766; unsupported simd helper buckets cleared |
 | latest pushed Phase 13 hardening / Phase 14A-B start | Component-aware texture extraction and context-aware resource coercion | New lowering moved to 229/766 |
+| latest local Phase 14 pass | Pointer/resource alias coercion, buffer offset scalarization, math intrinsic cast hardening, vector operand scalarization | New lowering moved to 432/766 |
 
 Important Metal limits observed during validation:
 
@@ -85,7 +86,7 @@ DXMT Wine DLL layer
     +-- d3d12_pipeline_state.cpp
     |     |
     |     +-- DXILToMSL::convert()    old converter, production, 765/766
-    |     +-- MSLLowering::lower()    typed lowering, experimental, 229/766
+    |     +-- MSLLowering::lower()    typed lowering, experimental, 432/766
     |
     +-- Shared parser/lowering support
           |
@@ -102,16 +103,15 @@ Metal compiler -> metallib -> WMT / Metal runtime
 
 ## Current Error Buckets
 
-These are the current high-signal categories after the local Phase 13 hardening / Phase 14A-B start pass.
+These are the current high-signal categories after the local Phase 14 typed-lowering pass.
 
 | Category | Approx Count | What It Means | Roadmap Owner |
 |---|---:|---|---|
-| `static_cast` from `device char*` to scalar | ~812 | Pointer-like SSA values still reach numeric casts through indirect aliases | Phase 14B |
-| pointer assigned to scalar | ~395 int, ~417 float | Cross-block and PHI assignments still lose some source pointer role information | Phase 13 hardening / Phase 14B |
-| `member reference base type 'int'/'float'` | ~347 combined | Vector/scalar component flow is improved but still inconsistent in later blocks | Phase 14A / 14C |
-| vector assigned or cast to scalar | ~120 combined | Vector width collapse still needs stricter scalar-lane extraction | Phase 14C |
-| pointer arithmetic / scalar pointer use | ~200 combined | `device char*` still appears in generic arithmetic or pointer-shaped locals | Phase 14B |
-| invalid buffer dereference/subscript | ~190 combined | Buffer operation lowering still needs byte-address and structured-buffer typing | Phase 14B |
+| vector-width mismatch (`int4`/`int2`) | ~42 | Width narrowing still needs lane-aware vector reconstruction, not blind constructor casts | Phase 14C |
+| scalar pointer leakage (`char*` to int) | ~24 | Thread-local alloca/GEP paths are much cleaner but not fully typed | Phase 14B |
+| vector shift/scalar operator mismatch | ~23 | Some integer ops still choose vector RHS/LHS where Metal requires matching vector shape | Phase 14C |
+| unresolved SSA values | ~7-12 per repeated value | Cross-block predeclaration still misses some late block references | Phase 12F/14C follow-up |
+| scalar member access | ~30 combined | Component extraction is mostly guarded; remaining cases come from stale value type records | Phase 14A/14C |
 | texture/buffer binding overflow | no broad compiler bucket currently | Direct declarations are capped, but argument buffers are still required for correctness | Phase 13 follow-up / Phase 16 |
 
 ---
@@ -407,6 +407,7 @@ Status:
 
 - Started.
 - Component-aware extraction now prevents scalarized texture reads like `(...read(...).x).x`.
+- Double-component sentinel is currently clean after the Phase 14 pass.
 - Invalid `.sample`/`.read`/`.write`/`.gather` call shapes are no longer the dominant failure family, but texture dimensionality, mips, array slices, MSAA, and compare/gather semantics are not complete.
 
 Work:
@@ -427,7 +428,9 @@ Status:
 
 - Started.
 - Context-aware resource coercion now catches some pointer-like SSA aliases before scalar assignments and arithmetic.
-- Pointer-to-scalar assignment buckets dropped substantially, but `device char*` still leaks through indirect casts, vector casts, and buffer-address arithmetic.
+- `device char*` scalar-cast/assignment buckets are no longer dominant.
+- Thread-local pointer syntax, numeric-base GEP, raw buffer offsets, and scalar store lanes now receive compile-oriented guards.
+- Remaining pointer leakage is mostly plain `char*` from alloca/GEP paths and needs real buffer/structured-buffer typing.
 
 Work:
 
@@ -447,6 +450,8 @@ Status:
 
 - Started opportunistically during Phase 13C.
 - Unsupported `simd_broadcast_first` and `simd_lane_id` helper emissions were scalarized for compileability, which removed those compiler buckets.
+- Float math intrinsics now cast numeric inputs to `float` to avoid Metal overload ambiguity.
+- Vector SSA operands can be scalarized inside scalar predeclared assignments, which removed the broad `int4` assigned to `int` bucket from the top census.
 - Full wave/quad semantics remain future work; current scalar fallbacks are only compile-oriented placeholders.
 
 Work:
@@ -542,7 +547,7 @@ Gate:
 ## Phase 17: Runtime Proof And Game Bring-Up
 
 **Goal:** prove the D3D12 pipeline works beyond compiler acceptance.  
-**Target:** Subnautica Below Zero reaches recognizable rendering; then expand to more games.
+**Target:** Subnautica 2 reaches recognizable rendering; then expand to more games.
 
 Work:
 
