@@ -10,6 +10,16 @@
 
 Complete the D3D12→Metal translation pipeline so that every DXBC/DXIL shader compiles to valid Metal with zero errors, no missed shaders, and accurate PSO/ABI runtime behavior. The end state is Subnautica Below Zero rendering correctly end-to-end through DXMT + MetalSharp.
 
+## Hard Constraint: Preserve the 765
+
+The old converter (`DXILToMSL::convert`) passes **765/766** shaders. This represents months of accumulated fixes across Phases 0–9. Every phase in this roadmap must:
+
+1. **Never regress the old converter.** It stays in `d3d12_pipeline_state.cpp` as the production path until the new lowering matches or exceeds it.
+2. **Learn from the old converter.** When the new lowering fails on a shader the old one passes, diff the two MSL outputs. The old converter's output is ground truth for that shader.
+3. **Match first, then exceed.** The new lowering must reach 765/766 pass rate before it replaces the old converter. Only then do we add features the old converter can't support.
+
+The 765 shaders that already compile are the foundation. We build on top of them, not around them.
+
 ---
 
 ## Current State (Phase 10E, commit `277c330`)
@@ -77,8 +87,14 @@ Metallib → loaded into GPU via WMT
 
 **Goal:** Eliminate categories 1, 3, 6, 8 (683+403+174+161 = 1,421 errors)
 **Target:** 200+/766 Metal pass
+**Method:** Diff-driven — compare new lowering output against old converter output for each of the 765 passing shaders. The old converter's MSL is ground truth.
 
 The typed lowering currently emits correct declarations but incorrect expressions. When building expressions like `v77 + v75` where v77 is `device char*` and v75 is `int`, Metal rejects it. The fix: when building any binary expression, check operand types and insert casts.
+
+**Validation approach:**
+- For every shader where old converter passes and new lowering fails: diff the two MSL outputs
+- Catalog the patterns the old converter uses that the new one doesn't
+- Implement those patterns in the new lowering, not by copying strings, but by understanding the type coercion rules
 
 **Files:** `msl_lowering.cpp`
 
@@ -391,17 +407,33 @@ After every phase:
 
 ## Old Converter Integration Strategy
 
-The old converter (`DXILToMSL::convert`) passes 765/766. It remains the production path in `d3d12_pipeline_state.cpp`. The new typed lowering (`MSLLowering::lower`) is being developed alongside it. Integration strategy:
+The old converter (`DXILToMSL::convert`) passes 765/766. It remains the production path in `d3d12_pipeline_state.cpp`. The new typed lowering (`MSLLowering::lower`) is being developed alongside it.
 
-1. **Now through Phase 14:** Both converters exist. Old is production, new is development.
-2. **Phase 15:** When new converter matches old converter pass rate (765+/766), switch the production path.
-3. **Phase 16+:** Remove old converter code if new converter proves stable.
+**Preservation rule:** The old converter is never modified or removed until the new lowering proves it can match 765/766 on its own. Both converters coexist. The old converter's output serves as the reference implementation.
+
+Integration strategy:
+
+1. **Now through Phase 14:** Both converters exist. Old is production, new is development. Every new lowering change is validated by diffing against old converter output.
+2. **Phase 15:** When new converter reaches 765+/766 AND passes a manual review of 50+ shader diffs showing semantic equivalence, switch the production path.
+3. **Phase 16+:** Remove old converter code only after 2+ weeks of stable new converter in production.
 
 The switch point is in `d3d12_pipeline_state.cpp` line ~433:
 ```cpp
 // Current: auto msl_result = dxmt::dxil::DXILToMSL::convert(*module, shader_info);
 // Future:  auto msl_result = dxmt::dxil::MSLLowering::lower(*module, shader_info);
 ```
+
+### Diff-Driven Development Protocol
+
+For every shader where old passes and new fails:
+
+1. Get old MSL: `cat /tmp/dxmt_shader_cache/<hash>.msl`
+2. Get new MSL: `cat /tmp/metal-test-NN/<hash>.metal`
+3. Diff: identify what pattern the old converter uses that the new one doesn't
+4. Implement: add the missing type coercion/binding/emission pattern to the new lowering
+5. Verify: recompile and confirm the shader now passes
+
+This ensures the new lowering learns from 765 working examples rather than guessing.
 
 ---
 
