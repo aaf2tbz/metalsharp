@@ -705,6 +705,44 @@ static MSLType valueTypeOrUnknown(const LowerContext &ctx, uint32_t idx) {
     return {};
 }
 
+static bool hasConstantValue(const LowerContext &ctx, uint32_t idx) {
+    for (auto &c : ctx.mod.constants)
+        if (c.id == idx && !c.constant_data.empty())
+            return true;
+    if (ctx.current_fn) {
+        for (auto &c : ctx.current_fn->constants)
+            if (c.id == idx && !c.constant_data.empty())
+                return true;
+    }
+    return false;
+}
+
+static bool hasEmittableValue(const LowerContext &ctx, uint32_t idx) {
+    if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty() &&
+        !startsWith(ctx.value_table[idx], "dx."))
+        return true;
+    return hasConstantValue(ctx, idx);
+}
+
+static bool isPointerMSLType(const MSLType &t) {
+    return t.kind == MSLTypeKind::DeviceCharPtr || t.kind == MSLTypeKind::ThreadgroupCharPtr;
+}
+
+static std::vector<uint32_t> functionParamTypeIds(const LLVMModule &module, const LLVMFunction &fn) {
+    uint32_t type_id = fn.type_id;
+    if (type_id < module.types.size() && module.types[type_id].kind == LLVMType::Pointer &&
+        !module.types[type_id].type_refs.empty())
+        type_id = module.types[type_id].type_refs[0];
+    if (type_id >= module.types.size() || module.types[type_id].kind != LLVMType::Function ||
+        module.types[type_id].type_refs.size() <= 1)
+        return {};
+    std::vector<uint32_t> params;
+    params.reserve(module.types[type_id].type_refs.size() - 1);
+    for (size_t i = 1; i < module.types[type_id].type_refs.size(); i++)
+        params.push_back(module.types[type_id].type_refs[i]);
+    return params;
+}
+
 static MSLType promoteNumericType(const MSLType &a, const MSLType &b, MSLType fallback) {
     if (DXILIRBuilder::isVectorType(a)) return a;
     if (DXILIRBuilder::isVectorType(b)) return b;
@@ -1507,6 +1545,20 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 }
                 ctx.value_table[value_counter] = result;
                 ctx.value_types[value_counter] = fallback_type;
+            } else if (translated.empty()) {
+                MSLType fallback_type = result_type;
+                if (!isUsableType(fallback_type))
+                    fallback_type = getTypeForInst(inst.type_id);
+                if (!isUsableType(fallback_type))
+                    fallback_type = {MSLTypeKind::Int, 0, {}};
+                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end()) {
+                    os << "  " << result << " = " << defaultForType(fallback_type) << ";\n";
+                } else {
+                    os << "  " << typedDecl(result, fallback_type) << " = "
+                       << defaultForType(fallback_type) << ";\n";
+                }
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = fallback_type;
             } else if (translated.find('=') == std::string::npos) {
                 if (!translated.empty() && translated[0] != ' ') {
                     bool is_resource_handle = startsWith(translated, "buf") ||
@@ -2108,6 +2160,45 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         ctx.function_decls[dfn.value_id] = dfn.name;
     }
 
+    auto seedValue = [&](uint32_t value_id, const std::string &expr, MSLType type,
+                         ValueRole role = ValueRole::Generic) {
+        if (ctx.value_table.size() <= value_id) ctx.value_table.resize(value_id + 1);
+        if (ctx.value_types.size() <= value_id) ctx.value_types.resize(value_id + 1);
+        if (ctx.value_roles.size() <= value_id) ctx.value_roles.resize(value_id + 1);
+        ctx.value_table[value_id] = expr;
+        ctx.value_types[value_id] = type;
+        ctx.value_roles[value_id] = role;
+    };
+
+    auto seedBufferHandle = [&](uint32_t value_id, uint32_t binding_index) {
+        seedValue(value_id, "buf" + std::to_string(std::min<uint32_t>(binding_index, 30)),
+                  {MSLTypeKind::DeviceCharPtr, 0, {}}, ValueRole::BufferHandle);
+    };
+
+    auto param_type_ids = functionParamTypeIds(module, fn);
+    if (fn.param_count != 0 && fn.instruction_start_value >= fn.param_count) {
+        uint32_t first_param_value = fn.instruction_start_value - fn.param_count;
+        for (uint32_t i = 0; i < fn.param_count; i++) {
+            uint32_t value_id = first_param_value + i;
+            MSLType type = i < param_type_ids.size()
+                ? DXILIRBuilder::resolveType(param_type_ids[i], module)
+                : MSLType{MSLTypeKind::Int, 0, {}};
+            if (type.kind == MSLTypeKind::Void || type.kind == MSLTypeKind::Unknown ||
+                type.kind == MSLTypeKind::Struct)
+                type = {MSLTypeKind::Int, 0, {}};
+            if (isPointerMSLType(type)) {
+                seedBufferHandle(value_id, i);
+            } else {
+                std::string name = emitValue(value_id);
+                seedValue(value_id, name, type);
+                ctx.predeclared_names.insert(name);
+                ctx.predeclared_types[name] = type;
+                os << "  " << typedDecl(name, type) << " = "
+                   << defaultForType(type) << "; // function parameter fallback\n";
+            }
+        }
+    }
+
     std::map<uint32_t, uint32_t> block_value_to_index;
     for (size_t i = 0; i < fn.block_value_ids.size(); i++)
         block_value_to_index[fn.block_value_ids[i]] = (uint32_t)i;
@@ -2319,7 +2410,12 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     value_operand = oi == 0;
                 if (!value_operand) continue;
 
-                if (inst.opcode == LLVMInstruction::PHI)
+                if ((inst.opcode == LLVMInstruction::Load ||
+                     inst.opcode == LLVMInstruction::Store ||
+                     inst.opcode == LLVMInstruction::GetElementPtr ||
+                     inst.opcode == LLVMInstruction::GEP) && oi == 0)
+                    type_hint = {MSLTypeKind::DeviceCharPtr, 0, {}};
+                else if (inst.opcode == LLVMInstruction::PHI)
                     type_hint = inst_type;
                 rememberUnresolvedReference(inst.operands[oi], type_hint);
 
@@ -2367,6 +2463,15 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     }
 
     for (uint32_t value_id : unresolved_referenced_values) {
+        auto type_it = unresolved_reference_types.find(value_id);
+        if (value_id < 31 && type_it != unresolved_reference_types.end() &&
+            isPointerMSLType(type_it->second) && !hasResolvedValue(value_id))
+            seedBufferHandle(value_id, value_id);
+    }
+
+    for (uint32_t value_id : unresolved_referenced_values) {
+        if (hasResolvedValue(value_id))
+            continue;
         MSLType pre_type = {MSLTypeKind::Int, 0, {}};
         auto type_it = unresolved_reference_types.find(value_id);
         if (type_it != unresolved_reference_types.end())
@@ -2455,7 +2560,9 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                                     MSLType phi_type = pi.result_slot < ctx.value_types.size()
                                         ? ctx.value_types[pi.result_slot]
                                         : DXILIRBuilder::resolveType(pi.type_id, module);
-                                    std::string incoming = resolveValue(ctx, inc.value_id);
+                                    std::string incoming = hasEmittableValue(ctx, inc.value_id)
+                                        ? resolveValue(ctx, inc.value_id)
+                                        : defaultForType(phi_type);
                                     if (inc.value_id < ctx.value_types.size() &&
                                         DXILIRBuilder::isVectorType(ctx.value_types[inc.value_id]) &&
                                         (DXILIRBuilder::isFloatType(phi_type) || DXILIRBuilder::isIntType(phi_type)) &&
