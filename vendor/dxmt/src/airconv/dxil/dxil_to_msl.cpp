@@ -1855,9 +1855,7 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
 
   // Pre-scan instructions to find PHI result_slot values
   // We need value_counter to match what emitInstruction uses
-  // PHI instructions produce values starting at fn.instruction_start_value + block_value_ids.size()
-  // (blocks consumed value IDs) — but actually the parser advances value_counter per instruction
-  // So we need to simulate the same counting
+  // instruction_start_value already accounts for fn_constants + block labels
   {
     uint32_t vc = fn.instruction_start_value;
     for (size_t bi = 0; bi < fn.blocks.size(); bi++) {

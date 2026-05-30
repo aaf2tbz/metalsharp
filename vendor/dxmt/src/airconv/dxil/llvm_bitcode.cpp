@@ -972,8 +972,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       fn.blocks.resize(ops.size() > 1 ? (size_t)ops[1] : 0);
       fn.block_value_ids.resize(fn.blocks.size());
       for (size_t i = 0; i < fn.blocks.size(); i++) {
-        fn.block_value_ids[i] = next_value;
-        next_value++;
+        fn.block_value_ids[i] = (uint32_t)i;
       }
       cur_block = 0;
       break;
@@ -1254,7 +1253,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
             inst.type_id = (uint32_t)ops[1];
           for (size_t i = 2; i + 1 < ops.size(); i += 2) {
             inst.operands.push_back(value(ops[i]));
-            inst.operands.push_back(value(ops[i + 1]));
+            inst.operands.push_back((uint32_t)ops[i + 1]);
           }
         }
         fn.blocks[cur_block].instructions.push_back(inst);
@@ -1526,7 +1525,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
           fn.type_id = pending.type_id;
           fn.param_count = pending.param_count;
           fn.name = pending.name;
-          fn.instruction_start_value = next_function_value_id + fn.param_count;
+          fn.instruction_start_value = next_module_value_id + fn.param_count;
           fn.is_declaration = false;
           ParseContext func_ctx{reader, module,
                                 getBlockAbbrevs(ctx, header.block_id),
@@ -1679,7 +1678,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
       fn.type_id = pending.type_id;
       fn.param_count = pending.param_count;
       fn.name = pending.name;
-      fn.instruction_start_value = next_function_value_id + fn.param_count;
+      fn.instruction_start_value = next_module_value_id + fn.param_count;
       fn.is_declaration = false;
       ParseContext func_ctx{reader, module,
                             getBlockAbbrevs(ctx, header.block_id),
