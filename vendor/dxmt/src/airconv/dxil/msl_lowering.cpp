@@ -625,7 +625,11 @@ static bool exprLooksSideEffectOnly(const std::string &value) {
            value.find("threadgroup_barrier(") != std::string::npos;
 }
 
+static bool exprEndsWithComponent(const std::string &value);
+
 static bool exprLooksVectorValue(const std::string &value) {
+    if (exprEndsWithComponent(value))
+        return false;
     return startsWith(value, "float2(") || startsWith(value, "float3(") ||
            startsWith(value, "float4(") || startsWith(value, "int2(") ||
            startsWith(value, "int3(") || startsWith(value, "int4(") ||
@@ -721,13 +725,70 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     return resolved;
 }
 
+static std::string coerceResolvedValue(const LowerContext &ctx, const std::string &value,
+                                       const MSLType &target) {
+    uint32_t source_id = 0;
+    MSLType source_type;
+    if (parseEmittedValueName(value, source_id) && source_id < ctx.value_types.size())
+        source_type = ctx.value_types[source_id];
+
+    auto pre_it = ctx.predeclared_types.find(value);
+    if (source_type.kind == MSLTypeKind::Unknown && pre_it != ctx.predeclared_types.end())
+        source_type = pre_it->second;
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        typeLooksResourceHandle(source_type))
+        return defaultForType(target);
+
+    return coerceResolvedValue(value, target);
+}
+
+static std::string stripEnclosingParens(std::string value) {
+    auto trim = [](std::string &text) {
+        while (!text.empty() && std::isspace((unsigned char)text.front()))
+            text.erase(text.begin());
+        while (!text.empty() && std::isspace((unsigned char)text.back()))
+            text.pop_back();
+    };
+
+    trim(value);
+    bool changed = true;
+    while (changed && value.size() >= 2 && value.front() == '(' && value.back() == ')') {
+        changed = false;
+        int depth = 0;
+        bool encloses_all = true;
+        for (size_t i = 0; i < value.size(); i++) {
+            if (value[i] == '(') depth++;
+            else if (value[i] == ')') {
+                depth--;
+                if (depth == 0 && i + 1 != value.size()) {
+                    encloses_all = false;
+                    break;
+                }
+            }
+            if (depth < 0) {
+                encloses_all = false;
+                break;
+            }
+        }
+        if (encloses_all && depth == 0) {
+            value = value.substr(1, value.size() - 2);
+            trim(value);
+            changed = true;
+        }
+    }
+    return value;
+}
+
 static bool exprEndsWithComponent(const std::string &value) {
-    if (value.size() < 2) return false;
-    char c = value.back();
+    std::string stripped = stripEnclosingParens(value);
+    if (stripped.size() < 2) return false;
+    char c = stripped.back();
     if (c != 'x' && c != 'y' && c != 'z' && c != 'w' &&
         c != 'r' && c != 'g' && c != 'b' && c != 'a')
         return false;
-    return value[value.size() - 2] == '.';
+    return stripped[stripped.size() - 2] == '.';
 }
 
 static std::string componentAccess(const std::string &value, uint32_t component, const MSLType &source_type) {
@@ -741,8 +802,20 @@ static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
     if (exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
         exprLooksSideEffectOnly(value))
         return "false";
-    if (idx < ctx.value_types.size() && DXILIRBuilder::isVectorType(ctx.value_types[idx]))
-        return "any(" + value + " != " + defaultForType(ctx.value_types[idx]) + ")";
+    MSLType condition_type = idx < ctx.value_types.size() ? ctx.value_types[idx] : MSLType{};
+    uint32_t resolved_id = 0;
+    if (!DXILIRBuilder::isVectorType(condition_type) &&
+        parseEmittedValueName(value, resolved_id) &&
+        resolved_id < ctx.value_types.size())
+        condition_type = ctx.value_types[resolved_id];
+    auto pre_it = ctx.predeclared_types.find(value);
+    if (!DXILIRBuilder::isVectorType(condition_type) &&
+        pre_it != ctx.predeclared_types.end())
+        condition_type = pre_it->second;
+    if (DXILIRBuilder::isVectorType(condition_type))
+        return "any(" + value + " != " + defaultForType(condition_type) + ")";
+    if (DXILIRBuilder::isFloatType(condition_type) || DXILIRBuilder::isIntType(condition_type))
+        return "(" + value + " != " + defaultForType(condition_type) + ")";
     return value;
 }
 
@@ -1581,7 +1654,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto pre_it = ctx.predeclared_types.find(name);
             if (pre_it != ctx.predeclared_types.end())
                 declared_type = pre_it->second;
-            std::string assigned = coerceResolvedValue(expr, declared_type);
+            std::string assigned = coerceResolvedValue(ctx, expr, declared_type);
             uint32_t source_id = 0;
             if (assigned == expr && parseEmittedValueName(expr, source_id) &&
                 source_id < ctx.value_types.size() &&
@@ -1593,7 +1666,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             os << "  " << name << " = " << assigned << ";\n";
             return;
         }
-        std::string assigned = coerceResolvedValue(expr, type);
+        std::string assigned = coerceResolvedValue(ctx, expr, type);
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << assigned << ";\n";
@@ -1664,6 +1737,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto coerceOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
         std::string value = getValue(idx);
         MSLType source = operandType(idx);
+        uint32_t resolved_id = 0;
+        if (!typeLooksResourceHandle(source) &&
+            parseEmittedValueName(value, resolved_id) &&
+            resolved_id < ctx.value_types.size())
+            source = ctx.value_types[resolved_id];
+        auto pre_it = ctx.predeclared_types.find(value);
+        if (!typeLooksResourceHandle(source) && pre_it != ctx.predeclared_types.end())
+            source = pre_it->second;
         if ((exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
              typeLooksResourceHandle(source)) &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
@@ -2829,7 +2910,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                                         !DXILIRBuilder::isVectorType(phi_type))
                                         incoming = "(" + incoming + ").x";
                                     os << "    " << emitValue(pi.result_slot) << " = "
-                                       << coerceResolvedValue(incoming, phi_type) << ";\n";
+                                       << coerceResolvedValue(ctx, incoming, phi_type) << ";\n";
                                 }
                             }
                         }
@@ -2854,7 +2935,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                 }
             } else if (inst.opcode == LLVMInstruction::Switch) {
                 if (inst.operands.size() >= 2) {
-                    os << "    { int _sv = (int)(" << coerceResolvedValue(resolveValue(ctx, inst.operands[0]), {MSLTypeKind::Int, 0, {}}) << ");\n";
+                    os << "    { int _sv = (int)(" << coerceResolvedValue(ctx, resolveValue(ctx, inst.operands[0]), {MSLTypeKind::Int, 0, {}}) << ");\n";
                     for (size_t j = 2; j + 1 < inst.operands.size(); j += 2)
                         os << "    if (_sv == " << inst.operands[j] << ") { _block_state = " << inst.operands[j+1] << "; continue; }\n";
                     os << "    _block_state = " << inst.operands[1] << "; continue; }\n";

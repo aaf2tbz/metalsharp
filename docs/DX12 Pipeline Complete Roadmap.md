@@ -4,7 +4,7 @@
 **Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
 **PR:** #129  
 **Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
-**Current PR head:** `0062505` (`[codex] Phase 12A: dispatch value predeclaration`)
+**Current PR head:** latest pushed `codex/beta7-dxmt-cohesion` commit (`(fix) Harden Phase 13 and start Phase 14`)
 
 ---
 
@@ -42,15 +42,15 @@ Latest staged validation:
 
 ```text
 DXIL Lowering: 766 pass, 0 fail, 0 skip
-Metal: 97 ok, 669 fail
+Metal: 229 ok, 537 fail
 ```
 
 | Metric | Old Converter (`DXILToMSL`) | New Typed Lowering (`MSLLowering`) |
 |---|---:|---:|
 | DXIL parse/lower | 766/766 | 766/766 |
-| Metal compile | 765/766 | 97/766 |
+| Metal compile | 765/766 | 229/766 |
 | Production status | Active | Experimental |
-| Current role | Runtime ground truth | Future typed architecture |
+| Current role | Runtime ground truth | Phase 14 typed lowering bring-up |
 
 Recent progress:
 
@@ -58,6 +58,13 @@ Recent progress:
 |---|---|---|
 | `87141bb` | Phase 11A typed operand coercion groundwork | New lowering moved to 75/766 Metal passes |
 | `0062505` | Phase 12A dispatch value predeclaration | New lowering moved to 97/766 Metal passes |
+| `40b3ce1` | Phase 12D aggregate literal lowering | New lowering moved to 151/766; `agg(` sentinel cleared |
+| `384b997` | Phase 12E resource handle isolation | New lowering moved to 164/766; targeted `int + texture2d` sentinel cleared |
+| `e90adea` | Phase 12F function parameter mapping | New lowering moved to 170/766 |
+| `5f17348` | Phase 12 hardening | New lowering moved to 176/766; malformed float literal sentinel cleared |
+| `d161bd0` | Phase 13A/13B binding manifest plan | Per-shader binding manifest emitted for all 766 shaders |
+| `98cb26f` | Phase 13C typed handle records | New lowering moved to 184/766; unsupported simd helper buckets cleared |
+| latest pushed Phase 13 hardening / Phase 14A-B start | Component-aware texture extraction and context-aware resource coercion | New lowering moved to 229/766 |
 
 Important Metal limits observed during validation:
 
@@ -78,7 +85,7 @@ DXMT Wine DLL layer
     +-- d3d12_pipeline_state.cpp
     |     |
     |     +-- DXILToMSL::convert()    old converter, production, 765/766
-    |     +-- MSLLowering::lower()    typed lowering, experimental, 97/766
+    |     +-- MSLLowering::lower()    typed lowering, experimental, 229/766
     |
     +-- Shared parser/lowering support
           |
@@ -95,17 +102,17 @@ Metal compiler -> metallib -> WMT / Metal runtime
 
 ## Current Error Buckets
 
-These are the current high-signal categories after `0062505`.
+These are the current high-signal categories after the local Phase 13 hardening / Phase 14A-B start pass.
 
 | Category | Approx Count | What It Means | Roadmap Owner |
 |---|---:|---|---|
-| `int4/uint4/float4` assigned to scalar | ~950 | Vector operations are still choosing scalar result slots or PHI/predecl types | Phase 12B / 12C |
-| `subscripted value is not an array, pointer, or vector` | ~530 | Scalar expression is being indexed; component extraction needs type guard | Phase 12C |
-| `member reference base type 'int'/'float' is not a structure or union` | ~320 | A value was scalarized too early, then later used as `.x/.y/.z/.w` | Phase 12B |
-| undeclared `vNN` and `agg` | ~1,700 total across many names | Value numbering, constants, aggregate literals, or function params are missing from the value table | Phase 12A / 12D |
-| `int` with `texture2d<..., read_write>` | ~150 | Resource handles are leaking into numeric arithmetic/PHI values | Phase 12E |
-| texture/buffer binding limits | still present | `tex8+` and large descriptor tables need argument-buffer design | Phase 13 |
-| pointer arithmetic / scalar pointer use | still present | `device char* + int`, invalid load/store shape | Phase 11B / 12F |
+| `static_cast` from `device char*` to scalar | ~812 | Pointer-like SSA values still reach numeric casts through indirect aliases | Phase 14B |
+| pointer assigned to scalar | ~395 int, ~417 float | Cross-block and PHI assignments still lose some source pointer role information | Phase 13 hardening / Phase 14B |
+| `member reference base type 'int'/'float'` | ~347 combined | Vector/scalar component flow is improved but still inconsistent in later blocks | Phase 14A / 14C |
+| vector assigned or cast to scalar | ~120 combined | Vector width collapse still needs stricter scalar-lane extraction | Phase 14C |
+| pointer arithmetic / scalar pointer use | ~200 combined | `device char*` still appears in generic arithmetic or pointer-shaped locals | Phase 14B |
+| invalid buffer dereference/subscript | ~190 combined | Buffer operation lowering still needs byte-address and structured-buffer typing | Phase 14B |
+| texture/buffer binding overflow | no broad compiler bucket currently | Direct declarations are capped, but argument buffers are still required for correctness | Phase 13 follow-up / Phase 16 |
 
 ---
 
@@ -306,6 +313,13 @@ Gate:
 
 ### 13A: Root Signature Extraction
 
+Status:
+
+- Partial foundation complete.
+- Current test-path binding manifest is emitted for all 766 shaders.
+- Manifest data is inferred from DXIL handle-creation calls, not from full DXBC root-signature chunks yet.
+- Proper root-signature/PSV propagation into typed lowering remains open because the current harness extracts DXIL and discards the surrounding container metadata.
+
 Work:
 
 - Parse root signature data from DXBC/DXIL container chunks.
@@ -318,9 +332,15 @@ Work:
 
 Gate:
 
-- Per-shader binding manifest emitted in test output.
+- Per-shader binding manifest emitted in test output. **Current:** pass for 766/766 via DXIL-derived manifest.
 
 ### 13B: Metal Binding Plan
+
+Status:
+
+- Direct declaration caps are active: buffers capped at 31, compute UAV-style textures capped at 8, vertex textures/samplers suppressed, samplers capped to observed/direct plan.
+- This clears the broad binding-limit compiler failure mode.
+- Argument-buffer-backed overflow is not implemented yet and remains required for runtime correctness.
 
 Observed limits:
 
@@ -346,7 +366,19 @@ Gate:
 - No binding-limit compiler errors.
 - No undeclared `bufN`/`texN`/`sampN` caused by descriptor table width.
 
+Current gate status:
+
+- No broad binding-limit compiler bucket in the 229/766 local validation.
+- Direct caps are compile-oriented compatibility, not final D3D12 descriptor ABI.
+
 ### 13C: Handle Translation
+
+Status:
+
+- `ResourceHandleRecord` now tracks kind, resource class, register space, lower bound, binding index, and non-uniform flag internally.
+- `CreateHandle`, `CreateHandleForLib`, `CreateHandleFromBinding`, `CreateHandleFromHeap`, and `AnnotateHandle` now feed typed handle records.
+- Final `bufN`/`texN`/`sampN` materialization happens at texture/buffer/sampler use sites.
+- Phase 13 hardening added context-aware assignment/PHI coercion so resource handles are less likely to leak into scalar paths.
 
 Work:
 
@@ -360,7 +392,7 @@ All must return typed handle records internally, not just strings. Final string 
 
 Gate:
 
-- Resource handle values do not appear in arithmetic or generic PHI paths.
+- Resource handle values do not appear in arithmetic or generic PHI paths. **Current:** improved but not complete; pointer-to-scalar casts and assignments remain the largest failure family.
 
 ---
 
@@ -370,6 +402,12 @@ Gate:
 **Target:** 650+ Metal passes.
 
 ### 14A: Texture Operations
+
+Status:
+
+- Started.
+- Component-aware extraction now prevents scalarized texture reads like `(...read(...).x).x`.
+- Invalid `.sample`/`.read`/`.write`/`.gather` call shapes are no longer the dominant failure family, but texture dimensionality, mips, array slices, MSAA, and compare/gather semantics are not complete.
 
 Work:
 
@@ -385,6 +423,12 @@ Gate:
 
 ### 14B: Buffer Operations
 
+Status:
+
+- Started.
+- Context-aware resource coercion now catches some pointer-like SSA aliases before scalar assignments and arithmetic.
+- Pointer-to-scalar assignment buckets dropped substantially, but `device char*` still leaks through indirect casts, vector casts, and buffer-address arithmetic.
+
 Work:
 
 - Raw buffer load/store.
@@ -398,6 +442,12 @@ Gate:
 - No invalid pointer dereference or scalar subscript errors from buffer operations.
 
 ### 14C: Math And Utility Intrinsics
+
+Status:
+
+- Started opportunistically during Phase 13C.
+- Unsupported `simd_broadcast_first` and `simd_lane_id` helper emissions were scalarized for compileability, which removed those compiler buckets.
+- Full wave/quad semantics remain future work; current scalar fallbacks are only compile-oriented placeholders.
 
 Work:
 
