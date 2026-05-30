@@ -108,6 +108,11 @@ static bool parseUnsignedLiteral(const std::string &text, uint32_t &value) {
     return true;
 }
 
+static bool parseEmittedValueName(const std::string &name, uint32_t &idx) {
+    if (name.size() < 2 || name[0] != 'v') return false;
+    return parseUnsignedLiteral(name.substr(1), idx);
+}
+
 static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
     std::vector<std::string> values;
     bool is_agg = startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
@@ -299,6 +304,7 @@ struct LowerContext {
     std::unordered_map<std::string, std::string> local_values;
     std::vector<std::string> diagnostics;
     std::unordered_map<uint32_t, std::string> function_decls;
+    std::set<std::string> predeclared_names;
     uint32_t next_binding = 0;
     uint32_t unsupported_intrinsics = 0;
     uint32_t unsupported_opcodes = 0;
@@ -365,18 +371,10 @@ static void emitFunctionPrologue(LowerContext &ctx) {
 
     if (ctx.shader.kind == DxilShaderKind::Compute) {
         os << "kernel void cs_main(\n";
-        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
-        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
-        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
-        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]],\n";
-        os << "  texture2d<float, access::read_write> tex0 [[texture(0)]],\n";
-        os << "  texture2d<float, access::read_write> tex1 [[texture(1)]],\n";
-        os << "  texture2d<float, access::read_write> tex2 [[texture(2)]],\n";
-        os << "  texture2d<float, access::read_write> tex3 [[texture(3)]],\n";
-        os << "  texture2d<float, access::read_write> tex4 [[texture(4)]],\n";
-        os << "  texture2d<float, access::read_write> tex5 [[texture(5)]],\n";
-        os << "  texture2d<float, access::read_write> tex6 [[texture(6)]],\n";
-        os << "  texture2d<float, access::read_write> tex7 [[texture(7)]],\n";
+        for (uint32_t i = 0; i < 31; i++)
+            os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
+        for (uint32_t i = 0; i < 8; i++)
+            os << "  texture2d<float, access::read_write> tex" << i << " [[texture(" << i << ")]],\n";
         os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
         os << "  sampler samp2 [[sampler(2)]],\n  sampler samp3 [[sampler(3)]],\n";
         os << "  uint3 dtid [[thread_position_in_grid]],\n";
@@ -386,18 +384,16 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
         os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
-        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
-        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
-        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
-        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]]\n) {\n";
+        for (uint32_t i = 0; i < 31; i++)
+            os << "  device char* buf" << i << " [[buffer(" << i << ")]]"
+               << (i + 1 == 31 ? "\n" : ",\n");
+        os << ") {\n";
         os << "  output_v out = {};\n";
     } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
         os << "fragment float4 ps_main(\n";
         os << "  input_v in [[stage_in]],\n";
-        os << "  device char* buf0 [[buffer(0)]],\n  device char* buf1 [[buffer(1)]],\n";
-        os << "  device char* buf2 [[buffer(2)]],\n  device char* buf3 [[buffer(3)]],\n";
-        os << "  device char* buf4 [[buffer(4)]],\n  device char* buf5 [[buffer(5)]],\n";
-        os << "  device char* buf6 [[buffer(6)]],\n  device char* buf7 [[buffer(7)]],\n";
+        for (uint32_t i = 0; i < 31; i++)
+            os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
         for (int i = 0; i < 32; i++)
             os << "  texture2d<float, access::sample> tex" << i << " [[texture(" << i << ")]],\n";
         os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
@@ -436,6 +432,72 @@ static std::string resolveValue(LowerContext &ctx, uint32_t idx) {
         }
     }
     return emitValue(idx);
+}
+
+static bool exprLooksResourceHandle(const std::string &value) {
+    return startsWith(value, "tex") || startsWith(value, "samp") || startsWith(value, "buf");
+}
+
+static bool exprLooksSideEffectOnly(const std::string &value) {
+    return value.find(".write(") != std::string::npos ||
+           value.find("threadgroup_barrier(") != std::string::npos;
+}
+
+static bool exprLooksVectorValue(const std::string &value) {
+    return startsWith(value, "float2(") || startsWith(value, "float3(") ||
+           startsWith(value, "float4(") || startsWith(value, "int2(") ||
+           startsWith(value, "int3(") || startsWith(value, "int4(") ||
+           startsWith(value, "uint2(") || startsWith(value, "uint3(") ||
+           startsWith(value, "uint4(") ||
+           value.find("float2(") != std::string::npos ||
+           value.find("float3(") != std::string::npos ||
+           value.find("float4(") != std::string::npos ||
+           value.find("int2(") != std::string::npos ||
+           value.find("int3(") != std::string::npos ||
+           value.find("int4(") != std::string::npos ||
+           value.find("uint2(") != std::string::npos ||
+           value.find("uint3(") != std::string::npos ||
+           value.find("uint4(") != std::string::npos ||
+           value.find("reinterpret_cast<device float4&>") != std::string::npos ||
+           value.find("reinterpret_cast<device uint4&>") != std::string::npos ||
+           value.find("reinterpret_cast<device int4&>") != std::string::npos ||
+           value.find(".read(") != std::string::npos ||
+           value.find(".sample(") != std::string::npos ||
+           value.find(".gather(") != std::string::npos;
+}
+
+static std::string coerceResolvedValue(const std::string &value, const MSLType &target) {
+    if (target.kind == MSLTypeKind::Bool) {
+        if (exprLooksResourceHandle(value) || exprLooksSideEffectOnly(value)) return "false";
+        return value;
+    }
+    if (exprLooksResourceHandle(value) &&
+        target.kind != MSLTypeKind::DeviceCharPtr &&
+        target.kind != MSLTypeKind::ThreadgroupCharPtr &&
+        target.kind != MSLTypeKind::Texture2D &&
+        target.kind != MSLTypeKind::RWTexture2D &&
+        target.kind != MSLTypeKind::Sampler) {
+        return defaultForType(target);
+    }
+    if (exprLooksSideEffectOnly(value))
+        return defaultForType(target);
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(value))
+        return "(" + value + ").x";
+    if (value == "inf" || value == "+inf")
+        return "INFINITY";
+    if (value == "-inf")
+        return "-INFINITY";
+    return value;
+}
+
+static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
+    std::string value = resolveValue(ctx, idx);
+    if (exprLooksResourceHandle(value) || exprLooksSideEffectOnly(value))
+        return "false";
+    if (idx < ctx.value_types.size() && DXILIRBuilder::isVectorType(ctx.value_types[idx]))
+        return "any(" + value + " != " + defaultForType(ctx.value_types[idx]) + ")";
+    return value;
 }
 
 static std::string resolveBindingName(const std::string &handle, const char *target_prefix) {
@@ -614,6 +676,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto samp = handleArg(1, "samp", "samp0");
         auto cx = ensureScalarIndex(valueArg(2, "0.0"));
         auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        if (ctx.shader.kind == DxilShaderKind::Compute)
+            return handle + ".read(uint2((uint)(" + cx + "), (uint)(" + cy + ")))";
         return handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + "))";
     }
     case DXOP_TextureGather: case 74: case 223: {
@@ -632,6 +696,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto cx = ensureScalarIndex(valueArg(2, "0.0"));
         auto cy = ensureScalarIndex(valueArg(3, "0.0"));
         auto cmp = valueArg(4, "0.0");
+        if (ctx.shader.kind == DxilShaderKind::Compute)
+            return "((" + handle + ".read(uint2((uint)(" + cx + "), (uint)(" + cy + "))).r) < (" + cmp + ") ? 1.0 : 0.0)";
         return "((" + handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + ")).r) < (" + cmp + ") ? 1.0 : 0.0)";
     }
     case 70: return "0";
@@ -857,6 +923,19 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto inferred = inferTypeFromExpr(expr);
             if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
         }
+        if (ctx.predeclared_names.find(name) != ctx.predeclared_names.end()) {
+            std::string assigned = coerceResolvedValue(expr, type);
+            uint32_t source_id = 0;
+            if (assigned == expr && parseEmittedValueName(expr, source_id) &&
+                source_id < ctx.value_types.size() &&
+                DXILIRBuilder::isVectorType(ctx.value_types[source_id]) &&
+                (DXILIRBuilder::isFloatType(type) || DXILIRBuilder::isIntType(type)) &&
+                !DXILIRBuilder::isVectorType(type)) {
+                assigned = "(" + expr + ").x";
+            }
+            os << "  " << name << " = " << assigned << ";\n";
+            return;
+        }
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << expr << ";\n";
@@ -946,6 +1025,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return castExpr(value, target);
         if (DXILIRBuilder::isFloatType(source) && DXILIRBuilder::isIntType(target))
             return castExpr(value, target);
+        if (DXILIRBuilder::isVectorType(source) &&
+            (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+            !DXILIRBuilder::isVectorType(target))
+            return castExpr("(" + value + ").x", target);
         if (DXILIRBuilder::isVectorType(source) && DXILIRBuilder::isVectorType(target) &&
             source.kind != target.kind)
             return castExpr(value, target);
@@ -1047,7 +1130,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             ensureValueTable(value_counter);
             MSLType result_type = getTypeForInst(inst.type_id);
             if (inst.type_id != 0) {
-                os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
+                    os << "  " << result << " = " << defaultForType(result_type) << "; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                else
+                    os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
             } else {
                 os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
             }
@@ -1394,10 +1480,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto lhs = coerceOperand(inst.operands[1], cmp_type);
             auto rhs = coerceOperand(inst.operands[2], cmp_type);
             const char *cmp = "==";
-            if (pred == 0) { os << "  bool " << result << " = false;\n"; }
-            else if (pred >= 15) { os << "  bool " << result << " = true;\n"; }
-            else if (pred == 7) { os << "  bool " << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << "));\n"; }
-            else if (pred == 14) { os << "  bool " << result << " = (isnan(" << lhs << ") || isnan(" << rhs << "));\n"; }
+            const char *decl = ctx.predeclared_names.find(result) != ctx.predeclared_names.end() ? "" : "bool ";
+            if (pred == 0) { os << "  " << decl << result << " = false;\n"; }
+            else if (pred >= 15) { os << "  " << decl << result << " = true;\n"; }
+            else if (pred == 7) { os << "  " << decl << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << "));\n"; }
+            else if (pred == 14) { os << "  " << decl << result << " = (isnan(" << lhs << ") || isnan(" << rhs << "));\n"; }
             else {
                 if (pred == 1 || pred == 8) cmp = "==";
                 else if (pred == 2 || pred == 9) cmp = ">";
@@ -1405,7 +1492,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else if (pred == 4 || pred == 11) cmp = "<";
                 else if (pred == 5 || pred == 12) cmp = "<=";
                 else if (pred == 6 || pred == 13) cmp = "!=";
-                os << "  bool " << result << " = (" << lhs << " " << cmp << " " << rhs << ");\n";
+                os << "  " << decl << result << " = (" << lhs << " " << cmp << " " << rhs << ");\n";
             }
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = {MSLTypeKind::Bool, 0, {}};
@@ -1535,7 +1622,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
+    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
                     false, false, false, false};
 
     const LLVMFunction *entry_fn = nullptr;
@@ -1646,13 +1733,99 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     struct PhiIncoming { uint32_t value_id; uint32_t pred_block_idx; };
     struct PhiInfo { uint32_t result_slot; uint32_t type_id; std::vector<PhiIncoming> incoming; };
     std::map<uint32_t, std::vector<PhiInfo>> phi_info_per_block;
+    std::map<uint32_t, uint32_t> value_def_block;
+    std::set<uint32_t> cross_block_values;
+    std::set<uint32_t> phi_result_values;
+
+    auto resultTypeForPredecl = [&](const LLVMInstruction &inst) -> MSLType {
+        switch (inst.opcode) {
+        case LLVMInstruction::FCmp:
+        case LLVMInstruction::ICmp:
+            return {MSLTypeKind::Bool, 0, {}};
+        case LLVMInstruction::Alloca:
+        case LLVMInstruction::GetElementPtr:
+        case LLVMInstruction::IntToPtr:
+            return {MSLTypeKind::DeviceCharPtr, 0, {}};
+        case LLVMInstruction::Call: {
+            if (!inst.operands.empty()) {
+                uint32_t callee = inst.operands[0];
+                std::string callee_name;
+                auto decl_it = ctx.function_decls.find(callee);
+                if (decl_it != ctx.function_decls.end()) callee_name = decl_it->second;
+                else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
+                uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
+                switch (intrinsic_id) {
+                case DXOP_CBufferLoad:
+                case DXOP_CBufferLoadLegacy:
+                case DXOP_BufferLoad:
+                case DXOP_TextureLoad:
+                case DXOP_TextureSample:
+                case DXOP_TextureSampleBias:
+                case DXOP_TextureSampleLevel:
+                case DXOP_TextureSampleGrad:
+                case DXOP_TextureGather:
+                case 74:
+                case 223:
+                    return {MSLTypeKind::Float4, 0, {}};
+                case DXOP_RawBufferLoad:
+                case 303:
+                case 1025:
+                case DXOP_GetDimensions:
+                    return {MSLTypeKind::UInt4, 0, {}};
+                case DXOP_TextureSampleCmp:
+                case DXOP_TextureSampleCmpLevelZero:
+                case 224:
+                case DXOP_CalcLOD:
+                    return {MSLTypeKind::Float, 0, {}};
+                case DXOP_CheckAccessFullyMapped:
+                    return {MSLTypeKind::Bool, 0, {}};
+                default:
+                    break;
+                }
+            }
+            break;
+        }
+        case LLVMInstruction::ExtractValue:
+        case LLVMInstruction::ExtractElement: {
+            MSLType source_type = inst.operands.empty() || inst.operands[0] >= ctx.value_types.size()
+                ? MSLType{}
+                : ctx.value_types[inst.operands[0]];
+            if (DXILIRBuilder::isVectorType(source_type))
+                return DXILIRBuilder::scalarType(source_type);
+            break;
+        }
+        case LLVMInstruction::ShuffleVector:
+        case LLVMInstruction::InsertElement:
+        case LLVMInstruction::InsertValue: {
+            if (!inst.operands.empty() && inst.operands[0] < ctx.value_types.size() &&
+                DXILIRBuilder::isVectorType(ctx.value_types[inst.operands[0]]))
+                return ctx.value_types[inst.operands[0]];
+            break;
+        }
+        default:
+            break;
+        }
+        MSLType type = DXILIRBuilder::resolveType(inst.type_id, module);
+        if (type.kind == MSLTypeKind::Void || type.kind == MSLTypeKind::Unknown ||
+            type.kind == MSLTypeKind::Struct)
+            type = {MSLTypeKind::Int, 0, {}};
+        return type;
+    };
 
     {
         uint32_t vc = fn.instruction_start_value;
         for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
             for (auto &inst : fn.blocks[bi].instructions) {
+                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
+                                      inst.opcode != LLVMInstruction::Br &&
+                                      inst.opcode != LLVMInstruction::Switch &&
+                                      inst.opcode != LLVMInstruction::Unreachable &&
+                                      inst.opcode != LLVMInstruction::Store;
+                if (produces_value)
+                    value_def_block[vc] = (uint32_t)bi;
                 if (inst.opcode == LLVMInstruction::PHI) {
                     PhiInfo pi; pi.result_slot = vc; pi.type_id = inst.type_id;
+                    phi_result_values.insert(vc);
                     for (size_t j = 0; j + 1 < inst.operands.size(); j += 2) {
                         PhiIncoming inc; inc.value_id = inst.operands[j];
                         uint32_t pbv = inst.operands[j + 1];
@@ -1672,12 +1845,24 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         }
     }
 
-    for (auto &[bi, phis] : phi_info_per_block) {
-        for (auto &pi : phis) {
-            std::string name = emitValue(pi.result_slot);
-            MSLType phi_type = DXILIRBuilder::resolveType(pi.type_id, module);
-            std::string dv = defaultForType(phi_type);
-            os << "  " << typedDecl(name, phi_type) << " = " << dv << "; // phi pre-decl\n";
+    for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
+        for (auto &inst : fn.blocks[bi].instructions) {
+            for (size_t oi = 0; oi < inst.operands.size(); oi++) {
+                bool value_operand = true;
+                if (inst.opcode == LLVMInstruction::PHI)
+                    value_operand = (oi % 2) == 0;
+                else if (inst.opcode == LLVMInstruction::Call)
+                    value_operand = oi >= 2;
+                else if (inst.opcode == LLVMInstruction::Br)
+                    value_operand = inst.operands.size() >= 3 && oi == 0;
+                else if (inst.opcode == LLVMInstruction::Switch)
+                    value_operand = oi == 0;
+                if (!value_operand) continue;
+
+                auto def_it = value_def_block.find(inst.operands[oi]);
+                if (def_it != value_def_block.end() && def_it->second != (uint32_t)bi)
+                    cross_block_values.insert(inst.operands[oi]);
+            }
         }
     }
 
@@ -1685,6 +1870,36 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     ctx.instruction_start_value = fn.instruction_start_value;
 
     bool needs_dispatch = fn.blocks.size() > 1;
+    if (needs_dispatch) {
+        uint32_t vc = fn.instruction_start_value;
+        for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
+            for (auto &inst : fn.blocks[bi].instructions) {
+                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
+                                      inst.opcode != LLVMInstruction::Br &&
+                                      inst.opcode != LLVMInstruction::Switch &&
+                                      inst.opcode != LLVMInstruction::Unreachable &&
+                                      inst.opcode != LLVMInstruction::Store;
+                MSLType static_type;
+                if (produces_value) {
+                    if (ctx.value_types.size() <= vc) ctx.value_types.resize(vc + 1);
+                    static_type = resultTypeForPredecl(inst);
+                    ctx.value_types[vc] = static_type;
+                }
+                if (produces_value &&
+                    (cross_block_values.find(vc) != cross_block_values.end() ||
+                     phi_result_values.find(vc) != phi_result_values.end())) {
+                    MSLType pre_type = static_type;
+                    std::string name = emitValue(vc);
+                    if (ctx.value_table.size() <= vc) ctx.value_table.resize(vc + 1);
+                    ctx.value_table[vc] = name;
+                    ctx.predeclared_names.insert(name);
+                    os << "  " << typedDecl(name, pre_type) << " = "
+                       << defaultForType(pre_type) << "; // dispatch pre-decl\n";
+                }
+                if (produces_value) vc++;
+            }
+        }
+    }
     if (needs_dispatch) {
         os << "  int _block_state = 0;\n  for (;;) {\n    switch (_block_state) {\n";
     }
@@ -1722,7 +1937,17 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                         for (auto &pi : phi_it->second) {
                             for (auto &inc : pi.incoming) {
                                 if (inc.pred_block_idx == (uint32_t)bi) {
-                                    os << "    " << emitValue(pi.result_slot) << " = " << resolveValue(ctx, inc.value_id) << ";\n";
+                                    MSLType phi_type = pi.result_slot < ctx.value_types.size()
+                                        ? ctx.value_types[pi.result_slot]
+                                        : DXILIRBuilder::resolveType(pi.type_id, module);
+                                    std::string incoming = resolveValue(ctx, inc.value_id);
+                                    if (inc.value_id < ctx.value_types.size() &&
+                                        DXILIRBuilder::isVectorType(ctx.value_types[inc.value_id]) &&
+                                        (DXILIRBuilder::isFloatType(phi_type) || DXILIRBuilder::isIntType(phi_type)) &&
+                                        !DXILIRBuilder::isVectorType(phi_type))
+                                        incoming = "(" + incoming + ").x";
+                                    os << "    " << emitValue(pi.result_slot) << " = "
+                                       << coerceResolvedValue(incoming, phi_type) << ";\n";
                                 }
                             }
                         }
@@ -1743,11 +1968,11 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                 if (inst.operands.size() == 1 && needs_dispatch) {
                     os << "    _block_state = " << inst.operands[0] << "; continue;\n";
                 } else if (inst.operands.size() >= 3 && needs_dispatch) {
-                    os << "    if (" << resolveValue(ctx, inst.operands[0]) << ") { _block_state = " << inst.operands[1] << "; continue; } else { _block_state = " << inst.operands[2] << "; continue; }\n";
+                    os << "    if (" << resolveCondition(ctx, inst.operands[0]) << ") { _block_state = " << inst.operands[1] << "; continue; } else { _block_state = " << inst.operands[2] << "; continue; }\n";
                 }
             } else if (inst.opcode == LLVMInstruction::Switch) {
                 if (inst.operands.size() >= 2) {
-                    os << "    { int _sv = (int)(" << resolveValue(ctx, inst.operands[0]) << ");\n";
+                    os << "    { int _sv = (int)(" << coerceResolvedValue(resolveValue(ctx, inst.operands[0]), {MSLTypeKind::Int, 0, {}}) << ");\n";
                     for (size_t j = 2; j + 1 < inst.operands.size(); j += 2)
                         os << "    if (_sv == " << inst.operands[j] << ") { _block_state = " << inst.operands[j+1] << "; continue; }\n";
                     os << "    _block_state = " << inst.operands[1] << "; continue; }\n";
