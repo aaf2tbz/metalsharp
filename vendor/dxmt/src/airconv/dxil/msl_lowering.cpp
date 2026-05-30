@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <cctype>
 #include <algorithm>
 #include <map>
 #include <set>
@@ -549,6 +550,25 @@ static bool exprLooksResourceHandle(const std::string &value) {
     return startsWith(value, "tex") || startsWith(value, "samp") || startsWith(value, "buf");
 }
 
+static bool typeLooksResourceHandle(const MSLType &type) {
+    switch (type.kind) {
+    case MSLTypeKind::DeviceCharPtr:
+    case MSLTypeKind::ThreadgroupCharPtr:
+    case MSLTypeKind::Texture2D:
+    case MSLTypeKind::Texture2DArray:
+    case MSLTypeKind::Texture3D:
+    case MSLTypeKind::TextureCube:
+    case MSLTypeKind::Texture2DMS:
+    case MSLTypeKind::RWTexture2D:
+    case MSLTypeKind::RWTexture2DArray:
+    case MSLTypeKind::RWTexture3D:
+    case MSLTypeKind::Sampler:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool exprLooksSideEffectOnly(const std::string &value) {
     return value.find(".write(") != std::string::npos ||
            value.find("threadgroup_barrier(") != std::string::npos;
@@ -577,6 +597,36 @@ static bool exprLooksVectorValue(const std::string &value) {
            value.find(".gather(") != std::string::npos;
 }
 
+static bool exprContainsRawResourceHandle(const std::string &value) {
+    if (value.find(".read(") != std::string::npos ||
+        value.find(".sample(") != std::string::npos ||
+        value.find(".gather(") != std::string::npos ||
+        value.find(".write(") != std::string::npos ||
+        value.find(".get_width(") != std::string::npos ||
+        value.find(".get_height(") != std::string::npos)
+        return false;
+
+    for (const char *prefix : {"tex", "samp", "buf"}) {
+        size_t pos = value.find(prefix);
+        while (pos != std::string::npos) {
+            bool start_ok = pos == 0 ||
+                (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_' && value[pos - 1] != '.');
+            size_t end = pos + std::strlen(prefix);
+            bool has_digits = false;
+            while (end < value.size() && std::isdigit((unsigned char)value[end])) {
+                has_digits = true;
+                end++;
+            }
+            bool end_ok = end >= value.size() ||
+                (!std::isalnum((unsigned char)value[end]) && value[end] != '_' && value[end] != '.');
+            if (start_ok && has_digits && end_ok)
+                return true;
+            pos = value.find(prefix, pos + 1);
+        }
+    }
+    return false;
+}
+
 static std::string coerceResolvedValue(const std::string &value, const MSLType &target) {
     std::string resolved = normalizeAggregateExpressions(value, target);
     if (target.kind == MSLTypeKind::Bool) {
@@ -601,6 +651,9 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         return defaultForType(target);
     }
     if (exprLooksSideEffectOnly(resolved))
+        return defaultForType(target);
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        exprContainsRawResourceHandle(resolved))
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved))
@@ -634,7 +687,8 @@ static std::string componentAccess(const std::string &value, uint32_t component,
 
 static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
     std::string value = resolveValue(ctx, idx);
-    if (exprLooksResourceHandle(value) || exprLooksSideEffectOnly(value))
+    if (exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
+        exprLooksSideEffectOnly(value))
         return "false";
     if (idx < ctx.value_types.size() && DXILIRBuilder::isVectorType(ctx.value_types[idx]))
         return "any(" + value + " != " + defaultForType(ctx.value_types[idx]) + ")";
@@ -820,6 +874,20 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         return fallback;
     };
 
+    auto numericArg = [&](size_t arg, const char *fallback) -> std::string {
+        if (arg >= args.size()) return fallback;
+        uint32_t idx = args[arg];
+        std::string value = valueArg(arg, fallback);
+        MSLType type = valueTypeOrUnknown(ctx, idx);
+        if (exprLooksResourceHandle(value) || typeLooksResourceHandle(type) ||
+            value.find("char*") != std::string::npos ||
+            value.find("char *") != std::string::npos ||
+            value.find("device ") != std::string::npos ||
+            value.find("threadgroup ") != std::string::npos)
+            return fallback;
+        return value;
+    };
+
     auto handleArg = [&](size_t arg, const char *prefix, const char *fallback) -> std::string {
         if (arg >= args.size()) return fallback;
         uint32_t idx = args[arg];
@@ -966,8 +1034,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto cx = ensureScalarIndex(valueArg(1, "0"));
         auto cy = ensureScalarIndex(valueArg(2, "0"));
         size_t vb = intrinsic_id == 225 ? 5 : 4;
-        return handle + ".write(float4(" + valueArg(vb, "0.0") + ", " + valueArg(vb+1, "0.0") +
-               ", " + valueArg(vb+2, "0.0") + ", " + valueArg(vb+3, "0.0") +
+        return handle + ".write(float4(" + numericArg(vb, "0.0") + ", " + numericArg(vb+1, "0.0") +
+               ", " + numericArg(vb+2, "0.0") + ", " + numericArg(vb+3, "0.0") +
                "), uint2(" + cx + ", " + cy + "))";
     }
     case DXOP_TextureSample: case DXOP_TextureSampleBias:
@@ -1034,7 +1102,10 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_Unary: {
         if (args.size() < 2) return "0";
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "unary");
-        auto x = valueArg(1, "0.0");
+        bool int_op = op == DXILOP_Bfrev || op == DXILOP_Countbits ||
+                      op == DXILOP_FirstbitLo || op == DXILOP_FirstbitHi ||
+                      op == DXILOP_FirstbitSHi;
+        auto x = numericArg(1, int_op ? "0" : "0.0");
         switch (op) {
         case DXILOP_FAbs: return "abs(" + x + ")";
         case DXILOP_Saturate: return "clamp(" + x + ", 0.0, 1.0)";
@@ -1067,7 +1138,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_Binary: {
         if (args.size() < 3) return "0";
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "binary");
-        auto a = valueArg(1, "0"), b = valueArg(2, "0");
+        auto a = numericArg(1, "0"), b = numericArg(2, "0");
         switch (op) {
         case DXILOP_FMax: case DXILOP_IMax: return "max(" + a + ", " + b + ")";
         case DXILOP_FMin: case DXILOP_IMin: return "min(" + a + ", " + b + ")";
@@ -1084,7 +1155,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_Tertiary: {
         if (args.size() < 4) return "0";
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "tertiary");
-        auto a = valueArg(1, "0"), b = valueArg(2, "0"), c = valueArg(3, "0");
+        auto a = numericArg(1, "0"), b = numericArg(2, "0"), c = numericArg(3, "0");
         switch (op) {
         case DXILOP_FMad: case DXILOP_Fma: return "fma(" + a + ", " + b + ", " + c + ")";
         case DXILOP_IMad: case DXILOP_UMad: return "((" + a + ") * (" + b + ") + (" + c + "))";
@@ -1096,15 +1167,15 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     }
     case DXOP_Dot2: {
         if (args.size() < 4) return "0.0";
-        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(2,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(3,"0.0") + "))";
+        return "((" + numericArg(0,"0.0") + ")*(" + numericArg(2,"0.0") + ") + (" + numericArg(1,"0.0") + ")*(" + numericArg(3,"0.0") + "))";
     }
     case DXOP_Dot3: {
         if (args.size() < 6) return "0.0";
-        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(3,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(4,"0.0") + ") + (" + valueArg(2,"0.0") + ")*(" + valueArg(5,"0.0") + "))";
+        return "((" + numericArg(0,"0.0") + ")*(" + numericArg(3,"0.0") + ") + (" + numericArg(1,"0.0") + ")*(" + numericArg(4,"0.0") + ") + (" + numericArg(2,"0.0") + ")*(" + numericArg(5,"0.0") + "))";
     }
     case DXOP_Dot4: {
         if (args.size() < 8) return "0.0";
-        return "((" + valueArg(0,"0.0") + ")*(" + valueArg(4,"0.0") + ") + (" + valueArg(1,"0.0") + ")*(" + valueArg(5,"0.0") + ") + (" + valueArg(2,"0.0") + ")*(" + valueArg(6,"0.0") + ") + (" + valueArg(3,"0.0") + ")*(" + valueArg(7,"0.0") + "))";
+        return "((" + numericArg(0,"0.0") + ")*(" + numericArg(4,"0.0") + ") + (" + numericArg(1,"0.0") + ")*(" + numericArg(5,"0.0") + ") + (" + numericArg(2,"0.0") + ")*(" + numericArg(6,"0.0") + ") + (" + numericArg(3,"0.0") + ")*(" + numericArg(7,"0.0") + "))";
     }
     case DXOP_LoadInput: {
         if (args.size() < 3) return "0.0";
@@ -1118,21 +1189,21 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "";
         uint32_t output_id = literalArg(0, 0, "output");
         uint32_t comp = literalArg(2, 0, "comp");
-        auto val = valueArg(3, "float4(0)");
+        auto val = numericArg(3, "0.0");
         if (ctx.shader.kind == DxilShaderKind::Vertex) return varyingField("out", output_id) + componentSuffix(comp) + " = " + val;
         if (ctx.shader.kind == DxilShaderKind::Pixel) return std::string("result") + componentSuffix(comp) + " = " + val;
         return "";
     }
-    case 131: return "static_cast<float>(half(" + valueArg(1, "0") + "))";
-    case 132: return "static_cast<uint>(half(" + valueArg(1, "0.0") + "))";
-    case 118: return "simd_broadcast_first(" + valueArg(1, "0") + ")";
-    case 117: return "simd_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    case 131: return "static_cast<float>(half(" + numericArg(1, "0") + "))";
+    case 132: return "static_cast<uint>(half(" + numericArg(1, "0.0") + "))";
+    case 118: return "simd_broadcast_first(" + numericArg(1, "0") + ")";
+    case 117: return "simd_broadcast(" + numericArg(1, "0") + ", (uint)(" + numericArg(2, "0") + "))";
     case 110: return "simd_is_first()";
     case 111: return "simd_lane_id()";
     case 112: return "simd_lane_count()";
-    case 113: return "simd_any(" + valueArg(1, "0") + ") ? 1 : 0";
-    case 114: return "simd_all(" + valueArg(1, "0") + ") ? 1 : 0";
-    case 122: return "quad_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    case 113: return "simd_any(" + numericArg(1, "0") + ") ? 1 : 0";
+    case 114: return "simd_all(" + numericArg(1, "0") + ") ? 1 : 0";
+    case 122: return "quad_broadcast(" + numericArg(1, "0") + ", (uint)(" + numericArg(2, "0") + "))";
     default:
         ctx.unsupported_intrinsics++;
         break;
@@ -1183,6 +1254,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto inferTypeFromExpr = [](const std::string &expr) -> MSLType {
         if (startsWith(expr, "buf"))
             return {MSLTypeKind::DeviceCharPtr, 0, {}};
+        if (startsWith(expr, "tex"))
+            return {MSLTypeKind::RWTexture2D, 0, {}};
+        if (startsWith(expr, "samp"))
+            return {MSLTypeKind::Sampler, 0, {}};
         if (expr.find("reinterpret_cast<device float4&>") != std::string::npos)
             return {MSLTypeKind::Float4, 0, {}};
         if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos)
@@ -1223,6 +1298,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             type.kind == MSLTypeKind::Struct) {
             auto inferred = inferTypeFromExpr(expr);
             if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
+            else if (exprContainsRawResourceHandle(expr)) type = {MSLTypeKind::Int, 0, {}};
         }
         if (ctx.predeclared_names.find(name) != ctx.predeclared_names.end()) {
             MSLType declared_type = type;
@@ -1312,7 +1388,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto coerceOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
         std::string value = getValue(idx);
         MSLType source = operandType(idx);
-        if ((startsWith(value, "tex") || startsWith(value, "samp") || startsWith(value, "buf")) &&
+        if ((exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
+             typeLooksResourceHandle(source)) &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
             return defaultForType(target);
         if (!isUsableType(target) || target.kind == source.kind)
@@ -1344,8 +1421,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto chooseBinaryType = [&](const MSLType &declared, const MSLType &lhs,
                                 const MSLType &rhs, MSLTypeKind pointer_scalar) -> MSLType {
         MSLType result_type = demotePointerType(declared, pointer_scalar);
-        MSLType op0 = demotePointerType(lhs, pointer_scalar);
-        MSLType op1 = demotePointerType(rhs, pointer_scalar);
+        if (typeLooksResourceHandle(result_type))
+            result_type = {pointer_scalar, 0, {}};
+        MSLType op0 = typeLooksResourceHandle(lhs) ? MSLType{pointer_scalar, 0, {}}
+                                                   : demotePointerType(lhs, pointer_scalar);
+        MSLType op1 = typeLooksResourceHandle(rhs) ? MSLType{pointer_scalar, 0, {}}
+                                                   : demotePointerType(rhs, pointer_scalar);
 
         if (DXILIRBuilder::isVectorType(op0)) result_type = op0;
         else if (DXILIRBuilder::isVectorType(op1)) result_type = op1;
@@ -1872,9 +1953,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 result_type = {MSLTypeKind::UInt, 0, {}};
             std::string type_name = emitTypeName(result_type);
             std::string expr = defaultForType(result_type);
-            if (isPointerType(ptr_type))
+            if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
+                exprContainsRawResourceHandle(ptr)) {
+                expr = defaultForType(result_type);
+            } else if (isPointerType(ptr_type)) {
                 expr = "*((" + std::string(pointerAddressSpace(inst.operands[0])) + " " +
                        type_name + "*)(" + ptr + "))";
+            }
             emitTypedLine(result_type, result, expr);
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
@@ -1889,7 +1974,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto val = getValue(inst.operands[1]);
             auto ptr_type = valueType(inst.operands[0]);
             auto val_type = valueType(inst.operands[1]);
-            if (isPointerType(ptr_type)) {
+            if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
+                exprContainsRawResourceHandle(ptr)) {
+                os << "  // skipped store through resource handle " << ptr << "\n";
+            } else if (isPointerType(ptr_type)) {
                 std::string type_name = emitTypeName(val_type);
                 if (type_name.empty() || type_name == "auto" || type_name == "void") type_name = "uint";
                 os << "  *((" << pointerAddressSpace(inst.operands[0]) << " " << type_name
@@ -1911,6 +1999,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         }
         auto base = getValue(inst.operands[0]);
         std::string gep = base;
+        if (startsWith(base, "tex") || startsWith(base, "samp") ||
+            exprContainsRawResourceHandle(base)) {
+            ctx.value_table[value_counter] = "0";
+            ctx.value_types[value_counter] = {MSLTypeKind::DeviceCharPtr, 0, {}};
+            value_counter++;
+            break;
+        }
         for (size_t i = 1; i < inst.operands.size(); i++) {
             auto idx = getValue(inst.operands[i]);
             if (idx != "0" && idx != "0.0" && idx != "0.0f")
