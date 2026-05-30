@@ -417,9 +417,11 @@ static void emitFunctionPrologue(LowerContext &ctx) {
 static std::string resolveValue(LowerContext &ctx, uint32_t idx) {
     if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
         const auto &v = ctx.value_table[idx];
-        if (v.find('.') != std::string::npos && !startsWith(v, "dx."))
+        if (startsWith(v, "dx.")) {
+            // function name, not a resolvable value
+        } else if (v.find('.') != std::string::npos) {
             return v;
-        if (startsWith(v, "agg(")) {
+        } else if (startsWith(v, "agg(")) {
             auto parts = parseAggregateLiteral(v);
             std::string args;
             for (size_t p = 0; p < parts.size(); p++) {
@@ -427,8 +429,9 @@ static std::string resolveValue(LowerContext &ctx, uint32_t idx) {
                 args += parts[p];
             }
             return "int" + std::to_string(parts.size()) + "(" + args + ")";
+        } else {
+            return v;
         }
-        return v;
     }
     for (auto &c : ctx.mod.constants) {
         if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
@@ -783,15 +786,18 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto getValue = [&](uint32_t idx) -> std::string {
         if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
             const auto &v = ctx.value_table[idx];
-            if (v.find('.') != std::string::npos && !startsWith(v, "dx.")) return v;
-            if (startsWith(v, "agg(")) {
+            if (startsWith(v, "dx.")) {
+                // function name, not a value — fall through to constants/emitValue
+            } else if (v.find('.') != std::string::npos) {
+                return v;
+            } else if (startsWith(v, "agg(")) {
                 auto parts = parseAggregateLiteral(v);
-                uint32_t tid = idx < ctx.value_types.size() ? 0 : 0;
                 std::string args;
                 for (size_t p = 0; p < parts.size(); p++) { if (p) args += ","; args += parts[p]; }
                 return "int" + std::to_string(parts.size()) + "(" + args + ")";
+            } else {
+                return v;
             }
-            return v;
         }
         for (auto &c : ctx.mod.constants)
             if (c.id == idx && !c.constant_data.empty()) return c.constant_data;
@@ -813,12 +819,63 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         return {MSLTypeKind::Unknown, 0, {}};
     };
 
-    auto emitTypedLine = [&](const MSLType &type, const std::string &name, const std::string &expr) {
+    auto inferTypeFromExpr = [](const std::string &expr) -> MSLType {
+        if (expr.find("reinterpret_cast<device float4&>") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos)
+            return {MSLTypeKind::UInt4, 0, {}};
+        if (expr.find("reinterpret_cast<device int4&>") != std::string::npos)
+            return {MSLTypeKind::Int4, 0, {}};
+        if (expr.find("reinterpret_cast<device float&>") != std::string::npos)
+            return {MSLTypeKind::Float, 0, {}};
+        if (expr.find("reinterpret_cast<device uint&>") != std::string::npos)
+            return {MSLTypeKind::UInt, 0, {}};
+        if (expr.find(".read(") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        if (expr.find(".sample(") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        if (expr.find(".gather(") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        if (expr.find("float4(") == 0 || expr.find("(float4(") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        if (expr.find("uint4(") == 0 || expr.find("(uint4(") != std::string::npos)
+            return {MSLTypeKind::UInt4, 0, {}};
+        if (expr.find("int4(") == 0 || expr.find("(int4(") != std::string::npos)
+            return {MSLTypeKind::Int4, 0, {}};
+        if (expr.find("float2(") == 0)
+            return {MSLTypeKind::Float2, 0, {}};
+        if (expr.find("float3(") == 0)
+            return {MSLTypeKind::Float3, 0, {}};
+        return {MSLTypeKind::Unknown, 0, {}};
+    };
+
+    auto bestType = [&](MSLType declared, const std::string &expr) -> MSLType {
+        auto inferred = inferTypeFromExpr(expr);
+        if (inferred.kind != MSLTypeKind::Unknown) return inferred;
+        return declared;
+    };
+
+    auto emitTypedLine = [&](MSLType &type, const std::string &name, const std::string &expr) {
+        if (type.kind == MSLTypeKind::Unknown || type.kind == MSLTypeKind::Void ||
+            type.kind == MSLTypeKind::Struct) {
+            auto inferred = inferTypeFromExpr(expr);
+            if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
+        }
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << expr << ";\n";
         else
             os << "  auto " << name << " = " << expr << ";\n";
+    };
+
+    auto promoteType = [](const MSLType &a, const MSLType &b) -> MSLType {
+        if (DXILIRBuilder::isVectorType(a)) return a;
+        if (DXILIRBuilder::isVectorType(b)) return b;
+        if (a.kind == MSLTypeKind::Float || a.kind == MSLTypeKind::Double ||
+            a.kind == MSLTypeKind::Half) return a;
+        if (b.kind == MSLTypeKind::Float || b.kind == MSLTypeKind::Double ||
+            b.kind == MSLTypeKind::Half) return b;
+        return a;
     };
 
     switch (inst.opcode) {
@@ -853,7 +910,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 fn_args.assign(call_args.begin() + 1, call_args.end());
 
             std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
-            MSLType result_type = getTypeForInst(inst.type_id);
+            MSLType result_type = bestType(getTypeForInst(inst.type_id), translated);
             ensureValueTable(value_counter);
             ctx.value_types[value_counter] = result_type;
 
@@ -919,8 +976,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         default: break;
         }
         MSLType result_type = getTypeForInst(inst.type_id);
-        if (result_type.kind == MSLTypeKind::Unknown && inst.operands.size() >= 1)
-            result_type = ctx.value_types.size() > inst.operands[0] ? ctx.value_types[inst.operands[0]] : result_type;
+        if (inst.operands.size() >= 1 && inst.operands[0] < ctx.value_types.size()) {
+            auto &op_type = ctx.value_types[inst.operands[0]];
+            if (op_type.kind != MSLTypeKind::Unknown && op_type.kind != MSLTypeKind::Struct)
+                result_type = op_type;
+        }
         std::string expr = getValue(inst.operands[0]) + " " + std::string(op_str) + " " + getValue(inst.operands[1]);
         emitTypedLine(result_type, result, expr);
         ctx.value_table[value_counter] = result;
@@ -971,6 +1031,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     case LLVMInstruction::InsertValue: {
         ensureValueTable(value_counter);
         MSLType result_type = getTypeForInst(inst.type_id);
+        if (inst.operands.size() >= 1 && inst.operands[0] < ctx.value_types.size()) {
+            auto &op_type = ctx.value_types[inst.operands[0]];
+            if (op_type.kind != MSLTypeKind::Unknown && op_type.kind != MSLTypeKind::Struct)
+                result_type = op_type;
+        }
         auto agg = inst.operands.size() >= 1 ? getValue(inst.operands[0]) : "float4(0)";
         emitTypedLine(result_type, result, agg);
         if (inst.operands.size() >= 3 && inst.operands[2] < 4) {
