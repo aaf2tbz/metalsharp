@@ -306,6 +306,7 @@ struct LowerContext {
     std::unordered_map<uint32_t, std::string> function_decls;
     std::set<std::string> predeclared_names;
     std::set<uint32_t> predeclared_allocas;
+    std::unordered_map<std::string, MSLType> predeclared_types;
     uint32_t next_binding = 0;
     uint32_t unsupported_intrinsics = 0;
     uint32_t unsupported_opcodes = 0;
@@ -480,6 +481,15 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         target.kind != MSLTypeKind::Sampler) {
         return defaultForType(target);
     }
+    if ((target.kind == MSLTypeKind::DeviceCharPtr ||
+         target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
+        !exprLooksResourceHandle(value) &&
+        value.find("char*") == std::string::npos &&
+        value.find("char *") == std::string::npos &&
+        value.find("thread") == std::string::npos &&
+        value.find("device") == std::string::npos) {
+        return defaultForType(target);
+    }
     if (exprLooksSideEffectOnly(value))
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
@@ -495,6 +505,21 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     if (value == "-inf")
         return "-INFINITY";
     return value;
+}
+
+static bool exprEndsWithComponent(const std::string &value) {
+    if (value.size() < 2) return false;
+    char c = value.back();
+    if (c != 'x' && c != 'y' && c != 'z' && c != 'w' &&
+        c != 'r' && c != 'g' && c != 'b' && c != 'a')
+        return false;
+    return value[value.size() - 2] == '.';
+}
+
+static std::string componentAccess(const std::string &value, uint32_t component, const MSLType &source_type) {
+    if (!DXILIRBuilder::isVectorType(source_type) || exprEndsWithComponent(value))
+        return value;
+    return "(" + value + ")" + componentSuffix(component);
 }
 
 static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
@@ -690,7 +715,16 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t idx = args[arg];
         auto it = ctx.buffer_origin.find(idx);
         if (it != ctx.buffer_origin.end()) return it->second;
-        return resolveBindingName(valueArg(arg, fallback), prefix);
+        std::string value = valueArg(arg, fallback);
+        MSLType type = valueTypeOrUnknown(ctx, idx);
+        if (startsWith(value, "buf") || startsWith(value, "tex") || startsWith(value, "samp") ||
+            type.kind == MSLTypeKind::DeviceCharPtr ||
+            type.kind == MSLTypeKind::ThreadgroupCharPtr ||
+            type.kind == MSLTypeKind::Texture2D ||
+            type.kind == MSLTypeKind::RWTexture2D ||
+            type.kind == MSLTypeKind::Sampler)
+            return resolveBindingName(value, prefix);
+        return fallback;
     };
 
     auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
@@ -1080,19 +1114,24 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto inferred = inferTypeFromExpr(expr);
             if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
         }
-        std::string assigned = coerceResolvedValue(expr, type);
         if (ctx.predeclared_names.find(name) != ctx.predeclared_names.end()) {
+            MSLType declared_type = type;
+            auto pre_it = ctx.predeclared_types.find(name);
+            if (pre_it != ctx.predeclared_types.end())
+                declared_type = pre_it->second;
+            std::string assigned = coerceResolvedValue(expr, declared_type);
             uint32_t source_id = 0;
             if (assigned == expr && parseEmittedValueName(expr, source_id) &&
                 source_id < ctx.value_types.size() &&
                 DXILIRBuilder::isVectorType(ctx.value_types[source_id]) &&
-                (DXILIRBuilder::isFloatType(type) || DXILIRBuilder::isIntType(type)) &&
-                !DXILIRBuilder::isVectorType(type)) {
+                (DXILIRBuilder::isFloatType(declared_type) || DXILIRBuilder::isIntType(declared_type)) &&
+                !DXILIRBuilder::isVectorType(declared_type)) {
                 assigned = "(" + expr + ").x";
             }
             os << "  " << name << " = " << assigned << ";\n";
             return;
         }
+        std::string assigned = coerceResolvedValue(expr, type);
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << assigned << ";\n";
@@ -1381,8 +1420,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     emitTypedLine(result_type, result, defaultForType(result_type));
                 }
             } else if (agg_is_vector && idx < 4) {
-                const char *suffix[] = {".x", ".y", ".z", ".w"};
-                std::string expr = "(" + agg + ")" + suffix[idx];
+                std::string expr = componentAccess(agg, idx, agg_type);
                 auto scalar = DXILIRBuilder::scalarType(agg_type);
                 emitTypedLine(scalar, result, expr);
                 result_type = scalar;
@@ -1391,8 +1429,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             } else {
                 auto inferred = inferTypeFromExpr(agg);
                 if (DXILIRBuilder::isVectorType(inferred) && idx < 4) {
-                    const char *suffix[] = {".x", ".y", ".z", ".w"};
-                    std::string expr = "(" + agg + ")" + suffix[idx];
+                    std::string expr = componentAccess(agg, idx, inferred);
                     auto scalar = DXILIRBuilder::scalarType(inferred);
                     emitTypedLine(scalar, result, expr);
                     result_type = scalar;
@@ -1434,14 +1471,17 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (inst.operands.size() >= 2) {
             auto vec = getValue(inst.operands[0]);
             auto idx = getValue(inst.operands[1]);
+            MSLType vec_type = inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : MSLType{};
             uint32_t idx_val = 0;
             std::string expr;
-            if (parseUnsignedLiteral(idx, idx_val) && idx_val < 4)
-                expr = vec + componentSuffix(idx_val);
+            if (!DXILIRBuilder::isVectorType(vec_type))
+                expr = vec;
+            else if (parseUnsignedLiteral(idx, idx_val) && idx_val < 4)
+                expr = componentAccess(vec, idx_val, vec_type);
             else
                 expr = vec + "[" + idx + "]";
             auto scalar = result_type.kind == MSLTypeKind::Unknown
-                ? DXILIRBuilder::scalarType(inst.operands[0] < ctx.value_types.size() ? ctx.value_types[inst.operands[0]] : result_type)
+                ? DXILIRBuilder::scalarType(vec_type)
                 : result_type;
             emitTypedLine(scalar, result, expr);
             ctx.value_table[value_counter] = result;
@@ -1799,7 +1839,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
+    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
                     false, false, false, false};
 
     const LLVMFunction *entry_fn = nullptr;
@@ -2142,6 +2182,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
             ctx.value_table[value_id] = name;
         ctx.value_types[value_id] = pre_type;
         ctx.predeclared_names.insert(name);
+        ctx.predeclared_types[name] = pre_type;
         os << "  " << typedDecl(name, pre_type) << " = "
            << defaultForType(pre_type) << "; // unresolved value pre-decl\n";
     }
@@ -2169,6 +2210,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     if (ctx.value_table.size() <= vc) ctx.value_table.resize(vc + 1);
                     ctx.value_table[vc] = name;
                     ctx.predeclared_names.insert(name);
+                    ctx.predeclared_types[name] = pre_type;
                     os << "  " << typedDecl(name, pre_type) << " = "
                        << defaultForType(pre_type) << "; // dispatch pre-decl\n";
                 }
