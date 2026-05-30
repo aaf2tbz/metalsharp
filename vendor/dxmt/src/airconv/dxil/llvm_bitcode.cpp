@@ -1,4 +1,5 @@
 #include "llvm_bitcode.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -364,6 +365,24 @@ static bool isPrintableString(const std::string &text) {
       return false;
   }
   return true;
+}
+
+static std::string formatFloatConstant(double value, bool suffix_f) {
+  if (std::isnan(value))
+    return "NAN";
+  if (std::isinf(value))
+    return std::signbit(value) ? "-INFINITY" : "INFINITY";
+
+  char buf[64];
+  snprintf(buf, sizeof(buf), suffix_f ? "%.9g" : "%.17g", value);
+  std::string text = buf;
+  if (text.find('.') == std::string::npos &&
+      text.find('e') == std::string::npos &&
+      text.find('E') == std::string::npos)
+    text += ".0";
+  if (suffix_f)
+    text += 'f';
+  return text;
 }
 
 struct SubBlockHeader {
@@ -771,18 +790,13 @@ static bool parseConstantsBlock(ParseContext &ctx, std::vector<LLVMValue> &targe
           float f;
           uint32_t raw = (uint32_t)ops[1];
           memcpy(&f, &raw, sizeof(f));
-          char buf[64];
-          snprintf(buf, sizeof(buf), "%.9gf", (double)f);
-          { std::string _s = buf; _s.pop_back(); if (_s.find('.') == std::string::npos) _s += ".0"; _s += 'f'; strncpy(buf, _s.c_str(), sizeof(buf)); buf[sizeof(buf)-1] = 0; }
-          v.constant_data = buf;
+          v.constant_data = formatFloatConstant((double)f, true);
         } else if (cur_type < ctx.module.types.size() &&
                    ctx.module.types[cur_type].kind == LLVMType::Double) {
           double d;
           uint64_t raw = ops[1];
           memcpy(&d, &raw, sizeof(d));
-          char buf[64];
-          snprintf(buf, sizeof(buf), "%.17g", d);
-          v.constant_data = buf;
+          v.constant_data = formatFloatConstant(d, false);
         }
       } else if (rec_code == kConstantsCode_Null) {
         v.constant_data = "0";
