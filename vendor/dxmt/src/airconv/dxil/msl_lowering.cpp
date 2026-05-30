@@ -2214,7 +2214,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else
                     os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
             } else {
-                os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
+                    os << "  " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                else
+                    os << "  int " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                result_type = {MSLTypeKind::Int, 0, {}};
             }
             for (size_t i = 0; i < call_args.size(); i++) {
                 if (i) os << ", ";
