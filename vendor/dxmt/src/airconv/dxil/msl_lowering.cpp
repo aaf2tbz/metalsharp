@@ -405,6 +405,20 @@ static std::string typedDecl(const std::string &name, const MSLType &t) {
     return emitTypeName(t) + " " + name;
 }
 
+struct DescriptorRangePlan {
+    enum class Kind { SRV, UAV, CBV, Sampler } kind = Kind::SRV;
+    uint32_t register_space = 0;
+    uint32_t lower_bound = 0;
+    uint32_t count = 1;
+};
+
+struct BindingPlan {
+    std::vector<DescriptorRangePlan> ranges;
+    uint32_t direct_buffer_count = 31;
+    uint32_t direct_texture_count = 8;
+    uint32_t direct_sampler_count = 4;
+};
+
 struct LowerContext {
     std::ostringstream &os;
     const LLVMModule &mod;
@@ -420,6 +434,7 @@ struct LowerContext {
     std::set<std::string> predeclared_names;
     std::set<uint32_t> predeclared_allocas;
     std::unordered_map<std::string, MSLType> predeclared_types;
+    BindingPlan binding_plan;
     uint32_t next_binding = 0;
     uint32_t unsupported_intrinsics = 0;
     uint32_t unsupported_opcodes = 0;
@@ -451,9 +466,39 @@ static void emitBindings(LowerContext &ctx) {
     os << "\n";
 }
 
+static const char *descriptorRangeKindName(DescriptorRangePlan::Kind kind) {
+    switch (kind) {
+    case DescriptorRangePlan::Kind::SRV: return "srv";
+    case DescriptorRangePlan::Kind::UAV: return "uav";
+    case DescriptorRangePlan::Kind::CBV: return "cbv";
+    case DescriptorRangePlan::Kind::Sampler: return "sampler";
+    }
+    return "unknown";
+}
+
+static void emitBindingManifest(LowerContext &ctx) {
+    auto &os = ctx.os;
+    os << "// metalsharp.binding_manifest.v1\n";
+    os << "// direct_buffers=" << ctx.binding_plan.direct_buffer_count
+       << " direct_textures=" << ctx.binding_plan.direct_texture_count
+       << " direct_samplers=" << ctx.binding_plan.direct_sampler_count << "\n";
+    if (ctx.binding_plan.ranges.empty()) {
+        os << "// range none\n\n";
+        return;
+    }
+    for (const auto &range : ctx.binding_plan.ranges) {
+        os << "// range kind=" << descriptorRangeKindName(range.kind)
+           << " space=" << range.register_space
+           << " lower=" << range.lower_bound
+           << " count=" << range.count << "\n";
+    }
+    os << "\n";
+}
+
 static void emitFunctionPrologue(LowerContext &ctx) {
     auto &os = ctx.os;
     os << kMetalHeader;
+    emitBindingManifest(ctx);
 
     os << "struct input_v {\n";
     os << "  float4 position [[position]];\n";
@@ -486,12 +531,12 @@ static void emitFunctionPrologue(LowerContext &ctx) {
 
     if (ctx.shader.kind == DxilShaderKind::Compute) {
         os << "kernel void cs_main(\n";
-        for (uint32_t i = 0; i < 31; i++)
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
-        for (uint32_t i = 0; i < 8; i++)
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_texture_count; i++)
             os << "  texture2d<float, access::read_write> tex" << i << " [[texture(" << i << ")]],\n";
-        os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
-        os << "  sampler samp2 [[sampler(2)]],\n  sampler samp3 [[sampler(3)]],\n";
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_sampler_count; i++)
+            os << "  sampler samp" << i << " [[sampler(" << i << ")]],\n";
         os << "  uint3 dtid [[thread_position_in_grid]],\n";
         os << "  uint3 gtid [[thread_position_in_threadgroup]],\n";
         os << "  uint3 ggid [[threadgroup_position_in_grid]],\n";
@@ -499,20 +544,23 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
         os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
-        for (uint32_t i = 0; i < 31; i++)
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             os << "  device char* buf" << i << " [[buffer(" << i << ")]]"
-               << (i + 1 == 31 ? "\n" : ",\n");
+               << (i + 1 == ctx.binding_plan.direct_buffer_count ? "\n" : ",\n");
         os << ") {\n";
         os << "  output_v out = {};\n";
     } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
         os << "fragment float4 ps_main(\n";
         os << "  input_v in [[stage_in]],\n";
-        for (uint32_t i = 0; i < 31; i++)
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             os << "  device char* buf" << i << " [[buffer(" << i << ")]],\n";
-        for (int i = 0; i < 32; i++)
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_texture_count; i++)
             os << "  texture2d<float, access::sample> tex" << i << " [[texture(" << i << ")]],\n";
-        os << "  sampler samp0 [[sampler(0)]],\n  sampler samp1 [[sampler(1)]],\n";
-        os << "  sampler samp2 [[sampler(2)]],\n  sampler samp3 [[sampler(3)]]\n) {\n";
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_sampler_count; i++) {
+            os << "  sampler samp" << i << " [[sampler(" << i << ")]]";
+            os << (i + 1 == ctx.binding_plan.direct_sampler_count ? "\n" : ",\n");
+        }
+        os << ") {\n";
         os << "  float4 result = float4(0,0,0,1);\n";
     } else {
         os << "kernel void unknown_main() {\n";
@@ -767,6 +815,105 @@ static uint32_t literalFromValue(const LowerContext &ctx, uint32_t idx, uint32_t
     uint32_t value = 0;
     if (parseUnsignedLiteral(text, value)) return value;
     return fallback;
+}
+
+static DescriptorRangePlan::Kind descriptorKindForResourceClass(uint32_t resource_class) {
+    switch (resource_class) {
+    case 0: return DescriptorRangePlan::Kind::SRV;
+    case 1: return DescriptorRangePlan::Kind::UAV;
+    case 2: return DescriptorRangePlan::Kind::CBV;
+    case 3: return DescriptorRangePlan::Kind::Sampler;
+    default: return DescriptorRangePlan::Kind::SRV;
+    }
+}
+
+static void recordDescriptorRange(BindingPlan &plan, DescriptorRangePlan range) {
+    if (range.count == 0)
+        range.count = 1;
+    for (auto &existing : plan.ranges) {
+        if (existing.kind == range.kind &&
+            existing.register_space == range.register_space &&
+            existing.lower_bound == range.lower_bound) {
+            existing.count = std::max(existing.count, range.count);
+            return;
+        }
+    }
+    plan.ranges.push_back(range);
+}
+
+static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
+    BindingPlan plan;
+    if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        plan.direct_texture_count = 0;
+        plan.direct_sampler_count = 0;
+    }
+
+    auto calleeName = [&](uint32_t callee) -> std::string {
+        auto decl_it = ctx.function_decls.find(callee);
+        if (decl_it != ctx.function_decls.end())
+            return decl_it->second;
+        if (callee < ctx.value_table.size())
+            return ctx.value_table[callee];
+        return {};
+    };
+
+    for (const auto &block : fn.blocks) {
+        for (const auto &inst : block.instructions) {
+            if (inst.opcode != LLVMInstruction::Call || inst.operands.size() < 2)
+                continue;
+
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(calleeName(inst.operands[0]));
+            if (intrinsic_id == 0)
+                continue;
+
+            std::vector<uint32_t> call_args;
+            for (size_t i = 2; i < inst.operands.size(); i++)
+                call_args.push_back(inst.operands[i]);
+
+            std::vector<uint32_t> fn_args;
+            if (intrinsic_id == DXOP_CreateHandle || intrinsic_id == DXOP_CreateHandleForLib ||
+                intrinsic_id == DXOP_AnnotateHandle)
+                fn_args = call_args;
+            else if (call_args.size() > 1)
+                fn_args.assign(call_args.begin() + 1, call_args.end());
+
+            if (intrinsic_id == DXOP_CreateHandle && fn_args.size() >= 3) {
+                uint32_t resource_class = literalFromValue(ctx, fn_args[0], 0);
+                uint32_t lower_bound = literalFromValue(ctx, fn_args[1], 0);
+                uint32_t index = literalFromValue(ctx, fn_args[2], 0);
+                recordDescriptorRange(plan, {descriptorKindForResourceClass(resource_class),
+                                             0, lower_bound, index + 1});
+            } else if (intrinsic_id == DXOP_CreateHandleFromBinding && fn_args.size() >= 1) {
+                std::string binding = resolveValue(ctx, fn_args[0]);
+                auto parts = parseAggregateLiteral(binding);
+                uint32_t lower_bound = 0, count = 1, space = 0, resource_class = 0;
+                if (parts.size() > 0) parseUnsignedLiteral(parts[0], lower_bound);
+                if (parts.size() > 1) parseUnsignedLiteral(parts[1], count);
+                if (parts.size() > 2) parseUnsignedLiteral(parts[2], space);
+                if (parts.size() > 3) parseUnsignedLiteral(parts[3], resource_class);
+                recordDescriptorRange(plan, {descriptorKindForResourceClass(resource_class),
+                                             space, lower_bound, count});
+            } else if (intrinsic_id == DXOP_CreateHandleFromHeap && fn_args.size() >= 1) {
+                uint32_t heap_index = literalFromValue(ctx, fn_args[0], 0);
+                bool sampler = fn_args.size() >= 2 && literalFromValue(ctx, fn_args[1], 0) != 0;
+                recordDescriptorRange(plan, {sampler ? DescriptorRangePlan::Kind::Sampler
+                                                     : DescriptorRangePlan::Kind::SRV,
+                                             0, heap_index, 1});
+            }
+        }
+    }
+
+    uint32_t max_sampler = 0;
+    bool has_sampler = false;
+    for (const auto &range : plan.ranges) {
+        if (range.kind == DescriptorRangePlan::Kind::Sampler) {
+            has_sampler = true;
+            max_sampler = std::max(max_sampler, range.lower_bound + range.count);
+        }
+    }
+    if (has_sampler)
+        plan.direct_sampler_count = std::max<uint32_t>(1, std::min<uint32_t>(max_sampler, 4));
+    ctx.binding_plan = std::move(plan);
 }
 
 static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
@@ -2096,7 +2243,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
+    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
                     false, false, false, false};
 
     const LLVMFunction *entry_fn = nullptr;
@@ -2114,18 +2261,6 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
 
     auto &fn = *entry_fn;
     ctx.current_fn = entry_fn;
-    emitFunctionPrologue(ctx);
-
-    for (auto &gv : module.globals) {
-        if (gv.address_space == 3) {
-            std::string gv_name = gv.name.empty() ? "gvar_" + std::to_string(gv.value_id) : escapeName(gv.name);
-            os << "  threadgroup char " << gv_name << "[256];\n";
-            if (ctx.value_table.size() <= gv.value_id) ctx.value_table.resize(gv.value_id + 1);
-            ctx.value_table[gv.value_id] = "(threadgroup char*)&" + gv_name;
-            if (ctx.value_types.size() <= gv.value_id) ctx.value_types.resize(gv.value_id + 1);
-            ctx.value_types[gv.value_id] = {MSLTypeKind::ThreadgroupCharPtr, 0, {}};
-        }
-    }
 
     ctx.value_table.resize(256);
     ctx.value_types.resize(256);
@@ -2158,6 +2293,20 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         ctx.value_table[dfn.value_id] = dfn.name;
         ctx.value_types[dfn.value_id] = {MSLTypeKind::Unknown, 0, {}};
         ctx.function_decls[dfn.value_id] = dfn.name;
+    }
+
+    analyzeBindingPlan(ctx, fn);
+    emitFunctionPrologue(ctx);
+
+    for (auto &gv : module.globals) {
+        if (gv.address_space == 3) {
+            std::string gv_name = gv.name.empty() ? "gvar_" + std::to_string(gv.value_id) : escapeName(gv.name);
+            os << "  threadgroup char " << gv_name << "[256];\n";
+            if (ctx.value_table.size() <= gv.value_id) ctx.value_table.resize(gv.value_id + 1);
+            ctx.value_table[gv.value_id] = "(threadgroup char*)&" + gv_name;
+            if (ctx.value_types.size() <= gv.value_id) ctx.value_types.resize(gv.value_id + 1);
+            ctx.value_types[gv.value_id] = {MSLTypeKind::ThreadgroupCharPtr, 0, {}};
+        }
     }
 
     auto seedValue = [&](uint32_t value_id, const std::string &expr, MSLType type,
