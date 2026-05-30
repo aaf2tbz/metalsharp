@@ -305,6 +305,7 @@ struct LowerContext {
     std::vector<std::string> diagnostics;
     std::unordered_map<uint32_t, std::string> function_decls;
     std::set<std::string> predeclared_names;
+    std::set<uint32_t> predeclared_allocas;
     uint32_t next_binding = 0;
     uint32_t unsupported_intrinsics = 0;
     uint32_t unsupported_opcodes = 0;
@@ -1059,6 +1060,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         std::string value = getValue(idx);
         if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup"))
             return "threadgroup";
+        if (startsWith(value, "(thread") || startsWith(value, "thread"))
+            return "thread";
         return "device";
     };
 
@@ -1527,7 +1530,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 storage_class = "threadgroup";
         }
         std::string alloca_name = "alloca_" + std::to_string(value_counter);
-        os << "  " << storage_class << " char " << alloca_name << "[256];\n";
+        if (ctx.predeclared_allocas.find(value_counter) == ctx.predeclared_allocas.end())
+            os << "  " << storage_class << " char " << alloca_name << "[256];\n";
         ensureValueTable(value_counter);
         ctx.value_table[value_counter] = "(" + storage_class + " char*)&" + alloca_name;
         ctx.value_types[value_counter] = {MSLTypeKind::DeviceCharPtr, 0, {}};
@@ -1622,7 +1626,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
+    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
                     false, false, false, false};
 
     const LLVMFunction *entry_fn = nullptr;
@@ -1736,6 +1740,8 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     std::map<uint32_t, uint32_t> value_def_block;
     std::set<uint32_t> cross_block_values;
     std::set<uint32_t> phi_result_values;
+    std::set<uint32_t> unresolved_referenced_values;
+    std::map<uint32_t, MSLType> unresolved_reference_types;
 
     auto resultTypeForPredecl = [&](const LLVMInstruction &inst) -> MSLType {
         switch (inst.opcode) {
@@ -1845,10 +1851,36 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         }
     }
 
+    auto hasResolvedValue = [&](uint32_t value_id) -> bool {
+        if (value_id < ctx.value_table.size() && !ctx.value_table[value_id].empty() &&
+            !startsWith(ctx.value_table[value_id], "dx."))
+            return true;
+        if (value_def_block.find(value_id) != value_def_block.end())
+            return true;
+        for (auto &c : module.constants)
+            if (c.id == value_id && !c.constant_data.empty())
+                return true;
+        for (auto &c : fn.constants)
+            if (c.id == value_id && !c.constant_data.empty())
+                return true;
+        return false;
+    };
+
+    auto rememberUnresolvedReference = [&](uint32_t value_id, MSLType type_hint) {
+        if (hasResolvedValue(value_id))
+            return;
+        unresolved_referenced_values.insert(value_id);
+        if (type_hint.kind != MSLTypeKind::Unknown && type_hint.kind != MSLTypeKind::Void &&
+            type_hint.kind != MSLTypeKind::Struct)
+            unresolved_reference_types[value_id] = type_hint;
+    };
+
     for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
         for (auto &inst : fn.blocks[bi].instructions) {
+            MSLType inst_type = DXILIRBuilder::resolveType(inst.type_id, module);
             for (size_t oi = 0; oi < inst.operands.size(); oi++) {
                 bool value_operand = true;
+                MSLType type_hint = inst_type;
                 if (inst.opcode == LLVMInstruction::PHI)
                     value_operand = (oi % 2) == 0;
                 else if (inst.opcode == LLVMInstruction::Call)
@@ -1858,6 +1890,10 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                 else if (inst.opcode == LLVMInstruction::Switch)
                     value_operand = oi == 0;
                 if (!value_operand) continue;
+
+                if (inst.opcode == LLVMInstruction::PHI)
+                    type_hint = inst_type;
+                rememberUnresolvedReference(inst.operands[oi], type_hint);
 
                 auto def_it = value_def_block.find(inst.operands[oi]);
                 if (def_it != value_def_block.end() && def_it->second != (uint32_t)bi)
@@ -1870,6 +1906,55 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     ctx.instruction_start_value = fn.instruction_start_value;
 
     bool needs_dispatch = fn.blocks.size() > 1;
+    if (needs_dispatch) {
+        uint32_t vc = fn.instruction_start_value;
+        for (auto &block : fn.blocks) {
+            for (auto &inst : block.instructions) {
+                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
+                                      inst.opcode != LLVMInstruction::Br &&
+                                      inst.opcode != LLVMInstruction::Switch &&
+                                      inst.opcode != LLVMInstruction::Unreachable &&
+                                      inst.opcode != LLVMInstruction::Store;
+                if (produces_value && inst.opcode == LLVMInstruction::Alloca) {
+                    std::string storage_class = "thread";
+                    if (inst.type_id > 0 && inst.type_id < module.types.size()) {
+                        auto &ptr_type = module.types[inst.type_id];
+                        if (ptr_type.kind == LLVMType::Pointer && ptr_type.address_space == 3)
+                            storage_class = "threadgroup";
+                    }
+                    std::string alloca_name = "alloca_" + std::to_string(vc);
+                    os << "  " << storage_class << " char " << alloca_name
+                       << "[256]; // dispatch alloca storage\n";
+                    if (ctx.value_table.size() <= vc) ctx.value_table.resize(vc + 1);
+                    if (ctx.value_types.size() <= vc) ctx.value_types.resize(vc + 1);
+                    ctx.value_table[vc] = "(" + storage_class + " char*)&" + alloca_name;
+                    ctx.value_types[vc] = storage_class == "threadgroup"
+                        ? MSLType{MSLTypeKind::ThreadgroupCharPtr, 0, {}}
+                        : MSLType{MSLTypeKind::DeviceCharPtr, 0, {}};
+                    ctx.predeclared_allocas.insert(vc);
+                }
+                if (produces_value) vc++;
+            }
+        }
+    }
+
+    for (uint32_t value_id : unresolved_referenced_values) {
+        MSLType pre_type = {MSLTypeKind::Int, 0, {}};
+        auto type_it = unresolved_reference_types.find(value_id);
+        if (type_it != unresolved_reference_types.end())
+            pre_type = type_it->second;
+        std::string name = emitValue(value_id);
+        bool declaration_slot = ctx.function_decls.find(value_id) != ctx.function_decls.end();
+        if (ctx.value_table.size() <= value_id) ctx.value_table.resize(value_id + 1);
+        if (ctx.value_types.size() <= value_id) ctx.value_types.resize(value_id + 1);
+        if (!declaration_slot)
+            ctx.value_table[value_id] = name;
+        ctx.value_types[value_id] = pre_type;
+        ctx.predeclared_names.insert(name);
+        os << "  " << typedDecl(name, pre_type) << " = "
+           << defaultForType(pre_type) << "; // unresolved value pre-decl\n";
+    }
+
     if (needs_dispatch) {
         uint32_t vc = fn.instruction_start_value;
         for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
