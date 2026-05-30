@@ -5,6 +5,7 @@
 #include <cctype>
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace dxmt::dxil {
@@ -194,15 +195,6 @@ static std::string escapeName(const std::string &s) {
     }
     if (!r.empty() && r[0] >= '0' && r[0] <= '9') r = "_" + r;
     return r;
-}
-
-static const char *bindingPrefixForClass(uint32_t resource_class) {
-    switch (resource_class) {
-    case 0: case 1: return "tex";
-    case 2: return "buf";
-    case 3: return "samp";
-    default: return "buf";
-    }
 }
 
 static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
@@ -412,6 +404,15 @@ struct DescriptorRangePlan {
     uint32_t count = 1;
 };
 
+struct ResourceHandleRecord {
+    DescriptorRangePlan::Kind kind = DescriptorRangePlan::Kind::SRV;
+    uint32_t resource_class = 0;
+    uint32_t register_space = 0;
+    uint32_t lower_bound = 0;
+    uint32_t binding_index = 0;
+    bool non_uniform = false;
+};
+
 struct BindingPlan {
     std::vector<DescriptorRangePlan> ranges;
     uint32_t direct_buffer_count = 31;
@@ -427,6 +428,8 @@ struct LowerContext {
     std::vector<MSLType> value_types;
     std::vector<ValueRole> value_roles;
     std::unordered_map<uint32_t, std::string> buffer_origin;
+    std::unordered_map<uint32_t, ResourceHandleRecord> resource_handles;
+    std::optional<ResourceHandleRecord> pending_handle;
     std::string last_buffer_handle;
     std::unordered_map<std::string, std::string> local_values;
     std::vector<std::string> diagnostics;
@@ -827,6 +830,57 @@ static DescriptorRangePlan::Kind descriptorKindForResourceClass(uint32_t resourc
     }
 }
 
+static const char *bindingPrefixForKind(DescriptorRangePlan::Kind kind) {
+    switch (kind) {
+    case DescriptorRangePlan::Kind::CBV: return "buf";
+    case DescriptorRangePlan::Kind::Sampler: return "samp";
+    case DescriptorRangePlan::Kind::SRV:
+    case DescriptorRangePlan::Kind::UAV:
+        return "tex";
+    }
+    return "buf";
+}
+
+static MSLType typeForHandleKind(DescriptorRangePlan::Kind kind) {
+    (void)kind;
+    return {MSLTypeKind::DeviceCharPtr, 0, {}};
+}
+
+static ValueRole roleForHandleKind(DescriptorRangePlan::Kind kind) {
+    switch (kind) {
+    case DescriptorRangePlan::Kind::CBV:
+        return ValueRole::BufferHandle;
+    case DescriptorRangePlan::Kind::Sampler:
+        return ValueRole::SamplerHandle;
+    case DescriptorRangePlan::Kind::SRV:
+    case DescriptorRangePlan::Kind::UAV:
+        return ValueRole::TextureHandle;
+    }
+    return ValueRole::Generic;
+}
+
+static uint32_t cappedBindingIndex(const LowerContext &ctx, const char *prefix, uint32_t binding_index) {
+    uint32_t limit = 0;
+    if (std::strcmp(prefix, "buf") == 0)
+        limit = ctx.binding_plan.direct_buffer_count;
+    else if (std::strcmp(prefix, "tex") == 0)
+        limit = ctx.binding_plan.direct_texture_count;
+    else if (std::strcmp(prefix, "samp") == 0)
+        limit = ctx.binding_plan.direct_sampler_count;
+
+    if (limit == 0)
+        return 0;
+    return std::min<uint32_t>(binding_index, limit - 1);
+}
+
+static std::string materializeHandleName(const LowerContext &ctx,
+                                         const ResourceHandleRecord &handle,
+                                         const char *target_prefix = nullptr) {
+    const char *prefix = target_prefix ? target_prefix : bindingPrefixForKind(handle.kind);
+    uint32_t binding_index = handle.lower_bound + handle.binding_index;
+    return std::string(prefix) + std::to_string(cappedBindingIndex(ctx, prefix, binding_index));
+}
+
 static void recordDescriptorRange(BindingPlan &plan, DescriptorRangePlan range) {
     if (range.count == 0)
         range.count = 1;
@@ -1048,6 +1102,8 @@ static std::string resolveBindingName(const std::string &handle, const char *tar
 
 static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id,
                                           const std::vector<uint32_t> &args) {
+    ctx.pending_handle.reset();
+
     auto valueArg = [&](size_t arg, const char *fallback) -> std::string {
         if (arg >= args.size()) return fallback;
         uint32_t idx = args[arg];
@@ -1076,6 +1132,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     auto handleArg = [&](size_t arg, const char *prefix, const char *fallback) -> std::string {
         if (arg >= args.size()) return fallback;
         uint32_t idx = args[arg];
+        auto handle_it = ctx.resource_handles.find(idx);
+        if (handle_it != ctx.resource_handles.end())
+            return materializeHandleName(ctx, handle_it->second, prefix);
         auto it = ctx.buffer_origin.find(idx);
         if (it != ctx.buffer_origin.end()) return it->second;
         std::string value = valueArg(arg, fallback);
@@ -1088,6 +1147,20 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
             type.kind == MSLTypeKind::Sampler)
             return resolveBindingName(value, prefix);
         return fallback;
+    };
+
+    auto recordHandle = [&](DescriptorRangePlan::Kind kind, uint32_t resource_class,
+                            uint32_t lower_bound, uint32_t binding_index,
+                            uint32_t register_space = 0, bool non_uniform = false) -> std::string {
+        ResourceHandleRecord handle;
+        handle.kind = kind;
+        handle.resource_class = resource_class;
+        handle.register_space = register_space;
+        handle.lower_bound = lower_bound;
+        handle.binding_index = binding_index;
+        handle.non_uniform = non_uniform;
+        ctx.pending_handle = handle;
+        return materializeHandleName(ctx, handle);
     };
 
     auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
@@ -1113,10 +1186,19 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "0";
         uint32_t resource_class = literalArg(0, 0, "resource class");
         uint32_t range_id = literalArg(1, 0, "range id");
+        bool non_uniform = args.size() >= 4 && literalArg(3, 0, "non uniform") != 0;
         ctx.next_binding++;
-        return std::string(bindingPrefixForClass(resource_class)) + std::to_string(range_id);
+        return recordHandle(descriptorKindForResourceClass(resource_class),
+                            resource_class, range_id, 0, 0, non_uniform);
     }
     case DXOP_CreateHandleForLib: case DXOP_AnnotateHandle: {
+        if (!args.empty()) {
+            auto handle_it = ctx.resource_handles.find(args[0]);
+            if (handle_it != ctx.resource_handles.end()) {
+                ctx.pending_handle = handle_it->second;
+                return materializeHandleName(ctx, handle_it->second);
+            }
+        }
         auto handle = valueArg(0, "tex0");
         if (startsWith(handle, "agg(")) handle = resolveBindingName(handle, "buf");
         return handle;
@@ -1125,15 +1207,24 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto binding = valueArg(0, "");
         auto bvals = parseAggregateLiteral(binding);
         uint32_t lower_bound = 0, resource_class = 0;
+        uint32_t count = 1, register_space = 0;
         if (bvals.size() > 0) parseUnsignedLiteral(bvals[0], lower_bound);
+        if (bvals.size() > 1) parseUnsignedLiteral(bvals[1], count);
+        if (bvals.size() > 2) parseUnsignedLiteral(bvals[2], register_space);
         if (bvals.size() > 3) parseUnsignedLiteral(bvals[3], resource_class);
         uint32_t index = args.size() >= 2 ? literalArg(1, 0, "idx") : 0;
-        return std::string(bindingPrefixForClass(resource_class)) + std::to_string(lower_bound + index);
+        if (count != 0)
+            index = std::min<uint32_t>(index, count - 1);
+        bool non_uniform = args.size() >= 3 && literalArg(2, 0, "non uniform") != 0;
+        return recordHandle(descriptorKindForResourceClass(resource_class),
+                            resource_class, lower_bound, index, register_space, non_uniform);
     }
     case DXOP_CreateHandleFromHeap: {
         uint32_t heap_index = literalArg(0, 0, "heap");
         bool sampler = args.size() >= 2 && literalArg(1, 0, "samp") != 0;
-        return std::string(sampler ? "samp" : "tex") + std::to_string(heap_index);
+        return recordHandle(sampler ? DescriptorRangePlan::Kind::Sampler
+                                    : DescriptorRangePlan::Kind::SRV,
+                            sampler ? 3 : 0, heap_index, 0);
     }
     case DXOP_ThreadId: {
         ctx.uses_thread_id = true;
@@ -1381,11 +1472,11 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     }
     case 131: return "static_cast<float>(half(" + numericArg(1, "0") + "))";
     case 132: return "static_cast<uint>(half(" + numericArg(1, "0.0") + "))";
-    case 118: return "simd_broadcast_first(" + numericArg(1, "0") + ")";
-    case 117: return "simd_broadcast(" + numericArg(1, "0") + ", (uint)(" + numericArg(2, "0") + "))";
-    case 110: return "simd_is_first()";
-    case 111: return "simd_lane_id()";
-    case 112: return "simd_lane_count()";
+    case 118: return numericArg(1, "0");
+    case 117: return numericArg(1, "0");
+    case 110: return "true";
+    case 111: return "0";
+    case 112: return "1";
     case 113: return "simd_any(" + numericArg(1, "0") + ") ? 1 : 0";
     case 114: return "simd_all(" + numericArg(1, "0") + ") ? 1 : 0";
     case 122: return "quad_broadcast(" + numericArg(1, "0") + ", (uint)(" + numericArg(2, "0") + "))";
@@ -1673,7 +1764,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             ensureValueTable(value_counter);
             ctx.value_types[value_counter] = result_type;
 
-            if (inst.type_id == 0) {
+            if (ctx.pending_handle.has_value()) {
+                ResourceHandleRecord handle = *ctx.pending_handle;
+                ctx.resource_handles[value_counter] = handle;
+                ctx.value_table[value_counter] = materializeHandleName(ctx, handle);
+                ctx.value_types[value_counter] = typeForHandleKind(handle.kind);
+                ctx.value_roles[value_counter] = roleForHandleKind(handle.kind);
+                ctx.pending_handle.reset();
+            } else if (inst.type_id == 0) {
                 if (!translated.empty()) {
                     os << "  " << translated << ";\n";
                     ctx.value_table[value_counter] = translated;
@@ -2039,8 +2137,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         MSLType result_type = getTypeForInst(inst.type_id);
         if (inst.operands.size() >= 1) {
             std::string val = getValue(inst.operands[0]);
+            MSLType source_type = valueType(inst.operands[0]);
+            if (!isUsableType(result_type))
+                result_type = {MSLTypeKind::Int, 0, {}};
             std::string dst_name = emitTypeName(result_type);
-            emitTypedLine(result_type, result, "static_cast<" + dst_name + ">(" + val + ")");
+            if (isPointerType(source_type) || typeLooksResourceHandle(source_type) ||
+                exprLooksResourceHandle(val) || exprContainsRawResourceHandle(val))
+                emitTypedLine(result_type, result, defaultForType(result_type));
+            else
+                emitTypedLine(result_type, result, "static_cast<" + dst_name + ">(" + val + ")");
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
@@ -2053,7 +2158,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         MSLType result_type = getTypeForInst(inst.type_id);
         if (inst.operands.size() >= 1) {
             std::string val = getValue(inst.operands[0]);
-            emitTypedLine(result_type, result, val);
+            MSLType source_type = valueType(inst.operands[0]);
+            if (!isUsableType(result_type))
+                result_type = {MSLTypeKind::UInt, 0, {}};
+            if (isPointerType(source_type) || typeLooksResourceHandle(source_type) ||
+                exprLooksResourceHandle(val) || exprContainsRawResourceHandle(val))
+                emitTypedLine(result_type, result, defaultForType(result_type));
+            else
+                emitTypedLine(result_type, result, val);
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
@@ -2243,8 +2355,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0, 0, nullptr,
-                    false, false, false, false};
+    LowerContext ctx{os, module, shader};
 
     const LLVMFunction *entry_fn = nullptr;
     for (auto &fn : module.functions) {
