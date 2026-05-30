@@ -6,7 +6,7 @@
 
 ---
 
-## Completed Phases (0–8 + Root Cause Fix)
+## Completed Phases (0–8 + Root Cause + 9A/9B)
 
 | Phase | Description | Commit | Result |
 |-------|-------------|--------|--------|
@@ -24,8 +24,8 @@
 | 7 | Value-table overlap mitigation | `2752ea7` | 23→23 (stable) |
 | 8 | Per-function constant scoping | `6fd1db1` | Protected function decls |
 | Root | Value numbering fix | `d5bbee2` | 12/279 correct Metal pass |
-
-**Root cause found and fixed:** Three parser bugs in `llvm_bitcode.cpp` — `instruction_start_value` excluded module-level constants, block labels incorrectly advanced `next_value`, PHI block operands decoded as relative values. Fix: `next_module_value_id`, no block advancement, raw block indices. Metal pass dropped from 23→12 but now produces **correct** MSL — the previous 23 were "accidentally compiling" with `auto vN = 0;` for all unresolved calls.
+| 9A | Aggregate constants + binding structs + chained CBufferLoad | `b0dd0a1` + `6bee9f9` | initializer_list 599→0, reinterpret_cast 322→0 |
+| 9B | ExtractValue/InsertValue parser fix + undeclared identifier reduction | `4d1869e` | Undeclared identifiers ~2000→~400, 12→13 Metal pass |
 
 ---
 
@@ -34,226 +34,270 @@
 | Metric | Value |
 |--------|-------|
 | DXIL parse rate | **279/279** (100%) |
-| Metal compile rate | **12/279** (4.3%) — correct output |
-| Total Metal errors | ~5,041 across 267 failing shaders |
-| Top error | `initializer_list<int>` subscript (599) |
-| Undeclared identifiers | ~2,000+ across many vNN values |
+| Metal compile rate | **13/279** (4.7%) |
+| Total Metal errors | **4,492** across 266 failing shaders |
+| Top errors | `dx` undeclared (233), subscript non-array (176), float/int mismatch (156), member ref on float (128) |
 
 ---
 
-## Phase 9: Metal Error Category Fix Sprint pending
+## Phase 9 Findings: Why Per-Error-Category Patching Failed
 
-**Goal:** Fix the 5 systematic error categories killing 90%+ of shader compilation.
-**Target:** 80+/279 Metal pass.
+### What we tried
 
-The root cause fix exposed real converter bugs. These are the categories:
+Phase 9A/9B patched the existing string-emitting converter (`dxil_to_msl.cpp`) to fix specific error categories:
 
-### 9A: Computed Index Initializer List — 1,344 errors (599 + 745)
+- `initializer_list<int>` subscript: 599→0 (agg() format + ensureScalarIndex)
+- `expected ';' after expression`: 745→0 (same root cause)
+- `reinterpret_cast of vector element`: 322→0 (buffer_origin SSA tracking)
+- ExtractValue/InsertValue parser bugs: fixed field offsets in `llvm_bitcode.cpp`
+- Undeclared identifiers: ~2000→~400 (Call type_id==0 stores, getValue dot fix)
 
-**Pattern:** `v34[({59,56})*64]` — Metal interprets `({59,56})` as `initializer_list<int>`, then fails because initializer_list has no subscript operator and there's a missing semicolon.
+### What happened
 
-**Root cause:** The converter emits multi-component vector indices as brace-enclosed expressions `({a,b})`. Metal doesn't allow this — it needs a single scalar index or a properly-typed vector.
+Net improvement: 5,041→4,492 errors (-549, -10.9%). Metal pass: 12→13.
 
-**Fix in `dxil_to_msl.cpp`:**
-- When emitting a subscript index that's a vector expression, extract the appropriate component (e.g., `.x`) based on context
-- Or emit the full computation as a single scalar expression without braces
-- Audit all GEP / buffer index emission paths
+Each fix eliminated its targeted category but exposed or shifted errors into new categories. The architecture fights back:
 
-### 9B: Undeclared Identifiers — ~2,000 errors
+1. **No type tracking.** The converter emits `auto vN = expr;` everywhere. Metal infers types, but when the inferred type is wrong (e.g., `int` instead of `float4`), all downstream uses break. Fixing one expression changes the inferred type and cascades.
 
-**Pattern:** `use of undeclared identifier 'v99'`, `v94`, `v90`, etc.
+2. **String-based value resolution.** `getValue(N)` returns a string from `value_table[N]`. That string might be `"v95"`, `"buf3"`, `"in.v7.y"`, `"2097152.0f"`, or `"dx.op.createHandle"`. The caller has no idea what type it is and emits it into expressions that may or may not be valid.
 
-**Root cause:** Some instruction results aren't being emitted as variable declarations. Likely causes:
-- Instructions that produce results but the emitter skips the declaration
-- Forward references to values defined later in the same block
-- Values from constants or parameters not in scope
+3. **No semantic context.** The converter doesn't distinguish between a buffer handle, a loaded float4, a texture reference, or a function name. They're all strings. When a buffer load result flows into a texture sample's handle argument, it produces nonsense that only fails at Metal compile time.
 
-**Fix in `dxil_to_msl.cpp`:**
-- Audit the emit loop: every instruction with a result must emit `auto vN = expr;`
-- Verify parameter loading covers all function parameters
-- Verify module constant and function constant loading covers all constants
-- Add pre-scan: collect all value IDs that will be defined, emit forward declarations for any used before definition
+4. **Diminishing returns per fix.** Each category fix requires understanding which string combinations produce the error, tracing through the emit logic, and patching the specific case. The patches interact in unpredictable ways. Phase 9B's parser fix, for example, caused `member reference base type 'int'` errors because ExtractValue now correctly resolves aggregates but those aggregates are sometimes `0` from unhandled calls.
 
-### 9C: Texture2D Subscript Mismatch — 85 errors
+### Conclusion
 
-**Pattern:** `type 'texture2d<float, access::read_write>' does not provide a subscript operator`
+The string-emitting architecture is a proof-of-concept that proved the concept. It demonstrated that DXIL bitcode can be parsed and Metal can be emitted. But it cannot reach 80%+ Metal pass through incremental patching. The approach needs a fundamental change.
 
-**Root cause:** SRVs mapped to `texture2d` but the shader code tries to use them as byte-addressed buffers via `[]` subscript. In D3D12, a structured buffer can be bound as either SRV or UAV with byte offsets. Metal textures don't support `[]` subscript — that's a buffer operation.
+---
 
-**Fix in `dxil_to_msl.cpp`:**
-- Detect when a texture resource is being used with byte-offset access patterns
-- Emit as `device float*` or `device float4*` buffer instead of `texture2d`
-- Or use `texture2d::read(uint2)` / `texture2d::write(float4, uint2)` for coordinate-based access
+## Phase 10: Typed MSL IR Architecture
 
-### 9D: Subscript on Non-Array — 108 errors
+**Goal:** Replace string-emitting translator with a typed IR that produces correct Metal.
+**Target:** 150+/279 Metal pass (54%+).
 
-**Pattern:** `subscripted value is not an array, pointer, or vector`
+### Architecture
 
-**Root cause:** Emitter produces `expr[index]` where `expr` is a scalar or struct. Happens when the converter assumes a value is a buffer/array but it's actually a scalar constant or struct field.
+```
+DXIL Bitcode
+     │
+     ▼
+┌─────────────┐
+│  LLVM Parser │  ← llvm_bitcode.cpp (KEEP — already fixed)
+│  (existing)  │
+└─────┬───────┘
+      │ LLVMModule, LLVMFunction, LLVMInstruction
+      ▼
+┌─────────────────┐
+│  DXIL IR Builder │  ← NEW: converts LLVM instructions → typed DXIL IR
+│                  │
+│  • TypedValue    │    Every value knows its type (float, float4, int, uint4,
+│  • TypedInst     │    buffer_handle, texture_ref, sampler_ref)
+│  • TypedBlock    │
+│  • TypedFunction │
+└─────┬──────────┘
+      │ Typed DXIL IR
+      ▼
+┌─────────────────┐
+│  MSL Lowering    │  ← NEW: lowers typed DXIL IR → MSL AST
+│                  │
+│  • Type-aware    │    Inserts casts, resolves bindings, emits correct
+│  • Binding-aware │    Metal types (no more `auto vN = ...`)
+│  • SSA-resolved  │
+└─────┬──────────┘
+      │ MSL AST
+      ▼
+┌─────────────────┐
+│  MSL Emitter     │  ← NEW: walks AST → final Metal source
+│                  │
+│  • Typed decls   │    Emits `float4 v95 = ...` instead of `auto v95 = ...`
+│  • Correct refs  │    Uses typed buffer/texture access patterns
+└─────────────────┘
+```
 
-**Fix in `dxil_to_msl.cpp`:**
-- Before emitting subscript, check the value's type from `value_type_ids`
-- If scalar, the subscript is wrong — likely the base expression already contains the indexed value
-- If struct, use member access instead of subscript
+### 10A: DXIL IR Types and Values
 
-### 9E: Type Mismatch in Binary Expressions — 43 errors
+**File:** `vendor/dxmt/src/airconv/dxil/dxil_ir.hpp` (new)
 
-**Pattern:** `invalid operands to binary expression ('float' and 'int')`
+Define the typed IR value system:
 
-**Root cause:** DXIL operations on mixed float/int types where the converter doesn't insert explicit casts. Metal is stricter than HLSL about implicit conversions.
+```cpp
+enum class DXILTypeKind {
+    Void, Float, Double, Int, UInt,
+    Float2, Float3, Float4,
+    Int2, Int3, Int4,
+    UInt2, UInt3, UInt4,
+    Bool,
+    BufferHandle,     // device char* with known binding
+    TextureHandle,    // texture2d/texture3d with known binding
+    SamplerHandle,    // sampler with known binding
+    Struct,           // aggregate with typed fields
+    Pointer,          // typed pointer
+    Function,         // function reference
+};
 
-**Fix in `dxil_to_msl.cpp`:**
-- Before emitting binary operator, check operand types
-- Insert explicit `static_cast<float>()` or `static_cast<int>()` as needed
-- Handle vector type promotion (e.g., `float + int` → `float + float(int)`)
+struct DXILValue {
+    uint32_t id;              // original SSA value ID
+    DXILTypeKind type;
+    uint32_t binding_index;   // for handles: which buffer/texture/sampler slot
+    std::string name;         // resolved name (buf3, tex0, etc.)
+};
+```
 
-### 9F: Remaining Error Categories
+**Why this matters:** When CBufferLoad extracts from `buf3`, the result is typed `float4`. When that float4 is used in an FMul with an `int`, the lowering pass knows to insert `float(int_val)`. No more `auto vN = ...` guessing.
 
-| Category | Count | Fix |
-|----------|-------|-----|
-| `no member 'sample'` on read_write texture | 26 | Use `.read()` for RO textures or `.write()` for RW |
-| `device char * + int` | 12 | Pointer arithmetic needs explicit cast |
-| `indirection requires pointer operand` | 12 | Dereference on non-pointer value |
-| `initializer list on right of *` | 9 | Same as 9A — brace-init in expression |
-| `as_type half→float` | 9 | Use `float(half_val)` not `as_type` |
-| `expected expression` | 8 | Empty or malformed expression |
-| `expected ')'` | 8 | Unclosed paren in expression |
+### 10B: DXIL IR Builder
+
+**File:** `vendor/dxmt/src/airconv/dxil/dxil_ir_builder.cpp` (new)
+
+Walk the existing `LLVMFunction` and build typed IR:
+
+1. **Type propagation pass:** Start from constants (known types from `type_id`), propagate through instructions. ExtractValue on `float4` struct → `float`. FMul of `float * float` → `float`. CBufferLoad → `float4`.
+
+2. **Binding resolution pass:** `CreateHandle`/`CreateHandleForLib`/`AnnotateHandle` resolve to concrete `BufferHandle`/`TextureHandle`/`SamplerHandle` with binding index. Track which values are handles vs loaded data.
+
+3. **Instruction conversion:** Each LLVM opcode maps to a typed DXIL IR instruction. No string emission — just typed value references.
+
+### 10C: MSL Lowering Pass
+
+**File:** `vendor/dxmt/src/airconv/dxil/msl_lowering.cpp` (new)
+
+Lower typed DXIL IR to MSL AST:
+
+1. **Type-aware expression lowering:** DXIL `CBufferLoad(handle, index)` → MSL `reinterpret_cast<device float4&>(buf_N[index * 64])` where handle.type = BufferHandle and result.type = Float4.
+
+2. **Automatic type coercion:** When operands have mismatched types (e.g., `float * int`), insert `static_cast<float>()`. When buffer load result is used as a handle, follow buffer_origin chain.
+
+3. **Correct Metal emission:**
+   - `float4 v95 = reinterpret_cast<device float4&>(buf3[(55)*64]);` — typed, not auto
+   - `float v59 = v58.x;` — ExtractValue knows it's extracting float from float4
+   - `device float4& v102 = reinterpret_cast<device float4&>(buf1[(8)*64]);` — chained loads resolve to original buffer
+
+### 10D: Integration and Validation
+
+- Wire new IR pipeline into existing test harness
+- Keep old converter as fallback (can be selected via flag)
+- Validate: 279/279 DXIL pass unchanged, Metal pass rate measured
+- Error census comparison: old pipeline vs new pipeline
 
 **Hardening gate:**
-- Metal pass: **80+/279** (29%+)
+- Metal pass: **150+/279** (54%+)
+- `auto` keyword: **0** occurrences in output (all values explicitly typed)
+- `undeclared identifier` errors: **0**
 - `initializer_list` errors: **0**
-- `expected ';' after expression`: **0**
-- `undeclared identifier` errors: **< 50**
-- `subscripted value not array`: **0**
-- `texture2d no subscript`: **0**
+- `reinterpret_cast of vector element` errors: **0**
 
 ---
 
-## Phase 10: Intrinsic Translation Completeness
+## Phase 11: Intrinsic Translation Completeness
 
 **Goal:** Every DXIL intrinsic in the Subnautica 2 corpus produces valid, compiling Metal.
-**Target:** 200+/279 Metal pass.
+**Target:** 220+/279 Metal pass.
 
-### 10A: Texture Operations Full Coverage
+With the typed IR in place, intrinsic translation becomes mechanical — each intrinsic has typed inputs and typed outputs, so the MSL lowering just emits the correct Metal pattern.
 
-- TextureLoad (`dx.op.textureLoad`) — all dimensions, all return types
-- TextureStore (`dx.op.textureStore`) — write to UAV textures
-- TextureGather (`dx.op.textureGather`) — component selection
+### 11A: Texture Operations Full Coverage
+
+- TextureLoad — all dimensions, all return types
+- TextureStore — write to UAV textures
+- TextureGather — component selection
 - TextureSampleLevel — explicit LOD
 - TextureSampleBias — bias
 - TextureSampleCmp — comparison sampling for shadow maps
 - BufferLoad / BufferStore — structured and raw buffers
 - Texture2DMS — multisample read
 
-### 10B: Compute-Specific Intrinsics
+### 11B: Compute-Specific Intrinsics
 
 - `CreateHandleFromHeap` — descriptor heap dynamic indexing
 - `AnnotateHandle` — handle metadata
 - `Barrier` — group/shared/global barrier mapping
 - `FlattenedThreadIdInGroup` — already mapped, verify
 
-### 10C: Remaining Arithmetic and Utility
+### 11C: Remaining Arithmetic and Utility
 
 - `dot`, `cross`, `normalize`, `length` — verify vector width preservation
 - `clamp`, `saturate`, `lerp` — verify type consistency
 - `isfinite`, `isnan`, `isinf` — map to Metal equivalents
 - `fma`, `mad` — fused multiply-add
 - `countbits`, `firstbitlow`, `firstbithigh` — bit operations
-- `reversebits`, `bits` — more bit ops
 
 **Hardening gate:**
-- Metal pass: **200+/279** (72%+)
+- Metal pass: **220+/279** (79%+)
 - `unknown intrinsic` diagnostics: **0** for all IDs in Subnautica corpus
 - All texture dimension variants compile
-- Compute dispatch shaders compile and produce correct output
 
 ---
 
-## Phase 11: Pipeline Correctness
+## Phase 12: Pipeline Correctness
 
 **Goal:** MSL that compiles correctly also produces correct visual output.
 **Target:** Subnautica 2 shows nonzero pixel readback + recognizable rendering.
 
-The converter can produce compiling MSL that still outputs wrong values. These are pipeline binding and state issues:
-
-### 11A: Root Signature → Metal Binding Mapping
+### 12A: Root Signature → Metal Binding Mapping
 
 - Audit root parameter → Metal buffer/texture binding
 - Verify descriptor table offsets are correct
 - Check CBV/SRV/UAV byte offsets match between D3D12 and Metal
-- Verify push constant `setBytes:length:atIndex:` mapping
 
-### 11B: Resource State and Barriers
+### 12B: Resource State and Barriers
 
 - Verify `ResourceBarrier` transitions produce correct Metal resource states
 - Check UAV barriers map to `MTLFence` or implicit sync
-- Verify aliasing barriers work with `MTLHeap`
 
-### 11C: Render Target and Depth
+### 12C: Render Target and Depth
 
 - Verify render target format mapping (DXGI_FORMAT → MTLPixelFormat)
 - Check depth-stencil state creation and binding
 - Verify viewport and scissor rect mapping
-- Check blend state maps correctly
 
-### 11D: Vertex Input and Stage-In
+### 12D: Vertex Input and Stage-In
 
 - Verify vertex buffer strides and offsets
 - Check input layout → Metal vertex descriptor mapping
 - Verify `LoadInput` intrinsic reads correct vertex attributes
-- Check instance rate and step rate
 
 **Hardening gate:**
 - Subnautica 2 readback: `nonzero_pixels > 0` on multiple consecutive frames
 - At least one recognizable rendered element (skybox, terrain, UI)
 - No crash during 60-second gameplay session
-- Frame rate stable (not counting converter recompiles)
 
 ---
 
-## Phase 12: Test Infrastructure & Regression Prevention
+## Phase 13: Test Infrastructure & Regression Prevention
 
 **Goal:** Every converter change validated automatically.
 **Target:** CI prevents regressions.
 
-### 12A: DXIL Test Suite Expansion
+### 13A: DXIL Test Suite Expansion
 
-- Expand from 279 real shaders to include targeted fixtures:
-  - Simple compute (add buffer)
-  - Vertex + pixel pair (transform + color)
-  - Texture sampling (2D, cube, array)
-  - Structured buffer read/write
-  - Wave ops
-  - Groupshared memory + barrier
-  - Branch/loop control flow
-  - PHI node chains
+- Expand from 279 real shaders to include targeted fixtures
 - Gold file comparison for each fixture
 - Track Metal compile pass rate per fixture
 
-### 12B: Automated Error Census
+### 13B: Automated Error Census
 
 - CI job runs converter on full Subnautica corpus
 - Compiles all MSL output with `xcrun -sdk macosx metal`
 - Tracks error category counts across commits
 - Flags any increase in error count as CI failure
 
-### 12C: Per-Phase Regression Harness
+### 13C: Per-Phase Regression Harness
 
 - Each completed phase has a saved snapshot of error counts
 - New commits must not regress any completed phase metric
-- Auto-bisect on regression
 
 **Hardening gate:**
 - 50+ DXIL test fixtures
 - CI green on all fixtures
 - Error census job runs in < 5 minutes
-- Zero regressions in Metal compile pass rate
 
 ---
 
-## Phase 13: Advanced Features
+## Phase 14: Advanced Features
 
-These are needed for specific modern games but aren't blocking the majority.
+Needed for specific modern games but aren't blocking the majority.
 
 | Feature | Metal Support | D3D12 Feature |
 |---------|--------------|---------------|
@@ -264,85 +308,79 @@ These are needed for specific modern games but aren't blocking the majority.
 
 ---
 
-## Phase 14: Steam Bridge & Ecosystem
+## Phase 15: Steam Bridge & Ecosystem
 
 **Goal:** Full Steam functionality.
 **Target:** Overlay, achievements, cloud saves working.
 
-### 14A: Vendor Proton lsteamclient
+### 15A: Vendor Proton lsteamclient
 
 - Vendor Proton `lsteamclient/` source
 - Build both `steamclient64.dll` (PE) and `lsteamclient.dylib` (macOS native)
-- Generate interface thunks from Steam API headers
 - Adapt build for arm64 macOS
 
-### 14B: Steam API Integration
+### 15B: Steam API Integration
 
 - ISteamUser, ISteamFriends, ISteamUserStats
 - ISteamRemoteStorage (cloud saves)
-- ISteamUGC (workshop)
-- ISteamApps, ISteamUtils
 - Callback flow through bridge
-
-**Hardening gate:**
-- Steam overlay renders in-game
-- Achievements unlock and sync
-- Cloud saves upload/download
-- No crash on Steam API callback delivery
 
 ---
 
-## Phase 15: Runtime Infrastructure
+## Phase 16: Runtime Infrastructure
 
 **Goal:** Multiple games running independently without conflicts.
 **Target:** 5+ D3D12 games reaching main menu.
 
-### 15A: Per-Game Prefix Isolation
+### 16A: Per-Game Prefix Isolation
 
 - Per-appid Wine prefix: `~/.metalsharp/compatdata/<appid>/pfx/`
 - Template from `prefix-steam` base
-- Wine client stays in shared prefix, game processes use per-game
-- Migration: existing `prefix-steam` becomes Steam client only
 
-### 15B: Redistributable Auto-Install
+### 16B: Redistributable Auto-Install
 
 - Central DLL cache: `~/.metalsharp/runtime/redist/`
 - Auto-install VC++ / DirectX / XNA on first game launch
-- Per-prefix install receipts
-- Handle DXSetup, vcredist, d3dx silent installs
 
-### 15C: Compat Config Expansion
+### 16C: Compat Config Expansion
 
 - Extend `mtsp-rules.toml` with full flag system
 - Mine Proton's game fix database for applicable patterns
-- Port: disablenvapi, heapdelayfree, WINEDLLOVERRIDES
-- Skip Linux/Vulkan-specific flags
 - Target: 200+ game entries
-
-**Hardening gate:**
-- 5+ D3D12 games reach main menu
-- No cross-game prefix contamination
-- Auto-install works for VC++ and DirectX runtimes
-- 200+ game compat entries
 
 ---
 
-## Validation Protocol
+## Dependency Graph
 
-After every phase:
+```
+Phase 10 (Typed MSL IR)               ── NEXT
+  │
+  ├── Phase 11 (intrinsic completeness)
+  │     │
+  │     └── Phase 12 (pipeline correctness)
+  │           │
+  │           └── Phase 13 (test infrastructure)
+  │
+  ├── Phase 14 (advanced features)         ── parallel
+  │
+  └── Phase 15 (Steam bridge)              ── parallel
 
-1. Build: `ninja -C vendor/dxmt/build-metalsharp-x64 src/d3d12/d3d12.dll`
-2. Deploy: `cp build/src/d3d12/d3d12.dll ~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
-3. Test: `./dxmt-src/tests/dxil/test_dxil_converter --dump-msl /tmp/test && ./dxmt-src/tests/dxil/test_dxil_converter --compile-metal /tmp/test`
-4. Measure: Metal compile pass rate, error category counts
-5. Gate: Pass rate must meet phase target before proceeding
+Phase 16 (runtime infrastructure)      ── after Phase 13
+```
 
-### Commit Discipline
+---
 
-- One commit per phase
-- Format: `[dxil-msl] Phase N: <description>` + metric delta
-- `clang++ -fsyntax-only -Wall -Wextra -Werror` clean on all changed files
-- Push to `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp` only
+## Success Metrics
+
+| Metric | Now | After Phase 10 | After Phase 11 | After Phase 12 | After Phase 16 |
+|--------|-----|----------------|-----------------|-----------------|-----------------|
+| Metal compile pass | 13/279 | 150+/279 | 220+/279 | 220+/279 | 220+/279 |
+| Metal errors | 4,492 | < 500 | < 50 | < 50 | < 50 |
+| Games reaching menu | 1-2 | 2-3 | 5-10 | 5-10 | 5+ |
+| Recognizable rendering | No | No | Maybe | Yes | Yes |
+| Per-game prefix | No | No | No | No | Yes |
+| Steam API coverage | 6 funcs | 6 funcs | 6 funcs | 6 funcs | 100+ |
+| Typed IR (no `auto`) | No | Yes | Yes | Yes | Yes |
 
 ---
 
@@ -350,49 +388,35 @@ After every phase:
 
 | Path | Purpose |
 |------|---------|
-| `vendor/dxmt/src/airconv/dxil/dxil_to_msl.cpp` | DXIL→MSL converter |
-| `vendor/dxmt/src/airconv/dxil/llvm_bitcode.cpp` | Bitcode parser |
-| `vendor/dxmt/src/airconv/dxil/dxil_to_msl.hpp` | EmitContext struct |
-| `vendor/dxmt/src/airconv/dxil/dxil_container.hpp` | DXIL container |
+| `vendor/dxmt/src/airconv/dxil/dxil_to_msl.cpp` | Current DXIL→MSL converter (keep as fallback) |
+| `vendor/dxmt/src/airconv/dxil/llvm_bitcode.cpp` | Bitcode parser (KEEP — already fixed) |
+| `vendor/dxmt/src/airconv/dxil/llvm_bitcode.hpp` | LLVM IR types (KEEP) |
+| `vendor/dxmt/src/airconv/dxil/dxil_ir.hpp` | NEW: Typed DXIL IR types |
+| `vendor/dxmt/src/airconv/dxil/dxil_ir_builder.cpp` | NEW: LLVM IR → typed DXIL IR |
+| `vendor/dxmt/src/airconv/dxil/msl_lowering.cpp` | NEW: Typed DXIL IR → MSL AST |
 | `dxmt-src/tests/dxil/test_dxil_converter.cpp` | Test harness |
-| `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/` | Deploy target |
 | `/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/.metalsharp-cache/` | Shader cache |
 | `/Volumes/AverySSD/metalsharp/dxmt-src/` | Dev tree |
 | `/Volumes/AverySSD/metalsharp/metalsharp-repo/` | Git repo |
 
 ---
 
-## Dependency Graph
+## Validation Protocol
 
-```
-Phase 9 (Metal error fix sprint)      ── NEXT
-  │
-  ├── Phase 10 (intrinsic completeness)
-  │     │
-  │     └── Phase 11 (pipeline correctness)
-  │           │
-  │           └── Phase 12 (test infrastructure)
-  │
-  ├── Phase 13 (advanced features)        ── parallel
-  │
-  └── Phase 14 (Steam bridge)            ── parallel
+After every phase:
 
-Phase 15 (runtime infrastructure)      ── after Phase 12
-```
+1. Build test harness: compile test_dxil_converter
+2. DXIL pass: 279/279 must hold
+3. Metal compile: `for f in *.metal; do xcrun -sdk macosx metal -c "$f" -o /dev/null 2> "errors/${f%.metal}.err"; done`
+4. Measure: Metal compile pass rate, error category counts
+5. Gate: Pass rate must meet phase target before proceeding
+
+### Commit Discipline
+
+- One commit per sub-phase
+- Format: `feat(dxil): Phase N — <description>` + metric delta
+- Push to `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp` only
 
 ---
 
-## Success Metrics
-
-| Metric | Now | After Phase 9 | After Phase 10 | After Phase 11 | After Phase 15 |
-|--------|-----|---------------|-----------------|-----------------|-----------------|
-| Metal compile pass | 12/279 | 80+/279 | 200+/279 | 200+/279 | 200+/279 |
-| Metal errors | ~5,000 | < 500 | < 50 | < 50 | < 50 |
-| Games reaching menu | 1-2 | 2-3 | 5-10 | 5-10 | 5+ |
-| Recognizable rendering | No | No | Maybe | Yes | Yes |
-| Per-game prefix | No | No | No | No | Yes |
-| Steam API coverage | 6 funcs | 6 funcs | 6 funcs | 6 funcs | 100+ |
-
----
-
-*This roadmap replaces all prior versions. Every phase must meet its gate before proceeding. No shortcuts, no claimed implementations without proof.*
+*This roadmap replaces all prior versions. Phase 9A/9B demonstrated that per-error-category patching of the string-emitting converter cannot reach target Metal pass rates. Phase 10 rebuilds the translation layer with type awareness. Every phase must meet its gate before proceeding.*
