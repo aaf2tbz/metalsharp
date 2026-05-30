@@ -4,7 +4,7 @@
 **Branch:** `codex/beta7-dxmt-cohesion` on `aaf2tbz/metalsharp`  
 **PR:** #129  
 **Workspace:** `/Volumes/AverySSD/metalsharp/pr129-dx12-pipeline/`  
-**Current PR head:** latest local Phase 14 completion pass, pending push (`(fix) Complete Phase 14 typed lowering gate`)
+**Current PR head:** latest local Phase 14 hardening pass, pending push (`(chore) Harden Phase 14 validation state`)
 
 ---
 
@@ -66,6 +66,7 @@ Recent progress:
 | `98cb26f` | Phase 13C typed handle records | New lowering moved to 184/766; unsupported simd helper buckets cleared |
 | `31916dc` | Phase 14 typed lowering advance | Pointer/resource alias coercion, buffer offset scalarization, math intrinsic cast hardening, vector operand scalarization moved new lowering to 432/766 |
 | latest local Phase 14 completion pass | Vector width reconstruction, scalar math/cast guards, scalar-to-vector operand coercion, opcode-prefixed annotate handling, and all-produced dispatch predeclaration | New lowering moved to 735/766 |
+| latest local Phase 14 hardening pass | PR CI green on `223debf`; local `./BUILD.sh && ./RUN.sh` rerun stable at DXIL 766/766 and Metal 735/766 | No Phase 14 regression; Phase 15 can start from a green baseline |
 
 Important Metal limits observed during validation:
 
@@ -400,7 +401,7 @@ Gate:
 
 **Goal:** every DXIL intrinsic in the corpus emits valid, typed Metal.  
 **Target:** 650+ Metal passes.  
-**Status:** complete for the Phase 14 gate at 735/766 Metal passes; remaining failures are Phase 15 parity work.
+**Status:** complete and hardened for the Phase 14 gate at 735/766 Metal passes; remaining failures are Phase 15 parity work.
 
 ### 14A: Texture Operations
 
@@ -600,9 +601,9 @@ Gate:
 
 ## Immediate Next Actions
 
-1. Commit Phase 14 completion with the 735/766 validation evidence.
-2. Run the Phase 14 hardening pass: recheck PR CI, rerun corpus validation, and fix any immediate red flags without expanding scope.
-3. Begin Phase 15 parity: build an old/new converter scoreboard for the remaining 31 typed-lowering Metal failures.
+1. Begin Phase 15 parity: build an old/new converter scoreboard for the remaining 31 typed-lowering Metal failures.
+2. Classify each remaining failure by first Metal diagnostic and old/new output diff.
+3. Fix only typed-lowering parity bugs until the new path reaches 765/766 Metal compiles.
 4. Keep the old converter as the production D3D12 path until typed lowering reaches 765/766 and runtime proof exists.
 
 Expected next milestone: **Phase 15 parity at 765/766 Metal passes** with a side-by-side old/new failure scoreboard.
