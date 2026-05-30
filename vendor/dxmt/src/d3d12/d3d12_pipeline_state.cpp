@@ -398,6 +398,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           snprintf(metallib_error_path, sizeof(metallib_error_path),
                    "%s.metallib.err.txt", cache_path);
           EnsureShaderCacheDir();
+          DumpShaderBlob(dxbc_path, bytecode, size);
 
           FILE *mf = fopen(metallib_path, "rb");
           if (!mf) {
