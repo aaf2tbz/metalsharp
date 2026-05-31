@@ -447,6 +447,7 @@ struct LowerContext {
     bool uses_group_id = false;
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
+    std::set<uint32_t> vertex_input_ids;
 };
 
 static void recordDiagnostic(LowerContext &ctx, const char *fmt, ...) {
@@ -528,7 +529,7 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     os << "};\n\n";
 
     os << "struct vertex_input_v {\n";
-    for (uint32_t i = 0; i < 16; i++)
+    for (uint32_t i : ctx.vertex_input_ids)
         os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
     os << "};\n\n";
 
@@ -743,6 +744,83 @@ static bool exprLooksScalarCast(const std::string &value) {
            startsWith(stripped, "static_cast<bool>(");
 }
 
+static bool exprLooksThreadVector(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    return stripped == "dtid" || stripped == "gtid" ||
+           stripped == "ggid" || stripped == "gsz";
+}
+
+static void replaceBareThreadVectorCast(std::string &value, const std::string &from,
+                                        const std::string &to) {
+    size_t pos = 0;
+    while ((pos = value.find(from, pos)) != std::string::npos) {
+        size_t end = pos + from.size();
+        bool bare = end >= value.size() ||
+                    (!std::isalnum((unsigned char)value[end]) &&
+                     value[end] != '_' && value[end] != '.');
+        if (bare) {
+            value.replace(pos, from.size(), to);
+            pos += to.size();
+        } else {
+            pos = end;
+        }
+    }
+}
+
+static std::string sanitizeThreadVectorCasts(std::string value) {
+    for (const char *name : {"dtid", "gtid", "ggid", "gsz"}) {
+        std::string base(name);
+        replaceBareThreadVectorCast(value, "(int)" + base, "(int)" + base + ".x");
+        replaceBareThreadVectorCast(value, "(uint)" + base, "(uint)" + base + ".x");
+        replaceBareThreadVectorCast(value, "static_cast<int>(" + base + ")",
+                                    "static_cast<int>(" + base + ".x)");
+        replaceBareThreadVectorCast(value, "static_cast<uint>(" + base + ")",
+                                    "static_cast<uint>(" + base + ".x)");
+    }
+    return value;
+}
+
+static bool exprLooksBoolValue(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    return stripped == "true" || stripped == "false" ||
+           stripped.find(" == ") != std::string::npos ||
+           stripped.find(" != ") != std::string::npos ||
+           stripped.find(" <= ") != std::string::npos ||
+           stripped.find(" >= ") != std::string::npos ||
+           stripped.find(" < ") != std::string::npos ||
+           stripped.find(" > ") != std::string::npos ||
+           startsWith(stripped, "any(") ||
+           startsWith(stripped, "all(") ||
+           startsWith(stripped, "isnan(") ||
+           startsWith(stripped, "!isnan(");
+}
+
+static std::string vectorZeroForExpression(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    static const std::pair<const char *, const char *> zeros[] = {
+        {"float2(", "float2(0.0f)"}, {"float3(", "float3(0.0f)"},
+        {"float4(", "float4(0.0f)"}, {"int2(", "int2(0)"},
+        {"int3(", "int3(0)"},       {"int4(", "int4(0)"},
+        {"uint2(", "uint2(0)"},     {"uint3(", "uint3(0)"},
+        {"uint4(", "uint4(0)"},
+    };
+    for (const auto &zero : zeros) {
+        if (startsWith(stripped, zero.first) ||
+            stripped.find(zero.first) != std::string::npos)
+            return zero.second;
+    }
+    if (stripped.find("reinterpret_cast<device float4&>") != std::string::npos ||
+        stripped.find(".read(") != std::string::npos ||
+        stripped.find(".sample(") != std::string::npos ||
+        stripped.find(".gather(") != std::string::npos)
+        return "float4(0.0f)";
+    if (stripped.find("reinterpret_cast<device uint4&>") != std::string::npos)
+        return "uint4(0)";
+    if (stripped.find("reinterpret_cast<device int4&>") != std::string::npos)
+        return "int4(0)";
+    return "";
+}
+
 static bool exprLooksVectorValue(const std::string &value) {
     if (exprEndsWithComponent(value))
         return false;
@@ -799,10 +877,17 @@ static bool exprContainsRawResourceHandle(const std::string &value) {
 }
 
 static std::string coerceResolvedValue(const std::string &value, const MSLType &target) {
-    std::string resolved = normalizeAggregateExpressions(value, target);
+    std::string resolved = sanitizeThreadVectorCasts(normalizeAggregateExpressions(value, target));
     if (target.kind == MSLTypeKind::Bool) {
         if (exprLooksResourceHandle(resolved) || exprLooksSideEffectOnly(resolved)) return "false";
-        return resolved;
+        if (exprLooksBoolValue(resolved)) return resolved;
+        if (exprLooksVectorValue(resolved)) {
+            std::string zero = vectorZeroForExpression(resolved);
+            if (!zero.empty())
+                return "any(" + resolved + " != " + zero + ")";
+            return "((" + resolved + ").x != 0)";
+        }
+        return "(" + resolved + " != 0)";
     }
     if (exprLooksResourceHandle(resolved) &&
         target.kind != MSLTypeKind::DeviceCharPtr &&
@@ -835,6 +920,13 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         if (!type_name.empty() && type_name != "auto")
             return type_name + "(" + resolved + ")";
     }
+    if (DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved)) {
+        std::string type_name = emitTypeName(target);
+        std::string stripped = stripEnclosingParens(resolved);
+        if (!type_name.empty() && type_name != "auto" &&
+            !startsWith(stripped, (type_name + "(").c_str()))
+            return type_name + "(" + resolved + ")";
+    }
     if (resolved == "inf" || resolved == "+inf")
         return "INFINITY";
     if (resolved == "-inf")
@@ -844,10 +936,11 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
 
 static std::string coerceResolvedValue(const LowerContext &ctx, const std::string &value,
                                        const MSLType &target) {
+    std::string sanitized_value = sanitizeThreadVectorCasts(value);
     std::string component_base;
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
-        splitTrailingComponentAccess(value, component_base)) {
+        splitTrailingComponentAccess(sanitized_value, component_base)) {
         MSLType base_type = typeForResolvedValueName(ctx, component_base);
         if ((isUsableMSLType(base_type) && !DXILIRBuilder::isVectorType(base_type)) ||
             (!isUsableMSLType(base_type) &&
@@ -858,14 +951,14 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         }
     }
 
-    MSLType source_type = typeForResolvedExpression(ctx, value);
+    MSLType source_type = typeForResolvedExpression(ctx, sanitized_value);
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
-        exprContainsPointerTypedValue(ctx, value) &&
-        value.find("*(") == std::string::npos &&
-        value.find("reinterpret_cast") == std::string::npos &&
-        value.find('[') == std::string::npos)
+        exprContainsPointerTypedValue(ctx, sanitized_value) &&
+        sanitized_value.find("*(") == std::string::npos &&
+        sanitized_value.find("reinterpret_cast") == std::string::npos &&
+        sanitized_value.find('[') == std::string::npos)
         return defaultForType(target);
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
@@ -875,9 +968,9 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
         DXILIRBuilder::isVectorType(source_type))
-        return coerceResolvedValue("(" + value + ").x", target);
+        return coerceResolvedValue("(" + sanitized_value + ").x", target);
 
-    return coerceResolvedValue(value, target);
+    return coerceResolvedValue(sanitized_value, target);
 }
 
 static std::string stripEnclosingParens(std::string value) {
@@ -1257,6 +1350,45 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     ctx.binding_plan = std::move(plan);
 }
 
+static void analyzeVertexInputs(LowerContext &ctx, const LLVMFunction &fn) {
+    if (ctx.shader.kind != DxilShaderKind::Vertex)
+        return;
+
+    auto calleeName = [&](uint32_t callee) -> std::string {
+        auto decl_it = ctx.function_decls.find(callee);
+        if (decl_it != ctx.function_decls.end())
+            return decl_it->second;
+        if (callee < ctx.value_table.size())
+            return ctx.value_table[callee];
+        return {};
+    };
+
+    for (const auto &block : fn.blocks) {
+        for (const auto &inst : block.instructions) {
+            if (inst.opcode != LLVMInstruction::Call || inst.operands.size() < 4)
+                continue;
+
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(calleeName(inst.operands[0]));
+            if (intrinsic_id != DXOP_LoadInput)
+                continue;
+
+            std::vector<uint32_t> call_args;
+            for (size_t i = 2; i < inst.operands.size(); i++)
+                call_args.push_back(inst.operands[i]);
+            uint32_t input_id = literalFromValue(ctx, call_args[0], 0);
+            if (input_id < 16)
+                ctx.vertex_input_ids.insert(input_id);
+            if (call_args.size() > 1) {
+                input_id = literalFromValue(ctx, call_args[1], 0);
+                if (input_id < 16)
+                    ctx.vertex_input_ids.insert(input_id);
+            }
+        }
+    }
+    if (!ctx.vertex_input_ids.empty())
+        ctx.vertex_input_ids.insert(0);
+}
+
 static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
                                           const std::vector<uint32_t> &args,
                                           MSLType declared = {}) {
@@ -1433,15 +1565,22 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (handle_it != ctx.resource_handles.end())
             return materializeHandleName(ctx, handle_it->second, prefix);
         auto it = ctx.buffer_origin.find(idx);
-        if (it != ctx.buffer_origin.end()) return it->second;
+        if (it != ctx.buffer_origin.end() && std::strcmp(prefix, "buf") == 0)
+            return it->second;
         std::string value = valueArg(arg, fallback);
         MSLType type = valueTypeOrUnknown(ctx, idx);
-        if (startsWith(value, "buf") || startsWith(value, "tex") || startsWith(value, "samp") ||
-            type.kind == MSLTypeKind::DeviceCharPtr ||
-            type.kind == MSLTypeKind::ThreadgroupCharPtr ||
-            type.kind == MSLTypeKind::Texture2D ||
-            type.kind == MSLTypeKind::RWTexture2D ||
-            type.kind == MSLTypeKind::Sampler)
+        if (startsWith(value, prefix))
+            return resolveBindingName(value, prefix);
+        if (startsWith(value, "buf") || startsWith(value, "tex") || startsWith(value, "samp"))
+            return fallback;
+        if ((std::strcmp(prefix, "buf") == 0 &&
+             (type.kind == MSLTypeKind::DeviceCharPtr ||
+              type.kind == MSLTypeKind::ThreadgroupCharPtr)) ||
+            (std::strcmp(prefix, "tex") == 0 &&
+             (type.kind == MSLTypeKind::Texture2D ||
+              type.kind == MSLTypeKind::RWTexture2D)) ||
+            (std::strcmp(prefix, "samp") == 0 &&
+             type.kind == MSLTypeKind::Sampler))
             return resolveBindingName(value, prefix);
         return fallback;
     };
@@ -1706,7 +1845,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         case DXILOP_Round_pi: return "ceil(" + fx + ")";
         case DXILOP_Round_z: return "trunc(" + fx + ")";
         case DXILOP_Bfrev: return "reverse_bits(" + x + ")";
-        case DXILOP_Countbits: return "popcount(" + x + ")";
+        case DXILOP_Countbits: return "popcount(static_cast<uint>(" + x + "))";
         case DXILOP_FirstbitLo: return "ctz(" + x + ")";
         case DXILOP_FirstbitHi: return "clz(" + x + ")";
         case DXILOP_FirstbitSHi: return "((" + x + ") < 0 ? clz(~(" + x + ")) : clz(" + x + "))";
@@ -2025,6 +2164,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return value;
         }
 
+        if (exprLooksThreadVector(value) &&
+            (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+            !DXILIRBuilder::isVectorType(target))
+            return castExpr(value + ".x", target);
+
         if (source.kind == MSLTypeKind::Unknown &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
             return castExpr(value, target);
@@ -2043,7 +2187,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             !DXILIRBuilder::isVectorType(target))
             return castExpr("(" + value + ").x", target);
         if (DXILIRBuilder::isVectorType(source) && DXILIRBuilder::isVectorType(target) &&
-            source.kind != target.kind)
+            (DXILIRBuilder::vectorWidth(source) != DXILIRBuilder::vectorWidth(target) ||
+             DXILIRBuilder::scalarType(source).kind != DXILIRBuilder::scalarType(target).kind))
             return coerceVectorWidth(value, source, target);
         return value;
     };
@@ -2814,6 +2959,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     }
 
     analyzeBindingPlan(ctx, fn);
+    analyzeVertexInputs(ctx, fn);
     emitFunctionPrologue(ctx);
 
     for (auto &gv : module.globals) {

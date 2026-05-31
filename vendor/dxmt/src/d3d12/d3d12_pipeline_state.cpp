@@ -12,12 +12,15 @@
 #include "dxil/dxil_container.hpp"
 #include "dxil/llvm_bitcode.hpp"
 #include "dxil/dxil_to_msl.hpp"
+#include "dxil/msl_lowering.hpp"
 #include "../../libs/DXBCParser/BlobContainer.h"
 #include "../../libs/DXBCParser/DXBCUtils.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 #include <process.h>
@@ -30,8 +33,50 @@ namespace dxmt {
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
 
+std::string ShaderCacheDir() {
+  const char *env_path = std::getenv("DXMT_SHADER_CACHE_PATH");
+  std::string path = (env_path && env_path[0]) ? env_path : "/tmp/dxmt_shader_cache";
+  while (path.size() > 1 && (path.back() == '/' || path.back() == '\\'))
+    path.pop_back();
+  return path;
+}
+
+void FormatShaderCachePath(char *out, size_t out_size, const char *suffix_fmt,
+                           size_t hash) {
+  char suffix[128];
+  snprintf(suffix, sizeof(suffix), suffix_fmt, hash);
+  snprintf(out, out_size, "%s/%s", ShaderCacheDir().c_str(), suffix);
+}
+
 void EnsureShaderCacheDir() {
-  CreateDirectoryA("Z:\\tmp\\dxmt_shader_cache", nullptr);
+  auto dir = ShaderCacheDir();
+  if (dir == "/tmp/dxmt_shader_cache")
+    CreateDirectoryA("Z:\\tmp\\dxmt_shader_cache", nullptr);
+  mkdir(dir.c_str());
+}
+
+std::string DescribeNSObject(obj_handle_t handle) {
+  if (!handle)
+    return "unknown";
+  auto desc = WMT::String{NSObject_description(handle)}.getUTF8String();
+  return desc.empty() ? "unknown" : desc;
+}
+
+dxmt::dxil::MSLShader
+ToRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
+  dxmt::dxil::MSLShader shader;
+  shader.source = std::move(typed.source);
+  shader.entry_point = std::move(typed.entry_point);
+  shader.tg_size[0] = typed.tg_size[0];
+  shader.tg_size[1] = typed.tg_size[1];
+  shader.tg_size[2] = typed.tg_size[2];
+  shader.unsupported_intrinsics = typed.unsupported_intrinsics;
+  shader.unsupported_opcodes = typed.unsupported_opcodes;
+  shader.diagnostics = std::move(typed.diagnostics);
+  shader.diagnostics.push_back(str::format(
+      "MSLLowering runtime path active: typed_values=", typed.typed_value_count,
+      " auto_values=", typed.auto_value_count));
+  return shader;
 }
 
 size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
@@ -123,11 +168,14 @@ size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
 }
 
 void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
-                            const WMTSize &threadgroup_size,
+                            uint32_t threadgroup_width,
+                            uint32_t threadgroup_height,
+                            uint32_t threadgroup_depth,
                             uintptr_t compute_function) {
-  char path[256];
-  snprintf(path, sizeof(path), "/tmp/dxmt_shader_cache/pso-compute-%016zx.json",
-           cs_hash);
+  char path[1024];
+  char metallib_path[1024];
+  FormatShaderCachePath(path, sizeof(path), "pso-compute-%016zx.json", cs_hash);
+  FormatShaderCachePath(metallib_path, sizeof(metallib_path), "%016zx.metallib", cs_hash);
   EnsureShaderCacheDir();
   FILE *df = fopen(path, "w");
   if (!df)
@@ -142,12 +190,12 @@ void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
   fprintf(df, "      \"type\": \"compute\",\n");
   fprintf(df, "      \"d3d12\": { \"cs_hash\": \"%016zx\", \"cs_bytes\": %zu },\n",
           cs_hash, (size_t)cs_size);
-  fprintf(df, "      \"shader\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"cs_main\" },\n",
-          cs_hash, cs_hash);
+  fprintf(df, "      \"shader\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"cs_main\" },\n",
+          cs_hash, metallib_path);
   fprintf(df, "      \"threadgroup_size\": [%llu, %llu, %llu],\n",
-          (unsigned long long)threadgroup_size.width,
-          (unsigned long long)threadgroup_size.height,
-          (unsigned long long)threadgroup_size.depth);
+          (unsigned long long)threadgroup_width,
+          (unsigned long long)threadgroup_height,
+          (unsigned long long)threadgroup_depth);
   fprintf(df, "      \"metal\": { \"compute_function\": %llu }\n",
           (unsigned long long)compute_function);
   fprintf(df, "    }\n");
@@ -167,9 +215,12 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
                            bool rasterization_enabled,
                            uintptr_t vertex_function,
                            uintptr_t fragment_function) {
-  char path[256];
-  snprintf(path, sizeof(path), "/tmp/dxmt_shader_cache/pso-render-%016zx.json",
-           pso_hash);
+  char path[1024];
+  char vs_metallib_path[1024];
+  char ps_metallib_path[1024];
+  FormatShaderCachePath(path, sizeof(path), "pso-render-%016zx.json", pso_hash);
+  FormatShaderCachePath(vs_metallib_path, sizeof(vs_metallib_path), "%016zx.metallib", vs_hash);
+  FormatShaderCachePath(ps_metallib_path, sizeof(ps_metallib_path), "%016zx.metallib", ps_hash);
   EnsureShaderCacheDir();
   FILE *df = fopen(path, "w");
   if (!df)
@@ -207,11 +258,11 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
   fprintf(df, "      \"stencil_format\": \"%s\",\n",
           PixelFormatManifestName(stencil_format));
   fprintf(df, "      \"sample_count\": %u,\n", sample_count ? sample_count : 1);
-  fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"vs_main\" },\n",
-          vs_hash, vs_hash);
+  fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"vs_main\" },\n",
+          vs_hash, vs_metallib_path);
   if (ps_size > 0) {
-    fprintf(df, "      \"fragment\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"ps_main\" },\n",
-            ps_hash, ps_hash);
+    fprintf(df, "      \"fragment\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"ps_main\" },\n",
+            ps_hash, ps_metallib_path);
   } else {
     fprintf(df, "      \"fragment\": null,\n");
   }
@@ -440,7 +491,10 @@ void DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
 
   fclose(df);
 
-  FILE *index = fopen("Z:\\tmp\\dxmt_shader_cache\\dxil_report_index.tsv", "a");
+  char index_path[1024];
+  snprintf(index_path, sizeof(index_path), "%s/dxil_report_index.tsv",
+           ShaderCacheDir().c_str());
+  FILE *index = fopen(index_path, "a");
   if (index) {
     fprintf(index, "0x%016zx\t%s\t%s\t%u.%u\t%u\t%u\t%s\n", hash,
             DxilShaderKindName(shader_info.kind), func_name ? func_name : "",
@@ -532,10 +586,68 @@ void MTLD3D12PipelineState::ClearCompileFailure() {
 bool MTLD3D12PipelineState::RecordCompileFailure(const char *stage, const std::string &detail) {
   m_compile_failure_stage = stage ? stage : "unknown";
   m_compile_failure_detail = detail;
+  m_compile_state.store(CompileState::Failed);
+  m_compile_cv.notify_all();
   PSTRACE("PSO COMPILE FAILURE: this=%p compute=%d stage=%s detail=%s",
           (void *)this, m_is_compute, m_compile_failure_stage.c_str(),
           m_compile_failure_detail.c_str());
   return false;
+}
+
+bool MTLD3D12PipelineState::IsCompiled() const {
+  return m_compile_state.load() == CompileState::Compiled;
+}
+
+bool MTLD3D12PipelineState::IsCompilePending() const {
+  CompileState state = m_compile_state.load();
+  return state == CompileState::Pending || state == CompileState::Compiling;
+}
+
+std::string MTLD3D12PipelineState::GetVSCacheHash() const {
+  if (m_vs.empty())
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_vs.data(), m_vs.size(), ShaderType::Vertex,
+                                  &m_input_layout));
+  return buffer;
+}
+
+std::string MTLD3D12PipelineState::GetPSCacheHash() const {
+  if (m_ps.empty())
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_ps.data(), m_ps.size(), ShaderType::Pixel,
+                                  nullptr));
+  return buffer;
+}
+
+std::string MTLD3D12PipelineState::GetGSCacheHash() const {
+  if (m_gs.empty())
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
+                                  ShaderType::Geometry, nullptr));
+  return buffer;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureStage() const {
+  return m_compile_failure_stage;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
+  return m_compile_failure_detail;
+}
+
+bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
+  (void)allow_async;
+  return Compile();
+}
+
+void MTLD3D12PipelineState::RunAsyncCompile() {
+  Compile();
 }
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
@@ -640,11 +752,11 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 
           auto wmt_device = m_device->GetDXMTDevice().device();
 
-          char cache_path[256];
-          snprintf(cache_path, sizeof(cache_path), "/tmp/dxmt_shader_cache/%016zx", hash);
-          char dxbc_path[256], metallib_path[256], reflection_path[256],
-              module_summary_path[256], dxil_report_path[256],
-              metallib_error_path[256];
+          char cache_path[1024];
+          FormatShaderCachePath(cache_path, sizeof(cache_path), "%016zx", hash);
+          char dxbc_path[1024], metallib_path[1024], reflection_path[1024],
+              module_summary_path[1024], dxil_report_path[1024],
+              metallib_error_path[1024];
           snprintf(dxbc_path, sizeof(dxbc_path), "%s.dxbc", cache_path);
           snprintf(metallib_path, sizeof(metallib_path), "%s.metallib", cache_path);
           snprintf(reflection_path, sizeof(reflection_path), "%s.json", cache_path);
@@ -688,9 +800,12 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             DumpDXILModuleSummary(module_summary_path, *module, shader_info);
             PSTRACE("  DXIL module summary written to %s", module_summary_path);
 
-            auto msl_result = dxmt::dxil::DXILToMSL::convert(*module, shader_info);
+            auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info);
+            auto msl_result = typed_msl
+                ? std::optional<dxmt::dxil::MSLShader>(std::in_place, ToRuntimeMSLShader(std::move(*typed_msl)))
+                : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
             if (!msl_result) {
-              PSTRACE("  DXILToMSL::convert FAILED");
+              PSTRACE("  MSLLowering::lower and DXILToMSL::convert FAILED");
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure("shader/dxil_to_msl",
                                           str::format(func_name,
@@ -699,12 +814,13 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                                                       "; dxbc ", dxbc_path));
             }
 
-            PSTRACE("  MSL generated: %zu bytes, entry=%s unsupported_intrinsics=%u unsupported_opcodes=%u",
+            PSTRACE("  MSL generated via %s: %zu bytes, entry=%s unsupported_intrinsics=%u unsupported_opcodes=%u",
+                    typed_msl ? "MSLLowering" : "DXILToMSL",
                     msl_result->source.size(), msl_result->entry_point.c_str(),
                     msl_result->unsupported_intrinsics, msl_result->unsupported_opcodes);
 
-            char msl_path[256];
-            char msl_error_path[256];
+            char msl_path[1024];
+            char msl_error_path[1024];
             snprintf(msl_path, sizeof(msl_path), "%s.msl", cache_path);
             snprintf(msl_error_path, sizeof(msl_error_path),
                      "%s.msl.err.txt", cache_path);
@@ -721,15 +837,15 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 msl_result->source.c_str(), msl_result->source.size(), compile_err);
 
             if (compile_err.handle) {
-              char *err_desc = (char *)NSObject_description(compile_err.handle);
-              DumpShaderText(msl_error_path, err_desc ? err_desc : "unknown");
-              PSTRACE("  newLibraryWithSource FAILED: %s", err_desc ? err_desc : "unknown");
+              auto err_desc = DescribeNSObject(compile_err.handle);
+              DumpShaderText(msl_error_path, err_desc.c_str());
+              PSTRACE("  newLibraryWithSource FAILED: %s", err_desc.c_str());
               Logger::err(str::format("DXIL MSL compilation failed for ", func_name, ": ",
-                                       err_desc ? err_desc : "unknown error"));
+                                       err_desc));
               DumpShaderBlob(dxbc_path, bytecode, size);
               return RecordCompileFailure("shader/metal_library_source",
                                           str::format(func_name, " MSL compile failed: ",
-                                                      err_desc ? err_desc : "unknown",
+                                                      err_desc,
                                                       "; msl ", msl_path,
                                                       "; error ", msl_error_path,
                                                       "; dxbc ", dxbc_path));
@@ -739,8 +855,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 
             const char *dump_msl = std::getenv("DXMT_DUMP_MSL");
             if (dump_msl && dump_msl[0] && strcmp(dump_msl, "0") != 0) {
-              char dump_path[256];
-              snprintf(dump_path, sizeof(dump_path), "/tmp/dxmt_msl_%s_%016zx.metal", func_name, hash);
+              char dump_path[1024];
+              snprintf(dump_path, sizeof(dump_path), "%s/dxmt_msl_%s_%016zx.metal",
+                       ShaderCacheDir().c_str(), func_name, hash);
               FILE *df = fopen(dump_path, "w");
               if (df) { fwrite(msl_result->source.c_str(), 1, msl_result->source.size(), df); fclose(df); }
             }
@@ -866,17 +983,15 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                                 "; dxbc ", dxbc_path));
               }
             } else {
-              char *err_desc = (char *)NSObject_description(err.handle);
-              DumpShaderText(metallib_error_path,
-                             err_desc ? err_desc : "unknown");
+              auto err_desc = DescribeNSObject(err.handle);
+              DumpShaderText(metallib_error_path, err_desc.c_str());
               DumpShaderBlob(dxbc_path, bytecode, size);
-              PSTRACE("  WMT newLibrary FAILED: %s",
-                      err_desc ? err_desc : "unknown");
+              PSTRACE("  WMT newLibrary FAILED: %s", err_desc.c_str());
               return RecordCompileFailure(
                   "shader/dxil_cached_metallib_load",
                   str::format(func_name,
                               " cached metallib load failed: ",
-                              err_desc ? err_desc : "unknown",
+                              err_desc,
                               "; metallib ", metallib_path, "; error ",
                               metallib_error_path, "; dxbc ", dxbc_path));
             }
@@ -893,9 +1008,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
       }
     }
     if (!has_dxil) {
-      char dxbc_path[256];
-      snprintf(dxbc_path, sizeof(dxbc_path),
-               "/tmp/dxmt_shader_cache/%016zx.sm50_failed.dxbc", hash);
+      char dxbc_path[1024];
+      FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                            "%016zx.sm50_failed.dxbc", hash);
       DumpShaderBlob(dxbc_path, bytecode, size);
       PSTRACE("SM50Init FAILED for %s: %s (no DXIL chunk, dumped %s)",
               func_name, err_buf, dxbc_path);
@@ -945,9 +1060,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                   func_name, &compile_result, &sm50_err)) {
     char err_buf[256] = {};
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-    char dxbc_path[256];
-    snprintf(dxbc_path, sizeof(dxbc_path),
-             "/tmp/dxmt_shader_cache/%016zx.sm50_compile_failed.dxbc", hash);
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_compile_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("SM50Compile failed for %s: %s (dumped %s)",
             func_name, err_buf, dxbc_path);
@@ -963,8 +1078,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   SM50GetCompiledBitcode(compile_result, &bitcode);
 
   {
-    char dump_path[256];
-    snprintf(dump_path, sizeof(dump_path), "/tmp/dxmt_sm50_%s.metallib", func_name);
+    char dump_path[1024];
+    snprintf(dump_path, sizeof(dump_path), "%s/dxmt_sm50_%s.metallib",
+             ShaderCacheDir().c_str(), func_name);
     FILE *df = fopen(dump_path, "wb");
     if (df) { fwrite(bitcode.Data, 1, bitcode.Size, df); fclose(df); }
     Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path, " (", bitcode.Size, " bytes)"));
@@ -976,19 +1092,19 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   auto library = wmt_device.newLibrary(lib_data, err);
 
   if (err.handle) {
-    char *err_desc = (char *)NSObject_description(err.handle);
-    char dxbc_path[256];
-    snprintf(dxbc_path, sizeof(dxbc_path),
-             "/tmp/dxmt_shader_cache/%016zx.sm50_metal_library_failed.dxbc", hash);
+    auto err_desc = DescribeNSObject(err.handle);
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_metal_library_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("Failed to create Metal library for %s: %s (dumped %s)",
-            func_name, err_desc ? err_desc : "unknown", dxbc_path);
+            func_name, err_desc.c_str(), dxbc_path);
     Logger::err(str::format("Failed to create Metal library for ", func_name));
     SM50DestroyBitcode(compile_result);
     SM50Destroy(shader);
     return RecordCompileFailure("shader/sm50_metal_library",
                                 str::format(func_name, " SM50 Metal library creation failed: ",
-                                            err_desc ? err_desc : "unknown",
+                                            err_desc,
                                             "; dumped ", dxbc_path));
   }
 
@@ -1006,9 +1122,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   }
 
   if (!out_func.handle) {
-    char dxbc_path[256];
-    snprintf(dxbc_path, sizeof(dxbc_path),
-             "/tmp/dxmt_shader_cache/%016zx.sm50_function_lookup_failed.dxbc", hash);
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_function_lookup_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("Failed to get function %s from Metal library (dumped %s)",
             func_name, dxbc_path);
@@ -1112,10 +1228,21 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
 }
 
 bool MTLD3D12PipelineState::Compile() {
-  PTRACE("Compile() called compiled=%d is_compute=%d", m_compiled, m_is_compute);
-  if (m_compiled)
+  PTRACE("Compile() called state=%u is_compute=%d",
+         (unsigned)m_compile_state.load(), m_is_compute);
+  std::unique_lock<std::mutex> lock(m_compile_mutex);
+  if (m_compile_state.load() == CompileState::Compiled)
     return true;
+  if (m_compile_state.load() == CompileState::Compiling) {
+    m_compile_cv.wait(lock, [this]() {
+      CompileState state = m_compile_state.load();
+      return state != CompileState::Compiling && state != CompileState::Pending;
+    });
+    return m_compile_state.load() == CompileState::Compiled;
+  }
+  m_compile_state.store(CompileState::Compiling);
   ClearCompileFailure();
+  lock.unlock();
 
   auto wmt_device = m_device->GetDXMTDevice().device();
   WMT::Reference<WMT::Error> err;
@@ -1139,18 +1266,19 @@ bool MTLD3D12PipelineState::Compile() {
 
     m_compute_pso = wmt_device.newComputePipelineState(info, err);
     if (!m_compute_pso.handle) {
-      char *err_desc = err.handle ? (char *)NSObject_description(err.handle) : nullptr;
+      auto err_desc = DescribeNSObject(err.handle);
       Logger::err(str::format("Failed to create compute PSO: ",
-                              err_desc ? err_desc : "unknown"));
+                              err_desc));
       if (m_cs_shader) {
         SM50Destroy(m_cs_shader);
         m_cs_shader = nullptr;
       }
       return RecordCompileFailure("pso/metal_compute_pso",
                                   str::format("Metal compute PSO creation failed: ",
-                                              err_desc ? err_desc : "unknown"));
+                                              err_desc));
     }
-    DumpComputePSOManifest(cs_hash, m_cs.size(), m_threadgroup_size,
+    DumpComputePSOManifest(cs_hash, m_cs.size(), m_threadgroup_size.width,
+                           m_threadgroup_size.height, m_threadgroup_size.depth,
                            (uintptr_t)cs_func.handle);
 
     PTRACE("CS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
@@ -1184,7 +1312,8 @@ bool MTLD3D12PipelineState::Compile() {
       m_cs_shader = nullptr;
     }
 
-    m_compiled = true;
+    m_compile_state.store(CompileState::Compiled);
+    m_compile_cv.notify_all();
     Logger::info("Compute PSO compiled successfully");
     return true;
   }
@@ -1318,6 +1447,7 @@ bool MTLD3D12PipelineState::Compile() {
   info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
 
   WMTVertexDescriptor vtx_desc = {};
+  bool vertex_descriptor_attached = false;
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
@@ -1431,10 +1561,30 @@ bool MTLD3D12PipelineState::Compile() {
     }
     if (m_vs_uses_stage_in && attribute_count > 0) {
       info.vertex_descriptor = &vtx_desc;
+      vertex_descriptor_attached = true;
       PSTRACE("D3D12 PSO input-layout attached as Metal vertex descriptor for DXIL stage_in");
     } else {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
+  }
+  if (m_vs_uses_stage_in && !vertex_descriptor_attached) {
+    constexpr uint32_t kSyntheticStageInAttributes = 16;
+    constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
+    for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+      auto &attr = vtx_desc.attributes[i];
+      attr.format = WMTAttributeFormatFloat4;
+      attr.offset = i * 16;
+      attr.buffer_index = 0;
+    }
+    vtx_desc.attribute_count = std::min<uint32_t>(kSyntheticStageInAttributes,
+                                                  WMT_MAX_VERTEX_ATTRIBUTES);
+    vtx_desc.layout_count = 1;
+    vtx_desc.layouts[0].stride = kSyntheticStageInStride;
+    vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
+    vtx_desc.layouts[0].step_rate = 1;
+    info.vertex_descriptor = &vtx_desc;
+    PSTRACE("D3D12 PSO synthetic vertex descriptor attached for DXIL stage_in without D3D12 input layout attrs=%u stride=%u",
+            vtx_desc.attribute_count, vtx_desc.layouts[0].stride);
   }
 
   PSTRACE("D3D12 PSO state this=%p rts=%u dsv_fmt=%u depth=%u stencil=%u blend0=%u write_mask0=0x%x cull=%u fill=%u front_ccw=%u depth_clip=%u",
@@ -1450,11 +1600,11 @@ bool MTLD3D12PipelineState::Compile() {
 
   m_render_pso = wmt_device.newRenderPipelineState(info, err);
   if (!m_render_pso.handle) {
-    char *err_desc = err.handle ? (char *)NSObject_description(err.handle) : nullptr;
-    Logger::err(str::format("Failed to create render PSO: ", err_desc ? err_desc : "unknown"));
+    auto err_desc = DescribeNSObject(err.handle);
+    Logger::err(str::format("Failed to create render PSO: ", err_desc));
     return RecordCompileFailure("pso/metal_render_pso",
                                 str::format("Metal render PSO creation failed: ",
-                                            err_desc ? err_desc : "unknown"));
+                                            err_desc));
   }
   {
     size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
@@ -1574,7 +1724,8 @@ bool MTLD3D12PipelineState::Compile() {
     }
   }
 
-  m_compiled = true;
+  m_compile_state.store(CompileState::Compiled);
+  m_compile_cv.notify_all();
   Logger::info(str::format("Graphics PSO compiled: RTs=", m_num_render_targets,
                             " DSV=", (int)m_dsv_format,
                             " samples=", m_sample_count));

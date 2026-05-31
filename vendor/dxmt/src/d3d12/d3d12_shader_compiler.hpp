@@ -44,7 +44,6 @@ struct D3D12ShaderCompileRequest {
   std::string metal_device_family;
   bool allow_debug_msl_backend = false;
   bool prefer_debug_msl_backend = false;
-  dxmt::dxil::MSLConvertOptions msl_options = {};
   D3D12ShaderCompilerPaths paths;
 };
 

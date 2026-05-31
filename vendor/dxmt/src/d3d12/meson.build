@@ -17,8 +17,10 @@ d3d12_src = [
   'd3d12_shader_compiler.cpp',
   'd3d12_swapchain.cpp',
   '../airconv/dxil/dxil_container.cpp',
+  '../airconv/dxil/dxil_ir.cpp',
   '../airconv/dxil/llvm_bitcode.cpp',
   '../airconv/dxil/dxil_to_msl.cpp',
+  '../airconv/dxil/msl_lowering.cpp',
 ]
 
 d3d12_ld_args      = ['-L' + windows_native_install_dir]
