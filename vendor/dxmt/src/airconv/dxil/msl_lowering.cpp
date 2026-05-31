@@ -701,8 +701,21 @@ static MSLType typeForResolvedExpression(const LowerContext &ctx, const std::str
     if (isUsableMSLType(direct))
         return direct;
 
-    if (exprContainsPointerSyntax(value))
-        return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    if (value.find("reinterpret_cast<device float4&>") != std::string::npos ||
+        value.find(".read(") != std::string::npos ||
+        value.find(".sample(") != std::string::npos ||
+        value.find(".gather(") != std::string::npos)
+        return {MSLTypeKind::Float4, 0, {}};
+    if (value.find("reinterpret_cast<device uint4&>") != std::string::npos)
+        return {MSLTypeKind::UInt4, 0, {}};
+    if (value.find("reinterpret_cast<device int4&>") != std::string::npos)
+        return {MSLTypeKind::Int4, 0, {}};
+    if (value.find("reinterpret_cast<device float&>") != std::string::npos)
+        return {MSLTypeKind::Float, 0, {}};
+    if (value.find("reinterpret_cast<device uint&>") != std::string::npos)
+        return {MSLTypeKind::UInt, 0, {}};
+    if (value.find("reinterpret_cast<device int&>") != std::string::npos)
+        return {MSLTypeKind::Int, 0, {}};
 
     std::string base;
     if (splitTrailingComponentAccess(value, base)) {
@@ -712,6 +725,9 @@ static MSLType typeForResolvedExpression(const LowerContext &ctx, const std::str
         if (isUsableMSLType(base_type))
             return base_type;
     }
+
+    if (exprContainsPointerSyntax(value))
+        return {MSLTypeKind::DeviceCharPtr, 0, {}};
 
     return {};
 }
@@ -731,7 +747,9 @@ static bool exprLooksScalarLiteral(const std::string &value) {
 
 static bool exprLooksSideEffectOnly(const std::string &value) {
     return value.find(".write(") != std::string::npos ||
-           value.find("threadgroup_barrier(") != std::string::npos;
+           value.find("threadgroup_barrier(") != std::string::npos ||
+           startsWith(stripEnclosingParens(value), "out.") ||
+           startsWith(stripEnclosingParens(value), "result.");
 }
 
 static bool exprLooksScalarMathCall(const std::string &value) {
@@ -1755,6 +1773,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_CBufferLoad: case DXOP_CBufferLoadLegacy: {
         if (args.size() < 2) return "float4(0)";
         auto handle = handleArg(0, "buf", "buf0");
+        if (!startsWith(handle, "buf"))
+            return "float4(0)";
         ctx.last_buffer_handle = handle;
         auto reg = ensureScalarIndex(numericArg(1, "0"));
         return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + reg + "))*64]))";
@@ -1762,6 +1782,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_BufferLoad: {
         if (args.size() < 3) return "float4(0)";
         auto handle = handleArg(0, "buf", "buf0");
+        if (!startsWith(handle, "buf"))
+            return "float4(0)";
         ctx.last_buffer_handle = handle;
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + idx + "))*16]))";
@@ -1769,6 +1791,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_RawBufferLoad: case 303: case 1025: {
         if (args.size() < 3) return "uint4(0)";
         auto handle = handleArg(0, "buf", "buf0");
+        if (!startsWith(handle, "buf"))
+            return "uint4(0)";
         ctx.last_buffer_handle = handle;
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
@@ -2380,7 +2404,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 ctx.value_types[value_counter] = typeForHandleKind(handle.kind);
                 ctx.value_roles[value_counter] = roleForHandleKind(handle.kind);
                 ctx.pending_handle.reset();
-            } else if (inst.type_id == 0) {
+            } else if (inst.type_id == 0 && result_type.kind != MSLTypeKind::Void &&
+                       !exprLooksSideEffectOnly(translated)) {
                 if (!translated.empty()) {
                     os << "  " << translated << ";\n";
                     ctx.value_table[value_counter] = translated;
