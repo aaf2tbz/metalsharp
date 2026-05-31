@@ -529,6 +529,8 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     os << "};\n\n";
 
     os << "struct vertex_input_v {\n";
+    if (ctx.shader.kind == DxilShaderKind::Vertex && ctx.vertex_input_ids.empty())
+        os << "  float4 a0 [[attribute(0)]];\n";
     for (uint32_t i : ctx.vertex_input_ids)
         os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
     os << "};\n\n";
@@ -799,10 +801,10 @@ static std::string vectorZeroForExpression(const std::string &value) {
     std::string stripped = stripEnclosingParens(value);
     static const std::pair<const char *, const char *> zeros[] = {
         {"float2(", "float2(0.0f)"}, {"float3(", "float3(0.0f)"},
-        {"float4(", "float4(0.0f)"}, {"int2(", "int2(0)"},
-        {"int3(", "int3(0)"},       {"int4(", "int4(0)"},
-        {"uint2(", "uint2(0)"},     {"uint3(", "uint3(0)"},
-        {"uint4(", "uint4(0)"},
+        {"float4(", "float4(0.0f)"}, {"uint2(", "uint2(0)"},
+        {"uint3(", "uint3(0)"},     {"uint4(", "uint4(0)"},
+        {"int2(", "int2(0)"},       {"int3(", "int3(0)"},
+        {"int4(", "int4(0)"},
     };
     for (const auto &zero : zeros) {
         if (startsWith(stripped, zero.first) ||
@@ -884,7 +886,7 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         if (exprLooksVectorValue(resolved)) {
             std::string zero = vectorZeroForExpression(resolved);
             if (!zero.empty())
-                return "any(" + resolved + " != " + zero + ")";
+                return "any((" + resolved + ") != " + zero + ")";
             return "((" + resolved + ").x != 0)";
         }
         return "(" + resolved + " != 0)";
@@ -934,6 +936,9 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     return resolved;
 }
 
+static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr);
+static bool exprLooksScalarizedArithmetic(const std::string &value);
+
 static std::string coerceResolvedValue(const LowerContext &ctx, const std::string &value,
                                        const MSLType &target) {
     std::string sanitized_value = sanitizeThreadVectorCasts(value);
@@ -967,8 +972,19 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
-        DXILIRBuilder::isVectorType(source_type))
+        DXILIRBuilder::isVectorType(source_type)) {
+        std::string scalarized = scalarizeVectorOperands(ctx, sanitized_value);
+        if (scalarized != sanitized_value)
+            return coerceResolvedValue(scalarized, target);
+        if (exprLooksScalarizedArithmetic(sanitized_value))
+            return sanitized_value;
         return coerceResolvedValue("(" + sanitized_value + ").x", target);
+    }
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        exprLooksScalarizedArithmetic(sanitized_value))
+        return sanitized_value;
 
     return coerceResolvedValue(sanitized_value, target);
 }
@@ -1099,6 +1115,19 @@ static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::s
     return out;
 }
 
+static bool exprLooksScalarizedArithmetic(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    if (stripped.find(").x") == std::string::npos &&
+        stripped.find(").y") == std::string::npos &&
+        stripped.find(").z") == std::string::npos &&
+        stripped.find(").w") == std::string::npos)
+        return false;
+    return stripped.find(" + ") != std::string::npos ||
+           stripped.find(" - ") != std::string::npos ||
+           stripped.find("*") != std::string::npos ||
+           stripped.find("/") != std::string::npos;
+}
+
 static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
     std::string value = resolveValue(ctx, idx);
     if (exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
@@ -1120,8 +1149,12 @@ static std::string resolveCondition(LowerContext &ctx, uint32_t idx) {
         condition_type = resolved_type;
     if (typeLooksResourceHandle(condition_type))
         return "false";
-    if (DXILIRBuilder::isVectorType(condition_type))
-        return "any(" + value + " != " + defaultForType(condition_type) + ")";
+    if (DXILIRBuilder::isVectorType(condition_type)) {
+        std::string zero = vectorZeroForExpression(value);
+        if (zero.empty())
+            zero = defaultForType(condition_type);
+        return "any((" + value + ") != " + zero + ")";
+    }
     if (DXILIRBuilder::isFloatType(condition_type) || DXILIRBuilder::isIntType(condition_type))
         return "(" + value + " != " + defaultForType(condition_type) + ")";
     return value;
@@ -2135,8 +2168,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto castExpr = [&](const std::string &expr, const MSLType &target) -> std::string {
         std::string type_name = emitTypeName(target);
         if (type_name.empty() || type_name == "auto" || type_name == "void") return expr;
-        if (DXILIRBuilder::isVectorType(target))
+        if (DXILIRBuilder::isVectorType(target)) {
+            MSLType source = inferTypeFromExpr(expr);
+            if (DXILIRBuilder::isVectorType(source) &&
+                (DXILIRBuilder::vectorWidth(source) != DXILIRBuilder::vectorWidth(target) ||
+                 DXILIRBuilder::scalarType(source).kind != DXILIRBuilder::scalarType(target).kind))
+                return coerceVectorWidth(expr, source, target);
             return type_name + "(" + expr + ")";
+        }
         return "static_cast<" + type_name + ">(" + expr + ")";
     };
 
@@ -2155,6 +2194,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
              typeLooksResourceHandle(source)) &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
             return defaultForType(target);
+        if (source.kind == MSLTypeKind::Bool &&
+            (target.kind == MSLTypeKind::Int || target.kind == MSLTypeKind::UInt))
+            return castExpr(value, target);
+        if ((target.kind == MSLTypeKind::Int || target.kind == MSLTypeKind::UInt) &&
+            exprLooksScalarMathCall(value))
+            return castExpr(value, target);
         if (!isUsableType(target) || target.kind == source.kind)
             return value;
 
@@ -2407,6 +2452,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             (DXILIRBuilder::isFloatType(pre_it->second) || DXILIRBuilder::isIntType(pre_it->second)))
             result_type = pre_it->second;
         result_type = integerTypeFor(result_type);
+        if ((inst.opcode == LLVMInstruction::Shl || inst.opcode == LLVMInstruction::LShr ||
+             inst.opcode == LLVMInstruction::AShr) &&
+            !DXILIRBuilder::isVectorType(result_type))
+            result_type = {MSLTypeKind::Int, 0, {}};
         std::string expr = coerceOperand(inst.operands[0], result_type) + " " +
                            std::string(op_str) + " " +
                            coerceOperand(inst.operands[1], result_type);
@@ -2825,12 +2874,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto val = getValue(inst.operands[1]);
             auto ptr_type = valueType(inst.operands[0]);
             auto val_type = operandType(inst.operands[1]);
+            MSLType ptr_name_type = typeForResolvedValueName(ctx, ptr);
             if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
                 exprContainsRawResourceHandle(ptr)) {
                 os << "  // skipped store through resource handle " << ptr << "\n";
             } else if (isPointerType(val_type) || typeLooksResourceHandle(val_type) ||
                        exprLooksResourceHandle(val) || exprContainsRawResourceHandle(val)) {
                 os << "  // skipped store of pointer/resource value " << val << "\n";
+            } else if (exprLooksVectorValue(ptr) || DXILIRBuilder::isVectorType(ptr_name_type)) {
+                os << "  // skipped store through vector-valued pointer " << ptr << "\n";
             } else if (isPointerType(ptr_type)) {
                 std::string type_name = emitTypeName(val_type);
                 if (type_name.empty() || type_name == "auto" || type_name == "void") type_name = "uint";
