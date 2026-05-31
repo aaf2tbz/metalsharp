@@ -36,7 +36,7 @@ struct LaunchLogContext<'a> {
     prefix: &'a Path,
     cwd: &'a Path,
     exe_name: &'a str,
-    args: &'a [&'a str],
+    args: &'a [String],
     cache_paths: Option<&'a CachePaths>,
 }
 
@@ -219,6 +219,9 @@ pub fn prepare_steam_pipeline_env(
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
+    if node.backend == "dxmt" {
+        repair_metalsharp_wine_wrapper_env_order()?;
+    }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
     }
@@ -291,6 +294,76 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
     Ok(())
 }
 
+fn deploy_prefix_route_dlls(
+    recipe: &super::recipe::LaunchRecipe,
+    prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if recipe.pipeline != PipelineId::M12 {
+        return Ok(());
+    }
+
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    std::fs::create_dir_all(&system32)?;
+    for deploy in &recipe.dlls {
+        if !deploy.source_present {
+            continue;
+        }
+        if !matches!(
+            deploy.filename.as_str(),
+            "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
+        ) {
+            continue;
+        }
+        std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
+    }
+    Ok(())
+}
+
+fn wine_debug_value() -> String {
+    std::env::var("METALSHARP_WINEDEBUG").unwrap_or_else(|_| "-all".to_string())
+}
+
+fn repair_metalsharp_wine_wrapper_env_order() -> Result<(), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wrapper = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    if !wrapper.exists() {
+        return Ok(());
+    }
+
+    let script = std::fs::read_to_string(&wrapper)?;
+    let mut repaired = script.clone();
+    let winedll_block = r#"if [ -n "${WINEDLLPATH:-}" ]; then
+  export WINEDLLPATH="$WINEDLLPATH:$MS_LIB/wine/x86_64-windows:$MS_LIB/wine/i386-windows"
+else
+  export WINEDLLPATH="$MS_LIB/wine/x86_64-windows:$MS_LIB/wine/i386-windows"
+fi
+"#;
+    if let (Some(start), Some(end)) =
+        (repaired.find("export WINELOADER=\"$MS_WINE\"\n"), repaired.find("export WINEDEBUG=\"${WINEDEBUG:--all}\""))
+    {
+        let replace_start = start + "export WINELOADER=\"$MS_WINE\"\n".len();
+        repaired.replace_range(replace_start..end, winedll_block);
+    }
+
+    let dyld_block = r#"if [ -n "${DYLD_FALLBACK_LIBRARY_PATH:-}" ]; then
+  export DYLD_FALLBACK_LIBRARY_PATH="$DYLD_FALLBACK_LIBRARY_PATH:$MS_LIB:$MS_LIB/wine/x86_64-unix"
+else
+  export DYLD_FALLBACK_LIBRARY_PATH="$MS_LIB:$MS_LIB/wine/x86_64-unix"
+fi
+"#;
+    if let (Some(start), Some(end)) =
+        (repaired.find("export WINEDATADIR=\"$MS_ROOT/share\"\n"), repaired.find("export MS_FWD_COMPAT_GL_CTX=1"))
+    {
+        let replace_start = start + "export WINEDATADIR=\"$MS_ROOT/share\"\n".len();
+        repaired.replace_range(replace_start..end, dyld_block);
+    }
+
+    if repaired != script {
+        std::fs::write(&wrapper, repaired)?;
+    }
+    Ok(())
+}
+
 pub fn launch_custom_with_pipeline(
     launch_id: u32,
     game_dir: &std::path::Path,
@@ -329,6 +402,9 @@ pub fn launch_custom_with_options(
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
     }
+    if node.backend == "dxmt" {
+        repair_metalsharp_wine_wrapper_env_order()?;
+    }
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
@@ -345,7 +421,10 @@ pub fn launch_custom_with_options(
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
 
     if node.uses_winedllpath_routing() {
@@ -359,6 +438,7 @@ pub fn launch_custom_with_options(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
     }
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
     for ev in &node.env_vars {
@@ -445,6 +525,7 @@ fn launch_dxmt_metal_with_context(
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
     }
+    repair_metalsharp_wine_wrapper_env_order()?;
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
@@ -460,8 +541,9 @@ fn launch_dxmt_metal_with_context(
         cleanup_legacy_injections(game_dir)?;
     }
     deploy_recipe_dlls(&recipe)?;
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
 
-    deploy_d3d12_agility_sidecars(node, game_dir, exe_dir)?;
+    deploy_d3d12_agility_sidecars(appid, node, game_dir, exe_dir)?;
 
     if !recipe.anti_cheat.is_empty() {
         deploy_steam_appid(game_dir, appid);
@@ -478,7 +560,10 @@ fn launch_dxmt_metal_with_context(
     let dxmt_config_file = ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string();
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
 
     if node.uses_winedllpath_routing() {
@@ -493,6 +578,7 @@ fn launch_dxmt_metal_with_context(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
     }
 
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
@@ -505,7 +591,7 @@ fn launch_dxmt_metal_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
@@ -515,7 +601,7 @@ fn launch_dxmt_metal_with_context(
             prefix: &prefix,
             cwd: exe_dir,
             exe_name: &exe_name,
-            args: &node.launch_args,
+            args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
         },
     )?;
@@ -524,11 +610,16 @@ fn launch_dxmt_metal_with_context(
 }
 
 fn deploy_d3d12_agility_sidecars(
+    appid: u32,
     node: &PipelineNode,
     game_dir: &Path,
     exe_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !matches!(node.id, PipelineId::M12 | PipelineId::M13) {
+        return Ok(());
+    }
+    if skips_app_local_agility_sidecars(appid) {
+        remove_app_local_agility_sidecars(game_dir, exe_dir)?;
         return Ok(());
     }
 
@@ -557,6 +648,27 @@ fn deploy_d3d12_agility_sidecars(
             }
         }
         std::fs::copy(&dxil_dll, target.join("dxil.dll"))?;
+    }
+
+    Ok(())
+}
+
+fn skips_app_local_agility_sidecars(appid: u32) -> bool {
+    appid == 1962700
+}
+
+fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut roots = vec![exe_dir.to_path_buf()];
+    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
+    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
+        roots.push(engine_bin);
+    }
+
+    for root in roots {
+        let target = root.join("D3D12");
+        if target.is_dir() {
+            std::fs::remove_dir_all(target)?;
+        }
     }
 
     Ok(())
@@ -742,7 +854,10 @@ fn launch_wine_bare_with_context(
     }
 
     let mut cmd = Command::new(&wine);
-    cmd.current_dir(exe_dir).env("WINEPREFIX", &prefix_str).env("WINEDEBUG", "-all").env("WINEDEBUGGER", "none");
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
 
     if let Some(overrides) = node.wine_overrides {
@@ -757,7 +872,7 @@ fn launch_wine_bare_with_context(
     }
 
     cmd.arg(&exe_name);
-    cmd.args(&node.launch_args);
+    cmd.args(&recipe.launch_args);
     attach_launch_log(
         &mut cmd,
         log_path,
@@ -767,7 +882,7 @@ fn launch_wine_bare_with_context(
             prefix: &prefix,
             cwd: exe_dir,
             exe_name: &exe_name,
-            args: &node.launch_args,
+            args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
         },
     )?;
@@ -915,6 +1030,10 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
+fn dxmt_winemetal_unixlib_path(_ms_root: &Path) -> String {
+    "winemetal.so".to_string()
+}
+
 fn route_library_env_pairs(ms_root: &PathBuf, paths: &[&str]) -> Vec<(String, String)> {
     if paths.is_empty() {
         return Vec::new();
@@ -1009,7 +1128,7 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
 
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
-    let shader_base = home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string());
+    let shader_base = preferred_shader_cache_base(home, subdir, appid);
     let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
@@ -1017,6 +1136,35 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
     Some(CachePaths {
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
+    })
+}
+
+fn preferred_shader_cache_base(home: &PathBuf, subdir: &str, appid: u32) -> PathBuf {
+    if appid == 1962700 && subdir == "m12" {
+        let game_dirs = crate::scan::resolve_dual_game_dir(appid);
+        for game_dir in [game_dirs.wine_dir.as_ref(), game_dirs.macos_dir.as_ref()].into_iter().flatten() {
+            let candidate =
+                game_dir.join(".metalsharp-cache").join("shader-cache").join(subdir).join(appid.to_string());
+            if shader_cache_has_runtime_artifacts(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string())
+}
+
+fn shader_cache_has_runtime_artifacts(path: &PathBuf) -> bool {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext, "metallib" | "msl" | "dxbc" | "json"))
+            .unwrap_or(false)
     })
 }
 
@@ -1035,6 +1183,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), dxmt_winemetal_unixlib_path(&ms_root)));
     }
     env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
@@ -1050,7 +1199,9 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
 
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
-        return vec![
+        let mut env = vec![
+            ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
+            ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
             ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
             ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()),
             ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
@@ -1069,6 +1220,41 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
             ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
         ];
+        if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
+            env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+            env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
+        }
+        return env;
     }
     Vec::new()
 }
@@ -1799,6 +1985,9 @@ mod tests {
         assert!(keys.contains("DXMT_LOG_PATH"));
         assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
         assert!(keys.contains("DXMT_CONFIG"));
+        let unixlib =
+            env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()).unwrap();
+        assert_eq!(unixlib, "winemetal.so");
         assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));

@@ -7,7 +7,8 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
-pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase15");
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
+const DXMT_BUNDLE_SHA256: &str = "32ca308272f152b6aa82094521f5bf1c555ce5b20d475d2d289c0ef19f4df918";
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const DXMT_REQUIRED_PE: &[&str] = &[
@@ -1144,7 +1145,9 @@ fn brew_install(package: &str) -> Result<bool, String> {
 fn find_bundled_archive(name: &str) -> Option<PathBuf> {
     let candidates = [find_in_resources(name), find_in_dev_path(name)];
 
-    if let Some(found) = candidates.into_iter().find(|c| c.is_some()).flatten() {
+    if let Some(found) =
+        candidates.into_iter().find(|c| c.as_ref().is_some_and(|path| bundled_artifact_valid(name, path))).flatten()
+    {
         return Some(found);
     }
 
@@ -1154,13 +1157,13 @@ fn find_bundled_archive(name: &str) -> Option<PathBuf> {
 fn find_bundled_file(name: &str) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let file = resources.join(format!("bundles/{}", name));
-        if file.exists() {
+        if file.exists() && bundled_artifact_valid(name, &file) {
             return Some(file);
         }
     }
 
     let dev = PathBuf::from(format!("app/bundles/{}", name));
-    if dev.exists() {
+    if dev.exists() && bundled_artifact_valid(name, &dev) {
         return Some(dev);
     }
 
@@ -1173,8 +1176,11 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
     let cached = cache_dir.join(filename);
     let tmp = cache_dir.join(format!("{}.download", filename));
 
-    if file_nonempty(&cached) {
+    if file_nonempty(&cached) && bundled_artifact_valid(filename, &cached) {
         return Some(cached);
+    }
+    if filename == "dxmt.tar.zst" {
+        let _ = fs::remove_file(&cached);
     }
 
     let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
@@ -1189,6 +1195,7 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
 
     if output.status.success()
         && file_nonempty(&tmp)
+        && bundled_artifact_valid(filename, &tmp)
         && fs::rename(&tmp, &cached).or_else(|_| fs::copy(&tmp, &cached).map(|_| ())).is_ok()
         && file_nonempty(&cached)
     {
@@ -1198,6 +1205,30 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
 
     let _ = fs::remove_file(&tmp);
     let _ = fs::remove_file(&cached);
+    None
+}
+
+fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
+    if name != "dxmt" && name != "dxmt.tar.zst" {
+        return true;
+    }
+
+    archive_sha256(path).as_deref() == Some(DXMT_BUNDLE_SHA256)
+}
+
+fn archive_sha256(path: &Path) -> Option<String> {
+    for (program, args) in [("shasum", vec!["-a", "256"]), ("sha256sum", Vec::new())] {
+        let Ok(output) = Command::new(program).args(args).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(hash) = text.split_whitespace().next() {
+            return Some(hash.to_string());
+        }
+    }
     None
 }
 

@@ -709,6 +709,11 @@ struct AgilitySdkRequirement {
 fn stage_agility_sdk_for_game(appid: u32, game_dir: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
     let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
+    if appid == 1962700 {
+        remove_app_local_agility_sidecars(game_dir, exe_dir)?;
+        return Ok(());
+    }
+
     let requirement = read_game_agility_requirement(&exe_path);
     let agility_bin = ensure_agility_sdk_bin(home, requirement.sdk_version).ok_or_else(|| {
         let version = requirement.sdk_version.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string());
@@ -737,6 +742,23 @@ fn stage_agility_sdk_for_game(appid: u32, game_dir: &Path, home: &Path) -> Resul
 
         if let Some(source) = &dxil_dll {
             stage_sdk_file(source, &target_dir.join("dxil.dll"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut roots = vec![exe_dir.to_path_buf()];
+    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
+    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
+        roots.push(engine_bin);
+    }
+
+    for root in roots {
+        let target = root.join("D3D12");
+        if target.is_dir() {
+            std::fs::remove_dir_all(target)?;
         }
     }
 

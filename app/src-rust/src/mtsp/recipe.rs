@@ -163,15 +163,10 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
             "r.RayTracing=0",
             "r.Lumen.HardwareRayTracing=0",
             "r.Shadow.Virtual.Enable=0",
-            "r.ShaderPipelineCache.Enabled=0",
-            "r.ShaderPipelineCache.StartupMode=0",
-            "r.PSOPrecaching=0",
-            "D3D12.PSOPrecache.KeepLowLevel=0",
-            "D3D12.PSO.KeepUsedPSOsInLowLevelCache=0",
-            "r.PSOPrecache.Resources=0",
         ]
         .join(",");
-        launch_args.push("-NoShaderPipelineCache".into());
+        launch_args.push("-dx12".into());
+        launch_args.push("-d3d12".into());
         launch_args.push(format!("-dpcvars={}", dpcvars));
         launch_args.push("-NoNanite".into());
         launch_args.push(
@@ -903,12 +898,14 @@ mod tests {
     }
 
     #[test]
-    fn subnautica_m12_disables_startup_pso_cache() {
+    fn subnautica_m12_keeps_startup_pso_cache_for_build_window() {
         let args = effective_launch_args(1962700, super::super::engine::get_pipeline(PipelineId::M12));
 
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-NoShaderPipelineCache")));
-        assert!(args.iter().any(|arg| arg.contains("r.ShaderPipelineCache.Enabled=0")));
-        assert!(args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-NoShaderPipelineCache")));
+        assert!(!args.iter().any(|arg| arg.contains("r.ShaderPipelineCache.Enabled=0")));
+        assert!(!args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")));
     }
 
     #[test]
