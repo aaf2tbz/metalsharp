@@ -988,6 +988,9 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       for (size_t i = 0; i < fn.blocks.size(); i++) {
         fn.block_value_ids[i] = (uint32_t)i;
       }
+      if (!fn.blocks.empty())
+        next_value++;
+      fn.instruction_start_value = next_value;
       cur_block = 0;
       break;
     case kFuncCode_InstRet:
@@ -1168,19 +1171,17 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     }
     case kFuncCode_InstSelect:
     case kFuncCode_InstVSelect: {
-      if (cur_block < fn.blocks.size() && ops.size() >= 5) {
+      if (cur_block < fn.blocks.size() && ops.size() >= 4) {
         LLVMInstruction inst;
         inst.opcode = LLVMInstruction::Select;
-        inst.type_id = (uint32_t)ops[1];
-        if (rec_code == kFuncCode_InstVSelect && ops.size() >= 6) {
-          inst.operands.push_back(value(ops[4]));
-          inst.operands.push_back(value(ops[1]));
-          inst.operands.push_back(value(ops[3]));
-        } else {
-          inst.operands.push_back(value(ops[4]));
-          inst.operands.push_back(value(ops[1]));
-          inst.operands.push_back(value(ops[3]));
-        }
+        size_t slot = 1;
+        uint32_t true_value = popValue(ops, slot);
+        uint32_t false_value = popValue(ops, slot);
+        uint32_t cond_type_id = 0;
+        uint32_t cond = valueTypePair(ops, slot, cond_type_id);
+        inst.operands.push_back(cond);
+        inst.operands.push_back(true_value);
+        inst.operands.push_back(false_value);
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
       }
@@ -1188,14 +1189,18 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     }
     case kFuncCode_InstCmp:
     case kFuncCode_InstCmp2: {
-      if (cur_block < fn.blocks.size() && ops.size() >= 5) {
+      if (cur_block < fn.blocks.size() && ops.size() >= 4) {
         LLVMInstruction inst;
-        uint32_t pred = (uint32_t)ops[4];
+        size_t slot = 1;
+        uint32_t type_id = 0;
+        uint32_t lhs = valueTypePair(ops, slot, type_id);
+        uint32_t rhs = popValue(ops, slot);
+        uint32_t pred = slot < ops.size() ? (uint32_t)ops[slot] : 0;
         inst.opcode = decodeCmp(pred);
-        inst.type_id = (uint32_t)ops[1];
+        inst.type_id = type_id;
         inst.operands.push_back(pred);
-        inst.operands.push_back(value(ops[1]));
-        inst.operands.push_back(value(ops[3]));
+        inst.operands.push_back(lhs);
+        inst.operands.push_back(rhs);
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
       }
