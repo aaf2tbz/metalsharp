@@ -915,6 +915,35 @@ static bool exprContainsVectorConstructor(const std::string &value) {
     return false;
 }
 
+static bool splitTopLevelTernary(const std::string &value,
+                                 std::string &then_branch,
+                                 std::string &else_branch) {
+    std::string stripped = stripEnclosingParens(value);
+    int depth = 0;
+    int ternary_depth = 0;
+    size_t question = std::string::npos;
+    for (size_t i = 0; i < stripped.size(); i++) {
+        char c = stripped[i];
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0) depth--;
+        } else if (depth == 0 && c == '?') {
+            if (question == std::string::npos)
+                question = i;
+            ternary_depth++;
+        } else if (depth == 0 && c == ':' && ternary_depth > 0) {
+            ternary_depth--;
+            if (ternary_depth == 0 && question != std::string::npos) {
+                then_branch = stripEnclosingParens(stripped.substr(question + 1, i - question - 1));
+                else_branch = stripEnclosingParens(stripped.substr(i + 1));
+                return !then_branch.empty() && !else_branch.empty();
+            }
+        }
+    }
+    return false;
+}
+
 static bool exprContainsRawResourceHandle(const std::string &value) {
     if (value.find(".read(") != std::string::npos ||
         value.find(".sample(") != std::string::npos ||
@@ -1003,6 +1032,49 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     return resolved;
 }
 
+static bool ternaryBranchesLookScalar(const LowerContext &ctx, const std::string &value) {
+    std::string then_branch;
+    std::string else_branch;
+    if (!splitTopLevelTernary(value, then_branch, else_branch))
+        return false;
+
+    auto branch_is_scalar = [&](const std::string &branch) {
+        MSLType branch_type = typeForResolvedExpression(ctx, branch);
+        if (DXILIRBuilder::isVectorType(branch_type))
+            return false;
+        if (isUsableMSLType(branch_type))
+            return true;
+        if (exprLooksScalarLiteral(branch) ||
+            exprLooksScalarMathCall(branch) ||
+            exprLooksScalarCast(branch))
+            return true;
+        return !exprLooksVectorValue(branch);
+    };
+
+    return branch_is_scalar(then_branch) && branch_is_scalar(else_branch);
+}
+
+static std::string dropInvalidScalarComponentAccess(const LowerContext &ctx,
+                                                    const std::string &value,
+                                                    const MSLType &target) {
+    if (!(DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) ||
+        DXILIRBuilder::isVectorType(target))
+        return value;
+
+    std::string base;
+    if (!splitTrailingComponentAccess(value, base))
+        return value;
+
+    MSLType base_type = typeForResolvedExpression(ctx, base);
+    if ((isUsableMSLType(base_type) && !DXILIRBuilder::isVectorType(base_type)) ||
+        exprLooksScalarCast(base) ||
+        exprLooksScalarMathCall(base) ||
+        ternaryBranchesLookScalar(ctx, base))
+        return base;
+
+    return value;
+}
+
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr);
 static bool exprLooksScalarizedArithmetic(const std::string &value);
 
@@ -1018,7 +1090,8 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
             (!isUsableMSLType(base_type) &&
              (exprLooksScalarLiteral(component_base) ||
               exprLooksScalarMathCall(component_base) ||
-              exprLooksScalarCast(component_base)))) {
+              exprLooksScalarCast(component_base) ||
+              ternaryBranchesLookScalar(ctx, component_base)))) {
             return coerceResolvedValue(ctx, component_base, target);
         }
     }
@@ -1051,6 +1124,11 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
         exprLooksScalarizedArithmetic(sanitized_value))
+        return sanitized_value;
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        ternaryBranchesLookScalar(ctx, sanitized_value))
         return sanitized_value;
 
     return coerceResolvedValue(sanitized_value, target);
@@ -1683,6 +1761,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t idx = args[arg];
         std::string value = valueArg(arg, fallback);
         MSLType type = valueTypeOrUnknown(ctx, idx);
+        auto pre_it = ctx.predeclared_types.find(value);
+        if (pre_it != ctx.predeclared_types.end())
+            type = pre_it->second;
         if (exprLooksResourceHandle(value) || typeLooksResourceHandle(type) ||
             exprContainsPointerSyntax(value) ||
             value.find("device ") != std::string::npos ||
@@ -2176,6 +2257,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     };
 
     auto emitTypedLine = [&](MSLType &type, const std::string &name, const std::string &expr) {
+        if (ctx.shader.kind != DxilShaderKind::Compute &&
+            type.kind == MSLTypeKind::RWTexture2D)
+            type = {MSLTypeKind::Texture2D, 0, {}};
         if (type.kind == MSLTypeKind::Unknown || type.kind == MSLTypeKind::Void ||
             type.kind == MSLTypeKind::Struct) {
             auto source_type = typeForResolvedExpression(ctx, expr);
@@ -2188,6 +2272,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto pre_it = ctx.predeclared_types.find(name);
             if (pre_it != ctx.predeclared_types.end())
                 declared_type = pre_it->second;
+            if (ctx.shader.kind != DxilShaderKind::Compute &&
+                declared_type.kind == MSLTypeKind::RWTexture2D)
+                declared_type = {MSLTypeKind::Texture2D, 0, {}};
             std::string assigned = coerceResolvedValue(ctx, expr, declared_type);
             if (DXILIRBuilder::isVectorType(declared_type)) {
                 MSLType assigned_type = inferTypeFromExpr(assigned);
@@ -2210,6 +2297,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 assigned = scalarized != expr ? scalarized :
                     (exprLooksVectorValue(expr) ? "(" + expr + ").x" : expr);
             }
+            assigned = dropInvalidScalarComponentAccess(ctx, assigned, declared_type);
             type = declared_type;
             os << "  " << name << " = " << assigned << ";\n";
             return;
@@ -2221,6 +2309,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 assigned_type.kind != type.kind)
                 assigned = coerceVectorWidth(assigned, assigned_type, type);
         }
+        assigned = dropInvalidScalarComponentAccess(ctx, assigned, type);
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
             os << "  " << emitTypeName(type) << " " << name << " = " << assigned << ";\n";
@@ -2296,6 +2385,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 (DXILIRBuilder::vectorWidth(source) != DXILIRBuilder::vectorWidth(target) ||
                  DXILIRBuilder::scalarType(source).kind != DXILIRBuilder::scalarType(target).kind))
                 return coerceVectorWidth(expr, source, target);
+            MSLType scalar = DXILIRBuilder::scalarType(target);
+            if (exprLooksScalarLiteral(stripEnclosingParens(expr)) &&
+                DXILIRBuilder::isIntType(scalar)) {
+                std::string scalar_name = emitTypeName(scalar);
+                if (!scalar_name.empty() && scalar_name != "auto")
+                    return type_name + "(static_cast<" + scalar_name + ">(" + expr + "))";
+            }
             return type_name + "(" + expr + ")";
         }
         return "static_cast<" + type_name + ">(" + expr + ")";
@@ -2889,7 +2985,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         ensureValueTable(value_counter);
         if (inst.operands.size() >= 1) {
             std::string val = getValue(inst.operands[0]);
-            if (exprLooksVectorValue(val) || exprLooksScalarLiteral(val))
+            MSLType source_type = operandType(inst.operands[0]);
+            MSLType name_type = typeForResolvedValueName(ctx, val);
+            if (DXILIRBuilder::isVectorType(source_type) ||
+                DXILIRBuilder::isVectorType(name_type) ||
+                exprLooksVectorValue(val) ||
+                exprLooksScalarMathCall(val) ||
+                exprLooksScalarCast(val) ||
+                exprLooksScalarLiteral(val))
                 val = "0";
             ctx.value_table[value_counter] = val;
             ctx.value_types[value_counter] = {MSLTypeKind::DeviceCharPtr, 0, {}};
@@ -2990,13 +3093,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (inst.operands.size() >= 1) {
             auto ptr = getValue(inst.operands[0]);
             auto ptr_type = valueType(inst.operands[0]);
+            auto ptr_name_type = typeForResolvedValueName(ctx, ptr);
             if (!isUsableType(result_type))
                 result_type = {MSLTypeKind::UInt, 0, {}};
             std::string type_name = emitTypeName(result_type);
             std::string expr = defaultForType(result_type);
             if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
                 exprContainsRawResourceHandle(ptr) || exprLooksScalarLiteral(ptr) ||
-                exprLooksVectorValue(ptr)) {
+                exprLooksVectorValue(ptr) || DXILIRBuilder::isVectorType(ptr_name_type)) {
                 expr = defaultForType(result_type);
             } else if (isPointerType(ptr_type)) {
                 expr = "*((" + std::string(pointerAddressSpace(inst.operands[0])) + " " +
@@ -3350,6 +3454,9 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
             break;
         }
         MSLType type = DXILIRBuilder::resolveType(inst.type_id, module);
+        if (ctx.shader.kind != DxilShaderKind::Compute &&
+            type.kind == MSLTypeKind::RWTexture2D)
+            type = {MSLTypeKind::Texture2D, 0, {}};
         if (type.kind == MSLTypeKind::Void || type.kind == MSLTypeKind::Unknown ||
             type.kind == MSLTypeKind::Struct)
             type = {MSLTypeKind::Int, 0, {}};
