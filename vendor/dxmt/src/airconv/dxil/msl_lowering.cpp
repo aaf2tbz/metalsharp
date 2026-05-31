@@ -1072,6 +1072,18 @@ static std::string coerceVectorWidth(const std::string &value, const MSLType &so
     return expr.str();
 }
 
+static std::string textureCoordComponent(LowerContext &ctx,
+                                         const std::string &value,
+                                         uint32_t component) {
+    std::string sanitized = sanitizeThreadVectorCasts(value);
+    MSLType source_type = typeForResolvedExpression(ctx, sanitized);
+    if (DXILIRBuilder::isVectorType(source_type))
+        sanitized = componentAccess(sanitized, component, source_type);
+    else if (exprLooksVectorValue(sanitized))
+        sanitized = "(" + sanitized + ")" + componentSuffix(component);
+    return "static_cast<uint>(" + ensureScalarIndex(sanitized) + ")";
+}
+
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr) {
     std::string out;
     for (size_t i = 0; i < expr.size();) {
@@ -1771,8 +1783,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 3) return "float4(0)";
         auto handle = handleArg(0, "tex", "tex0");
         ctx.last_buffer_handle = handle;
-        auto cx = ensureScalarIndex(valueArg(2, "0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0"));
+        auto cx = textureCoordComponent(ctx, valueArg(2, "0"), 0);
+        auto cy = textureCoordComponent(ctx, valueArg(3, "0"), 1);
         return handle + ".read(uint2(" + cx + ", " + cy + "))";
     }
     case DXOP_TextureStore: case 225: {
@@ -1795,7 +1807,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto cx = ensureScalarIndex(valueArg(2, "0.0"));
         auto cy = ensureScalarIndex(valueArg(3, "0.0"));
         if (ctx.shader.kind == DxilShaderKind::Compute)
-            return handle + ".read(uint2((uint)(" + cx + "), (uint)(" + cy + ")))";
+            return handle + ".read(uint2(" +
+                   textureCoordComponent(ctx, valueArg(2, "0"), 0) + ", " +
+                   textureCoordComponent(ctx, valueArg(3, "0"), 1) + "))";
         return handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + "))";
     }
     case DXOP_TextureGather: case 74: case 223: {

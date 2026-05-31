@@ -15,12 +15,15 @@
 #include "dxil/msl_lowering.hpp"
 #include "../../libs/DXBCParser/BlobContainer.h"
 #include "../../libs/DXBCParser/DXBCUtils.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <string>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 #include <process.h>
@@ -62,6 +65,11 @@ std::string DescribeNSObject(obj_handle_t handle) {
   return desc.empty() ? "unknown" : desc;
 }
 
+bool IsTransientMetalCompilerError(const std::string &desc) {
+  return desc.find("XPC_ERROR_CONNECTION_INTERRUPTED") != std::string::npos ||
+         desc.find("interrupted connection") != std::string::npos;
+}
+
 dxmt::dxil::MSLShader
 ToRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
   dxmt::dxil::MSLShader shader;
@@ -77,6 +85,84 @@ ToRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
       "MSLLowering runtime path active: typed_values=", typed.typed_value_count,
       " auto_values=", typed.auto_value_count));
   return shader;
+}
+
+bool AsyncPipelineCompileEnabled() {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA("DXMT_ASYNC_PIPELINE_COMPILE", value,
+                                      sizeof(value));
+  return len > 0 && value[0] && value[0] != '0';
+}
+
+uint32_t AsyncPipelineWorkerCount() {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA("DXMT_D3D12_PSO_WORKERS", value,
+                                      sizeof(value));
+  if (len == 0 || !value[0])
+    return 4;
+
+  char *end = nullptr;
+  unsigned long parsed = strtoul(value, &end, 10);
+  if (end == value || parsed == 0)
+    return 4;
+  return std::max(1u, std::min<uint32_t>((uint32_t)parsed, 12u));
+}
+
+class AsyncPipelineCompiler {
+public:
+  void Enqueue(MTLD3D12PipelineState *pso) {
+    EnsureStarted();
+    pso->AddRef();
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      m_queue.push_back(pso);
+    }
+    m_cv.notify_one();
+  }
+
+private:
+  void EnsureStarted() {
+    std::lock_guard<std::mutex> lock(m_start_mutex);
+    if (m_started)
+      return;
+    m_started = true;
+    m_worker_count = AsyncPipelineWorkerCount();
+    Logger::info(str::format("M12 async PSO compiler starting workers=",
+                             m_worker_count));
+    for (uint32_t i = 0; i < m_worker_count; i++) {
+      std::thread([this, i]() { WorkerLoop(i); }).detach();
+    }
+  }
+
+  void WorkerLoop(uint32_t worker_index) {
+    for (;;) {
+      MTLD3D12PipelineState *pso = nullptr;
+      {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_cv.wait(lock, [this]() { return !m_queue.empty(); });
+        pso = m_queue.front();
+        m_queue.pop_front();
+      }
+      if (!pso)
+        continue;
+      PSTRACE("PSO async worker[%u] compiling pso=%p", worker_index,
+              (void *)pso);
+      pso->RunAsyncCompile();
+      pso->Release();
+    }
+  }
+
+  std::mutex m_start_mutex;
+  bool m_started = false;
+  uint32_t m_worker_count = 0;
+  std::mutex m_mutex;
+  std::condition_variable m_cv;
+  std::deque<MTLD3D12PipelineState *> m_queue;
+};
+
+AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
+  static AsyncPipelineCompiler *compiler = new AsyncPipelineCompiler();
+  return *compiler;
 }
 
 size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
@@ -642,8 +728,18 @@ std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
 }
 
 bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
-  (void)allow_async;
-  return Compile();
+  if (!allow_async || !AsyncPipelineCompileEnabled())
+    return Compile();
+
+  CompileState expected = CompileState::NotStarted;
+  if (m_compile_state.compare_exchange_strong(expected, CompileState::Pending)) {
+    PSTRACE("PSO async compile scheduled pso=%p compute=%d", (void *)this,
+            m_is_compute);
+    GetAsyncPipelineCompiler().Enqueue(this);
+    return false;
+  }
+
+  return expected == CompileState::Compiled;
 }
 
 void MTLD3D12PipelineState::RunAsyncCompile() {
@@ -653,8 +749,10 @@ void MTLD3D12PipelineState::RunAsyncCompile() {
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   switch (format) {
   case DXGI_FORMAT_R8G8B8A8_UNORM: return WMTPixelFormatRGBA8Unorm;
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS: return WMTPixelFormatRGBA8Unorm;
   case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return WMTPixelFormatRGBA8Unorm_sRGB;
   case DXGI_FORMAT_B8G8R8A8_UNORM: return WMTPixelFormatBGRA8Unorm;
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS: return WMTPixelFormatBGRA8Unorm;
   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return WMTPixelFormatBGRA8Unorm_sRGB;
   case DXGI_FORMAT_R16G16B16A16_FLOAT: return WMTPixelFormatRGBA16Float;
   case DXGI_FORMAT_R32G32B32A32_FLOAT: return WMTPixelFormatRGBA32Float;
@@ -670,18 +768,25 @@ WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   case DXGI_FORMAT_R16G16_FLOAT: return WMTPixelFormatRG16Float;
   case DXGI_FORMAT_R16G16_UNORM: return WMTPixelFormatRG16Unorm;
   case DXGI_FORMAT_R8G8_UNORM: return WMTPixelFormatRG8Unorm;
+  case DXGI_FORMAT_BC1_TYPELESS: return WMTPixelFormatBC1_RGBA;
   case DXGI_FORMAT_BC1_UNORM: return WMTPixelFormatBC1_RGBA;
   case DXGI_FORMAT_BC1_UNORM_SRGB: return WMTPixelFormatBC1_RGBA_sRGB;
+  case DXGI_FORMAT_BC2_TYPELESS: return WMTPixelFormatBC2_RGBA;
   case DXGI_FORMAT_BC2_UNORM: return WMTPixelFormatBC2_RGBA;
   case DXGI_FORMAT_BC2_UNORM_SRGB: return WMTPixelFormatBC2_RGBA_sRGB;
+  case DXGI_FORMAT_BC3_TYPELESS: return WMTPixelFormatBC3_RGBA;
   case DXGI_FORMAT_BC3_UNORM: return WMTPixelFormatBC3_RGBA;
   case DXGI_FORMAT_BC3_UNORM_SRGB: return WMTPixelFormatBC3_RGBA_sRGB;
+  case DXGI_FORMAT_BC4_TYPELESS: return WMTPixelFormatBC4_RUnorm;
   case DXGI_FORMAT_BC4_UNORM: return WMTPixelFormatBC4_RUnorm;
   case DXGI_FORMAT_BC4_SNORM: return WMTPixelFormatBC4_RSnorm;
+  case DXGI_FORMAT_BC5_TYPELESS: return WMTPixelFormatBC5_RGUnorm;
   case DXGI_FORMAT_BC5_UNORM: return WMTPixelFormatBC5_RGUnorm;
   case DXGI_FORMAT_BC5_SNORM: return WMTPixelFormatBC5_RGSnorm;
+  case DXGI_FORMAT_BC6H_TYPELESS: return WMTPixelFormatBC6H_RGBUfloat;
   case DXGI_FORMAT_BC6H_UF16: return WMTPixelFormatBC6H_RGBUfloat;
   case DXGI_FORMAT_BC6H_SF16: return WMTPixelFormatBC6H_RGBFloat;
+  case DXGI_FORMAT_BC7_TYPELESS: return WMTPixelFormatBC7_RGBAUnorm;
   case DXGI_FORMAT_BC7_UNORM: return WMTPixelFormatBC7_RGBAUnorm;
   case DXGI_FORMAT_BC7_UNORM_SRGB: return WMTPixelFormatBC7_RGBAUnorm_sRGB;
   default: return WMTPixelFormatInvalid;
@@ -1264,9 +1369,24 @@ bool MTLD3D12PipelineState::Compile() {
     WMT::InitializeComputePipelineInfo(info);
     info.compute_function = cs_func.handle;
 
-    m_compute_pso = wmt_device.newComputePipelineState(info, err);
+    std::string err_desc = "unknown";
+    for (uint32_t attempt = 0; attempt < 4; attempt++) {
+      err = nullptr;
+      m_compute_pso = wmt_device.newComputePipelineState(info, err);
+      if (m_compute_pso.handle)
+        break;
+
+      err_desc = DescribeNSObject(err.handle);
+      if (!IsTransientMetalCompilerError(err_desc) || attempt == 3)
+        break;
+
+      Logger::warn(str::format("Retrying compute PSO after transient Metal compiler error attempt=",
+                               attempt + 1, " detail=", err_desc));
+      PSTRACE("Compute PSO transient Metal compiler failure attempt=%u detail=%s",
+              attempt + 1, err_desc.c_str());
+      Sleep(50 * (attempt + 1));
+    }
     if (!m_compute_pso.handle) {
-      auto err_desc = DescribeNSObject(err.handle);
       Logger::err(str::format("Failed to create compute PSO: ",
                               err_desc));
       if (m_cs_shader) {
@@ -1447,7 +1567,6 @@ bool MTLD3D12PipelineState::Compile() {
   info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
 
   WMTVertexDescriptor vtx_desc = {};
-  bool vertex_descriptor_attached = false;
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
@@ -1559,15 +1678,11 @@ bool MTLD3D12PipelineState::Compile() {
       PSTRACE("D3D12 PSO input-layout slot[%u]: stride=%u step=%u",
               s, slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function);
     }
-    if (m_vs_uses_stage_in && attribute_count > 0) {
-      info.vertex_descriptor = &vtx_desc;
-      vertex_descriptor_attached = true;
-      PSTRACE("D3D12 PSO input-layout attached as Metal vertex descriptor for DXIL stage_in");
-    } else {
+    if (!m_vs_uses_stage_in) {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
-  if (m_vs_uses_stage_in && !vertex_descriptor_attached) {
+  if (m_vs_uses_stage_in) {
     constexpr uint32_t kSyntheticStageInAttributes = 16;
     constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
     for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
@@ -1583,7 +1698,7 @@ bool MTLD3D12PipelineState::Compile() {
     vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
     vtx_desc.layouts[0].step_rate = 1;
     info.vertex_descriptor = &vtx_desc;
-    PSTRACE("D3D12 PSO synthetic vertex descriptor attached for DXIL stage_in without D3D12 input layout attrs=%u stride=%u",
+    PSTRACE("D3D12 PSO synthetic vertex descriptor attached for DXIL stage_in attrs=%u stride=%u",
             vtx_desc.attribute_count, vtx_desc.layouts[0].stride);
   }
 
@@ -1598,13 +1713,28 @@ bool MTLD3D12PipelineState::Compile() {
           (unsigned)m_rasterizer_desc.FrontCounterClockwise,
           (unsigned)m_rasterizer_desc.DepthClipEnable);
 
-  m_render_pso = wmt_device.newRenderPipelineState(info, err);
+  std::string render_err_desc = "unknown";
+  for (uint32_t attempt = 0; attempt < 4; attempt++) {
+    err = nullptr;
+    m_render_pso = wmt_device.newRenderPipelineState(info, err);
+    if (m_render_pso.handle)
+      break;
+
+    render_err_desc = DescribeNSObject(err.handle);
+    if (!IsTransientMetalCompilerError(render_err_desc) || attempt == 3)
+      break;
+
+    Logger::warn(str::format("Retrying render PSO after transient Metal compiler error attempt=",
+                             attempt + 1, " detail=", render_err_desc));
+    PSTRACE("Render PSO transient Metal compiler failure attempt=%u detail=%s",
+            attempt + 1, render_err_desc.c_str());
+    Sleep(50 * (attempt + 1));
+  }
   if (!m_render_pso.handle) {
-    auto err_desc = DescribeNSObject(err.handle);
-    Logger::err(str::format("Failed to create render PSO: ", err_desc));
+    Logger::err(str::format("Failed to create render PSO: ", render_err_desc));
     return RecordCompileFailure("pso/metal_render_pso",
                                 str::format("Metal render PSO creation failed: ",
-                                            err_desc));
+                                            render_err_desc));
   }
   {
     size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
