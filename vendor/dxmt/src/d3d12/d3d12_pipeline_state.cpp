@@ -742,6 +742,17 @@ bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
   return expected == CompileState::Compiled;
 }
 
+bool MTLD3D12PipelineState::TryCompilePendingInline() {
+  CompileState expected = CompileState::Pending;
+  if (!m_compile_state.compare_exchange_strong(expected,
+                                               CompileState::NotStarted))
+    return expected == CompileState::Compiled;
+
+  PSTRACE("PSO pending compile promoted inline pso=%p compute=%d",
+          (void *)this, m_is_compute);
+  return Compile();
+}
+
 void MTLD3D12PipelineState::RunAsyncCompile() {
   Compile();
 }
