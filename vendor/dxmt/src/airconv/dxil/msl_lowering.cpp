@@ -550,9 +550,18 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
         os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
+        std::vector<std::string> params;
         for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
-            os << "  device char* buf" << i << " [[buffer(" << i << ")]]"
-               << (i + 1 == ctx.binding_plan.direct_buffer_count ? "\n" : ",\n");
+            params.push_back("  device char* buf" + std::to_string(i) +
+                             " [[buffer(" + std::to_string(i) + ")]]");
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_texture_count; i++)
+            params.push_back("  texture2d<float, access::sample> tex" + std::to_string(i) +
+                             " [[texture(" + std::to_string(i) + ")]]");
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_sampler_count; i++)
+            params.push_back("  sampler samp" + std::to_string(i) +
+                             " [[sampler(" + std::to_string(i) + ")]]");
+        for (size_t i = 0; i < params.size(); i++)
+            os << params[i] << (i + 1 == params.size() ? "\n" : ",\n");
         os << ") {\n";
         os << "  output_v out = {};\n";
     } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
@@ -795,6 +804,14 @@ static bool exprLooksBoolValue(const std::string &value) {
            startsWith(stripped, "all(") ||
            startsWith(stripped, "isnan(") ||
            startsWith(stripped, "!isnan(");
+}
+
+static std::string scalarizeVectorBoolExpression(const std::string &expr,
+                                                 const MSLType &source_type,
+                                                 bool require_all = false) {
+    if (!DXILIRBuilder::isVectorType(source_type))
+        return expr;
+    return std::string(require_all ? "all((" : "any((") + expr + "))";
 }
 
 static std::string vectorZeroForExpression(const std::string &value) {
@@ -1383,12 +1400,22 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     }
 
     uint32_t max_sampler = 0;
+    uint32_t max_texture = 0;
     bool has_sampler = false;
+    bool has_texture = false;
     for (const auto &range : plan.ranges) {
         if (range.kind == DescriptorRangePlan::Kind::Sampler) {
             has_sampler = true;
             max_sampler = std::max(max_sampler, range.lower_bound + range.count);
+        } else if (range.kind == DescriptorRangePlan::Kind::SRV ||
+                   range.kind == DescriptorRangePlan::Kind::UAV) {
+            has_texture = true;
+            max_texture = std::max(max_texture, range.lower_bound + range.count);
         }
+    }
+    if (has_texture) {
+        uint32_t texture_limit = ctx.shader.kind == DxilShaderKind::Compute ? 8 : 16;
+        plan.direct_texture_count = std::max<uint32_t>(1, std::min<uint32_t>(max_texture, texture_limit));
     }
     if (has_sampler)
         plan.direct_sampler_count = std::max<uint32_t>(1, std::min<uint32_t>(max_sampler, 4));
@@ -1819,6 +1846,12 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto cx = ensureScalarIndex(valueArg(2, "0.0"));
         auto cy = ensureScalarIndex(valueArg(3, "0.0"));
         uint32_t ch = args.size() > 8 ? literalArg(8, 0, "ch") : 0;
+        if (ctx.shader.kind == DxilShaderKind::Compute) {
+            auto texel = handle + ".read(uint2(" +
+                         textureCoordComponent(ctx, valueArg(2, "0"), 0) + ", " +
+                         textureCoordComponent(ctx, valueArg(3, "0"), 1) + "))";
+            return "float4((" + texel + ")." + componentName(ch) + ")";
+        }
         return handle + ".gather(" + samp + ", float2(" + cx + ", " + cy + "), component::" + componentName(ch) + ")";
     }
     case DXOP_TextureSampleCmp: case DXOP_TextureSampleCmpLevelZero: case 224: {
@@ -1923,7 +1956,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "tertiary");
         auto a = numericArg(1, "0"), b = numericArg(2, "0"), c = numericArg(3, "0");
         switch (op) {
-        case DXILOP_FMad: case DXILOP_Fma: return "fma(" + a + ", " + b + ", " + c + ")";
+        case DXILOP_FMad: case DXILOP_Fma:
+            return "fma(static_cast<float>(" + a + "), static_cast<float>(" + b +
+                   "), static_cast<float>(" + c + "))";
         case DXILOP_IMad: case DXILOP_UMad: return "((" + a + ") * (" + b + ") + (" + c + "))";
         case DXILOP_Ibfe: return "extract_bits(" + a + ", " + b + ", " + c + ")";
         case DXILOP_Ubfe: return "extract_bits((uint)(" + a + "), (uint)(" + b + "), (uint)(" + c + "))";
@@ -2182,6 +2217,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     auto castExpr = [&](const std::string &expr, const MSLType &target) -> std::string {
         std::string type_name = emitTypeName(target);
         if (type_name.empty() || type_name == "auto" || type_name == "void") return expr;
+        if (target.kind == MSLTypeKind::Bool)
+            return coerceResolvedValue(ctx, expr, target);
         if (DXILIRBuilder::isVectorType(target)) {
             MSLType source = inferTypeFromExpr(expr);
             if (DXILIRBuilder::isVectorType(source) &&
@@ -2804,8 +2841,18 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             const char *decl = ctx.predeclared_names.find(result) != ctx.predeclared_names.end() ? "" : "bool ";
             if (pred == 0) { os << "  " << decl << result << " = false;\n"; }
             else if (pred >= 15) { os << "  " << decl << result << " = true;\n"; }
-            else if (pred == 7) { os << "  " << decl << result << " = (!isnan(" << lhs << ") && !isnan(" << rhs << "));\n"; }
-            else if (pred == 14) { os << "  " << decl << result << " = (isnan(" << lhs << ") || isnan(" << rhs << "));\n"; }
+            else if (pred == 7) {
+                if (DXILIRBuilder::isVectorType(cmp_type))
+                    os << "  " << decl << result << " = all((!isnan(" << lhs << ")) & (!isnan(" << rhs << ")));\n";
+                else
+                    os << "  " << decl << result << " = (!isnan(static_cast<float>(" << lhs << ")) && !isnan(static_cast<float>(" << rhs << ")));\n";
+            }
+            else if (pred == 14) {
+                if (DXILIRBuilder::isVectorType(cmp_type))
+                    os << "  " << decl << result << " = any((isnan(" << lhs << ")) | (isnan(" << rhs << ")));\n";
+                else
+                    os << "  " << decl << result << " = (isnan(static_cast<float>(" << lhs << ")) || isnan(static_cast<float>(" << rhs << ")));\n";
+            }
             else {
                 if (pred == 1 || pred == 8) cmp = "==";
                 else if (pred == 2 || pred == 9) cmp = ">";
@@ -2813,7 +2860,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else if (pred == 4 || pred == 11) cmp = "<";
                 else if (pred == 5 || pred == 12) cmp = "<=";
                 else if (pred == 6 || pred == 13) cmp = "!=";
-                os << "  " << decl << result << " = (" << lhs << " " << cmp << " " << rhs << ");\n";
+                std::string cmp_expr = "(" + lhs + " " + cmp + " " + rhs + ")";
+                os << "  " << decl << result << " = "
+                   << scalarizeVectorBoolExpression(cmp_expr, cmp_type) << ";\n";
             }
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = {MSLTypeKind::Bool, 0, {}};
