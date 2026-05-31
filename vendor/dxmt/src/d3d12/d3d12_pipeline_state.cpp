@@ -14,6 +14,7 @@
 #include "dxil/dxil_to_msl.hpp"
 #include "../../libs/DXBCParser/BlobContainer.h"
 #include "../../libs/DXBCParser/DXBCUtils.h"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -31,6 +32,200 @@ constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
 
 void EnsureShaderCacheDir() {
   CreateDirectoryA("Z:\\tmp\\dxmt_shader_cache", nullptr);
+}
+
+size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
+                              ShaderType type,
+                              const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = 0;
+  hash = hash * 131 + (size_t)type;
+  if (bytecode && size > 0) {
+    const uint8_t *p = (const uint8_t *)bytecode;
+    for (SIZE_T i = 0; i < size; i++)
+      hash = hash * 131 + p[i];
+  }
+  if (type == ShaderType::Vertex && input_layout) {
+    hash = hash * 131 + input_layout->NumElements;
+    for (UINT i = 0; i < input_layout->NumElements; i++) {
+      const auto &el = input_layout->pInputElementDescs[i];
+      hash = hash * 131 + el.SemanticIndex;
+      hash = hash * 131 + el.Format;
+      hash = hash * 131 + el.InputSlot;
+      hash = hash * 131 + el.AlignedByteOffset;
+      hash = hash * 131 + el.InputSlotClass;
+      hash = hash * 131 + el.InstanceDataStepRate;
+      if (el.SemanticName) {
+        for (const char *s = el.SemanticName; *s; s++)
+          hash = hash * 131 + (unsigned char)*s;
+      }
+    }
+  }
+  return hash;
+}
+
+const char *PixelFormatManifestName(WMTPixelFormat format) {
+  switch (format) {
+  case WMTPixelFormatRGBA8Unorm: return "rgba8unorm";
+  case WMTPixelFormatRGBA8Unorm_sRGB: return "rgba8unorm_srgb";
+  case WMTPixelFormatBGRA8Unorm: return "bgra8unorm";
+  case WMTPixelFormatBGRA8Unorm_sRGB: return "bgra8unorm_srgb";
+  case WMTPixelFormatRGBA16Float: return "rgba16float";
+  case WMTPixelFormatRGBA32Float: return "rgba32float";
+  case WMTPixelFormatRGB10A2Unorm: return "rgb10a2unorm";
+  case WMTPixelFormatRG11B10Float: return "rg11b10float";
+  case WMTPixelFormatR8Unorm: return "r8unorm";
+  case WMTPixelFormatR16Float: return "r16float";
+  case WMTPixelFormatR32Float: return "r32float";
+  case WMTPixelFormatRG16Float: return "rg16float";
+  case WMTPixelFormatRG16Unorm: return "rg16unorm";
+  case WMTPixelFormatRG8Unorm: return "rg8unorm";
+  case WMTPixelFormatDepth16Unorm: return "depth16unorm";
+  case WMTPixelFormatDepth32Float: return "depth32float";
+  case WMTPixelFormatDepth24Unorm_Stencil8: return "depth24unorm_stencil8";
+  case WMTPixelFormatDepth32Float_Stencil8: return "depth32float_stencil8";
+  case WMTPixelFormatBC1_RGBA: return "bc1_rgba";
+  case WMTPixelFormatBC1_RGBA_sRGB: return "bc1_rgba_srgb";
+  case WMTPixelFormatBC2_RGBA: return "bc2_rgba";
+  case WMTPixelFormatBC2_RGBA_sRGB: return "bc2_rgba_srgb";
+  case WMTPixelFormatBC3_RGBA: return "bc3_rgba";
+  case WMTPixelFormatBC3_RGBA_sRGB: return "bc3_rgba_srgb";
+  case WMTPixelFormatBC4_RUnorm: return "bc4_runorm";
+  case WMTPixelFormatBC4_RSnorm: return "bc4_rsnorm";
+  case WMTPixelFormatBC5_RGUnorm: return "bc5_rgunorm";
+  case WMTPixelFormatBC5_RGSnorm: return "bc5_rgsnorm";
+  case WMTPixelFormatBC6H_RGBFloat: return "bc6h_rgbfloat";
+  case WMTPixelFormatBC6H_RGBUfloat: return "bc6h_rgbufloat";
+  case WMTPixelFormatBC7_RGBAUnorm: return "bc7_rgbaunorm";
+  case WMTPixelFormatBC7_RGBAUnorm_sRGB: return "bc7_rgbaunorm_srgb";
+  default: return "invalid";
+  }
+}
+
+size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
+                                    size_t gs_hash,
+                                    UINT num_render_targets,
+                                    const DXGI_FORMAT *rtv_formats,
+                                    DXGI_FORMAT dsv_format,
+                                    UINT sample_count,
+                                    UINT input_elements,
+                                    bool uses_stage_in) {
+  size_t hash = vs_hash;
+  hash = hash * 131 + ps_hash;
+  hash = hash * 131 + gs_hash;
+  hash = hash * 131 + num_render_targets;
+  for (UINT i = 0; i < 8; i++)
+    hash = hash * 131 + (size_t)rtv_formats[i];
+  hash = hash * 131 + (size_t)dsv_format;
+  hash = hash * 131 + (size_t)sample_count;
+  hash = hash * 131 + (size_t)input_elements;
+  hash = hash * 131 + (uses_stage_in ? 1 : 0);
+  return hash;
+}
+
+void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
+                            const WMTSize &threadgroup_size,
+                            uintptr_t compute_function) {
+  char path[256];
+  snprintf(path, sizeof(path), "/tmp/dxmt_shader_cache/pso-compute-%016zx.json",
+           cs_hash);
+  EnsureShaderCacheDir();
+  FILE *df = fopen(path, "w");
+  if (!df)
+    return;
+
+  fprintf(df, "{\n");
+  fprintf(df, "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n");
+  fprintf(df, "  \"source\": \"dxmt-d3d12-runtime\",\n");
+  fprintf(df, "  \"pipelines\": [\n");
+  fprintf(df, "    {\n");
+  fprintf(df, "      \"name\": \"compute-%016zx\",\n", cs_hash);
+  fprintf(df, "      \"type\": \"compute\",\n");
+  fprintf(df, "      \"d3d12\": { \"cs_hash\": \"%016zx\", \"cs_bytes\": %zu },\n",
+          cs_hash, (size_t)cs_size);
+  fprintf(df, "      \"shader\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"cs_main\" },\n",
+          cs_hash, cs_hash);
+  fprintf(df, "      \"threadgroup_size\": [%llu, %llu, %llu],\n",
+          (unsigned long long)threadgroup_size.width,
+          (unsigned long long)threadgroup_size.height,
+          (unsigned long long)threadgroup_size.depth);
+  fprintf(df, "      \"metal\": { \"compute_function\": %llu }\n",
+          (unsigned long long)compute_function);
+  fprintf(df, "    }\n");
+  fprintf(df, "  ]\n");
+  fprintf(df, "}\n");
+  fclose(df);
+  PSTRACE("Compute PSO manifest written to %s", path);
+}
+
+void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
+                           size_t gs_hash, SIZE_T vs_size, SIZE_T ps_size,
+                           SIZE_T gs_size, UINT num_render_targets,
+                           const DXGI_FORMAT *rtv_formats,
+                           DXGI_FORMAT dsv_format, UINT sample_count,
+                           UINT input_elements, bool uses_stage_in,
+                           bool uses_geometry_mesh,
+                           bool rasterization_enabled,
+                           uintptr_t vertex_function,
+                           uintptr_t fragment_function) {
+  char path[256];
+  snprintf(path, sizeof(path), "/tmp/dxmt_shader_cache/pso-render-%016zx.json",
+           pso_hash);
+  EnsureShaderCacheDir();
+  FILE *df = fopen(path, "w");
+  if (!df)
+    return;
+
+  WMTPixelFormat depth_format =
+      MTLD3D12PipelineState::DXGIToMTLPixelFormat(dsv_format);
+  WMTPixelFormat stencil_format = WMTPixelFormatInvalid;
+  if (dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+      dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+    stencil_format = depth_format;
+
+  fprintf(df, "{\n");
+  fprintf(df, "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n");
+  fprintf(df, "  \"source\": \"dxmt-d3d12-runtime\",\n");
+  fprintf(df, "  \"pipelines\": [\n");
+  fprintf(df, "    {\n");
+  fprintf(df, "      \"name\": \"render-%016zx\",\n", pso_hash);
+  fprintf(df, "      \"type\": \"render\",\n");
+  fprintf(df, "      \"d3d12\": { \"vs_hash\": \"%016zx\", \"ps_hash\": \"%016zx\", \"gs_hash\": \"%016zx\", \"vs_bytes\": %zu, \"ps_bytes\": %zu, \"gs_bytes\": %zu, \"num_render_targets\": %u, \"dsv_format\": %u, \"input_elements\": %u },\n",
+          vs_hash, ps_hash, gs_hash, (size_t)vs_size, (size_t)ps_size,
+          (size_t)gs_size, num_render_targets, (unsigned)dsv_format,
+          input_elements);
+  fprintf(df, "      \"color_formats\": [");
+  for (UINT i = 0; i < 8; i++) {
+    if (i)
+      fprintf(df, ", ");
+    fprintf(df, "\"%s\"",
+            PixelFormatManifestName(
+                MTLD3D12PipelineState::DXGIToMTLPixelFormat(rtv_formats[i])));
+  }
+  fprintf(df, "],\n");
+  fprintf(df, "      \"depth_format\": \"%s\",\n",
+          PixelFormatManifestName(depth_format));
+  fprintf(df, "      \"stencil_format\": \"%s\",\n",
+          PixelFormatManifestName(stencil_format));
+  fprintf(df, "      \"sample_count\": %u,\n", sample_count ? sample_count : 1);
+  fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"vs_main\" },\n",
+          vs_hash, vs_hash);
+  if (ps_size > 0) {
+    fprintf(df, "      \"fragment\": { \"hash\": \"%016zx\", \"metallib\": \"/tmp/dxmt_shader_cache/%016zx.metallib\", \"function\": \"ps_main\" },\n",
+            ps_hash, ps_hash);
+  } else {
+    fprintf(df, "      \"fragment\": null,\n");
+  }
+  fprintf(df, "      \"metal\": { \"vertex_function\": %llu, \"fragment_function\": %llu, \"uses_stage_in\": %s, \"uses_geometry_mesh\": %s, \"rasterization_enabled\": %s }\n",
+          (unsigned long long)vertex_function,
+          (unsigned long long)fragment_function,
+          uses_stage_in ? "true" : "false",
+          uses_geometry_mesh ? "true" : "false",
+          rasterization_enabled ? "true" : "false");
+  fprintf(df, "    }\n");
+  fprintf(df, "  ]\n");
+  fprintf(df, "}\n");
+  fclose(df);
+  PSTRACE("Render PSO manifest written to %s", path);
 }
 
 void DumpShaderBlob(const char *path, const void *bytecode, SIZE_T size) {
@@ -387,29 +582,10 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                                           WMT::Reference<WMT::Function> &out_func,
                                           sm50_shader_t *out_shader_handle,
                                           MTL_SHADER_REFLECTION *out_reflection) {
-  size_t hash = 0;
-  hash = hash * 131 + (size_t)type;
-  if (bytecode && size > 0) {
-    const uint8_t *p = (const uint8_t *)bytecode;
-    for (SIZE_T i = 0; i < size; i++)
-      hash = hash * 131 + p[i];
-  }
-  if (type == ShaderType::Vertex) {
-    hash = hash * 131 + m_input_layout.NumElements;
-    for (UINT i = 0; i < m_input_layout.NumElements; i++) {
-      const auto &el = m_input_layout.pInputElementDescs[i];
-      hash = hash * 131 + el.SemanticIndex;
-      hash = hash * 131 + el.Format;
-      hash = hash * 131 + el.InputSlot;
-      hash = hash * 131 + el.AlignedByteOffset;
-      hash = hash * 131 + el.InputSlotClass;
-      hash = hash * 131 + el.InstanceDataStepRate;
-      if (el.SemanticName) {
-        for (const char *s = el.SemanticName; *s; s++)
-          hash = hash * 131 + (unsigned char)*s;
-      }
-    }
-  }
+  size_t hash = ComputeShaderCacheHash(bytecode, size, type,
+                                       type == ShaderType::Vertex
+                                           ? &m_input_layout
+                                           : nullptr);
   {
     std::lock_guard<std::mutex> lock(s_shader_mutex);
     PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu", func_name, hash, size, s_shader_cache.size());
@@ -950,6 +1126,8 @@ bool MTLD3D12PipelineState::Compile() {
       return RecordCompileFailure("pso/compute_no_cs", "Compute PSO has no CS bytecode");
     }
 
+    size_t cs_hash = ComputeShaderCacheHash(m_cs.data(), m_cs.size(),
+                                            ShaderType::Compute, nullptr);
     WMT::Reference<WMT::Function> cs_func;
     if (!CompileShader(m_cs.data(), m_cs.size(), ShaderType::Compute,
                        "cs_main", cs_func, &m_cs_shader, &m_cs_reflection))
@@ -972,6 +1150,8 @@ bool MTLD3D12PipelineState::Compile() {
                                   str::format("Metal compute PSO creation failed: ",
                                               err_desc ? err_desc : "unknown"));
     }
+    DumpComputePSOManifest(cs_hash, m_cs.size(), m_threadgroup_size,
+                           (uintptr_t)cs_func.handle);
 
     PTRACE("CS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
       (unsigned long long)(uintptr_t)m_cs_shader,
@@ -1010,6 +1190,19 @@ bool MTLD3D12PipelineState::Compile() {
   }
 
   WMT::Reference<WMT::Function> vs_func, ps_func;
+  size_t vs_hash = m_vs.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_vs.data(), m_vs.size(),
+                                                ShaderType::Vertex,
+                                                &m_input_layout);
+  size_t ps_hash = m_ps.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_ps.data(), m_ps.size(),
+                                                ShaderType::Pixel, nullptr);
+  size_t gs_hash = m_gs.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
+                                                ShaderType::Geometry, nullptr);
 
   if (!m_hs.empty() || !m_ds.empty()) {
     return RecordCompileFailure(
@@ -1262,6 +1455,19 @@ bool MTLD3D12PipelineState::Compile() {
     return RecordCompileFailure("pso/metal_render_pso",
                                 str::format("Metal render PSO creation failed: ",
                                             err_desc ? err_desc : "unknown"));
+  }
+  {
+    size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
+        vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
+        m_dsv_format, m_sample_count ? m_sample_count : 1,
+        m_input_layout.NumElements, m_vs_uses_stage_in);
+    DumpRenderPSOManifest(
+        pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
+        m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
+        m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
+        m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
+        info.rasterization_enabled, (uintptr_t)vs_func.handle,
+        (uintptr_t)ps_func.handle);
   }
 
   if (m_depth_stencil_desc.DepthEnable || m_depth_stencil_desc.StencilEnable) {
