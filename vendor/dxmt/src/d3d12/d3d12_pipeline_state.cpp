@@ -1,5 +1,6 @@
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_root_signature.hpp"
 #include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
@@ -69,6 +70,84 @@ const char *DxilShaderKindName(dxmt::dxil::DxilShaderKind kind) {
   }
 }
 
+const char *RootParameterTypeName(D3D12_ROOT_PARAMETER_TYPE type) {
+  switch (type) {
+  case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE: return "descriptor_table";
+  case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS: return "constants";
+  case D3D12_ROOT_PARAMETER_TYPE_CBV: return "cbv";
+  case D3D12_ROOT_PARAMETER_TYPE_SRV: return "srv";
+  case D3D12_ROOT_PARAMETER_TYPE_UAV: return "uav";
+  default: return "unknown";
+  }
+}
+
+const char *DescriptorRangeTypeName(D3D12_DESCRIPTOR_RANGE_TYPE type) {
+  switch (type) {
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SRV: return "srv";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_UAV: return "uav";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_CBV: return "cbv";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER: return "sampler";
+  default: return "unknown";
+  }
+}
+
+const char *ShaderVisibilityName(uint32_t visibility) {
+  switch ((D3D12_SHADER_VISIBILITY)visibility) {
+  case D3D12_SHADER_VISIBILITY_ALL: return "all";
+  case D3D12_SHADER_VISIBILITY_VERTEX: return "vertex";
+  case D3D12_SHADER_VISIBILITY_HULL: return "hull";
+  case D3D12_SHADER_VISIBILITY_DOMAIN: return "domain";
+  case D3D12_SHADER_VISIBILITY_GEOMETRY: return "geometry";
+  case D3D12_SHADER_VISIBILITY_PIXEL: return "pixel";
+  default: return "unknown";
+  }
+}
+
+void DumpRootSignatureSummary(FILE *df, const MTLD3D12RootSignature *root_sig) {
+  fprintf(df, "\nroot_signature:\n");
+  if (!root_sig) {
+    fprintf(df, "  present=0\n");
+    return;
+  }
+
+  const auto &parameters = root_sig->GetParameters();
+  const auto &static_samplers = root_sig->GetStaticSamplers();
+  fprintf(df, "  present=1\n");
+  fprintf(df, "  blob_hash=0x%016zx\n", root_sig->GetBlobHash());
+  fprintf(df, "  flags=0x%08x\n", (uint32_t)root_sig->GetFlags());
+  fprintf(df, "  parameter_count=%zu\n", parameters.size());
+  fprintf(df, "  static_sampler_count=%zu\n", static_samplers.size());
+
+  for (size_t i = 0; i < parameters.size(); i++) {
+    const auto &param = parameters[i];
+    fprintf(df,
+            "  parameter[%zu] type=%s visibility=%s register_space=%u register=%u descriptors=%u range_type=%s table_ranges=%zu\n",
+            i, RootParameterTypeName(param.type),
+            ShaderVisibilityName(param.shader_visibility), param.register_space,
+            param.register_index, param.num_descriptors,
+            DescriptorRangeTypeName(param.range_type), param.ranges.size());
+    for (size_t r = 0; r < param.ranges.size(); r++) {
+      const auto &range = param.ranges[r];
+      fprintf(df,
+              "    range[%zu] type=%s space=%u base=%u count=%u offset=%u\n",
+              r, DescriptorRangeTypeName(range.range_type),
+              range.register_space, range.base_register, range.num_descriptors,
+              range.offset_in_table);
+    }
+  }
+
+  for (size_t i = 0; i < static_samplers.size(); i++) {
+    const auto &sampler = static_samplers[i];
+    fprintf(df,
+            "  static_sampler[%zu] visibility=%s space=%u register=%u sampler_gpu=0x%016llx sampler_cube_gpu=0x%016llx lod_bias_bits=0x%016llx\n",
+            i, ShaderVisibilityName(sampler.shader_visibility),
+            sampler.register_space, sampler.shader_register,
+            (unsigned long long)sampler.sampler_gpu_id,
+            (unsigned long long)sampler.sampler_cube_gpu_id,
+            (unsigned long long)sampler.lod_bias_bits);
+  }
+}
+
 void DumpDXILModuleSummary(const char *path, const dxmt::dxil::LLVMModule &module,
                            const dxmt::dxil::DxilParsedShader &shader_info) {
   if (!path)
@@ -129,7 +208,8 @@ void DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
                            const char *module_summary_path, const char *msl_path,
                            const dxmt::dxil::LLVMModule &module,
                            const dxmt::dxil::DxilParsedShader &shader_info,
-                           const dxmt::dxil::MSLShader &msl_result) {
+                           const dxmt::dxil::MSLShader &msl_result,
+                           const MTLD3D12RootSignature *root_sig) {
   if (!path)
     return;
 
@@ -158,6 +238,7 @@ void DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
   fprintf(df, "dxbc=%s\n", dxbc_path ? dxbc_path : "");
   fprintf(df, "module=%s\n", module_summary_path ? module_summary_path : "");
   fprintf(df, "msl=%s\n", msl_path ? msl_path : "");
+  DumpRootSignatureSummary(df, root_sig);
   fprintf(df, "\ndiagnostics:\n");
   for (const auto &diagnostic : msl_result.diagnostics)
     fprintf(df, "  %s\n", diagnostic.c_str());
@@ -455,7 +536,8 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             PSTRACE("  MSL source written to %s", msl_path);
             DumpDXILCompileReport(dxil_report_path, func_name, hash, size,
                                   dxbc_path, module_summary_path, msl_path,
-                                  *module, shader_info, *msl_result);
+                                  *module, shader_info, *msl_result,
+                                  static_cast<MTLD3D12RootSignature *>(m_root_sig));
             PSTRACE("  DXIL compile report written to %s", dxil_report_path);
 
             WMT::Reference<WMT::Error> compile_err;
