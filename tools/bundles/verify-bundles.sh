@@ -98,10 +98,10 @@ verify_runtime_host() {
   local path="$1"
   local tmp
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-runtime-host.XXXXXX")"
-  trap 'rm -rf "$tmp"' RETURN
 
-  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" runtime/host; then
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" runtime/host && [ ! -d "$tmp/runtime/host" ]; then
     echo "HOST RUNTIME MISSING: $path does not contain runtime/host/" >&2
+    rm -rf "$tmp"
     return 1
   fi
 
@@ -122,7 +122,6 @@ verify_runtime_host() {
   fi
 
   rm -rf "$tmp"
-  trap - RETURN
   return "$failed"
 }
 
@@ -130,22 +129,21 @@ verify_scripts_tools_configs() {
   local path="$1"
   local tmp
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-scripts-tools.XXXXXX")"
-  trap 'rm -rf "$tmp"' RETURN
 
-  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" scripts/tools/configs/mtsp-rules.toml; then
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" scripts/tools/configs/mtsp-rules.toml \
+    && [ ! -e "$tmp/scripts/tools/configs/mtsp-rules.toml" ]; then
     echo "SCRIPTS TOOLS INVALID: $path does not contain scripts/tools/configs/mtsp-rules.toml" >&2
+    rm -rf "$tmp"
     return 1
   fi
 
   if [ ! -s "$tmp/scripts/tools/configs/mtsp-rules.toml" ]; then
     echo "SCRIPTS TOOLS INVALID: $path has empty scripts/tools/configs/mtsp-rules.toml" >&2
     rm -rf "$tmp"
-    trap - RETURN
     return 1
   fi
 
   rm -rf "$tmp"
-  trap - RETURN
   return 0
 }
 
