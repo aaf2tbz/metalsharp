@@ -9,9 +9,22 @@ STATUS_FILE=""
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
     local ver="$TARGET_VERSION"
+    local safe_phase="${phase//\\/\\\\}"
+    safe_phase="${safe_phase//\"/\\\"}"
+    local safe_message="${message//\\/\\\\}"
+    safe_message="${safe_message//\"/\\\"}"
+    local safe_ver="${ver//\\/\\\\}"
+    safe_ver="${safe_ver//\"/\\\"}"
+    local error_json="null"
+    if [ -n "$error" ]; then
+        local safe_error="${error//\\/\\\\}"
+        safe_error="${safe_error//\"/\\\"}"
+        error_json="\"$safe_error\""
+    fi
+    mkdir -p "$(dirname "$STATUS_FILE")" 2>/dev/null || true
     printf '{"phase":"%s","percent":%d,"message":"%s","error":%s,"new_version":"%s","timestamp":%s}\n' \
-        "$phase" "$percent" "$message" "$([ -n "$error" ] && echo "\"$error\"" || echo "null")" \
-        "$ver" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
+        "$safe_phase" "$percent" "$safe_message" "$error_json" \
+        "$safe_ver" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
 }
 
 kill_pid() {
@@ -27,13 +40,14 @@ kill_pid() {
     kill -0 "$pid" 2>/dev/null && return 1 || return 0
 }
 
-for arg in "$@"; do
-    case "$arg" in
-        --dmg)         shift; DMG_PATH="$1"; shift ;;
-        --backend-pid)  shift; BACKEND_PID="$1"; shift ;;
-        --target-version) shift; TARGET_VERSION="$1"; shift ;;
-        --status-file)  shift; STATUS_FILE="$1"; shift ;;
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dmg) shift; DMG_PATH="${1:-}"; shift ;;
+        --backend-pid) shift; BACKEND_PID="${1:-}"; shift ;;
+        --target-version) shift; TARGET_VERSION="${1:-}"; shift ;;
+        --status-file) shift; STATUS_FILE="${1:-}"; shift ;;
         --) shift; break ;;
+        *) shift ;;
     esac
 done
 
@@ -80,6 +94,10 @@ sleep 2
 write_status "verifying_dmg" 30 "Verifying DMG..."
 if [ ! -f "$DMG_PATH" ]; then
     write_status "error" 30 "DMG not found: $DMG_PATH" "dmg_not_found"
+    exit 1
+fi
+if ! hdiutil verify "$DMG_PATH" >/dev/null 2>&1; then
+    write_status "error" 30 "DMG failed verification: $DMG_PATH" "dmg_verify_failed"
     exit 1
 fi
 

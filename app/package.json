@@ -108,6 +108,10 @@
         ]
       },
       {
+        "from": "updater",
+        "to": "scripts/tools/updater"
+      },
+      {
         "from": "bundles/metalsharp-electron.tar.zst",
         "to": "bundles/metalsharp-electron.tar.zst"
       },
