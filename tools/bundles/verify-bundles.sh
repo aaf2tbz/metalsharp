@@ -91,7 +91,10 @@ verify_local() {
 archive_contains_root() {
   local path="$1"
   local root="$2"
-  tar --use-compress-program=unzstd -tf "$path" "$root" >/dev/null
+  local listing
+  listing="$(tar --use-compress-program=unzstd -tf "$path" "$root" 2>/dev/null || true)"
+  awk -v root="$root" 'index($0, root "/") == 1 || $0 == root { found=1 } END { exit found ? 0 : 1 }' \
+    <<< "$listing"
 }
 
 verify_runtime_host() {
