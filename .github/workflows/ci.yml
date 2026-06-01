@@ -85,22 +85,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload split dependency bundles
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-        run: |
-          gh release upload bundles \
-            app/bundles/metalsharp-electron.tar.zst \
-            app/bundles/metalsharp-graphics-dll.tar.zst \
-            app/bundles/metalsharp-runtime.tar.zst \
-            app/bundles/metalsharp-assets.tar.zst \
-            app/bundles/metalsharp-scripts-tools.tar.zst \
-            app/bundles/metalsharp-steam.tar.zst \
-            app/bundles/metalsharp-d3d12-developer-sdk.tar.zst \
-            dist/bundles/metalsharp-bundle-manifest.tsv \
-            --repo aaf2tbz/metalsharp --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: actions/upload-artifact@v4
         with:
           name: MetalSharp-dmg
