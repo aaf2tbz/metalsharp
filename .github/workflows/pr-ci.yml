@@ -109,6 +109,50 @@ jobs:
       - name: Shell check
         run: bash -n updater/update.sh
 
+  dmg:
+    name: DMG Install Asset CI
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust backend
+        run: cd app/src-rust && cargo build --release
+
+      - name: Build host runtime ABI
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build . --target metalsharp_host_runtime --parallel $(sysctl -n hw.ncpu)
+          cd ..
+          METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
+
+      - name: Install Electron deps
+        run: cd app && npm ci
+
+      - name: Build TypeScript
+        run: cd app && npm run build
+
+      - name: Prepare repaired setup bundles
+        run: tools/dmg/create-bundles.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package DMG
+        run: cd app && npx electron-builder --mac dmg --arm64 --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify mounted DMG runtime assets
+        run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
+
   native:
     name: C/C++/Obj-C CI
     runs-on: macos-14

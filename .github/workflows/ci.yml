@@ -73,6 +73,7 @@ jobs:
       - name: Publish developer SDK bundle
         run: |
           gh release upload bundles \
+            dist/bundles/metalsharp-runtime.tar.zst \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
             dist/developer-sdk/metalsharp-bundle-manifest.tsv \
             --repo "$GITHUB_REPOSITORY" \
@@ -155,6 +156,9 @@ jobs:
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify DMG runtime assets
+        run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
 
       - uses: actions/upload-artifact@v4
         with:

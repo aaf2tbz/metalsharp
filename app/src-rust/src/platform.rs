@@ -28,10 +28,14 @@ pub fn name() -> &'static str {
 
 pub fn app_resources_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
+    app_resources_dir_for_exe(&exe)
+}
+
+fn app_resources_dir_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 
     if cfg!(target_os = "macos") {
-        return exe_dir.parent().map(|p| p.join("Resources"));
+        return macos_resources_dir_for_exe(exe);
     }
 
     if exe_dir.file_name().and_then(|n| n.to_str()) == Some("resources") {
@@ -39,6 +43,22 @@ pub fn app_resources_dir() -> Option<PathBuf> {
     }
 
     Some(exe_dir.to_path_buf())
+}
+
+fn macos_resources_dir_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = exe.parent()?;
+    loop {
+        if dir.file_name().and_then(|n| n.to_str()) == Some("Resources") {
+            return Some(dir.to_path_buf());
+        }
+
+        let contents = dir.parent()?;
+        if contents.file_name().and_then(|n| n.to_str()) == Some("Contents") {
+            return Some(contents.join("Resources"));
+        }
+
+        dir = contents;
+    }
 }
 
 pub fn runtime_library_env(ms_root: &std::path::Path) -> Option<(&'static str, String)> {
@@ -68,4 +88,30 @@ pub fn runtime_wine_binary(ms_root: &std::path::Path) -> PathBuf {
     }
 
     ms_root.join("bin").join("wine")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn macos_resources_dir_accepts_backend_under_resources_runtime() {
+        let exe = Path::new("/Applications/MetalSharp.app/Contents/Resources/runtime/metalsharp-backend");
+
+        assert_eq!(
+            macos_resources_dir_for_exe(exe),
+            Some(PathBuf::from("/Applications/MetalSharp.app/Contents/Resources"))
+        );
+    }
+
+    #[test]
+    fn macos_resources_dir_accepts_app_binary_under_macos() {
+        let exe = Path::new("/Applications/MetalSharp.app/Contents/MacOS/MetalSharp");
+
+        assert_eq!(
+            macos_resources_dir_for_exe(exe),
+            Some(PathBuf::from("/Applications/MetalSharp.app/Contents/Resources"))
+        );
+    }
 }
