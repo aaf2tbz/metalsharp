@@ -7,6 +7,7 @@ BUNDLE_DIR="$PROJECT_ROOT/app/bundles"
 RELEASE_TAG="${METALSHARP_BUNDLE_TAG:-bundles}"
 REPO="${METALSHARP_BUNDLE_REPO:-aaf2tbz/metalsharp}"
 LINUX_RUNTIME_ASSET="${METALSHARP_LINUX_RUNTIME_ASSET:-metalsharp_linux_runtime.tar.zst}"
+VERIFY_BUNDLES="$PROJECT_ROOT/tools/bundles/verify-bundles.sh"
 
 mkdir -p "$BUNDLE_DIR"
 
@@ -15,13 +16,17 @@ download_asset() {
   local dest="$2"
 
   if [ -f "$dest" ] && [ -s "$dest" ]; then
-    echo "SKIP: $(basename "$dest") already exists"
-    return 0
+    if "$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" "$(basename "$dest")" >/dev/null; then
+      echo "SKIP: $(basename "$dest") already exists"
+      return 0
+    fi
+    echo "Invalid existing $(basename "$dest") — removing and downloading fresh copy"
   fi
 
   rm -f "$dest"
   echo "Downloading $asset..."
   curl -fL -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"
+  "$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" "$(basename "$dest")"
 }
 
 create_system_wine_runtime_bundle() {
@@ -89,5 +94,6 @@ do
 done
 
 echo ""
+"$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" --require linux dxmt.tar.zst steamwebhelper.exe steamwebhelper-wrapper.c
 echo "Linux bundles saved to: $BUNDLE_DIR"
 ls -lh "$BUNDLE_DIR"

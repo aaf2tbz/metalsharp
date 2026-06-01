@@ -6,6 +6,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUNDLE_DIR="$PROJECT_ROOT/app/bundles"
 RELEASE_TAG="bundles"
 REPO="aaf2tbz/metalsharp"
+VERIFY_BUNDLES="$PROJECT_ROOT/tools/bundles/verify-bundles.sh"
 
 echo "=== MetalSharp Bundle Downloader ==="
 echo "Downloading pre-built bundles from GitHub Release $RELEASE_TAG"
@@ -61,8 +62,12 @@ validate_bundle_runtime() {
 for bundle in "${BUNDLES[@]}"; do
     dest="$BUNDLE_DIR/$bundle"
     if [ -f "$dest" ] && [ -s "$dest" ]; then
-        echo "SKIP: $bundle — already exists"
-        continue
+        if "$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" "$bundle" >/dev/null; then
+            echo "SKIP: $bundle — already exists"
+            continue
+        fi
+        echo "Invalid existing $bundle — removing and downloading fresh copy"
+        rm -rf "$dest"
     elif [ -e "$dest" ]; then
         echo "Invalid existing $bundle — removing and downloading fresh copy"
         rm -rf "$dest"
@@ -77,6 +82,7 @@ for bundle in "${BUNDLES[@]}"; do
         rm -f "$dest"
         exit 1
     fi
+    "$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" "$bundle"
 done
 
 for bundle in "${BUNDLES[@]}"; do
@@ -87,6 +93,7 @@ for bundle in "${BUNDLES[@]}"; do
 done
 
 validate_bundle_runtime
+"$VERIFY_BUNDLES" --bundle-dir "$BUNDLE_DIR" --require mac dxmt.tar.zst steamwebhelper.exe steamwebhelper-wrapper.c
 
 echo ""
 echo "=== Bundle Summary ==="

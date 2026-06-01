@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
+const STEAMWEBHELPER_WRAPPER_SHA256: &str = "f46a1e8c39c850ba22861f63559f13b4f68557acf04a92e6d1b899769b2ea1f9";
 
 fn ms_wine() -> PathBuf {
     let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
@@ -558,7 +559,7 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
     let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
 
-    if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+    if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES || !steamwebhelper_wrapper_valid(&wrapper) {
         return;
     }
 
@@ -588,13 +589,13 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
 fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let wrapper = resources.join("bundles").join("steamwebhelper.exe");
-        if wrapper.exists() {
+        if steamwebhelper_wrapper_valid(&wrapper) {
             return Some(wrapper);
         }
     }
 
     let dev = PathBuf::from("app/bundles/steamwebhelper.exe");
-    if dev.exists() {
+    if steamwebhelper_wrapper_valid(&dev) {
         return Some(dev);
     }
 
@@ -603,24 +604,51 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
     let _ = std::fs::create_dir_all(&cache_dir);
     let cached = cache_dir.join("steamwebhelper.exe");
 
-    if cached.exists() {
-        let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
-            return Some(cached);
-        }
+    if steamwebhelper_wrapper_valid(&cached) {
+        return Some(cached);
+    } else if cached.exists() {
+        let _ = std::fs::remove_file(&cached);
     }
 
     let url = "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/steamwebhelper.exe";
-    let output = Command::new("curl").args(["-sL", "-o"]).arg(&cached).arg(url).output().ok()?;
+    let output = Command::new("curl")
+        .args(["--fail", "--location", "--silent", "--show-error", "-o"])
+        .arg(&cached)
+        .arg(url)
+        .output()
+        .ok()?;
 
-    if output.status.success() && cached.exists() {
-        let size = std::fs::metadata(&cached).map(|m| m.len()).unwrap_or(0);
-        if size > 0 && size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
-            return Some(cached);
-        }
+    if output.status.success() && steamwebhelper_wrapper_valid(&cached) {
+        return Some(cached);
     }
 
     let _ = std::fs::remove_file(&cached);
+    None
+}
+
+fn steamwebhelper_wrapper_valid(path: &Path) -> bool {
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size == 0 || size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+        return false;
+    }
+
+    file_sha256(path).as_deref() == Some(STEAMWEBHELPER_WRAPPER_SHA256)
+}
+
+fn file_sha256(path: &Path) -> Option<String> {
+    for (program, args) in [("shasum", vec!["-a", "256"]), ("sha256sum", Vec::new())] {
+        let Ok(output) = Command::new(program).args(args).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8(output.stdout).ok()?;
+        let hash = stdout.split_whitespace().next()?.to_string();
+        if hash.len() == 64 {
+            return Some(hash);
+        }
+    }
     None
 }
 
@@ -1307,5 +1335,17 @@ mod tests {
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
         ));
+    }
+
+    #[test]
+    fn steamwebhelper_wrapper_hash_matches_release_manifest() {
+        let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
+        let wrapper_row = manifest
+            .lines()
+            .find(|line| line.starts_with("steamwebhelper.exe\t"))
+            .expect("steamwebhelper.exe release manifest row");
+        let fields: Vec<&str> = wrapper_row.split('\t').collect();
+
+        assert_eq!(fields.get(1).copied(), Some(STEAMWEBHELPER_WRAPPER_SHA256));
     }
 }

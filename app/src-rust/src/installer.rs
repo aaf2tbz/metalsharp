@@ -8,7 +8,7 @@ use std::time::Duration;
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
-const DXMT_BUNDLE_SHA256: &str = "32ca308272f152b6aa82094521f5bf1c555ce5b20d475d2d289c0ef19f4df918";
+const DXMT_BUNDLE_SHA256: &str = "bc5574bcca08e222b5a26bf9118526c40a063a1290103319fc5648e02d599edc";
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const DXMT_REQUIRED_PE: &[&str] = &[
@@ -1378,6 +1378,18 @@ mod tests {
         ] {
             assert!(linux_assets.contains(&expected), "missing linux bundle asset {}", expected);
         }
+    }
+
+    #[test]
+    fn dxmt_bundle_hash_matches_release_manifest() {
+        let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
+        let dxmt_row = manifest
+            .lines()
+            .find(|line| line.starts_with("dxmt.tar.zst\t"))
+            .expect("dxmt.tar.zst release manifest row");
+        let fields: Vec<&str> = dxmt_row.split('\t').collect();
+
+        assert_eq!(fields.get(1).copied(), Some(DXMT_BUNDLE_SHA256));
     }
 
     #[test]
