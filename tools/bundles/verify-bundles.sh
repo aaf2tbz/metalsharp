@@ -91,18 +91,7 @@ verify_local() {
 archive_contains_root() {
   local path="$1"
   local root="$2"
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/metalsharp-bundle-list.XXXXXX")"
-  if ! tar --use-compress-program=unzstd -tf "$path" > "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if awk -v root="$root" 'index($0, root "/") == 1 || $0 == root { found=1 } END { exit found ? 0 : 1 }' "$tmp"; then
-    rm -f "$tmp"
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
+  tar --use-compress-program=unzstd -tf "$path" "$root" >/dev/null
 }
 
 verify_runtime_host() {
