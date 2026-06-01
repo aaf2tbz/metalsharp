@@ -10,6 +10,7 @@ Use this page as the repo map before changing launch/runtime code.
 - [Launcher Runtime](launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
 - [D3D12 Pipeline Map](m12-pipeline-map.md) - current M12 D3D12/DXMT path.
 - [DXMT and Vulkan Architecture](dxmt-vulkan-architecture.md) - DXMT/M9-M12 boundaries and Vulkan fallback boundaries.
+- [D3D12 Developer Runtime Package](../tools/d3d12-metal-sdk/docs/developer-runtime.md) - self-contained developer SDK tarball layout and publish flow.
 
 ## Historical Roadmaps
 

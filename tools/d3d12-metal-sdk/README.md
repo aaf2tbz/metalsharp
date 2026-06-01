@@ -4,6 +4,11 @@ This directory is the repo-owned development SDK for D3D12 to Metal work through
 
 MetalSharp is one host profile for this SDK. The probes are normal Windows executables that should also run under standalone Wine prefixes, DXMT development prefixes, and future host integrations.
 
+The released `metalsharp-d3d12-developer-sdk.tar.zst` package is self-contained:
+it includes this SDK source plus a staged developer Wine/DXMT runtime under
+`runtime/`. See [docs/developer-runtime.md](docs/developer-runtime.md) for the
+portable package layout, platform posture, and CI publish flow.
+
 The SDK exists to make D3D12 changes evidence-driven before game-specific debugging starts. A D3D12 claim should be backed by at least one of:
 
 - a contract entry in `contracts/`

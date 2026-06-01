@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import shutil
 import stat
@@ -121,6 +122,59 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+SDK_CRITICAL_FILES = [
+    "runtime/wine/bin/wine",
+    "runtime/dxmt/x86_64-windows/d3d12.dll",
+    "runtime/dxmt/x86_64-windows/dxgi.dll",
+    "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
+    "runtime/dxmt/x86_64-windows/winemetal.dll",
+    "runtime/dxmt/x86_64-unix/winemetal.so",
+    "scripts/run-probes.sh",
+    "scripts/preflight-runtime-layout.py",
+    "scripts/stage-dxmt-runtime.py",
+]
+
+
+def sdk_file_record(root: Path, rel: str) -> dict:
+    path = root / rel
+    return {
+        "path": rel,
+        "exists": path.exists(),
+        "size": path.stat().st_size if path.exists() else 0,
+        "sha256": sha256(path) if path.is_file() else None,
+    }
+
+
+def write_sdk_runtime_manifest(sdk_root: Path, runtime_archive: Path, graphics_archive: Path) -> None:
+    records = [sdk_file_record(sdk_root, rel) for rel in SDK_CRITICAL_FILES]
+    missing = [record["path"] for record in records if not record["exists"]]
+    manifest = {
+        "schema": "metalsharp.d3d12-developer-sdk.runtime.v1",
+        "root": "developer-sdk/d3d12",
+        "runtimeAsset": {
+            "name": runtime_archive.name,
+            "sha256": sha256(runtime_archive),
+            "size": runtime_archive.stat().st_size,
+        },
+        "graphicsAsset": {
+            "name": graphics_archive.name,
+            "sha256": sha256(graphics_archive),
+            "size": graphics_archive.stat().st_size,
+        },
+        "platforms": {
+            "macos": "bundled Wine runtime and DXMT Metal bridge are staged and ready to run on Apple Silicon hosts",
+            "linux": "SDK probes, contracts, and scripts are portable; use a local Wine runtime with the staged DXMT files for non-Metal host investigation",
+            "windows": "probe sources, contracts, and PowerShell helpers are included; native Windows does not use Wine",
+        },
+        "criticalFiles": records,
+        "ok": not missing,
+        "missing": missing,
+    }
+    out = sdk_root / "runtime" / "manifest.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def build_staging(tmp: Path) -> dict[str, Path]:
     source1 = tmp / "source-bundle-1"
     source2 = tmp / "source-bundle-2"
@@ -190,6 +244,15 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         return is_dir and rel.parts[:1] in {("cache",), ("external",), ("out",)}
 
     copy_tree(PROJECT_ROOT / "tools" / "d3d12-metal-sdk", roots["sdk"], ignore=sdk_ignore)
+    copy_tree(roots["runtime"] / "wine", roots["sdk"] / "runtime" / "wine")
+    copy_tree(roots["runtime"] / "host", roots["sdk"] / "runtime" / "host")
+    copy_file(roots["runtime"] / "metalsharp-backend", roots["sdk"] / "runtime" / "metalsharp-backend")
+    copy_tree(roots["graphics"] / "dxmt", roots["sdk"] / "runtime" / "dxmt")
+    write_sdk_runtime_manifest(
+        roots["sdk"],
+        SOURCE_BUNDLES / "metalsharp_bundle.tar.zst",
+        SOURCE_BUNDLES / "dxmt.tar.zst",
+    )
 
     return roots
 

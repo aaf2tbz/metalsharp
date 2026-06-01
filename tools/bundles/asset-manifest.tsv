@@ -5,4 +5,4 @@ metalsharp-runtime.tar.zst	runtime	mac	Wine runtime, host runtime ABI, and backe
 metalsharp-assets.tar.zst	assets	mac	Mono, GPTK, DXVK, Goldberg, EAC toggle, shims, and runtime support assets.
 metalsharp-scripts-tools.tar.zst	scripts/tools	mac	Updater scripts, configs, native tools, and CEF compatibility helpers.
 metalsharp-steam.tar.zst	steam	mac	Steam installer and Steam CEF wrapper assets.
-metalsharp-d3d12-developer-sdk.tar.zst	developer-sdk/d3d12	mac	D3D12 developer SDK contracts, probes, scripts, docs, and runtime-debug tools.
+metalsharp-d3d12-developer-sdk.tar.zst	developer-sdk/d3d12	mac,linux,windows	Self-contained D3D12 developer SDK with contracts, probes, docs, staged Wine runtime, and DXMT DLLs.

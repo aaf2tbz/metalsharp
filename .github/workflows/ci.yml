@@ -10,8 +10,39 @@ permissions:
   actions: read
 
 jobs:
+  developer-sdk:
+    name: Publish Developer SDK Bundle
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download current split bundles
+        run: tools/dmg/create-bundles.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build self-contained developer SDK
+        run: |
+          tools/bundles/create-developer-sdk.py \
+            --bundle-dir app/bundles \
+            --out-dir dist/developer-sdk \
+            --manifest dist/bundles/metalsharp-bundle-manifest.tsv
+          tools/bundles/verify-developer-sdk.sh \
+            dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
+
+      - name: Publish developer SDK bundle
+        run: |
+          gh release upload bundles \
+            dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
+            dist/developer-sdk/metalsharp-bundle-manifest.tsv \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     name: Build DMG
+    needs: [developer-sdk]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
