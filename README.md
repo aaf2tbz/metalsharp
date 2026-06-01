@@ -81,7 +81,7 @@ Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/release
 
 - [How to Use MetalSharp](docs/how-to-use-metalsharp.md)
 - [Docs Map](docs/README.md)
-- [Runtime Bundles and Steam Routing](docs/runtime-bundles-and-steam-routing.md)
+- [Runtime Bundles and Steam Routing](https://github.com/aaf2tbz/metalsharp/releases/tag/bundles)
 - [Launch Architecture](docs/launch-architecture.md)
 - [Wine Architecture](docs/wine-architecture.md)
 - [Supported Games](docs/GAMES-SUPPORTED.md)
