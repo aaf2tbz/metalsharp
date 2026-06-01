@@ -17,6 +17,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust backend
+        run: cd app/src-rust && cargo build --release
+
+      - name: Build host runtime ABI
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build . --target metalsharp_host_runtime --parallel $(sysctl -n hw.ncpu)
+          cd ..
+          METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
+
       - name: Download current split bundles
         run: tools/dmg/create-bundles.sh
         env:
