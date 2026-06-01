@@ -705,7 +705,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         RuntimeProfile::GameInstall
     } else {
         match pipeline {
-            crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::M12,
+            crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::GameInstall,
             crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
@@ -1817,7 +1817,7 @@ fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
 
 fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
     match pipeline {
-        crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::M12,
+        crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::GameInstall,
         crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
@@ -4092,6 +4092,7 @@ mod tests {
 
     #[test]
     fn steam_pipeline_maps_to_runtime_profile() {
+        assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::Dxmt), RuntimeProfile::GameInstall);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M9), RuntimeProfile::M9);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M12), RuntimeProfile::M12);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::FnaArm64), RuntimeProfile::FnaArm64);
