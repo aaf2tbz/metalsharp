@@ -70,7 +70,7 @@ verify_local() {
       fi
       continue
     fi
-    if ! tar --use-compress-program=unzstd -tf "$path" | awk -v root="$root" 'index($0, root "/") == 1 || $0 == root { found=1 } END { exit found ? 0 : 1 }'; then
+    if ! archive_contains_root "$path" "$root"; then
       echo "ROOT MISMATCH: $asset does not contain $root/" >&2
       failed=1
       continue
@@ -82,6 +82,23 @@ verify_local() {
     echo "OK: $asset root=$root"
   done < <(manifest_rows)
   return "$failed"
+}
+
+archive_contains_root() {
+  local path="$1"
+  local root="$2"
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/metalsharp-bundle-list.XXXXXX")"
+  if ! tar --use-compress-program=unzstd -tf "$path" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if awk -v root="$root" 'index($0, root "/") == 1 || $0 == root { found=1 } END { exit found ? 0 : 1 }' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }
 
 verify_runtime_host() {
