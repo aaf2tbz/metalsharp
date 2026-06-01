@@ -132,10 +132,13 @@ pub fn launch_with_pipeline(
     appid: u32,
     pipeline_id: PipelineId,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
 
     match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => launch_dxmt_metal(appid, node),
+        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+            launch_dxmt_metal(appid, node)
+        },
         PipelineId::M13 => launch_dxmt_metal(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
@@ -151,11 +154,12 @@ pub fn launch_steam_bottle_with_pipeline(
     prefix_path: &Path,
     extra_env: &[(String, String)],
 ) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
     let result = match pipeline_id {
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
+        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
@@ -203,9 +207,11 @@ pub fn prepare_steam_pipeline_env(
     appid: u32,
     pipeline_id: PipelineId,
 ) -> Result<(Vec<(String, String)>, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
+    let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
-        PipelineId::M9
+        PipelineId::Dxmt
+        | PipelineId::M9
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
@@ -382,9 +388,12 @@ pub fn launch_custom_with_options(
     launch_args: &[String],
     options: CustomLaunchOptions,
 ) -> Result<(u32, &'static str, super::recipe::LaunchRecipe), Box<dyn std::error::Error>> {
+    let pipeline_id =
+        if pipeline_id == PipelineId::Dxmt { super::rules::resolve_pipeline(launch_id) } else { pipeline_id };
     let node = get_pipeline(pipeline_id);
     match pipeline_id {
-        PipelineId::M9
+        PipelineId::Dxmt
+        | PipelineId::M9
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12

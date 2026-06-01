@@ -4,11 +4,13 @@
 # Rules are intentionally appid-first because Steam titles drift less than display
 # names. Pipeline choices are based on verified Windows renderer/API data:
 # - fna_arm64/fna_x86: XNA/FNA/Mono titles.
-# - m9/m10/m11/m12: Direct3D generation routed through MetalSharp/DXMT.
+# - dxmt: auto-detect the Direct3D generation and route through the unified DXMT backend.
+# - m9/m10/m11/m12: compatibility aliases for explicit D3D generation profiles under DXMT.
 # - wine_bare: non-D3D or Vulkan-first titles where DXMT is not the renderer.
 #
-# If a title supports both D3D11 and D3D12, prefer the older D3D path unless the
-# game is effectively D3D12-only or known to use the D3D12 renderer by default.
+# If a title supports both D3D11 and D3D12, dxmt auto-selection should follow PE
+# evidence first; explicit m12/D3D12 overrides are for games known to request or
+# require the D3D12 renderer and its Agility/DXIL sidecars.
 #
 # Per-game fields:
 #   pipeline        (required) - MTSP pipeline id

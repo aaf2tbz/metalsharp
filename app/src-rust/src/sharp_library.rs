@@ -1140,6 +1140,7 @@ fn normalize_engine(engine: &str) -> String {
 
 fn pipeline_engine_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str {
     match pipeline {
+        crate::mtsp::engine::PipelineId::Dxmt => "dxmt",
         crate::mtsp::engine::PipelineId::M9 => "m9",
         crate::mtsp::engine::PipelineId::M10 => "m10",
         crate::mtsp::engine::PipelineId::M11 => "m11",
@@ -1155,8 +1156,11 @@ fn pipeline_engine_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str
 
 fn resolve_sharp_pipeline(engine: &str, exe_path: &Path) -> crate::mtsp::engine::PipelineId {
     if !engine.trim().eq_ignore_ascii_case("auto") {
-        return crate::mtsp::engine::PipelineId::from_str_flexible(engine)
+        let parsed = crate::mtsp::engine::PipelineId::from_str_flexible(engine)
             .unwrap_or(crate::mtsp::engine::PipelineId::WineBare);
+        if parsed != crate::mtsp::engine::PipelineId::Dxmt {
+            return parsed;
+        }
     }
 
     let Ok(data) = fs::read(exe_path) else {

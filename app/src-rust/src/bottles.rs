@@ -705,6 +705,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
         RuntimeProfile::GameInstall
     } else {
         match pipeline {
+            crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::M12,
             crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
@@ -1512,7 +1513,8 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         .get("pipeline")
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
-        .unwrap_or(crate::mtsp::engine::PipelineId::M12);
+        .map(|pipeline| crate::mtsp::rules::resolve_requested_pipeline(appid, Some(pipeline)))
+        .unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
     let profile = runtime_profile_for_pipeline(pipeline);
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
@@ -1574,6 +1576,7 @@ pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
         .get("pipeline")
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
+        .map(|pipeline| crate::mtsp::rules::resolve_requested_pipeline(appid, Some(pipeline)))
         .unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
@@ -1814,6 +1817,7 @@ fn default_components_for(profile: RuntimeProfile) -> Vec<RuntimeComponent> {
 
 fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
     match pipeline {
+        crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
@@ -4382,7 +4386,7 @@ mod tests {
         assert_eq!(record.appid, 620);
         assert_eq!(record.bottle_id, "steam_620");
         assert!(record.compatdata_path.ends_with("/compatdata/620"));
-        assert_eq!(record.launch_pipeline, "d3d9_metal");
+        assert_eq!(record.launch_pipeline, "dxmt");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");
         assert!(record.launch_command_template.contains("/steam/launch-game"));

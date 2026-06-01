@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineId {
+    Dxmt,
     M9,
     M10,
     M11,
@@ -60,6 +61,23 @@ const DXMT_M12_SAFE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.p
 pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
         vec![
+            PipelineNode {
+                id: PipelineId::Dxmt,
+                name: "DXMT",
+                description: "Auto-selected D3D9/D3D10/D3D11/D3D12 -> Metal via unified DXMT runtime",
+                backend: "dxmt",
+                graphics_backend: "dxmt",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: None,
+                dyld_paths: vec![],
+                winedllpath_dirs: vec![],
+                deploy_dlls: vec![],
+                env_vars: vec![],
+                launch_args: vec![],
+                alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9],
+                shader_cache_subdir: None,
+            },
             PipelineNode {
                 id: PipelineId::M12,
                 name: "M12",
@@ -322,8 +340,13 @@ pub fn get_pipeline(id: PipelineId) -> &'static PipelineNode {
 }
 
 impl PipelineId {
+    pub fn is_dxmt_family(self) -> bool {
+        matches!(self, PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
+    }
+
     pub fn from_legacy_method(method: &str) -> Option<PipelineId> {
         match method.trim().to_ascii_lowercase().as_str() {
+            "dxmt" => Some(PipelineId::Dxmt),
             "dxmt_metal" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "dxmt_metal12" => Some(PipelineId::M12),
             "d3d9_metal" => Some(PipelineId::M9),
@@ -342,6 +365,7 @@ impl PipelineId {
             return Some(p);
         }
         match normalized.as_str() {
+            "dxmt" | "auto_dxmt" | "metalsharp_dxmt" => Some(PipelineId::Dxmt),
             "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
             "m13" | "gptk" | "d3dmetal" | "steam_d3dmetal" => Some(PipelineId::M13),
@@ -358,10 +382,7 @@ impl PipelineId {
 
     pub fn to_legacy_method(self) -> &'static str {
         match self {
-            PipelineId::M9 => "d3d9_metal",
-            PipelineId::M10 => "d3d10_metal",
-            PipelineId::M11 => "dxmt_metal",
-            PipelineId::M12 => "dxmt_metal12",
+            PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => "dxmt",
             PipelineId::M13 => "gptk_d3dmetal",
             PipelineId::M32 => "wined3d_32",
             PipelineId::FnaArm64 => "xna_fna_arm64",
@@ -377,10 +398,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn m12_is_primary_stable_pipeline() {
+    fn dxmt_is_primary_user_facing_pipeline() {
         let pipeline_list = pipelines();
-        assert_eq!(pipeline_list.first().map(|p| p.id), Some(PipelineId::M12));
+        assert_eq!(pipeline_list.first().map(|p| p.id), Some(PipelineId::Dxmt));
 
+        let dxmt = get_pipeline(PipelineId::Dxmt);
+        assert_eq!(dxmt.name, "DXMT");
+        assert_eq!(dxmt.backend, "dxmt");
+        assert_eq!(dxmt.graphics_backend, "dxmt");
+        assert!(dxmt.alternatives.contains(&PipelineId::M12));
+        assert!(dxmt.alternatives.contains(&PipelineId::M11));
+        assert!(dxmt.alternatives.contains(&PipelineId::M10));
+        assert!(dxmt.alternatives.contains(&PipelineId::M9));
+    }
+
+    #[test]
+    fn m12_is_primary_d3d12_dxmt_profile() {
         let m12 = get_pipeline(PipelineId::M12);
         assert!(!m12.experimental);
         assert_eq!(m12.backend, "dxmt");
@@ -503,10 +536,19 @@ mod tests {
 
     #[test]
     fn launch_method_parsing_is_case_and_separator_tolerant() {
+        assert_eq!(PipelineId::from_str_flexible("dxmt"), Some(PipelineId::Dxmt));
         assert_eq!(PipelineId::from_str_flexible(" M12 "), Some(PipelineId::M12));
         assert_eq!(PipelineId::from_str_flexible("d3d12"), Some(PipelineId::M12));
         assert_eq!(PipelineId::from_str_flexible("dx10"), Some(PipelineId::M10));
         assert_eq!(PipelineId::from_str_flexible("wine-steam"), Some(PipelineId::Steam));
         assert_eq!(PipelineId::from_legacy_method("DXMT_METAL"), Some(PipelineId::M11));
+    }
+
+    #[test]
+    fn dxmt_family_serializes_to_canonical_launch_method() {
+        for pipeline in [PipelineId::Dxmt, PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            assert_eq!(pipeline.to_legacy_method(), "dxmt");
+            assert!(pipeline.is_dxmt_family());
+        }
     }
 }

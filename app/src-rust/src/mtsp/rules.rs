@@ -141,7 +141,7 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
     let rules = load_rules();
 
     if let Some(&pipeline) = rules.get(&appid) {
-        return pipeline;
+        return resolve_dxmt_alias(appid, pipeline);
     }
 
     let game_dir = crate::setup::resolve_game_dir(appid);
@@ -164,6 +164,33 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
     }
 
     default_pipeline()
+}
+
+pub fn resolve_requested_pipeline(appid: u32, requested: Option<PipelineId>) -> PipelineId {
+    match requested {
+        Some(PipelineId::Dxmt) | None => resolve_pipeline(appid),
+        Some(pipeline) => pipeline,
+    }
+}
+
+fn resolve_dxmt_alias(appid: u32, pipeline: PipelineId) -> PipelineId {
+    if pipeline == PipelineId::Dxmt {
+        return detect_dxmt_pipeline(appid).unwrap_or_else(default_pipeline);
+    }
+    pipeline
+}
+
+fn detect_dxmt_pipeline(appid: u32) -> Option<PipelineId> {
+    let game_dir = crate::setup::resolve_game_dir(appid)?;
+    if crate::setup::detect_dotnet_game(&game_dir) {
+        return Some(PipelineId::FnaArm64);
+    }
+    if let Some(pe_info) = super::pe::analyze_game_exe(&game_dir) {
+        if let Some(pipeline) = pe_info_to_pipeline(&pe_info) {
+            return Some(pipeline);
+        }
+    }
+    detect_from_directory(&game_dir)
 }
 
 pub fn get_game_recipe(appid: u32) -> Option<GameRecipe> {

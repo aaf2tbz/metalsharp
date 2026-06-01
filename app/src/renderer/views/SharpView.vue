@@ -134,11 +134,12 @@ const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
 const engineOptions = [
   { id: "auto", name: "Auto" },
+  { id: "dxmt", name: "DXMT" },
   { id: "wine_bare", name: "Wine" },
-  { id: "m11", name: "M11" },
-  { id: "m12", name: "M12" },
-  { id: "m10", name: "M10" },
-  { id: "m9", name: "M9" },
+  { id: "m12", name: "DXMT D3D12" },
+  { id: "m11", name: "DXMT D3D11" },
+  { id: "m10", name: "DXMT D3D10" },
+  { id: "m9", name: "DXMT D3D9" },
   { id: "m32", name: "M32" },
 ];
 
