@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   actions: read
+  packages: write
 
 jobs:
   developer-sdk:
@@ -29,6 +30,31 @@ jobs:
             --manifest dist/bundles/metalsharp-bundle-manifest.tsv
           tools/bundles/verify-developer-sdk.sh \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Publish developer SDK package
+        run: |
+          set -euo pipefail
+          OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          PACKAGE="ghcr.io/$OWNER/metalsharp-d3d12-developer-sdk"
+          VERSION="$(node -p "require('./app/package.json').version")"
+          ARCHIVE="dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst"
+          SHA="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+          echo "$GH_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          oras push "$PACKAGE:$VERSION" \
+            "$ARCHIVE:application/vnd.metalsharp.d3d12-developer-sdk.layer.v1.tar+zstd" \
+            --artifact-type application/vnd.metalsharp.d3d12-developer-sdk.v1 \
+            --annotation "org.opencontainers.image.title=MetalSharp D3D12 Developer SDK" \
+            --annotation "org.opencontainers.image.description=Self-contained MetalSharp D3D12 developer SDK with staged Wine runtime and DXMT files" \
+            --annotation "org.opencontainers.image.version=$VERSION" \
+            --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "org.opencontainers.image.digest.sha256=$SHA"
+          oras tag "$PACKAGE:$VERSION" latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish developer SDK bundle
         run: |
