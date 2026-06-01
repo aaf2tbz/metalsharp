@@ -49,6 +49,8 @@ const setupDeviceName = ref("");
 const updateDownloading = ref(false);
 const updateProgress = ref(0);
 const updateMessage = ref("");
+let updatePollTimer: ReturnType<typeof setInterval> | null = null;
+let installPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const { theme, toggle: toggleTheme } = useTheme();
 const toast = useToast();
@@ -129,19 +131,29 @@ async function checkForUpdates() {
 async function startUpdateDownload() {
   if (updateDownloading.value) return;
   const backend = getAPI();
+  const ready = await backend.updaterEnsureReady();
+  if (!ready?.ok) {
+    toast.show(ready?.error ?? "Updater not available", "error");
+    return;
+  }
   const pid = await backend.backendGetPid();
   if (!pid) {
     toast.show("Cannot get backend PID", "error");
     return;
   }
-  const ready = await backend.updaterEnsureReady();
-  if (!ready) {
-    toast.show("Updater not available", "error");
+  const targetVersion = updateStatus.value?.latest_version ?? "";
+  if (!targetVersion) {
+    toast.show("Update version is unavailable", "error");
+    return;
+  }
+  if (!updateStatus.value?.download_url) {
+    toast.show("Update DMG asset is unavailable", "error");
     return;
   }
   updateDownloading.value = true;
   updateProgress.value = 0;
   updateMessage.value = "Starting download...";
+  await backend.updaterClearStatus();
 
   const startResult = await api<{ ok: boolean; error?: string }>("POST", "/update/start");
   if (!startResult?.ok) {
@@ -150,20 +162,26 @@ async function startUpdateDownload() {
     return;
   }
 
-  const pollDownload = setInterval(async () => {
-    const progress = await api<{ status: string; percent: number; message: string; error: string | null }>("GET", "/update/progress");
+  if (updatePollTimer) clearInterval(updatePollTimer);
+  let downloadPolls = 0;
+  updatePollTimer = setInterval(async () => {
+    downloadPolls += 1;
+    const progress = await api<{ status: string; percent: number; message: string; error: string | null }>(
+      "GET",
+      "/update/progress",
+    );
     if (!progress) return;
     updateProgress.value = progress.percent ?? 0;
     updateMessage.value = progress.message ?? "";
     if (progress.status === "downloaded" || progress.status === "complete") {
-      clearInterval(pollDownload);
+      if (updatePollTimer) clearInterval(updatePollTimer);
+      updatePollTimer = null;
       const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
       if (!dmgResult?.path) {
         toast.show("Download complete but DMG not found", "error");
         updateDownloading.value = false;
         return;
       }
-      const targetVersion = updateStatus.value?.latest_version ?? "";
       const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
       if (!spawnResult?.ok) {
         toast.show(spawnResult?.error ?? "Failed to start installer", "error");
@@ -172,25 +190,48 @@ async function startUpdateDownload() {
       }
       updateMessage.value = "Installing update...";
       updateProgress.value = 90;
-      const pollInstall = setInterval(async () => {
+      if (installPollTimer) clearInterval(installPollTimer);
+      let installPolls = 0;
+      installPollTimer = setInterval(async () => {
+        installPolls += 1;
         const installStatus = await backend.updaterInstallStatus();
-        if (!installStatus) return;
+        if (!installStatus) {
+          if (installPolls > 180) {
+            if (installPollTimer) clearInterval(installPollTimer);
+            installPollTimer = null;
+            updateDownloading.value = false;
+            toast.show("Installer did not report status", "error");
+          }
+          return;
+        }
         updateProgress.value = installStatus.percent ?? 90;
         updateMessage.value = installStatus.message ?? "Installing...";
         if (installStatus.phase === "complete") {
-          clearInterval(pollInstall);
+          if (installPollTimer) clearInterval(installPollTimer);
+          installPollTimer = null;
           updateDownloading.value = false;
           updateProgress.value = 100;
           updateMessage.value = "";
           toast.show("Update installed — restarting...", "success");
           await new Promise((r) => setTimeout(r, 2000));
           backend.quitApp();
+        } else if (installStatus.phase === "error") {
+          if (installPollTimer) clearInterval(installPollTimer);
+          installPollTimer = null;
+          updateDownloading.value = false;
+          toast.show(installStatus.error ?? installStatus.message ?? "Install failed", "error");
         }
       }, 1000);
     } else if (progress.status === "error") {
-      clearInterval(pollDownload);
+      if (updatePollTimer) clearInterval(updatePollTimer);
+      updatePollTimer = null;
       updateDownloading.value = false;
       toast.show(progress.error ?? "Download failed", "error");
+    } else if (downloadPolls > 3600) {
+      if (updatePollTimer) clearInterval(updatePollTimer);
+      updatePollTimer = null;
+      updateDownloading.value = false;
+      toast.show("Update download timed out", "error");
     }
   }, 500);
 }
@@ -264,12 +305,16 @@ onMounted(async () => {
     <main class="content">
       <div class="drag-strip"></div>
       <div v-if="updateStatus?.ok && updateStatus?.available" class="update-banner">
-        <span class="update-banner-text" v-if="!updateDownloading">MetalSharp v{{ updateStatus.latest_version }} is available</span>
+        <span class="update-banner-text" v-if="!updateDownloading"
+          >MetalSharp v{{ updateStatus.latest_version }} is available</span
+        >
         <span class="update-banner-text" v-else>{{ updateMessage }}</span>
         <div v-if="updateDownloading" class="update-banner-progress">
           <div class="update-banner-progress-fill" :style="{ width: updateProgress + '%' }"></div>
         </div>
-        <button v-if="!updateDownloading" class="update-banner-btn" @click="startUpdateDownload">Download &amp; Install</button>
+        <button v-if="!updateDownloading" class="update-banner-btn" @click="startUpdateDownload">
+          Download &amp; Install
+        </button>
       </div>
       <component :is="activeView" :key="currentView" />
     </main>

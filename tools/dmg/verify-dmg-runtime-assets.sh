@@ -36,6 +36,7 @@ for required in \
   "$BACKEND" \
   "$HOST/manifest.json" \
   "$HOST/HostRuntimeABI.h" \
+  "$RESOURCES/scripts/tools/updater/update.sh" \
   "$BUNDLES/metalsharp-electron.tar.zst" \
   "$BUNDLES/metalsharp-graphics-dll.tar.zst" \
   "$BUNDLES/metalsharp-runtime.tar.zst" \

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.53",
+  "version": "0.33.54",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -106,6 +106,10 @@
           "**/*",
           "!host/**"
         ]
+      },
+      {
+        "from": "updater",
+        "to": "scripts/tools/updater"
       },
       {
         "from": "bundles/metalsharp-electron.tar.zst",

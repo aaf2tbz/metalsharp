@@ -59,6 +59,13 @@ interface InstallStatus {
   timestamp: number;
 }
 
+interface UpdaterReadyResult {
+  ok: boolean;
+  error?: string;
+  scriptPath?: string;
+  candidates?: string[];
+}
+
 interface CrashReportSummary {
   id: string;
   timestamp: string;
@@ -147,7 +154,7 @@ type MetalsharpAPI = {
   copyText: (text: string) => Promise<{ ok: boolean; error?: string }>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;
-  updaterEnsureReady: () => Promise<boolean>;
+  updaterEnsureReady: () => Promise<UpdaterReadyResult>;
   updaterSpawnInstall: (
     dmgPath: string,
     backendPid: number,
