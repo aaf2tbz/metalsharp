@@ -79,6 +79,10 @@ verify_local() {
       failed=1
       continue
     fi
+    if [ "$asset" = "metalsharp-scripts-tools.tar.zst" ] && ! verify_scripts_tools_configs "$path"; then
+      failed=1
+      continue
+    fi
     echo "OK: $asset root=$root"
   done < <(manifest_rows)
   return "$failed"
@@ -131,6 +135,29 @@ verify_runtime_host() {
   rm -rf "$tmp"
   trap - RETURN
   return "$failed"
+}
+
+verify_scripts_tools_configs() {
+  local path="$1"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-scripts-tools.XXXXXX")"
+  trap 'rm -rf "$tmp"' RETURN
+
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" scripts/tools/configs/mtsp-rules.toml; then
+    echo "SCRIPTS TOOLS INVALID: $path does not contain scripts/tools/configs/mtsp-rules.toml" >&2
+    return 1
+  fi
+
+  if [ ! -s "$tmp/scripts/tools/configs/mtsp-rules.toml" ]; then
+    echo "SCRIPTS TOOLS INVALID: $path has empty scripts/tools/configs/mtsp-rules.toml" >&2
+    rm -rf "$tmp"
+    trap - RETURN
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  trap - RETURN
+  return 0
 }
 
 verify_release() {
