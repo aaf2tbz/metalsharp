@@ -33,14 +33,6 @@ const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-steam.tar.zst",
 ];
 
-const LINUX_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
-    "metalsharp-runtime.tar.zst",
-    "metalsharp-graphics-dll.tar.zst",
-    "metalsharp-assets.tar.zst",
-    "metalsharp-scripts-tools.tar.zst",
-    "metalsharp-steam.tar.zst",
-];
-
 fn progress_path() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".metalsharp").join("install_progress.json")
 }
@@ -99,6 +91,18 @@ pub fn start_install_all() -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 fn run_install_all() {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos {
+        write_progress(
+            0,
+            0,
+            "Unsupported Platform",
+            "error",
+            "MetalSharp runtime installation is Apple Silicon macOS-only.",
+            Some("unsupported_platform"),
+        );
+        return;
+    }
+
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => {
@@ -107,39 +111,22 @@ fn run_install_all() {
         },
     };
 
-    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> =
-        if crate::platform::current() == crate::platform::HostPlatform::Linux {
-            vec![
-                ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
-                ("Runtime Assets", Box::new(install_metalsharp_bundle)),
-                ("Host Runtime ABI", Box::new(install_host_runtime)),
-                ("Support Assets", Box::new(install_split_assets_bundle)),
-                ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
-                ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
-                ("DXVK Runtime", Box::new(install_dxvk_fallback)),
-                ("Goldberg Steam Emulator", Box::new(install_goldberg)),
-                ("Offline EAC Mode", Box::new(install_eac_toggle)),
-                ("Pipeline Rules", Box::new(install_mtsp_rules)),
-                ("Mono Configs", Box::new(install_mono_configs)),
-            ]
-        } else {
-            vec![
-                ("Rosetta 2", Box::new(|_| install_rosetta())),
-                ("System Tools", Box::new(|_| install_xcode_cli())),
-                ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
-                ("Runtime Assets", Box::new(install_metalsharp_bundle)),
-                ("Host Runtime ABI", Box::new(install_host_runtime)),
-                ("Support Assets", Box::new(install_split_assets_bundle)),
-                ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
-                ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
-                ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
-                ("Goldberg Steam Emulator", Box::new(install_goldberg)),
-                ("Offline EAC Mode", Box::new(install_eac_toggle)),
-                ("Pipeline Rules", Box::new(install_mtsp_rules)),
-                ("Mono Configs", Box::new(install_mono_configs)),
-                ("Runtime Support", Box::new(|_| install_mono_arm64())),
-            ]
-        };
+    let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
+        ("Rosetta 2", Box::new(|_| install_rosetta())),
+        ("System Tools", Box::new(|_| install_xcode_cli())),
+        ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
+        ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+        ("Host Runtime ABI", Box::new(install_host_runtime)),
+        ("Support Assets", Box::new(install_split_assets_bundle)),
+        ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
+        ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+        ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
+        ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+        ("Offline EAC Mode", Box::new(install_eac_toggle)),
+        ("Pipeline Rules", Box::new(install_mtsp_rules)),
+        ("Mono Configs", Box::new(install_mono_configs)),
+        ("Runtime Support", Box::new(|_| install_mono_arm64())),
+    ];
 
     let total = steps.len();
 
@@ -168,7 +155,7 @@ fn run_install_all() {
         return;
     }
 
-    if crate::platform::current() == crate::platform::HostPlatform::Macos && !check_command("brew") {
+    if !check_command("brew") {
         write_progress(
             0,
             total,
@@ -204,11 +191,7 @@ fn run_install_all() {
 }
 
 fn runtime_bundle_assets_for_host() -> &'static [&'static str] {
-    if crate::platform::current() == crate::platform::HostPlatform::Linux {
-        LINUX_RUNTIME_BUNDLE_ASSETS
-    } else {
-        MAC_RUNTIME_BUNDLE_ASSETS
-    }
+    MAC_RUNTIME_BUNDLE_ASSETS
 }
 
 fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
@@ -351,10 +334,6 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
                 Err(e) => return Err(format!("Wine binary exists but cannot execute: {}", e)),
             }
         }
-    }
-
-    if crate::platform::current() == crate::platform::HostPlatform::Linux {
-        return install_linux_system_wine_runtime(home);
     }
 
     Err("MetalSharp runtime not found — no bundled metalsharp-runtime.tar.zst available".into())
@@ -545,24 +524,6 @@ fn install_scripts_tools_bundle(home: &PathBuf) -> Result<bool, String> {
     copy_dir_recursive(&src, &dest)?;
     let _ = fs::remove_dir_all(&tmp);
     mark_split_bundle_installed(home, SCRIPTS_TOOLS_BUNDLE, &archive);
-    Ok(true)
-}
-
-fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
-    let wine = find_system_command("wine").ok_or_else(|| {
-        "Linux Wine runtime not found — install wine or bundle metalsharp_linux_runtime.tar.zst".to_string()
-    })?;
-
-    let bin_dir = home.join(".metalsharp").join("runtime").join("wine").join("bin");
-    fs::create_dir_all(&bin_dir).map_err(|e| format!("create wine runtime bin dir: {}", e))?;
-
-    for wrapper_name in &["wine", "metalsharp-wine"] {
-        let wrapper = bin_dir.join(wrapper_name);
-        let contents = format!("#!/bin/sh\nexec '{}' \"$@\"\n", wine.to_string_lossy());
-        fs::write(&wrapper, contents).map_err(|e| format!("write {}: {}", wrapper.display(), e))?;
-        make_executable(&wrapper);
-    }
-
     Ok(true)
 }
 
@@ -1463,17 +1424,6 @@ mod tests {
             "metalsharp-steam.tar.zst",
         ] {
             assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
-        }
-
-        let linux_assets = LINUX_RUNTIME_BUNDLE_ASSETS;
-        for expected in [
-            "metalsharp-runtime.tar.zst",
-            "metalsharp-graphics-dll.tar.zst",
-            "metalsharp-assets.tar.zst",
-            "metalsharp-scripts-tools.tar.zst",
-            "metalsharp-steam.tar.zst",
-        ] {
-            assert!(linux_assets.contains(&expected), "missing linux bundle asset {}", expected);
         }
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.42",
+  "version": "0.33.43",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -19,12 +19,9 @@
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",
     "fetch:bundles:mac": "../tools/dmg/create-bundles.sh",
-    "fetch:bundles:linux": "../tools/linux/create-bundles.sh",
-    "fetch:bundles": "if [ \"${METALSHARP_TARGET:-}\" = \"linux\" ]; then npm run fetch:bundles:linux; else npm run fetch:bundles:mac; fi",
+    "fetch:bundles": "npm run fetch:bundles:mac",
     "dist": "npm run prepare:native && npm run build:all && npm run fetch:bundles && electron-builder",
-    "dmg": "npm run dist -- --mac dmg",
-    "deb": "../tools/linux/build-deb.sh",
-    "deb:docker": "../tools/linux/build-deb-docker.sh"
+    "dmg": "npm run dist -- --mac dmg"
   },
   "dependencies": {
     "electron-store": "^10.0.0"
@@ -67,31 +64,6 @@
             "metalsharp"
           ]
         }
-      ]
-    },
-    "linux": {
-      "target": [
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "category": "Game",
-      "icon": "build/icon.png",
-      "executableName": "metalsharp",
-      "maintainer": "MetalSharp <noreply@metalsharp.local>"
-    },
-    "deb": {
-      "depends": [
-        "libgtk-3-0",
-        "libnss3",
-        "libxss1",
-        "libasound2 | libasound2t64",
-        "wine | wine64",
-        "tar",
-        "curl"
       ]
     },
     "dmg": {

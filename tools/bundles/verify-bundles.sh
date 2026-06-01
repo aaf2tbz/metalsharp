@@ -19,7 +19,7 @@ Options:
   --bundle-dir PATH    Local bundle directory to verify (default app/bundles)
   --manifest PATH      Manifest to verify (default tools/bundles/asset-manifest.tsv)
   --release            Verify that release assets exist
-  --require PLATFORM   Require every manifest asset for PLATFORM (mac or linux)
+  --require PLATFORM   Require every manifest asset for PLATFORM (mac)
   -h, --help           Show this help
 USAGE
 }

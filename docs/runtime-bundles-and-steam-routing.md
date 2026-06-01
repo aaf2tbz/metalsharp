@@ -24,7 +24,6 @@ Verification commands:
 
 ```bash
 tools/bundles/verify-bundles.sh --require mac
-tools/bundles/verify-bundles.sh --require linux
 tools/bundles/verify-bundles.sh --release
 ```
 

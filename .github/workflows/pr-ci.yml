@@ -172,27 +172,3 @@ jobs:
           test -s app/native/host/HostRuntimeABI.h
           test -s app/native/host/manifest.json
           test -s app/native/host/libmetalsharp_host_runtime.dylib
-
-  docker-smoke:
-    name: Docker Package Smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build Linux package builder image
-        run: docker build --platform linux/amd64 -f tools/linux/Dockerfile.deb -t metalsharp-deb-builder:ci .
-
-      - name: Smoke Linux package scripts in Docker
-        run: |
-          docker run --rm \
-            --platform linux/amd64 \
-            -e HOME=/tmp \
-            -e METALSHARP_PACKAGE_OUT=/work/dist/packages \
-            -e GITHUB_REPOSITORY=aaf2tbz/metalsharp \
-            -e GITHUB_REPOSITORY_OWNER=aaf2tbz \
-            -v "$PWD:/work" \
-            -w /work \
-            metalsharp-deb-builder:ci \
-            bash -lc 'source /usr/local/cargo/env && bash -n tools/linux/*.sh && tools/linux/create-release-tarballs.sh && VERSION="$(node -p "require('\''./app/package.json'\'').version")" && mkdir -p dist/electron && printf "deb" > "dist/electron/metalsharp_${VERSION}_amd64.deb" && printf "version: %s\n" "$VERSION" > dist/electron/latest-linux.yml && test -s dist/packages/metalsharp_linux_runtime.tar.zst && test -s dist/packages/metalsharp_linux_runtime2.tar.zst && test -s dist/packages/metalsharp_linux_runtime.sha256 && METALSHARP_VERSION="$VERSION" METALSHARP_OCI_DRY_RUN=1 tools/linux/publish-oci-packages.sh | tee /tmp/oci-paths.txt && ! grep -q "^/" /tmp/oci-paths.txt'

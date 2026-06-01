@@ -78,11 +78,12 @@ pub fn needs_migration() -> serde_json::Value {
     let legacy_migrated_version = setup.get("last_migrated_version").and_then(|v| v.as_str());
     let current_version = legacy_migrated_version.unwrap_or("0.0.0");
     let setup_completed = setup.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let repair_needed = runtime_needs_repair(&home, setup_completed);
 
     let needed = match current_schema {
-        Some(schema) => schema < MIGRATE_SCHEMA_VERSION,
-        None if legacy_migrated_version.is_some() => false,
-        None => runtime_needs_repair(&home, setup_completed),
+        Some(schema) => schema < MIGRATE_SCHEMA_VERSION || repair_needed,
+        None if legacy_migrated_version.is_some() => repair_needed,
+        None => repair_needed,
     };
 
     json!({
@@ -92,7 +93,7 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if needed { "runtime_schema_or_repair_needed" } else { "up_to_date" },
+        "reason": if repair_needed { "runtime_bundle_update_required" } else if needed { "runtime_schema_update_required" } else { "up_to_date" },
     })
 }
 
@@ -119,10 +120,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
 
     if !crate::installer::dxmt_runtime_current_for_ms_dir(ms_dir) {
         return false;
-    }
-
-    if crate::platform::current() == crate::platform::HostPlatform::Linux {
-        return true;
     }
 
     [
@@ -228,7 +225,7 @@ fn run_migration() {
     kill_steam_wine();
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Installing changed runtime bundles...", None);
+    write_migrate_progress("running", step, total_steps, "Installing updated split runtime bundles...", None);
     let install_ok = match crate::installer::start_install_all() {
         Ok(v) if v.get("ok").and_then(|ok| ok.as_bool()).unwrap_or(false) => match wait_for_install_complete() {
             Ok(()) => true,
@@ -280,7 +277,7 @@ fn run_migration() {
         }
         let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
-        write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated!", None);
+        write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated in place!", None);
     } else {
         write_migrate_progress(
             "error",
@@ -647,21 +644,19 @@ mod tests {
         let ms_dir = home.join(".metalsharp");
         write_runtime_core(&ms_dir);
 
-        if crate::platform::current() != crate::platform::HostPlatform::Linux {
-            fs::remove_file(
-                ms_dir
-                    .join("runtime")
-                    .join("wine")
-                    .join("lib")
-                    .join("gptk")
-                    .join("x86_64-windows")
-                    .join("nvngx-on-metalfx.dll"),
-            )
-            .expect("remove beta7 foundation file");
+        fs::remove_file(
+            ms_dir
+                .join("runtime")
+                .join("wine")
+                .join("lib")
+                .join("gptk")
+                .join("x86_64-windows")
+                .join("nvngx-on-metalfx.dll"),
+        )
+        .expect("remove beta7 foundation file");
 
-            assert!(!runtime_core_ready(&ms_dir));
-            assert!(runtime_needs_repair(&home, true));
-        }
+        assert!(!runtime_core_ready(&ms_dir));
+        assert!(runtime_needs_repair(&home, true));
 
         let _ = fs::remove_dir_all(home);
     }
@@ -740,10 +735,6 @@ mod tests {
         fs::create_dir_all(wine.parent().unwrap()).expect("create wine bin");
         fs::write(&wine, b"#!/bin/sh\n").expect("write wine");
         write_host_runtime(ms_dir);
-
-        if crate::platform::current() == crate::platform::HostPlatform::Linux {
-            return;
-        }
 
         for path in [
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join(".keep"),

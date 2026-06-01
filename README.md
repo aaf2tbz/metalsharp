@@ -15,7 +15,7 @@
 
 ---
 
-MetalSharp is an ARM64 app for Apple Silicon that bundles its own Wine runtime, DXMT Metal graphics support, Windows Steam setup, game detection, runtime bottles, logs, and launch diagnostics. Linux `.deb` packaging exists for Debian-based systems.
+MetalSharp is an ARM64 app for Apple Silicon that bundles its own Wine runtime, DXMT Metal graphics support, Windows Steam setup, game detection, runtime bottles, logs, and launch diagnostics.
 
 ## Runtime
 
@@ -72,18 +72,9 @@ Upgrades preserve `setup.json`, Steam settings/cache, `prefix-steam`, `games`, `
 
 Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it.
 
-Linux builds:
-
-```bash
-cd app
-npm run deb
-npm run deb:docker
-```
-
 ## Requirements
 
 - macOS DMG: Apple Silicon Mac, macOS 14 or newer
-- Linux `.deb`: x64 Debian/Ubuntu with `tar`, `curl`, `zstd`, and Wine
 - About 2 GB free space
 
 ## Help
