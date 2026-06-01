@@ -7,9 +7,13 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
-pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase15");
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
+const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
+const GRAPHICS_DLL_BUNDLE: &str = "metalsharp-graphics-dll";
+const ASSETS_BUNDLE: &str = "metalsharp-assets";
+const SCRIPTS_TOOLS_BUNDLE: &str = "metalsharp-scripts-tools";
 const DXMT_REQUIRED_PE: &[&str] = &[
     "d3d10core.dll",
     "d3d11.dll",
@@ -22,31 +26,19 @@ const DXMT_REQUIRED_PE: &[&str] = &[
 ];
 
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
-    "metalsharp_bundle.tar.zst",
-    "metalsharp_bundle2.tar.zst",
-    "dxmt.tar.zst",
-    "gptk.tar.zst",
-    "dxvk.tar.zst",
-    "mono-x86.tar.zst",
-    "mono-arm64.tar.zst",
-    "goldberg.tar.zst",
-    "eac-toggle.tar.zst",
-    "SteamSetup.exe",
-    "steamwebhelper.exe",
-    "steamwebhelper-wrapper.c",
+    "metalsharp-runtime.tar.zst",
+    "metalsharp-graphics-dll.tar.zst",
+    "metalsharp-assets.tar.zst",
+    "metalsharp-scripts-tools.tar.zst",
+    "metalsharp-steam.tar.zst",
 ];
 
 const LINUX_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
-    "metalsharp_bundle.tar.zst",
-    "metalsharp_bundle2.tar.zst",
-    "dxmt.tar.zst",
-    "dxvk.tar.zst",
-    "mono-x86.tar.zst",
-    "goldberg.tar.zst",
-    "eac-toggle.tar.zst",
-    "SteamSetup.exe",
-    "steamwebhelper.exe",
-    "steamwebhelper-wrapper.c",
+    "metalsharp-runtime.tar.zst",
+    "metalsharp-graphics-dll.tar.zst",
+    "metalsharp-assets.tar.zst",
+    "metalsharp-scripts-tools.tar.zst",
+    "metalsharp-steam.tar.zst",
 ];
 
 fn progress_path() -> PathBuf {
@@ -121,6 +113,8 @@ fn run_install_all() {
                 ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
+                ("Support Assets", Box::new(install_split_assets_bundle)),
+                ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
                 ("DXVK Runtime", Box::new(install_dxvk_fallback)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
@@ -135,6 +129,8 @@ fn run_install_all() {
                 ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
                 ("Runtime Assets", Box::new(install_metalsharp_bundle)),
                 ("Host Runtime ABI", Box::new(install_host_runtime)),
+                ("Support Assets", Box::new(install_split_assets_bundle)),
+                ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
                 ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
                 ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
                 ("Goldberg Steam Emulator", Box::new(install_goldberg)),
@@ -304,55 +300,46 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     let runtime_dir = home.join(".metalsharp").join("runtime");
     let _ = fs::create_dir_all(&runtime_dir);
 
+    let bundle = find_bundled_archive(RUNTIME_BUNDLE);
     let ms_wine = metalsharp_wine_binary(home);
-    let already_installed = ms_wine.exists()
-        && home.join(".metalsharp").join("runtime").join("mono-x86").join("bin").join("mono").exists()
-        && home.join(".metalsharp").join("runtime").join("dxvk-1.10.3").join("x32").join("d3d11.dll").exists();
-    if already_installed {
+    if ms_wine.exists() && bundle.as_ref().is_some_and(|archive| split_bundle_current(home, RUNTIME_BUNDLE, archive)) {
         return Ok(false);
     }
 
-    let bundle = find_bundled_file("metalsharp_bundle.tar.zst");
     if let Some(archive) = bundle {
         let tmp_extract = std::env::temp_dir().join("metalsharp-bundle-extract");
         let _ = fs::remove_dir_all(&tmp_extract);
         let _ = fs::create_dir_all(&tmp_extract);
-        extract_zst(&archive, &tmp_extract, "bundle")?;
+        extract_zst(&archive, &tmp_extract, RUNTIME_BUNDLE)?;
 
         let wine_dir = runtime_dir.join("wine");
-        let _ = fs::create_dir_all(&wine_dir);
-
-        let extracted_wine115 = tmp_extract.join("wine-11.5");
-        let source = if extracted_wine115.exists() { extracted_wine115 } else { tmp_extract.join("wine") };
-
+        let source = tmp_extract.join("runtime").join("wine");
         if source.exists() {
-            if let Ok(entries) = fs::read_dir(&source) {
-                for entry in entries.flatten() {
-                    let src_path = entry.path();
-                    let file_name = entry.file_name();
-                    let dst = wine_dir.join(&file_name);
-                    if src_path.is_dir() {
-                        let _ = fs::create_dir_all(&dst);
-                        let _ = copy_dir_recursive(&src_path, &dst);
-                    } else {
-                        let _ = fs::copy(&src_path, &dst);
-                    }
-                }
-            }
+            let _ = fs::remove_dir_all(&wine_dir);
+            copy_dir_recursive(&source, &wine_dir)?;
+        }
+
+        let source_host = tmp_extract.join("runtime").join("host");
+        if source_host.exists() {
+            let host_dir = runtime_dir.join("host");
+            let _ = fs::remove_dir_all(&host_dir);
+            copy_dir_recursive(&source_host, &host_dir)?;
+        }
+
+        let source_backend = tmp_extract.join("runtime").join("metalsharp-backend");
+        if source_backend.exists() {
+            let backend = runtime_dir.join("metalsharp-backend");
+            fs::copy(&source_backend, &backend).map_err(|e| format!("copy runtime backend: {}", e))?;
+            make_executable(&backend);
         }
         let _ = fs::remove_dir_all(&tmp_extract);
 
-        let bundle2 = find_bundled_file("metalsharp_bundle2.tar.zst");
-        if let Some(archive2) = bundle2 {
-            let _ = extract_zst(&archive2, &runtime_dir, "bundle2");
-        }
         let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
                 Ok(o) if o.status.success() => {
-                    let _ = install_mono_x86_fallback(home);
-                    let _ = install_dxvk_fallback(home);
+                    mark_split_bundle_installed(home, RUNTIME_BUNDLE, &archive);
                     return Ok(true);
                 },
                 Ok(o) => {
@@ -366,24 +353,11 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    let fallback_wine = find_bundled_archive("wine");
-    if let Some(archive) = fallback_wine {
-        let wine_dir = runtime_dir.join("wine");
-        let _ = fs::create_dir_all(&wine_dir);
-        extract_zst(&archive, &wine_dir, "wine")?;
-        let ms_wine = metalsharp_wine_binary(home);
-        if ms_wine.exists() {
-            let _ = install_mono_x86_fallback(home);
-            let _ = install_dxvk_fallback(home);
-            return Ok(true);
-        }
-    }
-
     if crate::platform::current() == crate::platform::HostPlatform::Linux {
         return install_linux_system_wine_runtime(home);
     }
 
-    Err("MetalSharp runtime not found — no bundled metalsharp_bundle.tar.zst available".into())
+    Err("MetalSharp runtime not found — no bundled metalsharp-runtime.tar.zst available".into())
 }
 
 fn metalsharp_wine_binary(home: &Path) -> PathBuf {
@@ -421,6 +395,48 @@ fn file_nonempty(path: &Path) -> bool {
     path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
+fn split_bundle_marker_dir(home: &Path) -> PathBuf {
+    home.join(".metalsharp").join("runtime").join("bundle-state")
+}
+
+fn split_bundle_marker_path(home: &Path, bundle: &str) -> PathBuf {
+    split_bundle_marker_dir(home).join(format!("{}.sha256", bundle))
+}
+
+fn split_bundle_current(home: &Path, bundle: &str, archive: &Path) -> bool {
+    let Some(hash) = archive_sha256(archive) else {
+        return false;
+    };
+    fs::read_to_string(split_bundle_marker_path(home, bundle)).map(|existing| existing.trim() == hash).unwrap_or(false)
+}
+
+fn mark_split_bundle_installed(home: &Path, bundle: &str, archive: &Path) {
+    let Some(hash) = archive_sha256(archive) else {
+        return;
+    };
+    let marker_dir = split_bundle_marker_dir(home);
+    if fs::create_dir_all(&marker_dir).is_ok() {
+        let _ = fs::write(marker_dir.join(format!("{}.sha256", bundle)), hash);
+    }
+}
+
+fn archive_sha256(path: &Path) -> Option<String> {
+    for (cmd, args) in [("shasum", vec!["-a", "256"]), ("sha256sum", Vec::new())] {
+        let Ok(output) = Command::new(cmd).args(args).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let hash = stdout.split_whitespace().next()?.to_string();
+        if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(hash);
+        }
+    }
+    None
+}
+
 fn find_packaged_host_runtime() -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let dir = resources.join("runtime").join("host");
@@ -442,6 +458,94 @@ fn find_packaged_host_runtime() -> Option<PathBuf> {
     }
 
     None
+}
+
+fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
+    let archive = find_bundled_archive(ASSETS_BUNDLE)
+        .ok_or_else(|| "Support assets not found — metalsharp-assets.tar.zst is missing".to_string())?;
+    if split_bundle_current(home, ASSETS_BUNDLE, &archive) {
+        return Ok(false);
+    }
+    let tmp = std::env::temp_dir().join("metalsharp-assets-extract");
+    let _ = fs::remove_dir_all(&tmp);
+    let _ = fs::create_dir_all(&tmp);
+    extract_zst(&archive, &tmp, ASSETS_BUNDLE)?;
+    let assets = tmp.join("assets");
+    let runtime_dir = home.join(".metalsharp").join("runtime");
+
+    let mut changed = false;
+    for (src_name, dst_path) in [
+        ("mono-x86", runtime_dir.join("mono-x86")),
+        ("mono-arm64", runtime_dir.join("mono-arm64")),
+        ("dxvk-1.10.3", runtime_dir.join("dxvk-1.10.3")),
+        ("goldberg", runtime_dir.join("goldberg")),
+        ("eac-toggle", runtime_dir.join("eac-toggle")),
+        ("shims", runtime_dir.join("shims")),
+    ] {
+        let src = assets.join(src_name);
+        if src.exists() {
+            let _ = fs::remove_dir_all(&dst_path);
+            copy_dir_recursive(&src, &dst_path)?;
+            changed = true;
+        }
+    }
+
+    let gptk = assets.join("gptk");
+    if gptk.exists() {
+        let gptk_dir = runtime_dir.join("wine").join("lib").join("gptk");
+        let ext_dir = runtime_dir.join("wine").join("lib").join("external");
+        for subdir in ["x86_64-windows", "x86_64-unix"] {
+            let src = gptk.join(subdir);
+            if src.exists() {
+                let dst = gptk_dir.join(subdir);
+                let _ = fs::remove_dir_all(&dst);
+                copy_dir_recursive(&src, &dst)?;
+                changed = true;
+            }
+        }
+        let external = gptk.join("external");
+        if external.exists() {
+            copy_dir_recursive(&external, &ext_dir)?;
+            changed = true;
+        }
+    }
+
+    let wine_etc = assets.join("wine").join("etc");
+    if wine_etc.exists() {
+        copy_dir_recursive(&wine_etc, &runtime_dir.join("wine").join("etc"))?;
+        changed = true;
+    }
+
+    let shader_cache = assets.join("shader-cache");
+    if shader_cache.exists() {
+        copy_dir_recursive(&shader_cache, &home.join(".metalsharp").join("shader-cache"))?;
+        changed = true;
+    }
+
+    let _ = fs::remove_dir_all(&tmp);
+    if changed {
+        mark_split_bundle_installed(home, ASSETS_BUNDLE, &archive);
+    }
+    Ok(changed)
+}
+
+fn install_scripts_tools_bundle(home: &PathBuf) -> Result<bool, String> {
+    let archive = find_bundled_archive(SCRIPTS_TOOLS_BUNDLE)
+        .ok_or_else(|| "Scripts/tools bundle not found — metalsharp-scripts-tools.tar.zst is missing".to_string())?;
+    if split_bundle_current(home, SCRIPTS_TOOLS_BUNDLE, &archive) {
+        return Ok(false);
+    }
+    let dest = home.join(".metalsharp").join("scripts").join("tools");
+    let tmp = std::env::temp_dir().join("metalsharp-scripts-tools-extract");
+    let _ = fs::remove_dir_all(&tmp);
+    let _ = fs::create_dir_all(&tmp);
+    extract_zst(&archive, &tmp, SCRIPTS_TOOLS_BUNDLE)?;
+    let src = tmp.join("scripts").join("tools");
+    let _ = fs::remove_dir_all(&dest);
+    copy_dir_recursive(&src, &dest)?;
+    let _ = fs::remove_dir_all(&tmp);
+    mark_split_bundle_installed(home, SCRIPTS_TOOLS_BUNDLE, &archive);
+    Ok(true)
 }
 
 fn install_linux_system_wine_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -535,22 +639,25 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
 
-    if dxmt_runtime_current_for_dir(&dxmt_dir) {
+    let bundled = find_bundled_archive(GRAPHICS_DLL_BUNDLE);
+    if dxmt_runtime_current_for_dir(&dxmt_dir)
+        && bundled.as_ref().is_some_and(|archive| split_bundle_current(home, GRAPHICS_DLL_BUNDLE, archive))
+    {
         return Ok(false);
     }
 
     let _ = fs::create_dir_all(dxmt_dir.join("x86_64-unix"));
     let _ = fs::create_dir_all(dxmt_dir.join("x86_64-windows"));
 
-    let bundled = find_bundled_archive("dxmt");
     if let Some(archive) = bundled {
         let tmp = std::env::temp_dir().join("metalsharp-dxmt-extract");
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::create_dir_all(&tmp);
-        extract_zst(&archive, &tmp, "dxmt")?;
+        extract_zst(&archive, &tmp, GRAPHICS_DLL_BUNDLE)?;
 
-        let src_x64_unix = tmp.join("x86_64-unix");
-        let src_x64_windows = tmp.join("x86_64-windows");
+        let src_root = tmp.join("Graphics").join("dll").join("dxmt");
+        let src_x64_unix = src_root.join("x86_64-unix");
+        let src_x64_windows = src_root.join("x86_64-windows");
 
         if src_x64_unix.exists() {
             for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read x86_64-unix: {}", e))? {
@@ -566,7 +673,8 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         }
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
-        write_dxmt_runtime_manifest(&dxmt_dir, "bundled:dxmt.tar.zst")?;
+        write_dxmt_runtime_manifest(&dxmt_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
+        mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
     } else {
         let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
@@ -592,7 +700,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err(format!(
-            "DXMT Metal runtime {} not installed — bundle dxmt.tar.zst or place files in ~/.metalsharp/runtime/dxmt/",
+            "DXMT Metal runtime {} not installed — bundle metalsharp-graphics-dll.tar.zst or place files in ~/.metalsharp/runtime/dxmt/",
             DXMT_BUNDLED_RUNTIME_VERSION
         ))
     }
@@ -857,6 +965,7 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
         if let Some(mut dir) = exe.parent() {
             for _ in 0..8 {
                 candidates.push(dir.join("configs").join("mtsp-rules.toml"));
+                candidates.push(dir.join("scripts").join("tools").join("configs").join("mtsp-rules.toml"));
                 match dir.parent() {
                     Some(p) => dir = p,
                     None => break,
@@ -911,6 +1020,7 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
             if let Some(mut dir) = exe.parent() {
                 for _ in 0..8 {
                     candidates.push(dir.join("configs").join(name));
+                    candidates.push(dir.join("scripts").join("tools").join("configs").join(name));
                     match dir.parent() {
                         Some(p) => dir = p,
                         None => break,
@@ -1144,7 +1254,9 @@ fn brew_install(package: &str) -> Result<bool, String> {
 fn find_bundled_archive(name: &str) -> Option<PathBuf> {
     let candidates = [find_in_resources(name), find_in_dev_path(name)];
 
-    if let Some(found) = candidates.into_iter().find(|c| c.is_some()).flatten() {
+    if let Some(found) =
+        candidates.into_iter().find(|c| c.as_ref().is_some_and(|path| bundled_artifact_valid(name, path))).flatten()
+    {
         return Some(found);
     }
 
@@ -1154,13 +1266,13 @@ fn find_bundled_archive(name: &str) -> Option<PathBuf> {
 fn find_bundled_file(name: &str) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let file = resources.join(format!("bundles/{}", name));
-        if file.exists() {
+        if file.exists() && bundled_artifact_valid(name, &file) {
             return Some(file);
         }
     }
 
     let dev = PathBuf::from(format!("app/bundles/{}", name));
-    if dev.exists() {
+    if dev.exists() && bundled_artifact_valid(name, &dev) {
         return Some(dev);
     }
 
@@ -1173,8 +1285,11 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
     let cached = cache_dir.join(filename);
     let tmp = cache_dir.join(format!("{}.download", filename));
 
-    if file_nonempty(&cached) {
+    if file_nonempty(&cached) && bundled_artifact_valid(filename, &cached) {
         return Some(cached);
+    }
+    if filename == "dxmt.tar.zst" {
+        let _ = fs::remove_file(&cached);
     }
 
     let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
@@ -1189,6 +1304,7 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
 
     if output.status.success()
         && file_nonempty(&tmp)
+        && bundled_artifact_valid(filename, &tmp)
         && fs::rename(&tmp, &cached).or_else(|_| fs::copy(&tmp, &cached).map(|_| ())).is_ok()
         && file_nonempty(&cached)
     {
@@ -1199,6 +1315,10 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
     let _ = fs::remove_file(&tmp);
     let _ = fs::remove_file(&cached);
     None
+}
+
+fn bundled_artifact_valid(_name: &str, path: &Path) -> bool {
+    file_nonempty(path)
 }
 
 fn find_in_resources(name: &str) -> Option<PathBuf> {
@@ -1233,7 +1353,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         let entry = entry.map_err(|e| format!("read entry in {}: {}", src.display(), e))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let file_type =
+            fs::symlink_metadata(&src_path).map_err(|e| format!("metadata {}: {}", src_path.display(), e))?.file_type();
+        if file_type.is_symlink() {
+            copy_symlink_or_target(&src_path, &dst_path)?;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)
@@ -1241,6 +1365,19 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink_or_target(src: &Path, dst: &Path) -> Result<(), String> {
+    let target = fs::read_link(src).map_err(|e| format!("read symlink {}: {}", src.display(), e))?;
+    let _ = fs::remove_file(dst);
+    std::os::unix::fs::symlink(&target, dst)
+        .map_err(|e| format!("copy symlink {} to {}: {}", src.display(), dst.display(), e))
+}
+
+#[cfg(not(unix))]
+fn copy_symlink_or_target(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::copy(src, dst).map(|_| ()).map_err(|e| format!("copy {} to {}: {}", src.display(), dst.display(), e))
 }
 
 fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), String> {
@@ -1319,34 +1456,37 @@ mod tests {
     fn runtime_bundle_preflight_knows_beta7_assets() {
         let mac_assets = MAC_RUNTIME_BUNDLE_ASSETS;
         for expected in [
-            "metalsharp_bundle.tar.zst",
-            "metalsharp_bundle2.tar.zst",
-            "dxmt.tar.zst",
-            "gptk.tar.zst",
-            "mono-x86.tar.zst",
-            "mono-arm64.tar.zst",
-            "goldberg.tar.zst",
-            "eac-toggle.tar.zst",
-            "SteamSetup.exe",
-            "steamwebhelper.exe",
+            "metalsharp-runtime.tar.zst",
+            "metalsharp-graphics-dll.tar.zst",
+            "metalsharp-assets.tar.zst",
+            "metalsharp-scripts-tools.tar.zst",
+            "metalsharp-steam.tar.zst",
         ] {
             assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
         }
 
         let linux_assets = LINUX_RUNTIME_BUNDLE_ASSETS;
         for expected in [
-            "metalsharp_bundle.tar.zst",
-            "metalsharp_bundle2.tar.zst",
-            "dxmt.tar.zst",
-            "dxvk.tar.zst",
-            "mono-x86.tar.zst",
-            "goldberg.tar.zst",
-            "eac-toggle.tar.zst",
-            "SteamSetup.exe",
-            "steamwebhelper.exe",
+            "metalsharp-runtime.tar.zst",
+            "metalsharp-graphics-dll.tar.zst",
+            "metalsharp-assets.tar.zst",
+            "metalsharp-scripts-tools.tar.zst",
+            "metalsharp-steam.tar.zst",
         ] {
             assert!(linux_assets.contains(&expected), "missing linux bundle asset {}", expected);
         }
+    }
+
+    #[test]
+    fn graphics_bundle_layout_matches_release_manifest() {
+        let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
+        let graphics_row = manifest
+            .lines()
+            .find(|line| line.starts_with("metalsharp-graphics-dll.tar.zst\t"))
+            .expect("metalsharp-graphics-dll.tar.zst release manifest row");
+        let fields: Vec<&str> = graphics_row.split('\t').collect();
+
+        assert_eq!(fields.get(1).copied(), Some("Graphics/dll"));
     }
 
     #[test]

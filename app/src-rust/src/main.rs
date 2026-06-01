@@ -232,6 +232,32 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
         },
+        (Method::Post, "/game/resolve-routing") => {
+            let body = read_body(req);
+            let appid = body.get("appid").and_then(|v| v.as_u64());
+            match appid {
+                Some(id) => {
+                    let pipeline = mtsp::rules::resolve_pipeline(id as u32);
+                    let node = mtsp::engine::get_pipeline(pipeline);
+                    let recipe = mtsp::rules::get_game_recipe(id as u32);
+                    resp(
+                        200,
+                        json!({
+                            "ok": true,
+                            "appid": id,
+                            "pipeline": pipeline,
+                            "pipeline_name": node.name,
+                            "graphics_backend": node.graphics_backend,
+                            "backend": node.backend,
+                            "offline_capable": recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false),
+                            "anticheat": recipe.as_ref().and_then(|r| r.anticheat.clone()),
+                            "recipe": recipe,
+                        }),
+                    )
+                },
+                None => resp(400, json!({"ok": false, "error": "appid required"})),
+            }
+        },
         (Method::Get, "/scan") => {
             app_log("Scanning for installed games...");
             match scan::scan_all() {
@@ -430,6 +456,82 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     };
                     match launch_result {
                         Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
+                },
+                Err(error) => resp(400, json!({"ok": false, "error": error})),
+            }
+        },
+        (Method::Post, "/steam/launch-offline") => {
+            let body = read_body(req);
+            match parse_request_appid(&body) {
+                Ok(id) => {
+                    let recipe = mtsp::rules::get_game_recipe(id);
+                    let pipeline = mtsp::rules::resolve_pipeline(id);
+                    let node = mtsp::engine::get_pipeline(pipeline);
+
+                    if !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false) {
+                        return resp(
+                            400,
+                            json!({
+                                "ok": false,
+                                "error": "Game is not marked as offline-capable",
+                                "hint": "Set offline_capable = true in mtsp-rules.toml for this appid"
+                            }),
+                        );
+                    }
+
+                    let game_dir = crate::setup::resolve_game_dir(id);
+                    let Some(ref dir) = game_dir else {
+                        return resp(404, json!({"ok": false, "error": "Game directory not found"}));
+                    };
+
+                    crate::mtsp::launcher::deploy_eac_toggle(&std::path::PathBuf::from(dir));
+
+                    let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
+                        Ok(bottle) => bottle,
+                        Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                    };
+
+                    let (mut env, launch_recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id, pipeline) {
+                        Ok(prepared) => prepared,
+                        Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                    };
+
+                    env.push(("SteamAppId".to_string(), id.to_string()));
+                    env.push(("SteamGameId".to_string(), id.to_string()));
+                    env.push(("METALSHARP_OFFLINE_MODE".to_string(), "1".to_string()));
+
+                    let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
+                    let launch_result =
+                        mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env);
+
+                    app_log(&format!(
+                        "[OFFLINE] appid={} pipeline={} backend={} eac_toggle=true anticheat={}",
+                        id,
+                        node.name,
+                        node.graphics_backend,
+                        recipe.as_ref().and_then(|r| r.anticheat.as_ref()).map(|s| s.as_str()).unwrap_or("none")
+                    ));
+
+                    match launch_result {
+                        Ok((pid, game_type, log_path)) => resp(
+                            200,
+                            json!({
+                                "ok": true,
+                                "pid": pid,
+                                "appid": id,
+                                "gameType": game_type,
+                                "bottle_id": bottle.id,
+                                "bottle_prefix": bottle.prefix_path,
+                                "launch_log": log_path.to_string_lossy().to_string(),
+                                "pipeline": pipeline,
+                                "graphics_backend": node.graphics_backend,
+                                "offline_mode": true,
+                                "eac_toggle_deployed": true,
+                                "anticheat": recipe.and_then(|r| r.anticheat),
+                            }),
+                        ),
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
                     }
                 },
@@ -750,6 +852,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
+        (Method::Post, "/mscompatdb/generate") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+            match mtsp::mscompatdb::write_compatdb_rules(&ms_root) {
+                Ok(()) => resp(
+                    200,
+                    json!({"ok": true, "path": ms_root.join("share/metalsharp/mscompatdb-rules.json").to_string_lossy().to_string()}),
+                ),
+                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+            }
         },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);

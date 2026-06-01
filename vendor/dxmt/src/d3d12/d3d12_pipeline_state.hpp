@@ -53,6 +53,7 @@ public:
 
   bool RequestCompile(bool allow_async);
   bool Compile();
+  bool TryCompilePendingInline();
   void RunAsyncCompile();
 
   bool EnsureCompiled() {

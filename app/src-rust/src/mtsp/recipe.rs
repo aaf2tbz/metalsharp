@@ -88,6 +88,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
@@ -162,15 +163,10 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
             "r.RayTracing=0",
             "r.Lumen.HardwareRayTracing=0",
             "r.Shadow.Virtual.Enable=0",
-            "r.ShaderPipelineCache.Enabled=0",
-            "r.ShaderPipelineCache.StartupMode=0",
-            "r.PSOPrecaching=0",
-            "D3D12.PSOPrecache.KeepLowLevel=0",
-            "D3D12.PSO.KeepUsedPSOsInLowLevelCache=0",
-            "r.PSOPrecache.Resources=0",
         ]
         .join(",");
-        launch_args.push("-NoShaderPipelineCache".into());
+        launch_args.push("-dx12".into());
+        launch_args.push("-d3d12".into());
         launch_args.push(format!("-dpcvars={}", dpcvars));
         launch_args.push("-NoNanite".into());
         launch_args.push(
@@ -193,6 +189,7 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
@@ -359,7 +356,13 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     let mut warnings = recipe.warnings.clone();
     let direct_wine_pipeline = matches!(
         recipe.pipeline,
-        PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M32 | PipelineId::WineBare
+        PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::M13
+            | PipelineId::M32
+            | PipelineId::WineBare
     );
     let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
 
@@ -601,6 +604,7 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M10, super::pe::D3dApi::D3D10)
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
+            | (PipelineId::M13, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }
@@ -659,6 +663,8 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("crashhandler")
         && !lower.contains("server")
         && !lower.contains("steamwebhelper")
+        && !lower.contains("start_protected")
+        && !lower.contains("easyanticheat")
 }
 
 fn score_exe_candidate(path: &Path, name: &str, dir_name: &str) -> i32 {
@@ -892,12 +898,14 @@ mod tests {
     }
 
     #[test]
-    fn subnautica_m12_disables_startup_pso_cache() {
+    fn subnautica_m12_keeps_startup_pso_cache_for_build_window() {
         let args = effective_launch_args(1962700, super::super::engine::get_pipeline(PipelineId::M12));
 
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-NoShaderPipelineCache")));
-        assert!(args.iter().any(|arg| arg.contains("r.ShaderPipelineCache.Enabled=0")));
-        assert!(args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-NoShaderPipelineCache")));
+        assert!(!args.iter().any(|arg| arg.contains("r.ShaderPipelineCache.Enabled=0")));
+        assert!(!args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")));
     }
 
     #[test]

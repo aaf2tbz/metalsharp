@@ -1,6 +1,8 @@
 #include "d3d12_shader_compiler.hpp"
 #include "dxil/dxil_container.hpp"
 #include "dxil/llvm_bitcode.hpp"
+#include "dxil/dxil_to_msl.hpp"
+#include "dxil/msl_lowering.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include <cstdio>
@@ -56,6 +58,23 @@ const char *FallbackEntryForStage(D3D12ShaderCompilerStage stage) {
   default:
     return "main";
   }
+}
+
+dxmt::dxil::MSLShader
+ToCompilerMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
+  dxmt::dxil::MSLShader shader;
+  shader.source = std::move(typed.source);
+  shader.entry_point = std::move(typed.entry_point);
+  shader.tg_size[0] = typed.tg_size[0];
+  shader.tg_size[1] = typed.tg_size[1];
+  shader.tg_size[2] = typed.tg_size[2];
+  shader.unsupported_intrinsics = typed.unsupported_intrinsics;
+  shader.unsupported_opcodes = typed.unsupported_opcodes;
+  shader.diagnostics = std::move(typed.diagnostics);
+  shader.diagnostics.push_back(str::format(
+      "MSLLowering debug compiler path active: typed_values=",
+      typed.typed_value_count, " auto_values=", typed.auto_value_count));
+  return shader;
 }
 
 D3D12ShaderCompilerStage
@@ -274,10 +293,12 @@ DebugMSLEmitterBackend::Compile(const D3D12ShaderCompileRequest &request) {
   WriteTextFile(request.paths.module_summary,
                 BuildModuleSummary(*module, shader));
 
-  auto msl =
-      dxmt::dxil::DXILToMSL::convert(*module, shader, request.msl_options);
+  auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader);
+  auto msl = typed_msl
+      ? std::optional<dxmt::dxil::MSLShader>(std::in_place, ToCompilerMSLShader(std::move(*typed_msl)))
+      : dxmt::dxil::DXILToMSL::convert(*module, shader);
   if (!msl) {
-    output.diagnostics = "DXILToMSL conversion failed\n";
+    output.diagnostics = "MSLLowering and DXILToMSL conversion failed\n";
     return output;
   }
 

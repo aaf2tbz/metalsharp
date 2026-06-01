@@ -1183,8 +1183,10 @@ struct ReplayState {
       return;
 
     if (pso->IsCompilePending()) {
+      bool compiled = pso->TryCompilePendingInline();
       Logger::info(str::format("M12 swapchain render PSO pending; advancing frame pso=",
-                               (void *)pso, " stage=",
+                               (void *)pso, " promoted_compiled=", compiled,
+                               " stage=",
                                TraceCompileFailureStage(pso), " detail=",
                                TraceCompileFailureDetail(pso)));
       return;

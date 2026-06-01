@@ -21,6 +21,7 @@ struct LLVMType {
     Function,
   } kind;
   uint32_t bit_width = 0;
+  uint32_t address_space = 0;
   std::vector<LLVMType> subtypes;
   std::vector<uint32_t> type_refs;
 };
@@ -116,16 +117,28 @@ struct LLVMFunction {
   std::vector<LLVMType> param_types;
   LLVMType return_type;
   std::vector<LLVMBasicBlock> blocks;
+  std::vector<uint32_t> block_value_ids;
   std::vector<std::string> attributes;
+  std::vector<LLVMValue> constants;
+};
+
+struct LLVMGlobal {
+  uint32_t value_id = 0;
+  uint32_t type_id = 0;
+  uint32_t address_space = 0;
+  std::string name;
+  bool is_constant = false;
 };
 
 struct LLVMModule {
   std::vector<LLVMType> types;
   std::vector<LLVMValue> constants;
   std::vector<LLVMFunction> functions;
+  std::vector<LLVMGlobal> globals;
   std::unordered_map<std::string, size_t> function_map;
   std::string source_filename;
   std::string target_triple;
+  uint32_t num_threads[3] = {1, 1, 1};
 };
 
 class BitcodeReader {

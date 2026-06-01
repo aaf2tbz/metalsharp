@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.40",
+  "version": "0.33.41",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -21,7 +21,7 @@
     "fetch:bundles:mac": "../tools/dmg/create-bundles.sh",
     "fetch:bundles:linux": "../tools/linux/create-bundles.sh",
     "fetch:bundles": "if [ \"${METALSHARP_TARGET:-}\" = \"linux\" ]; then npm run fetch:bundles:linux; else npm run fetch:bundles:mac; fi",
-    "dist": "npm run prepare:native && npm run fetch:bundles && npm run build:all && electron-builder",
+    "dist": "npm run prepare:native && npm run build:all && npm run fetch:bundles && electron-builder",
     "dmg": "npm run dist -- --mac dmg",
     "deb": "../tools/linux/build-deb.sh",
     "deb:docker": "../tools/linux/build-deb-docker.sh"
@@ -121,143 +121,47 @@
     "extraResources": [
       {
         "from": "src-rust/target/release/metalsharp-backend",
-        "to": "metalsharp-backend"
-      },
-      {
-        "from": "native/metalsharp",
-        "to": "metalsharp"
-      },
-      {
-        "from": "native/metalsharp_launcher",
-        "to": "metalsharp_launcher"
-      },
-      {
-        "from": "native/d3d11.dylib",
-        "to": "d3d11.dylib"
-      },
-      {
-        "from": "native/d3d12.dylib",
-        "to": "d3d12.dylib"
-      },
-      {
-        "from": "native/dxgi.dylib",
-        "to": "dxgi.dylib"
-      },
-      {
-        "from": "native/xaudio2_9.dylib",
-        "to": "xaudio2_9.dylib"
-      },
-      {
-        "from": "native/xinput1_4.dylib",
-        "to": "xinput1_4.dylib"
-      },
-      {
-        "from": "native/d3d11.so",
-        "to": "d3d11.so"
-      },
-      {
-        "from": "native/d3d12.so",
-        "to": "d3d12.so"
-      },
-      {
-        "from": "native/dxgi.so",
-        "to": "dxgi.so"
-      },
-      {
-        "from": "native/xaudio2_9.so",
-        "to": "xaudio2_9.so"
-      },
-      {
-        "from": "native/xinput1_4.so",
-        "to": "xinput1_4.so"
+        "to": "runtime/metalsharp-backend"
       },
       {
         "from": "native/host",
         "to": "runtime/host"
       },
       {
-        "from": "bundles/metalsharp_bundle.tar.zst",
-        "to": "bundles/metalsharp_bundle.tar.zst"
+        "from": "native",
+        "to": "scripts/tools/native",
+        "filter": [
+          "**/*",
+          "!host/**"
+        ]
       },
       {
-        "from": "bundles/metalsharp_bundle2.tar.zst",
-        "to": "bundles/metalsharp_bundle2.tar.zst"
+        "from": "bundles/metalsharp-electron.tar.zst",
+        "to": "bundles/metalsharp-electron.tar.zst"
       },
       {
-        "from": "bundles/dxmt.tar.zst",
-        "to": "bundles/dxmt.tar.zst"
+        "from": "bundles/metalsharp-graphics-dll.tar.zst",
+        "to": "bundles/metalsharp-graphics-dll.tar.zst"
       },
       {
-        "from": "bundles/gptk.tar.zst",
-        "to": "bundles/gptk.tar.zst"
+        "from": "bundles/metalsharp-runtime.tar.zst",
+        "to": "bundles/metalsharp-runtime.tar.zst"
       },
       {
-        "from": "bundles/dxvk.tar.zst",
-        "to": "bundles/dxvk.tar.zst"
+        "from": "bundles/metalsharp-assets.tar.zst",
+        "to": "bundles/metalsharp-assets.tar.zst"
       },
       {
-        "from": "bundles/mono-x86.tar.zst",
-        "to": "bundles/mono-x86.tar.zst"
+        "from": "bundles/metalsharp-scripts-tools.tar.zst",
+        "to": "bundles/metalsharp-scripts-tools.tar.zst"
       },
       {
-        "from": "bundles/mono-arm64.tar.zst",
-        "to": "bundles/mono-arm64.tar.zst"
+        "from": "bundles/metalsharp-steam.tar.zst",
+        "to": "bundles/metalsharp-steam.tar.zst"
       },
       {
-        "from": "bundles/goldberg.tar.zst",
-        "to": "bundles/goldberg.tar.zst"
-      },
-      {
-        "from": "bundles/eac-toggle.tar.zst",
-        "to": "bundles/eac-toggle.tar.zst"
-      },
-      {
-        "from": "bundles/SteamSetup.exe",
-        "to": "bundles/SteamSetup.exe"
-      },
-      {
-        "from": "bundles/steamwebhelper.exe",
-        "to": "bundles/steamwebhelper.exe"
-      },
-      {
-        "from": "bundles/steamwebhelper-wrapper.c",
-        "to": "bundles/steamwebhelper-wrapper.c"
-      },
-      {
-        "from": "bundles/cefcompat-wrapper32.exe",
-        "to": "bundles/cefcompat-wrapper32.exe"
-      },
-      {
-        "from": "bundles/cefcompat-wrapper64.exe",
-        "to": "bundles/cefcompat-wrapper64.exe"
-      },
-      {
-        "from": "bundles/cefcompat-wrapper.c",
-        "to": "bundles/cefcompat-wrapper.c"
-      },
-      {
-        "from": "bundles/cefchildhook32.dll",
-        "to": "bundles/cefchildhook32.dll"
-      },
-      {
-        "from": "bundles/cefchildhook64.dll",
-        "to": "bundles/cefchildhook64.dll"
-      },
-      {
-        "from": "bundles/cefchildhook.c",
-        "to": "bundles/cefchildhook.c"
-      },
-      {
-        "from": "updater/update.sh",
-        "to": "updater/update.sh"
-      },
-      {
-        "from": "updater/update.py",
-        "to": "updater/update.py"
-      },
-      {
-        "from": "../configs",
-        "to": "configs"
+        "from": "bundles/metalsharp-d3d12-developer-sdk.tar.zst",
+        "to": "bundles/metalsharp-d3d12-developer-sdk.tar.zst"
       }
     ],
     "directories": {

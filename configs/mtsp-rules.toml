@@ -93,6 +93,8 @@ name = "Ghostrunner"
 [overrides.1245620]
 pipeline = "m12"
 name = "ELDEN RING"
+offline_capable = true
+anticheat = "eac_eos"
 
 [overrides.1245620.dependencies]
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
@@ -111,6 +113,7 @@ name = "God of War"
 [overrides.2050650]
 pipeline = "m12"
 name = "Resident Evil 4"
+offline_capable = true
 
 [overrides.2050650.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -137,6 +140,7 @@ name = "Far Cry 5"
 [overrides.1091500]
 pipeline = "m12"
 name = "Cyberpunk 2077"
+offline_capable = true
 
 [overrides.1091500.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -151,6 +155,7 @@ name = "DAVE THE DIVER"
 [overrides.1551360]
 pipeline = "m12"
 name = "Forza Horizon 5"
+offline_capable = true
 
 [overrides.1551360.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -199,6 +204,14 @@ name = "Resident Evil Re:Verse"
 [overrides.1888160]
 pipeline = "m12"
 name = "ARMORED CORE VI FIRES OF RUBICON"
+offline_capable = true
+anticheat = "eac_eos"
+
+[overrides.1888160.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.1888160.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
 
 [overrides.976310]
 pipeline = "m11"

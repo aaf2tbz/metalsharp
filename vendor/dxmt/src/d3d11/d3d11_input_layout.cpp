@@ -30,6 +30,7 @@ HRESULT ExtractMTLInputLayoutElements(
   auto num_parameters = parser.GetParameters(&pParameters);
 
   UINT attribute_count = 0;
+  memset(pInputLayout, 0, sizeof(MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC) * NumElements);
   for (UINT j = 0; j < NumElements; j++) {
     auto &desc = pInputElementDescs[j];
 
@@ -47,6 +48,12 @@ HRESULT ExtractMTLInputLayoutElements(
       ERR("CreateInputLayout: not an ordinary or packed format: ", desc.Format);
       return E_INVALIDARG;
     }
+
+    if (desc.InputSlot >= 32) {
+      ERR("CreateInputLayout: InputSlot ", desc.InputSlot, " out of range (max 31)");
+      return E_INVALIDARG;
+    }
+
     auto aligned_byte_offset = desc.AlignedByteOffset == D3D11_APPEND_ALIGNED_ELEMENT
                                    ? align(append_offset[desc.InputSlot], std::min(4u, metal_format.BytesPerTexel))
                                    : desc.AlignedByteOffset;
@@ -59,7 +66,7 @@ HRESULT ExtractMTLInputLayoutElements(
                  strcasecmp(desc.SemanticName, inputSig.SemanticName) == 0;
         });
     if (pSig == pParameters + num_parameters)
-      continue; // shader has no such input register, so skip it
+      continue;
     auto &inputSig = *pSig;
     auto &attribute = pInputLayout[attribute_count++];
 
@@ -68,12 +75,14 @@ HRESULT ExtractMTLInputLayoutElements(
     attribute.Slot = desc.InputSlot;
     attribute.Index = inputSig.Register;
     attribute.Offset = aligned_byte_offset;
-    // the layout stride is provided in IASetVertexBuffer
     attribute.StepFunction = desc.InputSlotClass;
     attribute.InstanceStepRate =
         desc.InputSlotClass == D3D11_INPUT_PER_INSTANCE_DATA
             ? desc.InstanceDataStepRate
             : 1;
+    TRACE("CreateInputLayout: ", desc.SemanticName, "_", desc.SemanticIndex,
+          " slot=", desc.InputSlot, " offset=", aligned_byte_offset,
+          " format=", (uint32_t)desc.Format, " reg=", inputSig.Register);
     register_mask |= (1 << inputSig.Register);
   }
   for (UINT i = 0; i < num_parameters; i++) {

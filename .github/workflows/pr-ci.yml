@@ -122,28 +122,24 @@ jobs:
         run: |
           prepare_d3d12_mini_probe_runtime() {
             mkdir -p app/bundles "$HOME/.metalsharp/runtime/wine/lib/dxmt"
-            for asset in metalsharp_bundle.tar.zst metalsharp_bundle2.tar.zst dxmt.tar.zst; do
+            for asset in metalsharp-runtime.tar.zst metalsharp-graphics-dll.tar.zst; do
               if [ ! -s "app/bundles/$asset" ]; then
                 curl -fL -o "app/bundles/$asset" "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/$asset"
               fi
             done
 
             tmp_bundle="$(mktemp -d)"
-            tar --use-compress-program=unzstd -xf app/bundles/metalsharp_bundle.tar.zst -C "$tmp_bundle"
-            wine_source="$tmp_bundle/wine-11.5"
-            if [ ! -d "$wine_source" ]; then
-              wine_source="$tmp_bundle/wine"
-            fi
+            tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C "$tmp_bundle"
+            wine_source="$tmp_bundle/runtime/wine"
             mkdir -p "$HOME/.metalsharp/runtime/wine"
             cp -R "$wine_source"/. "$HOME/.metalsharp/runtime/wine/"
-            tar --use-compress-program=unzstd -xf app/bundles/metalsharp_bundle2.tar.zst -C "$HOME/.metalsharp/runtime"
 
             tmp_dxmt="$(mktemp -d)"
-            tar --use-compress-program=unzstd -xf app/bundles/dxmt.tar.zst -C "$tmp_dxmt"
+            tar --use-compress-program=unzstd -xf app/bundles/metalsharp-graphics-dll.tar.zst -C "$tmp_dxmt"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows"
-            cp -R "$tmp_dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
-            cp -R "$tmp_dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
+            cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
+            cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
           }
 
           python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py

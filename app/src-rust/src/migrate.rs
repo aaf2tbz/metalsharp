@@ -220,7 +220,7 @@ fn run_migration() {
         return;
     }
 
-    let total_steps = 5usize;
+    let total_steps = 3usize;
     let mut step = 0usize;
 
     step += 1;
@@ -228,19 +228,7 @@ fn run_migration() {
     kill_steam_wine();
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
-    let preserved = preserve_user_data(&ms_dir);
-
-    step += 1;
-    write_migrate_progress("running", step, total_steps, "Removing old runtime...", None);
-    remove_old_runtime(&ms_dir);
-
-    step += 1;
-    write_migrate_progress("running", step, total_steps, "Restoring user data...", None);
-    restore_user_data(&ms_dir, &preserved);
-
-    step += 1;
-    write_migrate_progress("running", step, total_steps, "Running full runtime install...", None);
+    write_migrate_progress("running", step, total_steps, "Installing changed runtime bundles...", None);
     let install_ok = match crate::installer::start_install_all() {
         Ok(v) if v.get("ok").and_then(|ok| ok.as_bool()).unwrap_or(false) => match wait_for_install_complete() {
             Ok(()) => true,
@@ -292,7 +280,7 @@ fn run_migration() {
         }
         let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
-        write_migrate_progress("complete", total_steps, total_steps, "Migration complete!", None);
+        write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated!", None);
     } else {
         write_migrate_progress(
             "error",

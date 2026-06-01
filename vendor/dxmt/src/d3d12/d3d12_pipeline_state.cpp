@@ -1,36 +1,28 @@
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_device.hpp"
 #include "d3d12_root_signature.hpp"
-#include "d3d12_shader_compiler.hpp"
 #include "d3d12_trace.hpp"
 #include "log/log.hpp"
-#include "util_env.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
 
-#define PTRACE(fmt, ...)                                                       \
-  do {                                                                         \
-    FILE *_tf = fopen("Z:\\tmp\\dxmt_ps_args_debug.log", "a");                 \
-    if (_tf) {                                                                 \
-      fprintf(_tf, fmt "\n", ##__VA_ARGS__);                                   \
-      fclose(_tf);                                                             \
-    }                                                                          \
-  } while (0)
+#define PTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_ps_args_debug.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 #include "airconv_public.h"
 #include "dxmt_format.hpp"
 #include "dxil/dxil_container.hpp"
 #include "dxil/llvm_bitcode.hpp"
 #include "dxil/dxil_to_msl.hpp"
+#include "dxil/msl_lowering.hpp"
 #include "../../libs/DXBCParser/BlobContainer.h"
 #include "../../libs/DXBCParser/DXBCUtils.h"
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cctype>
-#include <cerrno>
-#include <condition_variable>
 #include <deque>
-#include <filesystem>
 #include <map>
+#include <string>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -43,350 +35,334 @@ namespace dxmt {
 
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
-constexpr uint32_t kMetalShaderConverterStageInAttributeBase = 11;
-constexpr uint32_t kMetalShaderConverterVertexBufferBindPoint = 6;
-constexpr uint32_t kMetalShaderConverterVertexLayoutVersion = 2;
 
-class PipelineStateBlob : public ID3DBlob {
-public:
-  explicit PipelineStateBlob(std::vector<uint8_t> data)
-      : m_data(std::move(data)) {}
-  virtual ~PipelineStateBlob() = default;
-
-  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
-    if (!ppv)
-      return E_POINTER;
-    *ppv = nullptr;
-    if (riid == IID_IUnknown || riid == IID_ID3D10Blob ||
-        riid == __uuidof(ID3DBlob)) {
-      *ppv = this;
-      AddRef();
-      return S_OK;
-    }
-    return E_NOINTERFACE;
-  }
-
-  ULONG STDMETHODCALLTYPE AddRef() override { return ++m_ref_count; }
-
-  ULONG STDMETHODCALLTYPE Release() override {
-    ULONG ref = --m_ref_count;
-    if (!ref)
-      delete this;
-    return ref;
-  }
-
-  LPVOID STDMETHODCALLTYPE GetBufferPointer() override { return m_data.data(); }
-  SIZE_T STDMETHODCALLTYPE GetBufferSize() override { return m_data.size(); }
-
-private:
-  std::atomic<ULONG> m_ref_count = 1;
-  std::vector<uint8_t> m_data;
-};
-
-bool DXMTD3D12AsyncPipelineCompileEnabled() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_ASYNC_PIPELINE_COMPILE");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-unsigned DXMTD3D12AsyncPipelineWorkerCount() {
-  static unsigned worker_count = []() {
-    const char *value = std::getenv("DXMT_D3D12_PSO_WORKERS");
-    if (value && value[0]) {
-      long parsed = std::strtol(value, nullptr, 10);
-      if (parsed <= 0)
-        return 0u;
-      return (unsigned)parsed;
-    }
-
-    unsigned hw = std::thread::hardware_concurrency();
-    if (hw == 0)
-      hw = 4;
-    if (hw <= 2)
-      return 1u;
-    return std::min<unsigned>(8u, hw - 2);
-  }();
-  return worker_count;
-}
-
-bool DXMTD3D12GeometryMeshPipelineEnabled() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_ENABLE_GEOMETRY_MESH");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-bool DXMTD3D12DepthOnlyGeometryFallbackEnabled() {
-  static int enabled = []() {
-    const char *value =
-        std::getenv("DXMT_D3D12_DEPTH_ONLY_GEOMETRY_FALLBACK");
-    return !value || !value[0] || std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-bool DXMTD3D12ForceColorWriteState() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_FORCE_COLOR_WRITE_STATE");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-bool DXMTD3D12ForceDiagnosticFragment() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-bool DXMTD3D12ForceDiagnosticFullscreen() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-bool DXMTD3D12ShaderDiagnosticLogsEnabled() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_SHADER_DIAGNOSTICS");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
-}
-
-class PipelineCompileScheduler {
-public:
-  PipelineCompileScheduler() {
-    unsigned worker_count = DXMTD3D12AsyncPipelineWorkerCount();
-    workers_.reserve(worker_count);
-    for (unsigned i = 0; i < worker_count; i++) {
-      workers_.emplace_back([this]() { WorkerMain(); });
-    }
-  }
-
-  ~PipelineCompileScheduler() {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      stop_ = true;
-    }
-    cv_.notify_all();
-    for (auto &worker : workers_) {
-      if (worker.joinable())
-        worker.join();
-    }
-  }
-
-  bool Enqueue(MTLD3D12PipelineState *pso) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (stop_ || workers_.empty())
-      return false;
-    queue_.push_back(pso);
-    cv_.notify_one();
-    return true;
-  }
-
-private:
-  void WorkerMain();
-
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  std::deque<MTLD3D12PipelineState *> queue_;
-  bool stop_ = false;
-  std::vector<std::thread> workers_;
-};
-
-PipelineCompileScheduler &GetPipelineCompileScheduler() {
-  static PipelineCompileScheduler scheduler;
-  return scheduler;
-}
-
-const char *DescribeShaderBlobMagic(const void *bytecode, SIZE_T size) {
-  if (!bytecode || size < 4)
-    return "too_small";
-
-  uint32_t magic = *(const uint32_t *)bytecode;
-  switch (magic) {
-  case 0x43425844:
-    return "DXBC";
-  case 0x4C495844:
-    return "DXIL";
-  default:
-    return "unknown";
-  }
-}
-
-WMTBlendFactor D3D12BlendToWMT(D3D12_BLEND b) {
-  switch (b) {
-  case D3D12_BLEND_ZERO:
-    return WMTBlendFactorZero;
-  case D3D12_BLEND_ONE:
-    return WMTBlendFactorOne;
-  case D3D12_BLEND_SRC_COLOR:
-    return WMTBlendFactorSourceColor;
-  case D3D12_BLEND_INV_SRC_COLOR:
-    return WMTBlendFactorOneMinusSourceColor;
-  case D3D12_BLEND_SRC_ALPHA:
-    return WMTBlendFactorSourceAlpha;
-  case D3D12_BLEND_INV_SRC_ALPHA:
-    return WMTBlendFactorOneMinusSourceAlpha;
-  case D3D12_BLEND_DEST_ALPHA:
-    return WMTBlendFactorDestinationAlpha;
-  case D3D12_BLEND_INV_DEST_ALPHA:
-    return WMTBlendFactorOneMinusDestinationAlpha;
-  case D3D12_BLEND_DEST_COLOR:
-    return WMTBlendFactorDestinationColor;
-  case D3D12_BLEND_INV_DEST_COLOR:
-    return WMTBlendFactorOneMinusDestinationColor;
-  case D3D12_BLEND_SRC_ALPHA_SAT:
-    return WMTBlendFactorSourceAlphaSaturated;
-  case D3D12_BLEND_BLEND_FACTOR:
-    return WMTBlendFactorBlendColor;
-  case D3D12_BLEND_INV_BLEND_FACTOR:
-    return WMTBlendFactorOneMinusBlendColor;
-  default:
-    return WMTBlendFactorOne;
-  }
-}
-
-WMTBlendOperation D3D12BlendOpToWMT(D3D12_BLEND_OP op) {
-  switch (op) {
-  case D3D12_BLEND_OP_ADD:
-    return WMTBlendOperationAdd;
-  case D3D12_BLEND_OP_SUBTRACT:
-    return WMTBlendOperationSubtract;
-  case D3D12_BLEND_OP_REV_SUBTRACT:
-    return WMTBlendOperationReverseSubtract;
-  case D3D12_BLEND_OP_MIN:
-    return WMTBlendOperationMin;
-  case D3D12_BLEND_OP_MAX:
-    return WMTBlendOperationMax;
-  default:
-    return WMTBlendOperationAdd;
-  }
-}
-
-void TraceDxbcChunks(const void *bytecode, SIZE_T size, const char *label) {
-  if (!bytecode || size < 32)
-    return;
-
-  const uint32_t *chunks = (const uint32_t *)bytecode;
-  if (chunks[0] != 0x43425844)
-    return;
-
-  uint32_t container_size = chunks[6];
-  uint32_t num_chunks = chunks[7];
-  PSTRACE("%s DXBC: container_size=%u num_chunks=%u", label ? label : "blob",
-          container_size, num_chunks);
-  for (uint32_t i = 0; i < num_chunks && i < 16; i++) {
-    uint32_t offset = chunks[8 + i];
-    if (offset + 8 <= size) {
-      char tag[5] = {};
-      memcpy(tag, (const char *)bytecode + offset, 4);
-      uint32_t chunk_size = 0;
-      memcpy(&chunk_size, (const char *)bytecode + offset + 4,
-             sizeof(chunk_size));
-      PSTRACE("%s chunk[%u]: tag='%s' offset=%u size=%u",
-              label ? label : "blob", i, tag, offset, chunk_size);
-    }
-  }
-}
-
-bool DxbcContainsSm50ShaderBlob(const void *bytecode, SIZE_T size) {
-  if (!bytecode || size < 32)
-    return false;
-
-  const uint32_t *chunks = (const uint32_t *)bytecode;
-  if (chunks[0] != 0x43425844)
-    return false;
-
-  uint32_t num_chunks = chunks[7];
-  for (uint32_t i = 0; i < num_chunks && i < 64; i++) {
-    uint32_t offset = chunks[8 + i];
-    if (offset + 8 > size)
-      continue;
-    char tag[5] = {};
-    memcpy(tag, (const char *)bytecode + offset, 4);
-    if (std::strcmp(tag, "SHDR") == 0 || std::strcmp(tag, "SHEX") == 0)
-      return true;
-  }
-  return false;
-}
-
-bool ShouldFallbackFromMetalShaderConverter(std::string_view fail_text,
-                                            ShaderType type) {
-  if (fail_text.find("Unrecognized DXIL program header") !=
-      std::string_view::npos)
-    return true;
-
-  if (type != ShaderType::Compute)
-    return false;
-
-  // Treat converter-declared capability misses as authoritative. Falling back
-  // to the internal DXIL->MSL path for these cases currently produces invalid
-  // MSL and makes launch stability worse than a bounded PSO compile failure.
-  if (fail_text.find("Wave size is not supported. Must be 32.") !=
-          std::string_view::npos ||
-      fail_text.find("dx.op.atomicBinOp.i32") != std::string_view::npos) {
-    return false;
-  }
-
-  return true;
-}
-
-const std::string &GetShaderCacheRoot() {
-  static const std::string root = []() {
-    auto normalize_host_path = [](std::string path) {
-      // Wine and Steam library conversion can hand us //Volumes/..., which
-      // std::filesystem on macOS does not reliably create as a local path.
-      if (path.starts_with("//Volumes/"))
-        path.erase(0, 1);
-      return path;
-    };
-
-    const char *dxmt_cache = std::getenv("DXMT_SHADER_CACHE_PATH");
-    if (dxmt_cache && dxmt_cache[0])
-      return normalize_host_path(std::string(dxmt_cache));
-
-    const char *metalsharp_cache = std::getenv("METALSHARP_SHADER_CACHE_PATH");
-    if (metalsharp_cache && metalsharp_cache[0])
-      return normalize_host_path(std::string(metalsharp_cache));
-
-    // Fallback for older launch environments. New SDK preflights expect this
-    // to be overridden so dumped DXBC blobs land in the per-game corpus.
-    return std::string("/tmp/dxmt_shader_cache");
-  }();
-  return root;
-}
-
-std::string BuildShaderCachePath(const char *suffix) {
-  auto path = GetShaderCacheRoot();
-  if (!path.ends_with('/'))
-    path.push_back('/');
-  path += suffix;
+std::string ShaderCacheDir() {
+  const char *env_path = std::getenv("DXMT_SHADER_CACHE_PATH");
+  std::string path = (env_path && env_path[0]) ? env_path : "/tmp/dxmt_shader_cache";
+  while (path.size() > 1 && (path.back() == '/' || path.back() == '\\'))
+    path.pop_back();
   return path;
 }
 
+void FormatShaderCachePath(char *out, size_t out_size, const char *suffix_fmt,
+                           size_t hash) {
+  char suffix[128];
+  snprintf(suffix, sizeof(suffix), suffix_fmt, hash);
+  snprintf(out, out_size, "%s/%s", ShaderCacheDir().c_str(), suffix);
+}
+
 void EnsureShaderCacheDir() {
-  std::error_code ec;
-  std::filesystem::create_directories(GetShaderCacheRoot(), ec);
-  static bool logged_root = false;
-  if (!logged_root) {
-    logged_root = true;
-    if (ec) {
-      Logger::warn(str::format("D3D12 shader cache root create failed: ",
-                               GetShaderCacheRoot().c_str(), ": ",
-                               ec.message().c_str()));
-    } else {
-      Logger::info(str::format("D3D12 shader cache root: ",
-                               GetShaderCacheRoot().c_str()));
+  auto dir = ShaderCacheDir();
+  if (dir == "/tmp/dxmt_shader_cache")
+    CreateDirectoryA("Z:\\tmp\\dxmt_shader_cache", nullptr);
+  mkdir(dir.c_str());
+}
+
+std::string DescribeNSObject(obj_handle_t handle) {
+  if (!handle)
+    return "unknown";
+  auto desc = WMT::String{NSObject_description(handle)}.getUTF8String();
+  return desc.empty() ? "unknown" : desc;
+}
+
+bool IsTransientMetalCompilerError(const std::string &desc) {
+  return desc.find("XPC_ERROR_CONNECTION_INTERRUPTED") != std::string::npos ||
+         desc.find("interrupted connection") != std::string::npos;
+}
+
+dxmt::dxil::MSLShader
+ToRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
+  dxmt::dxil::MSLShader shader;
+  shader.source = std::move(typed.source);
+  shader.entry_point = std::move(typed.entry_point);
+  shader.tg_size[0] = typed.tg_size[0];
+  shader.tg_size[1] = typed.tg_size[1];
+  shader.tg_size[2] = typed.tg_size[2];
+  shader.unsupported_intrinsics = typed.unsupported_intrinsics;
+  shader.unsupported_opcodes = typed.unsupported_opcodes;
+  shader.diagnostics = std::move(typed.diagnostics);
+  shader.diagnostics.push_back(str::format(
+      "MSLLowering runtime path active: typed_values=", typed.typed_value_count,
+      " auto_values=", typed.auto_value_count));
+  return shader;
+}
+
+bool AsyncPipelineCompileEnabled() {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA("DXMT_ASYNC_PIPELINE_COMPILE", value,
+                                      sizeof(value));
+  return len > 0 && value[0] && value[0] != '0';
+}
+
+uint32_t AsyncPipelineWorkerCount() {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA("DXMT_D3D12_PSO_WORKERS", value,
+                                      sizeof(value));
+  if (len == 0 || !value[0])
+    return 4;
+
+  char *end = nullptr;
+  unsigned long parsed = strtoul(value, &end, 10);
+  if (end == value || parsed == 0)
+    return 4;
+  return std::max(1u, std::min<uint32_t>((uint32_t)parsed, 12u));
+}
+
+class AsyncPipelineCompiler {
+public:
+  void Enqueue(MTLD3D12PipelineState *pso) {
+    EnsureStarted();
+    pso->AddRef();
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      m_queue.push_back(pso);
+    }
+    m_cv.notify_one();
+  }
+
+private:
+  void EnsureStarted() {
+    std::lock_guard<std::mutex> lock(m_start_mutex);
+    if (m_started)
+      return;
+    m_started = true;
+    m_worker_count = AsyncPipelineWorkerCount();
+    Logger::info(str::format("M12 async PSO compiler starting workers=",
+                             m_worker_count));
+    for (uint32_t i = 0; i < m_worker_count; i++) {
+      std::thread([this, i]() { WorkerLoop(i); }).detach();
     }
   }
+
+  void WorkerLoop(uint32_t worker_index) {
+    for (;;) {
+      MTLD3D12PipelineState *pso = nullptr;
+      {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_cv.wait(lock, [this]() { return !m_queue.empty(); });
+        pso = m_queue.front();
+        m_queue.pop_front();
+      }
+      if (!pso)
+        continue;
+      PSTRACE("PSO async worker[%u] compiling pso=%p", worker_index,
+              (void *)pso);
+      pso->RunAsyncCompile();
+      pso->Release();
+    }
+  }
+
+  std::mutex m_start_mutex;
+  bool m_started = false;
+  uint32_t m_worker_count = 0;
+  std::mutex m_mutex;
+  std::condition_variable m_cv;
+  std::deque<MTLD3D12PipelineState *> m_queue;
+};
+
+AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
+  static AsyncPipelineCompiler *compiler = new AsyncPipelineCompiler();
+  return *compiler;
+}
+
+size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
+                              ShaderType type,
+                              const D3D12_INPUT_LAYOUT_DESC *input_layout) {
+  size_t hash = 0;
+  hash = hash * 131 + (size_t)type;
+  if (bytecode && size > 0) {
+    const uint8_t *p = (const uint8_t *)bytecode;
+    for (SIZE_T i = 0; i < size; i++)
+      hash = hash * 131 + p[i];
+  }
+  if (type == ShaderType::Vertex && input_layout) {
+    hash = hash * 131 + input_layout->NumElements;
+    for (UINT i = 0; i < input_layout->NumElements; i++) {
+      const auto &el = input_layout->pInputElementDescs[i];
+      hash = hash * 131 + el.SemanticIndex;
+      hash = hash * 131 + el.Format;
+      hash = hash * 131 + el.InputSlot;
+      hash = hash * 131 + el.AlignedByteOffset;
+      hash = hash * 131 + el.InputSlotClass;
+      hash = hash * 131 + el.InstanceDataStepRate;
+      if (el.SemanticName) {
+        for (const char *s = el.SemanticName; *s; s++)
+          hash = hash * 131 + (unsigned char)*s;
+      }
+    }
+  }
+  return hash;
+}
+
+const char *PixelFormatManifestName(WMTPixelFormat format) {
+  switch (format) {
+  case WMTPixelFormatRGBA8Unorm: return "rgba8unorm";
+  case WMTPixelFormatRGBA8Unorm_sRGB: return "rgba8unorm_srgb";
+  case WMTPixelFormatBGRA8Unorm: return "bgra8unorm";
+  case WMTPixelFormatBGRA8Unorm_sRGB: return "bgra8unorm_srgb";
+  case WMTPixelFormatRGBA16Float: return "rgba16float";
+  case WMTPixelFormatRGBA32Float: return "rgba32float";
+  case WMTPixelFormatRGB10A2Unorm: return "rgb10a2unorm";
+  case WMTPixelFormatRG11B10Float: return "rg11b10float";
+  case WMTPixelFormatR8Unorm: return "r8unorm";
+  case WMTPixelFormatR16Float: return "r16float";
+  case WMTPixelFormatR32Float: return "r32float";
+  case WMTPixelFormatRG16Float: return "rg16float";
+  case WMTPixelFormatRG16Unorm: return "rg16unorm";
+  case WMTPixelFormatRG8Unorm: return "rg8unorm";
+  case WMTPixelFormatDepth16Unorm: return "depth16unorm";
+  case WMTPixelFormatDepth32Float: return "depth32float";
+  case WMTPixelFormatDepth24Unorm_Stencil8: return "depth24unorm_stencil8";
+  case WMTPixelFormatDepth32Float_Stencil8: return "depth32float_stencil8";
+  case WMTPixelFormatBC1_RGBA: return "bc1_rgba";
+  case WMTPixelFormatBC1_RGBA_sRGB: return "bc1_rgba_srgb";
+  case WMTPixelFormatBC2_RGBA: return "bc2_rgba";
+  case WMTPixelFormatBC2_RGBA_sRGB: return "bc2_rgba_srgb";
+  case WMTPixelFormatBC3_RGBA: return "bc3_rgba";
+  case WMTPixelFormatBC3_RGBA_sRGB: return "bc3_rgba_srgb";
+  case WMTPixelFormatBC4_RUnorm: return "bc4_runorm";
+  case WMTPixelFormatBC4_RSnorm: return "bc4_rsnorm";
+  case WMTPixelFormatBC5_RGUnorm: return "bc5_rgunorm";
+  case WMTPixelFormatBC5_RGSnorm: return "bc5_rgsnorm";
+  case WMTPixelFormatBC6H_RGBFloat: return "bc6h_rgbfloat";
+  case WMTPixelFormatBC6H_RGBUfloat: return "bc6h_rgbufloat";
+  case WMTPixelFormatBC7_RGBAUnorm: return "bc7_rgbaunorm";
+  case WMTPixelFormatBC7_RGBAUnorm_sRGB: return "bc7_rgbaunorm_srgb";
+  default: return "invalid";
+  }
+}
+
+size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
+                                    size_t gs_hash,
+                                    UINT num_render_targets,
+                                    const DXGI_FORMAT *rtv_formats,
+                                    DXGI_FORMAT dsv_format,
+                                    UINT sample_count,
+                                    UINT input_elements,
+                                    bool uses_stage_in) {
+  size_t hash = vs_hash;
+  hash = hash * 131 + ps_hash;
+  hash = hash * 131 + gs_hash;
+  hash = hash * 131 + num_render_targets;
+  for (UINT i = 0; i < 8; i++)
+    hash = hash * 131 + (size_t)rtv_formats[i];
+  hash = hash * 131 + (size_t)dsv_format;
+  hash = hash * 131 + (size_t)sample_count;
+  hash = hash * 131 + (size_t)input_elements;
+  hash = hash * 131 + (uses_stage_in ? 1 : 0);
+  return hash;
+}
+
+void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
+                            uint32_t threadgroup_width,
+                            uint32_t threadgroup_height,
+                            uint32_t threadgroup_depth,
+                            uintptr_t compute_function) {
+  char path[1024];
+  char metallib_path[1024];
+  FormatShaderCachePath(path, sizeof(path), "pso-compute-%016zx.json", cs_hash);
+  FormatShaderCachePath(metallib_path, sizeof(metallib_path), "%016zx.metallib", cs_hash);
+  EnsureShaderCacheDir();
+  FILE *df = fopen(path, "w");
+  if (!df)
+    return;
+
+  fprintf(df, "{\n");
+  fprintf(df, "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n");
+  fprintf(df, "  \"source\": \"dxmt-d3d12-runtime\",\n");
+  fprintf(df, "  \"pipelines\": [\n");
+  fprintf(df, "    {\n");
+  fprintf(df, "      \"name\": \"compute-%016zx\",\n", cs_hash);
+  fprintf(df, "      \"type\": \"compute\",\n");
+  fprintf(df, "      \"d3d12\": { \"cs_hash\": \"%016zx\", \"cs_bytes\": %zu },\n",
+          cs_hash, (size_t)cs_size);
+  fprintf(df, "      \"shader\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"cs_main\" },\n",
+          cs_hash, metallib_path);
+  fprintf(df, "      \"threadgroup_size\": [%llu, %llu, %llu],\n",
+          (unsigned long long)threadgroup_width,
+          (unsigned long long)threadgroup_height,
+          (unsigned long long)threadgroup_depth);
+  fprintf(df, "      \"metal\": { \"compute_function\": %llu }\n",
+          (unsigned long long)compute_function);
+  fprintf(df, "    }\n");
+  fprintf(df, "  ]\n");
+  fprintf(df, "}\n");
+  fclose(df);
+  PSTRACE("Compute PSO manifest written to %s", path);
+}
+
+void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
+                           size_t gs_hash, SIZE_T vs_size, SIZE_T ps_size,
+                           SIZE_T gs_size, UINT num_render_targets,
+                           const DXGI_FORMAT *rtv_formats,
+                           DXGI_FORMAT dsv_format, UINT sample_count,
+                           UINT input_elements, bool uses_stage_in,
+                           bool uses_geometry_mesh,
+                           bool rasterization_enabled,
+                           uintptr_t vertex_function,
+                           uintptr_t fragment_function) {
+  char path[1024];
+  char vs_metallib_path[1024];
+  char ps_metallib_path[1024];
+  FormatShaderCachePath(path, sizeof(path), "pso-render-%016zx.json", pso_hash);
+  FormatShaderCachePath(vs_metallib_path, sizeof(vs_metallib_path), "%016zx.metallib", vs_hash);
+  FormatShaderCachePath(ps_metallib_path, sizeof(ps_metallib_path), "%016zx.metallib", ps_hash);
+  EnsureShaderCacheDir();
+  FILE *df = fopen(path, "w");
+  if (!df)
+    return;
+
+  WMTPixelFormat depth_format =
+      MTLD3D12PipelineState::DXGIToMTLPixelFormat(dsv_format);
+  WMTPixelFormat stencil_format = WMTPixelFormatInvalid;
+  if (dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+      dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+    stencil_format = depth_format;
+
+  fprintf(df, "{\n");
+  fprintf(df, "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n");
+  fprintf(df, "  \"source\": \"dxmt-d3d12-runtime\",\n");
+  fprintf(df, "  \"pipelines\": [\n");
+  fprintf(df, "    {\n");
+  fprintf(df, "      \"name\": \"render-%016zx\",\n", pso_hash);
+  fprintf(df, "      \"type\": \"render\",\n");
+  fprintf(df, "      \"d3d12\": { \"vs_hash\": \"%016zx\", \"ps_hash\": \"%016zx\", \"gs_hash\": \"%016zx\", \"vs_bytes\": %zu, \"ps_bytes\": %zu, \"gs_bytes\": %zu, \"num_render_targets\": %u, \"dsv_format\": %u, \"input_elements\": %u },\n",
+          vs_hash, ps_hash, gs_hash, (size_t)vs_size, (size_t)ps_size,
+          (size_t)gs_size, num_render_targets, (unsigned)dsv_format,
+          input_elements);
+  fprintf(df, "      \"color_formats\": [");
+  for (UINT i = 0; i < 8; i++) {
+    if (i)
+      fprintf(df, ", ");
+    fprintf(df, "\"%s\"",
+            PixelFormatManifestName(
+                MTLD3D12PipelineState::DXGIToMTLPixelFormat(rtv_formats[i])));
+  }
+  fprintf(df, "],\n");
+  fprintf(df, "      \"depth_format\": \"%s\",\n",
+          PixelFormatManifestName(depth_format));
+  fprintf(df, "      \"stencil_format\": \"%s\",\n",
+          PixelFormatManifestName(stencil_format));
+  fprintf(df, "      \"sample_count\": %u,\n", sample_count ? sample_count : 1);
+  fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"vs_main\" },\n",
+          vs_hash, vs_metallib_path);
+  if (ps_size > 0) {
+    fprintf(df, "      \"fragment\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"ps_main\" },\n",
+            ps_hash, ps_metallib_path);
+  } else {
+    fprintf(df, "      \"fragment\": null,\n");
+  }
+  fprintf(df, "      \"metal\": { \"vertex_function\": %llu, \"fragment_function\": %llu, \"uses_stage_in\": %s, \"uses_geometry_mesh\": %s, \"rasterization_enabled\": %s }\n",
+          (unsigned long long)vertex_function,
+          (unsigned long long)fragment_function,
+          uses_stage_in ? "true" : "false",
+          uses_geometry_mesh ? "true" : "false",
+          rasterization_enabled ? "true" : "false");
+  fprintf(df, "    }\n");
+  fprintf(df, "  ]\n");
+  fprintf(df, "}\n");
+  fclose(df);
+  PSTRACE("Render PSO manifest written to %s", path);
 }
 
 void DumpShaderBlob(const char *path, const void *bytecode, SIZE_T size) {
@@ -411,1555 +387,101 @@ void DumpShaderText(const char *path, const char *text) {
   }
 }
 
-std::string ReadTextFile(const char *path) {
-  if (!path)
-    return {};
-
-  FILE *file = fopen(path, "rb");
-  if (!file)
-    return {};
-
-  fseek(file, 0, SEEK_END);
-  long size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-  if (size <= 0) {
-    fclose(file);
-    return {};
-  }
-
-  std::string text;
-  text.resize((size_t)size);
-  size_t read = fread(text.data(), 1, (size_t)size, file);
-  fclose(file);
-  text.resize(read);
-  return text;
-}
-
-bool ExtractJsonStringValue(std::string_view text, const char *key,
-                            std::string &out_value) {
-  std::string key_token = str::format("\"", key, "\"");
-  size_t key_pos = text.find(key_token);
-  if (key_pos == std::string_view::npos)
-    return false;
-
-  size_t colon = text.find(':', key_pos + key_token.size());
-  if (colon == std::string_view::npos)
-    return false;
-
-  size_t first_quote = text.find('"', colon + 1);
-  if (first_quote == std::string_view::npos)
-    return false;
-
-  size_t second_quote = text.find('"', first_quote + 1);
-  if (second_quote == std::string_view::npos || second_quote <= first_quote)
-    return false;
-
-  out_value.assign(
-      text.substr(first_quote + 1, second_quote - first_quote - 1));
-  return true;
-}
-
-bool ExtractJsonInt3Value(std::string_view text, const char *key, int &x,
-                          int &y, int &z) {
-  std::string key_token = str::format("\"", key, "\"");
-  size_t key_pos = text.find(key_token);
-  if (key_pos == std::string_view::npos)
-    return false;
-
-  size_t open = text.find('[', key_pos + key_token.size());
-  size_t close = open == std::string_view::npos ? std::string_view::npos
-                                                : text.find(']', open + 1);
-  if (open == std::string_view::npos || close == std::string_view::npos ||
-      close <= open)
-    return false;
-
-  std::string values(text.substr(open + 1, close - open - 1));
-  return sscanf(values.c_str(), "%d , %d , %d", &x, &y, &z) == 3 ||
-         sscanf(values.c_str(), "%d,%d,%d", &x, &y, &z) == 3;
-}
-
-bool ExtractJsonUIntValue(std::string_view text, const char *key,
-                          uint32_t &out_value) {
-  std::string key_token = str::format("\"", key, "\"");
-  size_t key_pos = text.find(key_token);
-  if (key_pos == std::string_view::npos)
-    return false;
-
-  size_t colon = text.find(':', key_pos + key_token.size());
-  if (colon == std::string_view::npos)
-    return false;
-
-  const char *value_begin = text.data() + colon + 1;
-  const char *text_end = text.data() + text.size();
-  while (value_begin < text_end && std::isspace((unsigned char)*value_begin))
-    value_begin++;
-
-  char *end = nullptr;
-  unsigned long parsed = std::strtoul(value_begin, &end, 10);
-  if (end == value_begin)
-    return false;
-
-  out_value = (uint32_t)parsed;
-  return true;
-}
-
-bool ParseAttributeRegisterName(std::string_view name, uint32_t &out_register) {
-  static constexpr std::string_view kPrefix = "attribute";
-  if (name.size() <= kPrefix.size() ||
-      name.substr(0, kPrefix.size()) != kPrefix)
-    return false;
-
-  uint32_t value = 0;
-  for (size_t i = kPrefix.size(); i < name.size(); i++) {
-    unsigned char ch = (unsigned char)name[i];
-    if (!std::isdigit(ch))
-      return false;
-    value = value * 10 + (uint32_t)(ch - '0');
-  }
-
-  out_register = value;
-  return true;
-}
-
-bool ParseSemanticNameWithTrailingIndex(std::string_view name,
-                                        std::string &out_semantic,
-                                        uint32_t &out_index) {
-  if (name.empty())
-    return false;
-
-  size_t digit_start = name.size();
-  while (digit_start > 0 &&
-         std::isdigit((unsigned char)name[digit_start - 1]))
-    digit_start--;
-  if (digit_start == name.size() || digit_start == 0)
-    return false;
-
-  uint32_t value = 0;
-  for (size_t i = digit_start; i < name.size(); i++)
-    value = value * 10 + (uint32_t)(name[i] - '0');
-
-  out_semantic.assign(name.substr(0, digit_start));
-  out_index = value;
-  return !out_semantic.empty();
-}
-
-bool StageInSemanticMatchesInputElement(
-    const StageInVertexAttributeInfo &stage_in_attr,
-    const D3D12_INPUT_ELEMENT_DESC &element) {
-  if (!element.SemanticName || stage_in_attr.semantic_name.empty())
-    return false;
-
-  if (strcasecmp(element.SemanticName,
-                 stage_in_attr.semantic_name.c_str()) == 0)
-    return true;
-
-  std::string reflected_base;
-  uint32_t reflected_semantic_index = 0;
-  if (ParseSemanticNameWithTrailingIndex(stage_in_attr.semantic_name,
-                                         reflected_base,
-                                         reflected_semantic_index)) {
-    return strcasecmp(element.SemanticName, reflected_base.c_str()) == 0 &&
-           element.SemanticIndex == reflected_semantic_index;
-  }
-
-  uint32_t reflected_attribute_index = 0;
-  if (!ParseAttributeRegisterName(stage_in_attr.semantic_name,
-                                  reflected_attribute_index))
-    return false;
-
-  return strcasecmp(element.SemanticName, "ATTRIBUTE") == 0 &&
-         element.SemanticIndex == reflected_attribute_index;
-}
-
-WMTAttributeFormat ReflectionElementTypeToFormat(std::string_view element_type,
-                                                 uint32_t column_count) {
-  std::string normalized(element_type);
-  for (char &ch : normalized)
-    ch = (char)std::tolower((unsigned char)ch);
-
-  if (column_count == 0) {
-    if (!normalized.empty()) {
-      char last = normalized.back();
-      if (last >= '1' && last <= '4')
-        column_count = (uint32_t)(last - '0');
-    }
-    if (column_count == 0)
-      column_count = 1;
-  }
-
-  const bool is_float = normalized == "float" || normalized == "float32" ||
-                        normalized == "single" || normalized == "half" ||
-                        normalized == "float16";
-  const bool is_half = normalized == "half" || normalized == "float16";
-  const bool is_uint = normalized == "uint" || normalized == "uint32" ||
-                       normalized == "unsignedint" ||
-                       normalized == "unsignedint32";
-  const bool is_sint = normalized == "int" || normalized == "int32" ||
-                       normalized == "sint" || normalized == "sint32";
-
-  switch (column_count) {
-  case 1:
-    if (is_half)
-      return WMTAttributeFormatHalf;
-    if (is_float)
-      return WMTAttributeFormatFloat;
-    if (is_uint)
-      return WMTAttributeFormatUInt;
-    if (is_sint)
-      return WMTAttributeFormatInt;
-    break;
-  case 2:
-    if (is_half)
-      return WMTAttributeFormatHalf2;
-    if (is_float)
-      return WMTAttributeFormatFloat2;
-    if (is_uint)
-      return WMTAttributeFormatUInt2;
-    if (is_sint)
-      return WMTAttributeFormatInt2;
-    break;
-  case 3:
-    if (is_half)
-      return WMTAttributeFormatHalf3;
-    if (is_float)
-      return WMTAttributeFormatFloat3;
-    if (is_uint)
-      return WMTAttributeFormatUInt3;
-    if (is_sint)
-      return WMTAttributeFormatInt3;
-    break;
-  case 4:
-    if (is_half)
-      return WMTAttributeFormatHalf4;
-    if (is_float)
-      return WMTAttributeFormatFloat4;
-    if (is_uint)
-      return WMTAttributeFormatUInt4;
-    if (is_sint)
-      return WMTAttributeFormatInt4;
-    break;
-  default:
-    break;
-  }
-
-  return WMTAttributeFormatInvalid;
-}
-
-bool BufferContainsAsciiToken(const void *data, SIZE_T size,
-                              std::string_view token) {
-  if (!data || !size || token.empty() || token.size() > size)
-    return false;
-
-  const char *bytes = (const char *)data;
-  for (size_t i = 0; i + token.size() <= size; i++) {
-    if (memcmp(bytes + i, token.data(), token.size()) == 0)
-      return true;
-  }
-  return false;
-}
-
-bool InferGeometryPassThroughFromDxbcSignatures(
-    const void *bytecode, SIZE_T size, uint32_t &out_passthrough,
-    std::string &reason) {
-  using namespace microsoft;
-
-  out_passthrough = ~0u;
-  reason.clear();
-
-  CSignatureParser input_parser;
-  CSignatureParser5 output_parser;
-  HRESULT input_hr = DXBCGetInputSignature(bytecode, &input_parser);
-  HRESULT output_hr = DXBCGetOutputSignature(bytecode, &output_parser);
-  if (FAILED(input_hr) || FAILED(output_hr) || !output_parser.RastSignature()) {
-    reason = str::format("sig hr in=0x", str::format("%08lx", (unsigned long)input_hr),
-                         " out=0x", str::format("%08lx", (unsigned long)output_hr));
-    return false;
-  }
-
-  if (output_parser.NumStreams() > 1 || output_parser.RasterizedStream()) {
-    reason = str::format("streams=", output_parser.NumStreams(),
-                         " rasterized=", output_parser.RasterizedStream());
-    return false;
-  }
-
-  const D3D11_SIGNATURE_PARAMETER *input_params = nullptr;
-  const D3D11_SIGNATURE_PARAMETER *output_params = nullptr;
-  size_t num_input = input_parser.GetParameters(&input_params);
-  size_t num_output = output_parser.Signature(0)->GetParameters(&output_params);
-  MTL_GEOMETRY_SHADER_PASS_THROUGH data = {};
-  data.RenderTargetArrayIndexComponent = 255;
-  data.RenderTargetArrayIndexReg = 255;
-  data.ViewportArrayIndexComponent = 255;
-  data.ViewportArrayIndexReg = 255;
-
-  bool saw_rt_array = false;
-  bool saw_viewport_array = false;
-
-  auto signature_output_matches_input = [](const D3D11_SIGNATURE_PARAMETER &out,
-                                           const D3D11_SIGNATURE_PARAMETER &in) {
-    if ((out.Mask & in.Mask) != out.Mask)
-      return false;
-
-    if (out.SystemValue != D3D10_SB_NAME_UNDEFINED)
-      return out.SystemValue == in.SystemValue;
-
-    return out.SemanticIndex == in.SemanticIndex && out.SemanticName &&
-           in.SemanticName && strcasecmp(out.SemanticName, in.SemanticName) == 0;
-  };
-
-  for (size_t i = 0; i < num_output; i++) {
-    bool matched = false;
-    const D3D11_SIGNATURE_PARAMETER &out = output_params[i];
-    if (out.SystemValue == D3D10_SB_NAME_RENDER_TARGET_ARRAY_INDEX) {
-      data.RenderTargetArrayIndexReg = out.Register;
-      data.RenderTargetArrayIndexComponent = __builtin_ctz(out.Mask);
-      saw_rt_array = true;
-      continue;
-    }
-    if (out.SystemValue == D3D10_SB_NAME_VIEWPORT_ARRAY_INDEX) {
-      data.ViewportArrayIndexReg = out.Register;
-      data.ViewportArrayIndexComponent = __builtin_ctz(out.Mask);
-      saw_viewport_array = true;
-      continue;
-    }
-
-    for (size_t j = 0; j < num_input; j++) {
-      const D3D11_SIGNATURE_PARAMETER &in = input_params[j];
-      if (signature_output_matches_input(out, in)) {
-        matched = true;
-        break;
-      }
-    }
-    if (!matched) {
-      reason = str::format("unmatched output reg=", out.Register,
-                           " sys=", (unsigned)out.SystemValue, " sem=",
-                           out.SemanticName ? out.SemanticName : "?",
-                           out.SemanticIndex, " mask=", (unsigned)out.Mask);
-      return false;
-    }
-  }
-
-  if (!saw_rt_array && !saw_viewport_array) {
-    reason = "no layer system-value passthrough outputs";
-    return false;
-  }
-
-  if (!BufferContainsAsciiToken(bytecode, size, "WriteToSliceMainGS") &&
-      !BufferContainsAsciiToken(bytecode, size, "SV_RenderTargetArrayIndex")) {
-    reason = "signature match but no known slice marker";
-    return false;
-  }
-
-  memcpy(&out_passthrough, &data, sizeof(out_passthrough));
-  reason = str::format("rtai_reg=", (unsigned)data.RenderTargetArrayIndexReg,
-                       " rtai_comp=", (unsigned)data.RenderTargetArrayIndexComponent,
-                       " vpai_reg=", (unsigned)data.ViewportArrayIndexReg,
-                       " vpai_comp=", (unsigned)data.ViewportArrayIndexComponent);
-  return true;
-}
-
-std::vector<StageInVertexAttributeInfo>
-ParseVertexInputReflection(std::string_view text) {
-  std::vector<StageInVertexAttributeInfo> attributes;
-
-  size_t key_pos = text.find("\"vertex_inputs\"");
-  if (key_pos == std::string_view::npos)
-    return attributes;
-
-  size_t array_open = text.find('[', key_pos);
-  size_t array_close = array_open == std::string_view::npos
-                           ? std::string_view::npos
-                           : text.find(']', array_open + 1);
-  if (array_open == std::string_view::npos ||
-      array_close == std::string_view::npos || array_close <= array_open)
-    return attributes;
-
-  size_t cursor = array_open + 1;
-  while (cursor < array_close) {
-    size_t object_open = text.find('{', cursor);
-    if (object_open == std::string_view::npos || object_open >= array_close)
-      break;
-
-    size_t object_close = text.find('}', object_open + 1);
-    if (object_close == std::string_view::npos || object_close > array_close)
-      break;
-
-    std::string_view object =
-        text.substr(object_open, object_close - object_open + 1);
-    std::string name;
-    if (ExtractJsonStringValue(object, "name", name)) {
-      uint32_t register_index = 0;
-      bool name_is_attribute = ParseAttributeRegisterName(name, register_index);
-      std::string semantic_base;
-      uint32_t semantic_index = 0;
-      if (!name_is_attribute &&
-          ParseSemanticNameWithTrailingIndex(name, semantic_base,
-                                             semantic_index)) {
-        register_index = (uint32_t)attributes.size();
-      }
-      if (name_is_attribute || !semantic_base.empty()) {
-        StageInVertexAttributeInfo reflected = {};
-        reflected.register_index = register_index;
-        reflected.semantic_name = semantic_base.empty() ? name : semantic_base;
-        reflected.attribute_index =
-            kMetalShaderConverterStageInAttributeBase + register_index;
-
-        size_t index_pos = object.find("\"index\"");
-        if (name_is_attribute && index_pos != std::string_view::npos) {
-          size_t colon = object.find(':', index_pos + 7);
-          if (colon != std::string_view::npos) {
-            const char *value_begin = object.data() + colon + 1;
-            while ((size_t)(value_begin - object.data()) < object.size() &&
-                   std::isspace((unsigned char)*value_begin))
-              value_begin++;
-            char *end = nullptr;
-            unsigned long parsed = std::strtoul(value_begin, &end, 10);
-            if (end != value_begin && parsed == register_index)
-              reflected.attribute_index =
-                  kMetalShaderConverterStageInAttributeBase + (uint32_t)parsed;
-          }
-        }
-
-        uint32_t column_count = 0;
-        ExtractJsonUIntValue(object, "columnCount", column_count) ||
-            ExtractJsonUIntValue(object, "columns", column_count) ||
-            ExtractJsonUIntValue(object, "componentCount", column_count) ||
-            ExtractJsonUIntValue(object, "components", column_count) ||
-            ExtractJsonUIntValue(object, "vectorSize", column_count);
-
-        std::string element_type;
-        ExtractJsonStringValue(object, "elementType", element_type) ||
-            ExtractJsonStringValue(object, "componentType", element_type) ||
-            ExtractJsonStringValue(object, "scalarType", element_type) ||
-            ExtractJsonStringValue(object, "type", element_type);
-        reflected.format =
-            ReflectionElementTypeToFormat(element_type, column_count);
-        attributes.push_back(reflected);
-      }
-    }
-
-    cursor = object_close + 1;
-  }
-
-  return attributes;
-}
-
-bool ParseMetalShaderConverterArgumentType(std::string_view type,
-                                           SM50BindingType &out_type) {
-  if (type == "CBV" || type == "ConstantBuffer") {
-    out_type = SM50BindingType::ConstantBuffer;
-    return true;
-  }
-  if (type == "Sampler") {
-    out_type = SM50BindingType::Sampler;
-    return true;
-  }
-  if (type == "SRV") {
-    out_type = SM50BindingType::SRV;
-    return true;
-  }
-  if (type == "UAV") {
-    out_type = SM50BindingType::UAV;
-    return true;
-  }
-  return false;
-}
-
-std::vector<MTL_SM50_SHADER_ARGUMENT>
-ParseTopLevelArgumentBufferReflection(std::string_view text,
-                                      MTL_SHADER_REFLECTION &reflection) {
-  std::vector<MTL_SM50_SHADER_ARGUMENT> args;
-
-  size_t key_pos = text.find("\"TopLevelArgumentBuffer\"");
-  if (key_pos == std::string_view::npos)
-    return args;
-
-  size_t array_open = text.find('[', key_pos);
-  size_t array_close = array_open == std::string_view::npos
-                           ? std::string_view::npos
-                           : text.find(']', array_open + 1);
-  if (array_open == std::string_view::npos ||
-      array_close == std::string_view::npos || array_close <= array_open)
-    return args;
-
-  uint32_t max_qword = 0;
-  size_t cursor = array_open + 1;
-  while (cursor < array_close) {
-    size_t object_open = text.find('{', cursor);
-    if (object_open == std::string_view::npos || object_open >= array_close)
-      break;
-
-    size_t object_close = text.find('}', object_open + 1);
-    if (object_close == std::string_view::npos || object_close > array_close)
-      break;
-
-    std::string_view object =
-        text.substr(object_open, object_close - object_open + 1);
-    std::string type_name;
-    uint32_t slot = 0, space = 0, elt_offset = 0, size = 0;
-    SM50BindingType type = SM50BindingType::SRV;
-    if (ExtractJsonStringValue(object, "Type", type_name) &&
-        ParseMetalShaderConverterArgumentType(type_name, type) &&
-        ExtractJsonUIntValue(object, "Slot", slot) &&
-        ExtractJsonUIntValue(object, "EltOffset", elt_offset)) {
-      ExtractJsonUIntValue(object, "Space", space);
-      ExtractJsonUIntValue(object, "Size", size);
-
-      MTL_SM50_SHADER_ARGUMENT arg = {};
-      arg.Type = type;
-      arg.SM50BindingSlot = slot;
-      arg.SM50RegisterSpace = space;
-      arg.StructurePtrOffset = elt_offset / 8;
-      arg.Flags = (MTL_SM50_SHADER_ARGUMENT_FLAG)0;
-      args.push_back(arg);
-
-      uint32_t entry_qwords = (size + 7) / 8;
-      if (entry_qwords == 0)
-        entry_qwords = type == SM50BindingType::Sampler ? 3 : 2;
-      max_qword = std::max(max_qword, arg.StructurePtrOffset + entry_qwords);
-
-      switch (type) {
-      case SM50BindingType::ConstantBuffer:
-        if (slot < 16)
-          reflection.ConstantBufferSlotMask |= (uint16_t)(1u << slot);
-        break;
-      case SM50BindingType::Sampler:
-        if (slot < 16)
-          reflection.SamplerSlotMask |= (uint16_t)(1u << slot);
-        break;
-      case SM50BindingType::SRV:
-        if (slot < 64)
-          reflection.SRVSlotMaskLo |= 1ull << slot;
-        else if (slot < 128)
-          reflection.SRVSlotMaskHi |= 1ull << (slot - 64);
-        break;
-      case SM50BindingType::UAV:
-        if (slot < 64)
-          reflection.UAVSlotMask |= 1ull << slot;
-        break;
-      }
-    }
-
-    cursor = object_close + 1;
-  }
-
-  if (!args.empty()) {
-    reflection.NumArguments = (uint32_t)args.size();
-    reflection.ArgumentBufferBindIndex = 2;
-    reflection.ArgumentTableQwords = max_qword;
-  }
-
-  return args;
-}
-
-uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size);
-
-const char *DXGIFormatToMetalShaderConverterName(DXGI_FORMAT format) {
-  switch (format) {
-  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-    return "R32G32B32A32_TYPELESS";
-  case DXGI_FORMAT_R32G32B32A32_FLOAT:
-    return "R32G32B32A32_FLOAT";
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-    return "R32G32B32A32_UINT";
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-    return "R32G32B32A32_SINT";
-  case DXGI_FORMAT_R32G32B32_TYPELESS:
-    return "R32G32B32_TYPELESS";
-  case DXGI_FORMAT_R32G32B32_FLOAT:
-    return "R32G32B32_FLOAT";
-  case DXGI_FORMAT_R32G32B32_UINT:
-    return "R32G32B32_UINT";
-  case DXGI_FORMAT_R32G32B32_SINT:
-    return "R32G32B32_SINT";
-  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-    return "R16G16B16A16_TYPELESS";
-  case DXGI_FORMAT_R16G16B16A16_FLOAT:
-    return "R16G16B16A16_FLOAT";
-  case DXGI_FORMAT_R16G16B16A16_UNORM:
-    return "R16G16B16A16_UNORM";
-  case DXGI_FORMAT_R16G16B16A16_UINT:
-    return "R16G16B16A16_UINT";
-  case DXGI_FORMAT_R16G16B16A16_SNORM:
-    return "R16G16B16A16_SNORM";
-  case DXGI_FORMAT_R16G16B16A16_SINT:
-    return "R16G16B16A16_SINT";
-  case DXGI_FORMAT_R32G32_TYPELESS:
-    return "R32G32_TYPELESS";
-  case DXGI_FORMAT_R32G32_FLOAT:
-    return "R32G32_FLOAT";
-  case DXGI_FORMAT_R32G32_UINT:
-    return "R32G32_UINT";
-  case DXGI_FORMAT_R32G32_SINT:
-    return "R32G32_SINT";
-  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-    return "R10G10B10A2_TYPELESS";
-  case DXGI_FORMAT_R10G10B10A2_UNORM:
-    return "R10G10B10A2_UNORM";
-  case DXGI_FORMAT_R10G10B10A2_UINT:
-    return "R10G10B10A2_UINT";
-  case DXGI_FORMAT_R11G11B10_FLOAT:
-    return "R11G11B10_FLOAT";
-  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-    return "R8G8B8A8_TYPELESS";
-  case DXGI_FORMAT_R8G8B8A8_UNORM:
-    return "R8G8B8A8_UNORM";
-  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-    return "R8G8B8A8_UNORM_SRGB";
-  case DXGI_FORMAT_R8G8B8A8_UINT:
-    return "R8G8B8A8_UINT";
-  case DXGI_FORMAT_R8G8B8A8_SNORM:
-    return "R8G8B8A8_SNORM";
-  case DXGI_FORMAT_R8G8B8A8_SINT:
-    return "R8G8B8A8_SINT";
-  case DXGI_FORMAT_R16G16_TYPELESS:
-    return "R16G16_TYPELESS";
-  case DXGI_FORMAT_R16G16_FLOAT:
-    return "R16G16_FLOAT";
-  case DXGI_FORMAT_R16G16_UNORM:
-    return "R16G16_UNORM";
-  case DXGI_FORMAT_R16G16_UINT:
-    return "R16G16_UINT";
-  case DXGI_FORMAT_R16G16_SNORM:
-    return "R16G16_SNORM";
-  case DXGI_FORMAT_R16G16_SINT:
-    return "R16G16_SINT";
-  case DXGI_FORMAT_R32_TYPELESS:
-    return "R32_TYPELESS";
-  case DXGI_FORMAT_R32_FLOAT:
-    return "R32_FLOAT";
-  case DXGI_FORMAT_R32_UINT:
-    return "R32_UINT";
-  case DXGI_FORMAT_R32_SINT:
-    return "R32_SINT";
-  case DXGI_FORMAT_R8G8_TYPELESS:
-    return "R8G8_TYPELESS";
-  case DXGI_FORMAT_R8G8_UNORM:
-    return "R8G8_UNORM";
-  case DXGI_FORMAT_R8G8_UINT:
-    return "R8G8_UINT";
-  case DXGI_FORMAT_R8G8_SNORM:
-    return "R8G8_SNORM";
-  case DXGI_FORMAT_R8G8_SINT:
-    return "R8G8_SINT";
-  case DXGI_FORMAT_R16_TYPELESS:
-    return "R16_TYPELESS";
-  case DXGI_FORMAT_R16_FLOAT:
-    return "R16_FLOAT";
-  case DXGI_FORMAT_R16_UNORM:
-    return "R16_UNORM";
-  case DXGI_FORMAT_R16_UINT:
-    return "R16_UINT";
-  case DXGI_FORMAT_R16_SNORM:
-    return "R16_SNORM";
-  case DXGI_FORMAT_R16_SINT:
-    return "R16_SINT";
-  case DXGI_FORMAT_R8_TYPELESS:
-    return "R8_TYPELESS";
-  case DXGI_FORMAT_R8_UNORM:
-    return "R8_UNORM";
-  case DXGI_FORMAT_R8_UINT:
-    return "R8_UINT";
-  case DXGI_FORMAT_R8_SNORM:
-    return "R8_SNORM";
-  case DXGI_FORMAT_R8_SINT:
-    return "R8_SINT";
-  case DXGI_FORMAT_A8_UNORM:
-    return "A8_UNORM";
-  case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
-    return "R9G9B9E5_SHAREDEXP";
-  case DXGI_FORMAT_R8G8_B8G8_UNORM:
-    return "R8G8_B8G8_UNORM";
-  case DXGI_FORMAT_G8R8_G8B8_UNORM:
-    return "G8R8_G8B8_UNORM";
-  case DXGI_FORMAT_B5G6R5_UNORM:
-    return "B5G6R5_UNORM";
-  case DXGI_FORMAT_B5G5R5A1_UNORM:
-    return "B5G5R5A1_UNORM";
-  case DXGI_FORMAT_B8G8R8A8_UNORM:
-    return "B8G8R8A8_UNORM";
-  case DXGI_FORMAT_B8G8R8X8_UNORM:
-    return "B8G8R8X8_UNORM";
-  case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
-    return "R10G10B10_XR_BIAS_A2_UNORM";
-  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-    return "B8G8R8A8_TYPELESS";
-  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-    return "B8G8R8A8_UNORM_SRGB";
-  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
-    return "B8G8R8X8_TYPELESS";
-  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
-    return "B8G8R8X8_UNORM_SRGB";
-  case DXGI_FORMAT_B4G4R4A4_UNORM:
-    return "B4G4R4A4_UNORM";
-  default:
-    return nullptr;
-  }
-}
-
-uint32_t DXGIFormatVertexByteSize(DXGI_FORMAT format) {
-  switch (format) {
-  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-  case DXGI_FORMAT_R32G32B32A32_FLOAT:
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-    return 16;
-  case DXGI_FORMAT_R32G32B32_TYPELESS:
-  case DXGI_FORMAT_R32G32B32_FLOAT:
-  case DXGI_FORMAT_R32G32B32_UINT:
-  case DXGI_FORMAT_R32G32B32_SINT:
-    return 12;
-  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-  case DXGI_FORMAT_R16G16B16A16_FLOAT:
-  case DXGI_FORMAT_R16G16B16A16_UNORM:
-  case DXGI_FORMAT_R16G16B16A16_UINT:
-  case DXGI_FORMAT_R16G16B16A16_SNORM:
-  case DXGI_FORMAT_R16G16B16A16_SINT:
-  case DXGI_FORMAT_R32G32_TYPELESS:
-  case DXGI_FORMAT_R32G32_FLOAT:
-  case DXGI_FORMAT_R32G32_UINT:
-  case DXGI_FORMAT_R32G32_SINT:
-    return 8;
-  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-  case DXGI_FORMAT_R10G10B10A2_UNORM:
-  case DXGI_FORMAT_R10G10B10A2_UINT:
-  case DXGI_FORMAT_R11G11B10_FLOAT:
-  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-  case DXGI_FORMAT_R8G8B8A8_UNORM:
-  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-  case DXGI_FORMAT_R8G8B8A8_UINT:
-  case DXGI_FORMAT_R8G8B8A8_SNORM:
-  case DXGI_FORMAT_R8G8B8A8_SINT:
-  case DXGI_FORMAT_R16G16_TYPELESS:
-  case DXGI_FORMAT_R16G16_FLOAT:
-  case DXGI_FORMAT_R16G16_UNORM:
-  case DXGI_FORMAT_R16G16_UINT:
-  case DXGI_FORMAT_R16G16_SNORM:
-  case DXGI_FORMAT_R16G16_SINT:
-  case DXGI_FORMAT_R32_TYPELESS:
-  case DXGI_FORMAT_R32_FLOAT:
-  case DXGI_FORMAT_R32_UINT:
-  case DXGI_FORMAT_R32_SINT:
-  case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
-  case DXGI_FORMAT_R8G8_B8G8_UNORM:
-  case DXGI_FORMAT_G8R8_G8B8_UNORM:
-  case DXGI_FORMAT_B8G8R8A8_UNORM:
-  case DXGI_FORMAT_B8G8R8X8_UNORM:
-  case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
-  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
-  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
-    return 4;
-  case DXGI_FORMAT_R8G8_TYPELESS:
-  case DXGI_FORMAT_R8G8_UNORM:
-  case DXGI_FORMAT_R8G8_UINT:
-  case DXGI_FORMAT_R8G8_SNORM:
-  case DXGI_FORMAT_R8G8_SINT:
-  case DXGI_FORMAT_R16_TYPELESS:
-  case DXGI_FORMAT_R16_FLOAT:
-  case DXGI_FORMAT_R16_UNORM:
-  case DXGI_FORMAT_R16_UINT:
-  case DXGI_FORMAT_R16_SNORM:
-  case DXGI_FORMAT_R16_SINT:
-  case DXGI_FORMAT_B5G6R5_UNORM:
-  case DXGI_FORMAT_B5G5R5A1_UNORM:
-  case DXGI_FORMAT_B4G4R4A4_UNORM:
-    return 2;
-  case DXGI_FORMAT_R8_TYPELESS:
-  case DXGI_FORMAT_R8_UNORM:
-  case DXGI_FORMAT_R8_UINT:
-  case DXGI_FORMAT_R8_SNORM:
-  case DXGI_FORMAT_R8_SINT:
-  case DXGI_FORMAT_A8_UNORM:
-    return 1;
-  default:
-    return 0;
-  }
-}
-
-dxmt::dxil::MSLScalarKind SignatureComponentToMSLScalar(
-    microsoft::D3D10_SB_REGISTER_COMPONENT_TYPE component_type) {
-  switch (component_type) {
-  case microsoft::D3D10_SB_REGISTER_COMPONENT_UINT32:
-    return dxmt::dxil::MSLScalarKind::UInt;
-  case microsoft::D3D10_SB_REGISTER_COMPONENT_SINT32:
-    return dxmt::dxil::MSLScalarKind::SInt;
-  case microsoft::D3D10_SB_REGISTER_COMPONENT_FLOAT32:
-  default:
-    return dxmt::dxil::MSLScalarKind::Float;
-  }
-}
-
-uint32_t SignatureMaskComponentCount(BYTE mask) {
-  uint32_t count = 0;
-  for (uint32_t bit = 0; bit < 4; bit++) {
-    if (mask & (1u << bit))
-      count = bit + 1;
-  }
-  return count ? count : 4;
-}
-
-uint32_t DXGIFormatComponentCount(DXGI_FORMAT format) {
-  switch (format) {
-  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-  case DXGI_FORMAT_R32G32B32A32_FLOAT:
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-  case DXGI_FORMAT_R16G16B16A16_FLOAT:
-  case DXGI_FORMAT_R16G16B16A16_UNORM:
-  case DXGI_FORMAT_R16G16B16A16_UINT:
-  case DXGI_FORMAT_R16G16B16A16_SNORM:
-  case DXGI_FORMAT_R16G16B16A16_SINT:
-  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-  case DXGI_FORMAT_R10G10B10A2_UNORM:
-  case DXGI_FORMAT_R10G10B10A2_UINT:
-  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-  case DXGI_FORMAT_R8G8B8A8_UNORM:
-  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-  case DXGI_FORMAT_R8G8B8A8_UINT:
-  case DXGI_FORMAT_R8G8B8A8_SNORM:
-  case DXGI_FORMAT_R8G8B8A8_SINT:
-  case DXGI_FORMAT_B8G8R8A8_UNORM:
-  case DXGI_FORMAT_B8G8R8X8_UNORM:
-  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-  case DXGI_FORMAT_B8G8R8X8_TYPELESS:
-  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
-  case DXGI_FORMAT_B4G4R4A4_UNORM:
-    return 4;
-  case DXGI_FORMAT_R32G32B32_TYPELESS:
-  case DXGI_FORMAT_R32G32B32_FLOAT:
-  case DXGI_FORMAT_R32G32B32_UINT:
-  case DXGI_FORMAT_R32G32B32_SINT:
-  case DXGI_FORMAT_R11G11B10_FLOAT:
-    return 3;
-  case DXGI_FORMAT_R32G32_TYPELESS:
-  case DXGI_FORMAT_R32G32_FLOAT:
-  case DXGI_FORMAT_R32G32_UINT:
-  case DXGI_FORMAT_R32G32_SINT:
-  case DXGI_FORMAT_R16G16_TYPELESS:
-  case DXGI_FORMAT_R16G16_FLOAT:
-  case DXGI_FORMAT_R16G16_UNORM:
-  case DXGI_FORMAT_R16G16_UINT:
-  case DXGI_FORMAT_R16G16_SNORM:
-  case DXGI_FORMAT_R16G16_SINT:
-  case DXGI_FORMAT_R8G8_TYPELESS:
-  case DXGI_FORMAT_R8G8_UNORM:
-  case DXGI_FORMAT_R8G8_UINT:
-  case DXGI_FORMAT_R8G8_SNORM:
-  case DXGI_FORMAT_R8G8_SINT:
-  case DXGI_FORMAT_B5G6R5_UNORM:
-  case DXGI_FORMAT_B5G5R5A1_UNORM:
-    return 2;
-  default:
-    return 1;
-  }
-}
-
-dxmt::dxil::MSLScalarKind DXGIFormatToMSLScalar(DXGI_FORMAT format) {
-  switch (format) {
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-  case DXGI_FORMAT_R32G32B32_UINT:
-  case DXGI_FORMAT_R16G16B16A16_UINT:
-  case DXGI_FORMAT_R32G32_UINT:
-  case DXGI_FORMAT_R10G10B10A2_UINT:
-  case DXGI_FORMAT_R8G8B8A8_UINT:
-  case DXGI_FORMAT_R16G16_UINT:
-  case DXGI_FORMAT_R32_UINT:
-  case DXGI_FORMAT_R8G8_UINT:
-  case DXGI_FORMAT_R16_UINT:
-  case DXGI_FORMAT_R8_UINT:
-    return dxmt::dxil::MSLScalarKind::UInt;
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-  case DXGI_FORMAT_R32G32B32_SINT:
-  case DXGI_FORMAT_R16G16B16A16_SINT:
-  case DXGI_FORMAT_R32G32_SINT:
-  case DXGI_FORMAT_R8G8B8A8_SINT:
-  case DXGI_FORMAT_R16G16_SINT:
-  case DXGI_FORMAT_R32_SINT:
-  case DXGI_FORMAT_R8G8_SINT:
-  case DXGI_FORMAT_R16_SINT:
-  case DXGI_FORMAT_R8_SINT:
-    return dxmt::dxil::MSLScalarKind::SInt;
-  default:
-    return dxmt::dxil::MSLScalarKind::Float;
-  }
-}
-
-std::string EscapeJsonString(std::string_view value) {
-  std::string escaped;
-  escaped.reserve(value.size() + 8);
-  for (char ch : value) {
-    if (ch == '"' || ch == '\\')
-      escaped.push_back('\\');
-    escaped.push_back(ch);
-  }
-  return escaped;
-}
-
-std::string HexHash(size_t hash) {
-  char text[32] = {};
-  snprintf(text, sizeof(text), "%016zx", hash);
-  return text;
-}
-
-dxmt::dxil::MSLConvertOptions BuildDXILMSLConvertOptions(
-    ShaderType type, const void *bytecode, SIZE_T size,
-    const D3D12_INPUT_LAYOUT_DESC &input_layout,
-    const DXGI_FORMAT *rtv_formats, uint32_t num_render_targets) {
-  dxmt::dxil::MSLConvertOptions options = {};
-
-  if ((type == ShaderType::Vertex || type == ShaderType::Pixel) && bytecode &&
-      size) {
-    using namespace microsoft;
-    CSignatureParser parser;
-    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
-    uint32_t param_count = 0;
-    if (SUCCEEDED(DXBCGetInputSignature(bytecode, &parser)))
-      param_count = parser.GetParameters(&params);
-
-    for (uint32_t p = 0; p < param_count &&
-                         p < options.vertex_input_signature_valid.size();
-         p++) {
-      const auto &sig = params[p];
-      if (type == ShaderType::Vertex) {
-        options.vertex_input_register_for_signature[p] = sig.Register;
-        options.vertex_input_signature_valid[p] = true;
-        PSTRACE("DXILToMSL vertex input signature map: sig=%u reg=%u "
-                "semantic=%s%u sys=%u mask=0x%x",
-                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
-                sig.SemanticIndex, (unsigned)sig.SystemValue, sig.Mask);
-      } else {
-        options.pixel_input_register_for_signature[p] = sig.Register;
-        options.pixel_input_signature_valid[p] = true;
-        options.pixel_input_is_position[p] =
-            sig.SystemValue == D3D10_SB_NAME_POSITION;
-        PSTRACE("DXILToMSL pixel input signature map: sig=%u reg=%u "
-                "semantic=%s%u sys=%u pos=%u mask=0x%x",
-                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
-                sig.SemanticIndex, (unsigned)sig.SystemValue,
-                options.pixel_input_is_position[p] ? 1u : 0u, sig.Mask);
-      }
-    }
-  }
-
-  if ((type == ShaderType::Vertex || type == ShaderType::Pixel) && bytecode &&
-      size) {
-    using namespace microsoft;
-    CSignatureParser parser;
-    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
-    uint32_t param_count = 0;
-    if (SUCCEEDED(DXBCGetOutputSignature(bytecode, &parser)))
-      param_count = parser.GetParameters(&params);
-
-    for (uint32_t p = 0; p < param_count &&
-                         p < options.vertex_output_signature_valid.size();
-         p++) {
-      const auto &sig = params[p];
-      if (type == ShaderType::Vertex) {
-        options.vertex_output_register_for_signature[p] = sig.Register;
-        options.vertex_output_signature_valid[p] = true;
-        options.vertex_output_is_position[p] =
-            sig.SystemValue == D3D10_SB_NAME_POSITION;
-        PSTRACE("DXILToMSL vertex output signature map: sig=%u reg=%u "
-                "semantic=%s%u sys=%u pos=%u mask=0x%x",
-                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
-                sig.SemanticIndex, (unsigned)sig.SystemValue,
-                options.vertex_output_is_position[p] ? 1u : 0u, sig.Mask);
-      } else {
-        options.pixel_output_target_for_signature[p] = sig.Register;
-        options.pixel_output_signature_valid[p] = true;
-        PSTRACE("DXILToMSL pixel output signature map: sig=%u target=%u "
-                "semantic=%s%u sys=%u mask=0x%x",
-                p, sig.Register, sig.SemanticName ? sig.SemanticName : "?",
-                sig.SemanticIndex, (unsigned)sig.SystemValue, sig.Mask);
-      }
-    }
-  }
-
-  if (type == ShaderType::Vertex && bytecode && size &&
-      input_layout.NumElements && input_layout.pInputElementDescs) {
-    using namespace microsoft;
-    CSignatureParser parser;
-    const D3D11_SIGNATURE_PARAMETER *params = nullptr;
-    uint32_t param_count = 0;
-    if (SUCCEEDED(DXBCGetInputSignature(bytecode, &parser)))
-      param_count = parser.GetParameters(&params);
-
-    for (uint32_t p = 0; p < param_count; p++) {
-      const auto &sig = params[p];
-      if (sig.Register >= options.vertex_inputs.size())
-        continue;
-
-      uint32_t components = SignatureMaskComponentCount(sig.Mask);
-      for (UINT i = 0; i < input_layout.NumElements; i++) {
-        const auto &desc = input_layout.pInputElementDescs[i];
-        if (!desc.SemanticName || !sig.SemanticName)
-          continue;
-        if (desc.SemanticIndex == sig.SemanticIndex &&
-            strcasecmp(desc.SemanticName, sig.SemanticName) == 0) {
-          components = std::min<uint32_t>(
-              components, DXGIFormatComponentCount(desc.Format));
-          break;
-        }
-      }
-
-      options.vertex_inputs[sig.Register] = {
-          SignatureComponentToMSLScalar(sig.ComponentType),
-          std::max<uint32_t>(1, components), true};
-      PSTRACE("DXILToMSL vertex input type: reg=%u semantic=%s%u scalar=%u "
-              "components=%u mask=0x%x",
-              sig.Register, sig.SemanticName ? sig.SemanticName : "?",
-              sig.SemanticIndex,
-              (unsigned)options.vertex_inputs[sig.Register].scalar,
-              options.vertex_inputs[sig.Register].components, sig.Mask);
-    }
-  }
-
-  if (type == ShaderType::Pixel && rtv_formats) {
-    const uint32_t count =
-        std::min<uint32_t>(num_render_targets, options.pixel_outputs.size());
-    for (uint32_t i = 0; i < count; i++) {
-      if (rtv_formats[i] == DXGI_FORMAT_UNKNOWN)
-        continue;
-      // Keep render-target outputs vector-wide so DXIL component stores remain valid;
-      // the scalar base type is what Metal validates against integer attachments.
-      options.pixel_outputs[i] = {DXGIFormatToMSLScalar(rtv_formats[i]), 4,
-                                  true};
-      PSTRACE("DXILToMSL pixel output type: rt=%u fmt=%u scalar=%u components=%u",
-              i, (unsigned)rtv_formats[i],
-              (unsigned)options.pixel_outputs[i].scalar,
-              options.pixel_outputs[i].components);
-    }
-  }
-
-  return options;
-}
-
-size_t ComputeD3D12ShaderCacheHash(const void *bytecode, SIZE_T size,
-                                   ShaderType type,
-                                   const D3D12_INPUT_LAYOUT_DESC *input_layout,
-                                   const DXGI_FORMAT *rtv_formats = nullptr,
-                                   uint32_t num_render_targets = 0,
-                                   size_t root_signature_hash = 0) {
-  constexpr size_t kDXILToMSLStageIOTypeCacheVersion = 0x4458494c53494734ull;
-  size_t hash = 0;
-  hash = hash * 131 + kDXILToMSLStageIOTypeCacheVersion;
-  hash = hash * 131 + (size_t)type;
-  if (bytecode && size > 0) {
-    const uint8_t *p = (const uint8_t *)bytecode;
-    for (SIZE_T i = 0; i < size; i++)
-      hash = hash * 131 + p[i];
-  }
-  if (type == ShaderType::Vertex && input_layout) {
-    hash = hash * 131 + kMetalShaderConverterVertexLayoutVersion;
-    hash = hash * 131 + input_layout->NumElements;
-    for (UINT i = 0; i < input_layout->NumElements; i++) {
-      const auto &el = input_layout->pInputElementDescs[i];
-      hash = hash * 131 + el.SemanticIndex;
-      hash = hash * 131 + el.Format;
-      hash = hash * 131 + el.InputSlot;
-      hash = hash * 131 + el.AlignedByteOffset;
-      hash = hash * 131 + el.InputSlotClass;
-      hash = hash * 131 + el.InstanceDataStepRate;
-      if (el.SemanticName) {
-        for (const char *s = el.SemanticName; *s; s++)
-          hash = hash * 131 + (unsigned char)*s;
-      }
-    }
-  }
-  if (type == ShaderType::Pixel && rtv_formats) {
-    const uint32_t count = std::min<uint32_t>(num_render_targets, 8);
-    hash = hash * 131 + count;
-    for (uint32_t i = 0; i < count; i++)
-      hash = hash * 131 + (size_t)rtv_formats[i];
-  }
-  hash = hash * 131 + root_signature_hash;
-  return hash;
-}
-
-D3D12ShaderCompilerStage D3D12CompilerStageFromShaderType(ShaderType type) {
-  switch (type) {
-  case ShaderType::Vertex:
-    return D3D12ShaderCompilerStage::Vertex;
-  case ShaderType::Pixel:
-    return D3D12ShaderCompilerStage::Pixel;
-  case ShaderType::Geometry:
-    return D3D12ShaderCompilerStage::Geometry;
-  case ShaderType::Hull:
-    return D3D12ShaderCompilerStage::Hull;
-  case ShaderType::Domain:
-    return D3D12ShaderCompilerStage::Domain;
-  case ShaderType::Compute:
-    return D3D12ShaderCompilerStage::Compute;
-  default:
-    return D3D12ShaderCompilerStage::Unknown;
-  }
-}
-
-bool FileExistsNonEmpty(const std::string &path) {
-  FILE *file = fopen(path.c_str(), "rb");
-  if (!file)
-    return false;
-  fseek(file, 0, SEEK_END);
-  long size = ftell(file);
-  fclose(file);
-  return size > 0;
-}
-
-bool DXMTD3D12DisableRuntimeMetalShaderConverter() {
-  static bool value = [] {
-    const char *env = std::getenv("DXMT_D3D12_DISABLE_RUNTIME_MSC");
-    return env && env[0] && std::strcmp(env, "0") != 0;
-  }();
-  return value;
-}
-
-bool DXMTD3D12AllowDebugMSLEmitterBackend() {
-  static bool value = [] {
-    const char *env = std::getenv("DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND");
-    return env && env[0] && std::strcmp(env, "0") != 0;
-  }();
-  return value;
-}
-
-bool ReadBinaryFile(const std::string &path, std::vector<uint8_t> &out) {
-  FILE *file = fopen(path.c_str(), "rb");
-  if (!file)
-    return false;
-  fseek(file, 0, SEEK_END);
-  long size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-  if (size <= 0) {
-    fclose(file);
-    return false;
-  }
-  out.resize((size_t)size);
-  size_t read = fread(out.data(), 1, (size_t)size, file);
-  fclose(file);
-  out.resize(read);
-  return read == (size_t)size;
-}
-
-const char *OfflineMetalPixelFormatName(WMTPixelFormat format) {
-  switch (format) {
-  case WMTPixelFormatR8Unorm:
-    return "r8unorm";
-  case WMTPixelFormatRG8Unorm:
-    return "rg8unorm";
-  case WMTPixelFormatR16Unorm:
-    return "r16unorm";
-  case WMTPixelFormatR16Float:
-    return "r16float";
-  case WMTPixelFormatRG16Unorm:
-    return "rg16unorm";
-  case WMTPixelFormatRG16Float:
-    return "rg16float";
-  case WMTPixelFormatRGBA8Unorm:
-    return "rgba8unorm";
-  case WMTPixelFormatRGBA8Unorm_sRGB:
-    return "rgba8unorm_srgb";
-  case WMTPixelFormatBGRA8Unorm:
-    return "bgra8unorm";
-  case WMTPixelFormatBGRA8Unorm_sRGB:
-    return "bgra8unorm_srgb";
-  case WMTPixelFormatRGB10A2Unorm:
-    return "rgb10a2unorm";
-  case WMTPixelFormatRG11B10Float:
-    return "rg11b10float";
-  case WMTPixelFormatRGBA16Unorm:
-    return "rgba16unorm";
-  case WMTPixelFormatRGBA16Float:
-    return "rgba16float";
-  case WMTPixelFormatRGBA32Float:
-    return "rgba32float";
-  case WMTPixelFormatR32Float:
-    return "r32float";
-  case WMTPixelFormatR32Uint:
-    return "r32uint";
-  case WMTPixelFormatDepth16Unorm:
-    return "depth16unorm";
-  case WMTPixelFormatDepth32Float:
-    return "depth32float";
-  case WMTPixelFormatDepth24Unorm_Stencil8:
-    return "depth24unorm_stencil8";
-  case WMTPixelFormatDepth32Float_Stencil8:
-    return "depth32float_stencil8";
-  default:
-    return "invalid";
-  }
-}
-
-std::string OfflineShaderMetallibPath(const void *bytecode, SIZE_T size,
-                                      ShaderType type,
-                                      const char *sm50_function_name,
-                                      const D3D12_INPUT_LAYOUT_DESC *input_layout) {
-  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
-  auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
-  return cache_path + ".metallib";
-}
-
-std::string OfflineShaderStageInMetallibPath(
-    const void *bytecode, SIZE_T size, ShaderType type,
-    const D3D12_INPUT_LAYOUT_DESC *input_layout) {
-  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
-  auto cache_path = BuildShaderCachePath(HexHash(hash).c_str());
-  return cache_path + ".stageIn.metallib";
-}
-
-std::string OfflineShaderReflectionPath(const void *bytecode, SIZE_T size,
-                                        ShaderType type,
-                                        const D3D12_INPUT_LAYOUT_DESC *input_layout) {
-  size_t hash = ComputeD3D12ShaderCacheHash(bytecode, size, type, input_layout);
-  auto reflection = BuildShaderCachePath((HexHash(hash) + ".json").c_str());
-  return FileExistsNonEmpty(reflection) ? reflection : std::string();
-}
-
-std::string OfflineShaderFunctionName(const void *bytecode, SIZE_T size,
-                                      ShaderType type,
-                                      const char *fallback_function_name,
-                                      const D3D12_INPUT_LAYOUT_DESC *input_layout) {
-  auto reflection = OfflineShaderReflectionPath(bytecode, size, type, input_layout);
-  if (!reflection.empty()) {
-    auto reflection_text = ReadTextFile(reflection.c_str());
-    std::string entry;
-    if (ExtractJsonStringValue(reflection_text, "EntryPoint", entry) &&
-        !entry.empty())
-      return entry;
-  }
-  return fallback_function_name ? fallback_function_name : "main";
-}
-
-std::string ShaderBytecodeDigest(const std::vector<uint8_t> &shader,
-                                 ShaderType type,
-                                 const D3D12_INPUT_LAYOUT_DESC *input_layout) {
-  if (shader.empty())
-    return "0";
-  return HexHash(ComputeD3D12ShaderCacheHash(shader.data(), shader.size(), type,
-                                            input_layout));
-}
-
-std::string OfflinePsoManifestPath(const std::string &name) {
-  return BuildShaderCachePath(("pso-" + name + ".json").c_str());
-}
-
-void EmitOfflineComputePsoManifest(const std::vector<uint8_t> &cs,
-                                   const WMTComputePipelineInfo &info,
-                                   const WMTSize &threadgroup_size) {
-  if (cs.empty())
-    return;
-  EnsureShaderCacheDir();
-  const std::string cs_hash =
-      ShaderBytecodeDigest(cs, ShaderType::Compute, nullptr);
-  const std::string manifest =
-      OfflinePsoManifestPath("compute-" + cs_hash);
-  FILE *file = fopen(manifest.c_str(), "w");
-  if (!file) {
-    Logger::warn(str::format("offline compute PSO manifest open failed: ",
-                             manifest.c_str(), ": ", strerror(errno)));
-    return;
-  }
-
-  const std::string metallib = OfflineShaderMetallibPath(
-      cs.data(), cs.size(), ShaderType::Compute, "cs_main", nullptr);
-  const std::string reflection =
-      OfflineShaderReflectionPath(cs.data(), cs.size(), ShaderType::Compute,
-                                  nullptr);
-  const std::string function = OfflineShaderFunctionName(
-      cs.data(), cs.size(), ShaderType::Compute, "cs_main", nullptr);
-
-  fprintf(file,
-          "{\n"
-          "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n"
-          "  \"source\": \"dxmt-d3d12-capture\",\n"
-          "  \"pipelines\": [\n"
-          "    {\n"
-          "      \"name\": \"compute-%s\",\n"
-          "      \"type\": \"compute\",\n"
-          "      \"shader\": {\"metallib\": \"%s\", \"function\": \"%s\", "
-          "\"reflection\": \"%s\"},\n"
-          "      \"d3d12\": {\"cs_hash\": \"%s\", \"cs_bytes\": %zu},\n"
-          "      \"metal\": {\"compute_function\": %llu},\n"
-          "      \"threadgroup_size\": [%llu, %llu, %llu]\n"
-          "    }\n"
-          "  ]\n"
-          "}\n",
-          cs_hash.c_str(), EscapeJsonString(metallib).c_str(),
-          EscapeJsonString(function).c_str(),
-          EscapeJsonString(reflection).c_str(), cs_hash.c_str(), cs.size(),
-          (unsigned long long)info.compute_function,
-          (unsigned long long)threadgroup_size.width,
-          (unsigned long long)threadgroup_size.height,
-          (unsigned long long)threadgroup_size.depth);
-  fclose(file);
-  PSTRACE("offline PSO manifest wrote %s", manifest.c_str());
-}
-
-void EmitOfflineRenderPsoManifest(
-    const std::vector<uint8_t> &vs, const std::vector<uint8_t> &ps,
-    const std::vector<uint8_t> &gs, const WMTRenderPipelineInfo &info,
-    const D3D12_INPUT_LAYOUT_DESC &input_layout, UINT num_render_targets,
-    DXGI_FORMAT dsv_format, UINT sample_count, bool uses_stage_in,
-    bool requires_msc_stage_in, bool uses_geometry_mesh) {
-  if (vs.empty())
-    return;
-  EnsureShaderCacheDir();
-  const std::string vs_hash =
-      ShaderBytecodeDigest(vs, ShaderType::Vertex, &input_layout);
-  const std::string ps_hash =
-      ShaderBytecodeDigest(ps, ShaderType::Pixel, nullptr);
-  const std::string gs_hash =
-      ShaderBytecodeDigest(gs, ShaderType::Geometry, nullptr);
-  std::string pso_name =
-      "render-" + vs_hash + "-" + (ps.empty() ? std::string("nopixel") : ps_hash);
-  const std::string manifest = OfflinePsoManifestPath(pso_name);
-  FILE *file = fopen(manifest.c_str(), "w");
-  if (!file) {
-    Logger::warn(str::format("offline render PSO manifest open failed: ",
-                             manifest.c_str(), ": ", strerror(errno)));
-    return;
-  }
-
-  const std::string vs_metallib = OfflineShaderMetallibPath(
-      vs.data(), vs.size(), ShaderType::Vertex, "vs_main", &input_layout);
-  const std::string vs_reflection = OfflineShaderReflectionPath(
-      vs.data(), vs.size(), ShaderType::Vertex, &input_layout);
-  const std::string vs_function = OfflineShaderFunctionName(
-      vs.data(), vs.size(), ShaderType::Vertex, "vs_main", &input_layout);
-
-  std::string ps_metallib;
-  std::string ps_reflection;
-  std::string ps_function = "ps_main";
-  if (!ps.empty()) {
-    ps_metallib = OfflineShaderMetallibPath(
-        ps.data(), ps.size(), ShaderType::Pixel, "ps_main", nullptr);
-    ps_reflection = OfflineShaderReflectionPath(
-        ps.data(), ps.size(), ShaderType::Pixel, nullptr);
-    ps_function = OfflineShaderFunctionName(
-        ps.data(), ps.size(), ShaderType::Pixel, "ps_main", nullptr);
-  }
-
-  fprintf(file,
-          "{\n"
-          "  \"schema\": \"metalsharp.d3d12-metal.offline-pso-manifest.v1\",\n"
-          "  \"source\": \"dxmt-d3d12-capture\",\n"
-          "  \"pipelines\": [\n"
-          "    {\n"
-          "      \"name\": \"%s\",\n"
-          "      \"type\": \"render\",\n"
-          "      \"vertex\": {\"metallib\": \"%s\", \"function\": \"%s\", "
-          "\"reflection\": \"%s\"},\n",
-          pso_name.c_str(), EscapeJsonString(vs_metallib).c_str(),
-          EscapeJsonString(vs_function).c_str(),
-          EscapeJsonString(vs_reflection).c_str());
-  if (requires_msc_stage_in) {
-    const std::string stage_in_metallib = OfflineShaderStageInMetallibPath(
-        vs.data(), vs.size(), ShaderType::Vertex, &input_layout);
-    fprintf(file,
-            "      \"vertex_linked_functions\": ["
-            "{\"metallib\": \"%s\", \"function\": "
-            "\"irconverter_stage_in_shader\"}],\n",
-            EscapeJsonString(stage_in_metallib).c_str());
-  }
-  if (!ps.empty()) {
-    fprintf(file,
-            "      \"fragment\": {\"metallib\": \"%s\", \"function\": \"%s\", "
-            "\"reflection\": \"%s\"},\n",
-            EscapeJsonString(ps_metallib).c_str(),
-            EscapeJsonString(ps_function).c_str(),
-            EscapeJsonString(ps_reflection).c_str());
-  }
-  fprintf(file, "      \"color_formats\": [");
-  bool wrote_color = false;
-  for (UINT i = 0; i < num_render_targets && i < 8; i++) {
-    if (info.colors[i].pixel_format == WMTPixelFormatInvalid)
-      continue;
-    if (wrote_color)
-      fprintf(file, ", ");
-    wrote_color = true;
-    fprintf(file, "\"%s\"",
-            OfflineMetalPixelFormatName(info.colors[i].pixel_format));
-  }
-  if (!wrote_color)
-    fprintf(file, "\"invalid\"");
-  fprintf(file,
-          "],\n"
-          "      \"depth_format\": \"%s\",\n"
-          "      \"stencil_format\": \"%s\",\n"
-          "      \"sample_count\": %u,\n"
-          "      \"d3d12\": {\"vs_hash\": \"%s\", \"ps_hash\": \"%s\", "
-          "\"gs_hash\": \"%s\", \"vs_bytes\": %zu, \"ps_bytes\": %zu, "
-          "\"gs_bytes\": %zu, \"num_render_targets\": %u, "
-          "\"dsv_format\": %u, \"input_elements\": %u},\n"
-          "      \"metal\": {\"vertex_function\": %llu, "
-          "\"fragment_function\": %llu, \"rasterization_enabled\": %s, "
-          "\"uses_stage_in\": %s, \"uses_geometry_mesh\": %s}\n"
-          "    }\n"
-          "  ]\n"
-          "}\n",
-          OfflineMetalPixelFormatName(info.depth_pixel_format),
-          OfflineMetalPixelFormatName(info.stencil_pixel_format),
-          sample_count ? sample_count : 1, vs_hash.c_str(), ps_hash.c_str(),
-          gs_hash.c_str(), vs.size(), ps.size(), gs.size(), num_render_targets,
-          (unsigned)dsv_format, input_layout.NumElements,
-          (unsigned long long)info.vertex_function,
-          (unsigned long long)info.fragment_function,
-          info.rasterization_enabled ? "true" : "false",
-          uses_stage_in ? "true" : "false",
-          uses_geometry_mesh ? "true" : "false");
-  fclose(file);
-  PSTRACE("offline PSO manifest wrote %s", manifest.c_str());
-}
-
-bool WriteMetalShaderConverterVertexLayout(
-    MTLD3D12Device *device, const D3D12_INPUT_LAYOUT_DESC &input_layout,
-    const char *path) {
-  if (!path || !input_layout.NumElements || !input_layout.pInputElementDescs)
-    return false;
-
-  struct LayoutElement {
-    const D3D12_INPUT_ELEMENT_DESC *desc;
-    const char *format_name;
-    uint32_t aligned_offset;
-    uint32_t byte_size;
-  };
-
-  std::vector<LayoutElement> elements;
-  elements.reserve(input_layout.NumElements);
-  uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
-  for (UINT i = 0; i < input_layout.NumElements; i++) {
-    const auto &el = input_layout.pInputElementDescs[i];
-    const char *input_class =
-        el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
-            ? "PerInstanceData"
-            : "PerVertexData";
-
-    if (el.InputSlot >= WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
-      PSTRACE("MSC vertex layout invalid slot path=%s element=%u dxgi_format=%u "
-              "semantic=%s semantic_index=%u slot=%u input_class=%s",
-              path, i, (unsigned)el.Format,
-              el.SemanticName ? el.SemanticName : "", el.SemanticIndex,
-              el.InputSlot, input_class);
-      return false;
-    }
-
-    const char *format_name = DXGIFormatToMetalShaderConverterName(el.Format);
-    MTL_DXGI_FORMAT_DESC metal_format = {};
-    uint32_t byte_size = 0;
-    if (SUCCEEDED(MTLQueryDXGIFormat(device->GetMTLDevice(), el.Format,
-                                     metal_format)) &&
-        metal_format.BytesPerTexel)
-      byte_size = metal_format.BytesPerTexel;
-    if (!byte_size)
-      byte_size = DXGIFormatVertexByteSize(el.Format);
-
-    uint32_t aligned_offset =
-        el.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-            ? AlignD3D12InputOffset(append_offset[el.InputSlot], byte_size)
-            : el.AlignedByteOffset;
-    append_offset[el.InputSlot] = aligned_offset + byte_size;
-
-    if (!format_name || !byte_size) {
-      PSTRACE("MSC vertex layout unknown format path=%s element=%u "
-              "dxgi_format=%u semantic=%s semantic_index=%u slot=%u "
-              "offset=%u byte_size=%u input_class=%s",
-              path, i, (unsigned)el.Format,
-              el.SemanticName ? el.SemanticName : "", el.SemanticIndex,
-              el.InputSlot, aligned_offset, byte_size, input_class);
-      return false;
-    }
-
-    elements.push_back({&el, format_name, aligned_offset, byte_size});
-  }
-
-  for (size_t i = 0; i < elements.size(); i++) {
-    const auto &current = elements[i];
-    uint32_t next_offset = UINT32_MAX;
-    for (size_t j = 0; j < elements.size(); j++) {
-      const auto &candidate = elements[j];
-      if (candidate.desc->InputSlot != current.desc->InputSlot ||
-          candidate.aligned_offset <= current.aligned_offset)
-        continue;
-      next_offset = std::min(next_offset, candidate.aligned_offset);
-    }
-
-    if (next_offset != UINT32_MAX &&
-        current.aligned_offset + current.byte_size > next_offset) {
-      PSTRACE("MSC vertex layout overlapping element path=%s dxgi_format=%u "
-              "format=%s semantic=%s semantic_index=%u slot=%u offset=%u "
-              "byte_size=%u next_offset=%u",
-              path, (unsigned)current.desc->Format, current.format_name,
-              current.desc->SemanticName ? current.desc->SemanticName : "",
-              current.desc->SemanticIndex, current.desc->InputSlot,
-              current.aligned_offset, current.byte_size, next_offset);
-      return false;
-    }
-  }
-
-  FILE *file = fopen(path, "w");
-  if (!file)
-    return false;
-
-  fprintf(file, "{\"InputElements\":[");
-  for (size_t i = 0; i < elements.size(); i++) {
-    const auto &entry = elements[i];
-    const auto &el = *entry.desc;
-    if (i)
-      fprintf(file, ",");
-    fprintf(file,
-            "{\"AlignedByteOffset\":%u,\"Format\":\"%s\",\"InputSlot\":%u,"
-            "\"InputSlotClass\":\"%s\",\"InstanceDataStepRate\":%u,"
-            "\"SemanticIndex\":%u}",
-            entry.aligned_offset, entry.format_name, el.InputSlot,
-            el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
-                ? "PerInstanceData"
-                : "PerVertexData",
-            el.InstanceDataStepRate, el.SemanticIndex);
-  }
-  fprintf(file, "],\"SemanticNames\":[");
-  for (UINT i = 0; i < input_layout.NumElements; i++) {
-    const auto &el = input_layout.pInputElementDescs[i];
-    if (i)
-      fprintf(file, ",");
-    auto semantic = EscapeJsonString(el.SemanticName ? el.SemanticName : "");
-    fprintf(file, "\"%s\"", semantic.c_str());
-  }
-  fprintf(file, "]}");
-  fclose(file);
-  return true;
-}
-
 const char *DxilShaderKindName(dxmt::dxil::DxilShaderKind kind) {
   switch (kind) {
-  case dxmt::dxil::DxilShaderKind::Pixel:
-    return "pixel";
-  case dxmt::dxil::DxilShaderKind::Vertex:
-    return "vertex";
-  case dxmt::dxil::DxilShaderKind::Geometry:
-    return "geometry";
-  case dxmt::dxil::DxilShaderKind::Hull:
-    return "hull";
-  case dxmt::dxil::DxilShaderKind::Domain:
-    return "domain";
-  case dxmt::dxil::DxilShaderKind::Compute:
-    return "compute";
-  case dxmt::dxil::DxilShaderKind::Library:
-    return "library";
-  case dxmt::dxil::DxilShaderKind::Mesh:
-    return "mesh";
-  case dxmt::dxil::DxilShaderKind::Amplification:
-    return "amplification";
-  default:
-    return "other";
+  case dxmt::dxil::DxilShaderKind::Pixel: return "pixel";
+  case dxmt::dxil::DxilShaderKind::Vertex: return "vertex";
+  case dxmt::dxil::DxilShaderKind::Geometry: return "geometry";
+  case dxmt::dxil::DxilShaderKind::Hull: return "hull";
+  case dxmt::dxil::DxilShaderKind::Domain: return "domain";
+  case dxmt::dxil::DxilShaderKind::Compute: return "compute";
+  case dxmt::dxil::DxilShaderKind::Library: return "library";
+  case dxmt::dxil::DxilShaderKind::Mesh: return "mesh";
+  case dxmt::dxil::DxilShaderKind::Amplification: return "amplification";
+  default: return "other";
   }
 }
 
-[[maybe_unused]] void
-DumpDXILModuleSummary(const char *path,
-                      const dxmt::dxil::LLVMModule &module,
-                      const dxmt::dxil::DxilParsedShader &shader_info) {
+const char *RootParameterTypeName(D3D12_ROOT_PARAMETER_TYPE type) {
+  switch (type) {
+  case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE: return "descriptor_table";
+  case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS: return "constants";
+  case D3D12_ROOT_PARAMETER_TYPE_CBV: return "cbv";
+  case D3D12_ROOT_PARAMETER_TYPE_SRV: return "srv";
+  case D3D12_ROOT_PARAMETER_TYPE_UAV: return "uav";
+  default: return "unknown";
+  }
+}
+
+const char *DescriptorRangeTypeName(D3D12_DESCRIPTOR_RANGE_TYPE type) {
+  switch (type) {
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SRV: return "srv";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_UAV: return "uav";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_CBV: return "cbv";
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER: return "sampler";
+  default: return "unknown";
+  }
+}
+
+const char *ShaderVisibilityName(uint32_t visibility) {
+  switch ((D3D12_SHADER_VISIBILITY)visibility) {
+  case D3D12_SHADER_VISIBILITY_ALL: return "all";
+  case D3D12_SHADER_VISIBILITY_VERTEX: return "vertex";
+  case D3D12_SHADER_VISIBILITY_HULL: return "hull";
+  case D3D12_SHADER_VISIBILITY_DOMAIN: return "domain";
+  case D3D12_SHADER_VISIBILITY_GEOMETRY: return "geometry";
+  case D3D12_SHADER_VISIBILITY_PIXEL: return "pixel";
+  default: return "unknown";
+  }
+}
+
+void DumpRootSignatureSummary(FILE *df, const MTLD3D12RootSignature *root_sig) {
+  fprintf(df, "\nroot_signature:\n");
+  if (!root_sig) {
+    fprintf(df, "  present=0\n");
+    return;
+  }
+
+  const auto &parameters = root_sig->GetParameters();
+  const auto &static_samplers = root_sig->GetStaticSamplers();
+  fprintf(df, "  present=1\n");
+  fprintf(df, "  blob_hash=0x%016zx\n", root_sig->GetBlobHash());
+  fprintf(df, "  flags=0x%08x\n", (uint32_t)root_sig->GetFlags());
+  fprintf(df, "  parameter_count=%zu\n", parameters.size());
+  fprintf(df, "  static_sampler_count=%zu\n", static_samplers.size());
+
+  for (size_t i = 0; i < parameters.size(); i++) {
+    const auto &param = parameters[i];
+    fprintf(df,
+            "  parameter[%zu] type=%s visibility=%s register_space=%u register=%u descriptors=%u range_type=%s table_ranges=%zu\n",
+            i, RootParameterTypeName(param.type),
+            ShaderVisibilityName(param.shader_visibility), param.register_space,
+            param.register_index, param.num_descriptors,
+            DescriptorRangeTypeName(param.range_type), param.ranges.size());
+    for (size_t r = 0; r < param.ranges.size(); r++) {
+      const auto &range = param.ranges[r];
+      fprintf(df,
+              "    range[%zu] type=%s space=%u base=%u count=%u offset=%u\n",
+              r, DescriptorRangeTypeName(range.range_type),
+              range.register_space, range.base_register, range.num_descriptors,
+              range.offset_in_table);
+    }
+  }
+
+  for (size_t i = 0; i < static_samplers.size(); i++) {
+    const auto &sampler = static_samplers[i];
+    fprintf(df,
+            "  static_sampler[%zu] visibility=%s space=%u register=%u sampler_gpu=0x%016llx sampler_cube_gpu=0x%016llx lod_bias_bits=0x%016llx\n",
+            i, ShaderVisibilityName(sampler.shader_visibility),
+            sampler.register_space, sampler.shader_register,
+            (unsigned long long)sampler.sampler_gpu_id,
+            (unsigned long long)sampler.sampler_cube_gpu_id,
+            (unsigned long long)sampler.lod_bias_bits);
+  }
+}
+
+void DumpDXILModuleSummary(const char *path, const dxmt::dxil::LLVMModule &module,
+                           const dxmt::dxil::DxilParsedShader &shader_info) {
   if (!path)
     return;
   EnsureShaderCacheDir();
@@ -1977,6 +499,8 @@ DumpDXILModuleSummary(const char *path,
   fprintf(df, "target_triple=%s\n", module.target_triple.c_str());
   fprintf(df, "types=%zu constants=%zu functions=%zu\n", module.types.size(),
           module.constants.size(), module.functions.size());
+  fprintf(df, "num_threads=%u,%u,%u\n", module.num_threads[0],
+          module.num_threads[1], module.num_threads[2]);
 
   size_t total_blocks = 0;
   size_t total_instructions = 0;
@@ -1998,8 +522,7 @@ DumpDXILModuleSummary(const char *path,
     for (const auto &block : fn.blocks)
       inst_count += block.instructions.size();
     fprintf(df,
-            "  name=%s declaration=%d value=%u type=%u params=%u inst_start=%u "
-            "blocks=%zu instructions=%zu\n",
+            "  name=%s declaration=%d value=%u type=%u params=%u inst_start=%u blocks=%zu instructions=%zu\n",
             fn.name.c_str(), fn.is_declaration, fn.value_id, fn.type_id,
             fn.param_count, fn.instruction_start_value, fn.blocks.size(),
             inst_count);
@@ -2012,13 +535,13 @@ DumpDXILModuleSummary(const char *path,
   fclose(df);
 }
 
-[[maybe_unused]] void
-DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
-                      SIZE_T bytecode_size, const char *dxbc_path,
-                      const char *module_summary_path, const char *msl_path,
-                      const dxmt::dxil::LLVMModule &module,
-                      const dxmt::dxil::DxilParsedShader &shader_info,
-                      const dxmt::dxil::MSLShader &msl_result) {
+void DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
+                           SIZE_T bytecode_size, const char *dxbc_path,
+                           const char *module_summary_path, const char *msl_path,
+                           const dxmt::dxil::LLVMModule &module,
+                           const dxmt::dxil::DxilParsedShader &shader_info,
+                           const dxmt::dxil::MSLShader &msl_result,
+                           const MTLD3D12RootSignature *root_sig) {
   if (!path)
     return;
 
@@ -2041,19 +564,23 @@ DumpDXILCompileReport(const char *path, const char *func_name, size_t hash,
   fprintf(df, "msl_size=%zu\n", msl_result.source.size());
   fprintf(df, "threadgroup_size=%u,%u,%u\n", msl_result.tg_size[0],
           msl_result.tg_size[1], msl_result.tg_size[2]);
-  fprintf(df, "unsupported_intrinsics=%u\n", msl_result.unsupported_intrinsics);
+  fprintf(df, "unsupported_intrinsics=%u\n",
+          msl_result.unsupported_intrinsics);
   fprintf(df, "unsupported_opcodes=%u\n", msl_result.unsupported_opcodes);
   fprintf(df, "dxbc=%s\n", dxbc_path ? dxbc_path : "");
   fprintf(df, "module=%s\n", module_summary_path ? module_summary_path : "");
   fprintf(df, "msl=%s\n", msl_path ? msl_path : "");
+  DumpRootSignatureSummary(df, root_sig);
   fprintf(df, "\ndiagnostics:\n");
   for (const auto &diagnostic : msl_result.diagnostics)
     fprintf(df, "  %s\n", diagnostic.c_str());
 
   fclose(df);
 
-  std::string index_path = BuildShaderCachePath("dxil_report_index.tsv");
-  FILE *index = fopen(index_path.c_str(), "a");
+  char index_path[1024];
+  snprintf(index_path, sizeof(index_path), "%s/dxil_report_index.tsv",
+           ShaderCacheDir().c_str());
+  FILE *index = fopen(index_path, "a");
   if (index) {
     fprintf(index, "0x%016zx\t%s\t%s\t%u.%u\t%u\t%u\t%s\n", hash,
             DxilShaderKindName(shader_info.kind), func_name ? func_name : "",
@@ -2089,18 +616,26 @@ constexpr WMTColorWriteMask kColorWriteMaskMap[16] = {
 };
 
 constexpr WMTCompareFunction kCompareFunctionMap[] = {
-    WMTCompareFunctionNever,     WMTCompareFunctionNever,
-    WMTCompareFunctionLess,      WMTCompareFunctionEqual,
-    WMTCompareFunctionLessEqual, WMTCompareFunctionGreater,
-    WMTCompareFunctionNotEqual,  WMTCompareFunctionGreaterEqual,
+    WMTCompareFunctionNever,
+    WMTCompareFunctionNever,
+    WMTCompareFunctionLess,
+    WMTCompareFunctionEqual,
+    WMTCompareFunctionLessEqual,
+    WMTCompareFunctionGreater,
+    WMTCompareFunctionNotEqual,
+    WMTCompareFunctionGreaterEqual,
     WMTCompareFunctionAlways,
 };
 
 constexpr WMTStencilOperation kStencilOperationMap[] = {
-    WMTStencilOperationZero,           WMTStencilOperationKeep,
-    WMTStencilOperationZero,           WMTStencilOperationReplace,
-    WMTStencilOperationIncrementClamp, WMTStencilOperationDecrementClamp,
-    WMTStencilOperationInvert,         WMTStencilOperationIncrementWrap,
+    WMTStencilOperationZero,
+    WMTStencilOperationKeep,
+    WMTStencilOperationZero,
+    WMTStencilOperationReplace,
+    WMTStencilOperationIncrementClamp,
+    WMTStencilOperationDecrementClamp,
+    WMTStencilOperationInvert,
+    WMTStencilOperationIncrementWrap,
     WMTStencilOperationDecrementWrap,
 };
 
@@ -2113,28 +648,7 @@ uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size) {
 } // namespace
 
 std::mutex MTLD3D12PipelineState::s_shader_mutex;
-std::unordered_map<size_t, WMT::Reference<WMT::Function>>
-    MTLD3D12PipelineState::s_shader_cache;
-
-void PipelineCompileScheduler::WorkerMain() {
-  while (true) {
-    MTLD3D12PipelineState *pso = nullptr;
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      cv_.wait(lock, [this]() { return stop_ || !queue_.empty(); });
-      if (stop_ && queue_.empty())
-        return;
-      pso = queue_.front();
-      queue_.pop_front();
-    }
-
-    if (!pso)
-      continue;
-
-    pso->RunAsyncCompile();
-    pso->Release();
-  }
-}
+std::unordered_map<size_t, WMT::Reference<WMT::Function>> MTLD3D12PipelineState::s_shader_cache;
 
 MTLD3D12PipelineState::MTLD3D12PipelineState(MTLD3D12Device *device,
                                              bool is_compute)
@@ -2151,16 +665,15 @@ MTLD3D12PipelineState::~MTLD3D12PipelineState() {
 }
 
 void MTLD3D12PipelineState::ClearCompileFailure() {
-  std::lock_guard<std::mutex> lock(m_compile_mutex);
   m_compile_failure_stage.clear();
   m_compile_failure_detail.clear();
 }
 
-bool MTLD3D12PipelineState::RecordCompileFailure(const char *stage,
-                                                 const std::string &detail) {
-  std::lock_guard<std::mutex> lock(m_compile_mutex);
+bool MTLD3D12PipelineState::RecordCompileFailure(const char *stage, const std::string &detail) {
   m_compile_failure_stage = stage ? stage : "unknown";
   m_compile_failure_detail = detail;
+  m_compile_state.store(CompileState::Failed);
+  m_compile_cv.notify_all();
   PSTRACE("PSO COMPILE FAILURE: this=%p compute=%d stage=%s detail=%s",
           (void *)this, m_is_compute, m_compile_failure_stage.c_str(),
           m_compile_failure_detail.c_str());
@@ -2168,237 +681,142 @@ bool MTLD3D12PipelineState::RecordCompileFailure(const char *stage,
 }
 
 bool MTLD3D12PipelineState::IsCompiled() const {
-  return m_compile_state.load(std::memory_order_acquire) ==
-         CompileState::Compiled;
+  return m_compile_state.load() == CompileState::Compiled;
 }
 
 bool MTLD3D12PipelineState::IsCompilePending() const {
-  auto state = m_compile_state.load(std::memory_order_acquire);
+  CompileState state = m_compile_state.load();
   return state == CompileState::Pending || state == CompileState::Compiling;
-}
-
-std::string MTLD3D12PipelineState::GetCompileFailureStage() const {
-  std::lock_guard<std::mutex> lock(m_compile_mutex);
-  return m_compile_failure_stage.empty() ? "none" : m_compile_failure_stage;
-}
-
-std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
-  std::lock_guard<std::mutex> lock(m_compile_mutex);
-  return m_compile_failure_detail;
 }
 
 std::string MTLD3D12PipelineState::GetVSCacheHash() const {
   if (m_vs.empty())
-    return "0";
-  const size_t root_signature_hash =
-      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
-                 : 0;
-  return HexHash(ComputeD3D12ShaderCacheHash(
-      m_vs.data(), m_vs.size(), ShaderType::Vertex, &m_input_layout, nullptr,
-      0, root_signature_hash));
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_vs.data(), m_vs.size(), ShaderType::Vertex,
+                                  &m_input_layout));
+  return buffer;
 }
 
 std::string MTLD3D12PipelineState::GetPSCacheHash() const {
   if (m_ps.empty())
-    return "0";
-  const size_t root_signature_hash =
-      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
-                 : 0;
-  return HexHash(ComputeD3D12ShaderCacheHash(
-      m_ps.data(), m_ps.size(), ShaderType::Pixel, nullptr, m_rtv_formats,
-      m_num_render_targets, root_signature_hash));
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_ps.data(), m_ps.size(), ShaderType::Pixel,
+                                  nullptr));
+  return buffer;
 }
 
 std::string MTLD3D12PipelineState::GetGSCacheHash() const {
   if (m_gs.empty())
-    return "0";
-  const size_t root_signature_hash =
-      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
-                 : 0;
-  return HexHash(ComputeD3D12ShaderCacheHash(
-      m_gs.data(), m_gs.size(), ShaderType::Geometry, nullptr, nullptr, 0,
-      root_signature_hash));
+    return {};
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016zx",
+           ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
+                                  ShaderType::Geometry, nullptr));
+  return buffer;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureStage() const {
+  return m_compile_failure_stage;
+}
+
+std::string MTLD3D12PipelineState::GetCompileFailureDetail() const {
+  return m_compile_failure_detail;
+}
+
+bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
+  if (!allow_async || !AsyncPipelineCompileEnabled())
+    return Compile();
+
+  CompileState expected = CompileState::NotStarted;
+  if (m_compile_state.compare_exchange_strong(expected, CompileState::Pending)) {
+    PSTRACE("PSO async compile scheduled pso=%p compute=%d", (void *)this,
+            m_is_compute);
+    GetAsyncPipelineCompiler().Enqueue(this);
+    return false;
+  }
+
+  return expected == CompileState::Compiled;
+}
+
+bool MTLD3D12PipelineState::TryCompilePendingInline() {
+  CompileState expected = CompileState::Pending;
+  if (!m_compile_state.compare_exchange_strong(expected,
+                                               CompileState::NotStarted))
+    return expected == CompileState::Compiled;
+
+  PSTRACE("PSO pending compile promoted inline pso=%p compute=%d",
+          (void *)this, m_is_compute);
+  return Compile();
+}
+
+void MTLD3D12PipelineState::RunAsyncCompile() {
+  Compile();
 }
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   switch (format) {
-  case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-  case DXGI_FORMAT_R8G8B8A8_UNORM:
-    return WMTPixelFormatRGBA8Unorm;
-  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-    return WMTPixelFormatRGBA8Unorm_sRGB;
-  case DXGI_FORMAT_R8G8B8A8_SNORM:
-    return WMTPixelFormatRGBA8Snorm;
-  case DXGI_FORMAT_R8G8B8A8_UINT:
-    return WMTPixelFormatRGBA8Uint;
-  case DXGI_FORMAT_R8G8B8A8_SINT:
-    return WMTPixelFormatRGBA8Sint;
-  case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-  case DXGI_FORMAT_B8G8R8A8_UNORM:
-    return WMTPixelFormatBGRA8Unorm;
-  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-    return WMTPixelFormatBGRA8Unorm_sRGB;
-  case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-    return WMTPixelFormatRGBA16Unorm;
-  case DXGI_FORMAT_R16G16B16A16_FLOAT:
-    return WMTPixelFormatRGBA16Float;
-  case DXGI_FORMAT_R16G16B16A16_UNORM:
-    return WMTPixelFormatRGBA16Unorm;
-  case DXGI_FORMAT_R16G16B16A16_SNORM:
-    return WMTPixelFormatRGBA16Snorm;
-  case DXGI_FORMAT_R16G16B16A16_UINT:
-    return WMTPixelFormatRGBA16Uint;
-  case DXGI_FORMAT_R16G16B16A16_SINT:
-    return WMTPixelFormatRGBA16Sint;
-  case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-    return WMTPixelFormatRGBA32Float;
-  case DXGI_FORMAT_R32G32B32A32_FLOAT:
-    return WMTPixelFormatRGBA32Float;
-  case DXGI_FORMAT_R32G32B32A32_UINT:
-    return WMTPixelFormatRGBA32Uint;
-  case DXGI_FORMAT_R32G32B32A32_SINT:
-    return WMTPixelFormatRGBA32Sint;
-  case DXGI_FORMAT_R32G32_TYPELESS:
-    return WMTPixelFormatRG32Float;
-  case DXGI_FORMAT_R32G32_FLOAT:
-    return WMTPixelFormatRG32Float;
-  case DXGI_FORMAT_R32G32_UINT:
-    return WMTPixelFormatRG32Uint;
-  case DXGI_FORMAT_R32G32_SINT:
-    return WMTPixelFormatRG32Sint;
-  case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-  case DXGI_FORMAT_R10G10B10A2_UNORM:
-    return WMTPixelFormatRGB10A2Unorm;
-  case DXGI_FORMAT_R10G10B10A2_UINT:
-    return WMTPixelFormatRGB10A2Uint;
-  case DXGI_FORMAT_R11G11B10_FLOAT:
-    return WMTPixelFormatRG11B10Float;
-  case DXGI_FORMAT_R8_TYPELESS:
-  case DXGI_FORMAT_R8_UNORM:
-    return WMTPixelFormatR8Unorm;
-  case DXGI_FORMAT_R8_SNORM:
-    return WMTPixelFormatR8Snorm;
-  case DXGI_FORMAT_R8_UINT:
-    return WMTPixelFormatR8Uint;
-  case DXGI_FORMAT_R8_SINT:
-    return WMTPixelFormatR8Sint;
-  case DXGI_FORMAT_R16_TYPELESS:
-    return WMTPixelFormatR16Unorm;
-  case DXGI_FORMAT_R16_UNORM:
-    return WMTPixelFormatR16Unorm;
-  case DXGI_FORMAT_R16_FLOAT:
-    return WMTPixelFormatR16Float;
-  case DXGI_FORMAT_R16_SNORM:
-    return WMTPixelFormatR16Snorm;
-  case DXGI_FORMAT_R16_UINT:
-    return WMTPixelFormatR16Uint;
-  case DXGI_FORMAT_R16_SINT:
-    return WMTPixelFormatR16Sint;
-  case DXGI_FORMAT_R32_TYPELESS:
-  case DXGI_FORMAT_R32_FLOAT:
-    return WMTPixelFormatR32Float;
-  case DXGI_FORMAT_R32_UINT:
-    return WMTPixelFormatR32Uint;
-  case DXGI_FORMAT_R32_SINT:
-    return WMTPixelFormatR32Sint;
-  case DXGI_FORMAT_D32_FLOAT:
-    return WMTPixelFormatDepth32Float;
-  case DXGI_FORMAT_D24_UNORM_S8_UINT:
-    return WMTPixelFormatDepth24Unorm_Stencil8;
-  case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
-    return WMTPixelFormatDepth32Float_Stencil8;
-  case DXGI_FORMAT_D16_UNORM:
-    return WMTPixelFormatDepth16Unorm;
-  case DXGI_FORMAT_R16G16_TYPELESS:
-    return WMTPixelFormatRG16Unorm;
-  case DXGI_FORMAT_R16G16_FLOAT:
-    return WMTPixelFormatRG16Float;
-  case DXGI_FORMAT_R16G16_UNORM:
-    return WMTPixelFormatRG16Unorm;
-  case DXGI_FORMAT_R16G16_SNORM:
-    return WMTPixelFormatRG16Snorm;
-  case DXGI_FORMAT_R16G16_UINT:
-    return WMTPixelFormatRG16Uint;
-  case DXGI_FORMAT_R16G16_SINT:
-    return WMTPixelFormatRG16Sint;
-  case DXGI_FORMAT_R8G8_TYPELESS:
-  case DXGI_FORMAT_R8G8_UNORM:
-    return WMTPixelFormatRG8Unorm;
-  case DXGI_FORMAT_R8G8_SNORM:
-    return WMTPixelFormatRG8Snorm;
-  case DXGI_FORMAT_R8G8_UINT:
-    return WMTPixelFormatRG8Uint;
-  case DXGI_FORMAT_R8G8_SINT:
-    return WMTPixelFormatRG8Sint;
-  case DXGI_FORMAT_BC1_TYPELESS:
-  case DXGI_FORMAT_BC1_UNORM:
-    return WMTPixelFormatBC1_RGBA;
-  case DXGI_FORMAT_BC1_UNORM_SRGB:
-    return WMTPixelFormatBC1_RGBA_sRGB;
-  case DXGI_FORMAT_BC2_TYPELESS:
-  case DXGI_FORMAT_BC2_UNORM:
-    return WMTPixelFormatBC2_RGBA;
-  case DXGI_FORMAT_BC2_UNORM_SRGB:
-    return WMTPixelFormatBC2_RGBA_sRGB;
-  case DXGI_FORMAT_BC3_TYPELESS:
-  case DXGI_FORMAT_BC3_UNORM:
-    return WMTPixelFormatBC3_RGBA;
-  case DXGI_FORMAT_BC3_UNORM_SRGB:
-    return WMTPixelFormatBC3_RGBA_sRGB;
-  case DXGI_FORMAT_BC4_TYPELESS:
-  case DXGI_FORMAT_BC4_UNORM:
-    return WMTPixelFormatBC4_RUnorm;
-  case DXGI_FORMAT_BC4_SNORM:
-    return WMTPixelFormatBC4_RSnorm;
-  case DXGI_FORMAT_BC5_TYPELESS:
-  case DXGI_FORMAT_BC5_UNORM:
-    return WMTPixelFormatBC5_RGUnorm;
-  case DXGI_FORMAT_BC5_SNORM:
-    return WMTPixelFormatBC5_RGSnorm;
-  case DXGI_FORMAT_BC6H_TYPELESS:
-  case DXGI_FORMAT_BC6H_UF16:
-    return WMTPixelFormatBC6H_RGBUfloat;
-  case DXGI_FORMAT_BC6H_SF16:
-    return WMTPixelFormatBC6H_RGBFloat;
-  case DXGI_FORMAT_BC7_TYPELESS:
-  case DXGI_FORMAT_BC7_UNORM:
-    return WMTPixelFormatBC7_RGBAUnorm;
-  case DXGI_FORMAT_BC7_UNORM_SRGB:
-    return WMTPixelFormatBC7_RGBAUnorm_sRGB;
-  default:
-    return WMTPixelFormatInvalid;
+  case DXGI_FORMAT_R8G8B8A8_UNORM: return WMTPixelFormatRGBA8Unorm;
+  case DXGI_FORMAT_R8G8B8A8_TYPELESS: return WMTPixelFormatRGBA8Unorm;
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return WMTPixelFormatRGBA8Unorm_sRGB;
+  case DXGI_FORMAT_B8G8R8A8_UNORM: return WMTPixelFormatBGRA8Unorm;
+  case DXGI_FORMAT_B8G8R8A8_TYPELESS: return WMTPixelFormatBGRA8Unorm;
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return WMTPixelFormatBGRA8Unorm_sRGB;
+  case DXGI_FORMAT_R16G16B16A16_FLOAT: return WMTPixelFormatRGBA16Float;
+  case DXGI_FORMAT_R32G32B32A32_FLOAT: return WMTPixelFormatRGBA32Float;
+  case DXGI_FORMAT_R10G10B10A2_UNORM: return WMTPixelFormatRGB10A2Unorm;
+  case DXGI_FORMAT_R11G11B10_FLOAT: return WMTPixelFormatRG11B10Float;
+  case DXGI_FORMAT_R8_UNORM: return WMTPixelFormatR8Unorm;
+  case DXGI_FORMAT_R16_FLOAT: return WMTPixelFormatR16Float;
+  case DXGI_FORMAT_R32_FLOAT: return WMTPixelFormatR32Float;
+  case DXGI_FORMAT_D32_FLOAT: return WMTPixelFormatDepth32Float;
+  case DXGI_FORMAT_D24_UNORM_S8_UINT: return WMTPixelFormatDepth24Unorm_Stencil8;
+  case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return WMTPixelFormatDepth32Float_Stencil8;
+  case DXGI_FORMAT_D16_UNORM: return WMTPixelFormatDepth16Unorm;
+  case DXGI_FORMAT_R16G16_FLOAT: return WMTPixelFormatRG16Float;
+  case DXGI_FORMAT_R16G16_UNORM: return WMTPixelFormatRG16Unorm;
+  case DXGI_FORMAT_R8G8_UNORM: return WMTPixelFormatRG8Unorm;
+  case DXGI_FORMAT_BC1_TYPELESS: return WMTPixelFormatBC1_RGBA;
+  case DXGI_FORMAT_BC1_UNORM: return WMTPixelFormatBC1_RGBA;
+  case DXGI_FORMAT_BC1_UNORM_SRGB: return WMTPixelFormatBC1_RGBA_sRGB;
+  case DXGI_FORMAT_BC2_TYPELESS: return WMTPixelFormatBC2_RGBA;
+  case DXGI_FORMAT_BC2_UNORM: return WMTPixelFormatBC2_RGBA;
+  case DXGI_FORMAT_BC2_UNORM_SRGB: return WMTPixelFormatBC2_RGBA_sRGB;
+  case DXGI_FORMAT_BC3_TYPELESS: return WMTPixelFormatBC3_RGBA;
+  case DXGI_FORMAT_BC3_UNORM: return WMTPixelFormatBC3_RGBA;
+  case DXGI_FORMAT_BC3_UNORM_SRGB: return WMTPixelFormatBC3_RGBA_sRGB;
+  case DXGI_FORMAT_BC4_TYPELESS: return WMTPixelFormatBC4_RUnorm;
+  case DXGI_FORMAT_BC4_UNORM: return WMTPixelFormatBC4_RUnorm;
+  case DXGI_FORMAT_BC4_SNORM: return WMTPixelFormatBC4_RSnorm;
+  case DXGI_FORMAT_BC5_TYPELESS: return WMTPixelFormatBC5_RGUnorm;
+  case DXGI_FORMAT_BC5_UNORM: return WMTPixelFormatBC5_RGUnorm;
+  case DXGI_FORMAT_BC5_SNORM: return WMTPixelFormatBC5_RGSnorm;
+  case DXGI_FORMAT_BC6H_TYPELESS: return WMTPixelFormatBC6H_RGBUfloat;
+  case DXGI_FORMAT_BC6H_UF16: return WMTPixelFormatBC6H_RGBUfloat;
+  case DXGI_FORMAT_BC6H_SF16: return WMTPixelFormatBC6H_RGBFloat;
+  case DXGI_FORMAT_BC7_TYPELESS: return WMTPixelFormatBC7_RGBAUnorm;
+  case DXGI_FORMAT_BC7_UNORM: return WMTPixelFormatBC7_RGBAUnorm;
+  case DXGI_FORMAT_BC7_UNORM_SRGB: return WMTPixelFormatBC7_RGBAUnorm_sRGB;
+  default: return WMTPixelFormatInvalid;
   }
 }
 
-bool MTLD3D12PipelineState::CompileShader(
-    const void *bytecode, SIZE_T size, ShaderType type, const char *func_name,
-    WMT::Reference<WMT::Function> &out_func, sm50_shader_t *out_shader_handle,
-    MTL_SHADER_REFLECTION *out_reflection) {
-  DXMTD3D12ScopedTimer shader_timer("PSO", "CompileShader");
-  if (type == ShaderType::Vertex)
-    m_vs_stage_in_register_map.clear();
-  if (type == ShaderType::Vertex)
-    m_vs_stage_in_attribute_order.clear();
-
-  const size_t root_signature_hash =
-      m_root_sig ? static_cast<MTLD3D12RootSignature *>(m_root_sig)->GetBlobHash()
-                 : 0;
-  size_t hash = ComputeD3D12ShaderCacheHash(
-      bytecode, size, type,
-      type == ShaderType::Vertex ? &m_input_layout : nullptr,
-      type == ShaderType::Pixel ? m_rtv_formats : nullptr,
-      type == ShaderType::Pixel ? m_num_render_targets : 0,
-      root_signature_hash);
-  shader_timer.SetDetail("func=%s type=%u size=%zu blob=%s hash=0x%zx",
-                         func_name, (unsigned)type, size,
-                         DescribeShaderBlobMagic(bytecode, size), hash);
+bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
+                                          ShaderType type,
+                                          const char *func_name,
+                                          WMT::Reference<WMT::Function> &out_func,
+                                          sm50_shader_t *out_shader_handle,
+                                          MTL_SHADER_REFLECTION *out_reflection) {
+  size_t hash = ComputeShaderCacheHash(bytecode, size, type,
+                                       type == ShaderType::Vertex
+                                           ? &m_input_layout
+                                           : nullptr);
   {
-    DXMTD3D12ScopedTimer shader_cache_lock_timer("PSO", "ShaderCacheLockWait");
-    shader_cache_lock_timer.SetDetail("func=%s hash=0x%zx", func_name, hash);
     std::lock_guard<std::mutex> lock(s_shader_mutex);
-    shader_cache_lock_timer.TraceNow();
-    PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu",
-            func_name, hash, size, s_shader_cache.size());
+    PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu", func_name, hash, size, s_shader_cache.size());
     auto it = s_shader_cache.find(hash);
     if (it != s_shader_cache.end() && !out_shader_handle && !out_reflection) {
       out_func = it->second;
@@ -2409,10 +827,24 @@ bool MTLD3D12PipelineState::CompileShader(
 
   if (bytecode && size >= 4) {
     auto *magic = (const uint32_t *)bytecode;
-    PSTRACE("CompileShader: %s size=%zu magic=0x%08x (DXBC=0x43425844 "
-            "DXIL=0x4C495844)",
-            func_name, size, *magic);
-    TraceDxbcChunks(bytecode, size, func_name);
+    PSTRACE("CompileShader: %s size=%zu magic=0x%08x (DXBC=0x43425844 DXIL=0x4C495844)", func_name, size, *magic);
+    if (*magic == 0x43425844 && size >= 32) {
+      auto *chunks = (const uint32_t *)bytecode;
+      uint32_t container_size = chunks[6];
+      uint32_t num_chunks = chunks[7];
+      PSTRACE("  DXBC: container_size=%u num_chunks=%u", container_size, num_chunks);
+      for (uint32_t i = 0; i < num_chunks && i < 16; i++) {
+        uint32_t offset = chunks[8 + i];
+        if (offset + 8 <= size) {
+          char tag[5] = {};
+          memcpy(tag, (const char *)bytecode + offset, 4);
+          uint32_t chunk_size = 0;
+          memcpy(&chunk_size, (const char *)bytecode + offset + 4,
+                 sizeof(chunk_size));
+          PSTRACE("  chunk[%u]: tag='%s' offset=%u size=%u", i, tag, offset, chunk_size);
+        }
+      }
+    }
   }
   sm50_error_t sm50_err = nullptr;
   sm50_shader_t shader = nullptr;
@@ -2422,13 +854,6 @@ bool MTLD3D12PipelineState::CompileShader(
     char err_buf[256] = {};
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
     SM50FreeError(sm50_err);
-
-    if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-        (type == ShaderType::Vertex || type == ShaderType::Pixel)) {
-      Logger::warn(str::format("DIAG ", func_name, " SM50Init failed size=",
-                               size, " hash=", HexHash(hash),
-                               " err=", err_buf));
-    }
 
     bool has_dxil = false;
     using namespace microsoft;
@@ -2443,266 +868,161 @@ bool MTLD3D12PipelineState::CompileShader(
 
           auto wmt_device = m_device->GetDXMTDevice().device();
 
-          std::string cache_path = BuildShaderCachePath(HexHash(hash).c_str());
-          char dxbc_path[256], metallib_path[256], reflection_path[256],
-              vertex_layout_path[256], stage_in_metallib_path[256],
-              module_summary_path[256], dxil_report_path[256],
-              metallib_error_path[256], converter_fail_path[256];
-          snprintf(dxbc_path, sizeof(dxbc_path), "%s.dxbc", cache_path.c_str());
-          snprintf(metallib_path, sizeof(metallib_path), "%s.metallib",
-                   cache_path.c_str());
-          snprintf(reflection_path, sizeof(reflection_path), "%s.json",
-                   cache_path.c_str());
-          snprintf(vertex_layout_path, sizeof(vertex_layout_path),
-                   "%s.vertex-layout.json", cache_path.c_str());
-          snprintf(stage_in_metallib_path, sizeof(stage_in_metallib_path),
-                   "%s.stageIn.metallib", cache_path.c_str());
+          char cache_path[1024];
+          FormatShaderCachePath(cache_path, sizeof(cache_path), "%016zx", hash);
+          char dxbc_path[1024], metallib_path[1024], reflection_path[1024],
+              module_summary_path[1024], dxil_report_path[1024],
+              metallib_error_path[1024];
+          snprintf(dxbc_path, sizeof(dxbc_path), "%s.dxbc", cache_path);
+          snprintf(metallib_path, sizeof(metallib_path), "%s.metallib", cache_path);
+          snprintf(reflection_path, sizeof(reflection_path), "%s.json", cache_path);
           snprintf(module_summary_path, sizeof(module_summary_path),
-                   "%s.module.txt", cache_path.c_str());
+                   "%s.module.txt", cache_path);
           snprintf(dxil_report_path, sizeof(dxil_report_path),
-                   "%s.dxil_report.txt", cache_path.c_str());
+                   "%s.dxil_report.txt", cache_path);
           snprintf(metallib_error_path, sizeof(metallib_error_path),
-                   "%s.metallib.err.txt", cache_path.c_str());
-          snprintf(converter_fail_path, sizeof(converter_fail_path),
-                   "%s.msc.fail", cache_path.c_str());
+                   "%s.metallib.err.txt", cache_path);
           EnsureShaderCacheDir();
+          DumpShaderBlob(dxbc_path, bytecode, size);
 
-          const bool needs_stage_in =
-              type == ShaderType::Vertex && m_input_layout.NumElements > 0 &&
-              m_input_layout.pInputElementDescs;
-          if (needs_stage_in &&
-              !WriteMetalShaderConverterVertexLayout(
-                  m_device, m_input_layout, vertex_layout_path)) {
-            return RecordCompileFailure(
-                "shader/msc_vertex_layout",
-                str::format(func_name,
-                            " failed to write MetalShaderConverter vertex "
-                            "layout: ",
-                            vertex_layout_path));
-          }
-
-          const bool disable_runtime_msc =
-              DXMTD3D12DisableRuntimeMetalShaderConverter();
-          FILE *mf = disable_runtime_msc ? nullptr : fopen(metallib_path, "rb");
-          FILE *ff = disable_runtime_msc ? nullptr : fopen(converter_fail_path, "rb");
-          FILE *sf = (!disable_runtime_msc && needs_stage_in)
-                         ? fopen(stage_in_metallib_path, "rb")
-                         : nullptr;
-          if (disable_runtime_msc) {
-            PSTRACE("  runtime MSC disabled; using internal DXIL->MSL for %s",
-                    func_name);
-            DumpShaderBlob(dxbc_path, bytecode, size);
-          } else if (!mf) {
-            PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
-            if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-                type == ShaderType::Vertex)
-              Logger::warn(str::format(
-                  "DIAG ", func_name, " metallib not cached hash=",
-                  HexHash(hash), " needs_stage_in=", needs_stage_in,
-                  " path=", metallib_path));
-            DumpShaderBlob(dxbc_path, bytecode, size);
-            for (uint32_t attempt = 0; attempt < 100 && !mf && !ff; attempt++) {
-              FILE *rf = fopen(reflection_path, "rb");
-              if (rf) {
-                fclose(rf);
-                mf = fopen(metallib_path, "rb");
-                if (needs_stage_in) {
-                  if (sf)
-                    fclose(sf);
-                  sf = fopen(stage_in_metallib_path, "rb");
-                }
-                if (mf) {
-                  PSTRACE("  external metallib cache hit after %u waits",
-                          attempt + 1);
-                  break;
-                }
-              }
-              ff = fopen(converter_fail_path, "rb");
-              if (ff) {
-                PSTRACE(
-                    "  external converter failure marker hit after %u waits",
-                    attempt + 1);
-                break;
-              }
-              Sleep(20);
-            }
-          }
-          if (sf)
-            fclose(sf);
-
-          std::string converter_failure;
-          if (ff) {
-            fseek(ff, 0, SEEK_END);
-            long fail_size = ftell(ff);
-            fseek(ff, 0, SEEK_SET);
-            std::string fail_text;
-            if (fail_size > 0) {
-              fail_text.resize((size_t)fail_size);
-              size_t read = fread(fail_text.data(), 1, (size_t)fail_size, ff);
-              fail_text.resize(read);
-            }
-            fclose(ff);
-            if (fail_text.empty())
-              fail_text = "metal-shaderconverter failed";
-            converter_failure = fail_text;
-            if (ShouldFallbackFromMetalShaderConverter(fail_text, type)) {
-              if (!disable_runtime_msc &&
-                  !DXMTD3D12AllowDebugMSLEmitterBackend()) {
-                DumpShaderBlob(dxbc_path, bytecode, size);
-                return RecordCompileFailure(
-                    "shader/external_metal_shader_converter",
-                    str::format(func_name,
-                                " metal-shaderconverter failed and "
-                                "DebugMSLEmitterBackend is disabled; set "
-                                "DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND=1 to use "
-                                "the debug MSL fallback: ",
-                                fail_text, "; dxbc ", dxbc_path));
-              }
-              PSTRACE("  external converter failed for %s but is eligible for "
-                      "DXIL->MSL fallback: %s",
-                      func_name, fail_text.c_str());
-              Logger::warn(str::format(
-                  "metal-shaderconverter failed for ", func_name,
-                  "; falling back to DebugMSLEmitterBackend: ", fail_text));
-            } else {
-              DumpShaderBlob(dxbc_path, bytecode, size);
-              return RecordCompileFailure(
-                  "shader/external_metal_shader_converter",
-                  str::format(func_name, " metal-shaderconverter failed: ",
-                              fail_text, "; dxbc ", dxbc_path));
-            }
-          }
-
+          FILE *mf = fopen(metallib_path, "rb");
           if (!mf) {
-            auto msl_options = BuildDXILMSLConvertOptions(
-                type, bytecode, size, m_input_layout, m_rtv_formats,
-                m_num_render_targets);
-            if (type == ShaderType::Vertex && m_gs_passthrough != ~0u) {
-              MTL_GEOMETRY_SHADER_PASS_THROUGH pt = {};
-              memcpy(&pt, &m_gs_passthrough, sizeof(pt));
-              msl_options.gs_passthrough_rtai_reg = pt.RenderTargetArrayIndexReg;
-              msl_options.gs_passthrough_rtai_comp = pt.RenderTargetArrayIndexComponent;
-              msl_options.gs_passthrough_vpai_reg = pt.ViewportArrayIndexReg;
-              msl_options.gs_passthrough_vpai_comp = pt.ViewportArrayIndexComponent;
-              PSTRACE("  DXIL VS with GS pass-through: rtai_reg=%u rtai_comp=%u "
-                      "vpai_reg=%u vpai_comp=%u",
-                      (unsigned)pt.RenderTargetArrayIndexReg,
-                      (unsigned)pt.RenderTargetArrayIndexComponent,
-                      (unsigned)pt.ViewportArrayIndexReg,
-                      (unsigned)pt.ViewportArrayIndexComponent);
-            }
+            PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
 
-            const bool allow_debug_msl_backend =
-                disable_runtime_msc || DXMTD3D12AllowDebugMSLEmitterBackend();
-            if (!allow_debug_msl_backend) {
+            auto container = dxmt::dxil::DXILContainer::parse(blob, blob_size);
+            if (!container) {
+              PSTRACE("  DXILContainer::parse FAILED for %s", func_name);
               DumpShaderBlob(dxbc_path, bytecode, size);
-              return RecordCompileFailure(
-                  "shader/compiler_primary_cache_miss",
-                  str::format(func_name,
-                              " primary MetalIR compiler did not produce a "
-                              "metallib and DebugMSLEmitterBackend is disabled; "
-                              "set DXMT_D3D12_ALLOW_DEBUG_MSL_BACKEND=1 for "
-                              "the debug MSL fallback; metallib ",
-                              metallib_path, "; reflection ", reflection_path,
-                              "; dxbc ", dxbc_path,
-                              converter_failure.empty()
-                                  ? std::string()
-                                  : str::format("; converter failure ",
-                                                converter_failure)));
+              return RecordCompileFailure("shader/dxil_container_parse",
+                                          str::format(func_name, " DXIL container parse failed; dumped ", dxbc_path));
             }
 
-            char msl_path[256];
-            char msl_error_path[256];
-            snprintf(msl_path, sizeof(msl_path), "%s.msl", cache_path.c_str());
-            snprintf(msl_error_path, sizeof(msl_error_path), "%s.msl.err.txt",
-                     cache_path.c_str());
+            auto &shader_info = container->shader();
+            PSTRACE("  DXIL container parsed: kind=%u sm=%u.%u bc_size=%u",
+                    (uint32_t)shader_info.kind, shader_info.shader_model.major,
+                    shader_info.shader_model.minor, shader_info.bitcode.size);
 
-            D3D12ShaderCompileRequest compiler_request = {};
-            compiler_request.metal_device = wmt_device;
-            compiler_request.stage = D3D12CompilerStageFromShaderType(type);
-            compiler_request.dxil_container = blob;
-            compiler_request.dxil_container_size = blob_size;
-            compiler_request.original_bytecode_hash = hash;
-            compiler_request.original_bytecode_size = size;
-            compiler_request.requested_entry_point = func_name ? func_name : "";
-            compiler_request.cache_key = HexHash(hash);
-            compiler_request.root_signature_hash = HexHash(root_signature_hash);
-            compiler_request.converter_options_hash = "dxil-msl-stageio-v4";
-            compiler_request.metal_device_family = "runtime-device";
-            compiler_request.allow_debug_msl_backend = allow_debug_msl_backend;
-            compiler_request.prefer_debug_msl_backend = true;
-            compiler_request.msl_options = msl_options;
-            compiler_request.paths.dxbc = dxbc_path;
-            compiler_request.paths.module_summary = module_summary_path;
-            compiler_request.paths.dxil_report = dxil_report_path;
-            compiler_request.paths.msl = msl_path;
-            compiler_request.paths.msl_error = msl_error_path;
-            compiler_request.paths.metallib = metallib_path;
-            compiler_request.paths.reflection = reflection_path;
-            compiler_request.paths.stage_input_layout = vertex_layout_path;
-
-            D3D12ShaderCompiler compiler;
-            auto compiled_shader = compiler.Compile(compiler_request);
-            if (!compiled_shader.success) {
-              PSTRACE("  D3D12ShaderCompiler FAILED backend=%s diagnostics=%s",
-                      compiled_shader.backend_name.c_str(),
-                      compiled_shader.diagnostics.c_str());
-              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-                  type == ShaderType::Vertex)
-                Logger::warn(str::format("DIAG ", func_name,
-                                         " D3D12ShaderCompiler FAILED hash=",
-                                         HexHash(hash), " backend=",
-                                         compiled_shader.backend_name,
-                                         " diagnostics=",
-                                         compiled_shader.diagnostics));
+            auto module = dxmt::dxil::BitcodeReader::parse(
+                shader_info.bitcode.data, shader_info.bitcode.size);
+            if (!module) {
+              PSTRACE("  BitcodeReader::parse FAILED");
               DumpShaderBlob(dxbc_path, bytecode, size);
-              return RecordCompileFailure(
-                  "shader/d3d12_shader_compiler",
-                  str::format(func_name, " ",
-                              compiled_shader.backend_name,
-                              " failed; diagnostics ",
-                              compiled_shader.diagnostics, "; module ",
-                              module_summary_path, "; dxbc ", dxbc_path));
+              return RecordCompileFailure("shader/bitcode_parse",
+                                          str::format(func_name, " DXIL bitcode parse failed; dumped ", dxbc_path));
             }
 
-            out_func = compiled_shader.function;
-            PSTRACE("  D3D12ShaderCompiler OK backend=%s entry=%s "
-                    "debug_msl=%u function=%llu",
-                    compiled_shader.backend_name.c_str(),
-                    compiled_shader.entry_point.c_str(),
-                    compiled_shader.used_debug_msl_backend ? 1u : 0u,
-                    (unsigned long long)out_func.handle);
+            PSTRACE("  Bitcode parsed: types=%zu functions=%zu constants=%zu",
+                    module->types.size(), module->functions.size(), module->constants.size());
+            DumpDXILModuleSummary(module_summary_path, *module, shader_info);
+            PSTRACE("  DXIL module summary written to %s", module_summary_path);
+
+            auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info);
+            auto msl_result = typed_msl
+                ? std::optional<dxmt::dxil::MSLShader>(std::in_place, ToRuntimeMSLShader(std::move(*typed_msl)))
+                : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
+            if (!msl_result) {
+              PSTRACE("  MSLLowering::lower and DXILToMSL::convert FAILED");
+              DumpShaderBlob(dxbc_path, bytecode, size);
+              return RecordCompileFailure("shader/dxil_to_msl",
+                                          str::format(func_name,
+                                                      " DXIL to MSL conversion failed; module ",
+                                                      module_summary_path,
+                                                      "; dxbc ", dxbc_path));
+            }
+
+            PSTRACE("  MSL generated via %s: %zu bytes, entry=%s unsupported_intrinsics=%u unsupported_opcodes=%u",
+                    typed_msl ? "MSLLowering" : "DXILToMSL",
+                    msl_result->source.size(), msl_result->entry_point.c_str(),
+                    msl_result->unsupported_intrinsics, msl_result->unsupported_opcodes);
+
+            char msl_path[1024];
+            char msl_error_path[1024];
+            snprintf(msl_path, sizeof(msl_path), "%s.msl", cache_path);
+            snprintf(msl_error_path, sizeof(msl_error_path),
+                     "%s.msl.err.txt", cache_path);
+            DumpShaderText(msl_path, msl_result->source.c_str());
+            PSTRACE("  MSL source written to %s", msl_path);
+            DumpDXILCompileReport(dxil_report_path, func_name, hash, size,
+                                  dxbc_path, module_summary_path, msl_path,
+                                  *module, shader_info, *msl_result,
+                                  static_cast<MTLD3D12RootSignature *>(m_root_sig));
+            PSTRACE("  DXIL compile report written to %s", dxil_report_path);
+
+            WMT::Reference<WMT::Error> compile_err;
+            auto library = wmt_device.newLibraryWithSource(
+                msl_result->source.c_str(), msl_result->source.size(), compile_err);
+
+            if (compile_err.handle) {
+              auto err_desc = DescribeNSObject(compile_err.handle);
+              DumpShaderText(msl_error_path, err_desc.c_str());
+              PSTRACE("  newLibraryWithSource FAILED: %s", err_desc.c_str());
+              Logger::err(str::format("DXIL MSL compilation failed for ", func_name, ": ",
+                                       err_desc));
+              DumpShaderBlob(dxbc_path, bytecode, size);
+              return RecordCompileFailure("shader/metal_library_source",
+                                          str::format(func_name, " MSL compile failed: ",
+                                                      err_desc,
+                                                      "; msl ", msl_path,
+                                                      "; error ", msl_error_path,
+                                                      "; dxbc ", dxbc_path));
+            }
+
+            PSTRACE("  Metal library compiled OK from source lib_handle=%llu", (unsigned long long)library.handle);
 
             const char *dump_msl = std::getenv("DXMT_DUMP_MSL");
             if (dump_msl && dump_msl[0] && strcmp(dump_msl, "0") != 0) {
-              std::string dump_path = BuildShaderCachePath(
-                  str::format("dxmt_msl_", func_name, "_", HexHash(hash),
-                              ".metal")
-                      .c_str());
-              FILE *df = fopen(dump_path.c_str(), "w");
-              if (df) {
-                auto msl_text = ReadTextFile(msl_path);
-                fwrite(msl_text.c_str(), 1, msl_text.size(), df);
-                fclose(df);
+              char dump_path[1024];
+              snprintf(dump_path, sizeof(dump_path), "%s/dxmt_msl_%s_%016zx.metal",
+                       ShaderCacheDir().c_str(), func_name, hash);
+              FILE *df = fopen(dump_path, "w");
+              if (df) { fwrite(msl_result->source.c_str(), 1, msl_result->source.size(), df); fclose(df); }
+            }
+
+            const char *entry_name = msl_result->entry_point.c_str();
+            if (strcmp(entry_name, "cs_main") != 0 &&
+                strcmp(entry_name, "vs_main") != 0 &&
+                strcmp(entry_name, "ps_main") != 0) {
+              switch (shader_info.kind) {
+              case dxmt::dxil::DxilShaderKind::Compute: entry_name = "cs_main"; break;
+              case dxmt::dxil::DxilShaderKind::Vertex: entry_name = "vs_main"; break;
+              case dxmt::dxil::DxilShaderKind::Pixel: entry_name = "ps_main"; break;
+              default: break;
               }
             }
 
-            {
-              std::lock_guard<std::mutex> lock(s_shader_mutex);
+            out_func = library.newFunction(entry_name);
+            PSTRACE("  newFunction(%s) on lib=%llu -> func_handle=%llu", entry_name, (unsigned long long)library.handle, (unsigned long long)out_func.handle);
+            if (!out_func.handle) {
+              PSTRACE("  newFunction(%s) returned null, trying alternatives", entry_name);
+              out_func = library.newFunction("main");
+              if (!out_func.handle)
+                out_func = library.newFunction("cs_main");
+              if (!out_func.handle)
+                out_func = library.newFunction("vs_main");
+              if (!out_func.handle)
+                out_func = library.newFunction("ps_main");
+            }
+
+            if (out_func.handle) {
+              PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
               s_shader_cache[hash] = out_func;
-            }
 
-            if (type == ShaderType::Vertex) {
-              m_vs_uses_stage_in = true;
-              m_vs_requires_msc_stage_in = false;
-            }
+              if (type == ShaderType::Vertex)
+                m_vs_uses_stage_in = true;
 
-            if (type == ShaderType::Compute) {
-              m_threadgroup_size.width = compiled_shader.threadgroup_size[0];
-              m_threadgroup_size.height = compiled_shader.threadgroup_size[1];
-              m_threadgroup_size.depth = compiled_shader.threadgroup_size[2];
+              if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
+                m_threadgroup_size.width = msl_result->tg_size[0];
+                m_threadgroup_size.height = msl_result->tg_size[1];
+                m_threadgroup_size.depth = msl_result->tg_size[2];
+              }
+              return true;
+            } else {
+              PSTRACE("  newFunction returned null for all entry points");
+              Logger::err(str::format("DXIL: failed to get function from compiled library for ", func_name));
+              return RecordCompileFailure("shader/metal_function_lookup",
+                                          str::format(func_name, " function lookup failed after MSL compile; msl ",
+                                                      msl_path));
             }
-            return true;
           }
 
           PSTRACE("  loading cached metallib from %s", metallib_path);
@@ -2714,141 +1034,33 @@ bool MTLD3D12PipelineState::CompileShader(
             std::vector<uint8_t> lib_data(lib_size);
             fread(lib_data.data(), 1, lib_size, mf);
             fclose(mf);
-            auto dispatch_data =
-                WMT::MakeDispatchData(lib_data.data(), lib_size);
+            auto dispatch_data = WMT::MakeDispatchData(lib_data.data(), lib_size);
             WMT::Reference<WMT::Error> err;
             auto library = wmt_device.newLibrary(dispatch_data, err);
             if (!err.handle) {
-              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-                  type == ShaderType::Vertex && needs_stage_in)
-                Logger::info(str::format(
-                    "DIAG vertex metallib loaded OK size=", lib_size,
-                    " stage_in_sidecar=", sf ? 1 : 0));
-              std::string reflection_text = ReadTextFile(reflection_path);
-              std::string actual_entry;
-              ExtractJsonStringValue(reflection_text, "EntryPoint",
-                                     actual_entry);
-              MTL_SHADER_REFLECTION reflected_arguments = {};
-              reflected_arguments.ConstanttBufferTableBindIndex = ~0u;
-              reflected_arguments.ArgumentBufferBindIndex = ~0u;
-              auto msc_args = ParseTopLevelArgumentBufferReflection(
-                  reflection_text, reflected_arguments);
-              if (!msc_args.empty()) {
-                switch (type) {
-                case ShaderType::Vertex:
-                  m_vs_reflection = reflected_arguments;
-                  m_vs_args = msc_args;
-                  break;
-                case ShaderType::Pixel:
-                  m_ps_reflection = reflected_arguments;
-                  m_ps_args = msc_args;
-                  break;
-                case ShaderType::Compute:
-                  m_cs_reflection = reflected_arguments;
-                  m_cs_args = msc_args;
-                  break;
-                default:
-                  break;
-                }
-                PSTRACE("  MSC TopLevelArgumentBuffer reflected: type=%u "
-                        "args=%zu qwords=%u",
-                        (unsigned)type, msc_args.size(),
-                        reflected_arguments.ArgumentTableQwords);
-                for (size_t i = 0; i < msc_args.size(); i++) {
-                  PSTRACE("    MSC arg[%zu] type=%d slot=%u space=%u "
-                          "offset=%u flags=0x%x",
-                          i, (int)msc_args[i].Type,
-                          msc_args[i].SM50BindingSlot,
-                          msc_args[i].SM50RegisterSpace,
-                          msc_args[i].StructurePtrOffset, msc_args[i].Flags);
-                }
-              }
-              if (type == ShaderType::Vertex) {
-                m_vs_stage_in_attribute_order =
-                    ParseVertexInputReflection(reflection_text);
-                m_vs_stage_in_register_map.clear();
-                for (const auto &attr : m_vs_stage_in_attribute_order)
-                  m_vs_stage_in_register_map[attr.register_index] = attr;
-
-                if (!m_vs_stage_in_register_map.empty()) {
-                  for (const auto &[reg, attr] : m_vs_stage_in_register_map)
-                    PSTRACE("  DXIL vertex reflection register %u -> metal "
-                            "attribute %u format=%u",
-                            reg, attr.attribute_index, (unsigned)attr.format);
-                } else {
-                  PSTRACE("  DXIL vertex reflection register map unavailable");
-                }
-                if (!m_vs_stage_in_attribute_order.empty()) {
-                  for (size_t attr_i = 0;
-                       attr_i < m_vs_stage_in_attribute_order.size(); attr_i++)
-                    PSTRACE(
-                        "  DXIL vertex reflection order[%zu] register=%u "
-                        "attribute=%u format=%u",
-                        attr_i,
-                        m_vs_stage_in_attribute_order[attr_i].register_index,
-                        m_vs_stage_in_attribute_order[attr_i].attribute_index,
-                        (unsigned)m_vs_stage_in_attribute_order[attr_i].format);
-                } else {
-                  PSTRACE(
-                      "  DXIL vertex reflection attribute order unavailable");
-                }
-              }
-
-              const char *fn_name =
-                  actual_entry.empty() ? func_name : actual_entry.c_str();
-              PSTRACE("  trying newFunction(%s)", fn_name);
-
-              bool needs_fc = false;
-              {
-                size_t fc_pos = reflection_text.find("\"NeedsFunctionConstants\"");
-                if (fc_pos != std::string_view::npos) {
-                  size_t val_pos = reflection_text.find("true", fc_pos);
-                  if (val_pos != std::string_view::npos &&
-                      val_pos - fc_pos < 40)
-                    needs_fc = true;
-                }
-              }
-
-              if (DXMTD3D12ShaderDiagnosticLogsEnabled() &&
-                  type == ShaderType::Vertex && needs_stage_in) {
-                Logger::info(str::format("DIAG fn_lookup entry=", fn_name,
-                                         " needs_fc=", needs_fc,
-                                         " stage_in=1"));
-              }
-
-              if (needs_fc && type == ShaderType::Vertex) {
-                bool tessellation_enabled = false;
-                int vertex_output_size = 96;
-                {
-                  size_t state_pos = reflection_text.find("\"state\"");
-                  if (state_pos != std::string_view::npos) {
-                    size_t vos_pos =
-                        reflection_text.find("\"vertex_output_size_in_bytes\"",
-                                             state_pos);
-                    if (vos_pos != std::string_view::npos)
-                      ExtractJsonUIntValue(
-                          reflection_text.substr(vos_pos, 80),
-                          "vertex_output_size_in_bytes",
-                          (uint32_t &)vertex_output_size);
+              char actual_entry[256] = {};
+              char rbuf[4096] = {};
+              FILE *rf = fopen(reflection_path, "r");
+              if (rf) {
+                fread(rbuf, 1, sizeof(rbuf)-1, rf);
+                fclose(rf);
+                char *ep = strstr(rbuf, "\"EntryPoint\"");
+                if (ep) {
+                  char *q1 = strchr(ep + 13, '"');
+                  char *q2 = q1 ? strchr(q1+1, '"') : nullptr;
+                  if (q1 && q2) {
+                    size_t len = q2 - q1 - 1;
+                    if (len < sizeof(actual_entry)) {
+                      memcpy(actual_entry, q1+1, len);
+                      actual_entry[len] = 0;
+                    }
                   }
                 }
-                WMTFunctionConstant constants[2] = {};
-                constants[0].data.set(&tessellation_enabled);
-                constants[0].type = WMTDataTypeBool;
-                constants[0].index = 0;
-                constants[1].data.set(&vertex_output_size);
-                constants[1].type = WMTDataTypeInt;
-                constants[1].index = 1;
-                WMT::Reference<WMT::Error> fc_err;
-                out_func = library.newFunctionWithConstants(
-                    fn_name, constants, 2, fc_err);
-                if (!out_func.handle)
-                  out_func = library.newFunction(fn_name);
-              } else {
-                out_func = library.newFunction(fn_name);
               }
-
-              if (!out_func.handle && !actual_entry.empty()) {
+              const char *fn_name = actual_entry[0] ? actual_entry : func_name;
+              PSTRACE("  trying newFunction(%s)", fn_name);
+              out_func = library.newFunction(fn_name);
+              if (!out_func.handle && actual_entry[0]) {
                 out_func = library.newFunction(func_name);
               }
               if (!out_func.handle)
@@ -2861,22 +1073,19 @@ bool MTLD3D12PipelineState::CompileShader(
                 out_func = library.newFunction("ps_main");
               if (out_func.handle) {
                 PSTRACE("  DXIL loaded from cache OK! entry=%s", fn_name);
-                {
-                  std::lock_guard<std::mutex> lock(s_shader_mutex);
-                  s_shader_cache[hash] = out_func;
-                }
+                s_shader_cache[hash] = out_func;
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = true;
-                if (type == ShaderType::Vertex)
-                  m_vs_requires_msc_stage_in = needs_stage_in && sf;
-                int tw = 1, th = 1, td = 1;
-                if (ExtractJsonInt3Value(reflection_text, "tg_size", tw, th,
-                                         td)) {
-                  m_threadgroup_size.width = tw;
-                  m_threadgroup_size.height = th;
-                  m_threadgroup_size.depth = td;
-                  PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw,
-                          th, td);
+                char *tg = strstr(rbuf, "\"tg_size\"");
+                if (tg) {
+                  int tw=1,th=1,td=1;
+                  if (sscanf(tg, "\"tg_size\": [%d, %d, %d]", &tw, &th, &td) == 3 ||
+                      sscanf(tg, "\"tg_size\":[%d,%d,%d]", &tw, &th, &td) == 3) {
+                    m_threadgroup_size.width = tw;
+                    m_threadgroup_size.height = th;
+                    m_threadgroup_size.depth = td;
+                    PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
+                  }
                 }
                 return true;
               } else {
@@ -2884,27 +1093,23 @@ bool MTLD3D12PipelineState::CompileShader(
                 DumpShaderBlob(dxbc_path, bytecode, size);
                 return RecordCompileFailure(
                     "shader/dxil_cached_function_lookup",
-                    str::format(
-                        func_name,
-                        " cached metallib function lookup failed; metallib ",
-                        metallib_path, "; reflection ", reflection_path,
-                        "; dxbc ", dxbc_path));
+                    str::format(func_name,
+                                " cached metallib function lookup failed; metallib ",
+                                metallib_path, "; reflection ", reflection_path,
+                                "; dxbc ", dxbc_path));
               }
             } else {
-              auto err_desc_string = err.description().getUTF8String();
-              const char *err_desc =
-                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-              DumpShaderText(metallib_error_path,
-                             err_desc ? err_desc : "unknown");
+              auto err_desc = DescribeNSObject(err.handle);
+              DumpShaderText(metallib_error_path, err_desc.c_str());
               DumpShaderBlob(dxbc_path, bytecode, size);
-              PSTRACE("  WMT newLibrary FAILED: %s",
-                      err_desc ? err_desc : "unknown");
+              PSTRACE("  WMT newLibrary FAILED: %s", err_desc.c_str());
               return RecordCompileFailure(
                   "shader/dxil_cached_metallib_load",
-                  str::format(func_name, " cached metallib load failed: ",
-                              err_desc ? err_desc : "unknown", "; metallib ",
-                              metallib_path, "; error ", metallib_error_path,
-                              "; dxbc ", dxbc_path));
+                  str::format(func_name,
+                              " cached metallib load failed: ",
+                              err_desc,
+                              "; metallib ", metallib_path, "; error ",
+                              metallib_error_path, "; dxbc ", dxbc_path));
             }
           } else {
             fclose(mf);
@@ -2919,17 +1124,15 @@ bool MTLD3D12PipelineState::CompileShader(
       }
     }
     if (!has_dxil) {
-      char dxbc_path[256];
-      std::string dxbc_dump =
-          BuildShaderCachePath((HexHash(hash) + ".sm50_failed.dxbc").c_str());
-      snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
+      char dxbc_path[1024];
+      FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                            "%016zx.sm50_failed.dxbc", hash);
       DumpShaderBlob(dxbc_path, bytecode, size);
       PSTRACE("SM50Init FAILED for %s: %s (no DXIL chunk, dumped %s)",
               func_name, err_buf, dxbc_path);
     }
-    return RecordCompileFailure(
-        has_dxil ? "shader/dxil_metallib_cache" : "shader/sm50_init",
-        str::format(func_name, " SM50Initialize failed: ", err_buf));
+    return RecordCompileFailure(has_dxil ? "shader/dxil_metallib_cache" : "shader/sm50_init",
+                                str::format(func_name, " SM50Initialize failed: ", err_buf));
   }
 
   SM50_SHADER_COMMON_DATA common = {};
@@ -2939,22 +1142,18 @@ bool MTLD3D12PipelineState::CompileShader(
   common.flags = {};
 
   if (type == ShaderType::Compute) {
-    uint32_t tgx =
-        reflection.ThreadgroupSize[0] ? reflection.ThreadgroupSize[0] : 1;
-    uint32_t tgy =
-        reflection.ThreadgroupSize[1] ? reflection.ThreadgroupSize[1] : 1;
-    uint32_t tgz =
-        reflection.ThreadgroupSize[2] ? reflection.ThreadgroupSize[2] : 1;
+    uint32_t tgx = reflection.ThreadgroupSize[0] ? reflection.ThreadgroupSize[0] : 1;
+    uint32_t tgy = reflection.ThreadgroupSize[1] ? reflection.ThreadgroupSize[1] : 1;
+    uint32_t tgz = reflection.ThreadgroupSize[2] ? reflection.ThreadgroupSize[2] : 1;
     m_threadgroup_size.width = tgx;
     m_threadgroup_size.height = tgy;
     m_threadgroup_size.depth = tgz;
-    PSTRACE("CompileShader: %s SM50 threadgroup_size=%ux%ux%u", func_name, tgx,
-            tgy, tgz);
+    PSTRACE("CompileShader: %s SM50 threadgroup_size=%ux%ux%u",
+            func_name, tgx, tgy, tgz);
   }
 
   std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
   SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};
-  SM50_SHADER_GS_PASS_THROUGH_DATA gs_pass_through = {};
   SM50_SHADER_COMPILATION_ARGUMENT_DATA *compile_args =
       (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&common;
   if (type == ShaderType::Vertex) {
@@ -2968,33 +1167,22 @@ bool MTLD3D12PipelineState::CompileShader(
     ia_layout.num_elements = (uint32_t)ia_elements.size();
     ia_layout.elements = ia_elements.data();
     compile_args = (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&ia_layout;
-    if (m_gs_passthrough != ~0u) {
-      gs_pass_through.type = SM50_SHADER_GS_PASS_THROUGH;
-      gs_pass_through.next = &ia_layout;
-      gs_pass_through.DataEncoded = m_gs_passthrough;
-      gs_pass_through.RasterizationDisabled = false;
-      compile_args = (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&gs_pass_through;
-      PSTRACE("CompileShader: %s enabling synthesized GS pass-through=0x%x",
-              func_name, m_gs_passthrough);
-    }
-    PSTRACE("CompileShader: %s IA args elements=%u slot_mask=0x%x", func_name,
-            ia_layout.num_elements, ia_layout.slot_mask);
+    PSTRACE("CompileShader: %s IA args elements=%u slot_mask=0x%x",
+            func_name, ia_layout.num_elements, ia_layout.slot_mask);
   }
 
   sm50_bitcode_t compile_result = nullptr;
-  if (SM50Compile(shader, compile_args, func_name, &compile_result,
-                  &sm50_err)) {
+  if (SM50Compile(shader, compile_args,
+                  func_name, &compile_result, &sm50_err)) {
     char err_buf[256] = {};
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-    char dxbc_path[256];
-    std::string dxbc_dump = BuildShaderCachePath(
-        (HexHash(hash) + ".sm50_compile_failed.dxbc").c_str());
-    snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_compile_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
-    PSTRACE("SM50Compile failed for %s: %s (dumped %s)", func_name, err_buf,
-            dxbc_path);
-    Logger::err(
-        str::format("SM50Compile failed for ", func_name, ": ", err_buf));
+    PSTRACE("SM50Compile failed for %s: %s (dumped %s)",
+            func_name, err_buf, dxbc_path);
+    Logger::err(str::format("SM50Compile failed for ", func_name, ": ", err_buf));
     SM50FreeError(sm50_err);
     SM50Destroy(shader);
     return RecordCompileFailure("shader/sm50_compile",
@@ -3006,23 +1194,12 @@ bool MTLD3D12PipelineState::CompileShader(
   SM50GetCompiledBitcode(compile_result, &bitcode);
 
   {
-    std::string legacy_dump_path =
-        BuildShaderCachePath(str::format("dxmt_sm50_", func_name, ".metallib").c_str());
-    std::string dump_path = BuildShaderCachePath((HexHash(hash) + ".metallib").c_str());
-    FILE *df = fopen(dump_path.c_str(), "wb");
-    if (df) {
-      fwrite(bitcode.Data, 1, bitcode.Size, df);
-      fclose(df);
-    }
-    if (legacy_dump_path != dump_path) {
-      FILE *legacy = fopen(legacy_dump_path.c_str(), "wb");
-      if (legacy) {
-        fwrite(bitcode.Data, 1, bitcode.Size, legacy);
-        fclose(legacy);
-      }
-    }
-    Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path,
-                             " (", bitcode.Size, " bytes)"));
+    char dump_path[1024];
+    snprintf(dump_path, sizeof(dump_path), "%s/dxmt_sm50_%s.metallib",
+             ShaderCacheDir().c_str(), func_name);
+    FILE *df = fopen(dump_path, "wb");
+    if (df) { fwrite(bitcode.Data, 1, bitcode.Size, df); fclose(df); }
+    Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path, " (", bitcode.Size, " bytes)"));
   }
 
   auto wmt_device = m_device->GetDXMTDevice().device();
@@ -3031,23 +1208,20 @@ bool MTLD3D12PipelineState::CompileShader(
   auto library = wmt_device.newLibrary(lib_data, err);
 
   if (err.handle) {
-    auto err_desc_string = err.description().getUTF8String();
-    const char *err_desc =
-        err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-    char dxbc_path[256];
-    std::string dxbc_dump = BuildShaderCachePath(
-        (HexHash(hash) + ".sm50_metal_library_failed.dxbc").c_str());
-    snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
+    auto err_desc = DescribeNSObject(err.handle);
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_metal_library_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
-    PSTRACE("Failed to create Metal library for %s: %s (dumped %s)", func_name,
-            err_desc ? err_desc : "unknown", dxbc_path);
+    PSTRACE("Failed to create Metal library for %s: %s (dumped %s)",
+            func_name, err_desc.c_str(), dxbc_path);
     Logger::err(str::format("Failed to create Metal library for ", func_name));
     SM50DestroyBitcode(compile_result);
     SM50Destroy(shader);
-    return RecordCompileFailure(
-        "shader/sm50_metal_library",
-        str::format(func_name, " SM50 Metal library creation failed: ",
-                    err_desc ? err_desc : "unknown", "; dumped ", dxbc_path));
+    return RecordCompileFailure("shader/sm50_metal_library",
+                                str::format(func_name, " SM50 Metal library creation failed: ",
+                                            err_desc,
+                                            "; dumped ", dxbc_path));
   }
 
   out_func = library.newFunction(func_name);
@@ -3064,18 +1238,17 @@ bool MTLD3D12PipelineState::CompileShader(
   }
 
   if (!out_func.handle) {
-    char dxbc_path[256];
-    std::string dxbc_dump = BuildShaderCachePath(
-        (HexHash(hash) + ".sm50_function_lookup_failed.dxbc").c_str());
-    snprintf(dxbc_path, sizeof(dxbc_path), "%s", dxbc_dump.c_str());
+    char dxbc_path[1024];
+    FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
+                          "%016zx.sm50_function_lookup_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
     PSTRACE("Failed to get function %s from Metal library (dumped %s)",
             func_name, dxbc_path);
     Logger::err(str::format("Failed to get function ", func_name));
-    return RecordCompileFailure(
-        "shader/sm50_function_lookup",
-        str::format(func_name, " SM50 function lookup failed; dumped ",
-                    dxbc_path));
+    return RecordCompileFailure("shader/sm50_function_lookup",
+                                str::format(func_name,
+                                            " SM50 function lookup failed; dumped ",
+                                            dxbc_path));
   }
 
   PSTRACE("CompileShader: %s SM50 OK function=%llu", func_name,
@@ -3090,7 +1263,8 @@ bool MTLD3D12PipelineState::CompileShader(
 
 void MTLD3D12PipelineState::BuildIAInputLayout(
     const void *bytecode, SIZE_T size,
-    std::vector<SM50_IA_INPUT_ELEMENT> &elements, uint32_t &slot_mask) const {
+    std::vector<SM50_IA_INPUT_ELEMENT> &elements,
+    uint32_t &slot_mask) const {
   slot_mask = 0;
   elements.clear();
 
@@ -3113,17 +1287,16 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
   for (UINT i = 0; i < m_input_layout.NumElements; i++) {
     const auto &desc = m_input_layout.pInputElementDescs[i];
     if (desc.InputSlot >= kMetalD3D12VertexBufferSlotCount) {
-      PSTRACE("BuildIAInputLayout skip[%u]: slot %u outside cap %u", i,
-              desc.InputSlot, kMetalD3D12VertexBufferSlotCount);
+      PSTRACE("BuildIAInputLayout skip[%u]: slot %u outside cap %u",
+              i, desc.InputSlot, kMetalD3D12VertexBufferSlotCount);
       continue;
     }
 
     MTL_DXGI_FORMAT_DESC metal_format = {};
-    if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format,
-                                  metal_format)) ||
+    if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format, metal_format)) ||
         !metal_format.AttributeFormat || !metal_format.BytesPerTexel) {
-      PSTRACE("BuildIAInputLayout skip[%u]: unsupported fmt=%u", i,
-              (unsigned)desc.Format);
+      PSTRACE("BuildIAInputLayout skip[%u]: unsupported fmt=%u",
+              i, (unsigned)desc.Format);
       continue;
     }
 
@@ -3137,8 +1310,7 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
         });
     if (sig == params + param_count) {
       PSTRACE("BuildIAInputLayout skip[%u]: semantic %s%u not consumed by VS",
-              i, desc.SemanticName ? desc.SemanticName : "?",
-              desc.SemanticIndex);
+              i, desc.SemanticName ? desc.SemanticName : "?", desc.SemanticIndex);
       continue;
     }
 
@@ -3163,104 +1335,30 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
     elements.push_back(element);
     slot_mask |= 1u << desc.InputSlot;
 
-    PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u "
-            "offset=%u fmt=%u step=%u/%u",
+    PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u offset=%u fmt=%u step=%u/%u",
             elements.size() - 1, desc.SemanticName ? desc.SemanticName : "?",
             desc.SemanticIndex, element.reg, element.slot,
-            element.aligned_byte_offset, element.format, element.step_function,
-            element.step_rate);
+            element.aligned_byte_offset, element.format,
+            element.step_function, element.step_rate);
   }
-}
-
-bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
-  if (allow_async && DXMTD3D12AsyncPipelineCompileEnabled()) {
-    {
-      std::unique_lock<std::mutex> lock(m_compile_mutex);
-      auto state = m_compile_state.load(std::memory_order_acquire);
-      if (state == CompileState::Compiled)
-        return true;
-      if (state == CompileState::Failed)
-        return false;
-      if (state == CompileState::Pending || state == CompileState::Compiling)
-        return false;
-      m_compile_state.store(CompileState::Pending, std::memory_order_release);
-    }
-
-    AddRef();
-    if (!GetPipelineCompileScheduler().Enqueue(this)) {
-      Release();
-      std::lock_guard<std::mutex> lock(m_compile_mutex);
-      m_compile_state.store(CompileState::NotStarted, std::memory_order_release);
-      return Compile();
-    }
-
-    PSTRACE("Queued async PSO compile this=%p compute=%d", (void *)this,
-            m_is_compute);
-    return false;
-  }
-
-  return Compile();
 }
 
 bool MTLD3D12PipelineState::Compile() {
-  {
-    std::unique_lock<std::mutex> lock(m_compile_mutex);
-    auto state = m_compile_state.load(std::memory_order_acquire);
-    if (state == CompileState::Compiled)
-      return true;
-    if (state == CompileState::Failed)
-      return false;
-    if (state == CompileState::Pending || state == CompileState::Compiling) {
-      m_compile_cv.wait(lock, [this]() {
-        auto current = m_compile_state.load(std::memory_order_acquire);
-        return current != CompileState::Pending &&
-               current != CompileState::Compiling;
-      });
-      return m_compile_state.load(std::memory_order_acquire) ==
-             CompileState::Compiled;
-    }
-    m_compile_state.store(CompileState::Compiling, std::memory_order_release);
-  }
-
-  bool compiled = CompileImpl();
-  {
-    std::lock_guard<std::mutex> lock(m_compile_mutex);
-    m_compile_state.store(compiled ? CompileState::Compiled : CompileState::Failed,
-                          std::memory_order_release);
-  }
-  m_compile_cv.notify_all();
-  return compiled;
-}
-
-void MTLD3D12PipelineState::RunAsyncCompile() {
-  {
-    std::lock_guard<std::mutex> lock(m_compile_mutex);
-    auto state = m_compile_state.load(std::memory_order_acquire);
-    if (state != CompileState::Pending)
-      return;
-    m_compile_state.store(CompileState::Compiling, std::memory_order_release);
-  }
-
-  bool compiled = CompileImpl();
-  {
-    std::lock_guard<std::mutex> lock(m_compile_mutex);
-    m_compile_state.store(compiled ? CompileState::Compiled : CompileState::Failed,
-                          std::memory_order_release);
-  }
-  m_compile_cv.notify_all();
-}
-
-bool MTLD3D12PipelineState::CompileImpl() {
   PTRACE("Compile() called state=%u is_compute=%d",
-         (unsigned)m_compile_state.load(std::memory_order_acquire),
-         m_is_compute);
+         (unsigned)m_compile_state.load(), m_is_compute);
+  std::unique_lock<std::mutex> lock(m_compile_mutex);
+  if (m_compile_state.load() == CompileState::Compiled)
+    return true;
+  if (m_compile_state.load() == CompileState::Compiling) {
+    m_compile_cv.wait(lock, [this]() {
+      CompileState state = m_compile_state.load();
+      return state != CompileState::Compiling && state != CompileState::Pending;
+    });
+    return m_compile_state.load() == CompileState::Compiled;
+  }
+  m_compile_state.store(CompileState::Compiling);
   ClearCompileFailure();
-  m_uses_geometry_mesh_pipeline = false;
-  DXMTD3D12ScopedTimer compile_timer("PSO", "CompilePipelineState");
-  compile_timer.SetDetail("this=%p compute=%d root=%p vs=%zu ps=%zu cs=%zu il=%u",
-                          (void *)this, m_is_compute, (void *)m_root_sig,
-                          m_vs.size(), m_ps.size(), m_cs.size(),
-                          m_input_layout.NumElements);
+  lock.unlock();
 
   auto wmt_device = m_device->GetDXMTDevice().device();
   WMT::Reference<WMT::Error> err;
@@ -3268,52 +1366,58 @@ bool MTLD3D12PipelineState::CompileImpl() {
   if (m_is_compute) {
     if (m_cs.empty()) {
       Logger::err("Compute PSO has no CS bytecode");
-      return RecordCompileFailure("pso/compute_no_cs",
-                                  "Compute PSO has no CS bytecode");
+      return RecordCompileFailure("pso/compute_no_cs", "Compute PSO has no CS bytecode");
     }
 
+    size_t cs_hash = ComputeShaderCacheHash(m_cs.data(), m_cs.size(),
+                                            ShaderType::Compute, nullptr);
     WMT::Reference<WMT::Function> cs_func;
-    if (!CompileShader(m_cs.data(), m_cs.size(), ShaderType::Compute, "cs_main",
-                       cs_func, &m_cs_shader, &m_cs_reflection))
+    if (!CompileShader(m_cs.data(), m_cs.size(), ShaderType::Compute,
+                       "cs_main", cs_func, &m_cs_shader, &m_cs_reflection))
       return false;
 
     WMTComputePipelineInfo info = {};
     WMT::InitializeComputePipelineInfo(info);
     info.compute_function = cs_func.handle;
-    EmitOfflineComputePsoManifest(m_cs, info, GetThreadgroupSize());
 
-    DXMTD3D12ScopedTimer metal_compute_timer("PSO", "CreateMetalComputePSO");
-    metal_compute_timer.SetDetail("this=%p func=%llu threads=%ux%ux%u",
-                                  (void *)this,
-                                  (unsigned long long)cs_func.handle,
-                                  (unsigned)m_threadgroup_size.width,
-                                  (unsigned)m_threadgroup_size.height,
-                                  (unsigned)m_threadgroup_size.depth);
-    m_compute_pso = wmt_device.newComputePipelineState(info, err);
+    std::string err_desc = "unknown";
+    for (uint32_t attempt = 0; attempt < 4; attempt++) {
+      err = nullptr;
+      m_compute_pso = wmt_device.newComputePipelineState(info, err);
+      if (m_compute_pso.handle)
+        break;
+
+      err_desc = DescribeNSObject(err.handle);
+      if (!IsTransientMetalCompilerError(err_desc) || attempt == 3)
+        break;
+
+      Logger::warn(str::format("Retrying compute PSO after transient Metal compiler error attempt=",
+                               attempt + 1, " detail=", err_desc));
+      PSTRACE("Compute PSO transient Metal compiler failure attempt=%u detail=%s",
+              attempt + 1, err_desc.c_str());
+      Sleep(50 * (attempt + 1));
+    }
     if (!m_compute_pso.handle) {
-      auto err_desc_string =
-          err.handle ? err.description().getUTF8String() : std::string();
-      const char *err_desc =
-          err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
       Logger::err(str::format("Failed to create compute PSO: ",
-                              err_desc ? err_desc : "unknown"));
+                              err_desc));
       if (m_cs_shader) {
         SM50Destroy(m_cs_shader);
         m_cs_shader = nullptr;
       }
-      return RecordCompileFailure(
-          "pso/metal_compute_pso",
-          str::format("Metal compute PSO creation failed: ",
-                      err_desc ? err_desc : "unknown"));
+      return RecordCompileFailure("pso/metal_compute_pso",
+                                  str::format("Metal compute PSO creation failed: ",
+                                              err_desc));
     }
+    DumpComputePSOManifest(cs_hash, m_cs.size(), m_threadgroup_size.width,
+                           m_threadgroup_size.height, m_threadgroup_size.depth,
+                           (uintptr_t)cs_func.handle);
 
-    PTRACE("CS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u "
-           "ArgBufBindIdx=%u ArgTableQwords=%u",
-           (unsigned long long)(uintptr_t)m_cs_shader,
-           m_cs_reflection.NumConstantBuffers, m_cs_reflection.NumArguments,
-           m_cs_reflection.ConstanttBufferTableBindIndex,
-           m_cs_reflection.ArgumentBufferBindIndex,
-           m_cs_reflection.ArgumentTableQwords);
+    PTRACE("CS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_cs_shader,
+      m_cs_reflection.NumConstantBuffers, m_cs_reflection.NumArguments,
+      m_cs_reflection.ConstanttBufferTableBindIndex,
+      m_cs_reflection.ArgumentBufferBindIndex,
+      m_cs_reflection.ArgumentTableQwords);
     if (m_cs_shader && (m_cs_reflection.NumArguments > 0 ||
                         m_cs_reflection.NumConstantBuffers > 0)) {
       if (m_cs_reflection.NumConstantBuffers > 0)
@@ -3324,14 +1428,14 @@ bool MTLD3D12PipelineState::CompileImpl() {
                            m_cs_cb_args.empty() ? nullptr : m_cs_cb_args.data(),
                            m_cs_args.empty() ? nullptr : m_cs_args.data());
       for (size_t i = 0; i < m_cs_cb_args.size(); i++) {
-        PTRACE("CS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u", i,
-               (int)m_cs_cb_args[i].Type, m_cs_cb_args[i].SM50BindingSlot,
-               m_cs_cb_args[i].Flags, m_cs_cb_args[i].StructurePtrOffset);
+        PTRACE("CS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+          i, (int)m_cs_cb_args[i].Type, m_cs_cb_args[i].SM50BindingSlot,
+          m_cs_cb_args[i].Flags, m_cs_cb_args[i].StructurePtrOffset);
       }
       for (size_t i = 0; i < m_cs_args.size(); i++) {
         PTRACE("CS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-               i, (int)m_cs_args[i].Type, m_cs_args[i].SM50BindingSlot,
-               m_cs_args[i].Flags, m_cs_args[i].StructurePtrOffset);
+          i, (int)m_cs_args[i].Type, m_cs_args[i].SM50BindingSlot,
+          m_cs_args[i].Flags, m_cs_args[i].StructurePtrOffset);
       }
     }
     if (m_cs_shader) {
@@ -3339,911 +1443,41 @@ bool MTLD3D12PipelineState::CompileImpl() {
       m_cs_shader = nullptr;
     }
 
+    m_compile_state.store(CompileState::Compiled);
+    m_compile_cv.notify_all();
     Logger::info("Compute PSO compiled successfully");
     return true;
   }
 
   WMT::Reference<WMT::Function> vs_func, ps_func;
+  size_t vs_hash = m_vs.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_vs.data(), m_vs.size(),
+                                                ShaderType::Vertex,
+                                                &m_input_layout);
+  size_t ps_hash = m_ps.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_ps.data(), m_ps.size(),
+                                                ShaderType::Pixel, nullptr);
+  size_t gs_hash = m_gs.empty()
+                       ? 0
+                       : ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
+                                                ShaderType::Geometry, nullptr);
 
   if (!m_hs.empty() || !m_ds.empty()) {
     return RecordCompileFailure(
         "pso/unsupported_tessellation",
-        str::format("Graphics PSO uses HS bytes=", m_hs.size(), " DS bytes=",
-                    m_ds.size(), " but D3D12 tessellation is not implemented"));
+        str::format("Graphics PSO uses HS bytes=", m_hs.size(),
+                    " DS bytes=", m_ds.size(),
+                    " but D3D12 tessellation is not implemented"));
   }
 
-  m_gs_passthrough = ~0u;
   if (!m_gs.empty()) {
-    size_t gs_hash =
-        std::hash<std::string_view>{}(std::string_view(
-            (const char *)m_gs.data(), (size_t)m_gs.size()));
-    char gs_dump_path[256];
-    std::string gs_dump =
-        BuildShaderCachePath((HexHash(gs_hash) + ".gs").c_str());
-    snprintf(gs_dump_path, sizeof(gs_dump_path), "%s", gs_dump.c_str());
-    DumpShaderBlob(gs_dump_path, m_gs.data(), m_gs.size());
-    PSTRACE("Graphics PSO GS unsupported: size=%zu hash=0x%016zx magic=%s dumped=%s",
-            m_gs.size(), gs_hash, DescribeShaderBlobMagic(m_gs.data(), m_gs.size()),
-            gs_dump_path);
-    TraceDxbcChunks(m_gs.data(), m_gs.size(), "gs");
-    std::string gs_reason;
-    if (DescribeShaderBlobMagic(m_gs.data(), m_gs.size()) == std::string_view("DXBC") &&
-        InferGeometryPassThroughFromDxbcSignatures(m_gs.data(), m_gs.size(),
-                                                   m_gs_passthrough, gs_reason)) {
-      Logger::warn(str::format(
-          "CreateGraphicsPipelineState: treating DXIL-backed GS bytes=",
-          m_gs.size(), " as synthesized pass-through (", gs_reason, ")"));
-      PSTRACE("Graphics PSO GS synthesized pass-through hash=0x%016zx detail=%s",
-              gs_hash, gs_reason.c_str());
-      if (DXMTD3D12GeometryMeshPipelineEnabled() && !m_ps.empty() &&
-          m_num_render_targets > 0 &&
-          DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size()) &&
-          DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size())) {
-        Logger::warn(str::format(
-            "CreateGraphicsPipelineState: preferring SM50 geometry mesh "
-            "conversion over synthesized GS pass-through for color PSO "
-            "bytes=",
-            m_gs.size(), " (", gs_reason, ")"));
-        m_gs_passthrough = ~0u;
-      }
-    } else {
-      PSTRACE("Graphics PSO GS no synthesized pass-through hash=0x%016zx detail=%s",
-              gs_hash, gs_reason.c_str());
-    }
-    if (m_gs_passthrough == ~0u) {
-      if (DXMTD3D12GeometryMeshPipelineEnabled()) {
-        if (m_vs.empty()) {
-          return RecordCompileFailure(
-              "pso/geometry_mesh_no_vs",
-              "Geometry mesh PSO requested but graphics PSO has no VS bytecode");
-        }
-        if (DXMTD3D12DepthOnlyGeometryFallbackEnabled() &&
-            m_num_render_targets == 0 &&
-            m_dsv_format != DXGI_FORMAT_UNKNOWN) {
-          Logger::warn(str::format(
-              "CreateGraphicsPipelineState: depth-only DXIL GS bytes=",
-              m_gs.size(), " DSV=", (unsigned)m_dsv_format,
-              " falling back to VS/depth PSO to avoid Metal mesh GPU hang "
-              "(hash=0x", str::format("%016zx", gs_hash), ")"));
-          PSTRACE("Graphics PSO depth-only GS fallback hash=0x%016zx dsv=%u",
-                  gs_hash, (unsigned)m_dsv_format);
-          m_gs.clear();
-          goto d3d12_geometry_fallback_to_vs_ps;
-        }
-        if (!DxbcContainsSm50ShaderBlob(m_vs.data(), m_vs.size()) ||
-            !DxbcContainsSm50ShaderBlob(m_gs.data(), m_gs.size())) {
-          size_t geometry_hash = 0;
-          auto hash_bytes = [&](const void *data, SIZE_T byte_size) {
-            const uint8_t *bytes = (const uint8_t *)data;
-            for (SIZE_T i = 0; i < byte_size; i++)
-              geometry_hash = geometry_hash * 131 + bytes[i];
-          };
-          geometry_hash = geometry_hash * 131 + m_input_layout.NumElements;
-          hash_bytes(m_vs.data(), m_vs.size());
-          hash_bytes(m_gs.data(), m_gs.size());
-          for (UINT i = 0; i < m_input_layout.NumElements; i++) {
-            const auto &el = m_input_layout.pInputElementDescs[i];
-            geometry_hash = geometry_hash * 131 + el.SemanticIndex;
-            geometry_hash = geometry_hash * 131 + el.Format;
-            geometry_hash = geometry_hash * 131 + el.InputSlot;
-            geometry_hash = geometry_hash * 131 + el.AlignedByteOffset;
-            geometry_hash = geometry_hash * 131 + el.InputSlotClass;
-            geometry_hash = geometry_hash * 131 + el.InstanceDataStepRate;
-            if (el.SemanticName) {
-              for (const char *s = el.SemanticName; *s; s++)
-                geometry_hash = geometry_hash * 131 + (unsigned char)*s;
-            }
-          }
-          geometry_hash =
-              geometry_hash * 131 + kMetalShaderConverterVertexLayoutVersion;
-
-          const std::string base =
-              BuildShaderCachePath((HexHash(geometry_hash) + ".geom").c_str());
-          const std::string vs_dxbc_path = base + ".gsvs.dxbc";
-          const std::string gs_dxbc_path = base + ".gsmesh.dxbc";
-          const std::string vs_layout_path = base + ".gsvs.vertex-layout.json";
-          const std::string gs_layout_path = base + ".gsmesh.vertex-layout.json";
-          const std::string vs_metallib_path = base + ".gsvs.metallib";
-          const std::string vs_stage_in_metallib_path =
-              base + ".gsvs.stageIn.metallib";
-          const std::string gs_metallib_path = base + ".gsmesh.metallib";
-          const std::string vs_reflection_path = base + ".gsvs.json";
-          const std::string gs_reflection_path = base + ".gsmesh.json";
-          const std::string vs_fail_path = base + ".gsvs.msc.fail";
-          const std::string gs_fail_path = base + ".gsmesh.msc.fail";
-          EnsureShaderCacheDir();
-          DumpShaderBlob(vs_dxbc_path.c_str(), m_vs.data(), m_vs.size());
-          DumpShaderBlob(gs_dxbc_path.c_str(), m_gs.data(), m_gs.size());
-          if (!WriteMetalShaderConverterVertexLayout(
-                  m_device, m_input_layout, vs_layout_path.c_str()) ||
-              !WriteMetalShaderConverterVertexLayout(
-                  m_device, m_input_layout, gs_layout_path.c_str())) {
-            return RecordCompileFailure(
-                "pso/geometry_msc_vertex_layout",
-                str::format("Failed to write MetalShaderConverter vertex "
-                            "layout for DXIL geometry PSO base=",
-                            base));
-          }
-
-          auto wait_for_msc_output =
-              [&](const std::string &metallib_path,
-                  const std::string &reflection_path,
-                  const std::string &fail_path, const char *stage) -> bool {
-            for (uint32_t attempt = 0; attempt < 250; attempt++) {
-              FILE *mf = fopen(metallib_path.c_str(), "rb");
-              FILE *rf = fopen(reflection_path.c_str(), "rb");
-              if (mf && rf) {
-                fclose(mf);
-                fclose(rf);
-                PSTRACE("DXIL geometry MSC %s ready after %u waits", stage,
-                        attempt + 1);
-                return true;
-              }
-              if (mf)
-                fclose(mf);
-              if (rf)
-                fclose(rf);
-              FILE *ff = fopen(fail_path.c_str(), "rb");
-              if (ff) {
-                fclose(ff);
-                PSTRACE("DXIL geometry MSC %s failure marker hit after %u waits",
-                        stage, attempt + 1);
-                return false;
-              }
-              Sleep(20);
-            }
-            PSTRACE("DXIL geometry MSC %s timed out waiting for %s", stage,
-                    metallib_path.c_str());
-            return false;
-          };
-          auto file_exists = [](const char *path) -> bool {
-            FILE *file = fopen(path, "rb");
-            if (!file)
-              return false;
-            fclose(file);
-            return true;
-          };
-          auto wait_for_file = [&](const std::string &path,
-                                   const char *stage) -> bool {
-            for (uint32_t attempt = 0; attempt < 250; attempt++) {
-              if (file_exists(path.c_str())) {
-                PSTRACE("DXIL geometry MSC %s ready after %u waits", stage,
-                        attempt + 1);
-                return true;
-              }
-              Sleep(20);
-            }
-            PSTRACE("DXIL geometry MSC %s timed out waiting for %s", stage,
-                    path.c_str());
-            return false;
-          };
-
-          if (!wait_for_msc_output(vs_metallib_path, vs_reflection_path,
-                                   vs_fail_path, "object") ||
-              !wait_for_file(vs_stage_in_metallib_path, "stage-in") ||
-              !wait_for_msc_output(gs_metallib_path, gs_reflection_path,
-                                   gs_fail_path, "mesh")) {
-            Logger::warn(str::format(
-                "CreateGraphicsPipelineState: MetalShaderConverter did not "
-                "produce a complete DXIL geometry mesh pipeline; falling back "
-                "to VS/PS render PSO without GS. VS=",
-                vs_dxbc_path, " stageIn=", vs_stage_in_metallib_path,
-                " GS=", gs_dxbc_path));
-            PSTRACE("DXIL geometry MSC incomplete; dropping GS and compiling "
-                    "bounded VS/PS fallback base=%s",
-                    base.c_str());
-            m_gs.clear();
-            goto d3d12_geometry_fallback_to_vs_ps;
-          }
-
-          auto read_binary = [](const std::string &path,
-                                std::vector<uint8_t> &out) -> bool {
-            FILE *file = fopen(path.c_str(), "rb");
-            if (!file)
-              return false;
-            fseek(file, 0, SEEK_END);
-            long size = ftell(file);
-            fseek(file, 0, SEEK_SET);
-            if (size <= 0) {
-              fclose(file);
-              return false;
-            }
-            out.resize((size_t)size);
-            size_t read = fread(out.data(), 1, (size_t)size, file);
-            fclose(file);
-            out.resize(read);
-            return read == (size_t)size;
-          };
-
-          std::string vs_reflection_text = ReadTextFile(vs_reflection_path.c_str());
-          std::string gs_reflection_text = ReadTextFile(gs_reflection_path.c_str());
-          uint32_t vertex_output_size = 0;
-          uint32_t payload_size = 16256;
-          ExtractJsonUIntValue(vs_reflection_text,
-                               "vertex_output_size_in_bytes",
-                               vertex_output_size);
-          ExtractJsonUIntValue(gs_reflection_text,
-                               "max_payload_size_in_bytes", payload_size);
-          if (!vertex_output_size)
-            vertex_output_size = 16;
-          if (!payload_size)
-            payload_size = 16256;
-
-          std::string vs_entry;
-          std::string gs_entry;
-          ExtractJsonStringValue(vs_reflection_text, "EntryPoint", vs_entry);
-          ExtractJsonStringValue(gs_reflection_text, "EntryPoint", gs_entry);
-          if (vs_entry.empty())
-            vs_entry = "vs_main";
-          if (gs_entry.empty())
-            gs_entry = "gs_main";
-          std::string object_entry = vs_entry + ".dxil_irconverter_object_shader";
-
-          bool tessellation_enabled = false;
-          int vertex_output_size_int = (int)vertex_output_size;
-          WMTFunctionConstant constants[2] = {};
-          constants[0].data.set(&tessellation_enabled);
-          constants[0].type = WMTDataTypeBool;
-          constants[0].index = 0;
-          constants[1].data.set(&vertex_output_size_int);
-          constants[1].type = WMTDataTypeInt;
-          constants[1].index = 1;
-
-          auto load_msc_function =
-              [&](const std::string &metallib_path, const char *function_name,
-                  const char *stage,
-                  WMT::Reference<WMT::Function> &out_func) -> bool {
-            std::vector<uint8_t> lib_data;
-            if (!read_binary(metallib_path, lib_data))
-              return RecordCompileFailure(
-                  stage, str::format("Failed to read MSC metallib ",
-                                     metallib_path));
-            auto dispatch_data =
-                WMT::MakeDispatchData(lib_data.data(), lib_data.size());
-            WMT::Reference<WMT::Error> lib_err;
-            auto library = wmt_device.newLibrary(dispatch_data, lib_err);
-            if (lib_err.handle) {
-              auto err_desc_string = lib_err.description().getUTF8String();
-              const char *err_desc =
-                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-              return RecordCompileFailure(
-                  stage, str::format("MSC geometry Metal library failed: ",
-                                     err_desc ? err_desc : "unknown",
-                                     "; metallib ", metallib_path));
-            }
-
-            WMT::Reference<WMT::Error> fn_err;
-            out_func = library.newFunctionWithConstants(
-                function_name, constants, std::size(constants), fn_err);
-            if (!out_func.handle) {
-              auto err_desc_string =
-                  fn_err.handle ? fn_err.description().getUTF8String()
-                                : std::string();
-              const char *err_desc =
-                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-              return RecordCompileFailure(
-                  stage, str::format("MSC geometry function lookup failed for ",
-                                     function_name, ": ",
-                                     err_desc ? err_desc : "unknown",
-                                     "; metallib ", metallib_path));
-            }
-            return true;
-          };
-
-          auto load_msc_plain_function =
-              [&](const std::string &metallib_path, const char *function_name,
-                  const char *stage, bool required,
-                  WMT::Reference<WMT::Function> &out_func) -> bool {
-            std::vector<uint8_t> lib_data;
-            if (!read_binary(metallib_path, lib_data))
-              return RecordCompileFailure(
-                  stage, str::format("Failed to read MSC metallib ",
-                                     metallib_path));
-            auto dispatch_data =
-                WMT::MakeDispatchData(lib_data.data(), lib_data.size());
-            WMT::Reference<WMT::Error> lib_err;
-            auto library = wmt_device.newLibrary(dispatch_data, lib_err);
-            if (lib_err.handle) {
-              auto err_desc_string = lib_err.description().getUTF8String();
-              const char *err_desc =
-                  err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-              return RecordCompileFailure(
-                  stage, str::format("MSC geometry linked library failed: ",
-                                     err_desc ? err_desc : "unknown",
-                                     "; metallib ", metallib_path));
-            }
-
-            WMT::Reference<WMT::Error> fn_err;
-            out_func = library.newFunction(function_name);
-            std::string fn_error_desc =
-                fn_err.handle ? fn_err.description().getUTF8String() : std::string();
-            if (!out_func.handle) {
-              std::string visible_ref_name =
-                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
-              out_func = library.newFunction(visible_ref_name.c_str());
-            }
-            if (!out_func.handle) {
-              WMT::Reference<WMT::Error> plain_link_err;
-              out_func = library.newFunctionWithDescriptor(
-                  function_name, nullptr, nullptr, 0, WMTFunctionOptionNone,
-                  plain_link_err);
-              if (!out_func.handle && plain_link_err.handle)
-                fn_error_desc = plain_link_err.description().getUTF8String();
-            }
-            if (!out_func.handle) {
-              std::string visible_ref_name =
-                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
-              WMT::Reference<WMT::Error> visible_link_err;
-              out_func = library.newFunctionWithDescriptor(
-                  visible_ref_name.c_str(), nullptr, nullptr, 0,
-                  WMTFunctionOptionNone, visible_link_err);
-              if (!out_func.handle && visible_link_err.handle)
-                fn_error_desc = visible_link_err.description().getUTF8String();
-            }
-            if (!out_func.handle) {
-              out_func = library.newFunctionWithDescriptor(
-                  function_name, nullptr, constants, std::size(constants),
-                  WMTFunctionOptionCompileToBinary, fn_err);
-              if (!out_func.handle && fn_err.handle)
-                fn_error_desc = fn_err.description().getUTF8String();
-            }
-            if (!out_func.handle) {
-              std::string visible_ref_name =
-                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
-              WMT::Reference<WMT::Error> visible_fn_err;
-              out_func = library.newFunctionWithDescriptor(
-                  visible_ref_name.c_str(), nullptr, constants,
-                  std::size(constants), WMTFunctionOptionCompileToBinary,
-                  visible_fn_err);
-              if (!out_func.handle && visible_fn_err.handle)
-                fn_error_desc = visible_fn_err.description().getUTF8String();
-            }
-            if (!out_func.handle) {
-              WMT::Reference<WMT::Error> plain_descriptor_err;
-              out_func = library.newFunctionWithDescriptor(
-                  function_name, nullptr, nullptr, 0,
-                  WMTFunctionOptionCompileToBinary, plain_descriptor_err);
-              if (!out_func.handle && plain_descriptor_err.handle)
-                fn_error_desc =
-                    plain_descriptor_err.description().getUTF8String();
-            }
-            if (!out_func.handle) {
-              std::string visible_ref_name =
-                  std::string(function_name) + ".MTL_VISIBLE_FN_REF";
-              WMT::Reference<WMT::Error> plain_visible_descriptor_err;
-              out_func = library.newFunctionWithDescriptor(
-                  visible_ref_name.c_str(), nullptr, nullptr, 0,
-                  WMTFunctionOptionCompileToBinary,
-                  plain_visible_descriptor_err);
-              if (!out_func.handle && plain_visible_descriptor_err.handle)
-                fn_error_desc =
-                    plain_visible_descriptor_err.description().getUTF8String();
-            }
-            if (!out_func.handle && required)
-              return RecordCompileFailure(
-                  stage, str::format("MSC geometry linked function lookup "
-                                     "failed for ",
-                                     function_name, ": ",
-                                     fn_error_desc.empty()
-                                         ? "unknown"
-                                         : fn_error_desc,
-                                     "; metallib ", metallib_path));
-            if (!out_func.handle)
-              PSTRACE("MSC geometry optional linked function missing: %s in %s",
-                      function_name, metallib_path.c_str());
-            return true;
-          };
-
-          WMT::Reference<WMT::Function> geometry_vs_func;
-          WMT::Reference<WMT::Function> geometry_gs_func;
-          if (!load_msc_function(vs_metallib_path, object_entry.c_str(),
-                                 "shader/geometry_msc_object_function",
-                                 geometry_vs_func) ||
-              !load_msc_function(gs_metallib_path, gs_entry.c_str(),
-                                 "shader/geometry_msc_mesh_function",
-                                 geometry_gs_func)) {
-            return false;
-          }
-
-          std::vector<WMT::Reference<WMT::Function>> object_linked_refs;
-          std::vector<WMT::Reference<WMT::Function>> mesh_linked_refs;
-          auto append_linked_function =
-              [&](const std::string &metallib_path, const char *function_name,
-                  const char *stage, bool required,
-                  std::vector<WMT::Reference<WMT::Function>> &refs) -> bool {
-            WMT::Reference<WMT::Function> func;
-            if (!load_msc_plain_function(metallib_path, function_name, stage,
-                                         required, func))
-              return false;
-            if (func.handle)
-              refs.push_back(func);
-            return true;
-          };
-
-          if (!append_linked_function(
-                  vs_stage_in_metallib_path, "irconverter_stage_in_shader",
-                  "shader/geometry_msc_stage_in_function", true,
-                  object_linked_refs) ||
-              !append_linked_function(
-                  vs_metallib_path, "irconverter_hull_shader",
-                  "shader/geometry_msc_hull_function", false,
-                  object_linked_refs) ||
-              !append_linked_function(
-                  gs_metallib_path, "irconverter_dxil_domain_shader",
-                  "shader/geometry_msc_domain_function", false,
-                  mesh_linked_refs) ||
-              !append_linked_function(
-                  gs_metallib_path, "irconverter_tessellator",
-                  "shader/geometry_msc_tessellator_function", false,
-                  mesh_linked_refs)) {
-            return false;
-          }
-
-          MTL_SHADER_REFLECTION reflected_vs = {};
-          MTL_SHADER_REFLECTION reflected_gs = {};
-          reflected_vs.ConstanttBufferTableBindIndex = ~0u;
-          reflected_vs.ArgumentBufferBindIndex = ~0u;
-          reflected_gs.ConstanttBufferTableBindIndex = ~0u;
-          reflected_gs.ArgumentBufferBindIndex = ~0u;
-          m_vs_args = ParseTopLevelArgumentBufferReflection(vs_reflection_text,
-                                                            reflected_vs);
-          m_gs_args = ParseTopLevelArgumentBufferReflection(gs_reflection_text,
-                                                            reflected_gs);
-          m_vs_reflection = reflected_vs;
-          m_gs_reflection = reflected_gs;
-
-          WMT::Reference<WMT::Function> geometry_ps_func;
-          if (!m_ps.empty() &&
-              !CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel,
-                             "ps_main", geometry_ps_func, &m_ps_shader,
-                             &m_ps_reflection)) {
-            return false;
-          }
-
-          WMTMeshRenderPipelineInfo mesh_info;
-          WMT::InitializeMeshRenderPipelineInfo(mesh_info);
-          mesh_info.object_function = geometry_vs_func.handle;
-          mesh_info.mesh_function = geometry_gs_func.handle;
-          if (geometry_ps_func.handle)
-            mesh_info.fragment_function = geometry_ps_func.handle;
-          std::vector<obj_handle_t> object_linked_handles;
-          std::vector<obj_handle_t> mesh_linked_handles;
-          for (auto &func : object_linked_refs)
-            object_linked_handles.push_back(func.handle);
-          for (auto &func : mesh_linked_refs)
-            mesh_linked_handles.push_back(func.handle);
-          if (!object_linked_handles.empty()) {
-            mesh_info.object_linked_functions.set(object_linked_handles.data());
-            mesh_info.num_object_linked_functions =
-                (uint8_t)object_linked_handles.size();
-          }
-          if (!mesh_linked_handles.empty()) {
-            mesh_info.mesh_linked_functions.set(mesh_linked_handles.data());
-            mesh_info.num_mesh_linked_functions =
-                (uint8_t)mesh_linked_handles.size();
-          }
-          mesh_info.payload_memory_length = payload_size;
-          mesh_info.immutable_object_buffers =
-              (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
-          mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
-          mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
-          mesh_info.rasterization_enabled = geometry_ps_func.handle != 0;
-          mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
-
-          for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
-            if (!geometry_ps_func.handle)
-              break;
-            auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
-            if (fmt != WMTPixelFormatInvalid)
-              mesh_info.colors[i].pixel_format = fmt;
-            auto &rt = m_blend_desc.RenderTarget[i];
-            mesh_info.colors[i].write_mask =
-                kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
-            mesh_info.colors[i].blending_enabled =
-                rt.BlendEnable ? true : false;
-            if (DXMTD3D12ForceColorWriteState()) {
-              mesh_info.colors[i].write_mask = WMTColorWriteMaskAll;
-              mesh_info.colors[i].blending_enabled = false;
-              continue;
-            }
-            if (rt.BlendEnable) {
-              mesh_info.colors[i].src_rgb_blend_factor =
-                  D3D12BlendToWMT(rt.SrcBlend);
-              mesh_info.colors[i].dst_rgb_blend_factor =
-                  D3D12BlendToWMT(rt.DestBlend);
-              mesh_info.colors[i].rgb_blend_operation =
-                  D3D12BlendOpToWMT(rt.BlendOp);
-              mesh_info.colors[i].src_alpha_blend_factor =
-                  D3D12BlendToWMT(rt.SrcBlendAlpha);
-              mesh_info.colors[i].dst_alpha_blend_factor =
-                  D3D12BlendToWMT(rt.DestBlendAlpha);
-              mesh_info.colors[i].alpha_blend_operation =
-                  D3D12BlendOpToWMT(rt.BlendOpAlpha);
-            }
-          }
-
-          auto depth_fmt = DXGIToMTLPixelFormat(m_dsv_format);
-          if (depth_fmt != WMTPixelFormatInvalid) {
-            mesh_info.depth_pixel_format = depth_fmt;
-            if (m_dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                m_dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
-              mesh_info.stencil_pixel_format = depth_fmt;
-          }
-
-          WMT::Reference<WMT::Error> mesh_err;
-          m_render_pso = wmt_device.newRenderPipelineState(mesh_info, mesh_err);
-          if (!m_render_pso.handle) {
-            auto err_desc_string =
-                mesh_err.handle ? mesh_err.description().getUTF8String()
-                                : std::string();
-            const char *err_desc =
-                err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-            return RecordCompileFailure(
-                "pso/metal_geometry_msc_mesh_pso",
-                str::format("Metal MSC geometry mesh PSO creation failed: ",
-                            err_desc ? err_desc : "unknown",
-                            "; object=", object_entry, "; mesh=", gs_entry,
-                            "; payload=", payload_size,
-                            "; vertex_output=", vertex_output_size));
-          }
-
-          if (m_ps_shader) {
-            if (m_ps_reflection.NumConstantBuffers > 0 &&
-                m_ps_cb_args.empty())
-              m_ps_cb_args.resize(m_ps_reflection.NumConstantBuffers);
-            if (m_ps_reflection.NumArguments > 0 && m_ps_args.empty())
-              m_ps_args.resize(m_ps_reflection.NumArguments);
-            if (!m_ps_cb_args.empty() || !m_ps_args.empty()) {
-              SM50GetArgumentsInfo(m_ps_shader,
-                                   m_ps_cb_args.empty() ? nullptr
-                                                        : m_ps_cb_args.data(),
-                                   m_ps_args.empty() ? nullptr
-                                                     : m_ps_args.data());
-            }
-            SM50Destroy(m_ps_shader);
-            m_ps_shader = nullptr;
-          }
-
-          if (m_depth_stencil_desc.DepthEnable ||
-              m_depth_stencil_desc.StencilEnable) {
-            struct WMTDepthStencilInfo ds_info = {};
-            ds_info.depth_compare_function = WMTCompareFunctionAlways;
-            ds_info.depth_write_enabled = false;
-            ds_info.front_stencil.enabled = false;
-            ds_info.back_stencil.enabled = false;
-            if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
-                m_depth_stencil_desc.DepthFunc <=
-                    D3D12_COMPARISON_FUNC_ALWAYS) {
-              ds_info.depth_compare_function =
-                  kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
-            }
-            ds_info.depth_write_enabled =
-                m_depth_stencil_desc.DepthEnable &&
-                m_depth_stencil_desc.DepthWriteMask ==
-                    D3D12_DEPTH_WRITE_MASK_ALL;
-            m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
-          }
-
-          m_uses_geometry_mesh_pipeline = true;
-          Logger::info(str::format(
-              "Graphics DXIL geometry MSC mesh PSO compiled: object=",
-              object_entry, " mesh=", gs_entry, " payload=", payload_size,
-              " vertex_output=", vertex_output_size, " object_linked=",
-              object_linked_handles.size(), " mesh_linked=",
-              mesh_linked_handles.size(), " RTs=", m_num_render_targets,
-              " DSV=", (int)m_dsv_format));
-          return true;
-        }
-
-        auto init_shader = [&](const void *bytecode, SIZE_T bytecode_size,
-                               const char *label, sm50_shader_t *shader,
-                               MTL_SHADER_REFLECTION *reflection) -> bool {
-          sm50_error_t sm50_err = nullptr;
-          if (SM50Initialize(bytecode, bytecode_size, shader, reflection,
-                             &sm50_err)) {
-            char err_buf[256] = {};
-            SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-            SM50FreeError(sm50_err);
-            return RecordCompileFailure(
-                "shader/geometry_sm50_init",
-                str::format(label, " SM50Initialize failed: ", err_buf));
-          }
-          return true;
-        };
-
-        auto load_sm50_function =
-            [&](sm50_bitcode_t bitcode, const char *func_name,
-                const char *stage,
-                WMT::Reference<WMT::Function> &out_func) -> bool {
-          SM50_COMPILED_BITCODE compiled = {};
-          SM50GetCompiledBitcode(bitcode, &compiled);
-          auto lib_data = WMT::MakeDispatchData(compiled.Data, compiled.Size);
-          WMT::Reference<WMT::Error> lib_err;
-          auto library = wmt_device.newLibrary(lib_data, lib_err);
-          if (lib_err.handle) {
-            auto err_desc_string = lib_err.description().getUTF8String();
-            const char *err_desc =
-                err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-            SM50DestroyBitcode(bitcode);
-            return RecordCompileFailure(
-                stage, str::format(func_name,
-                                   " geometry Metal library failed: ",
-                                   err_desc ? err_desc : "unknown"));
-          }
-
-          out_func = library.newFunction(func_name);
-          SM50DestroyBitcode(bitcode);
-          if (!out_func.handle) {
-            return RecordCompileFailure(
-                stage, str::format(func_name,
-                                   " geometry Metal function lookup failed"));
-          }
-          return true;
-        };
-
-        if (!init_shader(m_vs.data(), m_vs.size(), "geometry VS", &m_vs_shader,
-                         &m_vs_reflection) ||
-            !init_shader(m_gs.data(), m_gs.size(), "geometry GS", &m_gs_shader,
-                         &m_gs_reflection)) {
-          if (m_vs_shader) {
-            SM50Destroy(m_vs_shader);
-            m_vs_shader = nullptr;
-          }
-          if (m_gs_shader) {
-            SM50Destroy(m_gs_shader);
-            m_gs_shader = nullptr;
-          }
-          return false;
-        }
-
-        SM50_SHADER_COMMON_DATA common = {};
-        common.next = nullptr;
-        common.type = SM50_SHADER_COMMON;
-        common.metal_version = SM50_SHADER_METAL_310;
-        common.flags = {};
-
-        std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
-        uint32_t slot_mask = 0;
-        BuildIAInputLayout(m_vs.data(), m_vs.size(), ia_elements, slot_mask);
-        m_ia_slot_mask = slot_mask;
-
-        SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};
-        ia_layout.next = &common;
-        ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
-        ia_layout.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
-        ia_layout.slot_mask = slot_mask;
-        ia_layout.num_elements = (uint32_t)ia_elements.size();
-        ia_layout.elements = ia_elements.data();
-
-        SM50_SHADER_PSO_GEOMETRY_SHADER_DATA geometry_for_vs = {};
-        geometry_for_vs.next = &ia_layout;
-        geometry_for_vs.type = SM50_SHADER_PSO_GEOMETRY_SHADER;
-        geometry_for_vs.strip_topology = false;
-
-        WMT::Reference<WMT::Function> geometry_vs_func;
-        sm50_error_t sm50_err = nullptr;
-        sm50_bitcode_t geometry_vs_bitcode = nullptr;
-        if (SM50CompileGeometryPipelineVertex(
-                m_vs_shader, m_gs_shader,
-                (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&geometry_for_vs,
-                "vsgs_main", &geometry_vs_bitcode, &sm50_err)) {
-          char err_buf[256] = {};
-          SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-          SM50FreeError(sm50_err);
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return RecordCompileFailure(
-              "shader/geometry_vertex_compile",
-              str::format("vsgs_main SM50 geometry vertex compile failed: ",
-                          err_buf));
-        }
-        if (!load_sm50_function(geometry_vs_bitcode, "vsgs_main",
-                                "shader/geometry_vertex_metallib",
-                                geometry_vs_func)) {
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return false;
-        }
-
-        SM50_SHADER_PSO_GEOMETRY_SHADER_DATA geometry_for_gs = {};
-        geometry_for_gs.next = &common;
-        geometry_for_gs.type = SM50_SHADER_PSO_GEOMETRY_SHADER;
-        geometry_for_gs.strip_topology = false;
-
-        WMT::Reference<WMT::Function> geometry_gs_func;
-        sm50_bitcode_t geometry_gs_bitcode = nullptr;
-        sm50_err = nullptr;
-        if (SM50CompileGeometryPipelineGeometry(
-                m_vs_shader, m_gs_shader,
-                (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&geometry_for_gs,
-                "gs_main", &geometry_gs_bitcode, &sm50_err)) {
-          char err_buf[256] = {};
-          SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-          SM50FreeError(sm50_err);
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return RecordCompileFailure(
-              "shader/geometry_mesh_compile",
-              str::format("gs_main SM50 geometry mesh compile failed: ",
-                          err_buf));
-        }
-        if (!load_sm50_function(geometry_gs_bitcode, "gs_main",
-                                "shader/geometry_mesh_metallib",
-                                geometry_gs_func)) {
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return false;
-        }
-
-        WMT::Reference<WMT::Function> geometry_ps_func;
-        if (!m_ps.empty() &&
-            !CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel,
-                           "ps_main", geometry_ps_func, &m_ps_shader,
-                           &m_ps_reflection)) {
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return false;
-        }
-
-        WMTMeshRenderPipelineInfo mesh_info;
-        WMT::InitializeMeshRenderPipelineInfo(mesh_info);
-        mesh_info.object_function = geometry_vs_func.handle;
-        mesh_info.mesh_function = geometry_gs_func.handle;
-        if (geometry_ps_func.handle)
-          mesh_info.fragment_function = geometry_ps_func.handle;
-        mesh_info.payload_memory_length = 16256;
-        mesh_info.immutable_object_buffers =
-            (1 << 16) | (1 << 21) | (1 << 29) | (1 << 30);
-        mesh_info.immutable_mesh_buffers = (1 << 29) | (1 << 30);
-        mesh_info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
-        mesh_info.rasterization_enabled = geometry_ps_func.handle != 0;
-        mesh_info.raster_sample_count = m_sample_count ? m_sample_count : 1;
-
-        for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
-          if (!geometry_ps_func.handle)
-            break;
-          auto fmt = DXGIToMTLPixelFormat(m_rtv_formats[i]);
-          if (fmt != WMTPixelFormatInvalid)
-            mesh_info.colors[i].pixel_format = fmt;
-          auto &rt = m_blend_desc.RenderTarget[i];
-          mesh_info.colors[i].write_mask =
-              kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
-          mesh_info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
-          if (DXMTD3D12ForceColorWriteState()) {
-            mesh_info.colors[i].write_mask = WMTColorWriteMaskAll;
-            mesh_info.colors[i].blending_enabled = false;
-            continue;
-          }
-          if (rt.BlendEnable) {
-            mesh_info.colors[i].src_rgb_blend_factor =
-                D3D12BlendToWMT(rt.SrcBlend);
-            mesh_info.colors[i].dst_rgb_blend_factor =
-                D3D12BlendToWMT(rt.DestBlend);
-            mesh_info.colors[i].rgb_blend_operation =
-                D3D12BlendOpToWMT(rt.BlendOp);
-            mesh_info.colors[i].src_alpha_blend_factor =
-                D3D12BlendToWMT(rt.SrcBlendAlpha);
-            mesh_info.colors[i].dst_alpha_blend_factor =
-                D3D12BlendToWMT(rt.DestBlendAlpha);
-            mesh_info.colors[i].alpha_blend_operation =
-                D3D12BlendOpToWMT(rt.BlendOpAlpha);
-          }
-        }
-
-        auto depth_fmt = DXGIToMTLPixelFormat(m_dsv_format);
-        if (depth_fmt != WMTPixelFormatInvalid) {
-          mesh_info.depth_pixel_format = depth_fmt;
-          if (m_dsv_format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-              m_dsv_format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
-            mesh_info.stencil_pixel_format = depth_fmt;
-        }
-
-        WMT::Reference<WMT::Error> mesh_err;
-        m_render_pso = wmt_device.newRenderPipelineState(mesh_info, mesh_err);
-        if (!m_render_pso.handle) {
-          auto err_desc_string =
-              mesh_err.handle ? mesh_err.description().getUTF8String()
-                              : std::string();
-          const char *err_desc =
-              err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-          SM50Destroy(m_vs_shader);
-          SM50Destroy(m_gs_shader);
-          m_vs_shader = nullptr;
-          m_gs_shader = nullptr;
-          return RecordCompileFailure(
-              "pso/metal_geometry_mesh_pso",
-              str::format("Metal geometry mesh PSO creation failed: ",
-                          err_desc ? err_desc : "unknown"));
-        }
-
-        if (m_vs_reflection.NumConstantBuffers > 0)
-          m_vs_cb_args.resize(m_vs_reflection.NumConstantBuffers);
-        if (m_vs_reflection.NumArguments > 0)
-          m_vs_args.resize(m_vs_reflection.NumArguments);
-        if (m_gs_reflection.NumConstantBuffers > 0)
-          m_gs_cb_args.resize(m_gs_reflection.NumConstantBuffers);
-        if (m_gs_reflection.NumArguments > 0)
-          m_gs_args.resize(m_gs_reflection.NumArguments);
-        SM50GetArgumentsInfo(m_vs_shader,
-                             m_vs_cb_args.empty() ? nullptr
-                                                  : m_vs_cb_args.data(),
-                             m_vs_args.empty() ? nullptr : m_vs_args.data());
-        SM50GetArgumentsInfo(m_gs_shader,
-                             m_gs_cb_args.empty() ? nullptr
-                                                  : m_gs_cb_args.data(),
-                             m_gs_args.empty() ? nullptr : m_gs_args.data());
-        SM50Destroy(m_vs_shader);
-        SM50Destroy(m_gs_shader);
-        m_vs_shader = nullptr;
-        m_gs_shader = nullptr;
-
-        if (m_ps_shader) {
-          if (m_ps_reflection.NumConstantBuffers > 0 &&
-              m_ps_cb_args.empty())
-            m_ps_cb_args.resize(m_ps_reflection.NumConstantBuffers);
-          if (m_ps_reflection.NumArguments > 0 && m_ps_args.empty())
-            m_ps_args.resize(m_ps_reflection.NumArguments);
-          if (!m_ps_cb_args.empty() || !m_ps_args.empty()) {
-            SM50GetArgumentsInfo(
-                m_ps_shader, m_ps_cb_args.empty() ? nullptr : m_ps_cb_args.data(),
-                m_ps_args.empty() ? nullptr : m_ps_args.data());
-          }
-          SM50Destroy(m_ps_shader);
-          m_ps_shader = nullptr;
-        }
-
-        if (m_depth_stencil_desc.DepthEnable ||
-            m_depth_stencil_desc.StencilEnable) {
-          struct WMTDepthStencilInfo ds_info = {};
-          ds_info.depth_compare_function = WMTCompareFunctionAlways;
-          ds_info.depth_write_enabled = false;
-          ds_info.front_stencil.enabled = false;
-          ds_info.back_stencil.enabled = false;
-          if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
-              m_depth_stencil_desc.DepthFunc <=
-                  D3D12_COMPARISON_FUNC_ALWAYS) {
-            ds_info.depth_compare_function =
-                kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
-          }
-          ds_info.depth_write_enabled =
-              m_depth_stencil_desc.DepthEnable &&
-              m_depth_stencil_desc.DepthWriteMask ==
-                  D3D12_DEPTH_WRITE_MASK_ALL;
-          m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
-        }
-
-        m_uses_geometry_mesh_pipeline = true;
-        Logger::info(str::format("Graphics geometry mesh PSO compiled: RTs=",
-                                 m_num_render_targets, " DSV=",
-                                 (int)m_dsv_format, " samples=",
-                                 m_sample_count));
-        return true;
-      }
-
-      std::string detail = str::format(
-          "CreateGraphicsPipelineState: dropping unsupported GS bytes=",
-          m_gs.size(), " hash=0x", str::format("%016zx", gs_hash), " magic=",
-          DescribeShaderBlobMagic(m_gs.data(), m_gs.size()), " reason=",
-          gs_reason.empty() ? "unknown" : gs_reason, " dumped=",
-          gs_dump_path);
-      Logger::warn(detail);
-      PSTRACE("Graphics PSO GS dropped hash=0x%016zx detail=%s", gs_hash,
-              gs_reason.c_str());
-      return RecordCompileFailure("pso/unsupported_geometry_shader", detail);
-    }
+    return RecordCompileFailure(
+        "pso/unsupported_geometry_shader",
+        str::format("Graphics PSO uses GS bytes=", m_gs.size(),
+                    " but D3D12 geometry shaders are not implemented"));
   }
-
-d3d12_geometry_fallback_to_vs_ps:
 
   if (m_has_stream_output) {
     return RecordCompileFailure(
@@ -4252,139 +1486,26 @@ d3d12_geometry_fallback_to_vs_ps:
   }
 
   if (!m_vs.empty()) {
-    if (!CompileShader(m_vs.data(), m_vs.size(), ShaderType::Vertex, "vs_main",
-                       vs_func, &m_vs_shader, &m_vs_reflection))
+    if (!CompileShader(m_vs.data(), m_vs.size(), ShaderType::Vertex,
+                       "vs_main", vs_func, &m_vs_shader, &m_vs_reflection))
       return false;
   }
 
   if (!m_ps.empty()) {
-    if (!CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel, "ps_main",
-                       ps_func, &m_ps_shader, &m_ps_reflection))
+    if (!CompileShader(m_ps.data(), m_ps.size(), ShaderType::Pixel,
+                       "ps_main", ps_func, &m_ps_shader, &m_ps_reflection))
       return false;
   }
 
   WMTRenderPipelineInfo info;
   WMT::InitializeRenderPipelineInfo(info);
-  std::vector<WMT::Reference<WMT::Function>> vertex_linked_refs;
-  std::vector<obj_handle_t> vertex_linked_handles;
 
   if (vs_func.handle)
     info.vertex_function = vs_func.handle;
   if (ps_func.handle)
     info.fragment_function = ps_func.handle;
-  if (DXMTD3D12ForceDiagnosticFullscreen() && m_num_render_targets > 0) {
-    auto diagnostic_vs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("vs_diagnostic_fullscreen_fallback");
-    auto diagnostic_fs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("fs_diagnostic_varying_fallback");
-    if (diagnostic_vs.handle && diagnostic_fs.handle) {
-      info.vertex_function = diagnostic_vs.handle;
-      info.fragment_function = diagnostic_fs.handle;
-      info.vertex_descriptor = nullptr;
-      Logger::info(str::format(
-          "D3D12 forcing diagnostic fullscreen shader pair for render PSO this=",
-          (void *)this, " rts=", m_num_render_targets, " vs=",
-          GetVSCacheHash(), " ps=", GetPSCacheHash()));
-    } else {
-      Logger::warn("D3D12 diagnostic fullscreen requested but fallback "
-                   "functions were unavailable");
-    }
-  } else if (DXMTD3D12ForceDiagnosticFragment() && m_num_render_targets > 0) {
-    auto diagnostic_fs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("fs_diagnostic_varying_fallback");
-    if (diagnostic_fs.handle) {
-      info.fragment_function = diagnostic_fs.handle;
-      Logger::info(str::format(
-          "D3D12 forcing diagnostic fragment shader for render PSO this=",
-          (void *)this, " rts=", m_num_render_targets, " vs=",
-          GetVSCacheHash(), " ps=", GetPSCacheHash()));
-    } else {
-      Logger::warn("D3D12 diagnostic fragment shader requested but fallback "
-                   "function was unavailable");
-    }
-  }
 
-  if (m_vs_requires_msc_stage_in && m_vs_uses_stage_in &&
-      m_input_layout.NumElements > 0 &&
-      m_input_layout.pInputElementDescs &&
-      !DXMTD3D12ForceDiagnosticFullscreen()) {
-    const std::string stage_in_path =
-        BuildShaderCachePath((GetVSCacheHash() + ".stageIn.metallib").c_str());
-    std::vector<uint8_t> stage_in_data;
-    if (!ReadBinaryFile(stage_in_path, stage_in_data)) {
-      return RecordCompileFailure(
-          "pso/msc_stage_in_missing",
-          str::format("DXIL vertex shader requires MetalShaderConverter "
-                      "stage-in function but sidecar is missing: ",
-                      stage_in_path));
-    }
-
-    auto dispatch_data =
-        WMT::MakeDispatchData(stage_in_data.data(), stage_in_data.size());
-    WMT::Reference<WMT::Error> stage_in_lib_err;
-    auto stage_in_library = wmt_device.newLibrary(dispatch_data, stage_in_lib_err);
-    if (stage_in_lib_err.handle) {
-      auto err_desc_string = stage_in_lib_err.description().getUTF8String();
-      const char *err_desc =
-          err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-      return RecordCompileFailure(
-          "pso/msc_stage_in_library",
-          str::format("MetalShaderConverter stage-in library failed: ",
-                      err_desc ? err_desc : "unknown", "; metallib ",
-                      stage_in_path));
-    }
-
-    WMT::Reference<WMT::Error> stage_in_fn_err;
-    WMT::Reference<WMT::Function> stage_in_func =
-        stage_in_library.newFunctionWithDescriptor(
-            "irconverter_stage_in_shader", nullptr, nullptr, 0,
-            WMTFunctionOptionCompileToBinary, stage_in_fn_err);
-    std::string stage_in_error =
-        stage_in_fn_err.handle ? stage_in_fn_err.description().getUTF8String()
-                               : std::string();
-    if (!stage_in_func.handle)
-      stage_in_func =
-          stage_in_library.newFunction("irconverter_stage_in_shader");
-    if (!stage_in_func.handle)
-      stage_in_func = stage_in_library.newFunction(
-          "irconverter_stage_in_shader.MTL_VISIBLE_FN_REF");
-    if (!stage_in_func.handle) {
-      return RecordCompileFailure(
-          "pso/msc_stage_in_function",
-          str::format("MetalShaderConverter stage-in function lookup failed: ",
-                      stage_in_error.empty() ? "unknown" : stage_in_error,
-                      "; metallib ", stage_in_path));
-    }
-
-    vertex_linked_refs.push_back(stage_in_func);
-    for (auto &func : vertex_linked_refs)
-      vertex_linked_handles.push_back(func.handle);
-    info.vertex_linked_functions.set(vertex_linked_handles.data());
-    info.num_vertex_linked_functions =
-        (uint8_t)std::min<size_t>(vertex_linked_handles.size(), UINT8_MAX);
-    if (ps_func.handle) {
-      info.fragment_linked_functions.set(vertex_linked_handles.data());
-      info.num_fragment_linked_functions = info.num_vertex_linked_functions;
-    }
-    Logger::info(str::format(
-        "D3D12 linked MetalShaderConverter stage-in function for VS ",
-        GetVSCacheHash(), " sidecar=", stage_in_path,
-        " vertex_linked=", (unsigned)info.num_vertex_linked_functions,
-        " fragment_linked=", (unsigned)info.num_fragment_linked_functions));
-  }
-
-  // D3D12 wireframe is still a rasterized fill mode; it must not be lowered to
-  // Metal rasterizationEnabled=false, which only accepts void vertex shaders.
-  info.rasterization_enabled = true;
+  info.rasterization_enabled = (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
   info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
   for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
@@ -4401,124 +1522,69 @@ d3d12_geometry_fallback_to_vs_ps:
       info.stencil_pixel_format = depth_fmt;
   }
 
-  auto map_blend = [](D3D12_BLEND b) -> WMTBlendFactor {
-    switch (b) {
-    case D3D12_BLEND_ZERO:
-      return WMTBlendFactorZero;
-    case D3D12_BLEND_ONE:
-      return WMTBlendFactorOne;
-    case D3D12_BLEND_SRC_COLOR:
-      return WMTBlendFactorSourceColor;
-    case D3D12_BLEND_INV_SRC_COLOR:
-      return WMTBlendFactorOneMinusSourceColor;
-    case D3D12_BLEND_SRC_ALPHA:
-      return WMTBlendFactorSourceAlpha;
-    case D3D12_BLEND_INV_SRC_ALPHA:
-      return WMTBlendFactorOneMinusSourceAlpha;
-    case D3D12_BLEND_DEST_ALPHA:
-      return WMTBlendFactorDestinationAlpha;
-    case D3D12_BLEND_INV_DEST_ALPHA:
-      return WMTBlendFactorOneMinusDestinationAlpha;
-    case D3D12_BLEND_DEST_COLOR:
-      return WMTBlendFactorDestinationColor;
-    case D3D12_BLEND_INV_DEST_COLOR:
-      return WMTBlendFactorOneMinusDestinationColor;
-    case D3D12_BLEND_SRC_ALPHA_SAT:
-      return WMTBlendFactorSourceAlphaSaturated;
-    case D3D12_BLEND_BLEND_FACTOR:
-      return WMTBlendFactorBlendColor;
-    case D3D12_BLEND_INV_BLEND_FACTOR:
-      return WMTBlendFactorOneMinusBlendColor;
-    default:
-      return WMTBlendFactorOne;
+  if (m_blend_desc.RenderTarget[0].BlendEnable) {
+    for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
+      auto &rt = m_blend_desc.RenderTarget[i];
+      info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
+      info.colors[i].write_mask = kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
+
+      auto map_blend = [](D3D12_BLEND b) -> WMTBlendFactor {
+        switch (b) {
+        case D3D12_BLEND_ZERO: return WMTBlendFactorZero;
+        case D3D12_BLEND_ONE: return WMTBlendFactorOne;
+        case D3D12_BLEND_SRC_COLOR: return WMTBlendFactorSourceColor;
+        case D3D12_BLEND_INV_SRC_COLOR: return WMTBlendFactorOneMinusSourceColor;
+        case D3D12_BLEND_SRC_ALPHA: return WMTBlendFactorSourceAlpha;
+        case D3D12_BLEND_INV_SRC_ALPHA: return WMTBlendFactorOneMinusSourceAlpha;
+        case D3D12_BLEND_DEST_ALPHA: return WMTBlendFactorDestinationAlpha;
+        case D3D12_BLEND_INV_DEST_ALPHA: return WMTBlendFactorOneMinusDestinationAlpha;
+        case D3D12_BLEND_DEST_COLOR: return WMTBlendFactorDestinationColor;
+        case D3D12_BLEND_INV_DEST_COLOR: return WMTBlendFactorOneMinusDestinationColor;
+        case D3D12_BLEND_SRC_ALPHA_SAT: return WMTBlendFactorSourceAlphaSaturated;
+        case D3D12_BLEND_BLEND_FACTOR: return WMTBlendFactorBlendColor;
+        case D3D12_BLEND_INV_BLEND_FACTOR: return WMTBlendFactorOneMinusBlendColor;
+        default: return WMTBlendFactorOne;
+        }
+      };
+
+      auto map_op = [](D3D12_BLEND_OP op) -> WMTBlendOperation {
+        switch (op) {
+        case D3D12_BLEND_OP_ADD: return WMTBlendOperationAdd;
+        case D3D12_BLEND_OP_SUBTRACT: return WMTBlendOperationSubtract;
+        case D3D12_BLEND_OP_REV_SUBTRACT: return WMTBlendOperationReverseSubtract;
+        case D3D12_BLEND_OP_MIN: return WMTBlendOperationMin;
+        case D3D12_BLEND_OP_MAX: return WMTBlendOperationMax;
+        default: return WMTBlendOperationAdd;
+        }
+      };
+
+      info.colors[i].src_rgb_blend_factor = map_blend(rt.SrcBlend);
+      info.colors[i].dst_rgb_blend_factor = map_blend(rt.DestBlend);
+      info.colors[i].rgb_blend_operation = map_op(rt.BlendOp);
+      info.colors[i].src_alpha_blend_factor = map_blend(rt.SrcBlendAlpha);
+      info.colors[i].dst_alpha_blend_factor = map_blend(rt.DestBlendAlpha);
+      info.colors[i].alpha_blend_operation = map_op(rt.BlendOpAlpha);
     }
-  };
-
-  auto map_op = [](D3D12_BLEND_OP op) -> WMTBlendOperation {
-    switch (op) {
-    case D3D12_BLEND_OP_ADD:
-      return WMTBlendOperationAdd;
-    case D3D12_BLEND_OP_SUBTRACT:
-      return WMTBlendOperationSubtract;
-    case D3D12_BLEND_OP_REV_SUBTRACT:
-      return WMTBlendOperationReverseSubtract;
-    case D3D12_BLEND_OP_MIN:
-      return WMTBlendOperationMin;
-    case D3D12_BLEND_OP_MAX:
-      return WMTBlendOperationMax;
-    default:
-      return WMTBlendOperationAdd;
-    }
-  };
-
-  for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
-    auto &rt = m_blend_desc.RenderTarget[i];
-    info.colors[i].write_mask =
-        kColorWriteMaskMap[rt.RenderTargetWriteMask & 0xf];
-    info.colors[i].blending_enabled = rt.BlendEnable ? true : false;
-
-    if (DXMTD3D12ForceColorWriteState()) {
-      info.colors[i].write_mask = WMTColorWriteMaskAll;
-      info.colors[i].blending_enabled = false;
-      continue;
-    }
-
-    if (!rt.BlendEnable)
-      continue;
-
-    info.colors[i].src_rgb_blend_factor = map_blend(rt.SrcBlend);
-    info.colors[i].dst_rgb_blend_factor = map_blend(rt.DestBlend);
-    info.colors[i].rgb_blend_operation = map_op(rt.BlendOp);
-    info.colors[i].src_alpha_blend_factor = map_blend(rt.SrcBlendAlpha);
-    info.colors[i].dst_alpha_blend_factor = map_blend(rt.DestBlendAlpha);
-    info.colors[i].alpha_blend_operation = map_op(rt.BlendOpAlpha);
   }
 
   switch (m_topology) {
-  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT:
-    info.input_primitive_topology = WMTPrimitiveTopologyClassPoint;
-    break;
-  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE:
-    info.input_primitive_topology = WMTPrimitiveTopologyClassLine;
-    break;
-  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE:
-    info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
-    break;
-  default:
-    info.input_primitive_topology = WMTPrimitiveTopologyClassUnspecified;
-    break;
+  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT: info.input_primitive_topology = WMTPrimitiveTopologyClassPoint; break;
+  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE: info.input_primitive_topology = WMTPrimitiveTopologyClassLine; break;
+  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE: info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle; break;
+  default: info.input_primitive_topology = WMTPrimitiveTopologyClassUnspecified; break;
   }
 
   info.immutable_vertex_buffers = (1 << 16) | (1 << 29) | (1 << 30);
   info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
-  if (m_vs_uses_stage_in) {
-    info.immutable_vertex_buffers |= (1 << 2) | (1 << 4) | (1 << 5);
-    for (uint32_t slot = kMetalShaderConverterVertexBufferBindPoint;
-         slot < WMT_MAX_VERTEX_BUFFER_LAYOUTS && slot < 31; slot++)
-      info.immutable_vertex_buffers |= (1u << slot);
-  }
-  if (m_ps_reflection.ArgumentBufferBindIndex == 2)
-    info.immutable_fragment_buffers |= (1 << 2);
 
   WMTVertexDescriptor vtx_desc = {};
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
-    uint32_t slot_step_rate[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t max_slot = 0;
-    uint32_t d3d_stage_in_slot_mask = 0;
     bool slot_per_vertex[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t attribute_count = 0;
     uint32_t next_attribute = 0;
-    bool attribute_present[WMT_MAX_VERTEX_ATTRIBUTES] = {};
-    struct InputLayoutSource {
-      UINT desc_index = 0;
-      const D3D12_INPUT_ELEMENT_DESC *element = nullptr;
-      MTL_DXGI_FORMAT_DESC metal_format = {};
-      uint32_t aligned_offset = 0;
-      uint32_t end = 0;
-    };
-    std::vector<InputLayoutSource> input_sources;
     const microsoft::D3D11_SIGNATURE_PARAMETER *input_sig_params = nullptr;
     uint32_t input_sig_count = 0;
     microsoft::CSignatureParser input_sig_parser;
@@ -4530,12 +1596,10 @@ d3d12_geometry_fallback_to_vs_ps:
       PSTRACE("D3D12 PSO input-layout: shader input signature params=%u",
               input_sig_count);
     } else {
-      PSTRACE("D3D12 PSO input-layout: shader input signature unavailable; "
-              "using layout order");
+      PSTRACE("D3D12 PSO input-layout: shader input signature unavailable; using layout order");
     }
 
-    PSTRACE("D3D12 PSO input-layout: elements=%u metal_attr_cap=%u "
-            "metal_slot_cap=%u",
+    PSTRACE("D3D12 PSO input-layout: elements=%u metal_attr_cap=%u metal_slot_cap=%u",
             m_input_layout.NumElements, WMT_MAX_VERTEX_ATTRIBUTES,
             kMetalD3D12VertexBufferSlotCount);
 
@@ -4543,112 +1607,47 @@ d3d12_geometry_fallback_to_vs_ps:
       auto &el = m_input_layout.pInputElementDescs[i];
 
       MTL_DXGI_FORMAT_DESC metal_format = {};
-      if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), el.Format,
-                                    metal_format)) ||
+      if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), el.Format, metal_format)) ||
           !metal_format.AttributeFormat || !metal_format.BytesPerTexel) {
-        PSTRACE(
-            "D3D12 PSO input-layout skip[%u]: unsupported fmt=%u semantic=%s%u",
-            i, (unsigned)el.Format, el.SemanticName ? el.SemanticName : "?",
-            el.SemanticIndex);
-        Logger::warn(str::format(
-            "M12 UNKNOWN VERTEX FMT pso=", (void *)this,
-            " element=", i, " fmt=", (unsigned)el.Format,
-            " semantic=", el.SemanticName ? el.SemanticName : "?",
-            el.SemanticIndex,
-            " slot=", el.InputSlot,
-            " offset=", el.AlignedByteOffset,
-            " stride=", el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA ? "per-vertex" : "per-instance",
-            " step_rate=", el.InstanceDataStepRate,
-            " vs_hash=", GetVSCacheHash()));
+        PSTRACE("D3D12 PSO input-layout skip[%u]: unsupported fmt=%u semantic=%s%u",
+                i, (unsigned)el.Format, el.SemanticName ? el.SemanticName : "?",
+                el.SemanticIndex);
         continue;
       }
 
-      const bool use_msc_vertex_fetch = m_vs_uses_stage_in;
-      const uint32_t metal_buffer_slot =
-          use_msc_vertex_fetch
-              ? kMetalShaderConverterVertexBufferBindPoint + el.InputSlot
-              : el.InputSlot;
-      if (el.InputSlot >= kMetalD3D12VertexBufferSlotCount ||
-          metal_buffer_slot >= WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
-        PSTRACE("D3D12 PSO input-layout skip[%u]: input slot %u is outside "
-                "Metal-backed slot cap %u",
+      if (el.InputSlot >= kMetalD3D12VertexBufferSlotCount) {
+        PSTRACE("D3D12 PSO input-layout skip[%u]: input slot %u is outside Metal-backed slot cap %u",
                 i, el.InputSlot, kMetalD3D12VertexBufferSlotCount);
         continue;
       }
 
       if (attribute_count >= WMT_MAX_VERTEX_ATTRIBUTES) {
-        PSTRACE("D3D12 PSO input-layout skip[%u]: attribute cap %u reached", i,
-                WMT_MAX_VERTEX_ATTRIBUTES);
+        PSTRACE("D3D12 PSO input-layout skip[%u]: attribute cap %u reached",
+                i, WMT_MAX_VERTEX_ATTRIBUTES);
         continue;
       }
 
       uint32_t attr_index = next_attribute;
-      const StageInVertexAttributeInfo *stage_in_attr = nullptr;
-      if (m_vs_uses_stage_in && el.SemanticName) {
-        auto semantic_match = std::find_if(
-            m_vs_stage_in_attribute_order.begin(),
-            m_vs_stage_in_attribute_order.end(),
-            [&](const StageInVertexAttributeInfo &attr) {
-              return StageInSemanticMatchesInputElement(attr, el);
-            });
-        if (semantic_match != m_vs_stage_in_attribute_order.end()) {
-          stage_in_attr = &*semantic_match;
-          attr_index = stage_in_attr->attribute_index;
-          PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u matched "
-                  "DXIL reflection name %s -> metal attribute %u",
-                  i, el.SemanticName ? el.SemanticName : "?",
-                  el.SemanticIndex, stage_in_attr->semantic_name.c_str(),
-                  attr_index);
-        }
-      }
       if (has_input_signature && input_sig_params) {
         auto *sig = std::find_if(
             input_sig_params, input_sig_params + input_sig_count,
             [&](const microsoft::D3D11_SIGNATURE_PARAMETER &input_sig) {
-              return input_sig.SystemValue ==
-                         microsoft::D3D10_SB_NAME_UNDEFINED &&
+              return input_sig.SystemValue == microsoft::D3D10_SB_NAME_UNDEFINED &&
                      el.SemanticName && input_sig.SemanticName &&
                      el.SemanticIndex == input_sig.SemanticIndex &&
                      strcasecmp(el.SemanticName, input_sig.SemanticName) == 0;
             });
         if (sig != input_sig_params + input_sig_count) {
-          if (!stage_in_attr)
-            attr_index = sig->Register;
-          if (m_vs_uses_stage_in && !stage_in_attr) {
-            auto remap = m_vs_stage_in_register_map.find(sig->Register);
-            if (remap != m_vs_stage_in_register_map.end()) {
-              stage_in_attr = &remap->second;
-              attr_index = stage_in_attr->attribute_index;
-              PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u register "
-                      "%u remapped to metal attribute %u",
-                      i, el.SemanticName ? el.SemanticName : "?",
-                      el.SemanticIndex, sig->Register, attr_index);
-            } else {
-              PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u register "
-                      "%u missing DXIL reflection remap; using register index",
-                      i, el.SemanticName ? el.SemanticName : "?",
-                      el.SemanticIndex, sig->Register);
-            }
-          }
+          attr_index = sig->Register;
         } else {
-          PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u not found in "
-                  "input signature; using attr order %u",
-                  i, el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
-                  attr_index);
+          PSTRACE("D3D12 PSO input-layout desc[%u]: semantic %s%u not found in input signature; using attr order %u",
+                  i, el.SemanticName ? el.SemanticName : "?",
+                  el.SemanticIndex, attr_index);
         }
-      }
-      if (!stage_in_attr && m_vs_uses_stage_in &&
-          i < m_vs_stage_in_attribute_order.size()) {
-        stage_in_attr = &m_vs_stage_in_attribute_order[i];
-        attr_index = stage_in_attr->attribute_index;
-        PSTRACE("D3D12 PSO input-layout desc[%u]: fallback stage_in order maps "
-                "to attribute %u",
-                i, attr_index);
       }
 
       if (attr_index >= WMT_MAX_VERTEX_ATTRIBUTES) {
-        PSTRACE("D3D12 PSO input-layout skip[%u]: mapped attribute %u outside "
-                "cap %u",
+        PSTRACE("D3D12 PSO input-layout skip[%u]: mapped attribute %u outside cap %u",
                 i, attr_index, WMT_MAX_VERTEX_ATTRIBUTES);
         continue;
       }
@@ -4661,383 +1660,105 @@ d3d12_geometry_fallback_to_vs_ps:
               : el.AlignedByteOffset;
       uint32_t end = aligned_offset + metal_format.BytesPerTexel;
       append_offset[el.InputSlot] = end;
-      if (end > slot_stride[metal_buffer_slot])
-        slot_stride[metal_buffer_slot] = end;
-      if (metal_buffer_slot >= max_slot)
-        max_slot = metal_buffer_slot + 1;
-      slot_per_vertex[metal_buffer_slot] =
-          (el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA);
-      slot_step_rate[metal_buffer_slot] =
-          el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
-              ? std::max<UINT>(1, el.InstanceDataStepRate)
-              : 1;
-      if (use_msc_vertex_fetch && el.InputSlot < 32)
-        d3d_stage_in_slot_mask |= 1u << el.InputSlot;
-
-      input_sources.push_back({i, &el, metal_format, aligned_offset, end});
-
-      if (attribute_present[attr_index]) {
-        const auto &existing_attr = vtx_desc.attributes[attr_index];
-        PSTRACE("D3D12 PSO input-layout desc[%u]: mapped attribute %u already "
-                "bound as fmt=%u slot=%u offset=%u; keeping first binding "
-                "and leaving duplicate semantic=%s%u as fallback source",
-                i, attr_index, (unsigned)existing_attr.format,
-                existing_attr.buffer_index, existing_attr.offset,
-                el.SemanticName ? el.SemanticName : "?", el.SemanticIndex);
-        continue;
-      }
+      if (end > slot_stride[el.InputSlot])
+        slot_stride[el.InputSlot] = end;
+      if (el.InputSlot >= max_slot)
+        max_slot = el.InputSlot + 1;
+      slot_per_vertex[el.InputSlot] = (el.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA);
 
       auto &attr = vtx_desc.attributes[attr_index];
-      attr.format =
-          stage_in_attr && stage_in_attr->format != WMTAttributeFormatInvalid
-              ? stage_in_attr->format
-              : metal_format.AttributeFormat;
+      attr.format = metal_format.AttributeFormat;
       attr.offset = aligned_offset;
-      attr.buffer_index = metal_buffer_slot;
-      attribute_present[attr_index] = true;
+      attr.buffer_index = el.InputSlot;
       attribute_count = std::max(attribute_count, attr_index + 1);
 
-      PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: semantic=%s%u fmt=%u "
-              "mtl_fmt=%u chosen_fmt=%u slot=%u offset=%u stride_end=%u "
-              "class=%u step=%u",
+      PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: semantic=%s%u fmt=%u mtl_fmt=%u slot=%u offset=%u stride_end=%u class=%u step=%u",
               attr_index, i, el.SemanticName ? el.SemanticName : "?",
               el.SemanticIndex, (unsigned)el.Format,
-              (unsigned)metal_format.AttributeFormat, (unsigned)attr.format,
-              metal_buffer_slot, aligned_offset, end, (unsigned)el.InputSlotClass,
+              (unsigned)metal_format.AttributeFormat, el.InputSlot,
+              aligned_offset, end, (unsigned)el.InputSlotClass,
               el.InstanceDataStepRate);
     }
-
-    if (m_vs_uses_stage_in && !input_sources.empty()) {
-      auto find_source_for_stage_in =
-          [&](const StageInVertexAttributeInfo &stage_in_attr,
-              size_t order_index) -> const InputLayoutSource * {
-        for (const auto &source : input_sources) {
-          const auto &el = *source.element;
-          if (!el.SemanticName)
-            continue;
-          if (StageInSemanticMatchesInputElement(stage_in_attr, el)) {
-            return &source;
-          }
-          if (strcasecmp(el.SemanticName, "ATTRIBUTE") == 0 &&
-              el.SemanticIndex == stage_in_attr.register_index) {
-            return &source;
-          }
-        }
-        if (order_index < input_sources.size())
-          return &input_sources[order_index];
-        return &input_sources.back();
-      };
-
-      for (size_t order_i = 0; order_i < m_vs_stage_in_attribute_order.size();
-           order_i++) {
-        const auto &stage_in_attr = m_vs_stage_in_attribute_order[order_i];
-        const uint32_t attr_index = stage_in_attr.attribute_index;
-        if (attr_index >= WMT_MAX_VERTEX_ATTRIBUTES)
-          continue;
-        if (attribute_present[attr_index]) {
-          auto &attr = vtx_desc.attributes[attr_index];
-          if (stage_in_attr.format != WMTAttributeFormatInvalid &&
-              attr.format != stage_in_attr.format) {
-            PSTRACE("D3D12 PSO input-layout attr[%u]: overriding descriptor "
-                    "format %u with DXIL stage_in format %u for semantic=%s "
-                    "register=%u",
-                    attr_index, (unsigned)attr.format,
-                    (unsigned)stage_in_attr.format,
-                    stage_in_attr.semantic_name.c_str(),
-                    stage_in_attr.register_index);
-            attr.format = stage_in_attr.format;
-          }
-          continue;
-        }
-
-        const InputLayoutSource *source =
-            find_source_for_stage_in(stage_in_attr, order_i);
-        if (!source || !source->element)
-          continue;
-
-        const auto &el = *source->element;
-        auto &attr = vtx_desc.attributes[attr_index];
-        attr.format = stage_in_attr.format != WMTAttributeFormatInvalid
-                          ? stage_in_attr.format
-                          : source->metal_format.AttributeFormat;
-        attr.offset = source->aligned_offset;
-        attr.buffer_index =
-            kMetalShaderConverterVertexBufferBindPoint + el.InputSlot;
-        attribute_present[attr_index] = true;
-        attribute_count = std::max(attribute_count, attr_index + 1);
-        if (m_vs_uses_stage_in && el.InputSlot < 32)
-          d3d_stage_in_slot_mask |= 1u << el.InputSlot;
-
-        PSTRACE("D3D12 PSO input-layout attr[%u]<-desc[%u]: filled missing "
-                "DXIL stage_in register=%u semantic=%s%u chosen_fmt=%u "
-                "slot=%u offset=%u",
-                attr_index, source->desc_index, stage_in_attr.register_index,
-                el.SemanticName ? el.SemanticName : "?", el.SemanticIndex,
-                (unsigned)attr.format, attr.buffer_index,
-                source->aligned_offset);
-      }
-
-      if (m_vs_stage_in_attribute_order.empty()) {
-        PSTRACE("D3D12 PSO input-layout: DXIL stage_in reflection did not "
-                "publish attribute order; preserving input-layout attributes "
-                "without synthetic padding");
-      }
-    }
-
     vtx_desc.attribute_count = attribute_count;
     vtx_desc.layout_count = max_slot;
-    bool slot_used_by_attribute[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
-    uint32_t stage_in_slot_mask = 0;
-    for (uint32_t attr_i = 0; attr_i < attribute_count; attr_i++) {
-      const auto &attr = vtx_desc.attributes[attr_i];
-      if (attr.format == WMTAttributeFormatInvalid)
-        continue;
-      if (attr.buffer_index < WMT_MAX_VERTEX_BUFFER_LAYOUTS) {
-        slot_used_by_attribute[attr.buffer_index] = true;
-        if (attr.buffer_index < kMetalD3D12VertexBufferSlotCount)
-          stage_in_slot_mask |= 1u << attr.buffer_index;
-      }
-    }
-    if (m_vs_uses_stage_in && d3d_stage_in_slot_mask)
-      m_ia_slot_mask = d3d_stage_in_slot_mask;
     for (uint32_t s = 0; s < max_slot; s++) {
-      if (!slot_used_by_attribute[s]) {
-        vtx_desc.layouts[s].stride = 0;
-        vtx_desc.layouts[s].step_function = WMTVertexStepFunctionPerVertex;
-        vtx_desc.layouts[s].step_rate = 1;
-        if (slot_stride[s] != 0) {
-          PSTRACE("D3D12 PSO input-layout slot[%u]: dropping unused layout "
-                  "stride=%u because no bound Metal attribute references it",
-                  s, slot_stride[s]);
-        }
-        continue;
-      }
-
       vtx_desc.layouts[s].stride = slot_stride[s];
-      vtx_desc.layouts[s].step_function =
-          slot_per_vertex[s] ? WMTVertexStepFunctionPerVertex
-                             : WMTVertexStepFunctionPerInstance;
-      vtx_desc.layouts[s].step_rate =
-          slot_per_vertex[s] ? 1 : std::max<uint32_t>(1, slot_step_rate[s]);
-      PSTRACE("D3D12 PSO input-layout slot[%u]: stride=%u step=%u rate=%u", s,
-              slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function,
-              vtx_desc.layouts[s].step_rate);
+      vtx_desc.layouts[s].step_function = slot_per_vertex[s]
+          ? WMTVertexStepFunctionPerVertex : WMTVertexStepFunctionPerInstance;
+      vtx_desc.layouts[s].step_rate = 1;
+      PSTRACE("D3D12 PSO input-layout slot[%u]: stride=%u step=%u",
+              s, slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function);
     }
-    if (m_vs_uses_stage_in && attribute_count > 0) {
-      std::stringstream attr_summary;
-      attr_summary << "D3D12 stage_in vertex descriptor attrs="
-                   << attribute_count << " layouts=" << max_slot
-                   << " slot_mask=0x" << std::hex << stage_in_slot_mask
-                   << std::dec
-                   << " has_input_signature=" << (has_input_signature ? 1 : 0)
-                   << " reflection_order="
-                   << m_vs_stage_in_attribute_order.size() << " present=[";
-      bool first_attr = true;
-      for (uint32_t attr_i = 0; attr_i < attribute_count; attr_i++) {
-        const auto &attr = vtx_desc.attributes[attr_i];
-        if (attr.format == WMTAttributeFormatInvalid)
-          continue;
-        if (!first_attr)
-          attr_summary << ",";
-        first_attr = false;
-        attr_summary << attr_i << "@slot" << attr.buffer_index << "+";
-        attr_summary << attr.offset << ":fmt" << (unsigned)attr.format;
-      }
-      attr_summary << "]";
-      Logger::info(attr_summary.str());
-      if (!m_vs_requires_msc_stage_in) {
-        info.vertex_descriptor = &vtx_desc;
-        PSTRACE("D3D12 PSO input-layout attached as Metal vertex descriptor for "
-                "DXIL stage_in");
-      } else {
-        PSTRACE("D3D12 PSO input-layout retained for MSC stage-in table "
-                "binding; Metal vertex descriptor disabled");
-      }
-    } else {
-      PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal "
-              "vertex descriptor disabled");
+    if (!m_vs_uses_stage_in) {
+      PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
-  if (m_vs_uses_stage_in && !m_vs_requires_msc_stage_in &&
-      !info.vertex_descriptor) {
-    uint32_t attribute_count = 0;
-    for (const auto &stage_in_attr : m_vs_stage_in_attribute_order) {
-      if (stage_in_attr.attribute_index < WMT_MAX_VERTEX_ATTRIBUTES)
-        attribute_count =
-            std::max(attribute_count, stage_in_attr.attribute_index + 1);
+  if (m_vs_uses_stage_in) {
+    constexpr uint32_t kSyntheticStageInAttributes = 16;
+    constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
+    for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+      auto &attr = vtx_desc.attributes[i];
+      attr.format = WMTAttributeFormatFloat4;
+      attr.offset = i * 16;
+      attr.buffer_index = 0;
     }
-    attribute_count =
-        std::min<uint32_t>(attribute_count, WMT_MAX_VERTEX_ATTRIBUTES);
-    if (attribute_count == 0)
-      attribute_count = 1;
-    if (attribute_count > 0) {
-      for (const auto &stage_in_attr : m_vs_stage_in_attribute_order) {
-        const uint32_t attr_index = stage_in_attr.attribute_index;
-        if (attr_index >= attribute_count)
-          continue;
-        auto &attr = vtx_desc.attributes[attr_index];
-        attr.format = stage_in_attr.format != WMTAttributeFormatInvalid
-                          ? stage_in_attr.format
-                          : WMTAttributeFormatFloat4;
-        attr.offset = attr_index * 16;
-        attr.buffer_index = kMetalShaderConverterVertexBufferBindPoint;
-      }
-      for (uint32_t attr_index = 0; attr_index < attribute_count; attr_index++) {
-        auto &attr = vtx_desc.attributes[attr_index];
-        if (attr.format != WMTAttributeFormatInvalid)
-          continue;
-        attr.format = WMTAttributeFormatFloat4;
-        attr.offset = attr_index * 16;
-        attr.buffer_index = kMetalShaderConverterVertexBufferBindPoint;
-      }
-      vtx_desc.attribute_count = attribute_count;
-      vtx_desc.layout_count = kMetalShaderConverterVertexBufferBindPoint + 1;
-      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint].stride =
-          std::max<uint32_t>(16, attribute_count * 16);
-      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint]
-          .step_function = WMTVertexStepFunctionPerVertex;
-      vtx_desc.layouts[kMetalShaderConverterVertexBufferBindPoint].step_rate =
-          1;
-      info.vertex_descriptor = &vtx_desc;
-      Logger::info(str::format(
-          "D3D12 stage_in fallback vertex descriptor attrs=", attribute_count,
-          " layouts=1 has_input_layout=0"));
-    }
+    vtx_desc.attribute_count = std::min<uint32_t>(kSyntheticStageInAttributes,
+                                                  WMT_MAX_VERTEX_ATTRIBUTES);
+    vtx_desc.layout_count = 1;
+    vtx_desc.layouts[0].stride = kSyntheticStageInStride;
+    vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
+    vtx_desc.layouts[0].step_rate = 1;
+    info.vertex_descriptor = &vtx_desc;
+    PSTRACE("D3D12 PSO synthetic vertex descriptor attached for DXIL stage_in attrs=%u stride=%u",
+            vtx_desc.attribute_count, vtx_desc.layouts[0].stride);
   }
 
-  PSTRACE(
-      "D3D12 PSO state this=%p rts=%u dsv_fmt=%u depth=%u stencil=%u blend0=%u "
-      "write_mask0=0x%x cull=%u fill=%u front_ccw=%u depth_clip=%u",
-      (void *)this, m_num_render_targets, (unsigned)m_dsv_format,
-      (unsigned)m_depth_stencil_desc.DepthEnable,
-      (unsigned)m_depth_stencil_desc.StencilEnable,
-      (unsigned)m_blend_desc.RenderTarget[0].BlendEnable,
-      (unsigned)m_blend_desc.RenderTarget[0].RenderTargetWriteMask,
-      (unsigned)m_rasterizer_desc.CullMode,
-      (unsigned)m_rasterizer_desc.FillMode,
-      (unsigned)m_rasterizer_desc.FrontCounterClockwise,
-      (unsigned)m_rasterizer_desc.DepthClipEnable);
+  PSTRACE("D3D12 PSO state this=%p rts=%u dsv_fmt=%u depth=%u stencil=%u blend0=%u write_mask0=0x%x cull=%u fill=%u front_ccw=%u depth_clip=%u",
+          (void *)this, m_num_render_targets, (unsigned)m_dsv_format,
+          (unsigned)m_depth_stencil_desc.DepthEnable,
+          (unsigned)m_depth_stencil_desc.StencilEnable,
+          (unsigned)m_blend_desc.RenderTarget[0].BlendEnable,
+          (unsigned)m_blend_desc.RenderTarget[0].RenderTargetWriteMask,
+          (unsigned)m_rasterizer_desc.CullMode,
+          (unsigned)m_rasterizer_desc.FillMode,
+          (unsigned)m_rasterizer_desc.FrontCounterClockwise,
+          (unsigned)m_rasterizer_desc.DepthClipEnable);
 
-  DXMTD3D12ScopedTimer metal_render_timer("PSO", "CreateMetalRenderPSO");
-  metal_render_timer.SetDetail(
-      "this=%p rts=%u dsv=%u depth=%u stencil=%u stage_in=%u il=%u",
-      (void *)this, m_num_render_targets, (unsigned)m_dsv_format,
-      (unsigned)m_depth_stencil_desc.DepthEnable,
-      (unsigned)m_depth_stencil_desc.StencilEnable,
-      m_vs_uses_stage_in ? 1u : 0u, m_input_layout.NumElements);
-  EmitOfflineRenderPsoManifest(m_vs, m_ps, m_gs, info, m_input_layout,
-                               m_num_render_targets, m_dsv_format,
-                               m_sample_count, m_vs_uses_stage_in,
-                               m_vs_requires_msc_stage_in,
-                               m_uses_geometry_mesh_pipeline);
-  m_render_pso = wmt_device.newRenderPipelineState(info, err);
+  std::string render_err_desc = "unknown";
+  for (uint32_t attempt = 0; attempt < 4; attempt++) {
+    err = nullptr;
+    m_render_pso = wmt_device.newRenderPipelineState(info, err);
+    if (m_render_pso.handle)
+      break;
+
+    render_err_desc = DescribeNSObject(err.handle);
+    if (!IsTransientMetalCompilerError(render_err_desc) || attempt == 3)
+      break;
+
+    Logger::warn(str::format("Retrying render PSO after transient Metal compiler error attempt=",
+                             attempt + 1, " detail=", render_err_desc));
+    PSTRACE("Render PSO transient Metal compiler failure attempt=%u detail=%s",
+            attempt + 1, render_err_desc.c_str());
+    Sleep(50 * (attempt + 1));
+  }
   if (!m_render_pso.handle) {
-    auto err_desc_string =
-        err.handle ? err.description().getUTF8String() : std::string();
-    const char *err_desc =
-        err_desc_string.empty() ? "unknown" : err_desc_string.c_str();
-    auto retry_render_pso = [&](const char *reason, auto mutate) -> bool {
-      WMT::Reference<WMT::Error> retry_err;
-      WMTRenderPipelineInfo retry_info = info;
-      mutate(retry_info);
-      auto retry_pso = wmt_device.newRenderPipelineState(retry_info, retry_err);
-      if (retry_pso.handle) {
-        Logger::warn(str::format("CreateGraphicsPipelineState: using bounded "
-                                 "Metal render PSO fallback for ",
-                                 reason ? reason : "link failure", ": ",
-                                 err_desc ? err_desc : "unknown",
-                                 " vs=", GetVSCacheHash(),
-                                 " ps=", GetPSCacheHash(),
-                                 " gs=", GetGSCacheHash(),
-                                 " rts=", m_num_render_targets,
-                                 " rtv0=",
-                                 m_num_render_targets ? (unsigned)m_rtv_formats[0]
-                                                      : 0u,
-                                 " dsv=", (unsigned)m_dsv_format,
-                                 " stage_in=", m_vs_uses_stage_in ? 1u : 0u,
-                                 " msc_stage_in=",
-                                 m_vs_requires_msc_stage_in ? 1u : 0u,
-                                 " geom_mesh=",
-                                 m_uses_geometry_mesh_pipeline ? 1u : 0u,
-                                 " input_elements=",
-                                 m_input_layout.NumElements));
-        m_render_pso = std::move(retry_pso);
-        return true;
-      }
-      auto retry_desc_string =
-          retry_err.handle ? retry_err.description().getUTF8String()
-                           : std::string();
-      Logger::warn(str::format(
-          "CreateGraphicsPipelineState: bounded Metal render PSO fallback failed for ",
-          reason ? reason : "link failure", ": ",
-          retry_desc_string.empty() ? "unknown" : retry_desc_string.c_str()));
-      PSTRACE("D3D12 PSO bounded fallback failed for %s: %s",
-              reason ? reason : "link failure",
-              retry_desc_string.empty() ? "unknown" : retry_desc_string.c_str());
-      return false;
-    };
-
-    std::string_view err_view(err_desc ? err_desc : "");
-    if (err_view.find("RasterizationEnabled is false but the vertex shader's return type is not void") !=
-        std::string_view::npos) {
-      if (retry_render_pso("wireframe rasterization state", [](auto &retry_info) {
-            retry_info.rasterization_enabled = true;
-          })) {
-        return true;
-      }
-    } else if (err_view.find("vertex shader's return type is void") !=
-        std::string_view::npos) {
-      auto fallback_vs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("vs_diagnostic_fullscreen_fallback");
-      auto fallback_fs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("fs_diagnostic_varying_fallback");
-      if (fallback_vs.handle && fallback_fs.handle &&
-          retry_render_pso("void vertex shader diagnostic raster path",
-                           [&](auto &retry_info) {
-            retry_info.rasterization_enabled = true;
-            retry_info.vertex_function = fallback_vs;
-            retry_info.fragment_function = fallback_fs;
-            retry_info.vertex_descriptor = nullptr;
-          })) {
-        return true;
-      }
-    } else if (err_view.find("mismatching vertex shader output") !=
-                   std::string_view::npos ||
-               err_view.find("not written by vertex shader") !=
-                   std::string_view::npos) {
-      if (m_num_render_targets == 0 && m_dsv_format != DXGI_FORMAT_UNKNOWN &&
-          retry_render_pso("depth-only VS/PS varying mismatch drop fragment",
-                           [&](auto &retry_info) {
-                             retry_info.fragment_function = 0;
-                           })) {
-        return true;
-      }
-      auto fallback_fs = m_device->GetDXMTDevice()
-                             .queue()
-                             .cmd_library
-                             .getLibrary()
-                             .newFunction("fs_diagnostic_varying_fallback");
-      if (fallback_fs.handle &&
-          retry_render_pso("VS/PS varying mismatch diagnostic fragment",
-                           [&](auto &retry_info) {
-                             retry_info.fragment_function = fallback_fs;
-          })) {
-        return true;
-      }
-    }
-
-    Logger::err(str::format("Failed to create render PSO: ",
-                            err_desc ? err_desc : "unknown"));
-    return RecordCompileFailure(
-        "pso/metal_render_pso",
-        str::format("Metal render PSO creation failed: ",
-                    err_desc ? err_desc : "unknown"));
+    Logger::err(str::format("Failed to create render PSO: ", render_err_desc));
+    return RecordCompileFailure("pso/metal_render_pso",
+                                str::format("Metal render PSO creation failed: ",
+                                            render_err_desc));
+  }
+  {
+    size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
+        vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
+        m_dsv_format, m_sample_count ? m_sample_count : 1,
+        m_input_layout.NumElements, m_vs_uses_stage_in);
+    DumpRenderPSOManifest(
+        pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
+        m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
+        m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
+        m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
+        info.rasterization_enabled, (uintptr_t)vs_func.handle,
+        (uintptr_t)ps_func.handle);
   }
 
   if (m_depth_stencil_desc.DepthEnable || m_depth_stencil_desc.StencilEnable) {
@@ -5061,8 +1782,7 @@ d3d12_geometry_fallback_to_vs_ps:
       ds_info.front_stencil.stencil_fail_op =
           kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilFailOp];
       ds_info.front_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace
-                                   .StencilDepthFailOp];
+          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilDepthFailOp];
       ds_info.front_stencil.stencil_compare_function =
           kCompareFunctionMap[m_depth_stencil_desc.FrontFace.StencilFunc];
       ds_info.front_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
@@ -5074,8 +1794,7 @@ d3d12_geometry_fallback_to_vs_ps:
       ds_info.back_stencil.stencil_fail_op =
           kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilFailOp];
       ds_info.back_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace
-                                   .StencilDepthFailOp];
+          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilDepthFailOp];
       ds_info.back_stencil.stencil_compare_function =
           kCompareFunctionMap[m_depth_stencil_desc.BackFace.StencilFunc];
       ds_info.back_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
@@ -5085,13 +1804,12 @@ d3d12_geometry_fallback_to_vs_ps:
   }
 
   {
-    PTRACE("VS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u "
-           "ArgBufBindIdx=%u ArgTableQwords=%u",
-           (unsigned long long)(uintptr_t)m_vs_shader,
-           m_vs_reflection.NumConstantBuffers, m_vs_reflection.NumArguments,
-           m_vs_reflection.ConstanttBufferTableBindIndex,
-           m_vs_reflection.ArgumentBufferBindIndex,
-           m_vs_reflection.ArgumentTableQwords);
+    PTRACE("VS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_vs_shader,
+      m_vs_reflection.NumConstantBuffers, m_vs_reflection.NumArguments,
+      m_vs_reflection.ConstanttBufferTableBindIndex,
+      m_vs_reflection.ArgumentBufferBindIndex,
+      m_vs_reflection.ArgumentTableQwords);
     if (m_vs_shader && (m_vs_reflection.NumArguments > 0 ||
                         m_vs_reflection.NumConstantBuffers > 0)) {
       if (m_vs_reflection.NumConstantBuffers > 0)
@@ -5102,14 +1820,14 @@ d3d12_geometry_fallback_to_vs_ps:
                            m_vs_cb_args.empty() ? nullptr : m_vs_cb_args.data(),
                            m_vs_args.empty() ? nullptr : m_vs_args.data());
       for (size_t i = 0; i < m_vs_cb_args.size(); i++) {
-        PTRACE("VS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u", i,
-               (int)m_vs_cb_args[i].Type, m_vs_cb_args[i].SM50BindingSlot,
-               m_vs_cb_args[i].Flags, m_vs_cb_args[i].StructurePtrOffset);
+        PTRACE("VS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+          i, (int)m_vs_cb_args[i].Type, m_vs_cb_args[i].SM50BindingSlot,
+          m_vs_cb_args[i].Flags, m_vs_cb_args[i].StructurePtrOffset);
       }
       for (size_t i = 0; i < m_vs_args.size(); i++) {
         PTRACE("VS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-               i, (int)m_vs_args[i].Type, m_vs_args[i].SM50BindingSlot,
-               m_vs_args[i].Flags, m_vs_args[i].StructurePtrOffset);
+          i, (int)m_vs_args[i].Type, m_vs_args[i].SM50BindingSlot,
+          m_vs_args[i].Flags, m_vs_args[i].StructurePtrOffset);
       }
       SM50Destroy(m_vs_shader);
       m_vs_shader = nullptr;
@@ -5117,13 +1835,12 @@ d3d12_geometry_fallback_to_vs_ps:
   }
 
   {
-    PTRACE("PS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u "
-           "ArgBufBindIdx=%u ArgTableQwords=%u",
-           (unsigned long long)(uintptr_t)m_ps_shader,
-           m_ps_reflection.NumConstantBuffers, m_ps_reflection.NumArguments,
-           m_ps_reflection.ConstanttBufferTableBindIndex,
-           m_ps_reflection.ArgumentBufferBindIndex,
-           m_ps_reflection.ArgumentTableQwords);
+    PTRACE("PS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_ps_shader,
+      m_ps_reflection.NumConstantBuffers, m_ps_reflection.NumArguments,
+      m_ps_reflection.ConstanttBufferTableBindIndex,
+      m_ps_reflection.ArgumentBufferBindIndex,
+      m_ps_reflection.ArgumentTableQwords);
     if (m_ps_shader && (m_ps_reflection.NumArguments > 0 ||
                         m_ps_reflection.NumConstantBuffers > 0)) {
       if (m_ps_reflection.NumConstantBuffers > 0)
@@ -5134,23 +1851,25 @@ d3d12_geometry_fallback_to_vs_ps:
                            m_ps_cb_args.empty() ? nullptr : m_ps_cb_args.data(),
                            m_ps_args.empty() ? nullptr : m_ps_args.data());
       for (size_t i = 0; i < m_ps_cb_args.size(); i++) {
-        PTRACE("PS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u", i,
-               (int)m_ps_cb_args[i].Type, m_ps_cb_args[i].SM50BindingSlot,
-               m_ps_cb_args[i].Flags, m_ps_cb_args[i].StructurePtrOffset);
+        PTRACE("PS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+          i, (int)m_ps_cb_args[i].Type, m_ps_cb_args[i].SM50BindingSlot,
+          m_ps_cb_args[i].Flags, m_ps_cb_args[i].StructurePtrOffset);
       }
       for (size_t i = 0; i < m_ps_args.size(); i++) {
         PTRACE("PS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-               i, (int)m_ps_args[i].Type, m_ps_args[i].SM50BindingSlot,
-               m_ps_args[i].Flags, m_ps_args[i].StructurePtrOffset);
+          i, (int)m_ps_args[i].Type, m_ps_args[i].SM50BindingSlot,
+          m_ps_args[i].Flags, m_ps_args[i].StructurePtrOffset);
       }
       SM50Destroy(m_ps_shader);
       m_ps_shader = nullptr;
     }
   }
 
+  m_compile_state.store(CompileState::Compiled);
+  m_compile_cv.notify_all();
   Logger::info(str::format("Graphics PSO compiled: RTs=", m_num_render_targets,
-                           " DSV=", (int)m_dsv_format,
-                           " samples=", m_sample_count));
+                            " DSV=", (int)m_dsv_format,
+                            " samples=", m_sample_count));
   return true;
 }
 
@@ -5185,21 +1904,11 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
   m_blend_desc = desc.BlendState;
   m_rasterizer_desc = desc.RasterizerState;
   m_depth_stencil_desc = desc.DepthStencilState;
-  m_has_stream_output =
-      desc.StreamOutput.NumEntries > 0 || desc.StreamOutput.NumStrides > 0 ||
-      desc.StreamOutput.pSODeclaration || desc.StreamOutput.pBufferStrides;
+  m_has_stream_output = desc.StreamOutput.NumEntries > 0 ||
+                        desc.StreamOutput.NumStrides > 0 ||
+                        desc.StreamOutput.pSODeclaration ||
+                        desc.StreamOutput.pBufferStrides;
   m_vs_uses_stage_in = false;
-  m_vs_requires_msc_stage_in = false;
-  m_uses_geometry_mesh_pipeline = false;
-  m_vs_reflection = {};
-  m_vs_args.clear();
-  m_vs_cb_args.clear();
-  m_ps_reflection = {};
-  m_ps_args.clear();
-  m_ps_cb_args.clear();
-  m_gs_reflection = {};
-  m_gs_args.clear();
-  m_gs_cb_args.clear();
   m_input_elements.clear();
   m_input_semantic_names.clear();
   m_input_layout = {};
@@ -5208,8 +1917,7 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
     m_input_elements.reserve(desc.InputLayout.NumElements);
     for (UINT i = 0; i < desc.InputLayout.NumElements; i++) {
       auto element = desc.InputLayout.pInputElementDescs[i];
-      m_input_semantic_names.emplace_back(
-          element.SemanticName ? element.SemanticName : "");
+      m_input_semantic_names.emplace_back(element.SemanticName ? element.SemanticName : "");
       element.SemanticName = m_input_semantic_names.back().c_str();
       m_input_elements.push_back(element);
     }
@@ -5218,31 +1926,11 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
   }
   m_strip_cut_value = desc.IBStripCutValue;
   m_topology = desc.PrimitiveTopologyType;
-  m_num_render_targets = std::min<UINT>(desc.NumRenderTargets, 8);
+  m_num_render_targets = desc.NumRenderTargets;
   memcpy(m_rtv_formats, desc.RTVFormats, sizeof(m_rtv_formats));
   m_dsv_format = desc.DSVFormat;
   m_sample_mask = desc.SampleMask;
   m_sample_count = desc.SampleDesc.Count ? desc.SampleDesc.Count : 1;
-  m_cached_pso_blob.clear();
-  if (desc.CachedPSO.pCachedBlob && desc.CachedPSO.CachedBlobSizeInBytes) {
-    auto *begin = static_cast<const uint8_t *>(desc.CachedPSO.pCachedBlob);
-    m_cached_pso_blob.assign(begin,
-                             begin + desc.CachedPSO.CachedBlobSizeInBytes);
-  } else {
-    const char marker[] = "DXMT-D3D12-GRAPHICS-PSO-CACHE-v1";
-    m_cached_pso_blob.assign(marker, marker + sizeof(marker) - 1);
-    const uint32_t fields[] = {
-        static_cast<uint32_t>(m_topology),
-        static_cast<uint32_t>(m_num_render_targets),
-        static_cast<uint32_t>(m_dsv_format),
-        static_cast<uint32_t>(m_sample_mask),
-        static_cast<uint32_t>(m_sample_count),
-        static_cast<uint32_t>(m_strip_cut_value),
-    };
-    const auto *field_bytes = reinterpret_cast<const uint8_t *>(fields);
-    m_cached_pso_blob.insert(m_cached_pso_blob.end(), field_bytes,
-                             field_bytes + sizeof(fields));
-  }
 }
 
 void MTLD3D12PipelineState::SetComputeDesc(
@@ -5272,7 +1960,8 @@ MTLD3D12PipelineState::QueryInterface(REFIID riid, void **ppvObject) {
   return E_NOINTERFACE;
 }
 
-ULONG STDMETHODCALLTYPE MTLD3D12PipelineState::AddRef() { return ++m_refCount; }
+ULONG STDMETHODCALLTYPE
+MTLD3D12PipelineState::AddRef() { return ++m_refCount; }
 
 ULONG STDMETHODCALLTYPE MTLD3D12PipelineState::Release() {
   uint32_t rc = --m_refCount;
@@ -5281,19 +1970,21 @@ ULONG STDMETHODCALLTYPE MTLD3D12PipelineState::Release() {
   return rc;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::GetPrivateData(REFGUID guid,
-                                                                UINT *data_size,
-                                                                void *data) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12PipelineState::GetPrivateData(REFGUID guid, UINT *data_size,
+                                      void *data) {
   return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::SetPrivateData(
-    REFGUID guid, UINT data_size, const void *data) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12PipelineState::SetPrivateData(REFGUID guid, UINT data_size,
+                                      const void *data) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::SetPrivateDataInterface(
-    REFGUID guid, const IUnknown *data) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12PipelineState::SetPrivateDataInterface(REFGUID guid,
+                                               const IUnknown *data) {
   return S_OK;
 }
 
@@ -5301,20 +1992,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::SetName(LPCWSTR name) {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12PipelineState::GetDevice(REFIID riid,
-                                                           void **device) {
+HRESULT STDMETHODCALLTYPE
+MTLD3D12PipelineState::GetDevice(REFIID riid, void **device) {
   return m_device->QueryInterface(riid, device);
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12PipelineState::GetCachedBlob(ID3DBlob **blob) {
-  if (!blob)
-    return E_POINTER;
-  *blob = nullptr;
-  if (m_cached_pso_blob.empty())
-    return E_FAIL;
-  *blob = new PipelineStateBlob(m_cached_pso_blob);
-  return S_OK;
+  return E_NOTIMPL;
 }
 
 } // namespace dxmt

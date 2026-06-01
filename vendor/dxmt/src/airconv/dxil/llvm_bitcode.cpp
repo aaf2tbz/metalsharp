@@ -1,4 +1,5 @@
 #include "llvm_bitcode.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -98,6 +99,14 @@ static constexpr uint32_t kBlockID_Strtab = 23;
 static constexpr uint32_t kBlockID_Function = 12;
 static constexpr uint32_t kBlockID_Type = 17;
 static constexpr uint32_t kBlockID_Constants = 11;
+static constexpr uint32_t kBlockID_Metadata = 15;
+static constexpr uint32_t kBlockID_MetadataAttachment = 16;
+
+static constexpr uint32_t kMetadataCode_String = 3;
+static constexpr uint32_t kMetadataCode_Value = 5;
+static constexpr uint32_t kMetadataCode_Kind = 6;
+static constexpr uint32_t kMetadataCode_Node = 1;
+static constexpr uint32_t kMetadataCode_NamedNode = 13;
 
 static constexpr uint32_t kModuleCode_Version = 1;
 static constexpr uint32_t kTypeCode_Void = 2;
@@ -254,6 +263,23 @@ struct ParseContext {
   std::vector<BlockInfo> block_infos;
 };
 
+struct MetadataValue {
+  uint32_t type_id = 0;
+  uint64_t value = 0;
+};
+
+struct MetadataNode {
+  std::vector<uint32_t> operands;
+};
+
+struct MetadataState {
+  std::vector<MetadataValue> values;
+  std::vector<MetadataNode> nodes;
+  std::unordered_map<std::string, uint32_t> kind_map;
+  uint32_t numthreads_kind = (uint32_t)-1;
+  bool parsed = false;
+};
+
 struct PendingFunction {
   uint32_t value_id = 0;
   uint32_t type_id = 0;
@@ -339,6 +365,24 @@ static bool isPrintableString(const std::string &text) {
       return false;
   }
   return true;
+}
+
+static std::string formatFloatConstant(double value, bool suffix_f) {
+  if (std::isnan(value))
+    return "NAN";
+  if (std::isinf(value))
+    return std::signbit(value) ? "-INFINITY" : "INFINITY";
+
+  char buf[64];
+  snprintf(buf, sizeof(buf), suffix_f ? "%.9g" : "%.17g", value);
+  std::string text = buf;
+  if (text.find('.') == std::string::npos &&
+      text.find('e') == std::string::npos &&
+      text.find('E') == std::string::npos)
+    text += ".0";
+  if (suffix_f)
+    text += 'f';
+  return text;
 }
 
 struct SubBlockHeader {
@@ -534,6 +578,13 @@ static void applyFunctionNamesFromStrtab(
                 name.c_str());
       }
     }
+
+    for (auto &gv : module.globals) {
+      if (gv.value_id == ref.value_id && gv.name.empty()) {
+        gv.name = name;
+        DXTRACE("DXIL strtab global name: value=%u name=%s", gv.value_id, name.c_str());
+      }
+    }
   }
 }
 
@@ -606,14 +657,18 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
     case kTypeCode_Pointer: {
       t.kind = LLVMType::Pointer;
       if (ops.size() > 1) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[1]);
       }
+      if (ops.size() > 2)
+        t.address_space = (uint32_t)ops[2];
       ctx.module.types.push_back(t);
       break;
     }
     case kTypeCode_OpaquePointer: {
       t.kind = LLVMType::Pointer;
+      if (ops.size() > 1)
+        t.address_space = (uint32_t)ops[1];
       ctx.module.types.push_back(t);
       break;
     }
@@ -639,7 +694,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
                           ? 2
                           : 1;
       for (size_t i = first_type; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -667,7 +722,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
       t.kind = LLVMType::Function;
       t.bit_width = ops.size() > 1 ? (uint32_t)ops[1] : 0;
       for (size_t i = 2; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -677,7 +732,7 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
       t.kind = LLVMType::Function;
       t.bit_width = ops.size() > 1 ? (uint32_t)ops[1] : 0;
       for (size_t i = 3; i < ops.size(); i++) {
-        t.subtypes.push_back({LLVMType::Void, 0, {}, {}});
+        t.subtypes.push_back({LLVMType::Void, 0, 0, {}, {}});
         t.type_refs.push_back((uint32_t)ops[i]);
       }
       ctx.module.types.push_back(t);
@@ -690,7 +745,8 @@ static bool parseTypeBlock(ParseContext &ctx, uint32_t abbrev_len, uint32_t end_
   return false;
 }
 
-static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
+static bool parseConstantsBlock(ParseContext &ctx, std::vector<LLVMValue> &target,
+                                uint32_t &next_value_id,
                                 uint32_t abbrev_len, uint32_t end_bit) {
   uint32_t cur_type = 0;
   while (!ctx.reader.atEnd() && ctx.reader.tell() < end_bit) {
@@ -734,24 +790,20 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
           float f;
           uint32_t raw = (uint32_t)ops[1];
           memcpy(&f, &raw, sizeof(f));
-          char buf[64];
-          snprintf(buf, sizeof(buf), "%.9gf", (double)f);
-          v.constant_data = buf;
+          v.constant_data = formatFloatConstant((double)f, true);
         } else if (cur_type < ctx.module.types.size() &&
                    ctx.module.types[cur_type].kind == LLVMType::Double) {
           double d;
           uint64_t raw = ops[1];
           memcpy(&d, &raw, sizeof(d));
-          char buf[64];
-          snprintf(buf, sizeof(buf), "%.17g", d);
-          v.constant_data = buf;
+          v.constant_data = formatFloatConstant(d, false);
         }
       } else if (rec_code == kConstantsCode_Null) {
         v.constant_data = "0";
       } else if (rec_code == kConstantsCode_Undefined) {
         v.constant_data = "0";
       }
-      ctx.module.constants.push_back(v);
+      target.push_back(v);
       break;
     }
     case kConstantsCode_Aggregate: {
@@ -765,6 +817,11 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
           v.constant_data += ",";
         uint32_t value_id = (uint32_t)ops[i];
         auto constant = findConstantById(ctx.module, value_id);
+        if (!constant) {
+          for (auto &tc : target) {
+            if (tc.id == value_id) { constant = &tc; break; }
+          }
+        }
         if (constant && !constant->constant_data.empty()) {
           v.constant_data += constant->constant_data;
         } else {
@@ -772,7 +829,7 @@ static bool parseConstantsBlock(ParseContext &ctx, uint32_t &next_value_id,
         }
       }
       v.constant_data += ")";
-      ctx.module.constants.push_back(v);
+      target.push_back(v);
       break;
     }
     default:
@@ -838,7 +895,16 @@ static bool parseValueSymbolTable(ParseContext &ctx,
 }
 
 static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
-                               uint32_t abbrev_len, uint32_t end_bit) {
+                               uint32_t abbrev_len, uint32_t end_bit,
+                               MetadataState *md_state = nullptr);
+static bool parseMetadataAttachmentBlock(
+    LLVMModule &module, BitstreamReader &reader, uint32_t abbrev_len,
+    uint32_t end_bit, std::vector<Abbrev> &cur_abbrevs,
+    const MetadataState &md_state);
+
+static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
+                               uint32_t abbrev_len, uint32_t end_bit,
+                               MetadataState *md_state) {
   uint32_t cur_block = 0;
   uint32_t next_value = fn.instruction_start_value;
 
@@ -854,6 +920,10 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       type_id = (uint32_t)record[slot++];
     } else if (auto constant = findConstantById(ctx.module, value_id)) {
       type_id = constant->type_id;
+    } else {
+      for (auto &c : fn.constants) {
+        if (c.id == value_id) { type_id = c.type_id; break; }
+      }
     }
 
     return value_id;
@@ -861,21 +931,6 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
 
   auto popValue = [&](const std::vector<uint64_t> &record, size_t &slot) {
     return slot < record.size() ? value(record[slot++]) : 0;
-  };
-
-  auto getContainedTypeId = [&](uint32_t type_id, uint32_t index) -> uint32_t {
-    if (type_id >= ctx.module.types.size())
-      return 0;
-    const auto &type = ctx.module.types[type_id];
-    switch (type.kind) {
-    case LLVMType::Struct:
-      return index < type.type_refs.size() ? type.type_refs[index] : 0;
-    case LLVMType::Array:
-    case LLVMType::Vector:
-      return !type.type_refs.empty() ? type.type_refs[0] : 0;
-    default:
-      return 0;
-    }
   };
 
   auto noteResult = [&]() {
@@ -900,10 +955,16 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         ParseContext const_ctx{ctx.reader, ctx.module,
                                getBlockAbbrevs(ctx, header.block_id),
                                ctx.block_infos};
-        parseConstantsBlock(const_ctx, function_next_value,
+        parseConstantsBlock(const_ctx, fn.constants, function_next_value,
                             header.new_abbrev_len, header.end_bit);
         next_value = function_next_value;
         fn.instruction_start_value = next_value;
+      } else if (header.block_id == kBlockID_MetadataAttachment &&
+                 md_state && md_state->parsed) {
+        std::vector<Abbrev> ma_abbrevs;
+        parseMetadataAttachmentBlock(ctx.module, ctx.reader,
+                                     header.new_abbrev_len, header.end_bit,
+                                     ma_abbrevs, *md_state);
       } else {
         ctx.reader.seek(header.end_bit);
       }
@@ -923,20 +984,19 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     switch (rec_code) {
     case kFuncCode_DeclareBlocks:
       fn.blocks.resize(ops.size() > 1 ? (size_t)ops[1] : 0);
+      fn.block_value_ids.resize(fn.blocks.size());
+      for (size_t i = 0; i < fn.blocks.size(); i++) {
+        fn.block_value_ids[i] = (uint32_t)i;
+      }
+      if (!fn.blocks.empty())
+        next_value++;
+      fn.instruction_start_value = next_value;
       cur_block = 0;
       break;
     case kFuncCode_InstRet:
       if (cur_block < fn.blocks.size()) {
         LLVMInstruction inst;
         inst.opcode = LLVMInstruction::Ret;
-        if (ops.size() >= 3) {
-          size_t slot = 1;
-          uint32_t type_id = 0;
-          inst.operands.push_back(valueTypePair(ops, slot, type_id));
-          inst.type_id = type_id;
-        } else if (ops.size() >= 2) {
-          inst.operands.push_back(value(ops[1]));
-        }
         fn.blocks[cur_block].instructions.push_back(inst);
         nextBlock();
       }
@@ -975,7 +1035,11 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
 
         uint32_t callee_type_id = 0;
         uint32_t callee = 0;
-        callee = valueTypePair(ops, slot, callee_type_id);
+        if (function_type_id) {
+          callee = popValue(ops, slot);
+        } else {
+          callee = valueTypePair(ops, slot, callee_type_id);
+        }
 
         uint32_t return_type_id = 0;
         size_t fixed_arg_count = 0;
@@ -1107,19 +1171,17 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     }
     case kFuncCode_InstSelect:
     case kFuncCode_InstVSelect: {
-      if (cur_block < fn.blocks.size() && ops.size() >= 5) {
+      if (cur_block < fn.blocks.size() && ops.size() >= 4) {
         LLVMInstruction inst;
         inst.opcode = LLVMInstruction::Select;
-        inst.type_id = (uint32_t)ops[1];
-        if (rec_code == kFuncCode_InstVSelect && ops.size() >= 6) {
-          inst.operands.push_back(value(ops[4]));
-          inst.operands.push_back(value(ops[1]));
-          inst.operands.push_back(value(ops[3]));
-        } else {
-          inst.operands.push_back(value(ops[4]));
-          inst.operands.push_back(value(ops[1]));
-          inst.operands.push_back(value(ops[3]));
-        }
+        size_t slot = 1;
+        uint32_t true_value = popValue(ops, slot);
+        uint32_t false_value = popValue(ops, slot);
+        uint32_t cond_type_id = 0;
+        uint32_t cond = valueTypePair(ops, slot, cond_type_id);
+        inst.operands.push_back(cond);
+        inst.operands.push_back(true_value);
+        inst.operands.push_back(false_value);
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
       }
@@ -1127,14 +1189,18 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     }
     case kFuncCode_InstCmp:
     case kFuncCode_InstCmp2: {
-      if (cur_block < fn.blocks.size() && ops.size() >= 5) {
+      if (cur_block < fn.blocks.size() && ops.size() >= 4) {
         LLVMInstruction inst;
-        uint32_t pred = (uint32_t)ops[4];
+        size_t slot = 1;
+        uint32_t type_id = 0;
+        uint32_t lhs = valueTypePair(ops, slot, type_id);
+        uint32_t rhs = popValue(ops, slot);
+        uint32_t pred = slot < ops.size() ? (uint32_t)ops[slot] : 0;
         inst.opcode = decodeCmp(pred);
-        inst.type_id = (uint32_t)ops[1];
+        inst.type_id = type_id;
         inst.operands.push_back(pred);
-        inst.operands.push_back(value(ops[1]));
-        inst.operands.push_back(value(ops[3]));
+        inst.operands.push_back(lhs);
+        inst.operands.push_back(rhs);
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
       }
@@ -1187,37 +1253,26 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                           ? LLVMInstruction::ExtractValue
                           : rec_code == kFuncCode_InstInsertVal
                                 ? LLVMInstruction::InsertValue
-                                : LLVMInstruction::PHI;
+                                 : LLVMInstruction::PHI;
         if (rec_code == kFuncCode_InstExtractVal) {
-          size_t slot = 1;
-          uint32_t agg_type_id = 0;
-          uint32_t agg = valueTypePair(ops, slot, agg_type_id);
-          inst.type_id = agg_type_id;
-          inst.operands.push_back(agg);
-          for (; slot < ops.size(); slot++) {
-            uint32_t index = (uint32_t)ops[slot];
-            inst.operands.push_back(index);
-            uint32_t contained_type_id = getContainedTypeId(inst.type_id, index);
-            if (contained_type_id)
-              inst.type_id = contained_type_id;
-          }
+          if (ops.size() > 1)
+            inst.operands.push_back(value(ops[1]));
+          for (size_t i = 2; i < ops.size(); i++)
+            inst.operands.push_back((uint32_t)ops[i]);
         } else if (rec_code == kFuncCode_InstInsertVal) {
-          size_t slot = 1;
-          uint32_t agg_type_id = 0;
-          uint32_t agg = valueTypePair(ops, slot, agg_type_id);
-          uint32_t value_type_id = 0;
-          uint32_t inserted = valueTypePair(ops, slot, value_type_id);
-          (void)value_type_id;
-          inst.type_id = agg_type_id;
-          inst.operands.push_back(agg);
-          inst.operands.push_back(inserted);
-          for (; slot < ops.size(); slot++)
-            inst.operands.push_back((uint32_t)ops[slot]);
+          if (ops.size() > 1)
+            inst.operands.push_back(value(ops[1]));
+          if (ops.size() > 2)
+            inst.operands.push_back(value(ops[2]));
+          for (size_t i = 3; i < ops.size(); i++)
+            inst.operands.push_back((uint32_t)ops[i]);
         } else {
           if (ops.size() > 1)
             inst.type_id = (uint32_t)ops[1];
-          for (size_t i = 2; i < ops.size(); i += 2)
+          for (size_t i = 2; i + 1 < ops.size(); i += 2) {
             inst.operands.push_back(value(ops[i]));
+            inst.operands.push_back((uint32_t)ops[i + 1]);
+          }
         }
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
@@ -1232,13 +1287,156 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         nextBlock();
       }
       break;
-    case kFuncCode_InstSwitch:
+    case kFuncCode_InstSwitch: {
+      if (cur_block < fn.blocks.size() && ops.size() >= 5) {
+        LLVMInstruction inst;
+        inst.opcode = LLVMInstruction::Switch;
+        size_t slot = 1;
+        uint32_t cond_type_id = 0;
+        inst.operands.push_back(valueTypePair(ops, slot, cond_type_id));
+        inst.operands.push_back((uint32_t)ops[slot++]);
+        uint32_t num_cases = (uint32_t)ops[slot++];
+        for (uint32_t i = 0; i < num_cases && slot + 1 < ops.size(); i++) {
+          inst.operands.push_back((uint32_t)ops[slot++]);
+          inst.operands.push_back((uint32_t)ops[slot++]);
+        }
+        fn.blocks[cur_block].instructions.push_back(inst);
+        nextBlock();
+      }
+      break;
+    }
     case kFuncCode_InstInvoke:
     default:
       break;
     }
   }
   return false;
+}
+
+static bool parseMetadataBlock(LLVMModule &module, BitstreamReader &reader,
+                               uint32_t abbrev_len, uint32_t end_bit,
+                               std::vector<Abbrev> &cur_abbrevs,
+                               const std::vector<BlockInfo> &block_infos,
+                               MetadataState &md_state) {
+  auto abbrevs = getBlockAbbrevs(ParseContext{reader, module, {}, block_infos},
+                                 kBlockID_Metadata);
+  if (!abbrevs.empty())
+    cur_abbrevs = abbrevs;
+
+  while (!reader.atEnd() && reader.tell() < end_bit) {
+    uint32_t code = reader.read(abbrev_len);
+    if (code == kEndBlock) {
+      reader.align32();
+      break;
+    }
+    if (code == kDefineAbbrev) {
+      readAbbrevRecord(reader, cur_abbrevs);
+      continue;
+    }
+    if (code == kEnterSubBlock) {
+      auto hdr = readSubBlockHeader(reader);
+      reader.seek(hdr.end_bit);
+      continue;
+    }
+
+    auto ops = readRecord(reader, code, cur_abbrevs);
+    if (ops.empty())
+      continue;
+
+    uint32_t rec_code = (uint32_t)ops[0];
+
+    if (rec_code == kMetadataCode_Kind && ops.size() > 2) {
+      std::string kind_name = recordString(ops, 2);
+      uint32_t kind_id = (uint32_t)ops[1];
+      md_state.kind_map[kind_name] = kind_id;
+      DXTRACE("DXIL metadata kind: id=%u name=%s", kind_id, kind_name.c_str());
+    } else if (rec_code == kMetadataCode_Value && ops.size() > 2) {
+      MetadataValue mv;
+      mv.type_id = (uint32_t)ops[1];
+      mv.value = ops[2];
+      md_state.values.push_back(mv);
+    } else if (rec_code == kMetadataCode_Node) {
+      MetadataNode node;
+      for (size_t i = 1; i < ops.size(); i++) {
+        uint32_t ref = (uint32_t)ops[i];
+        if (ref != (uint32_t)-1)
+          node.operands.push_back(ref);
+      }
+      md_state.nodes.push_back(node);
+    }
+  }
+
+  auto it = md_state.kind_map.find("numthreads");
+  if (it != md_state.kind_map.end()) {
+    md_state.numthreads_kind = it->second;
+    DXTRACE("DXIL numthreads kind_id=%u values=%zu nodes=%zu",
+            md_state.numthreads_kind, md_state.values.size(),
+            md_state.nodes.size());
+  }
+
+  md_state.parsed = true;
+  return true;
+}
+
+static void resolveNumthreadsFromAttachment(
+    LLVMModule &module, const std::vector<uint64_t> &ops,
+    const MetadataState &md_state) {
+  if (md_state.numthreads_kind == (uint32_t)-1)
+    return;
+
+  for (size_t i = 0; i + 1 < ops.size(); i += 2) {
+    uint32_t kind = (uint32_t)ops[i];
+    uint32_t md_idx = (uint32_t)ops[i + 1];
+    if (kind == md_state.numthreads_kind && md_idx < md_state.nodes.size()) {
+      const auto &node = md_state.nodes[md_idx];
+      uint32_t xyz[3] = {1, 1, 1};
+      for (size_t j = 0; j < 3 && j < node.operands.size(); j++) {
+        uint32_t val_idx = node.operands[j];
+        if (val_idx < md_state.values.size()) {
+          xyz[j] = (uint32_t)md_state.values[val_idx].value;
+        }
+      }
+      module.num_threads[0] = xyz[0] ? xyz[0] : 1;
+      module.num_threads[1] = xyz[1] ? xyz[1] : 1;
+      module.num_threads[2] = xyz[2] ? xyz[2] : 1;
+      DXTRACE("DXIL numthreads from attachment: %u,%u,%u",
+              module.num_threads[0], module.num_threads[1],
+              module.num_threads[2]);
+    }
+  }
+}
+
+static bool parseMetadataAttachmentBlock(
+    LLVMModule &module, BitstreamReader &reader, uint32_t abbrev_len,
+    uint32_t end_bit, std::vector<Abbrev> &cur_abbrevs,
+    const MetadataState &md_state) {
+  while (!reader.atEnd() && reader.tell() < end_bit) {
+    uint32_t code = reader.read(abbrev_len);
+    if (code == kEndBlock) {
+      reader.align32();
+      break;
+    }
+    if (code == kDefineAbbrev) {
+      readAbbrevRecord(reader, cur_abbrevs);
+      continue;
+    }
+    if (code == kEnterSubBlock) {
+      auto hdr = readSubBlockHeader(reader);
+      reader.seek(hdr.end_bit);
+      continue;
+    }
+
+    auto ops = readRecord(reader, code, cur_abbrevs);
+    if (ops.empty())
+      continue;
+
+    uint32_t rec_code = (uint32_t)ops[0];
+    if (rec_code == 18 && ops.size() >= 3) {
+      std::vector<uint64_t> attachment(ops.begin() + 1, ops.end());
+      resolveNumthreadsFromAttachment(module, attachment, md_state);
+    }
+  }
+  return true;
 }
 
 std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t size) {
@@ -1295,7 +1493,9 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
   std::vector<FunctionNameRef> function_name_refs;
   size_t next_function_body = 0;
   uint32_t next_module_value_id = 0;
+  uint32_t next_function_value_id = 0;
   bool use_strtab_names = false;
+  MetadataState md_state;
 
   ParseContext ctx{reader, module, {}, {}};
 
@@ -1328,7 +1528,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
         ParseContext const_ctx{reader, module,
                                getBlockAbbrevs(ctx, header.block_id),
                                ctx.block_infos};
-        parseConstantsBlock(const_ctx, next_module_value_id,
+        parseConstantsBlock(const_ctx, module.constants, next_module_value_id,
                             header.new_abbrev_len, header.end_bit);
         break;
       }
@@ -1348,7 +1548,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
           ParseContext func_ctx{reader, module,
                                 getBlockAbbrevs(ctx, header.block_id),
                                 ctx.block_infos};
-          parseFunctionBlock(func_ctx, fn, header.new_abbrev_len, header.end_bit);
+          parseFunctionBlock(func_ctx, fn, header.new_abbrev_len, header.end_bit, &md_state);
           module.functions.push_back(fn);
           DXTRACE("DXIL parsed function: value=%u name=%s blocks=%zu",
                   fn.value_id, fn.name.c_str(), fn.blocks.size());
@@ -1365,6 +1565,13 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
                              ctx.block_infos};
         parseValueSymbolTable(vst_ctx, pending_functions,
                               header.new_abbrev_len, header.end_bit);
+        break;
+      }
+      case kBlockID_Metadata: {
+        std::vector<Abbrev> md_abbrevs;
+        parseMetadataBlock(module, reader, header.new_abbrev_len,
+                           header.end_bit, md_abbrevs, ctx.block_infos,
+                           md_state);
         break;
       }
       default:
@@ -1410,7 +1617,9 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
                                 ? ops[record_base + 2] != 0
                                 : true;
       PendingFunction pending;
-      pending.value_id = next_module_value_id++;
+      pending.value_id = next_function_value_id++;
+      if (next_module_value_id < next_function_value_id)
+        next_module_value_id = next_function_value_id;
       pending.type_id = fn_type;
       pending.param_count = getFunctionParamCount(module, fn_type);
       if (use_strtab_names && record_base == 3 && ops.size() > 2) {
@@ -1420,21 +1629,37 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
       if (!is_declaration) {
         pending_functions.push_back(pending);
       } else {
-        LLVMFunction fn;
-        fn.value_id = pending.value_id;
-        fn.type_id = pending.type_id;
-        fn.param_count = pending.param_count;
-        fn.name = pending.name;
-        fn.is_declaration = true;
-        module.functions.push_back(fn);
-        if (!fn.name.empty())
-          module.function_map[fn.name] = module.functions.size() - 1;
+        LLVMFunction decl;
+        decl.value_id = pending.value_id;
+        decl.type_id = fn_type;
+        decl.param_count = pending.param_count;
+        decl.is_declaration = true;
+        module.functions.push_back(decl);
+        if (!decl.name.empty())
+          module.function_map[decl.name] = module.functions.size() - 1;
       }
       DXTRACE("DXIL module function: value=%u type=%u params=%u decl=%u pending=%zu",
               pending.value_id, pending.type_id, pending.param_count,
               is_declaration ? 1 : 0, pending_functions.size());
     } else if (rec_code == kModuleCode_GlobalVar) {
-      next_module_value_id++;
+      LLVMGlobal gv;
+      gv.value_id = next_function_value_id++;
+      if (next_module_value_id < next_function_value_id)
+        next_module_value_id = next_function_value_id;
+      if (ops.size() > 1)
+        gv.type_id = (uint32_t)ops[1];
+      if (ops.size() > 2)
+        gv.is_constant = (ops[2] & 1) != 0;
+      if (gv.type_id < module.types.size() &&
+          module.types[gv.type_id].kind == LLVMType::Pointer)
+        gv.address_space = module.types[gv.type_id].address_space;
+      if (use_strtab_names && ops.size() > 4) {
+        function_name_refs.push_back(
+            {gv.value_id, (uint32_t)ops[3], (uint32_t)ops[4]});
+      }
+      module.globals.push_back(gv);
+      DXTRACE("DXIL module global: value=%u type=%u addr_space=%u",
+              gv.value_id, gv.type_id, gv.address_space);
     }
   }
 
@@ -1476,7 +1701,7 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
       ParseContext func_ctx{reader, module,
                             getBlockAbbrevs(ctx, header.block_id),
                             ctx.block_infos};
-      parseFunctionBlock(func_ctx, fn, header.new_abbrev_len, header.end_bit);
+      parseFunctionBlock(func_ctx, fn, header.new_abbrev_len, header.end_bit, &md_state);
       module.functions.push_back(fn);
       DXTRACE("DXIL parsed trailing function: value=%u name=%s blocks=%zu",
               fn.value_id, fn.name.c_str(), fn.blocks.size());

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BUNDLE_DIR="$PROJECT_ROOT/app/bundles"
+MANIFEST="$SCRIPT_DIR/asset-manifest.tsv"
+REPO="${METALSHARP_BUNDLE_REPO:-aaf2tbz/metalsharp}"
+TAG="${METALSHARP_BUNDLE_TAG:-bundles}"
+CHECK_RELEASE=0
+REQUIRE_PLATFORM=""
+ASSETS=()
+
+usage() {
+  cat <<'USAGE'
+Usage: tools/bundles/verify-bundles.sh [options] [asset...]
+
+Options:
+  --bundle-dir PATH    Local bundle directory to verify (default app/bundles)
+  --manifest PATH      Manifest to verify (default tools/bundles/asset-manifest.tsv)
+  --release            Verify that release assets exist
+  --require PLATFORM   Require every manifest asset for PLATFORM (mac or linux)
+  -h, --help           Show this help
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --bundle-dir) BUNDLE_DIR="$2"; shift 2 ;;
+    --manifest) MANIFEST="$2"; shift 2 ;;
+    --release) CHECK_RELEASE=1; shift ;;
+    --require) REQUIRE_PLATFORM="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) ASSETS+=("$1"); shift ;;
+  esac
+done
+
+manifest_rows() {
+  awk -F '\t' 'NF >= 4 && $1 !~ /^#/ { print $0 }' "$MANIFEST"
+}
+
+asset_requested() {
+  local asset="$1"
+  [ "${#ASSETS[@]}" -eq 0 ] && return 0
+  local requested
+  for requested in "${ASSETS[@]}"; do
+    [ "$requested" = "$asset" ] && return 0
+  done
+  return 1
+}
+
+platform_required() {
+  local platforms="$1"
+  [ -z "$REQUIRE_PLATFORM" ] && return 1
+  case ",$platforms," in
+    *",$REQUIRE_PLATFORM,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+verify_local() {
+  local failed=0
+  while IFS=$'\t' read -r asset root platforms _notes; do
+    asset_requested "$asset" || continue
+    local path="$BUNDLE_DIR/$asset"
+    if [ ! -s "$path" ]; then
+      if platform_required "$platforms"; then
+        echo "MISSING: $asset required for $REQUIRE_PLATFORM" >&2
+        failed=1
+      fi
+      continue
+    fi
+    if ! tar --use-compress-program=unzstd -tf "$path" | awk -v root="$root" 'index($0, root "/") == 1 || $0 == root { found=1 } END { exit found ? 0 : 1 }'; then
+      echo "ROOT MISMATCH: $asset does not contain $root/" >&2
+      failed=1
+      continue
+    fi
+    echo "OK: $asset root=$root"
+  done < <(manifest_rows)
+  return "$failed"
+}
+
+verify_release() {
+  command -v gh >/dev/null 2>&1 || {
+    echo "ERROR: gh is required for --release verification" >&2
+    return 1
+  }
+  local assets
+  assets="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+  local failed=0
+  while IFS=$'\t' read -r asset _root platforms _notes; do
+    asset_requested "$asset" || continue
+    if ! printf '%s\n' "$assets" | grep -Fx "$asset" >/dev/null; then
+      if [ -z "$REQUIRE_PLATFORM" ] || platform_required "$platforms"; then
+        echo "RELEASE MISSING: $asset" >&2
+        failed=1
+      fi
+    else
+      echo "RELEASE OK: $asset"
+    fi
+  done < <(manifest_rows)
+  return "$failed"
+}
+
+verify_local
+if [ "$CHECK_RELEASE" = "1" ]; then
+  verify_release
+fi
