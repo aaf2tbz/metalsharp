@@ -945,8 +945,8 @@ pub fn library() -> Value {
             let recommended = pipeline_id.to_legacy_method();
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
-                "id": node.id,
-                "name": node.name,
+                "id": recommended,
+                "name": if pipeline_id.is_dxmt_family() { "DXMT" } else { node.name },
                 "recommended": true,
             }))
             .chain(node.alternatives.iter().map(|alt| {

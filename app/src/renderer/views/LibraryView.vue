@@ -54,6 +54,7 @@ function isMacSteamLaunch(launchMethod: string) {
 function isWineSteamRouteId(launchMethod: string) {
   const method = launchMethod.toLowerCase();
   return [
+    "dxmt",
     "steam",
     "wine_steam",
     "m9",

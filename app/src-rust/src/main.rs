@@ -391,7 +391,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         .unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
-                        Some(pipeline) => Some(pipeline),
+                        Some(pipeline) => Some(mtsp::rules::resolve_requested_pipeline(id, Some(pipeline))),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
                         None => Some(mtsp::rules::resolve_pipeline(id)),
                     };
@@ -675,8 +675,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 json!({
                     "ok": true,
                     "appid": appid,
-                    "recommended": node.id,
-                    "recommended_name": node.name,
+                    "recommended": pipeline_id.to_legacy_method(),
+                    "recommended_name": if pipeline_id.is_dxmt_family() { format!("DXMT ({})", node.name) } else { node.name.to_string() },
                     "pipelines": all_pipelines,
                 }),
             )
@@ -698,8 +698,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let pipeline = mtsp::engine::PipelineId::from_str_flexible(method)
-                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    let pipeline = mtsp::rules::resolve_requested_pipeline(
+                        id as u32,
+                        mtsp::engine::PipelineId::from_str_flexible(method),
+                    );
                     let node = mtsp::engine::get_pipeline(pipeline);
                     match mtsp::recipe::build_launch_recipe(id as u32, node) {
                         Ok(recipe) => resp(200, json!({"ok": true, "appid": id, "recipe": recipe})),
@@ -715,8 +717,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let pipeline = mtsp::engine::PipelineId::from_str_flexible(method)
-                        .unwrap_or_else(|| mtsp::rules::resolve_pipeline(id as u32));
+                    let pipeline = mtsp::rules::resolve_requested_pipeline(
+                        id as u32,
+                        mtsp::engine::PipelineId::from_str_flexible(method),
+                    );
                     let node = mtsp::engine::get_pipeline(pipeline);
                     let report = mtsp::recipe::diagnose_launch_request(id as u32, node);
                     resp(200, json!({"ok": true, "appid": id, "report": report}))
@@ -1020,12 +1024,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let launch_method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let resolved_pipeline =
-                        if let Some(pipeline_id) = crate::mtsp::engine::PipelineId::from_str_flexible(launch_method) {
-                            Some(pipeline_id)
-                        } else {
-                            Some(crate::mtsp::rules::resolve_pipeline(id as u32))
-                        };
+                    let resolved_pipeline = Some(crate::mtsp::rules::resolve_requested_pipeline(
+                        id as u32,
+                        crate::mtsp::engine::PipelineId::from_str_flexible(launch_method),
+                    ));
                     let engine_desc = resolved_pipeline
                         .map(|p| crate::mtsp::engine::get_pipeline(p).description)
                         .unwrap_or("Unknown");

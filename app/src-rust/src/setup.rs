@@ -295,19 +295,17 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let marker = game_dir.join(".metalsharp_prepared");
 
     let is_dotnet = detect_dotnet_game(&game_dir);
+    let pipeline =
+        if is_dotnet { crate::mtsp::engine::PipelineId::FnaArm64 } else { crate::mtsp::rules::resolve_pipeline(appid) };
     let game_type = match appid {
         105600 => "xna_fna_arm64",
         504230 => "xna_fna_x86",
-        312520 | 375520 => "dxmt_metal",
-        1962700 | 2050650 | 3164500 | 848450 => "dxmt_metal12",
-        535520 => "wined3d_32",
         945360 | 1139900 => "steam",
-        620 | 265930 => "d3d9_metal",
+        620 | 265930 => "dxmt",
         _ => {
             if is_dotnet {
                 "xna_fna"
             } else {
-                let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
                 pipeline.to_legacy_method()
             }
         },
@@ -320,19 +318,17 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     match appid {
         105600 => prepare_terrarria(&game_dir, &home)?,
         504230 => prepare_celeste(&game_dir, &home)?,
-        312520 | 375520 => prepare_rain_world(&game_dir, &home)?,
-        1962700 | 2050650 | 3164500 | 848450 => prepare_dxmt_metal12(appid, &game_dir, &home)?,
-        535520 => prepare_nidhogg_2(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 | 265930 => prepare_goldberg_game(&game_dir, &home, appid)?,
         _ => {
             if is_dotnet {
                 setup_fna_runtime(&game_dir, &home)?;
+            } else if pipeline.is_dxmt_family() {
+                prepare_dxmt_pipeline(appid, &game_dir, &home, pipeline)?;
             }
         },
     }
 
-    let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
     let node = crate::mtsp::engine::get_pipeline(pipeline);
     if let Some(subdir) = node.shader_cache_subdir {
         crate::mtsp::shader_cache::deploy_preset_cache(&home, subdir, appid);
@@ -504,20 +500,19 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
     Ok(())
 }
 
-fn prepare_rain_world(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let marker = game_dir.join(".metalsharp_prepared");
-    if !marker.exists() {
-        let _ = std::fs::write(&marker, "dxmt_metal");
-    }
-    Ok(())
-}
-
-fn prepare_dxmt_metal12(appid: u32, game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare_dxmt_pipeline(
+    appid: u32,
+    game_dir: &PathBuf,
+    home: &PathBuf,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<(), Box<dyn std::error::Error>> {
     let marker = game_dir.join(".metalsharp_prepared");
     stage_packaged_steam_runtime_for_game(appid, game_dir)?;
-    stage_agility_sdk_for_game(appid, game_dir, home)?;
+    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+        stage_agility_sdk_for_game(appid, game_dir, home)?;
+    }
     if !marker.exists() {
-        let _ = std::fs::write(&marker, "dxmt_metal12");
+        let _ = std::fs::write(&marker, "dxmt");
     }
     Ok(())
 }
@@ -1062,14 +1057,6 @@ fn same_file_contents(left: &Path, right: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
-}
-
-fn prepare_nidhogg_2(game_dir: &PathBuf, _home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let marker = game_dir.join(".metalsharp_prepared");
-    if !marker.exists() {
-        let _ = std::fs::write(&marker, "wined3d_32");
-    }
-    Ok(())
 }
 
 fn prepare_metalsharp_game(game_dir: &PathBuf, home: &PathBuf, appid: u32) -> Result<(), Box<dyn std::error::Error>> {

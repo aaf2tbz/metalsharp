@@ -84,7 +84,8 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
     let game_dir = crate::setup::resolve_game_dir(appid);
 
     let exe_path = match node.id {
-        PipelineId::M9
+        PipelineId::Dxmt
+        | PipelineId::M9
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
@@ -185,7 +186,8 @@ pub fn build_custom_launch_recipe(
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = home.join(".metalsharp").join("runtime").join("wine");
     let exe_path = match node.id {
-        PipelineId::M9
+        PipelineId::Dxmt
+        | PipelineId::M9
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
@@ -356,7 +358,8 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
     let mut warnings = recipe.warnings.clone();
     let direct_wine_pipeline = matches!(
         recipe.pipeline,
-        PipelineId::M9
+        PipelineId::Dxmt
+            | PipelineId::M9
             | PipelineId::M10
             | PipelineId::M11
             | PipelineId::M12
@@ -555,7 +558,9 @@ fn inspect_exe_route_compatibility(
     let api = d3d_api_label(pe.detected_api);
     let detail = format!("{} executable, imports {}", arch, api);
 
-    if !pe.is_64_bit && matches!(recipe.pipeline, PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
+    if !pe.is_64_bit
+        && matches!(recipe.pipeline, PipelineId::Dxmt | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
+    {
         let message = format!(
             "{} route requires a 64-bit Windows executable, but {} is 32-bit",
             recipe.pipeline_name,
@@ -599,6 +604,7 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
     !matches!(
         (pipeline, api),
         (_, super::pe::D3dApi::Unknown)
+            | (PipelineId::Dxmt, _)
             | (PipelineId::WineBare, _)
             | (PipelineId::M9, super::pe::D3dApi::D3D9)
             | (PipelineId::M10, super::pe::D3dApi::D3D10)

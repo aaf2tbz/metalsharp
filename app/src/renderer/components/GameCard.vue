@@ -191,7 +191,7 @@ async function runRuntimeDoctor() {
   runtimeReport.value = null;
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>("POST", "/steam/runtime-doctor", {
     appid: props.game.appid,
-    pipeline: selectedLaunchMode.value === "auto" ? props.game.launch_method ?? "m12" : selectedLaunchMode.value,
+    pipeline: selectedLaunchMode.value === "auto" ? props.game.launch_method ?? "dxmt" : selectedLaunchMode.value,
   });
   runtimeLoading.value = false;
 

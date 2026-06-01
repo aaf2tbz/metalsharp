@@ -44,9 +44,10 @@ TOML, not Rust code.
 
 | ID | Name | Backend | Notes |
 |---|---|---|---|
-| M11 | DXMT D3D11 → Metal | dxmt | Primary pipeline for D3D11 games |
-| M12 | DXMT D3D12 → Metal | dxmt | Primary D3D12 route, still game-compatibility dependent |
-| M9 | D3D9 → Metal | dxmt | Primary D3D9 path under the DXMT launch family |
+| DXMT | Auto D3D9/D3D10/D3D11/D3D12 → Metal | dxmt | User-facing unified launch path; selects the internal D3D profile from rules/PE evidence |
+| M11 | DXMT D3D11 → Metal | dxmt | Internal D3D11 profile and compatibility alias |
+| M12 | DXMT D3D12 → Metal | dxmt | Internal D3D12 profile; deploys D3D12/DXGI/DXIL/Agility sidecars when selected |
+| M9 | D3D9 → Metal | dxmt | Internal D3D9 profile under the DXMT launch family |
 | M32 | Wine 32-bit | wine | 32-bit Wine fallback |
 | Steam | Wine Steam | steam | Windows Steam in Wine, preflighted by Steam game bottles |
 | MacOS Steam | Native Steam | steam | Native macOS Steam |
