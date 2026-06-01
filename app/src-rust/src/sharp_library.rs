@@ -948,9 +948,20 @@ fn find_bundled_cef_child_hook(is_64_bit: bool) -> Option<PathBuf> {
 
 fn find_bundled_cef_asset(filename: &str) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
-        let wrapper = resources.join("bundles").join(filename);
-        if wrapper.exists() {
-            return Some(wrapper);
+        for wrapper in [
+            resources.join("scripts").join("tools").join("cef").join(filename),
+            resources.join("bundles").join(filename),
+        ] {
+            if wrapper.exists() {
+                return Some(wrapper);
+            }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let installed = home.join(".metalsharp").join("scripts").join("tools").join("cef").join(filename);
+        if installed.exists() {
+            return Some(installed);
         }
     }
 

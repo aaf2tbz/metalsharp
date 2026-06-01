@@ -34,6 +34,6 @@ trap restore_bundle EXIT
 
 export METALSHARP_TARGET=linux
 npm run prepare:native
-npm run fetch:bundles:linux
 npm run build:all
+npm run fetch:bundles:linux
 npx electron-builder --linux deb --x64

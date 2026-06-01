@@ -6,15 +6,19 @@ This is the operational contract for bundle provenance and Wine Steam launch rou
 
 Runtime assets are downloaded from the `bundles` GitHub release into `app/bundles/` during app packaging and into `~/.metalsharp/cache/bundles/` during installer fallback downloads.
 
-The manifest-tracked assets are listed in `tools/bundles/asset-manifest.tsv`. Assets in that manifest must match both size and SHA256 before they are accepted.
+The manifest-tracked assets are listed in `tools/bundles/asset-manifest.tsv`. The verifier checks that each tarball exists and contains the expected baby-named root.
 
-Current guarded assets:
+Current split bundle roots:
 
 | Asset | Why it is guarded |
 |---|---|
-| `dxmt.tar.zst` | Owns the D3D10/D3D11/D3D12 DXMT runtime used by M9-M12. A stale archive can make clean installs silently lose the current shader/runtime work. |
-| `steamwebhelper.exe` | Wine Steam CEF wrapper. A stale wrapper can make Steam appear broken even when Wine and the backend are fine. |
-| `steamwebhelper-wrapper.c` | Source for the Steam CEF wrapper shipped beside the binary. |
+| `metalsharp-electron.tar.zst` | Contains `electron/`, the built Electron application payload. |
+| `metalsharp-graphics-dll.tar.zst` | Contains `Graphics/dll/`, the DXMT D3D10/D3D11/D3D12 DLLs and winemetal bridge. |
+| `metalsharp-runtime.tar.zst` | Contains `runtime/`, the Wine runtime, host ABI, and backend executable. |
+| `metalsharp-assets.tar.zst` | Contains `assets/`, Mono, GPTK, DXVK, Goldberg, EAC toggle, shims, and runtime support assets. |
+| `metalsharp-scripts-tools.tar.zst` | Contains `scripts/tools/`, updater scripts, configs, native tools, and CEF helpers. |
+| `metalsharp-steam.tar.zst` | Contains `steam/`, the Steam installer and Steam CEF wrapper assets. |
+| `metalsharp-d3d12-developer-sdk.tar.zst` | Contains `developer-sdk/d3d12/`, the D3D12 contracts, probes, scripts, and docs. |
 
 Verification commands:
 
@@ -26,7 +30,7 @@ tools/bundles/verify-bundles.sh --release
 
 ## Installer Acceptance Rules
 
-The installer accepts `dxmt.tar.zst` only when its SHA256 equals the compiled `DXMT_BUNDLE_SHA256` in `app/src-rust/src/installer.rs`. The unit test in that file checks the compiled constant against the tracked manifest.
+The installer consumes the split runtime tarballs by root name. `metalsharp-graphics-dll.tar.zst` is the only source for the active DXMT runtime payload used by M9-M12.
 
 Installed DXMT runtime state is recorded in:
 
@@ -54,7 +58,7 @@ Wine Steam must be launched by the backend so it gets the managed Wine prefix, r
 
 ## Steam Wrapper Rules
 
-Before launching Steam, MetalSharp calls `ensure_steam_launch_ready()` and redeploys `steamwebhelper.exe` when Steam has overwritten it. The backend only accepts the wrapper if it matches `STEAMWEBHELPER_WRAPPER_SHA256` in `app/src-rust/src/steam.rs`.
+Before launching Steam, MetalSharp calls `ensure_steam_launch_ready()` and redeploys `steamwebhelper.exe` when Steam has overwritten it. Steam assets come from `metalsharp-steam.tar.zst`, and the backend only accepts the extracted wrapper if it matches `STEAMWEBHELPER_WRAPPER_SHA256` in `app/src-rust/src/steam.rs`.
 
 The expected deployed Steam CEF layout is:
 

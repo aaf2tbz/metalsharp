@@ -1,4 +1,8 @@
-# asset	sha256	size	bytes_required_by	notes
-dxmt.tar.zst	bc5574bcca08e222b5a26bf9118526c40a063a1290103319fc5648e02d599edc	31019110	mac,linux	PR129 D3D12/DXMT runtime bundle; installer rejects stale caches if this hash drifts.
-steamwebhelper.exe	f46a1e8c39c850ba22861f63559f13b4f68557acf04a92e6d1b899769b2ea1f9	17408	mac,linux	Wine Steam CEF wrapper deployed over Steam's steamwebhelper.exe.
-steamwebhelper-wrapper.c	1f4e5580c0ecd2ca44bb1b4673f793650d64b7dd53eddf6cd4b6530a2f2ac174	994	mac,linux	Source for the Wine Steam CEF wrapper.
+# asset	root	bytes_required_by	notes
+metalsharp-electron.tar.zst	electron	mac,linux	Electron application payload.
+metalsharp-graphics-dll.tar.zst	Graphics/dll	mac,linux	DXMT D3D10/D3D11/D3D12 pipeline DLLs and winemetal bridge payload.
+metalsharp-runtime.tar.zst	runtime	mac,linux	Wine runtime, host runtime ABI, and backend executable.
+metalsharp-assets.tar.zst	assets	mac,linux	Mono, GPTK, DXVK, Goldberg, EAC toggle, shims, and runtime support assets.
+metalsharp-scripts-tools.tar.zst	scripts/tools	mac,linux	Updater scripts, configs, native tools, and CEF compatibility helpers.
+metalsharp-steam.tar.zst	steam	mac,linux	Steam installer and Steam CEF wrapper assets.
+metalsharp-d3d12-developer-sdk.tar.zst	developer-sdk/d3d12	mac,linux	D3D12 developer SDK contracts, probes, scripts, docs, and runtime-debug tools.

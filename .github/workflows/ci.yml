@@ -61,12 +61,13 @@ jobs:
         run: |
           tools/dmg/create-bundles.sh
           for required in \
-            metalsharp_bundle.tar.zst \
-            metalsharp_bundle2.tar.zst \
-            dxmt.tar.zst \
-            SteamSetup.exe \
-            steamwebhelper.exe \
-            steamwebhelper-wrapper.c
+            metalsharp-electron.tar.zst \
+            metalsharp-graphics-dll.tar.zst \
+            metalsharp-runtime.tar.zst \
+            metalsharp-assets.tar.zst \
+            metalsharp-scripts-tools.tar.zst \
+            metalsharp-steam.tar.zst \
+            metalsharp-d3d12-developer-sdk.tar.zst
           do
             test -s "app/bundles/$required"
           done
@@ -87,10 +88,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload split dependency bundles
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release upload bundles \
+            app/bundles/metalsharp-electron.tar.zst \
+            app/bundles/metalsharp-graphics-dll.tar.zst \
+            app/bundles/metalsharp-runtime.tar.zst \
+            app/bundles/metalsharp-assets.tar.zst \
+            app/bundles/metalsharp-scripts-tools.tar.zst \
+            app/bundles/metalsharp-steam.tar.zst \
+            app/bundles/metalsharp-d3d12-developer-sdk.tar.zst \
+            dist/bundles/metalsharp-bundle-manifest.tsv \
+            --repo aaf2tbz/metalsharp --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: MetalSharp-dmg
-          path: dist/electron/*.dmg
+          path: |
+            dist/electron/*.dmg
+            dist/bundles/metalsharp-*.tar.zst
+            dist/bundles/metalsharp-bundle-manifest.tsv
 
   build-linux:
     name: Build DEB
@@ -184,4 +204,6 @@ jobs:
             release/latest-linux.yml
             release/metalsharp_linux_runtime*.tar.zst
             release/metalsharp_linux_runtime.sha256
+            release/metalsharp-*.tar.zst
+            release/metalsharp-bundle-manifest.tsv
           generate_release_notes: true

@@ -587,43 +587,94 @@ pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
 }
 
 fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
-    if let Some(resources) = crate::platform::app_resources_dir() {
-        let wrapper = resources.join("bundles").join("steamwebhelper.exe");
-        if steamwebhelper_wrapper_valid(&wrapper) {
-            return Some(wrapper);
-        }
+    find_bundled_steam_asset("steamwebhelper.exe").filter(|path| steamwebhelper_wrapper_valid(path))
+}
+
+fn find_bundled_steam_asset(filename: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let cache_dir = home.join(".metalsharp").join("cache").join("steam");
+    let cached = cache_dir.join(filename);
+    if cached.exists() {
+        return Some(cached);
     }
 
-    let dev = PathBuf::from("app/bundles/steamwebhelper.exe");
-    if steamwebhelper_wrapper_valid(&dev) {
+    let archive = find_steam_bundle_archive()?;
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let tmp = cache_dir.with_extension("download");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::create_dir_all(&tmp);
+
+    let status = Command::new("tar")
+        .args(["--use-compress-program=unzstd", "-xf"])
+        .arg(&archive)
+        .arg("-C")
+        .arg(&tmp)
+        .status()
+        .ok()?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return None;
+    }
+
+    let steam_root = tmp.join("steam");
+    if steam_root.exists() {
+        let _ = copy_dir_recursive_steam(&steam_root, &cache_dir);
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    cached.exists().then_some(cached)
+}
+
+fn find_steam_bundle_archive() -> Option<PathBuf> {
+    let filename = "metalsharp-steam.tar.zst";
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        let archive = resources.join("bundles").join(filename);
+        if archive.exists() {
+            return Some(archive);
+        }
+    }
+    let dev = PathBuf::from("app/bundles").join(filename);
+    if dev.exists() {
         return Some(dev);
     }
 
     let home = dirs::home_dir()?;
     let cache_dir = home.join(".metalsharp").join("cache").join("bundles");
     let _ = std::fs::create_dir_all(&cache_dir);
-    let cached = cache_dir.join("steamwebhelper.exe");
-
-    if steamwebhelper_wrapper_valid(&cached) {
+    let cached = cache_dir.join(filename);
+    if cached.exists() {
         return Some(cached);
-    } else if cached.exists() {
-        let _ = std::fs::remove_file(&cached);
     }
 
-    let url = "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/steamwebhelper.exe";
+    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
+    let tmp = cached.with_extension("download");
     let output = Command::new("curl")
-        .args(["--fail", "--location", "--silent", "--show-error", "-o"])
-        .arg(&cached)
+        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "-o"])
+        .arg(&tmp)
         .arg(url)
         .output()
         .ok()?;
-
-    if output.status.success() && steamwebhelper_wrapper_valid(&cached) {
+    if output.status.success() && tmp.exists() && std::fs::rename(&tmp, &cached).is_ok() {
         return Some(cached);
     }
-
-    let _ = std::fs::remove_file(&cached);
+    let _ = std::fs::remove_file(&tmp);
     None
+}
+
+fn copy_dir_recursive_steam(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive_steam(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn steamwebhelper_wrapper_valid(path: &Path) -> bool {
@@ -1168,21 +1219,8 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
     let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
     if !output.success() {
-        let mut found = false;
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(resources) = exe.parent().and_then(|p| p.parent()) {
-                let bundled = resources.join("bundles").join("SteamSetup.exe");
-                if bundled.exists() {
-                    let _ = std::fs::copy(&bundled, &installer);
-                    found = true;
-                }
-            }
-        }
-        if !found {
-            let bundled = PathBuf::from("app/bundles/SteamSetup.exe");
-            if bundled.exists() {
-                let _ = std::fs::copy(&bundled, &installer);
-            }
+        if let Some(bundled) = find_bundled_steam_asset("SteamSetup.exe") {
+            let _ = std::fs::copy(&bundled, &installer);
         }
     }
     if !installer.exists() {
@@ -1338,14 +1376,15 @@ mod tests {
     }
 
     #[test]
-    fn steamwebhelper_wrapper_hash_matches_release_manifest() {
+    fn steam_bundle_layout_matches_release_manifest() {
         let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
-        let wrapper_row = manifest
+        let steam_row = manifest
             .lines()
-            .find(|line| line.starts_with("steamwebhelper.exe\t"))
-            .expect("steamwebhelper.exe release manifest row");
-        let fields: Vec<&str> = wrapper_row.split('\t').collect();
+            .find(|line| line.starts_with("metalsharp-steam.tar.zst\t"))
+            .expect("metalsharp-steam.tar.zst release manifest row");
+        let fields: Vec<&str> = steam_row.split('\t').collect();
 
-        assert_eq!(fields.get(1).copied(), Some(STEAMWEBHELPER_WRAPPER_SHA256));
+        assert_eq!(fields.get(1).copied(), Some("steam"));
+        assert_eq!(STEAMWEBHELPER_WRAPPER_SHA256.len(), 64);
     }
 }

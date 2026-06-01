@@ -33,7 +33,11 @@ export class UpdaterBridge {
     const resourcesDir = process.resourcesPath || "";
     const devRoot = path.join(__dirname, "..", "..");
 
-    const candidates = [path.join(resourcesDir, "updater", "update.sh"), path.join(devRoot, "updater", "update.sh")];
+    const candidates = [
+      path.join(resourcesDir, "scripts", "tools", "updater", "update.sh"),
+      path.join(resourcesDir, "updater", "update.sh"),
+      path.join(devRoot, "updater", "update.sh"),
+    ];
 
     for (const c of candidates) {
       try {

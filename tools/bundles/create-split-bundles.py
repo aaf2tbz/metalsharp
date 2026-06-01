@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import shutil
+import stat
+import subprocess
+import tarfile
+import tempfile
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+APP_DIR = PROJECT_ROOT / "app"
+SOURCE_BUNDLES = APP_DIR / "bundles"
+OUT_DIR = PROJECT_ROOT / "dist" / "bundles"
+
+SPLIT_BUNDLES = {
+    "electron": "metalsharp-electron.tar.zst",
+    "graphics": "metalsharp-graphics-dll.tar.zst",
+    "runtime": "metalsharp-runtime.tar.zst",
+    "assets": "metalsharp-assets.tar.zst",
+    "scripts": "metalsharp-scripts-tools.tar.zst",
+    "steam": "metalsharp-steam.tar.zst",
+    "sdk": "metalsharp-d3d12-developer-sdk.tar.zst",
+}
+
+
+def copy_tree(src: Path, dst: Path, ignore=None) -> None:
+    if not src.exists():
+        return
+    for root, dirs, files in os.walk(src):
+        root_path = Path(root)
+        rel = root_path.relative_to(src)
+        if ignore and ignore(rel, True):
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if not ignore or not ignore(rel / d, True)]
+        target_root = dst / rel
+        target_root.mkdir(parents=True, exist_ok=True)
+        for file_name in files:
+            rel_file = rel / file_name
+            if ignore and ignore(rel_file, False):
+                continue
+            src_file = root_path / file_name
+            dst_file = target_root / file_name
+            if src_file.is_symlink():
+                target = os.readlink(src_file)
+                dst_file.unlink(missing_ok=True)
+                os.symlink(target, dst_file)
+            else:
+                shutil.copy2(src_file, dst_file)
+
+
+def copy_file(src: Path, dst: Path) -> None:
+    if src.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+def require_file(src: Path, description: str) -> None:
+    if not src.is_file() or src.stat().st_size == 0:
+        raise FileNotFoundError(f"missing required {description}: {src}")
+
+
+def extract_zst(archive: Path, dest: Path) -> None:
+    if not archive.exists():
+        raise FileNotFoundError(f"missing source archive: {archive}")
+    dest.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["tar", "--use-compress-program=unzstd", "-xf", str(archive), "-C", str(dest)],
+        check=True,
+    )
+
+
+def add_tree_to_tar(tar: tarfile.TarFile, root: Path, arc_root: str) -> None:
+    files = sorted([p for p in root.rglob("*") if p.is_file()])
+    dirs = sorted([p for p in root.rglob("*") if p.is_dir()])
+    for path in [root, *dirs, *files]:
+        rel = path.relative_to(root)
+        arcname = Path(arc_root) / rel if str(rel) != "." else Path(arc_root)
+        info = tar.gettarinfo(str(path), arcname=str(arcname))
+        info.uid = 0
+        info.gid = 0
+        info.uname = ""
+        info.gname = ""
+        info.mtime = 0
+        if path.is_symlink():
+            info.type = tarfile.SYMTYPE
+            info.linkname = os.readlink(path)
+            info.mode = 0o777
+            tar.addfile(info)
+        elif path.is_file():
+            mode = stat.S_IMODE(path.stat().st_mode)
+            info.mode = 0o755 if mode & stat.S_IXUSR else 0o644
+            with path.open("rb") as fh:
+                tar.addfile(info, fh)
+        else:
+            info.mode = 0o755
+            tar.addfile(info)
+
+
+def write_tar_zst(source_root: Path, arc_root: str, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
+        tar_path = Path(tmp.name)
+    try:
+        with tarfile.open(tar_path, "w") as tar:
+            add_tree_to_tar(tar, source_root, arc_root)
+        subprocess.run(["zstd", "-q", "-19", "-T0", "-f", str(tar_path), "-o", str(output)], check=True)
+        output.chmod(0o644)
+    finally:
+        tar_path.unlink(missing_ok=True)
+
+
+def sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_staging(tmp: Path) -> dict[str, Path]:
+    source1 = tmp / "source-bundle-1"
+    source2 = tmp / "source-bundle-2"
+    source_dxmt = tmp / "source-dxmt"
+    extract_zst(SOURCE_BUNDLES / "metalsharp_bundle.tar.zst", source1)
+    extract_zst(SOURCE_BUNDLES / "metalsharp_bundle2.tar.zst", source2)
+    extract_zst(SOURCE_BUNDLES / "dxmt.tar.zst", source_dxmt)
+
+    roots = {
+        "electron": tmp / "electron-root",
+        "graphics": tmp / "graphics-root",
+        "runtime": tmp / "runtime-root",
+        "assets": tmp / "assets-root",
+        "scripts": tmp / "scripts-root",
+        "steam": tmp / "steam-root",
+        "sdk": tmp / "sdk-root",
+    }
+    for root in roots.values():
+        root.mkdir(parents=True, exist_ok=True)
+
+    copy_tree(APP_DIR / "dist", roots["electron"] / "dist")
+    copy_file(APP_DIR / "package.json", roots["electron"] / "package.json")
+
+    wine_src = source1 / "wine-11.5"
+    copy_tree(wine_src, roots["runtime"] / "wine")
+    copy_tree(source2 / "wine" / "etc", roots["runtime"] / "wine" / "etc")
+    backend = APP_DIR / "src-rust" / "target" / "release" / "metalsharp-backend"
+    require_file(backend, "runtime backend")
+    copy_file(backend, roots["runtime"] / "metalsharp-backend")
+    require_file(APP_DIR / "native" / "host" / "manifest.json", "host runtime manifest")
+    copy_tree(APP_DIR / "native" / "host", roots["runtime"] / "host")
+
+    copy_tree(source_dxmt / "x86_64-unix", roots["graphics"] / "dxmt" / "x86_64-unix")
+    copy_tree(source_dxmt / "x86_64-windows", roots["graphics"] / "dxmt" / "x86_64-windows")
+
+    for name in ["mono-arm64", "goldberg", "eac-toggle", "shims", "shader-cache"]:
+        copy_tree(source2 / name, roots["assets"] / name)
+    copy_tree(source2 / "wine" / "etc", roots["assets"] / "wine" / "etc")
+
+    optional_archives = {
+        "gptk.tar.zst": ("gptk", "gptk"),
+        "dxvk.tar.zst": ("dxvk", "dxvk-1.10.3"),
+        "mono-x86.tar.zst": ("mono-x86", "mono-x86"),
+    }
+    for archive_name, (extract_name, target_name) in optional_archives.items():
+        archive = SOURCE_BUNDLES / archive_name
+        if archive.exists():
+            extracted = tmp / f"source-{extract_name}"
+            extract_zst(archive, extracted)
+            source = extracted / target_name
+            if source.exists():
+                copy_tree(source, roots["assets"] / target_name)
+            else:
+                copy_tree(extracted, roots["assets"] / target_name)
+
+    copy_tree(APP_DIR / "updater", roots["scripts"] / "updater")
+    copy_tree(PROJECT_ROOT / "configs", roots["scripts"] / "configs")
+    copy_tree(APP_DIR / "native", roots["scripts"] / "native", ignore=lambda rel, is_dir: rel.parts[:1] == ("host",))
+    for cef_asset in SOURCE_BUNDLES.glob("cef*"):
+        copy_file(cef_asset, roots["scripts"] / "cef" / cef_asset.name)
+
+    for steam_asset in ["SteamSetup.exe", "steamwebhelper.exe", "steamwebhelper-wrapper.c"]:
+        require_file(SOURCE_BUNDLES / steam_asset, f"Steam asset {steam_asset}")
+        copy_file(SOURCE_BUNDLES / steam_asset, roots["steam"] / steam_asset)
+
+    def sdk_ignore(rel: Path, is_dir: bool) -> bool:
+        return is_dir and rel.parts[:1] in {("cache",), ("external",), ("out",)}
+
+    copy_tree(PROJECT_ROOT / "tools" / "d3d12-metal-sdk", roots["sdk"], ignore=sdk_ignore)
+
+    return roots
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out-dir", default=str(OUT_DIR))
+    parser.add_argument("--only", help="comma-separated bundle keys")
+    args = parser.parse_args()
+
+    out_dir = Path(args.out_dir)
+    selected = set(args.only.split(",")) if args.only else set(SPLIT_BUNDLES)
+
+    with tempfile.TemporaryDirectory(prefix="metalsharp-split-bundles-") as tmp_name:
+        roots = build_staging(Path(tmp_name))
+        manifest_lines = ["asset\troot\tsha256\tsize\tnotes"]
+        arc_roots = {
+            "electron": "electron",
+            "graphics": "Graphics/dll",
+            "runtime": "runtime",
+            "assets": "assets",
+            "scripts": "scripts/tools",
+            "steam": "steam",
+            "sdk": "developer-sdk/d3d12",
+        }
+        for key, filename in SPLIT_BUNDLES.items():
+            if key not in selected:
+                continue
+            output = out_dir / filename
+            write_tar_zst(roots[key], arc_roots[key], output)
+            manifest_lines.append(f"{filename}\t{arc_roots[key]}\t{sha256(output)}\t{output.stat().st_size}\tgenerated split bundle")
+
+    manifest = out_dir / "metalsharp-bundle-manifest.tsv"
+    manifest.write_text("\n".join(manifest_lines) + "\n")
+    print(manifest)
+    for line in manifest.read_text().splitlines()[1:]:
+        print(line)
+
+
+if __name__ == "__main__":
+    main()
