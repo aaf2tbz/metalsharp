@@ -62,6 +62,19 @@ def require_file(src: Path, description: str) -> None:
         raise FileNotFoundError(f"missing required {description}: {src}")
 
 
+def require_host_runtime(host_dir: Path) -> None:
+    require_file(host_dir / "manifest.json", "host runtime manifest")
+    require_file(host_dir / "HostRuntimeABI.h", "host runtime ABI header")
+    libraries = [
+        host_dir / "libmetalsharp_host_runtime.dylib",
+        host_dir / "libmetalsharp_host_runtime.so",
+        host_dir / "metalsharp_host_runtime.dll",
+    ]
+    if not any(path.is_file() and path.stat().st_size > 0 for path in libraries):
+        names = ", ".join(str(path) for path in libraries)
+        raise FileNotFoundError(f"missing required non-empty host runtime library; checked {names}")
+
+
 def extract_zst(archive: Path, dest: Path) -> None:
     if not archive.exists():
         raise FileNotFoundError(f"missing source archive: {archive}")
@@ -124,6 +137,9 @@ def sha256(path: Path) -> str:
 
 SDK_CRITICAL_FILES = [
     "runtime/wine/bin/wine",
+    "runtime/host/manifest.json",
+    "runtime/host/HostRuntimeABI.h",
+    "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/dxmt/x86_64-windows/d3d12.dll",
     "runtime/dxmt/x86_64-windows/dxgi.dll",
     "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
@@ -204,8 +220,9 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     backend = APP_DIR / "src-rust" / "target" / "release" / "metalsharp-backend"
     require_file(backend, "runtime backend")
     copy_file(backend, roots["runtime"] / "metalsharp-backend")
-    require_file(APP_DIR / "native" / "host" / "manifest.json", "host runtime manifest")
+    require_host_runtime(APP_DIR / "native" / "host")
     copy_tree(APP_DIR / "native" / "host", roots["runtime"] / "host")
+    require_host_runtime(roots["runtime"] / "host")
 
     copy_tree(source_dxmt / "x86_64-unix", roots["graphics"] / "dxmt" / "x86_64-unix")
     copy_tree(source_dxmt / "x86_64-windows", roots["graphics"] / "dxmt" / "x86_64-windows")

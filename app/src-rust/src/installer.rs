@@ -285,7 +285,13 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 
     let bundle = find_bundled_archive(RUNTIME_BUNDLE);
     let ms_wine = metalsharp_wine_binary(home);
-    if ms_wine.exists() && bundle.as_ref().is_some_and(|archive| split_bundle_current(home, RUNTIME_BUNDLE, archive)) {
+    let host_dir = runtime_dir.join("host");
+    let backend = runtime_dir.join("metalsharp-backend");
+    if ms_wine.exists()
+        && host_runtime_ready(&host_dir)
+        && file_nonempty(&backend)
+        && bundle.as_ref().is_some_and(|archive| split_bundle_current(home, RUNTIME_BUNDLE, archive))
+    {
         return Ok(false);
     }
 
@@ -304,14 +310,12 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 
         let source_host = tmp_extract.join("runtime").join("host");
         if source_host.exists() {
-            let host_dir = runtime_dir.join("host");
             let _ = fs::remove_dir_all(&host_dir);
             copy_dir_recursive(&source_host, &host_dir)?;
         }
 
         let source_backend = tmp_extract.join("runtime").join("metalsharp-backend");
         if source_backend.exists() {
-            let backend = runtime_dir.join("metalsharp-backend");
             fs::copy(&source_backend, &backend).map_err(|e| format!("copy runtime backend: {}", e))?;
             make_executable(&backend);
         }
@@ -319,6 +323,13 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
 
         let ms_wine = metalsharp_wine_binary(home);
         if ms_wine.exists() {
+            if !host_runtime_ready(&host_dir) {
+                return Err("MetalSharp runtime bundle installed but host runtime ABI assets are missing".into());
+            }
+            if !file_nonempty(&backend) {
+                return Err("MetalSharp runtime bundle installed but backend executable is missing".into());
+            }
+
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
                 Ok(o) if o.status.success() => {
@@ -349,17 +360,42 @@ fn install_host_runtime(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let source = find_packaged_host_runtime()
-        .ok_or_else(|| "MetalSharp host runtime not found — packaged runtime/host assets are missing".to_string())?;
-    let _ = fs::remove_dir_all(&dest);
-    fs::create_dir_all(&dest).map_err(|e| format!("create host runtime dir: {}", e))?;
-    copy_dir_recursive(&source, &dest)?;
+    let Some(source) = find_packaged_host_runtime() else {
+        return install_host_runtime_from_runtime_bundle(&dest);
+    };
 
-    if host_runtime_ready(&dest) {
+    install_host_runtime_from_dir(&source, &dest)
+}
+
+fn install_host_runtime_from_dir(source: &Path, dest: &Path) -> Result<bool, String> {
+    let _ = fs::remove_dir_all(dest);
+    fs::create_dir_all(dest).map_err(|e| format!("create host runtime dir: {}", e))?;
+    copy_dir_recursive(source, dest)?;
+
+    if host_runtime_ready(dest) {
         Ok(true)
     } else {
         Err("MetalSharp host runtime copied but required ABI files are missing".into())
     }
+}
+
+fn install_host_runtime_from_runtime_bundle(dest: &Path) -> Result<bool, String> {
+    let archive = find_bundled_archive(RUNTIME_BUNDLE)
+        .ok_or_else(|| "MetalSharp host runtime not found — packaged runtime/host assets are missing".to_string())?;
+    let tmp_extract = std::env::temp_dir().join("metalsharp-host-runtime-extract");
+    let _ = fs::remove_dir_all(&tmp_extract);
+    let _ = fs::create_dir_all(&tmp_extract);
+    extract_zst(&archive, &tmp_extract, RUNTIME_BUNDLE)?;
+
+    let source = tmp_extract.join("runtime").join("host");
+    if !host_runtime_ready(&source) {
+        let _ = fs::remove_dir_all(&tmp_extract);
+        return Err("MetalSharp host runtime not found in bundled metalsharp-runtime.tar.zst".into());
+    }
+
+    let result = install_host_runtime_from_dir(&source, dest);
+    let _ = fs::remove_dir_all(&tmp_extract);
+    result
 }
 
 fn host_runtime_ready(dir: &Path) -> bool {
@@ -1278,8 +1314,41 @@ fn download_from_github_release(filename: &str) -> Option<PathBuf> {
     None
 }
 
-fn bundled_artifact_valid(_name: &str, path: &Path) -> bool {
-    file_nonempty(path)
+fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
+    if !file_nonempty(path) {
+        return false;
+    }
+
+    if name == RUNTIME_BUNDLE || name == "metalsharp-runtime.tar.zst" {
+        return runtime_bundle_host_valid(path);
+    }
+
+    true
+}
+
+fn runtime_bundle_host_valid(path: &Path) -> bool {
+    let tmp = std::env::temp_dir().join(format!(
+        "metalsharp-runtime-validate-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    if fs::create_dir_all(&tmp).is_err() {
+        return false;
+    }
+
+    let status = Command::new("tar")
+        .args(["--use-compress-program=unzstd", "-xf"])
+        .arg(path)
+        .arg("-C")
+        .arg(&tmp)
+        .arg("runtime/host")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let ready = status.map(|s| s.success()).unwrap_or(false) && host_runtime_ready(&tmp.join("runtime").join("host"));
+    let _ = fs::remove_dir_all(&tmp);
+    ready
 }
 
 fn find_in_resources(name: &str) -> Option<PathBuf> {
@@ -1437,6 +1506,20 @@ mod tests {
         let fields: Vec<&str> = graphics_row.split('\t').collect();
 
         assert_eq!(fields.get(1).copied(), Some("Graphics/dll"));
+    }
+
+    #[test]
+    fn bundle_validation_rejects_stale_known_archives() {
+        let home = test_home("stale-known-bundle");
+        fs::create_dir_all(&home).expect("create test dir");
+        let stale = home.join("metalsharp-runtime.tar.zst");
+        fs::write(&stale, b"old runtime bundle").expect("write stale archive");
+
+        assert!(!bundled_artifact_valid("metalsharp-runtime", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-runtime.tar.zst", &stale));
+        assert!(bundled_artifact_valid("unmanaged-test-asset.bin", &stale));
+
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]

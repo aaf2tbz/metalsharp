@@ -75,8 +75,44 @@ verify_local() {
       failed=1
       continue
     fi
+    if [ "$asset" = "metalsharp-runtime.tar.zst" ] && ! verify_runtime_host "$path"; then
+      failed=1
+      continue
+    fi
     echo "OK: $asset root=$root"
   done < <(manifest_rows)
+  return "$failed"
+}
+
+verify_runtime_host() {
+  local path="$1"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-runtime-host.XXXXXX")"
+  trap 'rm -rf "$tmp"' RETURN
+
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" runtime/host; then
+    echo "HOST RUNTIME MISSING: $path does not contain runtime/host/" >&2
+    return 1
+  fi
+
+  local host="$tmp/runtime/host"
+  local failed=0
+  for required in manifest.json HostRuntimeABI.h; do
+    if [ ! -s "$host/$required" ]; then
+      echo "HOST RUNTIME INVALID: $path has missing or empty runtime/host/$required" >&2
+      failed=1
+    fi
+  done
+
+  if [ ! -s "$host/libmetalsharp_host_runtime.dylib" ] \
+    && [ ! -s "$host/libmetalsharp_host_runtime.so" ] \
+    && [ ! -s "$host/metalsharp_host_runtime.dll" ]; then
+    echo "HOST RUNTIME INVALID: $path has no non-empty host runtime shared library" >&2
+    failed=1
+  fi
+
+  rm -rf "$tmp"
+  trap - RETURN
   return "$failed"
 }
 

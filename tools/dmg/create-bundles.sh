@@ -27,11 +27,35 @@ while IFS=$'\t' read -r asset _root _platforms _notes; do
     ""|\#*) continue ;;
   esac
   download_asset "$asset" "$BUNDLE_DIR/$asset"
+done < "$MANIFEST"
+
+"$PROJECT_ROOT/tools/dmg/repair-runtime-bundle.py" \
+  --archive "$BUNDLE_DIR/metalsharp-runtime.tar.zst" \
+  --host-dir "$PROJECT_ROOT/app/native/host" \
+  --backend "$PROJECT_ROOT/app/src-rust/target/release/metalsharp-backend"
+
+"$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$BUNDLE_DIR" --require mac
+
+rm -f "$OUT_DIR"/metalsharp-*.tar.zst
+while IFS=$'\t' read -r asset _root _platforms _notes; do
+  case "$asset" in
+    ""|\#*) continue ;;
+  esac
   cp "$BUNDLE_DIR/$asset" "$OUT_DIR/$asset"
 done < "$MANIFEST"
 
-download_asset "metalsharp-bundle-manifest.tsv" "$OUT_DIR/metalsharp-bundle-manifest.tsv"
-"$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$BUNDLE_DIR" --require mac
+{
+  printf 'asset\troot\tsha256\tsize\tnotes\n'
+  while IFS=$'\t' read -r asset root _platforms notes; do
+    case "$asset" in
+      ""|\#*) continue ;;
+    esac
+    archive="$BUNDLE_DIR/$asset"
+    hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+    size="$(wc -c < "$archive" | tr -d ' ')"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$asset" "$root" "$hash" "$size" "$notes"
+  done < "$MANIFEST"
+} > "$OUT_DIR/metalsharp-bundle-manifest.tsv"
 
 echo ""
 echo "=== Split Bundle Summary ==="
