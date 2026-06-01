@@ -954,6 +954,7 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
     let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
     let mut candidates = vec![
         PathBuf::from("configs/mtsp-rules.toml"),
+        home.join(".metalsharp").join("scripts").join("tools").join("configs").join("mtsp-rules.toml"),
         home.join("metalsharp").join("configs").join("mtsp-rules.toml"),
         home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
     ];
@@ -971,10 +972,14 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    for src in &candidates {
+    install_mtsp_rules_from_candidates(&dest, &candidates)
+}
+
+fn install_mtsp_rules_from_candidates(dest: &Path, candidates: &[PathBuf]) -> Result<bool, String> {
+    for src in candidates {
         if src.exists() {
             if let Ok(contents) = fs::read_to_string(src) {
-                if let Ok(existing) = fs::read_to_string(&dest) {
+                if let Ok(existing) = fs::read_to_string(dest) {
                     if existing == contents {
                         return Ok(false);
                     }
@@ -982,8 +987,8 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
                     let _ = fs::write(&backup, existing);
                 }
                 fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("create MTSP config dir: {}", e))?;
-                fs::write(&dest, &contents).map_err(|e| format!("write mtsp-rules.toml: {}", e))?;
-                if fs::read_to_string(&dest).ok().as_deref() == Some(contents.as_str()) {
+                fs::write(dest, &contents).map_err(|e| format!("write mtsp-rules.toml: {}", e))?;
+                if fs::read_to_string(dest).ok().as_deref() == Some(contents.as_str()) {
                     return Ok(true);
                 }
                 return Err("mtsp-rules.toml was written but could not be verified".into());
@@ -991,7 +996,7 @@ fn install_mtsp_rules(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    Err("mtsp-rules.toml not found — pipeline auto-detection will use PE analysis fallback".into())
+    Ok(false)
 }
 
 fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
@@ -1568,27 +1573,52 @@ mod tests {
 
     #[test]
     fn install_mtsp_rules_refreshes_stale_installed_copy() {
-        let cwd = std::env::current_dir().expect("current dir");
         let repo = test_home("mtsp-rules-source");
         let home = test_home("mtsp-rules-home");
         let source_dir = repo.join("configs");
         let dest_dir = home.join(".metalsharp").join("configs");
+        let dest = dest_dir.join("mtsp-rules.toml");
         fs::create_dir_all(&source_dir).expect("create source config dir");
         fs::create_dir_all(&dest_dir).expect("create dest config dir");
         fs::write(source_dir.join("mtsp-rules.toml"), "# new rules\n[overrides]\n").expect("write source rules");
-        fs::write(dest_dir.join("mtsp-rules.toml"), "# stale rules\n").expect("write stale rules");
+        fs::write(&dest, "# stale rules\n").expect("write stale rules");
 
-        std::env::set_current_dir(&repo).expect("enter source repo");
+        let result = install_mtsp_rules_from_candidates(&dest, &[source_dir.join("mtsp-rules.toml")]);
+
+        assert_eq!(result, Ok(true));
+        assert_eq!(fs::read_to_string(&dest).expect("read rules"), "# new rules\n[overrides]\n");
+        assert_eq!(fs::read_to_string(dest_dir.join("mtsp-rules.toml.bak")).expect("read backup"), "# stale rules\n");
+        let _ = fs::remove_dir_all(repo);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_mtsp_rules_uses_installed_scripts_tools_bundle_copy() {
+        let home = test_home("mtsp-rules-installed-tools");
+        let source_dir = home.join(".metalsharp").join("scripts").join("tools").join("configs");
+        let dest_dir = home.join(".metalsharp").join("configs");
+        fs::create_dir_all(&source_dir).expect("create installed scripts tools config dir");
+        fs::write(source_dir.join("mtsp-rules.toml"), "# installed rules\n[profiles]\n").expect("write source rules");
+
         let result = install_mtsp_rules(&home);
-        std::env::set_current_dir(cwd).expect("restore cwd");
 
         assert_eq!(result, Ok(true));
         assert_eq!(
             fs::read_to_string(dest_dir.join("mtsp-rules.toml")).expect("read rules"),
-            "# new rules\n[overrides]\n"
+            "# installed rules\n[profiles]\n"
         );
-        assert_eq!(fs::read_to_string(dest_dir.join("mtsp-rules.toml.bak")).expect("read backup"), "# stale rules\n");
-        let _ = fs::remove_dir_all(repo);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_mtsp_rules_allows_missing_optional_rules() {
+        let home = test_home("mtsp-rules-missing-home");
+        let dest = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
+
+        let result = install_mtsp_rules_from_candidates(&dest, &[]);
+
+        assert_eq!(result, Ok(false));
+        assert!(!dest.exists());
         let _ = fs::remove_dir_all(home);
     }
 
