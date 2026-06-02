@@ -955,18 +955,18 @@ pub fn library() -> Value {
             } else {
                 None
             };
-            let recommended = pipeline_id.to_legacy_method();
+            let recommended = pipeline_id.user_selectable_id().unwrap_or("auto");
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
                 "id": recommended,
-                "name": if pipeline_id.is_dxmt_family() { "DXMT" } else { node.name },
+                "name": pipeline_id.user_selectable_name().unwrap_or("Auto"),
                 "recommended": true,
             }))
-            .chain(node.alternatives.iter().map(|alt| {
+            .chain(node.alternatives.iter().filter(|alt| alt.is_user_selectable()).map(|alt| {
                 let alt_node = crate::mtsp::engine::get_pipeline(*alt);
                 serde_json::json!({
-                    "id": alt_node.id,
-                    "name": alt_node.name,
+                    "id": alt_node.id.user_selectable_id().unwrap_or("auto"),
+                    "name": alt_node.id.user_selectable_name().unwrap_or(alt_node.name),
                     "recommended": false,
                 })
             }))

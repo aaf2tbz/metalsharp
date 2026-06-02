@@ -262,7 +262,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             },
             PipelineNode {
                 id: PipelineId::FnaArm64,
-                name: "FNA/Mono/XNA",
+                name: "Mono/FNA",
                 description: "Windows XNA/FNA via MetalSharp Mono runtime",
                 backend: "mono",
                 graphics_backend: "native",
@@ -342,6 +342,32 @@ pub fn get_pipeline(id: PipelineId) -> &'static PipelineNode {
 impl PipelineId {
     pub fn is_dxmt_family(self) -> bool {
         matches!(self, PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
+    }
+
+    pub fn is_user_selectable(self) -> bool {
+        matches!(self, PipelineId::M12 | PipelineId::M11 | PipelineId::M10 | PipelineId::M9 | PipelineId::FnaArm64)
+    }
+
+    pub fn user_selectable_id(self) -> Option<&'static str> {
+        match self {
+            PipelineId::M12 => Some("m12"),
+            PipelineId::M11 => Some("m11"),
+            PipelineId::M10 => Some("m10"),
+            PipelineId::M9 => Some("m9"),
+            PipelineId::FnaArm64 => Some("fna_arm64"),
+            _ => None,
+        }
+    }
+
+    pub fn user_selectable_name(self) -> Option<&'static str> {
+        match self {
+            PipelineId::M12 => Some("M12"),
+            PipelineId::M11 => Some("M11"),
+            PipelineId::M10 => Some("M10"),
+            PipelineId::M9 => Some("M9"),
+            PipelineId::FnaArm64 => Some("Mono/FNA"),
+            _ => None,
+        }
     }
 
     pub fn from_legacy_method(method: &str) -> Option<PipelineId> {
@@ -532,6 +558,34 @@ mod tests {
         assert_eq!(PipelineId::from_legacy_method("dxvk_metal32"), None);
         assert_eq!(PipelineId::from_str_flexible("m9_gl"), None);
         assert_eq!(PipelineId::from_str_flexible("m32_vk"), None);
+    }
+
+    #[test]
+    fn user_selectable_pipelines_are_the_public_bottle_options() {
+        let selectable: Vec<_> = pipelines()
+            .iter()
+            .filter(|pipeline| pipeline.id.is_user_selectable())
+            .map(|pipeline| pipeline.id)
+            .collect();
+        assert_eq!(
+            selectable,
+            vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
+        );
+
+        let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
+        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "Mono/FNA"]);
+
+        for hidden in [
+            PipelineId::Dxmt,
+            PipelineId::M13,
+            PipelineId::M32,
+            PipelineId::Steam,
+            PipelineId::MacSteam,
+            PipelineId::WineBare,
+        ] {
+            assert!(!hidden.is_user_selectable());
+            assert_eq!(hidden.user_selectable_id(), None);
+        }
     }
 
     #[test]

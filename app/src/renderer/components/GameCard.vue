@@ -111,21 +111,47 @@ const bottleName = ref("");
 const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
+const userSelectablePipelineOrder = ["m12", "m11", "m10", "m9", "fna_arm64"];
+const userSelectablePipelineNames: Record<string, string> = {
+  m12: "M12",
+  m11: "M11",
+  m10: "M10",
+  m9: "M9",
+  fna_arm64: "Mono/FNA",
+};
+
+function normalizePipelineOption(option: PipelineOption): PipelineOption | null {
+  const id = option.id.toLowerCase();
+  if (!userSelectablePipelineOrder.includes(id)) return null;
+  return {
+    ...option,
+    id,
+    name: userSelectablePipelineNames[id] ?? option.name,
+  };
+}
 
 const launchModeOptions = computed(() => {
   const byId = new Map<string, PipelineOption>();
   byId.set("auto", { id: "auto", name: `Auto${pipelineName.value !== "Auto" ? ` (${pipelineName.value})` : ""}` });
   for (const option of pipelineOptions.value) {
-    if (option.id === "mac_steam" && !props.game.has_native_build) continue;
-    byId.set(option.id, option);
+    const normalized = normalizePipelineOption(option);
+    if (normalized) byId.set(normalized.id, normalized);
   }
   for (const option of props.game.available_pipelines ?? []) {
-    if (option.id === "mac_steam" && !props.game.has_native_build) continue;
-    byId.set(option.id, option);
+    const normalized = normalizePipelineOption(option);
+    if (normalized) byId.set(normalized.id, normalized);
   }
-  if (props.game.has_native_build) byId.set("mac_steam", { id: "mac_steam", name: "MacOS Steam" });
   return [...byId.values()];
 });
+
+const bottlePipelineOptions = computed(() =>
+  userSelectablePipelineOrder.map((id) => ({ id, name: userSelectablePipelineNames[id] })),
+);
+
+function preferredBottlePipeline(report: SteamRuntimeReport) {
+  const candidates = [report.preferred_pipeline, report.pipeline, props.game.launch_method];
+  return candidates.find((id) => id && userSelectablePipelineOrder.includes(id)) ?? "m11";
+}
 
 onMounted(async () => {
   const savedLaunchMode = localStorage.getItem(launchModeStorageKey.value);
@@ -133,6 +159,9 @@ onMounted(async () => {
 
   if (props.game.installed) {
     await refreshPipelineMetadata();
+    if (selectedLaunchMode.value !== "auto" && !userSelectablePipelineOrder.includes(selectedLaunchMode.value)) {
+      selectedLaunchMode.value = "auto";
+    }
 
     const gs = await api<{ ok: boolean; goldberg_active: boolean }>(
       "GET",
@@ -227,7 +256,7 @@ async function runRuntimeDoctor() {
   if (result?.ok && result.report) {
     runtimeReport.value = result.report;
     bottleName.value = result.report.bottle_name || props.game.name;
-    bottlePreferredMode.value = result.report.preferred_pipeline || "auto";
+    bottlePreferredMode.value = preferredBottlePipeline(result.report);
   } else {
     toast.show(result?.error ?? "Runtime Doctor failed", "error");
   }
@@ -280,7 +309,9 @@ async function saveBottleEdit() {
 
   if (result?.ok && result.bottle) {
     bottleName.value = result.bottle.name;
-    bottlePreferredMode.value = result.bottle.preferred_pipeline || "auto";
+    bottlePreferredMode.value = result.bottle.preferred_pipeline && userSelectablePipelineOrder.includes(result.bottle.preferred_pipeline)
+      ? result.bottle.preferred_pipeline
+      : bottlePreferredMode.value;
     if (runtimeReport.value) {
       runtimeReport.value.bottle_name = result.bottle.name;
       runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;
@@ -521,7 +552,7 @@ function formatBytes(bytes: number): string {
               <div class="bottle-edit-row">
                 <span>Graphics Backend</span>
                 <select v-model="bottlePreferredMode" class="launch-mode-select" title="Bottle graphics backend">
-                  <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
+                  <option v-for="option in bottlePipelineOptions" :key="option.id" :value="option.id">
                     {{ option.name }}
                   </option>
                 </select>

@@ -676,10 +676,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let preferred_pipeline = bottles::preferred_pipeline_for_steam_app(appid);
             let all_pipelines: Vec<serde_json::Value> = mtsp::engine::pipelines()
                 .iter()
+                .filter(|p| p.id.is_user_selectable())
                 .map(|p| {
                     serde_json::json!({
-                        "id": p.id,
-                        "name": p.name,
+                        "id": p.id.user_selectable_id().unwrap_or("auto"),
+                        "name": p.id.user_selectable_name().unwrap_or(p.name),
                         "description": p.description,
                         "backend": p.backend,
                         "experimental": p.experimental,
@@ -692,12 +693,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 json!({
                     "ok": true,
                     "appid": appid,
-                    "recommended": pipeline_id.to_legacy_method(),
-                    "recommended_name": if pipeline_id.is_dxmt_family() { format!("DXMT ({})", node.name) } else { node.name.to_string() },
-                    "preferred": preferred_pipeline.map(|p| p.to_legacy_method().to_string()),
-                    "preferred_name": preferred_pipeline.map(|p| {
-                        let preferred = mtsp::engine::get_pipeline(p);
-                        if p.is_dxmt_family() { format!("DXMT ({})", preferred.name) } else { preferred.name.to_string() }
+                    "recommended": pipeline_id.user_selectable_id().unwrap_or("auto"),
+                    "recommended_name": pipeline_id.user_selectable_name().unwrap_or("Auto"),
+                    "preferred": preferred_pipeline.and_then(|p| p.user_selectable_id().map(|id| id.to_string())),
+                    "preferred_name": preferred_pipeline.and_then(|p| {
+                        p.user_selectable_name().map(|name| name.to_string())
                     }),
                     "pipelines": all_pipelines,
                 }),
