@@ -14,6 +14,9 @@ jobs:
   developer-sdk:
     name: Publish Developer SDK Bundle
     runs-on: macos-14
+    concurrency:
+      group: metalsharp-developer-sdk-bundles
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +49,11 @@ jobs:
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
 
       - name: Setup ORAS
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: oras-project/setup-oras@v1
 
       - name: Publish developer SDK package
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
@@ -71,13 +76,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish developer SDK bundle
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          gh release upload bundles \
+          tools/bundles/publish-release-assets.sh bundles \
             dist/bundles/metalsharp-runtime.tar.zst \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
-            dist/developer-sdk/metalsharp-bundle-manifest.tsv \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+            dist/developer-sdk/metalsharp-bundle-manifest.tsv
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
