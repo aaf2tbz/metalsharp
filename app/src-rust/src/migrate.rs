@@ -13,7 +13,7 @@ const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
 fn migrate_progress_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("migrate_progress.json")
+    crate::platform::metalsharp_home_dir().join("migrate_progress.json")
 }
 
 fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str, error: Option<&str>) {
@@ -57,8 +57,8 @@ pub fn needs_migration() -> serde_json::Value {
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    let setup_path = home.join(".metalsharp").join("setup.json");
-    let setup_dir_exists = home.join(".metalsharp").exists();
+    let setup_path = crate::platform::metalsharp_home_dir_for(&home).join("setup.json");
+    let setup_dir_exists = crate::platform::metalsharp_home_dir_for(&home).exists();
 
     if !setup_dir_exists || !setup_path.exists() {
         return json!({"ok": true, "needed": false, "reason": "fresh_install"});
@@ -98,7 +98,7 @@ pub fn needs_migration() -> serde_json::Value {
 }
 
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
-    let ms_dir = home.join(".metalsharp");
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
     if runtime_core_ready(&ms_dir) {
         return false;
     }
@@ -210,7 +210,7 @@ fn run_migration() {
         },
     };
 
-    let ms_dir = home.join(".metalsharp");
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
 
     if !ms_dir.exists() {
         write_migrate_progress("error", 0, 0, "~/.metalsharp not found", Some("no_metalsharp_dir"));
@@ -572,7 +572,7 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
 
 fn log_to_file(msg: &str) {
     let home = dirs::home_dir().unwrap_or_default();
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = crate::platform::metalsharp_home_dir_for(&home).join("logs");
     let _ = fs::create_dir_all(&log_dir);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn completed_setups_repair_missing_runtime_without_steam_prefix() {
         let home = test_dir("missing-runtime");
-        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+        fs::create_dir_all(crate::platform::metalsharp_home_dir_for(&home)).expect("create ms dir");
 
         assert!(runtime_needs_repair(&home, true));
         let _ = fs::remove_dir_all(home);
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn incomplete_fresh_setups_do_not_enter_migration_without_prefix() {
         let home = test_dir("fresh-incomplete");
-        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+        fs::create_dir_all(crate::platform::metalsharp_home_dir_for(&home)).expect("create ms dir");
 
         assert!(!runtime_needs_repair(&home, false));
         let _ = fs::remove_dir_all(home);
@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn complete_runtime_does_not_request_repair() {
         let home = test_dir("complete-runtime");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         assert!(runtime_core_ready(&ms_dir));
@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn missing_beta7_foundation_requests_repair() {
         let home = test_dir("missing-beta7-foundation");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         fs::remove_file(
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn missing_dxmt_manifest_requests_repair() {
         let home = test_dir("missing-dxmt-manifest");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         fs::remove_file(
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let bottle_manifest = ms_dir.join("bottles").join("steam_620").join("bottle.json");
         fs::create_dir_all(bottle_manifest.parent().unwrap()).expect("create bottle dir");
         fs::write(&bottle_manifest, br#"{"id":"steam_620"}"#).expect("write bottle manifest");
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn migration_preserves_compatdata_across_runtime_cleanup() {
         let home = test_dir("preserve-compatdata");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let compat_manifest = ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json");
         fs::create_dir_all(compat_manifest.parent().unwrap()).expect("create compatdata dir");
         fs::write(&compat_manifest, br#"{"appid":620}"#).expect("write compatdata manifest");

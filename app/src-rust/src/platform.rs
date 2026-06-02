@@ -31,6 +31,20 @@ pub fn app_resources_dir() -> Option<PathBuf> {
     app_resources_dir_for_exe(&exe)
 }
 
+pub fn metalsharp_home_dir() -> PathBuf {
+    metalsharp_home_dir_for(&dirs::home_dir().unwrap_or_default())
+}
+
+pub fn metalsharp_home_dir_for(home: &std::path::Path) -> PathBuf {
+    if let Ok(value) = std::env::var("METALSHARP_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    home.join(".metalsharp")
+}
+
 fn app_resources_dir_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 

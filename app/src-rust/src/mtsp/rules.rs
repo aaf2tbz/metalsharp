@@ -75,7 +75,7 @@ fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
     }
 
     candidates.push(home.join("metalsharp").join("configs").join("mtsp-rules.toml"));
-    candidates.push(home.join(".metalsharp").join("configs").join("mtsp-rules.toml"));
+    candidates.push(crate::platform::metalsharp_home_dir_for(&home).join("configs").join("mtsp-rules.toml"));
     candidates
 }
 
@@ -456,7 +456,7 @@ mod tests {
         let candidates = rule_candidates(home, Some(current_exe));
 
         let repo_rules = home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml");
-        let stale_user_rules = home.join(".metalsharp").join("configs").join("mtsp-rules.toml");
+        let stale_user_rules = crate::platform::metalsharp_home_dir_for(&home).join("configs").join("mtsp-rules.toml");
         let repo_pos = candidates.iter().position(|path| path == &repo_rules).unwrap();
         let stale_user_pos = candidates.iter().position(|path| path == &stale_user_rules).unwrap();
 

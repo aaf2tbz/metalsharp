@@ -8,12 +8,12 @@ const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const STEAMWEBHELPER_WRAPPER_SHA256: &str = "f46a1e8c39c850ba22861f63559f13b4f68557acf04a92e6d1b899769b2ea1f9";
 
 fn ms_wine() -> PathBuf {
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
     crate::platform::runtime_wine_binary(&ms_root)
 }
 
 fn steam_prefix() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
+    crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
 fn steam_exe_path() -> PathBuf {
@@ -239,7 +239,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     ensure_steam_launch_ready(&steam_dir);
 
     let prefix_str = steam_prefix().to_string_lossy().to_string();
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&steam_dir)
@@ -592,7 +592,7 @@ fn find_bundled_steamwebhelper_wrapper() -> Option<PathBuf> {
 
 fn find_bundled_steam_asset(filename: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    let cache_dir = home.join(".metalsharp").join("cache").join("steam");
+    let cache_dir = crate::platform::metalsharp_home_dir_for(&home).join("cache").join("steam");
     let cached = cache_dir.join(filename);
     if cached.exists() {
         return Some(cached);
@@ -640,7 +640,7 @@ fn find_steam_bundle_archive() -> Option<PathBuf> {
     }
 
     let home = dirs::home_dir()?;
-    let cache_dir = home.join(".metalsharp").join("cache").join("bundles");
+    let cache_dir = crate::platform::metalsharp_home_dir_for(&home).join("cache").join("bundles");
     let _ = std::fs::create_dir_all(&cache_dir);
     let cached = cache_dir.join(filename);
     if cached.exists() {
@@ -817,8 +817,8 @@ pub fn uninstall_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         }
     }
 
-    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
-    if remove_dir_all_under(&local_dir, &home.join(".metalsharp").join("games"))? {
+    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
+    if remove_dir_all_under(&local_dir, &crate::platform::metalsharp_home_dir_for(&home).join("games"))? {
         removed_local = true;
     }
 
@@ -848,7 +848,7 @@ pub fn get_api_key() -> Value {
 
 pub fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let config_dir = home.join(".metalsharp/cache");
+    let config_dir = crate::platform::metalsharp_home_dir_for(&home).join("cache");
     std::fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("steam_config.json");
 
@@ -869,7 +869,7 @@ pub fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn api_key_sync_state() -> Value {
     let (api_key, steam_id) = read_steam_config();
-    let cache_path = dirs::home_dir().map(|h| h.join(".metalsharp/cache/owned_games.json")).unwrap_or_default();
+    let cache_path = crate::platform::metalsharp_home_dir().join("cache/owned_games.json");
     json!({
         "api_key_set": api_key.as_deref().map(|k| !k.is_empty()).unwrap_or(false),
         "steam_id_detected": steam_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
@@ -883,7 +883,8 @@ pub fn get_steam_id() -> Option<String> {
 
     let paths = vec![
         home.join("Library/Application Support/Steam/config/loginusers.vdf"),
-        home.join(".metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf"),
+        crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf"),
     ];
 
     for mac_path in &paths {
@@ -1001,7 +1002,7 @@ pub fn library() -> Value {
 
 fn get_downloaded_appids() -> Vec<u32> {
     let home = dirs::home_dir().unwrap_or_default();
-    let games_dir = home.join(".metalsharp").join("games");
+    let games_dir = crate::platform::metalsharp_home_dir_for(&home).join("games");
     let mut appids = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&games_dir) {
@@ -1030,7 +1031,7 @@ fn get_downloaded_appids() -> Vec<u32> {
 
 fn read_steam_config() -> (Option<String>, Option<String>) {
     let home = dirs::home_dir().unwrap_or_default();
-    let config_path = home.join(".metalsharp/cache/steam_config.json");
+    let config_path = crate::platform::metalsharp_home_dir_for(&home).join("cache/steam_config.json");
     if let Ok(contents) = std::fs::read_to_string(&config_path) {
         if let Ok(cfg) = serde_json::from_str::<serde_json::Map<String, Value>>(&contents) {
             let key = cfg.get("steam_api_key").and_then(|v| v.as_str()).map(String::from);
@@ -1050,7 +1051,7 @@ fn fetch_owned_games(_steam_id: Option<&str>) -> Result<Vec<(u32, String)>, Box<
         return Ok(vec![]);
     }
 
-    let cache_path = dirs::home_dir().map(|h| h.join(".metalsharp/cache/owned_games.json")).unwrap_or_default();
+    let cache_path = crate::platform::metalsharp_home_dir().join("cache/owned_games.json");
 
     if cache_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&cache_path) {
@@ -1155,7 +1156,8 @@ fn get_installed_appids() -> Vec<u32> {
 fn detect_login_state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let mac_path = home.join("Library/Application Support/Steam/config/loginusers.vdf");
-    let wine_path = home.join(".metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf");
+    let wine_path = crate::platform::metalsharp_home_dir_for(&home)
+        .join("prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf");
 
     let contents =
         std::fs::read_to_string(&mac_path).or_else(|_| std::fs::read_to_string(&wine_path)).unwrap_or_default();
@@ -1219,7 +1221,7 @@ pub fn install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
 fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let metalsharp_dir = home.join(".metalsharp");
+    let metalsharp_dir = crate::platform::metalsharp_home_dir_for(&home);
     std::fs::create_dir_all(&metalsharp_dir)?;
 
     let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
@@ -1250,7 +1252,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    let ms_root = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
 
     let mut wineboot_cmd = Command::new(&wine);
     wineboot_cmd
@@ -1319,7 +1321,7 @@ pub fn watch_steamapps() -> Option<String> {
     }
 
     let current = get_wine_steam_installed_games();
-    let cached_path = dirs::home_dir()?.join(".metalsharp").join("cache").join("wine_steam_appids.cache");
+    let cached_path = crate::platform::metalsharp_home_dir().join("cache").join("wine_steam_appids.cache");
 
     let cached: Vec<u32> = if cached_path.exists() {
         std::fs::read_to_string(&cached_path)

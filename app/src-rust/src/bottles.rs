@@ -322,15 +322,15 @@ pub struct SteamCompatdataRecord {
 }
 
 pub fn bottles_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join(BOTTLES_DIR)
+    crate::platform::metalsharp_home_dir().join(BOTTLES_DIR)
 }
 
 pub fn compatdata_root() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join(COMPATDATA_DIR)
+    crate::platform::metalsharp_home_dir().join(COMPATDATA_DIR)
 }
 
 fn steam_launch_prefix() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
+    crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
 pub fn bottle_dir(id: &str) -> PathBuf {
@@ -1105,7 +1105,7 @@ fn should_wait_for_prefix_idle(manifest: &BottleManifest) -> bool {
 
 fn spawn_wineserver_wait(prefix: &Path) -> Result<Child, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wineserver = ms_root.join("bin").join("wineserver");
     if !wineserver.exists() {
         return Err("wineserver not found".into());
@@ -1285,7 +1285,7 @@ pub fn repair_component(
 
     if matches!(component_id, "gpu_vendor_stubs" | "gptk_amd_stub") {
         let home = dirs::home_dir().unwrap_or_default();
-        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
         let system32 = prefix.join("drive_c").join("windows").join("system32");
         fs::create_dir_all(&system32)?;
 
@@ -1911,7 +1911,7 @@ fn mono_runtime_definition(profile: RuntimeProfile) -> Option<MonoRuntimeDefinit
     match profile {
         RuntimeProfile::FnaArm64 => Some(MonoRuntimeDefinition {
             id: "mono-arm64",
-            binary_path: home.join(".metalsharp/runtime/mono-arm64/bin/mono").to_string_lossy().to_string(),
+            binary_path: crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-arm64/bin/mono").to_string_lossy().to_string(),
             expected_arch: "arm64",
             known_version: "6.14.1",
             config_path: Some("configs/terraria-mono.config"),
@@ -1920,7 +1920,7 @@ fn mono_runtime_definition(profile: RuntimeProfile) -> Option<MonoRuntimeDefinit
         }),
         RuntimeProfile::FnaX86 => Some(MonoRuntimeDefinition {
             id: "mono-x86",
-            binary_path: home.join(".metalsharp/runtime/mono-x86/bin/mono").to_string_lossy().to_string(),
+            binary_path: crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-x86/bin/mono").to_string_lossy().to_string(),
             expected_arch: "x86_64",
             known_version: "6.12.0.122",
             config_path: Some("configs/celeste-x86-mono.config"),
@@ -2432,13 +2432,14 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
 
 fn inspect_host_mono_component(runtime_id: &str) -> Option<ComponentState> {
     let home = dirs::home_dir()?;
-    let mono = home.join(".metalsharp").join("runtime").join(runtime_id).join("bin").join("mono");
+    let mono =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join(runtime_id).join("bin").join("mono");
     Some(if mono.exists() { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn inspect_fna_runtime_component() -> Option<ComponentState> {
     let home = dirs::home_dir()?;
-    let runtime = home.join(".metalsharp").join("runtime");
+    let runtime = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
     let candidates = [
         runtime.join("fna").join("FNA.dll"),
         runtime.join("shims").join("libFNA3D.dylib"),
@@ -2528,7 +2529,7 @@ fn install_host_core_fonts(prefix: &Path, log_path: &Path) -> Result<bool, Box<d
 fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
     let filename = format!("{}.dll", id);
     let home = dirs::home_dir()?;
-    let runtime_wine = home.join(".metalsharp").join("runtime").join("wine");
+    let runtime_wine = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let candidates = [
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join(&filename),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join(&filename),
@@ -2588,7 +2589,7 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
         .join("common")
         .join("Steamworks Shared")
         .join("_CommonRedist");
-    let local_redist = home.join(".metalsharp").join("runtime").join("redist");
+    let local_redist = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist");
 
     resolve_component_installer_from_roots(component_id, arch, &redist_root, &local_redist)
 }
@@ -2795,7 +2796,7 @@ fn launch_component_installer(
     log_path: &Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -2846,7 +2847,7 @@ fn launch_wineboot_repair(
     log_path: &Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wineboot = ms_root.join("bin").join("wineboot");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     let executable = if wineboot.exists() { wineboot } else { wine };
@@ -2885,7 +2886,7 @@ fn run_wine_reg_set_windows_version(
     log_path: &Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -2957,7 +2958,7 @@ const WINE_FONT_REPLACEMENTS: &[(&str, &str)] = &[
 
 pub fn apply_font_substitutions(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -3016,7 +3017,7 @@ const POST_WINEBOOT_DLL_OVERRIDES: &[(&str, &str)] = &[
 
 pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found".into());
@@ -3143,8 +3144,10 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             source: "metalsharp_wine_bootstrap".to_string(),
             available: dirs::home_dir()
                 .map(|home| {
-                    crate::platform::runtime_wine_binary(&home.join(".metalsharp").join("runtime").join("wine"))
-                        .exists()
+                    crate::platform::runtime_wine_binary(
+                        &crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine"),
+                    )
+                    .exists()
                 })
                 .unwrap_or(false),
             detail: format!("{} is repaired by running wineboot -u in the bottle prefix", id),
@@ -3175,10 +3178,10 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         }
         .unwrap_or(ComponentState::Unknown);
         let path = dirs::home_dir().map(|home| match id {
-            "mono-arm64" => home.join(".metalsharp/runtime/mono-arm64/bin/mono"),
-            "mono-x86" => home.join(".metalsharp/runtime/mono-x86/bin/mono"),
-            "fna" => home.join(".metalsharp/runtime/fna"),
-            _ => home.join(".metalsharp/runtime"),
+            "mono-arm64" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-arm64/bin/mono"),
+            "mono-x86" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-x86/bin/mono"),
+            "fna" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fna"),
+            _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime"),
         });
         return ComponentSourcePolicy {
             id: id.to_string(),
@@ -3548,7 +3551,7 @@ fn per_game_prefix_recommendation(case: &CompatibilityCase) -> String {
 
 fn redist_source_guides() -> Vec<RedistSourceGuide> {
     let home = dirs::home_dir().unwrap_or_default();
-    let redist = home.join(".metalsharp").join("runtime").join("redist");
+    let redist = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist");
     vec![
         RedistSourceGuide {
             id: "dotnet48".to_string(),

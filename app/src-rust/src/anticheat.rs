@@ -68,7 +68,7 @@ pub fn handle_steam_anticheat_evidence(body: &Map<String, Value>) -> Value {
         None => return json!({"ok": false, "appid": appid, "error": "no home dir"}),
     };
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
     let game_dir = resolve_anticheat_game_dir(appid);
     let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
     let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
@@ -123,7 +123,7 @@ pub fn handle_steam_anticheat_probe(body: &Map<String, Value>) -> Value {
         None => return json!({"ok": false, "appid": appid, "error": "no home dir"}),
     };
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
     let game_dir = resolve_anticheat_game_dir(appid);
     let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
     let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
@@ -173,8 +173,8 @@ pub fn handle_steam_anticheat_delta_audit(body: &Map<String, Value>) -> Value {
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
-    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    let wine_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let game_dir = appid.and_then(resolve_anticheat_game_dir);
     let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
     let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
@@ -375,7 +375,7 @@ pub fn handle_steam_anticheat_contract_probe(body: &Map<String, Value>) -> Value
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
     let game_dir = appid.and_then(resolve_anticheat_game_dir);
     let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
     let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
@@ -430,7 +430,7 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
         None => return json!({"ok": false, "appid": appid, "error": "no home dir"}),
     };
 
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
     let game_dir = resolve_anticheat_game_dir(appid);
     let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
     let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
@@ -676,7 +676,7 @@ fn is_anticheat_probe_target(path: &Path) -> bool {
 }
 
 fn runtime_probe_checks(home: &Path) -> Value {
-    let wine_root = home.join(".metalsharp").join("runtime").join("wine");
+    let wine_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine_bin = wine_root.join("bin").join("wine");
     let wine64_bin = wine_root.join("bin").join("wine64");
     let wineserver_bin = wine_root.join("bin").join("wineserver");

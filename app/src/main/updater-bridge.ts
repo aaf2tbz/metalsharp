@@ -5,10 +5,15 @@ import * as os from "os";
 import * as path from "path";
 
 function getMetalsharpDir(): string {
+  if (process.env.METALSHARP_HOME?.trim()) {
+    return path.resolve(process.env.METALSHARP_HOME);
+  }
   return path.join(os.homedir(), ".metalsharp");
 }
 
-const STATUS_FILE = path.join(getMetalsharpDir(), "update_install_status.json");
+function getStatusFile(): string {
+  return path.join(getMetalsharpDir(), "update_install_status.json");
+}
 
 export interface InstallStatus {
   phase: string;
@@ -116,7 +121,7 @@ export class UpdaterBridge {
         "--target-version",
         targetVersion,
         "--status-file",
-        STATUS_FILE,
+        getStatusFile(),
       ],
       {
         detached: true,
@@ -167,14 +172,14 @@ export class UpdaterBridge {
   }
 
   private static validateStatusPath(): boolean {
-    const resolved = path.resolve(STATUS_FILE);
+    const resolved = path.resolve(getStatusFile());
     return resolved.startsWith(path.resolve(getMetalsharpDir()));
   }
 
   readInstallStatus(): InstallStatus | null {
     try {
       if (!UpdaterBridge.validateStatusPath()) return null;
-      const raw = fs.readFileSync(STATUS_FILE, "utf8");
+      const raw = fs.readFileSync(getStatusFile(), "utf8");
       return JSON.parse(raw);
     } catch {
       return null;
@@ -184,11 +189,11 @@ export class UpdaterBridge {
   clearInstallStatus(): void {
     try {
       if (!UpdaterBridge.validateStatusPath()) return;
-      fs.unlinkSync(STATUS_FILE);
+      fs.unlinkSync(getStatusFile());
     } catch {}
   }
 
   static getStatusFilePath(): string {
-    return STATUS_FILE;
+    return getStatusFile();
   }
 }
