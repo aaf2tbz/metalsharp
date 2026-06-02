@@ -7,13 +7,14 @@ MetalSharp has two graphics translation families:
 
 ## Pipeline Map
 
-| Pipeline | Translation |
+| Public route | Translation |
 |---|---|
 | **M12** | D3D12 -> DXMT -> Metal |
 | **M11** | D3D11 -> DXMT -> Metal |
 | **M10** | D3D10 -> DXMT -> Metal |
 | **M9** | D3D9 -> MetalSharp D3D9 -> DXMT launch family -> Metal |
-| **M32** | 32-bit Wine fallback |
+
+`dxmt` is the internal auto-router that selects M12/M11/M10/M9. M32, Wine, and macOS Steam are backend fallback/diagnostic paths, not normal graphics-route buttons.
 
 ## DXMT
 
@@ -83,18 +84,17 @@ M9 cache path:
 | Subnautica | M11 |
 | Subnautica: Below Zero | M12 recommended, M11 optimized |
 | Rain World | M11, M9 also works |
-| Undertale | M32, fallback M9 |
-| Portal 2 | M9, audio still needs work |
-| Nidhogg 2 | M32 |
-| Ghostrunner | M12 |
-| High on Life | Steam with `-dx11` |
-| Borderlands 3 | Steam |
-| Stardew Valley | MacOS Steam |
+| Undertale | M9 |
+| Portal 2 | M9 |
+| Nidhogg 2 | M9 |
+| Ghostrunner | M11; M12 only if needed |
+| DREDGE | Not a DXMT/FNA target yet; 32-bit Unity embedded Mono crash |
+| Goat Simulator | M9, blocked before graphics by native .NET 4.0 CLR install |
 
 ## Notes
 
-- DXMT is the direct Metal path.
+- DXMT is the internal direct-Metal auto-router, not a visible route selector option.
 - M12 is the primary stable DXMT D3D engine method in source.
 - M10 and M11 share the `dxmt-metal` preset fallback family.
 - M9 no longer has a Vulkan/MoltenVK hop in MTSP selection.
-- M32 is the fallback for 32-bit Wine cases.
+- 32-bit and Wine fallback cases remain backend internals unless promoted to a public route.

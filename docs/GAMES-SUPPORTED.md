@@ -2,7 +2,7 @@
 
 Updated: 2026-06-02
 
-These notes reflect the current MetalSharp pipeline names and current local playtesting evidence.
+These notes reflect the current MetalSharp route names, current local playtesting evidence, and the June 2 route-selector cleanup. The visible bottle options are now **M12**, **M11**, **M10**, **M9**, and **Mono/FNA**. Raw `dxmt`, Wine, macOS Steam, M32, and Steam handoff routes remain internal backend machinery.
 
 ## Test System
 
@@ -10,17 +10,22 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 
 ## Pipelines
 
-| Pipeline | Use |
+| Visible Route | Use |
 |---|---|
-| **M11** | D3D11 to Metal via DXMT |
 | **M12** | D3D12 to Metal via DXMT |
+| **M11** | D3D11 to Metal via DXMT |
 | **M10** | D3D10 to Metal via DXMT |
-| **M9** | D3D9 via DXMT launch family |
-| **M32** | 32-bit Wine fallback |
-| **FNA/Mono/XNA** | Windows XNA/FNA games through MetalSharp's Mono runtime |
-| **Steam** | Wine Steam, preflighted by Steam game bottles |
-| **MacOS Steam** | Native macOS Steam |
-| **Wine** | Plain Wine custom-library fallback |
+| **M9** | D3D9 through the DXMT launch/cache family |
+| **Mono/FNA** | Windows XNA/FNA games through MetalSharp's native Mono runtime, staged FNA/XNA assemblies, FMOD/FAudio/FNA3D/native-library shims, and Steamworks shim support |
+
+Internal routes still exist for diagnostics and compatibility records:
+
+| Internal Route | Current Role |
+|---|---|
+| `dxmt` | Auto-router that chooses M12/M11/M10/M9 from rules and PE evidence |
+| Wine Steam | Background account/session/download owner for Steam games |
+| macOS Steam | Native Steam handoff for diagnostics or special cases, not a normal Windows-game route |
+| Plain Wine / M32 / M13 | Backend fallback and investigation routes, hidden from normal bottle selectors |
 
 ## Current Compatibility Summary
 
@@ -50,7 +55,17 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | Blasphemous | `steam_774361` | Auto-routed to M11, but the game is 32-bit. Saved to M9 bottle and ran perfectly. | **M9** |
 | Dave the Diver | `steam_1868140` | Auto-routed to M11, but the game is 32-bit. Saved to M9 and ran beautifully after deploying D3D9, vcrun2019, and DirectX June 2010. | **M9** |
 | Peak | `steam_3527290` | DX12 game. With M12 applied to the bottle, it launched and played perfectly on medium settings. Should auto-route to M12 instead of M11. | **M12**, Medium settings |
-| Dark Deception | `steam_332950` | Routed to M12 and hit Agility SDK not found. Saved config to M11 launched with no input. Launching through Steam installed needed runtime assets, then the game launched and worked normally. | **Steam**, then **M11** |
+| Dark Deception | `steam_332950` | Routed to M12 and hit Agility SDK not found. Saved config to M11 launched with no input. A one-time internal Steam handoff installed needed runtime assets, then the saved route launched and worked normally. | **M11** after runtime bootstrap |
+
+## Recent Runtime Hardening
+
+| Area | Current State |
+|---|---|
+| Public route selector | Only **M12**, **M11**, **M10**, **M9**, and **Mono/FNA** are shown. DXMT auto-routing, Wine, macOS Steam, M32, and M13/GPTK stay internal. |
+| Mono/FNA/XNA | First-class route with ARM64 and x86_64 Mono lanes under the hood. The launcher stages FNA/XNA assemblies, native libraries, FMOD/FAudio/FNA3D shims, `steam_appid.txt`, and Steamworks compatibility shims. |
+| Celeste/Terraria path | Hardened for future FNA/XNA targets, but not marked working from this pass. Celeste still hit Steamworks initialization failure during testing. Terraria was downloaded for testing but not promoted to working evidence. |
+| Goat Simulator | Defined as an M9/D3D9 UE3 title requiring native .NET 4.0 CLR, VC++ 2010, and DirectX June 2010. Current blocker is native `.NET 4.0` install failure in Wine: registry repair clears false install markers, but `clr.dll` still does not land. |
+| DREDGE | Reclassified away from FNA/XNA. It is a 32-bit Unity title with embedded MonoBleedingEdge and currently crashes in embedded Mono before reaching graphics routing. |
 
 ## Half Working / Needs Investigation
 
@@ -58,7 +73,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 |---|---:|---|---|
 | Subnautica 2 | `steam_1962700` | Launches with M12 pipeline but does not render. | **M12**, render-path investigation |
 | Minecraft Legends | `steam_1928870` | Only launches with M12 pipeline but does not render. | **M12**, render-path investigation |
-| Stardew Valley | `steam_413150` | Launches from Steam, then crashes with Wine debug output. Bottle config could not be updated away from Native macOS. | Bottle config save bug |
+| Stardew Valley | `steam_413150` | Launches from Steam, then crashes with Wine debug output. Earlier testing was stuck on an old native-macOS handoff label that is no longer a public route option. | Needs fresh public-route test |
 | Palworld | `steam_1623730` | DX12/DX11 game. M11 and M12 both produce a black loading window with no visible output. | M11/M12 render-path investigation |
 | Mirror's Edge | `steam_17410` | Auto-routed to M11 and launched, but this is a DX9 game and the routing does not make sense. Loaded oddly. | Should route to **M9** |
 | Resident Evil Village | `steam_1196590` | DX12 game. M12 stages DLLs but does not launch because Agility SDK x64 payload is not found for version `default`. With DLLs staged, it reached a black launch before Wine debug crash. | **M12**, Agility payload fix |
@@ -71,25 +86,27 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | Game | AppID / Bottle | Failure | Notes |
 |---|---:|---|---|
 | Necesse | Not recorded | Does not load with M11 bottle config or any tested config. | Supposedly supports DX11/OpenGL. |
-| Dredge | Not recorded | Does not launch with any tested pipeline. | Mono/FNA/XNA title. |
-| Celeste | Not recorded | Does not launch with any tested pipeline, and pipeline config could not be changed during testing. | Mono/FNA/XNA title plus bottle config save issue. |
+| Dredge | Not recorded | Does not launch with any tested pipeline. Current evidence points to a 32-bit Unity embedded-Mono crash, not the Mono/FNA/XNA route. | Embedded Unity Mono investigation |
+| Celeste | `steam_504230` | Windows install is routed through Mono/FNA x86_64 with FNA/XNA/shim staging. Launch still fails around Steamworks initialization / native Mono behavior. | **Mono/FNA**, not working yet |
+| Terraria | `steam_105600` | Mono/FNA route has Terraria-specific runtime staging and x86_64 Mono handling, but current pass did not produce a new working proof. | **Mono/FNA**, needs fresh launch proof |
+| Goat Simulator | `steam_265930` | M9 route launches then dies before graphics with native Mono/CLR crash. Runtime doctor correctly reports missing `dotnet40`; .NET 4.0 redist extracts but no native `clr.dll` lands. | **M9**, blocked on native .NET 4.0 |
 | Elden Ring | Not recorded | Launches with M11, but anti-cheat blocks the path. Offline play is not solved yet. | Anti-cheat/offline route needed. |
-| No Man's Sky | Not recorded | Not a Direct3D-first game; primarily Vulkan. | Needs Vulkan backend or bottle option such as MoltenVK/VKD3D-style route. |
+| No Man's Sky | Not recorded | Not a Direct3D-first game; primarily Vulkan. | Needs a future Vulkan backend, not a current public route |
 
 ## Backend And Bottle Usability Notes
 
 - Bottle saves appear to work in at least some cases: Peak did not launch before M12 routing, but launched correctly after the bottle was moved to M12.
-- Game cards can still report the old graphics routing method after a saved bottle pipeline change. If a bottle is moved to M12, the card should reflect `DXMT (M12)`.
-- Some bottles could not be changed after routing had already been saved. Celeste and Stardew Valley exposed this most clearly, alongside Dredge potentially.
+- Game cards and bottle selectors now use the public route vocabulary: **M12**, **M11**, **M10**, **M9**, and **Mono/FNA**.
+- Old saved route values such as `dxmt`, `wine_bare`, `mac_steam`, and `m32` are still parsed by the backend for compatibility, but the renderer filters them out of normal route controls.
 - Pipeline override persistence should be treated as a backend/UI correctness issue, not only a game-compatibility issue.
 - Route detection needs better 32-bit and API-aware correction. Blasphemous and Dave the Diver should not stay on M11 when M9 is the working route, and Mirror's Edge should not auto-route to M11 as a DX9 title.
 - Peak should be added to the routing rules as an M12 target.
-- Dark Deception shows that launching through Steam can install required runtime assets before the saved route works correctly. The runtime should try a Steam launch first on a fresh installation, then proceed with graphics routing once Steam installs redistributables and queues the game for launch.
+- Dark Deception shows that an internal Steam handoff can install required runtime assets before the saved public route works correctly. The runtime should try that bootstrap only when needed, then proceed with graphics routing once Steam installs redistributables and queues the game for launch.
 
 ## Notes
 
-- Game cards can be tested through the pipeline dropdown.
+- Game cards can be tested through the route dropdown.
 - Shader caches are per appid and can be cleared from Settings.
-- Steam and MacOS Steam are separate launch paths. The current target is Wine Steam for installed Steam games.
+- Wine Steam remains the normal background Steam client for installed Windows Steam games.
 - Installed Wine Steam games create `steam_<appid>` bottle records for runtime asset/component preflight before launch.
 - Env-dependent Steam game routes keep Wine Steam alive as the background client, then launch the game executable directly with the selected MTSP pipeline, bottle prefix, route env, and Steam identity variables.

@@ -14,23 +14,19 @@ After a game is installed, MetalSharp detects the Wine Steam library and creates
 
 The bottle is the launch-authoritative runtime record. It checks the selected profile, runtime assets, redistributables, DLL expectations, and logs before launch.
 
-For env-dependent routes such as M9, M10, M11, M12, M32, and Wine fallback, MetalSharp keeps Wine Steam alive in the background, then launches the game executable directly through the selected bottle-aware MTSP pipeline. The game process receives the prepared prefix, route environment, cache paths, and Steam identity variables (`SteamAppId` and `SteamGameId`) so Steamworks can bind back to the running Wine Steam client.
+For routes such as M12, M11, M10, M9, and Mono/FNA, MetalSharp keeps Wine Steam alive in the background when Steamworks ownership/session state is needed, then launches the game executable through the selected bottle-aware MTSP pipeline. The game process receives the prepared prefix or native Mono/FNA environment, cache paths, and Steam identity variables (`SteamAppId` and `SteamGameId`) so Steamworks can bind back to the running Wine Steam client where applicable.
 
-Plain **Steam** mode still uses Wine Steam itself. If Wine Steam is not detectable after startup, MetalSharp now fails the launch clearly instead of hanging behind the renderer timeout.
+Internal Steam, Wine, macOS Steam, M32, and raw DXMT routes still exist for diagnostics, compatibility records, and backend fallback behavior, but they are not normal route selector choices. If Wine Steam is not detectable after startup, MetalSharp fails the launch clearly instead of hanging behind the renderer timeout.
 
 Click **Play** from the Library page. Use the launch mode dropdown when you want to force a route:
 
 | Mode | Use |
 |---|---|
-| M9 | D3D9 / 32-bit capable DXMT-family route |
-| M10 | D3D10 to Metal |
-| M11 | D3D11 to Metal |
 | M12 | D3D12 to Metal |
-| M32 | 32-bit Wine fallback |
-| Steam | Windows Steam in Wine |
-| MacOS Steam | Native macOS Steam |
-| Wine | Plain Wine fallback |
-| FNA/Mono/XNA | Windows XNA/FNA games through MetalSharp's Mono runtime |
+| M11 | D3D11 to Metal |
+| M10 | D3D10 to Metal |
+| M9 | D3D9 through the DXMT launch/cache family |
+| Mono/FNA | Windows XNA/FNA games through MetalSharp's native Mono runtime, staged FNA/XNA assemblies, native dylibs, FMOD/FAudio/FNA3D shims, and Steamworks shim support |
 
 Use **Runtime Doctor** on a game card when a game needs VC runtime, DirectX, .NET, WebView2, fonts, or other launch assets.
 

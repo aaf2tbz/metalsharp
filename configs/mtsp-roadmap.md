@@ -21,9 +21,9 @@ TOML, not Rust code.
 
 ## Phase 1 — Frontend Integration
 
-- [x] Pipeline selector UI in game library
+- [x] Public route selector UI in game library
 - [x] Pipeline info panel with description and alternatives
-- [ ] Per-game pipeline override (persisted to TOML)
+- [x] Per-game bottle route override for public routes
 - [ ] Experimental pipeline warnings
 
 ## Phase 1.5 — Runtime Bottles
@@ -40,16 +40,22 @@ TOML, not Rust code.
 - [ ] Community pipeline recommendations (shared TOML rules)
 - [ ] Hot-reload rules TOML without restart
 
-## Pipeline ID Reference
+## Public Route Reference
 
 | ID | Name | Backend | Notes |
 |---|---|---|---|
-| DXMT | Auto D3D9/D3D10/D3D11/D3D12 → Metal | dxmt | User-facing unified launch path; selects the internal D3D profile from rules/PE evidence |
-| M11 | DXMT D3D11 → Metal | dxmt | Internal D3D11 profile and compatibility alias |
-| M12 | DXMT D3D12 → Metal | dxmt | Internal D3D12 profile; deploys D3D12/DXGI/DXIL/Agility sidecars when selected |
-| M9 | D3D9 → Metal | dxmt | Internal D3D9 profile under the DXMT launch family |
-| M32 | Wine 32-bit | wine | 32-bit Wine fallback |
-| Steam | Wine Steam | steam | Windows Steam in Wine, preflighted by Steam game bottles |
-| MacOS Steam | Native Steam | steam | Native macOS Steam |
-| FnaArm64 | FNA ARM64 | mono | Mono + OpenGL/Metal |
-| WineBare | Wine Bare | wine | Plain Wine |
+| M12 | D3D12 → Metal | dxmt | Public D3D12 route; deploys D3D12/DXGI/DXIL/Agility sidecars when selected |
+| M11 | D3D11 → Metal | dxmt | Public D3D11 route |
+| M10 | D3D10 → Metal | dxmt | Public D3D10 route |
+| M9 | D3D9 → Metal | dxmt | Public D3D9 route under the DXMT launch/cache family |
+| Mono/FNA | Windows XNA/FNA → native Mono | mono | Public FNA/XNA route; launcher picks ARM64 or x86_64 Mono internally |
+
+## Internal Route IDs
+
+| ID | Role |
+|---|---|
+| DXMT | Auto-router that selects M12/M11/M10/M9 from rules and PE evidence |
+| M32 | 32-bit Wine fallback retained for diagnostics/legacy records |
+| Steam | Windows Steam client handoff retained for bootstrap/diagnostics |
+| MacOS Steam | Native Steam handoff retained for diagnostics/special cases |
+| WineBare | Plain Wine fallback retained for installer/custom-app internals |

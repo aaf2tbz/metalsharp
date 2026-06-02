@@ -12,7 +12,7 @@ Play clicked
   -> backend builds a LaunchRecipe
   -> backend preflights runtime assets
   -> backend prepares DLLs/env/cache beside the selected executable
-  -> direct Wine/MTSP, Steam, MacOS Steam, or Native macOS starts the game
+  -> selected MTSP route starts the game; internal Steam/Wine/macOS handoffs are used only when the backend selects them
 ```
 
 The launch recipe is the backend contract for click-to-play. It records the appid, selected pipeline, game directory,
@@ -30,21 +30,19 @@ legal local assets from Steamworks Shared or `~/.metalsharp/runtime/redist/` and
 
 For env-dependent Steam routes, MetalSharp keeps Wine Steam running as the background client, then launches the game
 executable directly through the selected MTSP pipeline with the bottle prefix, route env, cache paths, and
-`SteamAppId`/`SteamGameId`. Plain **Steam** mode still uses Wine Steam itself.
+`SteamAppId`/`SteamGameId`. Internal client-only Steam handoff still exists for diagnostics and bootstrap cases, but it is not exposed as a normal bottle option.
 
 ## Current Pipelines
 
-| Pipeline | Backend | Launch path |
+| Public route | Backend | Launch path |
 |---|---|---|
-| **M11** | DXMT | Direct Wine launch with D3D11/DXGI DXMT DLLs |
 | **M12** | DXMT | Direct Wine launch with D3D12/D3D11/DXGI DXMT DLLs |
+| **M11** | DXMT | Direct Wine launch with D3D11/DXGI DXMT DLLs |
 | **M10** | DXMT | Direct Wine launch with D3D10/D3D11/DXGI DXMT DLLs |
 | **M9** | DXMT launch family | Direct Wine launch with bundled `d3d9.dll` and DXMT-family cache/env |
-| **M32** | Wine32 | 32-bit Wine fallback |
-| **Native macOS** | Mono/FNA | Native FNA/XNA/Mono runtime |
-| **Steam** | Wine Steam | Launch through Windows Steam after Steam bottle preflight |
-| **MacOS Steam** | Native Steam | Launch through native macOS Steam |
-| **Wine** | Wine | Plain Wine launch for custom library apps |
+| **Mono/FNA** | Native Mono | Native FNA/XNA/Mono runtime with FNA/XNA assemblies, native dylib staging, FMOD/FAudio/FNA3D shims, and Steamworks shim support |
+
+Internal route IDs such as `dxmt`, `steam`, `macos_steam`, `wine_bare`, `m32`, and `m13` remain parseable for old records, diagnostics, and backend fallback behavior. They are intentionally hidden from normal bottle selectors.
 
 ## Resolution
 
@@ -60,9 +58,9 @@ Common marker behavior:
 
 | Marker | Pipeline |
 |---|---|
-| `.NET` managed game without native PE dependencies | Native macOS |
+| Known XNA/FNA managed game | Mono/FNA |
 | Unity, Unreal, Source, RE Engine, or `steam_api*.dll` markers | M11 |
-| `d3dx9_43.dll` | Wine |
+| `d3dx9_43.dll` or D3D9 import | M9 |
 | PE imports D3D12 | M12 for 64-bit games, M11 otherwise |
 | PE imports D3D11 | M11 |
 | 64-bit PE imports D3D10 | M10 |
@@ -95,7 +93,7 @@ M9 copies:
 
 M9 no longer accepts the legacy `dxvk_metal32`, `m9_gl`, or `m32_vk` aliases. D3D9 imports resolve to `[m9]`, and `[m9]` stays on the DXMT-family launch path instead of selecting DXVK/MoltenVK.
 
-Native macOS does not use Wine. Steam and MacOS Steam are separate paths.
+Mono/FNA does not use Wine. Wine Steam remains the background client for Windows Steam ownership/session state, while the selected MTSP route owns the game process.
 
 ## Bottles
 
@@ -106,7 +104,7 @@ Native macOS does not use Wine. Steam and MacOS Steam are separate paths.
 
 Steam game bottles do not replace Steam. They prepare the runtime state the game will use and keep Wine Steam alive as
 the background Steamworks client/session owner. Env-dependent pipeline launches run the game executable directly with
-Steam identity env; client-only **Steam** launches still route through Wine Steam.
+Steam identity env; client-only Steam handoff remains internal for diagnostics/bootstrap cases.
 
 ## Process Lifecycle
 

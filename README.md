@@ -11,11 +11,15 @@
 
 **Beta 6**
 
+| Public Routes | Runtime Status |
+|---|---|
+| `M12` / `M11` / `M10` / `M9` / `Mono/FNA` | DXMT auto-routing stays internal; Wine, macOS Steam, and fallback lanes are diagnostics/runtime machinery rather than user-facing route buttons. |
+
 </div>
 
 ---
 
-MetalSharp is an ARM64 app for Apple Silicon that bundles its own Wine runtime, DXMT Metal graphics support, Windows Steam setup, game detection, runtime bottles, logs, and launch diagnostics.
+MetalSharp is an ARM64 app for Apple Silicon that bundles its own Wine runtime, DXMT Metal graphics support, Windows Steam setup, game detection, runtime bottles, Mono/FNA/XNA support, logs, and launch diagnostics.
 
 ## Runtime
 
@@ -42,19 +46,17 @@ MetalSharp keeps state under `~/.metalsharp/`:
 
 ## Launching
 
-When Play is clicked, MetalSharp resolves a pipeline, syncs the bottle/runtime record, checks required components/assets, prepares DLLs/cache/env/logs, ensures Wine Steam is ready when needed, then launches through direct Wine/MTSP, Wine Steam, native macOS Steam, or native Mono/FNA.
+When Play is clicked, MetalSharp resolves the best route, syncs the bottle/runtime record, checks required components/assets, prepares DLLs/cache/env/logs, ensures Wine Steam is ready when needed, then launches the game through the selected MTSP path. The visible route selector is intentionally small; `dxmt` is the internal auto-router, not a manual button.
 
 | Mode | Purpose |
 |---|---|
-| **M9** | D3D9 / 32-bit capable DXMT-family route |
-| **M10** | D3D10 to Metal |
-| **M11** | D3D11 to Metal |
 | **M12** | D3D12 to Metal |
-| **M32** | 32-bit Wine fallback |
-| **Steam** | Windows Steam in Wine |
-| **MacOS Steam** | Native macOS Steam |
-| **Wine** | Plain Wine custom-app fallback |
-| **Native macOS** | Native Mono/FNA/XNA path |
+| **M11** | D3D11 to Metal |
+| **M10** | D3D10 to Metal |
+| **M9** | D3D9 / 32-bit capable DXMT-family route |
+| **Mono/FNA** | Windows XNA/FNA games through MetalSharp's native Mono runtime, FNA assemblies, XNA compatibility shims, FMOD/FAudio/FNA3D/native-library staging, and Steamworks shim support |
+
+Internal routes such as Wine Steam, macOS Steam, plain Wine, M32, and raw DXMT remain available to the backend for auto-routing, compatibility records, diagnostics, and legacy repair paths, but they are not exposed as normal bottle options.
 
 ## Sharp Library
 
@@ -64,7 +66,7 @@ Installer bottles classify the program, apply known launcher recipes where possi
 
 ## Diagnostics and Migration
 
-Use Logs and Runtime Doctor when something fails. Doctor checks common blockers like Wine Mono, Gecko, .NET, VC runtime, DirectX June 2010, WebView2, core fonts, runtime profile, app detection, launch state, and redistributable assets.
+Use Logs and Runtime Doctor when something fails. Doctor checks common blockers like Wine Mono, native .NET CLR files, Gecko, VC runtime, DirectX June 2010, WebView2, core fonts, Mono/FNA runtime assets, runtime profile, app detection, launch state, and redistributable assets.
 
 Upgrades preserve `setup.json`, Steam settings/cache, `prefix-steam`, `games`, `sharp-library`, `bottles`, and Steam game compatdata.
 
@@ -84,6 +86,7 @@ Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/release
 - [Runtime Bundles and Steam Routing](https://github.com/aaf2tbz/metalsharp/releases/tag/bundles)
 - [Launch Architecture](docs/launch-architecture.md)
 - [Wine Architecture](docs/wine-architecture.md)
+- [Game Compatibility](docs/game-compat.md)
 - [Supported Games](docs/GAMES-SUPPORTED.md)
 - [Releases](https://github.com/aaf2tbz/metalsharp/releases)
 - [Discussions](https://github.com/aaf2tbz/metalsharp/discussions)
