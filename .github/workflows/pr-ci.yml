@@ -8,6 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  shell:
+    name: Shell CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: ShellCheck maintained scripts
+        run: tools/ci/shellcheck.sh
+
   metal:
     name: Metal CI
     runs-on: macos-14
@@ -105,9 +119,6 @@ jobs:
 
       - name: Prettier
         run: npx prettier --check 'src/main/**/*.{ts,js,json}' 'src/shared/**/*.{ts,js,json}'
-
-      - name: Shell check
-        run: bash -n updater/update.sh
 
   dmg:
     name: DMG Install Asset CI
