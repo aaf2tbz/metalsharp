@@ -147,7 +147,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check Apple signing credentials
+        id: apple-signing
+        run: tools/dmg/check-apple-signing-readiness.sh
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
       - name: Prepare Apple Developer ID signing
+        if: steps.apple-signing.outputs.ready == 'true'
         run: tools/dmg/prepare-apple-signing.sh
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -175,25 +189,42 @@ jobs:
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ steps.apple-signing.outputs.ready == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.apple-signing.outputs.ready == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.apple-signing.outputs.ready == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_API_KEY_ID: ${{ steps.apple-signing.outputs.ready == 'true' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ steps.apple-signing.outputs.ready == 'true' && secrets.APPLE_API_ISSUER || '' }}
 
       - name: Verify DMG runtime assets
         run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
 
       - name: Verify Apple notarization
+        if: steps.apple-signing.outputs.ready == 'true'
         run: |
           tools/dmg/verify-notarization.sh dist/electron/mac-arm64/MetalSharp.app
           tools/dmg/verify-notarization.sh dist/electron/MetalSharp-*-arm64.dmg
+
+      - name: Mark signed DMG
+        if: steps.apple-signing.outputs.ready == 'true'
+        run: |
+          printf '%s\n' \
+            "MetalSharp DMG was packaged with Apple Developer ID signing and notarization." \
+            > dist/electron/DMG-SIGNING.txt
+
+      - name: Mark unsigned DMG
+        if: steps.apple-signing.outputs.ready != 'true'
+        run: |
+          printf '%s\n' \
+            "MetalSharp DMG was packaged without Apple Developer ID signing because release secrets are not configured." \
+            "Configure MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD, and one notarization credential set to produce a notarized DMG." \
+            > dist/electron/DMG-SIGNING.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: MetalSharp-dmg
           path: |
             dist/electron/*.dmg
+            dist/electron/DMG-SIGNING.txt
             dist/bundles/metalsharp-bundle-manifest.tsv
 
   release:
@@ -215,8 +246,10 @@ jobs:
           find release -type f -print | sort
           mkdir -p release-flat
           find release -type f -name '*.dmg' -exec cp {} release-flat/ \;
+          find release -type f -name 'DMG-SIGNING.txt' -exec cp {} release-flat/ \;
           find release -type f -name 'metalsharp-bundle-manifest.tsv' -exec cp {} release-flat/ \;
           test "$(find release-flat -type f -name '*.dmg' | wc -l | tr -d ' ')" -ge 1
+          test -s release-flat/DMG-SIGNING.txt
           test -s release-flat/metalsharp-bundle-manifest.tsv
           find release-flat -type f -print | sort
 
@@ -225,5 +258,6 @@ jobs:
         with:
           files: |
             release-flat/*.dmg
+            release-flat/DMG-SIGNING.txt
             release-flat/metalsharp-bundle-manifest.tsv
           generate_release_notes: true

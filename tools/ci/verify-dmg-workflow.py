@@ -120,11 +120,22 @@ def check_workflows() -> None:
         "Publish developer SDK package",
         "Publish developer SDK bundle",
         "Build DMG",
+        "Check Apple signing credentials",
         "Verify Apple notarization",
+        "Mark unsigned DMG",
         "Create GitHub Release",
     ]:
         if required not in release:
             fail(f"release workflow missing publish step: {required}")
+    for required in [
+        "tools/dmg/check-apple-signing-readiness.sh",
+        "steps.apple-signing.outputs.ready == 'true'",
+        "DMG-SIGNING.txt",
+    ]:
+        if required not in release:
+            fail(f"release workflow missing signing fallback contract: {required}")
+    if "CSC_IDENTITY_AUTO_DISCOVERY=false" not in read("tools/dmg/check-apple-signing-readiness.sh"):
+        fail("unsigned DMG fallback must disable Electron Builder certificate discovery")
 
 
 def main() -> int:
