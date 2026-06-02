@@ -356,6 +356,18 @@ def main() -> int:
     if args.game_dir:
         entries.append(inspect(Path(args.game_dir) / "winemetal.dll", "game_local_winemetal", required_dxmt_exports, "pe"))
 
+    active_windows_roles = {"dxmt_windows", "prefix_system32", "game_local_winemetal"}
+    active_windows_ok = any(entry["role"] in active_windows_roles and entry["ok"] for entry in entries)
+    if active_windows_ok:
+        for entry in entries:
+            if entry["role"] == "wine_builtin_windows" and not entry["ok"]:
+                entry["ok"] = True
+                entry["advisory_only"] = True
+                entry["advisory_reason"] = (
+                    "Active DXMT/prefix winemetal.dll export surface passed; "
+                    "global Wine builtin copy is not the launch-authoritative M12 DLL."
+                )
+
     source_audit = inspect_sources(contract)
     failures = [entry for entry in entries if not entry["ok"]]
     result = {

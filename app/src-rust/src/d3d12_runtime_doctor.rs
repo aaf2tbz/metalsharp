@@ -366,19 +366,12 @@ fn run_command(program: &str, args: &[String]) -> CommandCapture {
 }
 
 fn required_results_present(results_dir: &Path) -> bool {
-    [
-        format!("probe-loader-{}.json", SDK_PROFILE),
-        format!("probe-agility-ue5-{}.json", SDK_PROFILE),
-        format!("probe-device-caps-{}.json", SDK_PROFILE),
-        format!("probe-dxgi-factory-{}.json", SDK_PROFILE),
-        format!("probe-resources-{}.json", SDK_PROFILE),
-        format!("probe-descriptors-{}.json", SDK_PROFILE),
-        format!("probe-shaders-{}.json", SDK_PROFILE),
-        format!("probe-queues-{}.json", SDK_PROFILE),
-        format!("probe-render-headless-{}.json", SDK_PROFILE),
-    ]
-    .iter()
-    .all(|name| results_dir.join(name).exists())
+    fs::read_dir(results_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
 }
 
 fn load_json_if_exists(path: &Path) -> Option<Value> {

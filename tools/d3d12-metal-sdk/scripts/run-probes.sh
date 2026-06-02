@@ -1121,6 +1121,10 @@ if [[ "$RUN_AGILITY" == "1" ]]; then
   echo "$AGILITY_RESULT_FILE"
 fi
 
+# Feature-policy probes can intentionally return nonzero while still emitting useful
+# JSON. Keep collecting the rest of the matrix and let compare-contract decide pass/fail.
+set +e
+
 if [[ "$RUN_CAPS" == "1" ]]; then
   (
     cd "$SDK_DIR/out/bin"
