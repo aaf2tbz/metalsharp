@@ -138,7 +138,7 @@ Struct-aware InsertValue:
 - `metalsharp-repo/app/src-rust/src/mtsp/launcher.rs` line 963 (shared prefix)
 - `metalsharp-repo/app/src-rust/src/steam.rs` line 15 (`steam_prefix()`)
 - `metalsharp-repo/app/src-rust/src/mtsp/bottles.rs` line 324 (`steam_launch_prefix()`)
-- `metalsharp-repo/docs/compatdata-architecture.md` line 23
+- `metalsharp-repo/docs/runtime/compatdata-architecture.md` line 23
 
 **Work:**
 - Create `~/.metalsharp/compatdata/<appid>/pfx/` per Steam game on first launch

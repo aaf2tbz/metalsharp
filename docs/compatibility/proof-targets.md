@@ -124,7 +124,7 @@ Finish the Minecraft CEF child-process path by either reaching the lower-level p
 
 Mono follow-up:
 
-- See `docs/mono-runtime-lanes.md`.
+- See `docs/runtime/mono-runtime-lanes.md`.
 - Keep Minecraft in the Wine-bottle lane for now because it is a Windows launcher/bootstrapper, not a native FNA game.
 - Use the old Terraria/Celeste native Mono lanes as selective fallback profiles for known FNA/XNA games, not as a global replacement for Wine Mono.
 

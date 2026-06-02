@@ -76,7 +76,7 @@ This proves the installer/launcher side of the roadmap is not speculative. The s
 - apps can be launched by saved commands
 - debug logs and launch options are attached to bottle execution
 
-MetalSharp should continue the Beta 6 bottle model and extend it toward Proton-like compatdata for games.
+MetalSharp should continue the Beta 7 bottle model and extend it toward Proton-like compatdata for games.
 
 ## Common Redistributables
 

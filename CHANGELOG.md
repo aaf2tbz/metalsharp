@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+Documentation and compatibility ledger cleanup.
+
+### Added
+
+- **Release cleanup bump** - bumped release metadata to `0.33.60` for the bottle persistence, updater migration, and routing cleanup tag.
+
+### Changed
+
+- **Supported games ledger** - moved Celeste (`steam_504230`) and Terraria (`steam_105600`) into the supported section after the Mono/FNA route hardening made both launch through the Windows builds.
+- **Docs organization** - grouped repository docs into `guides/`, `compatibility/`, `runtime/`, `architecture/`, `roadmaps/`, `research/`, and `release/` sections, with the docs index and README help links updated to match.
+- **README** - changed the public release label from Beta 6 to Beta 7 and removed the top public-routes/runtime-status table.
+- **Agent guidance** - updated routing notes so future work treats `M12`, `M11`, `M10`, `M9`, and `Mono/FNA` as the public route set, with Celeste/Terraria as supported Mono/FNA examples.
+- **Update copy** - shortened the migration progress text to `Installing update...` so the wizard describes the app update flow instead of implying daily bundle reinstalls.
+
+### Fixed
+
+- **License coverage** - added the root MIT license file and expanded third-party license notes for bundled/runtime dependencies.
+- **Bottle persistence** - saving a Steam bottle now keeps the selected public route as the persistent bottle preference and runs a best-effort runtime preflight so route DLL deployment happens immediately.
+- **Auto routing** - pinned stale-preference cleanup for Mirror's Edge, PEAK, DAVE THE DIVER, Minecraft Legends, Palworld, and Blasphemous so Auto resolves back to the researched M9/M12 route when old bottle state says M11.
+- **Updater migration handoff** - the updater now writes the post-update migration marker before relaunching MetalSharp so the migration wizard opens on the first updated launch.
+
 ## v0.33.27 - 2026-05-20
 
 WTMKT Phase 1 anti-cheat translation evidence.
@@ -154,7 +177,7 @@ Performance optimizations, GPTK D3DMetal integration for Steam DRM games, 7 game
 - **Subnautica BZ (appid 848450)** — added to `DxmtMetal` explicit map
 - **Schedule I (appid 3164500)** — moved from `DxmtMetal12` to `DxmtMetal` (D3D11 only, no D3D12 needed)
 - **High on Life (appid 1583230)** — mapped to `SteamD3DMetalPerf` with GPTK D3DMetal
-- **Games Supported doc** — `docs/GAMES-SUPPORTED.md` with full game compatibility, launch methods, recommended settings
+- **Games Supported doc** — `docs/compatibility/GAMES-SUPPORTED.md` with full game compatibility, launch methods, recommended settings
 - **Library merge** — wine-steam installed games merged into owned games list in `library()`, fixes games not appearing if Steam API doesn't report them
 
 ### Changed

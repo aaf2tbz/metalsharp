@@ -64,17 +64,15 @@ install.sh                       CLI build script (cmake + test runner)
 
 Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get `steam_<appid>` bottles that are launch-authoritative for runtime checks. Wine Steam remains the live background Steam client; env-dependent Steam routes launch the game executable directly with the bottle prefix, route env, and Steam identity variables instead of trying to make an already-running Steam process inherit new env.
 
-| Pipeline | Method | Example Games |
+| Public route | Method | Example games |
 |--------|--------|--------------|
-| `M9` | D3D9 / 32-bit capable DXMT-family route | Portal 2-class D3D9 titles, 32-bit installers |
+| `M9` | D3D9 / 32-bit capable DXMT-family route | Nidhogg 2, Undertale, Blasphemous, Dave the Diver |
 | `M10` | D3D10 to Metal | D3D10 apps/games |
 | `M11` | D3D11 to Metal | Rain World, Schedule I, Subnautica BZ |
-| `M12` | D3D12 to Metal | RE4-class D3D12 titles |
-| `M32` | 32-bit Wine fallback | legacy 32-bit apps |
-| `Steam` | Wine Steam client route with bottle preflight | Steam client-only launches |
-| `MacOS Steam` | Native macOS Steam handoff | user-confirmed native Steam flow |
-| `Wine` | Plain Wine custom-app fallback | Sharp Library apps |
-| `Native macOS` | Native Mono/FNA/XNA path | Terraria/FNA-class apps |
+| `M12` | D3D12 to Metal | Peak, Silksong, D3D12 investigation titles |
+| `Mono/FNA` | Windows XNA/FNA through native Mono, staged FNA/XNA assemblies, and host shims | Celeste, Terraria |
+
+Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, and `m13` stay backend-parseable for legacy records, diagnostics, and fallback behavior, but they are not normal bottle route buttons.
 
 ### Key Paths at Runtime
 
@@ -176,13 +174,14 @@ Current CI is split between PR smoke coverage and tag/main release packaging:
 
 ## Version Bumping
 
-Four files must be updated together for a version bump:
+Five files must be updated together for a version bump:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
 | `app/src-rust/Cargo.toml` | `version = "X.Y.Z"` |
+| `app/src-rust/Cargo.lock` | `metalsharp-backend` package `version = "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
 
 The Rust backend reads its version from `CARGO_PKG_VERSION` (set by Cargo.toml). The CI release workflow (`ci.yml`) reads the version from the git tag — if the tag version differs from `package.json`, it rewrites `package.json` before building.
@@ -190,7 +189,7 @@ The Rust backend reads its version from `CARGO_PKG_VERSION` (set by Cargo.toml).
 ### Tag and release process
 
 ```bash
-# 1. Update all three version files to the new version
+# 1. Update all synchronized version files to the new version
 # 2. Commit and push to main
 # 3. Create and push the tag
 git tag v<X.Y.Z>
@@ -241,9 +240,8 @@ npx biome check src/           # lint (CI enforces)
 - **Don't edit the Wine plist before running `daemon start`** — let signet create it first, then patch HOME and kickstart
 - **DXVK i386 DLLs are at `lib/dxvk/i386-windows/`**, NOT `lib/wine/i386-windows/` — the latter is for Wine builtins
 - **Shader cache is per-appid** (`~/.metalsharp/shader-cache/<engine>/<appid>/`), not per-exename
-- **Celeste (504230) is SteamD3DMetalPerf**, not FnaX86 — it uses Steam DRM + GPTK D3DMetal
-- **Portal 2 (620) and Goat Simulator (265930) are DxvkMetal32**, not SteamD3DMetalPerf
-- **SteamD3DMetalPerf requires GPTK installed** at `/Applications/Game Porting Toolkit.app/` — it sets WINEDLLPATH to GPTK's d3d11.dll
+- **Celeste (504230) and Terraria (105600) are Mono/FNA** — they use the native Mono/XNA/FNA lane with Steamworks/audio/native-library shims.
+- **Goat Simulator (265930) is currently an M9/D3D9 investigation target** — it still needs native .NET 4.0 CLR work before it can be promoted.
 - **CMakeLists.txt version must match Cargo.toml and package.json** — all three are independently read
 - **app/package-lock.json version must match package.json** — npm package metadata and release automation both see it
 - **Steam game bottles are launch-authoritative, but Steam stays alive as the client** — bottles preflight and bind runtime assets; env-dependent routes spawn the game process with `SteamAppId`/`SteamGameId` while Wine Steam remains connected

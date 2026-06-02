@@ -208,7 +208,7 @@ rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
 write_status "installed" 80 "New version installed"
 
 mkdir -p "$MS_DIR"
-rm -f "$MS_DIR/.post-update-migration" 2>/dev/null || true
+printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
 write_status "unmounting" 82 "Unmounting update disk..."
 hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
@@ -241,7 +241,7 @@ if [ "$BACKEND_VERSION" != "$TARGET_VERSION" ] && [ -n "$BACKEND_VERSION" ]; the
 fi
 
 if [ "$BACKEND_VERSION" = "$TARGET_VERSION" ]; then
-    write_status "complete" 100 "Successfully updated to v${TARGET_VERSION}!"
+    write_status "complete" 100 "Update installed. Opening migration wizard..."
 else
     write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION}" "backend_version_mismatch"
 fi

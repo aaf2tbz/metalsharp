@@ -56,6 +56,8 @@ Internal routes still exist for diagnostics and compatibility records:
 | Dave the Diver | `steam_1868140` | Auto-routed to M11, but the game is 32-bit. Saved to M9 and ran beautifully after deploying D3D9, vcrun2019, and DirectX June 2010. | **M9** |
 | Peak | `steam_3527290` | DX12 game. With M12 applied to the bottle, it launched and played perfectly on medium settings. Should auto-route to M12 instead of M11. | **M12**, Medium settings |
 | Dark Deception | `steam_332950` | Routed to M12 and hit Agility SDK not found. Saved config to M11 launched with no input. A one-time internal Steam handoff installed needed runtime assets, then the saved route launched and worked normally. | **M11** after runtime bootstrap |
+| Celeste | `steam_504230` | Windows build now launches through the Mono/FNA route with x86_64 Mono, staged FNA/XNA assets, FMOD/native shims, and Steamworks compatibility shim support. | **Mono/FNA** |
+| Terraria | `steam_105600` | Windows build now launches through the Mono/FNA route with Terraria-specific launcher/patcher support, x86_64 Mono handling, XNA/FNA assembly staging, and audio/runtime shims. | **Mono/FNA** |
 
 ## Recent Runtime Hardening
 
@@ -63,7 +65,7 @@ Internal routes still exist for diagnostics and compatibility records:
 |---|---|
 | Public route selector | Only **M12**, **M11**, **M10**, **M9**, and **Mono/FNA** are shown. DXMT auto-routing, Wine, macOS Steam, M32, and M13/GPTK stay internal. |
 | Mono/FNA/XNA | First-class route with ARM64 and x86_64 Mono lanes under the hood. The launcher stages FNA/XNA assemblies, native libraries, FMOD/FAudio/FNA3D shims, `steam_appid.txt`, and Steamworks compatibility shims. |
-| Celeste/Terraria path | Hardened for future FNA/XNA targets, but not marked working from this pass. Celeste still hit Steamworks initialization failure during testing. Terraria was downloaded for testing but not promoted to working evidence. |
+| Celeste/Terraria path | Promoted to supported through **Mono/FNA** after the runtime lane was hardened with x86_64 Mono handling, FNA/XNA asset staging, Steamworks offline shims, FMOD/FAudio/FNA3D/native library staging, and correct FNA launch log recording. |
 | Goat Simulator | Defined as an M9/D3D9 UE3 title requiring native .NET 4.0 CLR, VC++ 2010, and DirectX June 2010. Current blocker is native `.NET 4.0` install failure in Wine: registry repair clears false install markers, but `clr.dll` still does not land. |
 | DREDGE | Reclassified away from FNA/XNA. It is a 32-bit Unity title with embedded MonoBleedingEdge and currently crashes in embedded Mono before reaching graphics routing. |
 
@@ -87,8 +89,6 @@ Internal routes still exist for diagnostics and compatibility records:
 |---|---:|---|---|
 | Necesse | Not recorded | Does not load with M11 bottle config or any tested config. | Supposedly supports DX11/OpenGL. |
 | Dredge | Not recorded | Does not launch with any tested pipeline. Current evidence points to a 32-bit Unity embedded-Mono crash, not the Mono/FNA/XNA route. | Embedded Unity Mono investigation |
-| Celeste | `steam_504230` | Windows install is routed through Mono/FNA x86_64 with FNA/XNA/shim staging. Launch still fails around Steamworks initialization / native Mono behavior. | **Mono/FNA**, not working yet |
-| Terraria | `steam_105600` | Mono/FNA route has Terraria-specific runtime staging and x86_64 Mono handling, but current pass did not produce a new working proof. | **Mono/FNA**, needs fresh launch proof |
 | Goat Simulator | `steam_265930` | M9 route launches then dies before graphics with native Mono/CLR crash. Runtime doctor correctly reports missing `dotnet40`; .NET 4.0 redist extracts but no native `clr.dll` lands. | **M9**, blocked on native .NET 4.0 |
 | Elden Ring | Not recorded | Launches with M11, but anti-cheat blocks the path. Offline play is not solved yet. | Anti-cheat/offline route needed. |
 | No Man's Sky | Not recorded | Not a Direct3D-first game; primarily Vulkan. | Needs a future Vulkan backend, not a current public route |

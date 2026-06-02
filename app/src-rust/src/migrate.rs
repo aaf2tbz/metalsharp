@@ -245,7 +245,7 @@ fn run_migration() {
     remove_old_runtime(&ms_dir);
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Installing updated split runtime bundles...", None);
+    write_migrate_progress("running", step, total_steps, "Installing update...", None);
     let install_ok = match crate::installer::start_install_all() {
         Ok(v) if v.get("ok").and_then(|ok| ok.as_bool()).unwrap_or(false) => match wait_for_install_complete() {
             Ok(()) => true,
@@ -285,7 +285,7 @@ fn run_migration() {
         update_migration_metadata(&ms_dir);
         let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
-        write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated in place!", None);
+        write_migrate_progress("complete", total_steps, total_steps, "Update installed.", None);
     } else {
         write_migrate_progress(
             "error",

@@ -9,11 +9,7 @@
 <a href="https://github.com/aaf2tbz/metalsharp/discussions"><img src="https://img.shields.io/github/discussions/aaf2tbz/metalsharp?style=for-the-badge" alt="Discussions"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT"></a>
 
-**Beta 6**
-
-| Public Routes | Runtime Status |
-|---|---|
-| `M12` / `M11` / `M10` / `M9` / `Mono/FNA` | DXMT auto-routing stays internal; Wine, macOS Steam, and fallback lanes are diagnostics/runtime machinery rather than user-facing route buttons. |
+**Beta 7**
 
 </div>
 
@@ -81,17 +77,18 @@ Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/release
 
 ## Help
 
-- [How to Use MetalSharp](docs/how-to-use-metalsharp.md)
+- [How to Use MetalSharp](docs/guides/how-to-use-metalsharp.md)
 - [Docs Map](docs/README.md)
-- [Runtime Bundles and Steam Routing](https://github.com/aaf2tbz/metalsharp/releases/tag/bundles)
-- [Launch Architecture](docs/launch-architecture.md)
-- [Wine Architecture](docs/wine-architecture.md)
-- [Game Compatibility](docs/game-compat.md)
-- [Supported Games](docs/GAMES-SUPPORTED.md)
+- [Runtime Bundles and Steam Routing](docs/runtime/runtime-bundles-and-steam-routing.md)
+- [Launch Architecture](docs/architecture/launch-architecture.md)
+- [Wine Architecture](docs/runtime/wine-architecture.md)
+- [Game Compatibility](docs/compatibility/game-compat.md)
+- [Supported Games](docs/compatibility/GAMES-SUPPORTED.md)
+- [Third-Party Licenses](THIRD_PARTY_LICENSES)
 - [Releases](https://github.com/aaf2tbz/metalsharp/releases)
 - [Discussions](https://github.com/aaf2tbz/metalsharp/discussions)
 - [Issues](https://github.com/aaf2tbz/metalsharp/issues)
 
 ## License
 
-MIT
+MetalSharp is MIT licensed. Third-party runtime and source components keep their original licenses; see [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

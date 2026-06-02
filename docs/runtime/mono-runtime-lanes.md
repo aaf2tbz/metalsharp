@@ -23,7 +23,7 @@ MetalSharp now treats Mono/FNA as a first-class public route, not a global depen
 
 ## Current Mono/FNA Route Contract
 
-The route stages FNA/XNA assemblies, native FNA3D/FAudio/SDL/Steam libraries when available, FMOD/FMOD Studio stubs, `steam_appid.txt`, and Steamworks compatibility shims. Celeste-style games select x86_64 Mono under Rosetta; Terraria-style games can use the Terraria runtime patch/stub path. A route being available does not mean a game is marked working: Celeste and Terraria still need fresh launch proof before moving into the supported bucket.
+The route stages FNA/XNA assemblies, native FNA3D/FAudio/SDL/Steam libraries when available, FMOD/FMOD Studio stubs, `steam_appid.txt`, and Steamworks compatibility shims. Celeste-style games select x86_64 Mono under Rosetta; Terraria-style games can use the Terraria runtime patch/stub path. Celeste and Terraria are now supported through this lane; future Mono/FNA titles should still be promoted only after per-game launch proof.
 
 ## Phase 11 Minecraft Finding
 
