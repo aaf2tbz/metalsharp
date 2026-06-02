@@ -143,7 +143,7 @@ pub fn launch_with_pipeline(
         },
         PipelineId::M13 => launch_dxmt_metal(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
-        PipelineId::FnaArm64 => launch_fna_arm64(appid),
+        PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
         PipelineId::MacSteam => launch_macos_steam(appid),
         PipelineId::WineBare => launch_wine_bare(appid, node),
@@ -160,18 +160,18 @@ pub fn launch_steam_bottle_with_pipeline(
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
-    let result = match pipeline_id {
+    match pipeline_id {
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+                .map(|(pid, method)| (pid, method, log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
             launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+                .map(|(pid, method)| (pid, method, log_path))
         },
         PipelineId::FnaArm64 => launch_fna_arm64(appid),
         PipelineId::Steam | PipelineId::MacSteam => Err("Steam bottle launch only supports MTSP game pipelines".into()),
-    }?;
-
-    Ok((result.0, result.1, log_path))
+    }
 }
 
 pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -994,7 +994,7 @@ fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::er
     Ok((pid, "macos_steam"))
 }
 
-fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
     let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = resolve_fna_game_dir(appid)?;
     let home = dirs::home_dir().ok_or("no home dir")?;
@@ -1085,7 +1085,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         105600 | 504230 => "xna_fna_x86",
         _ => "xna_fna_arm64",
     };
-    Ok((child.id(), method))
+    Ok((child.id(), method, log_path))
 }
 
 fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
