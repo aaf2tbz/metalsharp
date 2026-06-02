@@ -232,6 +232,7 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
 
     match component_id {
         "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
+        "vcrun2010" => ["msvcr100.dll", "msvcp100.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
         "directx_jun2010" => {
             ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
@@ -492,13 +493,18 @@ mod tests {
     }
 
     #[test]
-    fn game_recipes_without_dependencies_get_empty_vecs() {
+    fn game_recipes_parse_goat_simulator_m9_runtime() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let goat = recipes.get(&265930).expect("goat simulator recipe");
         assert_eq!(goat.pipeline, PipelineId::M9);
-        assert!(goat.components.is_empty());
+        assert!(goat.components.contains(&"dotnet48".to_string()));
+        assert!(goat.components.contains(&"vcrun2010".to_string()));
+        assert!(goat.components.contains(&"directx_jun2010".to_string()));
         assert!(goat.env.is_empty());
-        assert!(goat.check_dlls.is_empty());
+        assert!(goat.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"mscoree.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"msvcr100.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"msvcp100.dll".to_string()));
     }
 
     #[test]
@@ -512,6 +518,11 @@ mod tests {
         std::fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write vcrun dll");
         std::fs::write(system32.join("msvcp140.dll"), b"dll").expect("write vcrun dll");
         assert!(recipe_component_satisfied("vcrun2019", &root));
+
+        std::fs::write(system32.join("msvcr100.dll"), b"dll").expect("write partial vcrun2010");
+        assert!(!recipe_component_satisfied("vcrun2010", &root));
+        std::fs::write(system32.join("msvcp100.dll"), b"dll").expect("write vcrun2010 dll");
+        assert!(recipe_component_satisfied("vcrun2010", &root));
 
         std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
         assert!(!recipe_component_satisfied("directx_jun2010", &root));

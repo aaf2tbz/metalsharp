@@ -541,6 +541,14 @@ fn launch_dxmt_metal_with_context(
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let default_log_path;
+    let log_path = match log_path {
+        Some(path) => Some(path),
+        None => {
+            default_log_path = mtsp_launch_log_path(appid);
+            Some(default_log_path.as_path())
+        },
+    };
 
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -1106,6 +1114,11 @@ fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::E
 fn fna_launch_log_path(appid: u32) -> PathBuf {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     crate::bottles::steam_compatdata_dir(appid).join("logs").join(format!("fna-launch-{}.log", ts))
+}
+
+fn mtsp_launch_log_path(appid: u32) -> PathBuf {
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    crate::bottles::steam_compatdata_dir(appid).join("logs").join(format!("mtsp-launch-{}.log", ts))
 }
 
 fn tail_text(path: &Path, max_bytes: usize) -> String {
