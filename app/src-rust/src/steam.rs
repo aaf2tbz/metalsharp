@@ -440,7 +440,7 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
 
     let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
-    let bottle = crate::bottles::ensure_steam_game_bottle(appid, &name, None, pipeline).ok();
+    let bottle = crate::bottles::refresh_steam_game_bottle(appid, &name, None, pipeline).ok();
 
     Ok(json!({"ok": true, "appid": appid, "method": "steam_ui", "bottle_id": bottle.map(|b| b.id)}))
 }
@@ -951,10 +951,12 @@ pub fn library() -> Value {
             let dual = crate::scan::resolve_dual_game_dir(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
             let bottle = if is_installed {
-                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+                crate::bottles::refresh_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
             } else {
                 None
             };
+            let effective_pipeline = crate::bottles::resolve_steam_pipeline_for_request(*appid, None);
+            let effective_node = crate::mtsp::engine::get_pipeline(effective_pipeline);
             let recommended = pipeline_id.user_selectable_id().unwrap_or("auto");
             let node = crate::mtsp::engine::get_pipeline(pipeline_id);
             let available_pipelines: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
@@ -977,7 +979,9 @@ pub fn library() -> Value {
                 "installed": is_installed,
                 "state": if is_installed { "installed" } else { "not_installed" },
                 "can_uninstall": can_uninstall,
-                "launch_method": recommended,
+                "launch_method": effective_pipeline.user_selectable_id().unwrap_or(recommended),
+                "launch_method_name": effective_pipeline.user_selectable_name().unwrap_or(effective_node.name),
+                "preferred_pipeline": bottle.as_ref().and_then(|b| b.preferred_pipeline.clone()),
                 "available_pipelines": available_pipelines,
                 "has_native_build": dual.has_native_build,
                 "native_app_path": dual.macos_app.map(|p| p.to_string_lossy().to_string()),

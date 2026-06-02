@@ -13,6 +13,8 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  launch_method_name?: string;
+  preferred_pipeline?: string | null;
   available_pipelines?: { id: string; name: string; recommended?: boolean }[];
   has_native_build?: boolean;
   can_uninstall?: boolean;
