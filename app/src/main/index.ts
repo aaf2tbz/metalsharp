@@ -110,10 +110,6 @@ function clearPostUpdateMigrationMarker() {
 
 async function checkNeedsMigration(): Promise<boolean> {
   const marker = hasPostUpdateMigrationMarker();
-  if (marker.needed) {
-    return true;
-  }
-
   return new Promise((resolve) => {
     const req = http.get("http://127.0.0.1:9274/update/migrate/check", (res) => {
       const chunks: Buffer[] = [];
@@ -121,16 +117,18 @@ async function checkNeedsMigration(): Promise<boolean> {
       res.on("end", () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
-          resolve(data.ok && data.needed === true);
+          const needed = data.ok && data.needed === true;
+          if (marker.needed && !needed) clearPostUpdateMigrationMarker();
+          resolve(needed);
         } catch {
-          resolve(false);
+          resolve(marker.needed);
         }
       });
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve(marker.needed));
     req.setTimeout(3000, () => {
       req.destroy();
-      resolve(false);
+      resolve(marker.needed);
     });
   });
 }

@@ -59,14 +59,47 @@ DMG_PATH="${DMG_PATH:?--dmg required}"
 BACKEND_PID="${BACKEND_PID:?--backend-pid required}"
 TARGET_VERSION="${TARGET_VERSION:?--target-version required}"
 APP_PATH="/Applications/MetalSharp.app"
+TMP_APP_PATH="/Applications/.MetalSharp.app.update.$$"
+BACKUP_APP_PATH="/Applications/.MetalSharp.app.previous.$$"
 MOUNT_POINT=""
 
 cleanup() {
     if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
     fi
+    rm -rf "$TMP_APP_PATH" 2>/dev/null || true
+    if [ -d "$BACKUP_APP_PATH" ] && [ -d "$APP_PATH" ]; then
+        rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
+
+run_privileged() {
+    local command="$1"
+    osascript -e "do shell script \"${command//\"/\\\"}\" with administrator privileges" 2>/dev/null
+}
+
+verify_app_bundle() {
+    local app_path="$1"
+    for required in \
+        "$app_path/Contents/Info.plist" \
+        "$app_path/Contents/MacOS/MetalSharp" \
+        "$app_path/Contents/Resources/runtime/metalsharp-backend" \
+        "$app_path/Contents/Resources/scripts/tools/updater/update.sh"
+    do
+        if [ ! -s "$required" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+restore_backup() {
+    if [ -d "$BACKUP_APP_PATH" ] && [ ! -d "$APP_PATH" ]; then
+        mv "$BACKUP_APP_PATH" "$APP_PATH" 2>/dev/null || \
+            run_privileged "mv '$BACKUP_APP_PATH' '$APP_PATH'" || true
+    fi
+}
 
 write_status "starting" 0 "Starting update..."
 
@@ -130,34 +163,52 @@ if [ -z "$APP_SOURCE" ]; then
     write_status "error" 50 "MetalSharp.app not found in update" "app_not_found"
     exit 1
 fi
-
-write_status "installing" 50 "Removing old version..."
-if [ -d "$APP_PATH" ]; then
-    rm -rf "$APP_PATH" 2>/dev/null || {
-        osascript -e "do shell script \"rm -rf \\\"$APP_PATH\\\"\" with administrator privileges" 2>/dev/null || true
-        sleep 1
-    }
-    [ -d "$APP_PATH" ] && {
-        write_status "error" 55 "Failed to remove old app" "remove_failed"
-        exit 1
-    }
-fi
-
-write_status "installing" 60 "Installing new version..."
-cp -R "$APP_SOURCE" "$APP_PATH" 2>/dev/null || {
-    osascript -e "do shell script \"cp -R \\\"$APP_SOURCE\\\" \\\"$APP_PATH\\\"\" with administrator privileges" 2>/dev/null || true
-    sleep 2
-}
-
-if [ ! -d "$APP_PATH" ]; then
-    write_status "error" 65 "Failed to install new version" "copy_failed"
+if ! verify_app_bundle "$APP_SOURCE"; then
+    write_status "error" 50 "Update app bundle is missing required MetalSharp files" "app_bundle_invalid"
     exit 1
 fi
 
+write_status "installing" 50 "Staging new version..."
+rm -rf "$TMP_APP_PATH" "$BACKUP_APP_PATH" 2>/dev/null || true
+ditto "$APP_SOURCE" "$TMP_APP_PATH" 2>/dev/null || {
+    run_privileged "ditto '$APP_SOURCE' '$TMP_APP_PATH'" || true
+    sleep 1
+}
+
+if ! verify_app_bundle "$TMP_APP_PATH"; then
+    write_status "error" 60 "Failed to stage a valid update app bundle" "stage_failed"
+    exit 1
+fi
+
+write_status "installing" 65 "Installing new version..."
+if [ -d "$APP_PATH" ]; then
+    mv "$APP_PATH" "$BACKUP_APP_PATH" 2>/dev/null || {
+        run_privileged "mv '$APP_PATH' '$BACKUP_APP_PATH'" || true
+        sleep 1
+    }
+    if [ -d "$APP_PATH" ]; then
+        write_status "error" 68 "Failed to move the old app out of the way" "remove_failed"
+        exit 1
+    fi
+fi
+
+mv "$TMP_APP_PATH" "$APP_PATH" 2>/dev/null || {
+    run_privileged "mv '$TMP_APP_PATH' '$APP_PATH'" || true
+    sleep 1
+}
+
+if [ -d "$TMP_APP_PATH" ] || ! verify_app_bundle "$APP_PATH"; then
+    rm -rf "$APP_PATH" 2>/dev/null || true
+    restore_backup
+    write_status "error" 70 "Failed to install a valid new version" "copy_failed"
+    exit 1
+fi
+
+rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
 write_status "installed" 80 "New version installed"
 
 mkdir -p "$MS_DIR"
-printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
+rm -f "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
 write_status "unmounting" 82 "Unmounting update disk..."
 hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
@@ -192,5 +243,5 @@ fi
 if [ "$BACKEND_VERSION" = "$TARGET_VERSION" ]; then
     write_status "complete" 100 "Successfully updated to v${TARGET_VERSION}!"
 else
-    write_status "complete" 100 "Update installed. Backend: v${BACKEND_VERSION:-?} (expected v${TARGET_VERSION})"
+    write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION}" "backend_version_mismatch"
 fi

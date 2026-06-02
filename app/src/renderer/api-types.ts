@@ -38,6 +38,7 @@ interface UpdateStatus {
   current_version: string;
   latest_version: string;
   download_url: string;
+  download_size: number;
   release_notes: string;
   release_name: string;
   error?: string;

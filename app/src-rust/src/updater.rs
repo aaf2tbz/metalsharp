@@ -96,6 +96,7 @@ pub fn check_for_update() -> serde_json::Value {
     let available = semver_gt(&latest, &current);
 
     let download_url = find_dmg_asset(&release.assets).map(|a| a.browser_download_url.clone()).unwrap_or_default();
+    let download_size = find_dmg_asset(&release.assets).map(|a| a.size).unwrap_or(0);
 
     let release_notes = release.body.unwrap_or_default();
     let release_name = release.name.unwrap_or_else(|| release.tag_name.clone());
@@ -111,6 +112,7 @@ pub fn check_for_update() -> serde_json::Value {
         "latest_version": latest,
         "available": available,
         "download_url": download_url,
+        "download_size": download_size,
         "release_notes": release_notes,
         "release_name": release_name,
     })
@@ -184,6 +186,7 @@ fn run_download() {
     };
 
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+    let expected_size = update_info.get("download_size").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let home = match dirs::home_dir() {
         Some(h) => h,
@@ -197,18 +200,39 @@ fn run_download() {
     let _ = fs::create_dir_all(&cache_dir);
     let dmg_path = cache_dir.join(format!("MetalSharp-{}.dmg", latest_version));
 
-    if !dmg_path.exists() {
+    if cached_dmg_ready(&dmg_path, expected_size) {
+        app_log(&format!("Using cached DMG: {}", dmg_path.display()));
+    } else {
+        let _ = fs::remove_file(&dmg_path);
         write_update_progress("downloading", 10, &format!("Downloading v{}...", latest_version), None);
         if let Err(e) = download_with_progress(&download_url, &dmg_path) {
             write_update_progress("error", 0, &format!("Download failed: {}", e), Some(&e.to_string()));
             let _ = fs::remove_file(&dmg_path);
             return;
         }
-    } else {
-        app_log(&format!("Using cached DMG: {}", dmg_path.display()));
+        if !cached_dmg_ready(&dmg_path, expected_size) {
+            write_update_progress(
+                "error",
+                0,
+                "Downloaded DMG size did not match the latest release asset",
+                Some("dmg_size_mismatch"),
+            );
+            let _ = fs::remove_file(&dmg_path);
+            return;
+        }
     }
 
     write_update_progress("downloaded", 80, &format!("Download complete — ready to install v{}", latest_version), None);
+}
+
+fn cached_dmg_ready(path: &PathBuf, expected_size: u64) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() || meta.len() == 0 {
+        return false;
+    }
+    expected_size == 0 || meta.len() == expected_size
 }
 
 fn download_with_progress(url: &str, dest: &PathBuf) -> Result<(), String> {
@@ -300,7 +324,9 @@ pub fn get_downloaded_dmg_path() -> Option<String> {
         .join("updates")
         .join(format!("MetalSharp-{}.dmg", latest_version));
 
-    if dmg_path.exists() {
+    let expected_size = update_info.get("download_size").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    if cached_dmg_ready(&dmg_path, expected_size) {
         Some(dmg_path.to_string_lossy().to_string())
     } else {
         None
@@ -354,5 +380,31 @@ mod tests {
     #[test]
     fn unix_days_to_ymd_handles_current_dates_without_underflow() {
         assert_eq!(unix_days_to_ymd(20_592), (2026, 5, 19));
+    }
+
+    #[test]
+    fn cached_dmg_requires_nonempty_expected_size_match() {
+        let home = test_home("cached-dmg-size");
+        fs::create_dir_all(&home).expect("create test dir");
+        let dmg = home.join("MetalSharp-0.1.0.dmg");
+
+        assert!(!cached_dmg_ready(&dmg, 4));
+
+        fs::write(&dmg, b"test").expect("write dmg");
+
+        assert!(cached_dmg_ready(&dmg, 0));
+        assert!(cached_dmg_ready(&dmg, 4));
+        assert!(!cached_dmg_ready(&dmg, 5));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn test_home(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "metalsharp-updater-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ))
     }
 }

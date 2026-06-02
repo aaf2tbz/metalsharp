@@ -80,11 +80,8 @@ pub fn needs_migration() -> serde_json::Value {
     let setup_completed = setup.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
     let repair_needed = runtime_needs_repair(&home, setup_completed);
 
-    let needed = match current_schema {
-        Some(schema) => schema < MIGRATE_SCHEMA_VERSION || repair_needed,
-        None if legacy_migrated_version.is_some() => repair_needed,
-        None => repair_needed,
-    };
+    let schema_current = current_schema.is_some_and(|schema| schema >= MIGRATE_SCHEMA_VERSION);
+    let needed = repair_needed;
 
     json!({
         "ok": true,
@@ -93,7 +90,13 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if repair_needed { "runtime_bundle_update_required" } else if needed { "runtime_schema_update_required" } else { "up_to_date" },
+        "reason": if repair_needed {
+            "runtime_bundle_update_required"
+        } else if schema_current {
+            "up_to_date"
+        } else {
+            "runtime_schema_already_satisfied"
+        },
     })
 }
 
@@ -217,6 +220,15 @@ fn run_migration() {
         return;
     }
 
+    if runtime_core_ready(&ms_dir) {
+        update_migration_metadata(&ms_dir);
+        let marker = ms_dir.join(".post-update-migration");
+        let _ = fs::remove_file(&marker);
+        write_migrate_progress("complete", 1, 1, "Runtime already ready; app update complete.", None);
+        log_to_file(&format!("Migration to v{} skipped; runtime already ready", MIGRATE_VERSION));
+        return;
+    }
+
     let total_steps = 5usize;
     let mut step = 0usize;
 
@@ -270,23 +282,7 @@ fn run_migration() {
     restore_user_data(&ms_dir, &preserved);
 
     if install_ok {
-        let setup_path = ms_dir.join("setup.json");
-        if setup_path.exists() {
-            if let Ok(contents) = fs::read_to_string(&setup_path) {
-                if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
-                    cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
-                    cfg.insert("runtime_migration_schema".into(), json!(MIGRATE_SCHEMA_VERSION));
-                    let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-                }
-            }
-        } else {
-            let cfg = json!({
-                "completed": true,
-                "last_migrated_version": MIGRATE_VERSION,
-                "runtime_migration_schema": MIGRATE_SCHEMA_VERSION,
-            });
-            let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-        }
+        update_migration_metadata(&ms_dir);
         let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated in place!", None);
@@ -301,6 +297,26 @@ fn run_migration() {
     }
 
     log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
+}
+
+fn update_migration_metadata(ms_dir: &Path) {
+    let setup_path = ms_dir.join("setup.json");
+    if setup_path.exists() {
+        if let Ok(contents) = fs::read_to_string(&setup_path) {
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
+                cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
+                cfg.insert("runtime_migration_schema".into(), json!(MIGRATE_SCHEMA_VERSION));
+                let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+            }
+        }
+    } else {
+        let cfg = json!({
+            "completed": true,
+            "last_migrated_version": MIGRATE_VERSION,
+            "runtime_migration_schema": MIGRATE_SCHEMA_VERSION,
+        });
+        let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    }
 }
 
 fn wait_for_install_complete() -> Result<(), String> {
