@@ -30,7 +30,7 @@ Click **Play** from the Library page. Use the launch mode dropdown when you want
 | Steam | Windows Steam in Wine |
 | MacOS Steam | Native macOS Steam |
 | Wine | Plain Wine fallback |
-| Native macOS | Native Mono/FNA/XNA path |
+| FNA/Mono/XNA | Windows XNA/FNA games through MetalSharp's Mono runtime |
 
 Use **Runtime Doctor** on a game card when a game needs VC runtime, DirectX, .NET, WebView2, fonts, or other launch assets.
 

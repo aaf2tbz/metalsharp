@@ -17,7 +17,7 @@ Games were tested from an external 1TB M.2 SSD, roughly 5000 MB/s read/write ove
 | **M10** | D3D10 to Metal via DXMT |
 | **M9** | D3D9 via DXMT launch family |
 | **M32** | 32-bit Wine fallback |
-| **Native macOS** | FNA/XNA/Mono ARM64 native runtime |
+| **FNA/Mono/XNA** | Windows XNA/FNA games through MetalSharp's Mono runtime |
 | **Steam** | Wine Steam, preflighted by Steam game bottles |
 | **MacOS Steam** | Native macOS Steam |
 | **Wine** | Plain Wine custom-library fallback |
