@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Validate the DMG build/publish contract without building a DMG."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def fail(message: str) -> None:
+    print(f"DMG workflow check failed: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read(path: str) -> str:
+    full = ROOT / path
+    if not full.exists():
+        fail(f"missing required file: {path}")
+    return full.read_text()
+
+
+def manifest_assets() -> list[str]:
+    assets: list[str] = []
+    for line in read("tools/bundles/asset-manifest.tsv").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 3:
+            fail(f"invalid manifest row: {line}")
+        asset, _root, platforms = fields[:3]
+        if "mac" in platforms.split(","):
+            assets.append(asset)
+    if not assets:
+        fail("bundle manifest has no mac assets")
+    return assets
+
+
+def check_package_resources(assets: list[str]) -> None:
+    package = json.loads(read("app/package.json"))
+    build = package.get("build", {})
+    resources = build.get("extraResources", [])
+    if not isinstance(resources, list):
+        fail("app/package.json build.extraResources must be a list")
+
+    pairs = {
+        (entry.get("from"), entry.get("to"))
+        for entry in resources
+        if isinstance(entry, dict)
+    }
+    required_pairs = {
+        ("src-rust/target/release/metalsharp-backend", "runtime/metalsharp-backend"),
+        ("native/host", "runtime/host"),
+        ("updater", "scripts/tools/updater"),
+    }
+    required_pairs.update((f"bundles/{asset}", f"bundles/{asset}") for asset in assets)
+
+    missing = sorted(required_pairs - pairs)
+    if missing:
+        fail(f"app/package.json missing extraResources entries: {missing}")
+
+    if build.get("afterSign") != "build/notarize.cjs":
+        fail("app/package.json must keep afterSign=build/notarize.cjs")
+
+
+def check_dmg_verifier(assets: list[str]) -> None:
+    verifier = read("tools/dmg/verify-dmg-runtime-assets.sh")
+    for needle in [
+        "Contents/Resources",
+        "runtime/metalsharp-backend",
+        "runtime/host",
+        "scripts/tools/updater/update.sh",
+        "tools/bundles/verify-bundles.sh",
+    ]:
+        if needle not in verifier:
+            fail(f"DMG verifier no longer checks {needle}")
+
+    for asset in assets:
+        if asset not in verifier:
+            fail(f"DMG verifier no longer checks bundle asset {asset}")
+
+
+def check_bundle_scripts() -> None:
+    create_bundles = read("tools/dmg/create-bundles.sh")
+    for needle in [
+        "tools/dmg/repair-runtime-bundle.py",
+        "tools/bundles/verify-bundles.sh",
+        "metalsharp-bundle-manifest.tsv",
+    ]:
+        if needle not in create_bundles:
+            fail(f"create-bundles.sh no longer performs {needle}")
+
+    stage_bundles = read("tools/dmg/stage-release-bundles.sh")
+    if "asset-manifest.tsv" not in stage_bundles or "tar --use-compress-program=unzstd" not in stage_bundles:
+        fail("stage-release-bundles.sh no longer stages bundle manifest archives")
+
+
+def check_workflows() -> None:
+    pr = read(".github/workflows/pr-ci.yml")
+    main = read(".github/workflows/ci.yml")
+    release = read(".github/workflows/release.yml")
+
+    if "DMG Workflow CI" not in pr:
+        fail("PR CI must keep a lightweight DMG Workflow CI job")
+    for forbidden in ["electron-builder --mac dmg", "Verify mounted DMG runtime assets"]:
+        if forbidden in pr:
+            fail(f"PR CI should not run the full DMG build path: {forbidden}")
+
+    for required in ["Shell CI", "Metal CI", "Vue CI", "Rust CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
+        if required not in main:
+            fail(f"main CI missing validation job: {required}")
+    for required in ["Verify Developer SDK Bundle", "Build DMG", "Verify DMG runtime assets"]:
+        if required not in main:
+            fail(f"main CI missing staging job: {required}")
+
+    for required in [
+        "Publish Developer SDK Bundle",
+        "Publish developer SDK package",
+        "Publish developer SDK bundle",
+        "Build DMG",
+        "Verify Apple notarization",
+        "Create GitHub Release",
+    ]:
+        if required not in release:
+            fail(f"release workflow missing publish step: {required}")
+
+
+def main() -> int:
+    assets = manifest_assets()
+    check_package_resources(assets)
+    check_dmg_verifier(assets)
+    check_bundle_scripts()
+    check_workflows()
+    print(f"DMG workflow contract verified ({len(assets)} mac bundle assets).")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

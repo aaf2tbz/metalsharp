@@ -4,6 +4,10 @@ on:
   push:
     tags: ['v*']
 
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   actions: read
