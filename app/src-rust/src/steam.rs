@@ -440,7 +440,7 @@ pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::E
 
     let name = get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let pipeline = crate::mtsp::rules::resolve_pipeline(appid);
-    let bottle = crate::bottles::ensure_steam_game_bottle(appid, &name, None, pipeline).ok();
+    let bottle = crate::bottles::refresh_steam_game_bottle(appid, &name, None, pipeline).ok();
 
     Ok(json!({"ok": true, "appid": appid, "method": "steam_ui", "bottle_id": bottle.map(|b| b.id)}))
 }
@@ -951,7 +951,7 @@ pub fn library() -> Value {
             let dual = crate::scan::resolve_dual_game_dir(*appid);
             let pipeline_id = crate::mtsp::rules::resolve_pipeline(*appid);
             let bottle = if is_installed {
-                crate::bottles::ensure_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
+                crate::bottles::refresh_steam_game_bottle(*appid, name, dual.wine_dir.as_deref(), pipeline_id).ok()
             } else {
                 None
             };

@@ -423,6 +423,18 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
     }
 }
 
+fn effective_pipeline_for_bottle_refresh(
+    existing: Option<&BottleManifest>,
+    requested: crate::mtsp::engine::PipelineId,
+    respect_preferred_pipeline: bool,
+) -> crate::mtsp::engine::PipelineId {
+    if respect_preferred_pipeline {
+        existing.and_then(manifest_preferred_pipeline).unwrap_or(requested)
+    } else {
+        requested
+    }
+}
+
 fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
     matches!(
         appid,
@@ -487,13 +499,13 @@ fn steam_compatdata_record(
         steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
-        launch_pipeline: pipeline.to_legacy_method().to_string(),
+        launch_pipeline: pipeline_preference_id(pipeline).to_string(),
         steam_identity_mode: "wine_steam_background".to_string(),
         compat_tool_name: "MetalSharp".to_string(),
         launch_command_template: format!(
             "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
             appid,
-            pipeline.to_legacy_method()
+            pipeline_preference_id(pipeline)
         ),
         log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
         runtime_assets: manifest.runtime_assets.clone(),
@@ -617,6 +629,15 @@ pub fn ensure_steam_game_bottle(
     ensure_steam_game_bottle_inner(appid, name, game_dir, pipeline, false)
 }
 
+pub fn refresh_steam_game_bottle(
+    appid: u32,
+    name: &str,
+    game_dir: Option<&Path>,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    ensure_steam_game_bottle_inner(appid, name, game_dir, pipeline, true)
+}
+
 fn ensure_steam_game_bottle_inner(
     appid: u32,
     name: &str,
@@ -627,11 +648,8 @@ fn ensure_steam_game_bottle_inner(
     let id = steam_game_bottle_id(appid);
     let now = timestamp_secs();
     let existing = load_bottle(&id).ok();
-    let effective_pipeline = if respect_preferred_pipeline {
-        existing.as_ref().and_then(manifest_preferred_pipeline).unwrap_or(pipeline)
-    } else {
-        pipeline
-    };
+    let effective_pipeline =
+        effective_pipeline_for_bottle_refresh(existing.as_ref(), pipeline, respect_preferred_pipeline);
     let runtime_profile = runtime_profile_for_pipeline(effective_pipeline);
     let mut manifest = existing.unwrap_or_else(|| BottleManifest {
         id: id.clone(),
@@ -884,8 +902,17 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
     manifest.runtime_profile = profile;
     manifest.arch = runtime_profile_definition(profile).arch;
     manifest.installed_components = rebuild_components_for_profile(&manifest.installed_components, profile);
+    if manifest.bottle_type == BottleType::Steam {
+        let pipeline = runtime_profile_definition(profile).launch_pipeline;
+        manifest.preferred_pipeline = pipeline.user_selectable_id().map(|id| id.to_string());
+    }
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    if let Some(appid) = manifest.steam_app_id {
+        let pipeline =
+            manifest_preferred_pipeline(&manifest).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+        let _ = save_steam_compatdata(&manifest, pipeline);
+    }
     Ok(manifest)
 }
 
@@ -4080,6 +4107,49 @@ mod tests {
     }
 
     #[test]
+    fn steam_profile_route_ids_are_precise_for_saved_compatdata() {
+        assert_eq!(pipeline_preference_id(crate::mtsp::engine::PipelineId::M11), "m11");
+        assert_eq!(pipeline_preference_id(crate::mtsp::engine::PipelineId::M12), "m12");
+    }
+
+    #[test]
+    fn passive_steam_refresh_respects_saved_pipeline_preference() {
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(620),
+            name: "Portal 2".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(620),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M12,
+            preferred_pipeline: Some("m12".into()),
+            installed_components: default_components_for(RuntimeProfile::M12),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, true),
+            crate::mtsp::engine::PipelineId::M12
+        );
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, false),
+            crate::mtsp::engine::PipelineId::M11
+        );
+    }
+
+    #[test]
     fn researched_appid_rules_override_stale_auto_preferences() {
         assert!(appid_rule_overrides_auto_preference(17410));
         assert!(appid_rule_overrides_auto_preference(49520));
@@ -4777,7 +4847,7 @@ mod tests {
         assert_eq!(record.appid, 620);
         assert_eq!(record.bottle_id, "steam_620");
         assert!(record.compatdata_path.ends_with("/compatdata/620"));
-        assert_eq!(record.launch_pipeline, "dxmt");
+        assert_eq!(record.launch_pipeline, "m9");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");
         assert!(record.launch_command_template.contains("/steam/launch-game"));
