@@ -29,7 +29,9 @@ const startUpdateDownload = inject<() => void>("startUpdateDownload")!;
 const steamApiKey = inject<Ref<string | null>>("steamApiKey")!;
 const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
-const library = inject<Ref<{ ok: boolean; total: number; installed_count: number; games: unknown[] } | null>>("library")!;
+const library =
+  inject<Ref<{ ok: boolean; total: number; installed_count: number; games: unknown[] } | null>>("library")!;
+const developerMode = inject<Ref<boolean>>("developerMode")!;
 
 const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
@@ -230,6 +232,11 @@ function cacheStatusText(cache: CacheSummary | null): string {
   if (cache.status === "empty") return "Empty";
   return `${formatBytes(cache.bytes)} · ${cache.files} files`;
 }
+
+function toggleDeveloperMode(enabled: boolean) {
+  developerMode.value = enabled;
+  localStorage.setItem("metalsharp-developer-mode", String(enabled));
+}
 </script>
 
 <template>
@@ -326,6 +333,22 @@ function cacheStatusText(cache: CacheSummary | null): string {
         </div>
         <div class="settings-value">
           <button class="btn btn-secondary btn-sm" @click="restartBackend">Restart Backend</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Developer Tools</div>
+          <div class="settings-desc">Show launch routing, doctor controls, and advanced card tools</div>
+        </div>
+        <div class="settings-value">
+          <label class="settings-toggle">
+            <input
+              type="checkbox"
+              :checked="developerMode"
+              @change="toggleDeveloperMode(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="toggle-switch"></span>
+          </label>
         </div>
       </div>
     </div>
@@ -514,5 +537,10 @@ function cacheStatusText(cache: CacheSummary | null): string {
   background: var(--accent);
   border-radius: 3px;
   transition: width 0.3s ease;
+}
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
 }
 </style>

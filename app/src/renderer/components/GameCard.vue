@@ -72,6 +72,7 @@ const props = defineProps<{
   running: boolean;
   launching: boolean;
   steamInstalled: boolean;
+  developerMode: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -189,10 +190,14 @@ async function runRuntimeDoctor() {
   runtimeOpen.value = true;
   runtimeLoading.value = true;
   runtimeReport.value = null;
-  const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>("POST", "/steam/runtime-doctor", {
-    appid: props.game.appid,
-    pipeline: selectedLaunchMode.value === "auto" ? props.game.launch_method ?? "dxmt" : selectedLaunchMode.value,
-  });
+  const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
+    "POST",
+    "/steam/runtime-doctor",
+    {
+      appid: props.game.appid,
+      pipeline: selectedLaunchMode.value === "auto" ? (props.game.launch_method ?? "dxmt") : selectedLaunchMode.value,
+    },
+  );
   runtimeLoading.value = false;
 
   if (result?.ok && result.report) {
@@ -202,16 +207,28 @@ async function runRuntimeDoctor() {
   }
 }
 
+async function openBottleWorkspace() {
+  if (runtimeOpen.value && runtimeReport.value) {
+    runtimeOpen.value = false;
+    return;
+  }
+  await runRuntimeDoctor();
+}
+
 async function repairRuntimeComponent(component: string) {
   if (!runtimeReport.value?.bottle_id) {
     toast.show("No Steam bottle is attached to this install yet", "error");
     return;
   }
   runtimeLoading.value = true;
-  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
-    id: runtimeReport.value.bottle_id,
-    component,
-  });
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>(
+    "POST",
+    "/bottles/repair-component",
+    {
+      id: runtimeReport.value.bottle_id,
+      component,
+    },
+  );
   runtimeLoading.value = false;
   if (result?.ok && result.repair) {
     toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
@@ -242,7 +259,15 @@ function formatBytes(bytes: number): string {
       />
       <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
       <button v-if="running" class="running-close-button" title="Close game" @click="emit('stop')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+        >
           <path d="M18 6 6 18" />
           <path d="m6 6 12 12" />
         </svg>
@@ -272,13 +297,32 @@ function formatBytes(bytes: number): string {
         </div>
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="primary-action-row">
+            <button class="icon-button bottle-button" title="Bottle" @click="openBottleWorkspace">
+              <svg
+                v-if="!runtimeLoading"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M10 2h4" />
+                <path d="M11 2v5l-4 5v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-8l-4-5V2" />
+                <path d="M8 15h8" />
+              </svg>
+              <span v-else class="spinner"></span>
+            </button>
             <button class="btn btn-play" @click="emit('play', selectedLaunchMode)">Play</button>
-            <select v-model="selectedLaunchMode" class="launch-mode-select" title="Launch mode">
+            <select v-if="developerMode" v-model="selectedLaunchMode" class="launch-mode-select" title="Launch mode">
               <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
                 {{ option.name }}
               </option>
             </select>
             <button
+              v-if="developerMode"
               class="icon-button doctor-button"
               :disabled="doctorLoading"
               title="Run Launch Doctor"
@@ -302,6 +346,7 @@ function formatBytes(bytes: number): string {
               <span v-else class="spinner"></span>
             </button>
             <button
+              v-if="developerMode"
               class="icon-button doctor-button"
               :disabled="runtimeLoading"
               title="Run Runtime Doctor"
@@ -318,14 +363,16 @@ function formatBytes(bytes: number): string {
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <path
+                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                />
                 <path d="M3.3 7 12 12l8.7-5" />
                 <path d="M12 22V12" />
               </svg>
               <span v-else class="spinner"></span>
             </button>
           </div>
-          <div class="secondary-action-grid">
+          <div v-if="developerMode" class="secondary-action-grid">
             <label class="tool-chip toggle-label" title="Goldberg Steam emulator">
               <input
                 type="checkbox"
@@ -346,7 +393,7 @@ function formatBytes(bytes: number): string {
             </label>
           </div>
           <button
-            v-if="game.can_uninstall !== false"
+            v-if="developerMode && game.can_uninstall !== false"
             class="danger-link danger-link-wide"
             title="Uninstall"
             @click="emit('uninstall')"
@@ -387,9 +434,17 @@ function formatBytes(bytes: number): string {
             <template v-else-if="runtimeReport">
               <div class="doctor-summary">
                 <span class="badge" :class="runtimeReport.actions.length ? 'badge-warn' : 'badge-ok'">
-                  {{ runtimeReport.actions.length ? "Repair" : "Ready" }}
+                  {{ runtimeReport.actions.length ? "Bottle Repair" : "Bottle Ready" }}
                 </span>
                 <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeReport.runtime_profile }}</span>
+              </div>
+              <div class="bottle-edit-row">
+                <span>Graphics Backend</span>
+                <select v-model="selectedLaunchMode" class="launch-mode-select" title="Bottle graphics backend">
+                  <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
+                    {{ option.name }}
+                  </option>
+                </select>
               </div>
               <div class="doctor-checks">
                 <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check">
@@ -404,7 +459,11 @@ function formatBytes(bytes: number): string {
               <div v-if="runtimeReport.actions.length" class="doctor-notes blocked">
                 <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
                   <span>{{ action.id }}: {{ action.detail }}</span>
-                  <button class="btn btn-secondary btn-sm" :disabled="runtimeLoading" @click="repairRuntimeComponent(action.id)">
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    :disabled="runtimeLoading"
+                    @click="repairRuntimeComponent(action.id)"
+                  >
                     Repair
                   </button>
                 </div>
@@ -577,7 +636,7 @@ function formatBytes(bytes: number): string {
   min-width: 0;
 }
 .primary-action-row .btn-play {
-  flex: 0 0 76px;
+  flex: 1 1 auto;
 }
 .wide-action {
   width: 100%;
@@ -644,6 +703,11 @@ function formatBytes(bytes: number): string {
 .icon-button .spinner {
   width: 14px;
   height: 14px;
+}
+.bottle-button {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-input));
 }
 .danger-link {
   min-height: 30px;
@@ -740,6 +804,14 @@ function formatBytes(bytes: number): string {
 }
 .runtime-action-row span {
   overflow-wrap: anywhere;
+}
+.bottle-edit-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 720px) {

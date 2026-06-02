@@ -45,6 +45,7 @@ const config = ref<AppConfig | null>(null);
 const updateStatus = ref<UpdateStatus | null>(null);
 const steamApiKey = ref<string | null>(null);
 const setupDeviceName = ref("");
+const developerMode = ref(localStorage.getItem("metalsharp-developer-mode") === "true");
 
 const updateDownloading = ref(false);
 const updateProgress = ref(0);
@@ -79,6 +80,7 @@ provide("updateMessage", updateMessage);
 provide("startUpdateDownload", startUpdateDownload);
 provide("steamApiKey", steamApiKey);
 provide("setupDeviceName", setupDeviceName);
+provide("developerMode", developerMode);
 provide("toast", toast);
 provide("loadLibrary", loadLibrary);
 provide("api", api);
