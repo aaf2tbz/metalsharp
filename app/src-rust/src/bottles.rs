@@ -401,7 +401,10 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
 }
 
 fn manifest_preferred_pipeline(manifest: &BottleManifest) -> Option<crate::mtsp::engine::PipelineId> {
-    manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
+    match manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible) {
+        Some(crate::mtsp::engine::PipelineId::Dxmt) | None => None,
+        Some(pipeline) => Some(pipeline),
+    }
 }
 
 fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str {
@@ -420,8 +423,19 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
     }
 }
 
+fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
+    matches!(appid, 17410 | 49520 | 1928870 | 774361 | 1868140 | 3527290)
+}
+
 pub fn preferred_pipeline_for_steam_app(appid: u32) -> Option<crate::mtsp::engine::PipelineId> {
-    load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline)
+    let preferred = load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline);
+    if appid_rule_overrides_auto_preference(appid)
+        && preferred.is_some_and(|pipeline| pipeline != crate::mtsp::rules::resolve_pipeline(appid))
+    {
+        None
+    } else {
+        preferred
+    }
 }
 
 pub fn resolve_steam_pipeline_for_request(
@@ -3876,6 +3890,43 @@ mod tests {
 
         assert_ne!(fresh, stable);
         assert!(fresh.starts_with(&format!("{}_fresh_", stable)));
+    }
+
+    #[test]
+    fn dxmt_preference_is_treated_as_auto_not_a_saved_override() {
+        let manifest = BottleManifest {
+            id: "steam_17410".into(),
+            name: "Mirror's Edge".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(17410),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            preferred_pipeline: Some("dxmt".into()),
+            installed_components: Vec::new(),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(manifest_preferred_pipeline(&manifest), None);
+    }
+
+    #[test]
+    fn researched_appid_rules_override_stale_auto_preferences() {
+        assert!(appid_rule_overrides_auto_preference(17410));
+        assert!(appid_rule_overrides_auto_preference(49520));
+        assert!(!appid_rule_overrides_auto_preference(2358720));
     }
 
     #[test]

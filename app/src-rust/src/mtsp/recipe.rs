@@ -658,6 +658,8 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
+        1196590 => &["re8.exe"],
+        2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         _ => &[],
     }
 }
@@ -684,6 +686,7 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("installer")
         && !lower.contains("uninstall")
         && !lower.contains("vcredist")
+        && !lower.contains("crashreport")
         && !lower.contains("crashhandler")
         && !lower.contains("server")
         && !lower.contains("steamwebhelper")
@@ -911,6 +914,30 @@ mod tests {
     fn launcher_names_are_classified_as_launchers() {
         assert!(is_likely_launcher_exe(Path::new("DOOM-Eternal Launcher.exe")));
         assert!(!is_likely_launcher_exe(Path::new("DOOMEternalx64vk.exe")));
+    }
+
+    #[test]
+    fn preferred_exes_skip_crash_reporters_for_known_half_working_titles() {
+        let village_dir = test_dir("preferred-village-exe");
+        std::fs::create_dir_all(&village_dir).expect("create village dir");
+        std::fs::write(village_dir.join("CrashReport.exe"), b"not pe").expect("write crash reporter");
+        std::fs::write(village_dir.join("re8.exe"), b"not pe").expect("write village exe");
+
+        let village = resolve_game_exe(1196590, &village_dir).expect("select village exe");
+        assert_eq!(village.file_name().unwrap().to_string_lossy(), "re8.exe");
+        let _ = std::fs::remove_dir_all(village_dir);
+
+        let wukong_dir = test_dir("preferred-wukong-exe");
+        let exe_dir = wukong_dir.join("b1").join("Binaries").join("Win64");
+        let engine_dir = wukong_dir.join("Engine").join("Binaries").join("Win64");
+        std::fs::create_dir_all(&exe_dir).expect("create wukong exe dir");
+        std::fs::create_dir_all(&engine_dir).expect("create wukong engine dir");
+        std::fs::write(engine_dir.join("CrashReportClient.exe"), b"not pe").expect("write crash reporter");
+        std::fs::write(exe_dir.join("b1-Win64-Shipping.exe"), b"not pe").expect("write wukong exe");
+
+        let wukong = resolve_game_exe(2358720, &wukong_dir).expect("select wukong exe");
+        assert_eq!(wukong.file_name().unwrap().to_string_lossy(), "b1-Win64-Shipping.exe");
+        let _ = std::fs::remove_dir_all(wukong_dir);
     }
 
     #[test]
