@@ -40,8 +40,8 @@ pub fn handle_steam_d3d12_runtime_doctor(body: &serde_json::Map<String, Value>) 
         .get("pipeline")
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
-        .map(|pipeline| crate::mtsp::rules::resolve_requested_pipeline(appid, Some(pipeline)))
-        .unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+        .map(|pipeline| crate::bottles::resolve_steam_pipeline_for_request(appid, Some(pipeline)))
+        .unwrap_or_else(|| crate::bottles::resolve_steam_pipeline_for_request(appid, None));
     let refresh = body.get("refresh").and_then(|v| v.as_bool()).unwrap_or(true);
     let windowed_present = body.get("windowedPresent").and_then(|v| v.as_bool()).unwrap_or(false);
 

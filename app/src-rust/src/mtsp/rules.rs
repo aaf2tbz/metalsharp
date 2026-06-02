@@ -437,13 +437,22 @@ mod tests {
         let rules = parse_rules(include_str!("../../../../configs/mtsp-rules.toml"));
 
         for (appid, pipeline) in [
+            (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (49520, PipelineId::M9),
             (508440, PipelineId::M11),
             (535520, PipelineId::M9),
+            (774361, PipelineId::M9),
             (1237320, PipelineId::M11),
+            (1623730, PipelineId::M12),
+            (1868140, PipelineId::M9),
+            (1928870, PipelineId::M12),
+            (2358720, PipelineId::M12),
+            (2456740, PipelineId::M12),
             (1326470, PipelineId::M11),
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),
+            (3527290, PipelineId::M12),
         ] {
             assert_eq!(rules.get(&appid), Some(&pipeline), "appid {appid}");
         }

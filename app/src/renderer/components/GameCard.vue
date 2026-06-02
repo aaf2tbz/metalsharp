@@ -132,14 +132,7 @@ onMounted(async () => {
   if (savedLaunchMode) selectedLaunchMode.value = savedLaunchMode;
 
   if (props.game.installed) {
-    const gp = await api<{ ok: boolean; recommended: string; recommended_name: string; pipelines: PipelineOption[] }>(
-      "GET",
-      `/mtsp/pipelines?appid=${props.game.appid}`,
-    );
-    if (gp?.ok && gp.recommended_name) {
-      pipelineName.value = gp.recommended_name;
-      pipelineOptions.value = gp.pipelines ?? [];
-    }
+    await refreshPipelineMetadata();
 
     const gs = await api<{ ok: boolean; goldberg_active: boolean }>(
       "GET",
@@ -158,6 +151,21 @@ onMounted(async () => {
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
+
+async function refreshPipelineMetadata() {
+  const gp = await api<{
+    ok: boolean;
+    recommended: string;
+    recommended_name: string;
+    preferred?: string | null;
+    preferred_name?: string | null;
+    pipelines: PipelineOption[];
+  }>("GET", `/mtsp/pipelines?appid=${props.game.appid}`);
+  if (gp?.ok && gp.recommended_name) {
+    pipelineName.value = gp.preferred_name || gp.recommended_name;
+    pipelineOptions.value = gp.pipelines ?? [];
+  }
+}
 
 async function toggleGoldberg(enable: boolean) {
   const result = await api<{ ok: boolean; goldberg_active: boolean }>("POST", "/goldberg/toggle", {
@@ -278,6 +286,7 @@ async function saveBottleEdit() {
       runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;
     }
     toast.show("Bottle settings saved", "success");
+    await refreshPipelineMetadata();
     await runRuntimeDoctor();
   } else {
     toast.show(result?.error ?? "Bottle settings failed", "error");

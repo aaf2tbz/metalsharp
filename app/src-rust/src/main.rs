@@ -239,9 +239,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    let pipeline = mtsp::rules::resolve_pipeline(id as u32);
+                    let pipeline = bottles::resolve_steam_pipeline_for_request(id as u32, None);
                     let node = mtsp::engine::get_pipeline(pipeline);
                     let recipe = mtsp::rules::get_game_recipe(id as u32);
+                    let preferred_pipeline = bottles::preferred_pipeline_for_steam_app(id as u32);
                     resp(
                         200,
                         json!({
@@ -249,6 +250,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             "appid": id,
                             "pipeline": pipeline,
                             "pipeline_name": node.name,
+                            "preferred_pipeline": preferred_pipeline.map(|p| p.to_legacy_method().to_string()),
                             "graphics_backend": node.graphics_backend,
                             "backend": node.backend,
                             "offline_capable": recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false),
@@ -481,7 +483,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match parse_request_appid(&body) {
                 Ok(id) => {
                     let recipe = mtsp::rules::get_game_recipe(id);
-                    let pipeline = mtsp::rules::resolve_pipeline(id);
+                    let pipeline = bottles::resolve_steam_pipeline_for_request(id, None);
                     let node = mtsp::engine::get_pipeline(pipeline);
 
                     if !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false) {
@@ -669,8 +671,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .and_then(|v| v.split('&').next())
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let pipeline_id = mtsp::rules::resolve_pipeline(appid);
+            let pipeline_id = bottles::resolve_steam_pipeline_for_request(appid, None);
             let node = mtsp::engine::get_pipeline(pipeline_id);
+            let preferred_pipeline = bottles::preferred_pipeline_for_steam_app(appid);
             let all_pipelines: Vec<serde_json::Value> = mtsp::engine::pipelines()
                 .iter()
                 .map(|p| {
@@ -691,6 +694,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     "appid": appid,
                     "recommended": pipeline_id.to_legacy_method(),
                     "recommended_name": if pipeline_id.is_dxmt_family() { format!("DXMT ({})", node.name) } else { node.name.to_string() },
+                    "preferred": preferred_pipeline.map(|p| p.to_legacy_method().to_string()),
+                    "preferred_name": preferred_pipeline.map(|p| {
+                        let preferred = mtsp::engine::get_pipeline(p);
+                        if p.is_dxmt_family() { format!("DXMT ({})", preferred.name) } else { preferred.name.to_string() }
+                    }),
                     "pipelines": all_pipelines,
                 }),
             )
@@ -712,7 +720,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let pipeline = mtsp::rules::resolve_requested_pipeline(
+                    let pipeline = bottles::resolve_steam_pipeline_for_request(
                         id as u32,
                         mtsp::engine::PipelineId::from_str_flexible(method),
                     );
@@ -731,7 +739,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let method = body.get("launchMethod").and_then(|v| v.as_str()).unwrap_or("auto");
-                    let pipeline = mtsp::rules::resolve_requested_pipeline(
+                    let pipeline = bottles::resolve_steam_pipeline_for_request(
                         id as u32,
                         mtsp::engine::PipelineId::from_str_flexible(method),
                     );
