@@ -403,9 +403,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         .unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
-                        Some(pipeline) => Some(mtsp::rules::resolve_requested_pipeline(id, Some(pipeline))),
+                        Some(pipeline) => Some(bottles::resolve_steam_pipeline_for_request(id, Some(pipeline))),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
-                        None => Some(mtsp::rules::resolve_pipeline(id)),
+                        None => Some(bottles::resolve_steam_pipeline_for_request(id, None)),
                     };
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
@@ -450,7 +450,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             )
                         },
                         None => {
-                            let pipeline = mtsp::rules::resolve_pipeline(id);
+                            let pipeline = bottles::resolve_steam_pipeline_for_request(id, None);
                             let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
@@ -812,6 +812,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/bottles/set-runtime-profile") => {
             let body = read_body(req);
             resp(200, bottles::handle_set_runtime_profile(&body))
+        },
+        (Method::Post, "/bottles/edit") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_edit_bottle(&body))
         },
         (Method::Post, "/bottles/set-windows-version") => {
             let body = read_body(req);

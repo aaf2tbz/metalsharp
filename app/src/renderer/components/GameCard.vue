@@ -51,6 +51,8 @@ interface LaunchDoctorReport {
 interface SteamRuntimeReport {
   appid?: number | null;
   bottle_id?: string | null;
+  bottle_name?: string | null;
+  preferred_pipeline?: string | null;
   pipeline: string;
   runtime_profile: string;
   prefix_path: string;
@@ -65,6 +67,17 @@ interface ComponentRepair {
   status: string;
   detail: string;
   pid?: number | null;
+}
+
+interface BottleEditResponse {
+  ok: boolean;
+  bottle?: {
+    id: string;
+    name: string;
+    custom_name?: string | null;
+    preferred_pipeline?: string | null;
+  };
+  error?: string;
 }
 
 const props = defineProps<{
@@ -94,6 +107,9 @@ const doctorReport = ref<LaunchDoctorReport | null>(null);
 const runtimeOpen = ref(false);
 const runtimeLoading = ref(false);
 const runtimeReport = ref<SteamRuntimeReport | null>(null);
+const bottleName = ref("");
+const bottlePreferredMode = ref("auto");
+const bottleSaving = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
 
 const launchModeOptions = computed(() => {
@@ -202,6 +218,8 @@ async function runRuntimeDoctor() {
 
   if (result?.ok && result.report) {
     runtimeReport.value = result.report;
+    bottleName.value = result.report.bottle_name || props.game.name;
+    bottlePreferredMode.value = result.report.preferred_pipeline || "auto";
   } else {
     toast.show(result?.error ?? "Runtime Doctor failed", "error");
   }
@@ -236,6 +254,38 @@ async function repairRuntimeComponent(component: string) {
   } else {
     toast.show(result?.error ?? "Runtime repair failed", "error");
   }
+}
+
+async function saveBottleEdit() {
+  const bottleId = runtimeReport.value?.bottle_id;
+  if (!bottleId) {
+    toast.show("No Steam bottle is attached to this install yet", "error");
+    return;
+  }
+  bottleSaving.value = true;
+  const result = await api<BottleEditResponse>("POST", "/bottles/edit", {
+    id: bottleId,
+    name: bottleName.value,
+    preferredPipeline: bottlePreferredMode.value,
+  });
+  bottleSaving.value = false;
+
+  if (result?.ok && result.bottle) {
+    bottleName.value = result.bottle.name;
+    bottlePreferredMode.value = result.bottle.preferred_pipeline || "auto";
+    if (runtimeReport.value) {
+      runtimeReport.value.bottle_name = result.bottle.name;
+      runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;
+    }
+    toast.show("Bottle settings saved", "success");
+    await runRuntimeDoctor();
+  } else {
+    toast.show(result?.error ?? "Bottle settings failed", "error");
+  }
+}
+
+function resetBottleName() {
+  bottleName.value = "";
 }
 
 function formatBytes(bytes: number): string {
@@ -439,13 +489,37 @@ function formatBytes(bytes: number): string {
                 <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeReport.runtime_profile }}</span>
               </div>
               <div class="bottle-edit-row">
+                <span>Bottle Name</span>
+                <div class="bottle-input-row">
+                  <input v-model="bottleName" class="bottle-name-input" type="text" :placeholder="game.name" />
+                  <button class="icon-button compact-button" title="Use Steam name" @click="resetBottleName">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                      <path d="M3 3v5h5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="bottle-edit-row">
                 <span>Graphics Backend</span>
-                <select v-model="selectedLaunchMode" class="launch-mode-select" title="Bottle graphics backend">
+                <select v-model="bottlePreferredMode" class="launch-mode-select" title="Bottle graphics backend">
                   <option v-for="option in launchModeOptions" :key="option.id" :value="option.id">
                     {{ option.name }}
                   </option>
                 </select>
               </div>
+              <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
+                {{ bottleSaving ? "Saving..." : "Save Bottle" }}
+              </button>
               <div class="doctor-checks">
                 <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check">
                   <span class="doctor-check-state">{{ component.state === "missing" ? "!" : "OK" }}</span>
@@ -704,6 +778,11 @@ function formatBytes(bytes: number): string {
   width: 14px;
   height: 14px;
 }
+.compact-button {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
+}
 .bottle-button {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
@@ -813,9 +892,34 @@ function formatBytes(bytes: number): string {
   font-size: 11px;
   color: var(--text-secondary);
 }
+.bottle-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bottle-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 12px;
+  outline: none;
+}
+.bottle-name-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
 
 @media (max-width: 720px) {
   .secondary-action-grid {
+    grid-template-columns: 1fr;
+  }
+  .bottle-edit-row {
     grid-template-columns: 1fr;
   }
   .doctor-check {
