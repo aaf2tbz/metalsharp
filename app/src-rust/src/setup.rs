@@ -2,6 +2,8 @@ use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const DEFAULT_AGILITY_PACKAGE_VERSION: &str = "1.614.1";
+
 pub fn state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let config_path = crate::platform::metalsharp_home_dir_for(&home).join("setup.json");
@@ -674,7 +676,7 @@ fn ensure_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<
         return Some(found);
     }
 
-    let package_version = required_version.and_then(agility_package_version)?;
+    let package_version = agility_package_version_for_requirement(required_version);
     fetch_agility_sdk_bin(home, package_version, required_version)?;
     find_agility_sdk_bin(home, required_version)
 }
@@ -699,9 +701,8 @@ fn find_agility_sdk_bin(home: &Path, required_version: Option<u32>) -> Option<Pa
         push_agility_candidates(&mut candidates, &resources);
     }
 
-    if let Some(package_version) = required_version.and_then(agility_package_version) {
-        push_cached_agility_package_candidates(&mut candidates, home, package_version);
-    }
+    let package_version = agility_package_version_for_requirement(required_version);
+    push_cached_agility_package_candidates(&mut candidates, home, package_version);
 
     candidates.push(
         home.join("Dev").join("metalsharp").join("tools").join("d3d12-metal-sdk").join("out").join("bin").join("D3D12"),
@@ -906,6 +907,10 @@ fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
         619 => Some("1.619.3"),
         _ => None,
     }
+}
+
+fn agility_package_version_for_requirement(required_version: Option<u32>) -> &'static str {
+    required_version.and_then(agility_package_version).unwrap_or(DEFAULT_AGILITY_PACKAGE_VERSION)
 }
 
 fn resolve_agility_target_dirs(exe_dir: &Path, sdk_path: &str) -> Vec<PathBuf> {
@@ -1595,6 +1600,13 @@ mod tests {
                     .join("x64")
             )
         );
+    }
+
+    #[test]
+    fn agility_default_requirement_uses_fetchable_runtime_package() {
+        assert_eq!(agility_package_version_for_requirement(None), "1.614.1");
+        assert_eq!(agility_package_version_for_requirement(Some(614)), "1.614.1");
+        assert_eq!(agility_package_version_for_requirement(Some(619)), "1.619.3");
     }
 
     #[test]
