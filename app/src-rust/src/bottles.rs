@@ -424,7 +424,10 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
 }
 
 fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
-    matches!(appid, 17410 | 49520 | 1928870 | 774361 | 1868140 | 3527290)
+    matches!(
+        appid,
+        17410 | 49520 | 1928870 | 774361 | 1868140 | 3527290 | 504230 | 1169040 | 1245620 | 1562430 | 275850
+    )
 }
 
 pub fn preferred_pipeline_for_steam_app(appid: u32) -> Option<crate::mtsp::engine::PipelineId> {
@@ -3926,6 +3929,11 @@ mod tests {
     fn researched_appid_rules_override_stale_auto_preferences() {
         assert!(appid_rule_overrides_auto_preference(17410));
         assert!(appid_rule_overrides_auto_preference(49520));
+        assert!(appid_rule_overrides_auto_preference(504230));
+        assert!(appid_rule_overrides_auto_preference(1169040));
+        assert!(appid_rule_overrides_auto_preference(1245620));
+        assert!(appid_rule_overrides_auto_preference(1562430));
+        assert!(appid_rule_overrides_auto_preference(275850));
         assert!(!appid_rule_overrides_auto_preference(2358720));
     }
 

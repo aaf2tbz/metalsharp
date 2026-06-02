@@ -262,8 +262,8 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             },
             PipelineNode {
                 id: PipelineId::FnaArm64,
-                name: "Native macOS",
-                description: "FNA/XNA/Mono via native macOS runtime",
+                name: "FNA/Mono",
+                description: "Windows XNA/FNA via MetalSharp Mono runtime",
                 backend: "mono",
                 graphics_backend: "native",
                 experimental: false,

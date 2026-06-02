@@ -286,6 +286,28 @@ pub fn resolve_game_dir(appid: u32) -> Option<PathBuf> {
     None
 }
 
+pub fn resolve_windows_game_dir(appid: u32) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+
+    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
+    if local_dir.join(".metalsharp_prepared").exists() && crate::scan::is_windows_game_dir(&local_dir) {
+        return Some(local_dir);
+    }
+
+    let dual = crate::scan::resolve_dual_game_dir(appid);
+    if let Some(ref wine_dir) = dual.wine_dir {
+        if wine_dir.exists() && crate::scan::is_windows_game_dir(wine_dir) {
+            return Some(wine_dir.clone());
+        }
+    }
+
+    if local_dir.exists() && crate::scan::is_windows_game_dir(&local_dir) {
+        return Some(local_dir);
+    }
+
+    None
+}
+
 pub fn resolve_native_game_dir(appid: u32) -> Option<PathBuf> {
     crate::scan::resolve_dual_game_dir(appid).macos_dir
 }

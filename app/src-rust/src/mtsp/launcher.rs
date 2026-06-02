@@ -167,9 +167,8 @@ pub fn launch_steam_bottle_with_pipeline(
         PipelineId::M32 | PipelineId::WineBare => {
             launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
         },
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            Err("Steam bottle launch only supports Wine-backed MTSP game pipelines".into())
-        },
+        PipelineId::FnaArm64 => launch_fna_arm64(appid),
+        PipelineId::Steam | PipelineId::MacSteam => Err("Steam bottle launch only supports MTSP game pipelines".into()),
     }?;
 
     Ok((result.0, result.1, log_path))
@@ -220,7 +219,12 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => {},
-        PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
+        PipelineId::FnaArm64 => {
+            let recipe = super::recipe::build_launch_recipe(appid, node)?;
+            validate_recipe_runtime(&recipe)?;
+            return Ok((Vec::new(), recipe));
+        },
+        PipelineId::Steam | PipelineId::MacSteam => {
             return Err("Steam route handoff only supports Wine-backed MTSP pipelines".into());
         },
     }
@@ -1368,18 +1372,8 @@ fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error
         return Ok(local_dir);
     }
 
-    let dual = crate::scan::resolve_dual_game_dir(appid);
-
-    if let Some(ref wine_dir) = dual.wine_dir {
-        if wine_dir.exists() && has_exe_files(wine_dir) {
-            return Ok(wine_dir.clone());
-        }
-    }
-
-    if let Some(ref macos_dir) = dual.macos_dir {
-        if macos_dir.exists() {
-            return Ok(macos_dir.clone());
-        }
+    if let Some(windows_dir) = crate::setup::resolve_windows_game_dir(appid) {
+        return Ok(windows_dir);
     }
 
     if local_dir.exists() {
@@ -1389,15 +1383,7 @@ fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error
 }
 
 fn has_exe_files(dir: &PathBuf) -> bool {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.ends_with(".exe") {
-                return true;
-            }
-        }
-    }
-    false
+    crate::scan::is_windows_game_dir(dir)
 }
 
 fn find_preferred_exe(dir: &PathBuf, candidates: &[&str]) -> Result<PathBuf, Box<dyn std::error::Error>> {

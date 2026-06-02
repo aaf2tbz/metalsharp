@@ -52,7 +52,7 @@ pub fn resolve_dual_game_dir(appid: u32) -> DualGameDir {
     let manifest_name = format!("appmanifest_{}.acf", appid);
     let mut macos_dir: Option<PathBuf> = None;
     let mut wine_dir: Option<PathBuf> = None;
-    let mut install_dir_name: Option<String> = None;
+    let mut install_dir_names: Vec<String> = Vec::new();
 
     for steamapps in macos_steam_library_paths() {
         let manifest_path = steamapps.join(&manifest_name);
@@ -60,30 +60,30 @@ pub fn resolve_dual_game_dir(appid: u32) -> DualGameDir {
             if let Some(dir_name) = parse_installdir_from_acf(&contents) {
                 let dir = steamapps.join("common").join(&dir_name);
                 if dir.exists() {
-                    macos_dir = Some(dir);
-                    install_dir_name = Some(dir_name);
-                    break;
+                    classify_dual_game_dir(&dir, &mut macos_dir, &mut wine_dir);
+                    push_unique_install_dir(&mut install_dir_names, dir_name);
                 }
             }
         }
     }
 
     for steamapps in wine_steam_library_paths() {
-        if let Some(ref dir_name) = install_dir_name {
+        let mut found_from_known_dir = false;
+        for dir_name in &install_dir_names {
             let dir = steamapps.join("common").join(dir_name);
             if dir.exists() {
-                wine_dir = Some(dir);
-                break;
+                classify_dual_game_dir(&dir, &mut macos_dir, &mut wine_dir);
+                found_from_known_dir = true;
             }
-        } else {
+        }
+        if !found_from_known_dir {
             let manifest_path = steamapps.join(&manifest_name);
             if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
                 if let Some(dir_name) = parse_installdir_from_acf(&contents) {
                     let dir = steamapps.join("common").join(&dir_name);
                     if dir.exists() {
-                        wine_dir = Some(dir);
-                        let _ = install_dir_name.insert(dir_name);
-                        break;
+                        classify_dual_game_dir(&dir, &mut macos_dir, &mut wine_dir);
+                        push_unique_install_dir(&mut install_dir_names, dir_name);
                     }
                 }
             }
@@ -94,6 +94,45 @@ pub fn resolve_dual_game_dir(appid: u32) -> DualGameDir {
     let has_native_build = macos_app.is_some();
 
     DualGameDir { appid, macos_dir, wine_dir, macos_app, has_native_build }
+}
+
+fn push_unique_install_dir(names: &mut Vec<String>, name: String) {
+    if !names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+        names.push(name);
+    }
+}
+
+fn classify_dual_game_dir(dir: &Path, macos_dir: &mut Option<PathBuf>, wine_dir: &mut Option<PathBuf>) {
+    if is_windows_game_dir(dir) && wine_dir.is_none() {
+        *wine_dir = Some(dir.to_path_buf());
+    }
+    if find_macos_app(dir).is_some() && macos_dir.is_none() {
+        *macos_dir = Some(dir.to_path_buf());
+    }
+    if wine_dir.is_none() && macos_dir.is_none() {
+        *macos_dir = Some(dir.to_path_buf());
+    }
+}
+
+pub fn is_windows_game_dir(dir: &Path) -> bool {
+    find_windows_exe_in_dir(dir, 5).is_some()
+}
+
+pub fn find_windows_exe_in_dir(dir: &Path, max_depth: usize) -> Option<PathBuf> {
+    for entry in WalkDir::new(dir).max_depth(max_depth).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) != Some(true) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if is_valid_game_exe(&name) {
+            return Some(path.to_path_buf());
+        }
+    }
+    None
 }
 
 pub fn find_macos_app(dir: &Path) -> Option<PathBuf> {
@@ -792,6 +831,44 @@ mod tests {
         assert_eq!(first.len(), 16);
         assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn windows_exe_marks_shared_steam_dir_as_wine_candidate() {
+        let dir = test_dir("shared-windows-depot");
+        std::fs::create_dir_all(dir.join("Binaries")).expect("create game dir");
+        std::fs::write(dir.join("Binaries").join("Game.exe"), b"exe").expect("write exe");
+
+        let mut macos_dir = None;
+        let mut wine_dir = None;
+        classify_dual_game_dir(&dir, &mut macos_dir, &mut wine_dir);
+
+        assert_eq!(wine_dir.as_deref(), Some(dir.as_path()));
+        assert!(macos_dir.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn native_app_without_windows_exe_stays_macos_candidate() {
+        let dir = test_dir("native-only-depot");
+        std::fs::create_dir_all(dir.join("Game.app").join("Contents").join("MacOS")).expect("create app dir");
+
+        let mut macos_dir = None;
+        let mut wine_dir = None;
+        classify_dual_game_dir(&dir, &mut macos_dir, &mut wine_dir);
+
+        assert_eq!(macos_dir.as_deref(), Some(dir.as_path()));
+        assert!(wine_dir.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "metalsharp-scan-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ))
     }
 
     fn test_shortcuts_vdf(

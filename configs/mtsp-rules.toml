@@ -28,6 +28,10 @@ name = "Terraria"
 pipeline = "fna_x86"
 name = "Celeste"
 
+[overrides.1169040]
+pipeline = "wine_bare"
+name = "Necesse"
+
 [overrides.312520]
 pipeline = "m11"
 name = "Rain World"
@@ -97,7 +101,7 @@ pipeline = "m11"
 name = "Ghostrunner"
 
 [overrides.1245620]
-pipeline = "m12"
+pipeline = "m11"
 name = "ELDEN RING"
 offline_capable = true
 anticheat = "eac_eos"
@@ -106,7 +110,7 @@ anticheat = "eac_eos"
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
 
 [overrides.1245620.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll"]
 
 [overrides.814380]
 pipeline = "m11"
@@ -332,7 +336,7 @@ pipeline = "wine_bare"
 name = "Dome Keeper"
 
 [overrides.1562430]
-pipeline = "m11"
+pipeline = "m9"
 name = "DREDGE"
 
 [overrides.1092790]

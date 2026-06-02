@@ -144,7 +144,7 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
         return resolve_dxmt_alias(appid, pipeline);
     }
 
-    let game_dir = crate::setup::resolve_game_dir(appid);
+    let game_dir = crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid));
     if let Some(ref dir) = game_dir {
         if dir.exists() {
             if crate::setup::detect_dotnet_game(dir) {
@@ -181,7 +181,7 @@ fn resolve_dxmt_alias(appid: u32, pipeline: PipelineId) -> PipelineId {
 }
 
 fn detect_dxmt_pipeline(appid: u32) -> Option<PipelineId> {
-    let game_dir = crate::setup::resolve_game_dir(appid)?;
+    let game_dir = crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid))?;
     if crate::setup::detect_dotnet_game(&game_dir) {
         return Some(PipelineId::FnaArm64);
     }
@@ -439,16 +439,21 @@ mod tests {
         for (appid, pipeline) in [
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
             (508440, PipelineId::M11),
             (535520, PipelineId::M9),
             (774361, PipelineId::M9),
+            (1169040, PipelineId::WineBare),
             (1237320, PipelineId::M11),
+            (1245620, PipelineId::M11),
+            (1562430, PipelineId::M9),
             (1623730, PipelineId::M12),
             (1868140, PipelineId::M9),
             (1928870, PipelineId::M12),
             (2358720, PipelineId::M12),
             (2456740, PipelineId::M12),
+            (275850, PipelineId::WineBare),
             (1326470, PipelineId::M11),
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),
@@ -479,11 +484,11 @@ mod tests {
         assert!(!recipes.is_empty());
 
         let elden = recipes.get(&1245620).expect("elden ring recipe");
-        assert_eq!(elden.pipeline, PipelineId::M12);
+        assert_eq!(elden.pipeline, PipelineId::M11);
         assert_eq!(elden.name, "ELDEN RING");
         assert!(elden.components.contains(&"vcrun2019".to_string()));
         assert!(elden.components.contains(&"directx_jun2010".to_string()));
-        assert!(elden.check_dlls.contains(&"d3d12.dll".to_string()));
+        assert!(elden.check_dlls.contains(&"d3d11.dll".to_string()));
     }
 
     #[test]

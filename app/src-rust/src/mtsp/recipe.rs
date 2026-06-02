@@ -81,7 +81,23 @@ struct ExeCandidate {
 pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let game_dir = crate::setup::resolve_game_dir(appid);
+    let direct_wine_pipeline = matches!(
+        node.id,
+        PipelineId::Dxmt
+            | PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::M13
+            | PipelineId::M32
+            | PipelineId::FnaArm64
+            | PipelineId::WineBare
+    );
+    let game_dir = if direct_wine_pipeline {
+        crate::setup::resolve_windows_game_dir(appid)
+    } else {
+        crate::setup::resolve_game_dir(appid)
+    };
 
     let exe_path = match node.id {
         PipelineId::Dxmt
@@ -91,6 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::M32
+        | PipelineId::FnaArm64
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
             Some(resolve_game_exe(appid, dir)?)
@@ -383,6 +400,7 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
             | PipelineId::M12
             | PipelineId::M13
             | PipelineId::M32
+            | PipelineId::FnaArm64
             | PipelineId::WineBare
     );
     let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
