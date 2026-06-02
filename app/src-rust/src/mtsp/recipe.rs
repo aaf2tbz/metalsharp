@@ -175,6 +175,24 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
                 .into(),
         );
     }
+
+    match (appid, pipeline) {
+        (1196590 | 1623730 | 1928870 | 2358720 | 2456740, PipelineId::M12) => {
+            append_unique_launch_arg(launch_args, "-dx12");
+            append_unique_launch_arg(launch_args, "-d3d12");
+        },
+        (1623730 | 2358720, PipelineId::M11) => {
+            append_unique_launch_arg(launch_args, "-dx11");
+            append_unique_launch_arg(launch_args, "-d3d11");
+        },
+        _ => {},
+    }
+}
+
+fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {
+    if !launch_args.iter().any(|existing| existing.eq_ignore_ascii_case(arg)) {
+        launch_args.push(arg.to_string());
+    }
 }
 
 pub fn build_custom_launch_recipe(
@@ -912,6 +930,26 @@ mod tests {
         assert!(!args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")));
+    }
+
+    #[test]
+    fn dual_renderer_half_working_titles_get_dx11_args_on_m11() {
+        for appid in [1623730, 2358720] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx11")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d11")), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn m12_half_working_titles_get_explicit_dx12_args() {
+        for appid in [1196590, 1623730, 1928870, 2358720, 2456740] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M12));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")), "appid {appid}");
+        }
     }
 
     #[test]
