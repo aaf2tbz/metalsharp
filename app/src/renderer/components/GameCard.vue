@@ -77,6 +77,11 @@ interface BottleEditResponse {
     custom_name?: string | null;
     preferred_pipeline?: string | null;
   };
+  preflight?: {
+    ok: boolean;
+    deployed_dlls?: number;
+    error?: string;
+  };
   error?: string;
 }
 
@@ -151,6 +156,10 @@ const bottlePipelineOptions = computed(() =>
 function preferredBottlePipeline(report: SteamRuntimeReport) {
   const candidates = [report.preferred_pipeline, report.pipeline, props.game.launch_method];
   return candidates.find((id) => id && userSelectablePipelineOrder.includes(id)) ?? "m11";
+}
+
+function runtimeDoctorPipelineRequest() {
+  return selectedLaunchMode.value === "auto" ? "auto" : selectedLaunchMode.value;
 }
 
 onMounted(async () => {
@@ -248,7 +257,7 @@ async function runRuntimeDoctor() {
     "/steam/runtime-doctor",
     {
       appid: props.game.appid,
-      pipeline: selectedLaunchMode.value === "auto" ? (props.game.launch_method ?? "dxmt") : selectedLaunchMode.value,
+      pipeline: runtimeDoctorPipelineRequest(),
     },
   );
   runtimeLoading.value = false;
@@ -316,7 +325,11 @@ async function saveBottleEdit() {
       runtimeReport.value.bottle_name = result.bottle.name;
       runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;
     }
-    toast.show("Bottle settings saved", "success");
+    if (result.preflight?.ok === false) {
+      toast.show(result.preflight.error ?? "Bottle saved; runtime doctor needs attention", "error");
+    } else {
+      toast.show("Bottle settings saved", "success");
+    }
     await refreshPipelineMetadata();
     await runRuntimeDoctor();
   } else {

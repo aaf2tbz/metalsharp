@@ -426,7 +426,7 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
 fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
     matches!(
         appid,
-        17410 | 49520 | 1928870 | 774361 | 1868140 | 3527290 | 504230 | 1169040 | 1245620 | 1562430 | 275850
+        17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 3527290 | 504230 | 1169040 | 1245620 | 1562430 | 275850
     )
 }
 
@@ -1552,8 +1552,30 @@ pub fn handle_edit_bottle(body: &serde_json::Map<String, Value>) -> Value {
         return json!({"ok": false, "error": "name or preferredPipeline required"});
     }
     match edit_bottle(id, name, preferred_pipeline) {
-        Ok(bottle) => json!({"ok": true, "bottle": bottle}),
+        Ok(bottle) => {
+            let preflight = preflight_bottle_after_edit(&bottle);
+            json!({"ok": true, "bottle": bottle, "preflight": preflight})
+        },
         Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+fn preflight_bottle_after_edit(bottle: &BottleManifest) -> Value {
+    let Some(appid) = bottle.steam_app_id else {
+        return json!({"ok": true, "skipped": true, "reason": "not_steam_bottle"});
+    };
+    let pipeline = manifest_preferred_pipeline(bottle).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+    match crate::mtsp::launcher::prepare_steam_pipeline_env(appid, pipeline) {
+        Ok((_env, recipe)) => json!({
+            "ok": true,
+            "pipeline": pipeline_preference_id(pipeline),
+            "deployed_dlls": recipe.dlls.len(),
+        }),
+        Err(e) => json!({
+            "ok": false,
+            "pipeline": pipeline_preference_id(pipeline),
+            "error": e.to_string(),
+        }),
     }
 }
 
@@ -4061,6 +4083,11 @@ mod tests {
     fn researched_appid_rules_override_stale_auto_preferences() {
         assert!(appid_rule_overrides_auto_preference(17410));
         assert!(appid_rule_overrides_auto_preference(49520));
+        assert!(appid_rule_overrides_auto_preference(774361));
+        assert!(appid_rule_overrides_auto_preference(1623730));
+        assert!(appid_rule_overrides_auto_preference(1868140));
+        assert!(appid_rule_overrides_auto_preference(1928870));
+        assert!(appid_rule_overrides_auto_preference(3527290));
         assert!(appid_rule_overrides_auto_preference(504230));
         assert!(appid_rule_overrides_auto_preference(1169040));
         assert!(appid_rule_overrides_auto_preference(1245620));

@@ -415,7 +415,7 @@ def main():
             sf,
             "complete",
             100,
-            "Successfully updated to v{}!".format(tv),
+            "Update installed. Opening migration wizard...",
             new_version=tv,
         )
     else:
