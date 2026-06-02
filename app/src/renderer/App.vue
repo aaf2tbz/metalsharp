@@ -266,8 +266,8 @@ function onSetupDone() {
 }
 
 async function initApp() {
-  await loadLibrary();
   await getSteamApiKey();
+  await loadLibrary();
   const state = await api<{ deviceName?: string }>("GET", "/setup/state");
   if (state?.deviceName) setupDeviceName.value = state.deviceName;
   startHealthPolling();

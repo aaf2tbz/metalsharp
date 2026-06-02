@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, inject, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 
 const emit = defineEmits<{ done: [] }>();
 const toast = useToast();
+const library = inject<Ref<{ ok: boolean; total: number; installed_count: number; games: unknown[] } | null>>("library", ref(null));
+const steamApiKey = inject<Ref<string | null>>("steamApiKey", ref(null));
 
 const step = ref(0);
 const deviceName = ref("");
@@ -113,7 +115,23 @@ async function finish() {
   const key = keyInput?.value?.trim();
 
   await api("POST", "/setup/save", { step: 2, deviceName: name, completed: true });
-  if (key) await api("POST", "/steam/save-api-key", { key });
+  if (key) {
+    const result = await api<{
+      ok: boolean;
+      error?: string;
+      library?: { ok: boolean; total: number; installed_count: number; games: unknown[] };
+      sync?: { steam_id_detected: boolean };
+    }>("POST", "/steam/save-api-key", { key });
+    if (!result?.ok) {
+      toast.show(result?.error ?? "Failed to save Steam API key", "error");
+      return;
+    }
+    steamApiKey.value = key;
+    if (result.library) library.value = result.library;
+    if (result.sync && !result.sync.steam_id_detected) {
+      toast.show("API key saved, but SteamID was not detected yet", "error");
+    }
+  }
 
   emit("done");
 }

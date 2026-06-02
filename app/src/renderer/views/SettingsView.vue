@@ -29,6 +29,7 @@ const startUpdateDownload = inject<() => void>("startUpdateDownload")!;
 const steamApiKey = inject<Ref<string | null>>("steamApiKey")!;
 const setupDeviceName = inject<Ref<string>>("setupDeviceName")!;
 const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
+const library = inject<Ref<{ ok: boolean; total: number; installed_count: number; games: unknown[] } | null>>("library")!;
 
 const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
@@ -65,10 +66,24 @@ async function saveApiKey() {
     toast.show("Please enter a Steam API key", "error");
     return;
   }
-  await api("POST", "/steam/save-api-key", { key });
-  toast.show("API key saved — syncing library...", "success");
-  await reloadLibrary();
+  const result = await api<{
+    ok: boolean;
+    error?: string;
+    library?: { ok: boolean; total: number; installed_count: number; games: unknown[] };
+    sync?: { api_key_set: boolean; steam_id_detected: boolean };
+  }>("POST", "/steam/save-api-key", { key });
+  if (!result?.ok) {
+    toast.show(result?.error ?? "Failed to save Steam API key", "error");
+    return;
+  }
+  if (result.library) library.value = result.library;
+  else await reloadLibrary();
   steamApiKey.value = key;
+  if (result.sync && !result.sync.steam_id_detected) {
+    toast.show("API key saved, but SteamID was not detected yet", "error");
+  } else {
+    toast.show(`API key saved — synced ${result.library?.total ?? 0} games`, "success");
+  }
 }
 
 async function changeDeviceName() {

@@ -278,7 +278,19 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let key = body.get("key").and_then(|v| v.as_str()).unwrap_or("");
             app_log("Steam API key saved");
             match steam::save_api_key(key) {
-                Ok(_) => resp(200, json!({"ok": true})),
+                Ok(_) => {
+                    let library = steam::library();
+                    let total = library.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+                    app_log(&format!("Steam API key sync loaded {} games", total));
+                    resp(
+                        200,
+                        json!({
+                            "ok": true,
+                            "library": library,
+                            "sync": steam::api_key_sync_state(),
+                        }),
+                    )
+                },
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },

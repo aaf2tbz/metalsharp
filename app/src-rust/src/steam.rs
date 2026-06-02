@@ -867,6 +867,17 @@ pub fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn api_key_sync_state() -> Value {
+    let (api_key, steam_id) = read_steam_config();
+    let cache_path = dirs::home_dir().map(|h| h.join(".metalsharp/cache/owned_games.json")).unwrap_or_default();
+    json!({
+        "api_key_set": api_key.as_deref().map(|k| !k.is_empty()).unwrap_or(false),
+        "steam_id_detected": steam_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "steam_id": steam_id.unwrap_or_default(),
+        "owned_games_cache": cache_path.exists(),
+    })
+}
+
 pub fn get_steam_id() -> Option<String> {
     let home = dirs::home_dir()?;
 
@@ -896,6 +907,7 @@ pub fn library() -> Value {
     let installed_appids = get_installed_appids();
     let downloaded_appids = get_downloaded_appids();
     let wine_steam_appids = get_wine_steam_installed_games();
+    let sync = api_key_sync_state();
 
     let owned: Vec<(u32, String)> = match fetch_owned_games(get_steam_id().as_deref()) {
         Ok(games) if !games.is_empty() => games,
@@ -982,6 +994,7 @@ pub fn library() -> Value {
         "ok": true,
         "total": games.len(),
         "installed_count": games.iter().filter(|g| g["installed"].as_bool().unwrap_or(false)).count(),
+        "sync": sync,
         "games": games,
     })
 }
