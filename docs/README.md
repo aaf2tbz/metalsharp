@@ -2,29 +2,58 @@
 
 Use this page as the repo map before changing launch/runtime code.
 
-## Operational Docs
+## Guides
 
-- [Runtime Bundles and Steam Routing](runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
-- [Launch Architecture](launch-architecture.md) - pipeline selection and launch ownership.
-- [Game Compatibility](game-compat.md) - short entrypoint to the current compatibility ledger.
-- [Supported Games](GAMES-SUPPORTED.md) - current working/blocked game evidence and recommended public routes.
-- [Mono Runtime Lanes](mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
-- [Wine Architecture](wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
-- [Launcher Runtime](launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
-- [D3D12 Pipeline Map](m12-pipeline-map.md) - current M12 D3D12/DXMT path.
-- [DXMT and Vulkan Architecture](dxmt-vulkan-architecture.md) - DXMT/M9-M12 boundaries and Vulkan fallback boundaries.
+- [How to Use MetalSharp](guides/how-to-use-metalsharp.md) - install, launch, diagnose, and update flow.
+
+## Compatibility
+
+- [Game Compatibility](compatibility/game-compat.md) - short entrypoint to the current compatibility ledger.
+- [Supported Games](compatibility/GAMES-SUPPORTED.md) - current working/blocked game evidence and recommended public routes.
+- [Proof Targets](compatibility/proof-targets.md) - local evidence targets and runtime proof notes.
+
+## Runtime
+
+- [Runtime Bundles and Steam Routing](runtime/runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
+- [Mono Runtime Lanes](runtime/mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
+- [Wine Architecture](runtime/wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
+- [Launcher Runtime](runtime/launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
+- [Compatdata Architecture](runtime/compatdata-architecture.md) - Steam game compatdata ownership.
+- [Host Runtime ABI](runtime/host-runtime-abi.md) - host shim ABI boundaries.
+- [Redistributable Runtime](runtime/redistributable-runtime.md) - redistributable source and repair policy.
+- [Steam Compatibility Tool Surface](runtime/steam-compatibility-tool-surface.md) - Steam-facing compatibility contract.
+- [Vendor Trust Kit](runtime/vendor-trust-kit.md) - vendor runtime evidence and trust boundaries.
+- [Host Shim Inventory](runtime/metalsharp-host-shim-inventory.md) - current host/runtime shim inventory.
+- [Darwin Sync Map](runtime/darwin-sync-map.md) - macOS runtime sync notes.
+
+## Architecture
+
+- [Launch Architecture](architecture/launch-architecture.md) - pipeline selection and launch ownership.
+- [D3D12 Pipeline Map](architecture/m12-pipeline-map.md) - current M12 D3D12/DXMT path.
+- [D3D10 Pipeline Map](architecture/m10-pipeline-map.md) - current M10 D3D10/DXMT path.
+- [D3D9 Pipeline Map](architecture/m9-pipeline-map.md) - current M9 D3D9 route.
+- [DXMT and Vulkan Architecture](architecture/dxmt-vulkan-architecture.md) - DXMT/M9-M12 boundaries and Vulkan fallback boundaries.
 - [D3D12 Developer Runtime Package](../tools/d3d12-metal-sdk/docs/developer-runtime.md) - self-contained developer SDK tarball layout and publish flow.
 
 ## Historical Roadmaps
 
 These files are planning history and should not be treated as the current implementation contract without checking the code and runtime manifests first.
 
-- [MetalSharp Final Roadmap](MetalSharp%20Final%20Roadmap.md)
-- [DX12 Pipeline Complete Roadmap](DX12%20Pipeline%20Complete%20Roadmap.md)
-- [Beta7 DXMT Cohesion Roadmap](beta7-dxmt-cohesion-roadmap.md)
-- [DXMT Proton-Parity Roadmap](dxmt-proton-parity-roadmap.md)
-- [Installer Runtime Roadmap](installer-runtime-roadmap.md)
-- [Anti-Cheat Hard Route Roadmap](anticheat-hard-route-roadmap.md)
+- [MetalSharp Final Roadmap](roadmaps/metalsharp-final-roadmap.md)
+- [DX12 Pipeline Complete Roadmap](roadmaps/dx12-pipeline-complete-roadmap.md)
+- [Beta7 DXMT Cohesion Roadmap](roadmaps/beta7-dxmt-cohesion-roadmap.md)
+- [DXMT Proton-Parity Roadmap](roadmaps/dxmt-proton-parity-roadmap.md)
+- [Installer Runtime Roadmap](roadmaps/installer-runtime-roadmap.md)
+- [Anti-Cheat Hard Route Roadmap](roadmaps/anticheat-hard-route-roadmap.md)
+
+## Research
+
+- [Proton Runtime Research](research/proton-runtime-research.md)
+- [Anti-Cheat Compatibility Boundaries](research/anti-cheat-compatibility-boundaries.md)
+
+## Release
+
+- [Release Signing](release/release-signing.md)
 
 ## Bundle Truth Sources
 
