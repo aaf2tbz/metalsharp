@@ -12,6 +12,8 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  launch_method_name?: string;
+  preferred_pipeline?: string | null;
   available_pipelines?: PipelineOption[];
   has_native_build?: boolean;
   can_uninstall?: boolean;
@@ -154,7 +156,7 @@ const bottlePipelineOptions = computed(() =>
 );
 
 function preferredBottlePipeline(report: SteamRuntimeReport) {
-  const candidates = [report.preferred_pipeline, report.pipeline, props.game.launch_method];
+  const candidates = [report.preferred_pipeline, report.pipeline, props.game.preferred_pipeline, props.game.launch_method];
   return candidates.find((id) => id && userSelectablePipelineOrder.includes(id)) ?? "m11";
 }
 
@@ -190,6 +192,16 @@ watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
 
+watch(
+  () => [props.game.launch_method, props.game.launch_method_name, props.game.preferred_pipeline],
+  () => {
+    const routeId = props.game.preferred_pipeline || props.game.launch_method;
+    if (routeId && userSelectablePipelineOrder.includes(routeId)) {
+      pipelineName.value = props.game.launch_method_name || userSelectablePipelineNames[routeId] || pipelineName.value;
+    }
+  },
+);
+
 async function refreshPipelineMetadata() {
   const gp = await api<{
     ok: boolean;
@@ -200,7 +212,7 @@ async function refreshPipelineMetadata() {
     pipelines: PipelineOption[];
   }>("GET", `/mtsp/pipelines?appid=${props.game.appid}`);
   if (gp?.ok && gp.recommended_name) {
-    pipelineName.value = gp.preferred_name || gp.recommended_name;
+    pipelineName.value = props.game.launch_method_name || gp.preferred_name || gp.recommended_name;
     pipelineOptions.value = gp.pipelines ?? [];
   }
 }
@@ -321,6 +333,8 @@ async function saveBottleEdit() {
     bottlePreferredMode.value = result.bottle.preferred_pipeline && userSelectablePipelineOrder.includes(result.bottle.preferred_pipeline)
       ? result.bottle.preferred_pipeline
       : bottlePreferredMode.value;
+    selectedLaunchMode.value = bottlePreferredMode.value;
+    pipelineName.value = userSelectablePipelineNames[bottlePreferredMode.value] || pipelineName.value;
     if (runtimeReport.value) {
       runtimeReport.value.bottle_name = result.bottle.name;
       runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;

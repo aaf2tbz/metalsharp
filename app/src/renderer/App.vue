@@ -22,6 +22,8 @@ interface SteamGame {
   header_url: string;
   size_bytes?: number | null;
   launch_method?: string;
+  launch_method_name?: string;
+  preferred_pipeline?: string | null;
 }
 
 interface SteamLibrary {
