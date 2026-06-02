@@ -136,6 +136,15 @@ def check_workflows() -> None:
             fail(f"release workflow missing signing fallback contract: {required}")
     if "CSC_IDENTITY_AUTO_DISCOVERY=false" not in read("tools/dmg/check-apple-signing-readiness.sh"):
         fail("unsigned DMG fallback must disable Electron Builder certificate discovery")
+    notarization = read("tools/dmg/verify-notarization.sh")
+    for required in [
+        "Authority=Developer ID Application",
+        "xcrun stapler validate",
+        "hdiutil verify",
+        "spctl -a -vvv --type open",
+    ]:
+        if required not in notarization:
+            fail(f"notarization verifier missing hardening check: {required}")
 
 
 def main() -> int:

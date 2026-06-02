@@ -201,6 +201,8 @@ jobs:
       - name: Verify Apple notarization
         if: steps.apple-signing.outputs.ready == 'true'
         run: |
+          set -euo pipefail
+          test "${{ steps.apple-signing.outputs.ready }}" = "true"
           tools/dmg/verify-notarization.sh dist/electron/mac-arm64/MetalSharp.app
           tools/dmg/verify-notarization.sh dist/electron/MetalSharp-*-arm64.dmg
 
