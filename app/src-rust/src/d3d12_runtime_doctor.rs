@@ -40,8 +40,8 @@ pub fn handle_steam_d3d12_runtime_doctor(body: &serde_json::Map<String, Value>) 
         .get("pipeline")
         .and_then(|v| v.as_str())
         .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
-        .map(|pipeline| crate::mtsp::rules::resolve_requested_pipeline(appid, Some(pipeline)))
-        .unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+        .map(|pipeline| crate::bottles::resolve_steam_pipeline_for_request(appid, Some(pipeline)))
+        .unwrap_or_else(|| crate::bottles::resolve_steam_pipeline_for_request(appid, None));
     let refresh = body.get("refresh").and_then(|v| v.as_bool()).unwrap_or(true);
     let windowed_present = body.get("windowedPresent").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -366,19 +366,12 @@ fn run_command(program: &str, args: &[String]) -> CommandCapture {
 }
 
 fn required_results_present(results_dir: &Path) -> bool {
-    [
-        format!("probe-loader-{}.json", SDK_PROFILE),
-        format!("probe-agility-ue5-{}.json", SDK_PROFILE),
-        format!("probe-device-caps-{}.json", SDK_PROFILE),
-        format!("probe-dxgi-factory-{}.json", SDK_PROFILE),
-        format!("probe-resources-{}.json", SDK_PROFILE),
-        format!("probe-descriptors-{}.json", SDK_PROFILE),
-        format!("probe-shaders-{}.json", SDK_PROFILE),
-        format!("probe-queues-{}.json", SDK_PROFILE),
-        format!("probe-render-headless-{}.json", SDK_PROFILE),
-    ]
-    .iter()
-    .all(|name| results_dir.join(name).exists())
+    fs::read_dir(results_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
 }
 
 fn load_json_if_exists(path: &Path) -> Option<Value> {

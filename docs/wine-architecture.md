@@ -6,7 +6,7 @@ MetalSharp ships a self-contained Wine runtime at:
 ~/.metalsharp/runtime/wine/
 ```
 
-It is used by M11, M12, M10, M9, M32, Steam, and Wine. Native macOS and MacOS Steam do not use this Wine runtime.
+It is used by the public Wine-backed routes M12, M11, M10, and M9. Internal fallback/diagnostic routes such as M32, Steam handoff, and plain Wine also use this runtime. Mono/FNA does not use the Wine runtime.
 
 ## Layout
 
@@ -51,17 +51,16 @@ User/runtime state lives beside the runtime root:
 └── logs/
 ```
 
-## Pipeline Use
+## Route Use
 
-| Pipeline | Wine use |
+| Route | Wine use |
 |---|---|
-| M11 | Wine + DXMT D3D11/DXGI |
 | M12 | Wine + DXMT D3D12/D3D11/DXGI |
+| M11 | Wine + DXMT D3D11/DXGI |
 | M10 | Wine + DXMT D3D10/D3D11/DXGI |
 | M9 | Wine + D3D9 Metal under the DXMT launch family |
-| M32 | Wine 32-bit fallback |
-| Steam | Wine Steam prefix, preflighted by `steam_<appid>` bottle records |
-| Wine | Plain Wine |
+
+M32, Steam handoff, and plain Wine remain internal Wine-backed routes for diagnostics, bootstrap cases, legacy records, and installer/custom-app internals.
 
 ## DLL Deployment
 
@@ -114,7 +113,7 @@ Steam game bottles are different: they are launch-authoritative readiness record
 points at `~/.metalsharp/prefix-steam/` so Runtime Doctor and repair actions affect the prefix Wine Steam actually uses.
 Wine Steam remains the live background client that stays connected for Steam games. Env-dependent Steam game launches
 run the game executable directly through the selected MTSP pipeline with this prefix, route env, cache paths, and
-`SteamAppId`/`SteamGameId`; plain **Steam** launches still route through Wine Steam.
+`SteamAppId`/`SteamGameId`; client-only Steam handoff remains internal for diagnostics/bootstrap cases.
 
 ## Important Environment
 

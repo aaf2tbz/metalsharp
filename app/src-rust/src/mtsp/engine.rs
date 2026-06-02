@@ -262,8 +262,8 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
             },
             PipelineNode {
                 id: PipelineId::FnaArm64,
-                name: "Native macOS",
-                description: "FNA/XNA/Mono via native macOS runtime",
+                name: "Mono/FNA",
+                description: "Windows XNA/FNA via MetalSharp Mono runtime",
                 backend: "mono",
                 graphics_backend: "native",
                 experimental: false,
@@ -344,6 +344,32 @@ impl PipelineId {
         matches!(self, PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
     }
 
+    pub fn is_user_selectable(self) -> bool {
+        matches!(self, PipelineId::M12 | PipelineId::M11 | PipelineId::M10 | PipelineId::M9 | PipelineId::FnaArm64)
+    }
+
+    pub fn user_selectable_id(self) -> Option<&'static str> {
+        match self {
+            PipelineId::M12 => Some("m12"),
+            PipelineId::M11 => Some("m11"),
+            PipelineId::M10 => Some("m10"),
+            PipelineId::M9 => Some("m9"),
+            PipelineId::FnaArm64 => Some("fna_arm64"),
+            _ => None,
+        }
+    }
+
+    pub fn user_selectable_name(self) -> Option<&'static str> {
+        match self {
+            PipelineId::M12 => Some("M12"),
+            PipelineId::M11 => Some("M11"),
+            PipelineId::M10 => Some("M10"),
+            PipelineId::M9 => Some("M9"),
+            PipelineId::FnaArm64 => Some("Mono/FNA"),
+            _ => None,
+        }
+    }
+
     pub fn from_legacy_method(method: &str) -> Option<PipelineId> {
         match method.trim().to_ascii_lowercase().as_str() {
             "dxmt" => Some(PipelineId::Dxmt),
@@ -354,7 +380,7 @@ impl PipelineId {
             "metalsharp_wine" => Some(PipelineId::WineBare),
             "steam" => Some(PipelineId::Steam),
             "macos_steam" | "mac_steam" | "native_steam" => Some(PipelineId::MacSteam),
-            "xna_fna_arm64" | "xna_fna_x86" | "xna_fna" => Some(PipelineId::FnaArm64),
+            "xna_fna_arm64" | "xna_fna_x86" | "xna_fna" | "fna_mono_xna" | "mono_fna_xna" => Some(PipelineId::FnaArm64),
             _ => None,
         }
     }
@@ -372,7 +398,7 @@ impl PipelineId {
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
-            "fna_arm64" | "fna_x86" | "mono_generic" => Some(PipelineId::FnaArm64),
+            "fna_arm64" | "fna_x86" | "mono_generic" | "fna_mono_xna" | "mono_fna_xna" => Some(PipelineId::FnaArm64),
             "steam" | "wine_steam" => Some(PipelineId::Steam),
             "macos_steam" | "mac_steam" | "native_steam" => Some(PipelineId::MacSteam),
             "wine_bare" | "m64" => Some(PipelineId::WineBare),
@@ -532,6 +558,34 @@ mod tests {
         assert_eq!(PipelineId::from_legacy_method("dxvk_metal32"), None);
         assert_eq!(PipelineId::from_str_flexible("m9_gl"), None);
         assert_eq!(PipelineId::from_str_flexible("m32_vk"), None);
+    }
+
+    #[test]
+    fn user_selectable_pipelines_are_the_public_bottle_options() {
+        let selectable: Vec<_> = pipelines()
+            .iter()
+            .filter(|pipeline| pipeline.id.is_user_selectable())
+            .map(|pipeline| pipeline.id)
+            .collect();
+        assert_eq!(
+            selectable,
+            vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
+        );
+
+        let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
+        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "Mono/FNA"]);
+
+        for hidden in [
+            PipelineId::Dxmt,
+            PipelineId::M13,
+            PipelineId::M32,
+            PipelineId::Steam,
+            PipelineId::MacSteam,
+            PipelineId::WineBare,
+        ] {
+            assert!(!hidden.is_user_selectable());
+            assert_eq!(hidden.user_selectable_id(), None);
+        }
     }
 
     #[test]

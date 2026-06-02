@@ -28,6 +28,10 @@ name = "Terraria"
 pipeline = "fna_x86"
 name = "Celeste"
 
+[overrides.1169040]
+pipeline = "wine_bare"
+name = "Necesse"
+
 [overrides.312520]
 pipeline = "m11"
 name = "Rain World"
@@ -72,6 +76,10 @@ name = "Totally Accurate Battle Simulator"
 pipeline = "m9"
 name = "Nidhogg 2"
 
+[overrides.17410]
+pipeline = "m9"
+name = "Mirror's Edge"
+
 [overrides.620]
 pipeline = "m9"
 name = "Portal 2"
@@ -79,6 +87,12 @@ name = "Portal 2"
 [overrides.265930]
 pipeline = "m9"
 name = "Goat Simulator"
+
+[overrides.265930.dependencies]
+components = ["dotnet40", "vcrun2010", "directx_jun2010"]
+
+[overrides.265930.diagnostics]
+check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll", "mscoree.dll", "msvcr100.dll", "msvcp100.dll"]
 
 [overrides.391540]
 pipeline = "m9"
@@ -93,7 +107,7 @@ pipeline = "m11"
 name = "Ghostrunner"
 
 [overrides.1245620]
-pipeline = "m12"
+pipeline = "m11"
 name = "ELDEN RING"
 offline_capable = true
 anticheat = "eac_eos"
@@ -102,7 +116,7 @@ anticheat = "eac_eos"
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
 
 [overrides.1245620.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll"]
 
 [overrides.814380]
 pipeline = "m11"
@@ -131,6 +145,10 @@ name = "High On Life"
 pipeline = "m11"
 name = "Borderlands 3"
 
+[overrides.49520]
+pipeline = "m9"
+name = "Borderlands 2"
+
 [overrides.298110]
 pipeline = "m11"
 name = "Far Cry 4"
@@ -151,8 +169,12 @@ components = ["vcrun2019", "directx_jun2010"]
 check_dlls = ["d3d12.dll", "dxgi.dll"]
 
 [overrides.1868140]
-pipeline = "m11"
+pipeline = "m9"
 name = "DAVE THE DIVER"
+
+[overrides.774361]
+pipeline = "m9"
+name = "Blasphemous"
 
 [overrides.1551360]
 pipeline = "m12"
@@ -198,6 +220,12 @@ name = "CONTROL Ultimate Edition"
 [overrides.1196590]
 pipeline = "m12"
 name = "Resident Evil Village"
+
+[overrides.1196590.dependencies]
+components = ["vcrun2019", "directx_jun2010", "gpu_vendor_stubs"]
+
+[overrides.1196590.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll"]
 
 [overrides.1236300]
 pipeline = "m12"
@@ -270,6 +298,19 @@ name = "Palworld"
 [overrides.1623730.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
 
+[overrides.1623730.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
+
+[overrides.1928870]
+pipeline = "m12"
+name = "Minecraft Legends"
+
+[overrides.1928870.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.1928870.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
+
 [overrides.553850]
 pipeline = "m12"
 name = "HELLDIVERS 2"
@@ -301,7 +342,7 @@ pipeline = "wine_bare"
 name = "Dome Keeper"
 
 [overrides.1562430]
-pipeline = "m11"
+pipeline = "m9"
 name = "DREDGE"
 
 [overrides.1092790]
@@ -328,6 +369,26 @@ name = "Sonic Frontiers"
 pipeline = "m11"
 name = "Sons Of The Forest"
 
+[overrides.2358720]
+pipeline = "m12"
+name = "Black Myth: Wukong"
+
+[overrides.2358720.dependencies]
+components = ["vcrun2019", "directx_jun2010", "gpu_vendor_stubs"]
+
+[overrides.2358720.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll"]
+
+[overrides.2456740]
+pipeline = "m12"
+name = "inZOI"
+
+[overrides.2456740.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.2456740.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
+
 [overrides.275850]
 pipeline = "wine_bare"
 name = "No Man's Sky"
@@ -353,6 +414,16 @@ name = "DOOM Eternal"
 [overrides.289070]
 pipeline = "m11"
 name = "Sid Meier's Civilization VI"
+
+[overrides.3527290]
+pipeline = "m12"
+name = "PEAK"
+
+[overrides.3527290.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.3527290.diagnostics]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
 
 [overrides.1147560]
 pipeline = "m11"

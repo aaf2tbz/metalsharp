@@ -81,7 +81,23 @@ struct ExeCandidate {
 pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchRecipe, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let game_dir = crate::setup::resolve_game_dir(appid);
+    let direct_wine_pipeline = matches!(
+        node.id,
+        PipelineId::Dxmt
+            | PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::M13
+            | PipelineId::M32
+            | PipelineId::FnaArm64
+            | PipelineId::WineBare
+    );
+    let game_dir = if direct_wine_pipeline {
+        crate::setup::resolve_windows_game_dir(appid)
+    } else {
+        crate::setup::resolve_game_dir(appid)
+    };
 
     let exe_path = match node.id {
         PipelineId::Dxmt
@@ -91,6 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::M32
+        | PipelineId::FnaArm64
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
             Some(resolve_game_exe(appid, dir)?)
@@ -174,6 +191,24 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
             "-ExecCmds=r.Nanite 0;r.Nanite.ProjectEnabled 0;r.Nanite.Tessellation 0;r.GeometryCollection.Nanite 0"
                 .into(),
         );
+    }
+
+    match (appid, pipeline) {
+        (1196590 | 1623730 | 1928870 | 2358720 | 2456740, PipelineId::M12) => {
+            append_unique_launch_arg(launch_args, "-dx12");
+            append_unique_launch_arg(launch_args, "-d3d12");
+        },
+        (1623730 | 2358720, PipelineId::M11) => {
+            append_unique_launch_arg(launch_args, "-dx11");
+            append_unique_launch_arg(launch_args, "-d3d11");
+        },
+        _ => {},
+    }
+}
+
+fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {
+    if !launch_args.iter().any(|existing| existing.eq_ignore_ascii_case(arg)) {
+        launch_args.push(arg.to_string());
     }
 }
 
@@ -365,6 +400,7 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
             | PipelineId::M12
             | PipelineId::M13
             | PipelineId::M32
+            | PipelineId::FnaArm64
             | PipelineId::WineBare
     );
     let requires_game_dir = !matches!(recipe.pipeline, PipelineId::Steam | PipelineId::MacSteam);
@@ -640,6 +676,8 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
+        1196590 => &["re8.exe"],
+        2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         _ => &[],
     }
 }
@@ -666,6 +704,7 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("installer")
         && !lower.contains("uninstall")
         && !lower.contains("vcredist")
+        && !lower.contains("crashreport")
         && !lower.contains("crashhandler")
         && !lower.contains("server")
         && !lower.contains("steamwebhelper")
@@ -896,6 +935,30 @@ mod tests {
     }
 
     #[test]
+    fn preferred_exes_skip_crash_reporters_for_known_half_working_titles() {
+        let village_dir = test_dir("preferred-village-exe");
+        std::fs::create_dir_all(&village_dir).expect("create village dir");
+        std::fs::write(village_dir.join("CrashReport.exe"), b"not pe").expect("write crash reporter");
+        std::fs::write(village_dir.join("re8.exe"), b"not pe").expect("write village exe");
+
+        let village = resolve_game_exe(1196590, &village_dir).expect("select village exe");
+        assert_eq!(village.file_name().unwrap().to_string_lossy(), "re8.exe");
+        let _ = std::fs::remove_dir_all(village_dir);
+
+        let wukong_dir = test_dir("preferred-wukong-exe");
+        let exe_dir = wukong_dir.join("b1").join("Binaries").join("Win64");
+        let engine_dir = wukong_dir.join("Engine").join("Binaries").join("Win64");
+        std::fs::create_dir_all(&exe_dir).expect("create wukong exe dir");
+        std::fs::create_dir_all(&engine_dir).expect("create wukong engine dir");
+        std::fs::write(engine_dir.join("CrashReportClient.exe"), b"not pe").expect("write crash reporter");
+        std::fs::write(exe_dir.join("b1-Win64-Shipping.exe"), b"not pe").expect("write wukong exe");
+
+        let wukong = resolve_game_exe(2358720, &wukong_dir).expect("select wukong exe");
+        assert_eq!(wukong.file_name().unwrap().to_string_lossy(), "b1-Win64-Shipping.exe");
+        let _ = std::fs::remove_dir_all(wukong_dir);
+    }
+
+    #[test]
     fn subnautica_m12_preserves_startup_movie_handoff() {
         let args = effective_launch_args(1962700, super::super::engine::get_pipeline(PipelineId::M12));
 
@@ -912,6 +975,26 @@ mod tests {
         assert!(!args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")));
+    }
+
+    #[test]
+    fn dual_renderer_half_working_titles_get_dx11_args_on_m11() {
+        for appid in [1623730, 2358720] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx11")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d11")), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn m12_half_working_titles_get_explicit_dx12_args() {
+        for appid in [1196590, 1623730, 1928870, 2358720, 2456740] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M12));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")), "appid {appid}");
+        }
     }
 
     #[test]

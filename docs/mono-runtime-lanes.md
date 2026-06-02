@@ -1,8 +1,8 @@
 # MetalSharp Mono Runtime Lanes
 
-Status: Phase 11 active
+Status: June 2026 route hardening active
 
-MetalSharp now treats Mono as a runtime choice, not a global dependency. The old working FNA path and the current Wine installer path are different compatibility lanes and should stay isolated per bottle/game.
+MetalSharp now treats Mono/FNA as a first-class public route, not a global dependency and not a synonym for Wine Mono. The visible selector shows one **Mono/FNA** option while the launcher chooses the appropriate native Mono lane and shim set per game.
 
 ## Lanes
 
@@ -19,6 +19,11 @@ MetalSharp now treats Mono as a runtime choice, not a global dependency. The old
 - Native Mono ARM64/x86_64 should not be injected into every Wine bottle.
 - Wine Mono failures should be logged separately from native Mono/FNA failures.
 - A hard case like Minecraft should remain in the Wine bottle lane until evidence shows it needs a native launcher bridge or a different Wine Mono strategy.
+- The public route label is **Mono/FNA**. Internal component names such as `fna_arm64`, `fna_x86`, `mono-arm64`, and `mono-x86` remain implementation details.
+
+## Current Mono/FNA Route Contract
+
+The route stages FNA/XNA assemblies, native FNA3D/FAudio/SDL/Steam libraries when available, FMOD/FMOD Studio stubs, `steam_appid.txt`, and Steamworks compatibility shims. Celeste-style games select x86_64 Mono under Rosetta; Terraria-style games can use the Terraria runtime patch/stub path. A route being available does not mean a game is marked working: Celeste and Terraria still need fresh launch proof before moving into the supported bucket.
 
 ## Phase 11 Minecraft Finding
 

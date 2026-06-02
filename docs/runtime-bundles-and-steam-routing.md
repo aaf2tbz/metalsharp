@@ -48,10 +48,10 @@ The app launches Wine Steam through:
 Renderer button -> POST /steam/launch -> steam::launch_wine_steam()
 ```
 
-Game launches that need M12/DXMT route through:
+Game launches that need an explicit public route use M12/M11/M10/M9/Mono-FNA route IDs. Raw `dxmt` remains an internal auto-router and legacy compatibility value.
 
 ```text
-Renderer Play -> POST /steam/launch-game {"launchMethod":"dxmt_metal12"} -> prepare_steam_pipeline_env() -> Steam game launch
+Renderer Play -> POST /steam/launch-game {"launchMethod":"m12"} -> prepare_steam_pipeline_env() -> direct game launch with Wine Steam alive in the background
 ```
 
 Wine Steam must be launched by the backend so it gets the managed Wine prefix, runtime library env, DLL overrides, and wrapper deployment. Launching `Steam.exe` directly from a shell is not equivalent to pressing the app button.

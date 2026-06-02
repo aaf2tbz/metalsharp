@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
@@ -133,15 +133,21 @@ const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
 const engineOptions = [
-  { id: "auto", name: "Auto" },
-  { id: "dxmt", name: "DXMT" },
-  { id: "wine_bare", name: "Wine" },
-  { id: "m12", name: "DXMT D3D12" },
-  { id: "m11", name: "DXMT D3D11" },
-  { id: "m10", name: "DXMT D3D10" },
-  { id: "m9", name: "DXMT D3D9" },
-  { id: "m32", name: "M32" },
+  { id: "m12", name: "M12" },
+  { id: "m11", name: "M11" },
+  { id: "m10", name: "M10" },
+  { id: "m9", name: "M9" },
+  { id: "fna_arm64", name: "Mono/FNA" },
 ];
+const selectableRuntimeProfileIds = new Set(["m12", "m11", "m10", "m9", "fna_arm64"]);
+const visibleRuntimeProfiles = computed(() =>
+  runtimeProfiles.value
+    .filter((profile) => selectableRuntimeProfileIds.has(profile.id))
+    .map((profile) => ({
+      ...profile,
+      name: profile.id === "fna_arm64" ? "Mono/FNA" : profile.name.replace(/^D3D(\d+) Metal$/, "M$1"),
+    })),
+);
 
 async function load() {
   const [result, bottleResult, profileResult, matrixResult, redistResult] = await Promise.all([
@@ -683,7 +689,7 @@ onMounted(load);
                 :disabled="bottleLoading[bottle.id]"
                 @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
               >
-                <option v-for="profile in runtimeProfiles" :key="profile.id" :value="profile.id">
+                <option v-for="profile in visibleRuntimeProfiles" :key="profile.id" :value="profile.id">
                   {{ profile.name }}
                 </option>
               </select>

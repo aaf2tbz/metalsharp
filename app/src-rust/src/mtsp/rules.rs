@@ -57,10 +57,19 @@ fn load_game_recipes() -> &'static HashMap<u32, GameRecipe> {
 }
 
 fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
-    let mut candidates = vec![
+    let mut candidates = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("configs").join("mtsp-rules.toml"));
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    candidates.push(manifest_dir.join("..").join("..").join("configs").join("mtsp-rules.toml"));
+
+    candidates.extend([
         home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
         PathBuf::from("configs/mtsp-rules.toml"),
-    ];
+    ]);
 
     if let Some(exe) = current_exe {
         if let Some(mut dir) = exe.parent() {
@@ -144,7 +153,7 @@ pub fn resolve_pipeline(appid: u32) -> PipelineId {
         return resolve_dxmt_alias(appid, pipeline);
     }
 
-    let game_dir = crate::setup::resolve_game_dir(appid);
+    let game_dir = crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid));
     if let Some(ref dir) = game_dir {
         if dir.exists() {
             if crate::setup::detect_dotnet_game(dir) {
@@ -181,7 +190,7 @@ fn resolve_dxmt_alias(appid: u32, pipeline: PipelineId) -> PipelineId {
 }
 
 fn detect_dxmt_pipeline(appid: u32) -> Option<PipelineId> {
-    let game_dir = crate::setup::resolve_game_dir(appid)?;
+    let game_dir = crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid))?;
     if crate::setup::detect_dotnet_game(&game_dir) {
         return Some(PipelineId::FnaArm64);
     }
@@ -232,7 +241,12 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
 
     match component_id {
         "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
+        "vcrun2010" => ["msvcr100.dll", "msvcp100.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
+        "dotnet40" | "dotnet48" => {
+            windows.join("Microsoft.NET").join("Framework").join("v4.0.30319").join("clr.dll").exists()
+                || windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("clr.dll").exists()
+        },
         "directx_jun2010" => {
             ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
         },
@@ -437,13 +451,27 @@ mod tests {
         let rules = parse_rules(include_str!("../../../../configs/mtsp-rules.toml"));
 
         for (appid, pipeline) in [
+            (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (504230, PipelineId::FnaArm64),
+            (49520, PipelineId::M9),
             (508440, PipelineId::M11),
             (535520, PipelineId::M9),
+            (774361, PipelineId::M9),
+            (1169040, PipelineId::WineBare),
             (1237320, PipelineId::M11),
+            (1245620, PipelineId::M11),
+            (1562430, PipelineId::M9),
+            (1623730, PipelineId::M12),
+            (1868140, PipelineId::M9),
+            (1928870, PipelineId::M12),
+            (2358720, PipelineId::M12),
+            (2456740, PipelineId::M12),
+            (275850, PipelineId::WineBare),
             (1326470, PipelineId::M11),
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),
+            (3527290, PipelineId::M12),
         ] {
             assert_eq!(rules.get(&appid), Some(&pipeline), "appid {appid}");
         }
@@ -470,21 +498,27 @@ mod tests {
         assert!(!recipes.is_empty());
 
         let elden = recipes.get(&1245620).expect("elden ring recipe");
-        assert_eq!(elden.pipeline, PipelineId::M12);
+        assert_eq!(elden.pipeline, PipelineId::M11);
         assert_eq!(elden.name, "ELDEN RING");
         assert!(elden.components.contains(&"vcrun2019".to_string()));
         assert!(elden.components.contains(&"directx_jun2010".to_string()));
-        assert!(elden.check_dlls.contains(&"d3d12.dll".to_string()));
+        assert!(elden.check_dlls.contains(&"d3d11.dll".to_string()));
     }
 
     #[test]
-    fn game_recipes_without_dependencies_get_empty_vecs() {
+    fn game_recipes_parse_goat_simulator_m9_runtime() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let goat = recipes.get(&265930).expect("goat simulator recipe");
         assert_eq!(goat.pipeline, PipelineId::M9);
-        assert!(goat.components.is_empty());
+        assert!(goat.components.contains(&"dotnet40".to_string()));
+        assert!(!goat.components.contains(&"dotnet48".to_string()));
+        assert!(goat.components.contains(&"vcrun2010".to_string()));
+        assert!(goat.components.contains(&"directx_jun2010".to_string()));
         assert!(goat.env.is_empty());
-        assert!(goat.check_dlls.is_empty());
+        assert!(goat.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"mscoree.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"msvcr100.dll".to_string()));
+        assert!(goat.check_dlls.contains(&"msvcp100.dll".to_string()));
     }
 
     #[test]
@@ -498,6 +532,20 @@ mod tests {
         std::fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write vcrun dll");
         std::fs::write(system32.join("msvcp140.dll"), b"dll").expect("write vcrun dll");
         assert!(recipe_component_satisfied("vcrun2019", &root));
+
+        std::fs::write(system32.join("msvcr100.dll"), b"dll").expect("write partial vcrun2010");
+        assert!(!recipe_component_satisfied("vcrun2010", &root));
+        std::fs::write(system32.join("msvcp100.dll"), b"dll").expect("write vcrun2010 dll");
+        assert!(recipe_component_satisfied("vcrun2010", &root));
+
+        let framework = root.join("drive_c/windows/Microsoft.NET/Framework/v4.0.30319");
+        std::fs::create_dir_all(&framework).expect("create dotnet framework dir");
+        std::fs::write(framework.join("mscorlib.dll"), b"dll").expect("write dotnet facade");
+        assert!(!recipe_component_satisfied("dotnet48", &root));
+        assert!(!recipe_component_satisfied("dotnet40", &root));
+        std::fs::write(framework.join("clr.dll"), b"dll").expect("write native clr");
+        assert!(recipe_component_satisfied("dotnet48", &root));
+        assert!(recipe_component_satisfied("dotnet40", &root));
 
         std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
         assert!(!recipe_component_satisfied("directx_jun2010", &root));

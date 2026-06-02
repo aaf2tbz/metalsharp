@@ -6,6 +6,9 @@ Use this page as the repo map before changing launch/runtime code.
 
 - [Runtime Bundles and Steam Routing](runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
 - [Launch Architecture](launch-architecture.md) - pipeline selection and launch ownership.
+- [Game Compatibility](game-compat.md) - short entrypoint to the current compatibility ledger.
+- [Supported Games](GAMES-SUPPORTED.md) - current working/blocked game evidence and recommended public routes.
+- [Mono Runtime Lanes](mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
 - [Wine Architecture](wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
 - [Launcher Runtime](launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
 - [D3D12 Pipeline Map](m12-pipeline-map.md) - current M12 D3D12/DXMT path.
