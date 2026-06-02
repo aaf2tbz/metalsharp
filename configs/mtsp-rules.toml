@@ -89,7 +89,7 @@ pipeline = "m9"
 name = "Goat Simulator"
 
 [overrides.265930.dependencies]
-components = ["dotnet48", "vcrun2010", "directx_jun2010"]
+components = ["dotnet40", "vcrun2010", "directx_jun2010"]
 
 [overrides.265930.diagnostics]
 check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll", "mscoree.dll", "msvcr100.dll", "msvcp100.dll"]

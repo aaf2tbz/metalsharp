@@ -243,7 +243,7 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
         "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2010" => ["msvcr100.dll", "msvcp100.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
-        "dotnet48" => {
+        "dotnet40" | "dotnet48" => {
             windows.join("Microsoft.NET").join("Framework").join("v4.0.30319").join("clr.dll").exists()
                 || windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("clr.dll").exists()
         },
@@ -510,7 +510,8 @@ mod tests {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let goat = recipes.get(&265930).expect("goat simulator recipe");
         assert_eq!(goat.pipeline, PipelineId::M9);
-        assert!(goat.components.contains(&"dotnet48".to_string()));
+        assert!(goat.components.contains(&"dotnet40".to_string()));
+        assert!(!goat.components.contains(&"dotnet48".to_string()));
         assert!(goat.components.contains(&"vcrun2010".to_string()));
         assert!(goat.components.contains(&"directx_jun2010".to_string()));
         assert!(goat.env.is_empty());
@@ -541,8 +542,10 @@ mod tests {
         std::fs::create_dir_all(&framework).expect("create dotnet framework dir");
         std::fs::write(framework.join("mscorlib.dll"), b"dll").expect("write dotnet facade");
         assert!(!recipe_component_satisfied("dotnet48", &root));
+        assert!(!recipe_component_satisfied("dotnet40", &root));
         std::fs::write(framework.join("clr.dll"), b"dll").expect("write native clr");
         assert!(recipe_component_satisfied("dotnet48", &root));
+        assert!(recipe_component_satisfied("dotnet40", &root));
 
         std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
         assert!(!recipe_component_satisfied("directx_jun2010", &root));

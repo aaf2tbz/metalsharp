@@ -1396,6 +1396,10 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "dotnet40" {
+        prepare_native_dotnet4_repair(&prefix, &log_path)?;
+    }
+
     let pid = launch_component_installer(&prefix, &installer, &log_path)?;
     mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
     mark_manifest_launch_started(&mut manifest, pid, &log_path);
@@ -2331,7 +2335,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
-        "dotnet48" => {
+        "dotnet40" | "dotnet48" => {
             let framework = windows.join("Microsoft.NET").join("Framework").join("v4.0.30319");
             let framework64 = windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319");
             if framework.join("clr.dll").exists() || framework64.join("clr.dll").exists() {
@@ -2687,6 +2691,14 @@ fn resolve_component_installer_from_roots(
             local_redist.join("DotNet").join("4.8").join("ndp48-x86-x64-allos-enu.exe"),
             local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe"),
         ]),
+        "dotnet40" => first_existing(&[
+            redist_root.join("DotNet").join("4.0").join("dotNetFx40_Client_x86_x64.exe"),
+            redist_root.join("DotNet").join("4.0").join("dotNetFx40_Full_x86_x64.exe"),
+            redist_root.join("DotNet").join("4.0").join("dotNetFx40_Full_setup.exe"),
+            local_redist.join("DotNet").join("4.0").join("dotNetFx40_Client_x86_x64.exe"),
+            local_redist.join("DotNet").join("4.0").join("dotNetFx40_Full_x86_x64.exe"),
+            local_redist.join("DotNet").join("4.0").join("dotNetFx40_Full_setup.exe"),
+        ]),
         "webview2" => first_existing(&[
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
             redist_root.join("WebView2").join("MicrosoftEdgeWebView2RuntimeInstallerX86.exe"),
@@ -2725,7 +2737,7 @@ fn resolve_component_installer_from_roots(
 
     let args = match component_id {
         "vcrun2019" | "vcrun2013" | "vcrun2010" => vec!["/quiet".to_string(), "/norestart".to_string()],
-        "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
+        "dotnet40" | "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
         "openal" => vec!["/S".to_string()],
@@ -2845,6 +2857,60 @@ fn find_case_insensitive_sibling(parent: &Path, file_name: &str) -> Option<PathB
 
 fn first_existing(paths: &[PathBuf]) -> Option<PathBuf> {
     paths.iter().find(|path| path.exists()).cloned()
+}
+
+fn prepare_native_dotnet4_repair(prefix: &Path, log_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if inspect_component_state(prefix, "dotnet40", ComponentState::Missing) == ComponentState::Installed {
+        return Ok(());
+    }
+
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let reg_file = prefix.join("drive_c").join("metalsharp-dotnet40-native-repair.reg");
+    fs::write(&reg_file, build_dotnet4_native_repair_reg())?;
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "dotnet40_native_repair_preflight={}", reg_file.display())?;
+    writeln!(log, "--- dotnet40 native repair registry output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&wine);
+    cmd.arg("regedit")
+        .arg(wine_z_drive_path(&reg_file))
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(format!("failed to clear stale .NET 4 registry markers before native repair: {}", status).into());
+    }
+    Ok(())
+}
+
+fn build_dotnet4_native_repair_reg() -> String {
+    let keys = [
+        r"HKEY_LOCAL_MACHINE\Software\Microsoft\NET Framework Setup\NDP\v4\Client",
+        r"HKEY_LOCAL_MACHINE\Software\Microsoft\NET Framework Setup\NDP\v4\Full",
+        r"HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\NET Framework Setup\NDP\v4\Client",
+        r"HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\NET Framework Setup\NDP\v4\Full",
+    ];
+    let mut reg = String::from("REGEDIT4\r\n\r\n");
+    for key in keys {
+        reg.push_str(&format!("[{}]\r\n", key));
+        reg.push_str("\"Install\"=dword:00000000\r\n\r\n");
+    }
+    reg
 }
 
 fn launch_component_installer(
@@ -3260,6 +3326,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         source: if installer.is_some() { "local_redist_asset" } else { "missing_local_asset" }.to_string(),
         available: installer.is_some(),
         detail: match id {
+            "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
             "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
             "vcrun2010" => "Uses Steam CommonRedist or local Visual C++ 2010 redistributable",
@@ -3288,6 +3355,7 @@ fn component_action_detail(id: &str) -> String {
         "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
         "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
+        "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
         "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
         "vcrun2010" => "Install Visual C++ 2010 runtime DLLs (msvcr100, msvcp100)".to_string(),
@@ -3612,6 +3680,17 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
     let home = dirs::home_dir().unwrap_or_default();
     let redist = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist");
     vec![
+        RedistSourceGuide {
+            id: "dotnet40".to_string(),
+            name: ".NET Framework 4.0 Runtime".to_string(),
+            source_url: "https://dotnet.microsoft.com/en-us/download/dotnet-framework/net40".to_string(),
+            local_targets: vec![
+                redist.join("DotNet").join("4.0").join("dotNetFx40_Client_x86_x64.exe").to_string_lossy().to_string(),
+                redist.join("DotNet").join("4.0").join("dotNetFx40_Full_x86_x64.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download_or_user_supplied".to_string(),
+            notes: "Use for CLR v4 games that ship C++/CLI launchers, including older UE3 titles such as Goat Simulator.".to_string(),
+        },
         RedistSourceGuide {
             id: "dotnet48".to_string(),
             name: ".NET Framework 4.8 Runtime".to_string(),
@@ -4203,17 +4282,30 @@ mod tests {
     }
 
     #[test]
-    fn dotnet48_requires_native_clr_not_only_framework_folder() {
-        let dir = test_dir("dotnet48-native-clr");
+    fn dotnet4_components_require_native_clr_not_only_framework_folder() {
+        let dir = test_dir("dotnet4-native-clr");
         let framework = dir.join("drive_c/windows/Microsoft.NET/Framework/v4.0.30319");
         fs::create_dir_all(&framework).expect("create framework dir");
         fs::write(framework.join("mscorlib.dll"), b"mono-backed facade").expect("write mscorlib");
 
+        assert_eq!(inspect_component_state(&dir, "dotnet40", ComponentState::Unknown), ComponentState::NeedsRepair);
         assert_eq!(inspect_component_state(&dir, "dotnet48", ComponentState::Unknown), ComponentState::NeedsRepair);
 
         fs::write(framework.join("clr.dll"), b"native clr").expect("write clr");
+        assert_eq!(inspect_component_state(&dir, "dotnet40", ComponentState::Unknown), ComponentState::Installed);
         assert_eq!(inspect_component_state(&dir, "dotnet48", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dotnet40_native_repair_clears_false_install_markers() {
+        let reg = build_dotnet4_native_repair_reg();
+
+        assert!(reg.contains(r"[HKEY_LOCAL_MACHINE\Software\Microsoft\NET Framework Setup\NDP\v4\Client]"));
+        assert!(reg.contains(r"[HKEY_LOCAL_MACHINE\Software\Microsoft\NET Framework Setup\NDP\v4\Full]"));
+        assert!(reg.contains(r"[HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\NET Framework Setup\NDP\v4\Client]"));
+        assert!(reg.contains(r"[HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\NET Framework Setup\NDP\v4\Full]"));
+        assert_eq!(reg.matches("\"Install\"=dword:00000000").count(), 4);
     }
 
     #[test]
@@ -4271,14 +4363,17 @@ mod tests {
         let steam_redist = dir.join("steam-redist");
         let local_redist = dir.join("runtime-redist");
         let dotnet = local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe");
+        let dotnet40 = local_redist.join("DotNet").join("4.0").join("dotNetFx40_Client_x86_x64.exe");
         let vc = local_redist.join("VC_redist.x86.exe");
         let xna = local_redist.join("XNA").join("4.0").join("xnafx40_redist.msi");
         let physx = local_redist.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi");
         fs::create_dir_all(dotnet.parent().expect("dotnet parent")).expect("create dotnet dir");
+        fs::create_dir_all(dotnet40.parent().expect("dotnet40 parent")).expect("create dotnet40 dir");
         fs::create_dir_all(vc.parent().expect("vc parent")).expect("create vc dir");
         fs::create_dir_all(xna.parent().expect("xna parent")).expect("create xna dir");
         fs::create_dir_all(physx.parent().expect("physx parent")).expect("create physx dir");
         fs::write(&dotnet, b"dotnet").expect("write dotnet redist");
+        fs::write(&dotnet40, b"dotnet40").expect("write dotnet40 redist");
         fs::write(&vc, b"vc").expect("write vc redist");
         fs::write(&xna, b"xna").expect("write xna redist");
         fs::write(&physx, b"physx").expect("write physx redist");
@@ -4286,6 +4381,9 @@ mod tests {
         let dotnet_installer =
             resolve_component_installer_from_roots("dotnet48", BottleArch::Wow64, &steam_redist, &local_redist)
                 .expect("resolve local dotnet");
+        let dotnet40_installer =
+            resolve_component_installer_from_roots("dotnet40", BottleArch::Wow64, &steam_redist, &local_redist)
+                .expect("resolve local dotnet40");
         let vc_installer =
             resolve_component_installer_from_roots("vcrun2019", BottleArch::Win32, &steam_redist, &local_redist)
                 .expect("resolve local vc");
@@ -4299,6 +4397,10 @@ mod tests {
         assert_eq!(
             dotnet_installer.path.to_string_lossy().to_ascii_lowercase(),
             dotnet.to_string_lossy().to_ascii_lowercase()
+        );
+        assert_eq!(
+            dotnet40_installer.path.to_string_lossy().to_ascii_lowercase(),
+            dotnet40.to_string_lossy().to_ascii_lowercase()
         );
         assert_eq!(vc_installer.path, vc);
         assert_eq!(xna_installer.path, xna);
