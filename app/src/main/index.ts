@@ -1,8 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
-import * as path from "path";
 import * as os from "os";
+import * as path from "path";
 import { RustBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
 

@@ -35,14 +35,14 @@ pub fn metalsharp_home_dir() -> PathBuf {
     metalsharp_home_dir_for(&dirs::home_dir().unwrap_or_default())
 }
 
-pub fn metalsharp_home_dir_for(home: &std::path::Path) -> PathBuf {
+pub fn metalsharp_home_dir_for<T: AsRef<std::path::Path> + ?Sized>(home: &T) -> PathBuf {
     if let Ok(value) = std::env::var("METALSHARP_HOME") {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
         }
     }
-    home.join(".metalsharp")
+    home.as_ref().join(".metalsharp")
 }
 
 fn app_resources_dir_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
