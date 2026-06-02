@@ -22,14 +22,24 @@ function getShellPath(): string {
 
 const shellPath = getShellPath();
 
+interface RustBridgeOptions {
+  devMode?: boolean;
+  metalsharpHome?: string;
+}
+
 export class RustBridge {
   private proc: ChildProcess | null = null;
   private port: number = 9274;
   private base: string;
   private startPromise: Promise<{ ok: boolean; error?: string }> | null = null;
+  private devMode: boolean;
+  private metalsharpHome?: string;
 
-  constructor() {
-    this.port = parseInt(process.env.METALSHARP_PORT || "9274", 10);
+  constructor(options: RustBridgeOptions = {}) {
+    this.devMode = options.devMode === true || process.env.METALSHARP_DEV === "1";
+    this.metalsharpHome = options.metalsharpHome || process.env.METALSHARP_HOME;
+    const defaultPort = this.devMode ? "9276" : "9274";
+    this.port = parseInt(process.env.METALSHARP_PORT || defaultPort, 10);
     this.base = `http://127.0.0.1:${this.port}`;
   }
 
@@ -71,7 +81,7 @@ export class RustBridge {
     const needsRestart = await this.shouldRestart(binPath);
     if (needsRestart) {
       console.log("Backend version mismatch or not running — restarting...");
-      this.killExisting();
+      await this.killExisting();
       await new Promise((r) => setTimeout(r, 500));
     } else if (await this.isAlive()) {
       console.log("Backend already running and up to date");
@@ -94,7 +104,7 @@ export class RustBridge {
     }
 
     this.stop();
-    this.killExisting();
+    await this.killExisting();
     await new Promise((r) => setTimeout(r, 500));
 
     try {
@@ -191,6 +201,8 @@ export class RustBridge {
         ...process.env,
         PATH: shellPath,
         METALSHARP_PORT: String(this.port),
+        ...(this.metalsharpHome ? { METALSHARP_HOME: this.metalsharpHome } : {}),
+        ...(this.devMode ? { METALSHARP_DEV: "1" } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -241,21 +253,34 @@ export class RustBridge {
     });
   }
 
-  private killExisting() {
-    const { execSync } = require("child_process");
+  private async killExisting() {
+    if (this.proc?.pid) {
+      try {
+        this.proc.kill();
+      } catch {}
+    }
+    this.proc = null;
+
+    const pid = await this.getBackendPid();
+    if (!pid) return;
     try {
-      execSync("pkill -x metalsharp-backend 2>/dev/null", { stdio: "ignore" });
+      process.kill(pid, "SIGTERM");
     } catch {}
   }
 
   private findBinary(): string | null {
-    const candidates = [
+    const devCandidates = [
+      path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
+      path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
+    ];
+    const packagedCandidates = [
       path.join(process.resourcesPath || "", "runtime", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",
       "/usr/bin/metalsharp-backend",
     ];
+    const candidates = this.devMode ? [...devCandidates, ...packagedCandidates] : packagedCandidates;
 
     for (const c of candidates) {
       try {

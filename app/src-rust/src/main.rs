@@ -140,6 +140,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     "ok": true,
                     "version": env!("CARGO_PKG_VERSION"),
                     "pid": std::process::id(),
+                    "dev_mode": std::env::var("METALSHARP_DEV").map(|v| v == "1").unwrap_or(false),
+                    "metalsharp_home": crate::platform::metalsharp_home_dir().to_string_lossy().to_string(),
                 }),
             )
         },
@@ -278,7 +280,19 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let key = body.get("key").and_then(|v| v.as_str()).unwrap_or("");
             app_log("Steam API key saved");
             match steam::save_api_key(key) {
-                Ok(_) => resp(200, json!({"ok": true})),
+                Ok(_) => {
+                    let library = steam::library();
+                    let total = library.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+                    app_log(&format!("Steam API key sync loaded {} games", total));
+                    resp(
+                        200,
+                        json!({
+                            "ok": true,
+                            "library": library,
+                            "sync": steam::api_key_sync_state(),
+                        }),
+                    )
+                },
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
@@ -391,9 +405,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         .unwrap_or("steam");
                     let route_pipeline = match mtsp::engine::PipelineId::from_str_flexible(launch_method) {
                         Some(mtsp::engine::PipelineId::Steam) => None,
-                        Some(pipeline) => Some(mtsp::rules::resolve_requested_pipeline(id, Some(pipeline))),
+                        Some(pipeline) => Some(bottles::resolve_steam_pipeline_for_request(id, Some(pipeline))),
                         None if launch_method.eq_ignore_ascii_case("steam") => None,
-                        None => Some(mtsp::rules::resolve_pipeline(id)),
+                        None => Some(bottles::resolve_steam_pipeline_for_request(id, None)),
                     };
                     app_log(&format!("Launching game via Wine Steam: appid {}, route {}", id, launch_method));
                     let launch_result = match route_pipeline {
@@ -438,7 +452,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             )
                         },
                         None => {
-                            let pipeline = mtsp::rules::resolve_pipeline(id);
+                            let pipeline = bottles::resolve_steam_pipeline_for_request(id, None);
                             let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
@@ -554,7 +568,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/logs") => {
             let home = dirs::home_dir().unwrap_or_default();
-            let log_path = home.join(".metalsharp").join("logs");
+            let log_path = crate::platform::metalsharp_home_dir_for(&home).join("logs");
             let mut entries = Vec::new();
             let mut files: Vec<std::path::PathBuf> = if log_path.exists() {
                 walkdir::WalkDir::new(&log_path)
@@ -590,7 +604,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/logs/stream") => {
             let home = dirs::home_dir().unwrap_or_default();
-            let log_dir = home.join(".metalsharp").join("logs");
+            let log_dir = crate::platform::metalsharp_home_dir_for(&home).join("logs");
             let url_str = req.url().to_string();
             let after: usize = url_str
                 .split("after=")
@@ -618,7 +632,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/logs/crash-reports") => {
             let home = dirs::home_dir().unwrap_or_default();
             let mut reports = Vec::new();
-            let game_base = home.join(".metalsharp").join("games");
+            let game_base = crate::platform::metalsharp_home_dir_for(&home).join("games");
             if let Ok(rd) = std::fs::read_dir(&game_base) {
                 for entry in rd.flatten() {
                     if entry.path().is_dir() {
@@ -627,7 +641,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     }
                 }
             }
-            let prefix = home.join(".metalsharp").join("prefix-steam").join("drive_c");
+            let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam").join("drive_c");
             let _ = scan_crash_files(&prefix, "system", &mut reports);
             reports.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
                 b.get("timestamp")
@@ -801,6 +815,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, bottles::handle_set_runtime_profile(&body))
         },
+        (Method::Post, "/bottles/edit") => {
+            let body = read_body(req);
+            resp(200, bottles::handle_edit_bottle(&body))
+        },
         (Method::Post, "/bottles/set-windows-version") => {
             let body = read_body(req);
             resp(200, bottles::handle_set_windows_version(&body))
@@ -860,7 +878,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
-            let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+            let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
             match mtsp::mscompatdb::write_compatdb_rules(&ms_root) {
                 Ok(()) => resp(
                     200,
@@ -997,7 +1015,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let mut game_type = "native";
             if let Some(sid) = steam_app_id {
                 let home = dirs::home_dir().unwrap_or_default();
-                let marker = home.join(".metalsharp").join("games").join(sid.to_string()).join(".metalsharp_prepared");
+                let marker = crate::platform::metalsharp_home_dir_for(&home)
+                    .join("games")
+                    .join(sid.to_string())
+                    .join(".metalsharp_prepared");
                 if let Ok(content) = std::fs::read_to_string(&marker) {
                     if content.contains("is_dotnet=true") {
                         app_log("Detected XNA/FNA game — using mono runtime");
@@ -1258,7 +1279,7 @@ fn app_issue_log(kind: &str, subject: &str, summary: &str, details: &[String]) {
 }
 
 fn logs_dir() -> std::path::PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("logs")
+    crate::platform::metalsharp_home_dir().join("logs")
 }
 
 fn chrono_now() -> String {
@@ -1307,8 +1328,8 @@ fn local_date_for_epoch(secs: u64) -> String {
 
 fn cache_dir_for_type(home: &std::path::Path, cache_type: &str) -> std::path::PathBuf {
     match cache_type {
-        "pipeline" => home.join(".metalsharp").join("pipeline-cache"),
-        _ => home.join(".metalsharp").join("shader-cache"),
+        "pipeline" => crate::platform::metalsharp_home_dir_for(&home).join("pipeline-cache"),
+        _ => crate::platform::metalsharp_home_dir_for(&home).join("shader-cache"),
     }
 }
 
@@ -1373,7 +1394,7 @@ fn cache_summary(path: &std::path::Path) -> serde_json::Value {
 
 fn resolve_game_exe(appid: u32) -> String {
     let home = dirs::home_dir().unwrap_or_default();
-    let game_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let game_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
 
     for entry in walkdir::WalkDir::new(&game_dir).max_depth(3).into_iter().flatten() {
         if let Some(ext) = entry.path().extension() {

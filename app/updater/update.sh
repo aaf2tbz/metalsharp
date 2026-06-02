@@ -5,6 +5,7 @@ DMG_PATH=""
 BACKEND_PID=""
 TARGET_VERSION=""
 STATUS_FILE=""
+METALSHARP_HOME_ARG=""
 
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
@@ -46,24 +47,59 @@ while [ "$#" -gt 0 ]; do
         --backend-pid) shift; BACKEND_PID="${1:-}"; shift ;;
         --target-version) shift; TARGET_VERSION="${1:-}"; shift ;;
         --status-file) shift; STATUS_FILE="${1:-}"; shift ;;
+        --metalsharp-home) shift; METALSHARP_HOME_ARG="${1:-}"; shift ;;
         --) shift; break ;;
         *) shift ;;
     esac
 done
 
-STATUS_FILE="${STATUS_FILE:-$HOME/.metalsharp/update_install_status.json}"
+MS_DIR="${METALSHARP_HOME_ARG:-${METALSHARP_HOME:-$HOME/.metalsharp}}"
+STATUS_FILE="${STATUS_FILE:-$MS_DIR/update_install_status.json}"
 DMG_PATH="${DMG_PATH:?--dmg required}"
 BACKEND_PID="${BACKEND_PID:?--backend-pid required}"
 TARGET_VERSION="${TARGET_VERSION:?--target-version required}"
 APP_PATH="/Applications/MetalSharp.app"
+TMP_APP_PATH="/Applications/.MetalSharp.app.update.$$"
+BACKUP_APP_PATH="/Applications/.MetalSharp.app.previous.$$"
 MOUNT_POINT=""
 
 cleanup() {
     if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
     fi
+    rm -rf "$TMP_APP_PATH" 2>/dev/null || true
+    if [ -d "$BACKUP_APP_PATH" ] && [ -d "$APP_PATH" ]; then
+        rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
+
+run_privileged() {
+    local command="$1"
+    osascript -e "do shell script \"${command//\"/\\\"}\" with administrator privileges" 2>/dev/null
+}
+
+verify_app_bundle() {
+    local app_path="$1"
+    for required in \
+        "$app_path/Contents/Info.plist" \
+        "$app_path/Contents/MacOS/MetalSharp" \
+        "$app_path/Contents/Resources/runtime/metalsharp-backend" \
+        "$app_path/Contents/Resources/scripts/tools/updater/update.sh"
+    do
+        if [ ! -s "$required" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+restore_backup() {
+    if [ -d "$BACKUP_APP_PATH" ] && [ ! -d "$APP_PATH" ]; then
+        mv "$BACKUP_APP_PATH" "$APP_PATH" 2>/dev/null || \
+            run_privileged "mv '$BACKUP_APP_PATH' '$APP_PATH'" || true
+    fi
+}
 
 write_status "starting" 0 "Starting update..."
 
@@ -73,8 +109,10 @@ pkill -x metalsharp-backend 2>/dev/null || true
 sleep 0.5
 
 write_status "killing_steam" 15 "Stopping Steam and Wine processes..."
-for pat in steam steam.exe steamwebhelper steamwebhelper.exe wine wine64 wineserver; do
+for pat in steam steam.exe steamwebhelper steamwebhelper.exe wine wine64 wineserver wineloader; do
     pkill -x "$pat" 2>/dev/null || true
+done
+for pat in Steam.exe steamwebhelper.exe wineserver wineloader; do
     pkill -f "$pat" 2>/dev/null || true
 done
 sleep 1
@@ -103,7 +141,7 @@ fi
 
 write_status "mounting" 35 "Mounting update disk image..."
 MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1) || true
-if [ -z "$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/')" ]; then
+if ! grep -q '/Volumes/' <<<"$MOUNT_OUTPUT"; then
     MOUNT_OUTPUT=$(osascript -e "do shell script \"hdiutil attach -nobrowse \\\"$DMG_PATH\\\"\" with administrator privileges" 2>&1) || true
     sleep 2
 fi
@@ -125,35 +163,52 @@ if [ -z "$APP_SOURCE" ]; then
     write_status "error" 50 "MetalSharp.app not found in update" "app_not_found"
     exit 1
 fi
-
-write_status "installing" 50 "Removing old version..."
-if [ -d "$APP_PATH" ]; then
-    rm -rf "$APP_PATH" 2>/dev/null || {
-        osascript -e "do shell script \"rm -rf \\\"$APP_PATH\\\"\" with administrator privileges" 2>/dev/null || true
-        sleep 1
-    }
-    [ -d "$APP_PATH" ] && {
-        write_status "error" 55 "Failed to remove old app" "remove_failed"
-        exit 1
-    }
-fi
-
-write_status "installing" 60 "Installing new version..."
-cp -R "$APP_SOURCE" "$APP_PATH" 2>/dev/null || {
-    osascript -e "do shell script \"cp -R \\\"$APP_SOURCE\\\" \\\"$APP_PATH\\\"\" with administrator privileges" 2>/dev/null || true
-    sleep 2
-}
-
-if [ ! -d "$APP_PATH" ]; then
-    write_status "error" 65 "Failed to install new version" "copy_failed"
+if ! verify_app_bundle "$APP_SOURCE"; then
+    write_status "error" 50 "Update app bundle is missing required MetalSharp files" "app_bundle_invalid"
     exit 1
 fi
 
+write_status "installing" 50 "Staging new version..."
+rm -rf "$TMP_APP_PATH" "$BACKUP_APP_PATH" 2>/dev/null || true
+ditto "$APP_SOURCE" "$TMP_APP_PATH" 2>/dev/null || {
+    run_privileged "ditto '$APP_SOURCE' '$TMP_APP_PATH'" || true
+    sleep 1
+}
+
+if ! verify_app_bundle "$TMP_APP_PATH"; then
+    write_status "error" 60 "Failed to stage a valid update app bundle" "stage_failed"
+    exit 1
+fi
+
+write_status "installing" 65 "Installing new version..."
+if [ -d "$APP_PATH" ]; then
+    mv "$APP_PATH" "$BACKUP_APP_PATH" 2>/dev/null || {
+        run_privileged "mv '$APP_PATH' '$BACKUP_APP_PATH'" || true
+        sleep 1
+    }
+    if [ -d "$APP_PATH" ]; then
+        write_status "error" 68 "Failed to move the old app out of the way" "remove_failed"
+        exit 1
+    fi
+fi
+
+mv "$TMP_APP_PATH" "$APP_PATH" 2>/dev/null || {
+    run_privileged "mv '$TMP_APP_PATH' '$APP_PATH'" || true
+    sleep 1
+}
+
+if [ -d "$TMP_APP_PATH" ] || ! verify_app_bundle "$APP_PATH"; then
+    rm -rf "$APP_PATH" 2>/dev/null || true
+    restore_backup
+    write_status "error" 70 "Failed to install a valid new version" "copy_failed"
+    exit 1
+fi
+
+rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
 write_status "installed" 80 "New version installed"
 
-MS_DIR="$HOME/.metalsharp"
 mkdir -p "$MS_DIR"
-printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
+rm -f "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
 write_status "unmounting" 82 "Unmounting update disk..."
 hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
@@ -188,5 +243,5 @@ fi
 if [ "$BACKEND_VERSION" = "$TARGET_VERSION" ]; then
     write_status "complete" 100 "Successfully updated to v${TARGET_VERSION}!"
 else
-    write_status "complete" 100 "Update installed. Backend: v${BACKEND_VERSION:-?} (expected v${TARGET_VERSION})"
+    write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION}" "backend_version_mismatch"
 fi

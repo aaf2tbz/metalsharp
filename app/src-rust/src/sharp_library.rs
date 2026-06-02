@@ -12,7 +12,7 @@ const MANIFEST_FILE: &str = "library.json";
 
 fn base_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_default();
-    home.join(".metalsharp").join(LIBRARY_DIR)
+    crate::platform::metalsharp_home_dir_for(&home).join(LIBRARY_DIR)
 }
 
 fn manifest_path() -> PathBuf {
@@ -20,7 +20,7 @@ fn manifest_path() -> PathBuf {
 }
 
 fn steam_prefix() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam")
+    crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -602,7 +602,7 @@ fn launch_msi_installer(
     log_path: &Path,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -959,7 +959,8 @@ fn find_bundled_cef_asset(filename: &str) -> Option<PathBuf> {
     }
 
     if let Some(home) = dirs::home_dir() {
-        let installed = home.join(".metalsharp").join("scripts").join("tools").join("cef").join(filename);
+        let installed =
+            crate::platform::metalsharp_home_dir_for(&home).join("scripts").join("tools").join("cef").join(filename);
         if installed.exists() {
             return Some(installed);
         }

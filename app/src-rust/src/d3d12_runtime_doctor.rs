@@ -284,7 +284,11 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn probe_runs_root(home: &Path, appid: u32) -> PathBuf {
-    home.join(".metalsharp").join("pipeline-cache").join("m12").join("probes").join(appid.to_string())
+    crate::platform::metalsharp_home_dir_for(&home)
+        .join("pipeline-cache")
+        .join("m12")
+        .join("probes")
+        .join(appid.to_string())
 }
 
 fn latest_cached_report_in(root: &Path) -> Option<Value> {
@@ -687,7 +691,7 @@ fn build_log_file(
 }
 
 fn write_global_log(appid: u32, timestamp: &str, contents: &str) -> std::io::Result<()> {
-    let log_dir = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("logs");
+    let log_dir = crate::platform::metalsharp_home_dir().join("logs");
     fs::create_dir_all(&log_dir)?;
     fs::write(log_dir.join(format!("d3d12-runtime-doctor-{}-{}.log", appid, timestamp)), contents)
 }

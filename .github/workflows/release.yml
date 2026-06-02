@@ -4,6 +4,10 @@ on:
   push:
     tags: ['v*']
 
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   actions: read
@@ -143,8 +147,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Adhoc-sign backend binary
+      - name: Prepare Apple Developer ID signing
+        run: tools/dmg/prepare-apple-signing.sh
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+      - name: Adhoc-sign native binaries for unsigned local packaging
         run: |
+          if [ -n "${CSC_KEYCHAIN:-}" ]; then
+            echo "Developer ID signing enabled; skipping ad-hoc pre-sign."
+            exit 0
+          fi
           codesign --force --sign - app/src-rust/target/release/metalsharp-backend || true
           for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
             codesign --force --sign - "$f" 2>/dev/null || true
@@ -155,9 +175,19 @@ jobs:
         run: cd app && npx electron-builder --mac dmg --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
       - name: Verify DMG runtime assets
         run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
+
+      - name: Verify Apple notarization
+        run: |
+          tools/dmg/verify-notarization.sh dist/electron/mac-arm64/MetalSharp.app
+          tools/dmg/verify-notarization.sh dist/electron/MetalSharp-*-arm64.dmg
 
       - uses: actions/upload-artifact@v4
         with:

@@ -13,7 +13,7 @@ const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
 fn migrate_progress_path() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".metalsharp").join("migrate_progress.json")
+    crate::platform::metalsharp_home_dir().join("migrate_progress.json")
 }
 
 fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str, error: Option<&str>) {
@@ -57,8 +57,8 @@ pub fn needs_migration() -> serde_json::Value {
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    let setup_path = home.join(".metalsharp").join("setup.json");
-    let setup_dir_exists = home.join(".metalsharp").exists();
+    let setup_path = crate::platform::metalsharp_home_dir_for(&home).join("setup.json");
+    let setup_dir_exists = crate::platform::metalsharp_home_dir_for(&home).exists();
 
     if !setup_dir_exists || !setup_path.exists() {
         return json!({"ok": true, "needed": false, "reason": "fresh_install"});
@@ -80,11 +80,8 @@ pub fn needs_migration() -> serde_json::Value {
     let setup_completed = setup.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
     let repair_needed = runtime_needs_repair(&home, setup_completed);
 
-    let needed = match current_schema {
-        Some(schema) => schema < MIGRATE_SCHEMA_VERSION || repair_needed,
-        None if legacy_migrated_version.is_some() => repair_needed,
-        None => repair_needed,
-    };
+    let schema_current = current_schema.is_some_and(|schema| schema >= MIGRATE_SCHEMA_VERSION);
+    let needed = repair_needed;
 
     json!({
         "ok": true,
@@ -93,12 +90,18 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if repair_needed { "runtime_bundle_update_required" } else if needed { "runtime_schema_update_required" } else { "up_to_date" },
+        "reason": if repair_needed {
+            "runtime_bundle_update_required"
+        } else if schema_current {
+            "up_to_date"
+        } else {
+            "runtime_schema_already_satisfied"
+        },
     })
 }
 
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
-    let ms_dir = home.join(".metalsharp");
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
     if runtime_core_ready(&ms_dir) {
         return false;
     }
@@ -210,19 +213,36 @@ fn run_migration() {
         },
     };
 
-    let ms_dir = home.join(".metalsharp");
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
 
     if !ms_dir.exists() {
         write_migrate_progress("error", 0, 0, "~/.metalsharp not found", Some("no_metalsharp_dir"));
         return;
     }
 
-    let total_steps = 3usize;
+    if runtime_core_ready(&ms_dir) {
+        update_migration_metadata(&ms_dir);
+        let marker = ms_dir.join(".post-update-migration");
+        let _ = fs::remove_file(&marker);
+        write_migrate_progress("complete", 1, 1, "Runtime already ready; app update complete.", None);
+        log_to_file(&format!("Migration to v{} skipped; runtime already ready", MIGRATE_VERSION));
+        return;
+    }
+
+    let total_steps = 5usize;
     let mut step = 0usize;
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Stopping Steam and Wine processes...", None);
     kill_steam_wine();
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
+    let preserved = preserve_user_data(&ms_dir);
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Cleaning stale runtime state...", None);
+    remove_old_runtime(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Installing updated split runtime bundles...", None);
@@ -257,24 +277,12 @@ fn run_migration() {
         },
     };
 
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
+    restore_user_data(&ms_dir, &preserved);
+
     if install_ok {
-        let setup_path = ms_dir.join("setup.json");
-        if setup_path.exists() {
-            if let Ok(contents) = fs::read_to_string(&setup_path) {
-                if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
-                    cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
-                    cfg.insert("runtime_migration_schema".into(), json!(MIGRATE_SCHEMA_VERSION));
-                    let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-                }
-            }
-        } else {
-            let cfg = json!({
-                "completed": true,
-                "last_migrated_version": MIGRATE_VERSION,
-                "runtime_migration_schema": MIGRATE_SCHEMA_VERSION,
-            });
-            let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
-        }
+        update_migration_metadata(&ms_dir);
         let marker = ms_dir.join(".post-update-migration");
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", total_steps, total_steps, "Runtime bundles updated in place!", None);
@@ -289,6 +297,26 @@ fn run_migration() {
     }
 
     log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
+}
+
+fn update_migration_metadata(ms_dir: &Path) {
+    let setup_path = ms_dir.join("setup.json");
+    if setup_path.exists() {
+        if let Ok(contents) = fs::read_to_string(&setup_path) {
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) {
+                cfg.insert("last_migrated_version".into(), json!(MIGRATE_VERSION));
+                cfg.insert("runtime_migration_schema".into(), json!(MIGRATE_SCHEMA_VERSION));
+                let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+            }
+        }
+    } else {
+        let cfg = json!({
+            "completed": true,
+            "last_migrated_version": MIGRATE_VERSION,
+            "runtime_migration_schema": MIGRATE_SCHEMA_VERSION,
+        });
+        let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    }
 }
 
 fn wait_for_install_complete() -> Result<(), String> {
@@ -345,6 +373,7 @@ struct PreservedData {
     setup_json: Option<Vec<u8>>,
     steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
+    cache_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
@@ -361,6 +390,14 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
 
     let steam_config_path = ms_dir.join("cache").join("steam_config.json");
     let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
+
+    write_migrate_progress("running", 2, 5, "Preserving user data (cache metadata)...", None);
+    let cache_tmp = tmp.join("cache");
+    let cache = ms_dir.join("cache");
+    if cache.exists() {
+        let _ = fs::create_dir_all(&cache_tmp);
+        preserve_selective(&cache, &cache_tmp, &["downloads", "updates", "updater-tools", "tmp"]);
+    }
 
     write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
@@ -407,6 +444,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         setup_json,
         steam_config_json,
         prefix_steam_tmp,
+        cache_tmp,
         games_tmp,
         sharp_library_tmp,
         bottles_tmp,
@@ -511,6 +549,14 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         copy_dir_recursive(&preserved.games_tmp, &dst);
     }
 
+    if preserved.cache_tmp.exists() {
+        let dst = ms_dir.join("cache");
+        if !dst.exists() {
+            let _ = fs::create_dir_all(&dst);
+        }
+        copy_dir_recursive(&preserved.cache_tmp, &dst);
+    }
+
     if preserved.sharp_library_tmp.exists() {
         let dst = ms_dir.join("sharp-library");
         if !dst.exists() {
@@ -572,7 +618,7 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
 
 fn log_to_file(msg: &str) {
     let home = dirs::home_dir().unwrap_or_default();
-    let log_dir = home.join(".metalsharp").join("logs");
+    let log_dir = crate::platform::metalsharp_home_dir_for(&home).join("logs");
     let _ = fs::create_dir_all(&log_dir);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
@@ -612,7 +658,7 @@ mod tests {
     #[test]
     fn completed_setups_repair_missing_runtime_without_steam_prefix() {
         let home = test_dir("missing-runtime");
-        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+        fs::create_dir_all(crate::platform::metalsharp_home_dir_for(&home)).expect("create ms dir");
 
         assert!(runtime_needs_repair(&home, true));
         let _ = fs::remove_dir_all(home);
@@ -621,7 +667,7 @@ mod tests {
     #[test]
     fn incomplete_fresh_setups_do_not_enter_migration_without_prefix() {
         let home = test_dir("fresh-incomplete");
-        fs::create_dir_all(home.join(".metalsharp")).expect("create ms dir");
+        fs::create_dir_all(crate::platform::metalsharp_home_dir_for(&home)).expect("create ms dir");
 
         assert!(!runtime_needs_repair(&home, false));
         let _ = fs::remove_dir_all(home);
@@ -630,7 +676,7 @@ mod tests {
     #[test]
     fn complete_runtime_does_not_request_repair() {
         let home = test_dir("complete-runtime");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         assert!(runtime_core_ready(&ms_dir));
@@ -641,7 +687,7 @@ mod tests {
     #[test]
     fn missing_beta7_foundation_requests_repair() {
         let home = test_dir("missing-beta7-foundation");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         fs::remove_file(
@@ -664,7 +710,7 @@ mod tests {
     #[test]
     fn missing_dxmt_manifest_requests_repair() {
         let home = test_dir("missing-dxmt-manifest");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
         fs::remove_file(
@@ -680,7 +726,7 @@ mod tests {
     #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let bottle_manifest = ms_dir.join("bottles").join("steam_620").join("bottle.json");
         fs::create_dir_all(bottle_manifest.parent().unwrap()).expect("create bottle dir");
         fs::write(&bottle_manifest, br#"{"id":"steam_620"}"#).expect("write bottle manifest");
@@ -700,7 +746,7 @@ mod tests {
     #[test]
     fn migration_preserves_compatdata_across_runtime_cleanup() {
         let home = test_dir("preserve-compatdata");
-        let ms_dir = home.join(".metalsharp");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let compat_manifest = ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json");
         fs::create_dir_all(compat_manifest.parent().unwrap()).expect("create compatdata dir");
         fs::write(&compat_manifest, br#"{"appid":620}"#).expect("write compatdata manifest");
@@ -714,6 +760,30 @@ mod tests {
             fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
             r#"{"appid":620}"#
         );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_preserves_cache_metadata_without_download_payloads() {
+        let home = test_dir("preserve-cache");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache").join("covers")).expect("create cache metadata dir");
+        fs::create_dir_all(ms_dir.join("cache").join("updates")).expect("create update cache dir");
+        fs::write(ms_dir.join("cache").join("steam_config.json"), br#"{"api_key_set":true}"#)
+            .expect("write steam config");
+        fs::write(ms_dir.join("cache").join("covers").join("620.png"), b"cover").expect("write cover");
+        fs::write(ms_dir.join("cache").join("updates").join("MetalSharp.dmg"), b"dmg").expect("write cached dmg");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).unwrap(),
+            r#"{"api_key_set":true}"#
+        );
+        assert_eq!(fs::read(ms_dir.join("cache").join("covers").join("620.png")).unwrap(), b"cover");
+        assert!(!ms_dir.join("cache").join("updates").join("MetalSharp.dmg").exists());
         let _ = fs::remove_dir_all(home);
     }
 

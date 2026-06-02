@@ -69,10 +69,11 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let port = bridge_port();
-    let bridge_exe = home.join(".metalsharp").join("runtime").join("steam-bridge").join("steambridge.exe");
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let bridge_exe =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("steam-bridge").join("steambridge.exe");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
-    let prefix = home.join(".metalsharp").join("prefix-steam");
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
 
     if !bridge_exe.exists() {
         return Err("steambridge.exe not found".into());
@@ -117,7 +118,8 @@ fn deploy_steam_shim(game_dir: &PathBuf) {
         Some(h) => h,
         None => return,
     };
-    let shim_src = home.join(".metalsharp").join("runtime").join("steam-bridge").join("libsteam_api.dylib");
+    let shim_src =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("steam-bridge").join("libsteam_api.dylib");
     if !shim_src.exists() {
         return;
     }
@@ -331,7 +333,11 @@ fn wine_debug_value() -> String {
 
 fn repair_metalsharp_wine_wrapper_env_order() -> Result<(), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let wrapper = home.join(".metalsharp").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+    let wrapper = crate::platform::metalsharp_home_dir_for(&home)
+        .join("runtime")
+        .join("wine")
+        .join("bin")
+        .join("metalsharp-wine");
     if !wrapper.exists() {
         return Ok(());
     }
@@ -406,7 +412,7 @@ pub fn launch_custom_with_options(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -423,7 +429,8 @@ pub fn launch_custom_with_options(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix = options.prefix_path.unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    let prefix =
+        options.prefix_path.unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -528,7 +535,7 @@ fn launch_dxmt_metal_with_context(
     log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
 
     if !wine.exists() {
@@ -540,8 +547,9 @@ fn launch_dxmt_metal_with_context(
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix =
-        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    let prefix = prefix_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -633,7 +641,7 @@ fn deploy_d3d12_agility_sidecars(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let source_dir = find_or_fetch_agility_614_dir(&home, &ms_root)?;
     let dxil_dll = find_or_fetch_dxil_dll(&home, &source_dir)?;
 
@@ -710,7 +718,7 @@ fn agility_payload_present(dir: &Path) -> bool {
 }
 
 fn agility_614_redist_dir(home: &Path) -> PathBuf {
-    home.join(".metalsharp")
+    crate::platform::metalsharp_home_dir_for(&home)
         .join("runtime")
         .join("redist")
         .join("agility")
@@ -722,8 +730,11 @@ fn agility_614_redist_dir(home: &Path) -> PathBuf {
 }
 
 fn fetch_agility_614_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let package_root =
-        home.join(".metalsharp").join("runtime").join("redist").join("agility").join(AGILITY_614_VERSION);
+    let package_root = crate::platform::metalsharp_home_dir_for(&home)
+        .join("runtime")
+        .join("redist")
+        .join("agility")
+        .join(AGILITY_614_VERSION);
     let cache_dir = package_root.join(".download");
     let package_file = cache_dir.join("Microsoft.Direct3D.D3D12.nupkg");
     std::fs::create_dir_all(&cache_dir)?;
@@ -758,7 +769,7 @@ fn find_or_fetch_dxil_dll(home: &Path, agility_dir: &Path) -> Result<PathBuf, Bo
     let redist_dll = dxc_redist_bin_dir(home).join("dxil.dll");
     let candidates = [
         agility_dir.join("dxil.dll"),
-        home.join(".metalsharp").join("runtime").join("redist").join("dxil.dll"),
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxil.dll"),
         redist_dll.clone(),
     ];
     if let Some(found) = candidates.iter().find(|path| path.is_file()) {
@@ -774,11 +785,18 @@ fn find_or_fetch_dxil_dll(home: &Path, agility_dir: &Path) -> Result<PathBuf, Bo
 }
 
 fn dxc_redist_bin_dir(home: &Path) -> PathBuf {
-    home.join(".metalsharp").join("runtime").join("redist").join("dxc").join(DXC_VERSION).join("bin").join("x64")
+    crate::platform::metalsharp_home_dir_for(&home)
+        .join("runtime")
+        .join("redist")
+        .join("dxc")
+        .join(DXC_VERSION)
+        .join("bin")
+        .join("x64")
 }
 
 fn fetch_dxc_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let redist_root = home.join(".metalsharp").join("runtime").join("redist").join("dxc").join(DXC_VERSION);
+    let redist_root =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxc").join(DXC_VERSION);
     let download_dir = redist_root.join("downloads");
     let archive_path = download_dir.join(DXC_ARCHIVE);
     std::fs::create_dir_all(&download_dir)?;
@@ -840,7 +858,7 @@ fn launch_wine_bare_with_context(
     log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
 
     if !wine.exists() {
@@ -851,8 +869,9 @@ fn launch_wine_bare_with_context(
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let prefix =
-        prefix_override.map(Path::to_path_buf).unwrap_or_else(|| home.join(".metalsharp").join("prefix-steam"));
+    let prefix = prefix_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -931,7 +950,7 @@ fn attach_launch_log(
 
 fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>) -> std::io::Result<()> {
     let home = dirs::home_dir().unwrap_or_default();
-    let metalsharp_home = home.join(".metalsharp");
+    let metalsharp_home = crate::platform::metalsharp_home_dir_for(&home);
     writeln!(log, "metalsharp_home={}", metalsharp_home.display())?;
     writeln!(log, "host_abi=1.0")?;
     writeln!(log, "host_runtime={}", metalsharp_home.join("runtime").join("host").display())?;
@@ -967,7 +986,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
     let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = resolve_fna_game_dir(appid)?;
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
     let dir = if game_dir.exists() { &game_dir } else { &local_dir };
 
     ensure_launcher_exe(appid, dir);
@@ -1007,7 +1026,12 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         .env("MONO_PATH", dir.to_string_lossy().to_string());
 
     let cache_paths = build_cache_paths(&home, node, appid);
-    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &home.join(".metalsharp").join("runtime").join("wine"));
+    apply_cache_env(
+        &mut cmd,
+        node,
+        cache_paths.as_ref(),
+        &crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine"),
+    );
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -1025,7 +1049,7 @@ fn find_mono_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
         PathBuf::from("/opt/homebrew/bin/mono"),
         PathBuf::from("/usr/local/bin/mono"),
         PathBuf::from("/usr/bin/mono"),
-        home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono"),
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64").join("bin").join("mono"),
     ];
     for c in candidates {
         if c.exists() {
@@ -1138,7 +1162,8 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
     let shader_base = preferred_shader_cache_base(home, subdir, appid);
-    let pipeline_base = home.join(".metalsharp").join("pipeline-cache").join(subdir).join(appid.to_string());
+    let pipeline_base =
+        crate::platform::metalsharp_home_dir_for(&home).join("pipeline-cache").join(subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
@@ -1160,7 +1185,7 @@ fn preferred_shader_cache_base(home: &PathBuf, subdir: &str, appid: u32) -> Path
         }
     }
 
-    home.join(".metalsharp").join("shader-cache").join(subdir).join(appid.to_string())
+    crate::platform::metalsharp_home_dir_for(&home).join("shader-cache").join(subdir).join(appid.to_string())
 }
 
 fn shader_cache_has_runtime_artifacts(path: &PathBuf) -> bool {
@@ -1178,7 +1203,7 @@ fn shader_cache_has_runtime_artifacts(path: &PathBuf) -> bool {
 }
 
 fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
-    let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let cache_paths = build_cache_paths(home, node, appid);
     let appid_string = appid.to_string();
     let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
@@ -1323,20 +1348,22 @@ fn resolve_game_exe(game_dir: &PathBuf) -> String {
 
 fn find_config(name: &str) -> String {
     let home = dirs::home_dir().unwrap_or_default();
-    let candidates =
-        vec![home.join(".metalsharp").join("configs").join(name), home.join("metalsharp").join("configs").join(name)];
+    let candidates = vec![
+        crate::platform::metalsharp_home_dir_for(&home).join("configs").join(name),
+        home.join("metalsharp").join("configs").join(name),
+    ];
     for c in candidates {
         if c.exists() {
             return c.to_string_lossy().to_string();
         }
     }
-    home.join(".metalsharp").join("configs").join(name).to_string_lossy().to_string()
+    crate::platform::metalsharp_home_dir_for(&home).join("configs").join(name).to_string_lossy().to_string()
 }
 
 fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
-    let local_dir = home.join(".metalsharp").join("games").join(appid.to_string());
+    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
     if local_dir.join(".metalsharp_prepared").exists() {
         return Ok(local_dir);
     }
@@ -1425,7 +1452,8 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
         None => return,
     };
 
-    let mono_bin = home.join(".metalsharp").join("runtime").join("mono-arm64").join("bin").join("mono");
+    let mono_bin =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64").join("bin").join("mono");
     let mcs_exe = home
         .join(".metalsharp")
         .join("runtime")
@@ -1451,14 +1479,16 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
 
 fn find_shims_dir() -> String {
     let home = dirs::home_dir().unwrap_or_default();
-    let candidates =
-        vec![home.join(".metalsharp").join("runtime").join("shims"), home.join(".metalsharp").join("shims")];
+    let candidates = vec![
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims"),
+        crate::platform::metalsharp_home_dir_for(&home).join("shims"),
+    ];
     for c in candidates {
         if c.exists() {
             return c.to_string_lossy().to_string();
         }
     }
-    home.join(".metalsharp").join("runtime").join("shims").to_string_lossy().to_string()
+    crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims").to_string_lossy().to_string()
 }
 
 fn deploy_fna_assemblies(game_dir: &PathBuf) {
@@ -1466,7 +1496,7 @@ fn deploy_fna_assemblies(game_dir: &PathBuf) {
         Some(h) => h,
         None => return,
     };
-    let fna_dll = home.join(".metalsharp").join("runtime").join("fna").join("FNA.dll");
+    let fna_dll = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fna").join("FNA.dll");
     if !fna_dll.exists() {
         return;
     }
@@ -1553,7 +1583,7 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
 }
 
 pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
-    let goldberg_dir = home.join(".metalsharp").join("runtime").join("goldberg");
+    let goldberg_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("goldberg");
     if !goldberg_dir.exists() {
         return;
     }
@@ -1675,7 +1705,8 @@ pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
 
 pub fn deploy_eac_toggle(game_dir: &PathBuf) {
     let home = dirs::home_dir().unwrap_or_default();
-    let eac_dir = home.join(".metalsharp").join("runtime").join("eac-toggle").join("x86_64-windows");
+    let eac_dir =
+        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("eac-toggle").join("x86_64-windows");
     if !eac_dir.exists() {
         return;
     }
@@ -1760,7 +1791,7 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
 
     let log_dir = cache_paths
         .map(|cache| PathBuf::from(&cache.pipeline))
-        .unwrap_or_else(|| home.join(".metalsharp").join("logs"));
+        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
     let cache_dir = cache_paths
@@ -2013,10 +2044,11 @@ mod tests {
         let env = steam_pipeline_env_pairs(&home, node, 1);
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
-        let runtime_lib_key =
-            crate::platform::runtime_library_env(&home.join(".metalsharp").join("runtime").join("wine"))
-                .map(|(key, _)| key)
-                .unwrap_or("LD_LIBRARY_PATH");
+        let runtime_lib_key = crate::platform::runtime_library_env(
+            &crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine"),
+        )
+        .map(|(key, _)| key)
+        .unwrap_or("LD_LIBRARY_PATH");
         assert!(keys.contains(runtime_lib_key));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
@@ -2174,7 +2206,7 @@ mod tests {
     #[test]
     fn launch_log_identity_records_host_runtime_and_compatdata_paths() {
         let mut log = Vec::new();
-        let prefix = dirs::home_dir().unwrap_or_default().join(".metalsharp").join("prefix-steam");
+        let prefix = crate::platform::metalsharp_home_dir().join("prefix-steam");
 
         write_runtime_identity(&mut log, &prefix, Some(620)).expect("write runtime identity");
 

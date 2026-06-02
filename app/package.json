@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.33.56",
+  "version": "0.33.57",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
+    "@electron/notarize": "^2.5.0",
     "@types/node": "^22.0.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "electron": "^39.8.10",
@@ -41,6 +42,7 @@
     "appId": "com.metalsharp.app",
     "productName": "MetalSharp",
     "copyright": "Copyright © 2026 MetalSharp",
+    "afterSign": "build/notarize.cjs",
     "mac": {
       "category": "public.app-category.games",
       "icon": "build/icon.png",

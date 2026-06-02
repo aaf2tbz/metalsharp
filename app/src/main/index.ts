@@ -1,6 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
+import * as os from "os";
 import * as path from "path";
 import { RustBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
@@ -31,8 +32,15 @@ let bridge: RustBridge;
 let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
 
+function isDevRuntime(): boolean {
+  return process.env.METALSHARP_DEV === "1" || !app.isPackaged;
+}
+
 function getMetalsharpDir(): string {
-  return path.join(require("os").homedir(), ".metalsharp");
+  if (process.env.METALSHARP_HOME?.trim()) {
+    return path.resolve(process.env.METALSHARP_HOME);
+  }
+  return path.join(os.homedir(), isDevRuntime() ? ".metalsharp-dev" : ".metalsharp");
 }
 
 function isFirstLaunch(): boolean {
@@ -102,10 +110,6 @@ function clearPostUpdateMigrationMarker() {
 
 async function checkNeedsMigration(): Promise<boolean> {
   const marker = hasPostUpdateMigrationMarker();
-  if (marker.needed) {
-    return true;
-  }
-
   return new Promise((resolve) => {
     const req = http.get("http://127.0.0.1:9274/update/migrate/check", (res) => {
       const chunks: Buffer[] = [];
@@ -113,16 +117,18 @@ async function checkNeedsMigration(): Promise<boolean> {
       res.on("end", () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
-          resolve(data.ok && data.needed === true);
+          const needed = data.ok && data.needed === true;
+          if (marker.needed && !needed) clearPostUpdateMigrationMarker();
+          resolve(needed);
         } catch {
-          resolve(false);
+          resolve(marker.needed);
         }
       });
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve(marker.needed));
     req.setTimeout(3000, () => {
       req.destroy();
-      resolve(false);
+      resolve(marker.needed);
     });
   });
 }
@@ -191,8 +197,10 @@ function cleanup() {
 let migrationMode = false;
 
 app.whenReady().then(async () => {
+  process.env.METALSHARP_HOME = getMetalsharpDir();
+  if (isDevRuntime()) process.env.METALSHARP_DEV = "1";
   ensureMetalsharpDirs();
-  bridge = new RustBridge();
+  bridge = new RustBridge({ devMode: isDevRuntime(), metalsharpHome: getMetalsharpDir() });
   updaterBridge = new UpdaterBridge(bridge.getPort());
   const backendStart = await bridge.start();
   if (!backendStart.ok) {
@@ -438,8 +446,8 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:open-in-finder", async (_e, inputPath: string) => {
-    const home = require("os").homedir();
-    const metalsharpDir = path.join(home, ".metalsharp");
+    const home = os.homedir();
+    const metalsharpDir = getMetalsharpDir();
     const resolved = inputPath.replace(/^~/, home);
     const fullPath = path.resolve(resolved);
     if (!fullPath.startsWith(metalsharpDir) && !fullPath.startsWith(home)) {
@@ -452,7 +460,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:open-logs-folder", async () => {
-    const logsPath = path.join(app.getPath("home"), ".metalsharp", "logs");
+    const logsPath = path.join(getMetalsharpDir(), "logs");
     fs.mkdirSync(logsPath, { recursive: true });
     await shell.openPath(logsPath);
     return { ok: true, path: logsPath };

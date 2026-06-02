@@ -291,7 +291,7 @@ fn shortcut_vdf_paths() -> Vec<PathBuf> {
         home.join("Library/Application Support/Steam/userdata"),
         home.join(".steam/steam/userdata"),
         home.join(".local/share/Steam/userdata"),
-        home.join(".metalsharp")
+        crate::platform::metalsharp_home_dir_for(&home)
             .join("prefix-steam")
             .join("drive_c")
             .join("Program Files (x86)")
@@ -437,7 +437,9 @@ fn clean_shortcut_path(path: &str) -> Option<PathBuf> {
         let rest = normalized[2..].trim_start_matches('/');
         return match drive {
             'z' => Some(PathBuf::from("/").join(rest)),
-            'c' => Some(home.join(".metalsharp").join("prefix-steam").join("drive_c").join(rest)),
+            'c' => {
+                Some(crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam").join("drive_c").join(rest))
+            },
             _ => Some(PathBuf::from("/").join(rest)),
         };
     }
@@ -650,7 +652,7 @@ fn dir_size(dir: &PathBuf) -> Option<u64> {
 fn scan_local_exes() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
     let mut games = Vec::new();
     let home = dirs::home_dir().unwrap_or_default();
-    let metalsharp_dir = home.join(".metalsharp").join("games");
+    let metalsharp_dir = crate::platform::metalsharp_home_dir_for(&home).join("games");
 
     if !metalsharp_dir.exists() {
         return Ok(games);
