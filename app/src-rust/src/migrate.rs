@@ -217,12 +217,20 @@ fn run_migration() {
         return;
     }
 
-    let total_steps = 3usize;
+    let total_steps = 5usize;
     let mut step = 0usize;
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Stopping Steam and Wine processes...", None);
     kill_steam_wine();
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
+    let preserved = preserve_user_data(&ms_dir);
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Cleaning stale runtime state...", None);
+    remove_old_runtime(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Installing updated split runtime bundles...", None);
@@ -256,6 +264,10 @@ fn run_migration() {
             false
         },
     };
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
+    restore_user_data(&ms_dir, &preserved);
 
     if install_ok {
         let setup_path = ms_dir.join("setup.json");
@@ -345,6 +357,7 @@ struct PreservedData {
     setup_json: Option<Vec<u8>>,
     steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
+    cache_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
@@ -361,6 +374,14 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
 
     let steam_config_path = ms_dir.join("cache").join("steam_config.json");
     let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
+
+    write_migrate_progress("running", 2, 5, "Preserving user data (cache metadata)...", None);
+    let cache_tmp = tmp.join("cache");
+    let cache = ms_dir.join("cache");
+    if cache.exists() {
+        let _ = fs::create_dir_all(&cache_tmp);
+        preserve_selective(&cache, &cache_tmp, &["downloads", "updates", "updater-tools", "tmp"]);
+    }
 
     write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
@@ -407,6 +428,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         setup_json,
         steam_config_json,
         prefix_steam_tmp,
+        cache_tmp,
         games_tmp,
         sharp_library_tmp,
         bottles_tmp,
@@ -509,6 +531,14 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         copy_dir_recursive(&preserved.games_tmp, &dst);
+    }
+
+    if preserved.cache_tmp.exists() {
+        let dst = ms_dir.join("cache");
+        if !dst.exists() {
+            let _ = fs::create_dir_all(&dst);
+        }
+        copy_dir_recursive(&preserved.cache_tmp, &dst);
     }
 
     if preserved.sharp_library_tmp.exists() {
@@ -714,6 +744,30 @@ mod tests {
             fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
             r#"{"appid":620}"#
         );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_preserves_cache_metadata_without_download_payloads() {
+        let home = test_dir("preserve-cache");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache").join("covers")).expect("create cache metadata dir");
+        fs::create_dir_all(ms_dir.join("cache").join("updates")).expect("create update cache dir");
+        fs::write(ms_dir.join("cache").join("steam_config.json"), br#"{"api_key_set":true}"#)
+            .expect("write steam config");
+        fs::write(ms_dir.join("cache").join("covers").join("620.png"), b"cover").expect("write cover");
+        fs::write(ms_dir.join("cache").join("updates").join("MetalSharp.dmg"), b"dmg").expect("write cached dmg");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).unwrap(),
+            r#"{"api_key_set":true}"#
+        );
+        assert_eq!(fs::read(ms_dir.join("cache").join("covers").join("620.png")).unwrap(), b"cover");
+        assert!(!ms_dir.join("cache").join("updates").join("MetalSharp.dmg").exists());
         let _ = fs::remove_dir_all(home);
     }
 

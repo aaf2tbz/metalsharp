@@ -122,12 +122,15 @@ export class UpdaterBridge {
         targetVersion,
         "--status-file",
         getStatusFile(),
+        "--metalsharp-home",
+        getMetalsharpDir(),
       ],
       {
         detached: true,
         stdio: "ignore",
         env: {
           ...process.env,
+          METALSHARP_HOME: getMetalsharpDir(),
           PATH: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
         },
       },

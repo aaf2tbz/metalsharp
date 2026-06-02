@@ -5,6 +5,7 @@ DMG_PATH=""
 BACKEND_PID=""
 TARGET_VERSION=""
 STATUS_FILE=""
+METALSHARP_HOME_ARG=""
 
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
@@ -46,12 +47,14 @@ while [ "$#" -gt 0 ]; do
         --backend-pid) shift; BACKEND_PID="${1:-}"; shift ;;
         --target-version) shift; TARGET_VERSION="${1:-}"; shift ;;
         --status-file) shift; STATUS_FILE="${1:-}"; shift ;;
+        --metalsharp-home) shift; METALSHARP_HOME_ARG="${1:-}"; shift ;;
         --) shift; break ;;
         *) shift ;;
     esac
 done
 
-STATUS_FILE="${STATUS_FILE:-$HOME/.metalsharp/update_install_status.json}"
+MS_DIR="${METALSHARP_HOME_ARG:-${METALSHARP_HOME:-$HOME/.metalsharp}}"
+STATUS_FILE="${STATUS_FILE:-$MS_DIR/update_install_status.json}"
 DMG_PATH="${DMG_PATH:?--dmg required}"
 BACKEND_PID="${BACKEND_PID:?--backend-pid required}"
 TARGET_VERSION="${TARGET_VERSION:?--target-version required}"
@@ -73,8 +76,10 @@ pkill -x metalsharp-backend 2>/dev/null || true
 sleep 0.5
 
 write_status "killing_steam" 15 "Stopping Steam and Wine processes..."
-for pat in steam steam.exe steamwebhelper steamwebhelper.exe wine wine64 wineserver; do
+for pat in steam steam.exe steamwebhelper steamwebhelper.exe wine wine64 wineserver wineloader; do
     pkill -x "$pat" 2>/dev/null || true
+done
+for pat in Steam.exe steamwebhelper.exe wineserver wineloader; do
     pkill -f "$pat" 2>/dev/null || true
 done
 sleep 1
@@ -103,7 +108,7 @@ fi
 
 write_status "mounting" 35 "Mounting update disk image..."
 MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1) || true
-if [ -z "$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/')" ]; then
+if ! grep -q '/Volumes/' <<<"$MOUNT_OUTPUT"; then
     MOUNT_OUTPUT=$(osascript -e "do shell script \"hdiutil attach -nobrowse \\\"$DMG_PATH\\\"\" with administrator privileges" 2>&1) || true
     sleep 2
 fi
@@ -151,7 +156,6 @@ fi
 
 write_status "installed" 80 "New version installed"
 
-MS_DIR="$HOME/.metalsharp"
 mkdir -p "$MS_DIR"
 printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
