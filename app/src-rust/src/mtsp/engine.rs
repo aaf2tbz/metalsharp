@@ -354,9 +354,7 @@ impl PipelineId {
             "metalsharp_wine" => Some(PipelineId::WineBare),
             "steam" => Some(PipelineId::Steam),
             "macos_steam" | "mac_steam" | "native_steam" => Some(PipelineId::MacSteam),
-            "xna_fna_arm64" | "xna_fna_x86" | "xna_fna" | "fna_mono_xna" | "mono_fna_xna" => {
-                Some(PipelineId::FnaArm64)
-            },
+            "xna_fna_arm64" | "xna_fna_x86" | "xna_fna" | "fna_mono_xna" | "mono_fna_xna" => Some(PipelineId::FnaArm64),
             _ => None,
         }
     }
@@ -374,9 +372,7 @@ impl PipelineId {
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
-            "fna_arm64" | "fna_x86" | "mono_generic" | "fna_mono_xna" | "mono_fna_xna" => {
-                Some(PipelineId::FnaArm64)
-            },
+            "fna_arm64" | "fna_x86" | "mono_generic" | "fna_mono_xna" | "mono_fna_xna" => Some(PipelineId::FnaArm64),
             "steam" | "wine_steam" => Some(PipelineId::Steam),
             "macos_steam" | "mac_steam" | "native_steam" => Some(PipelineId::MacSteam),
             "wine_bare" | "m64" => Some(PipelineId::WineBare),

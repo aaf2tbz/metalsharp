@@ -1010,11 +1010,8 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         _ => "terraria-mono.config",
     });
     let shims_dir = find_shims_dir();
-    let mono_root = mono_bin
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(""));
+    let mono_root =
+        mono_bin.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(""));
     let mono_lib = mono_root.join("lib");
     let mono_profile = mono_lib.join("mono").join("4.5");
     let mut library_paths = vec![dir.to_string_lossy().to_string(), shims_dir, mono_lib.to_string_lossy().to_string()];
@@ -1031,13 +1028,14 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         "LD_LIBRARY_PATH"
     };
 
-    let mut cmd = if appid == 504230 && crate::platform::current() == crate::platform::HostPlatform::Macos {
-        let mut arch_cmd = Command::new("arch");
-        arch_cmd.arg("-x86_64").arg(&mono_bin);
-        arch_cmd
-    } else {
-        Command::new(&mono_bin)
-    };
+    let mut cmd =
+        if matches!(appid, 504230 | 105600) && crate::platform::current() == crate::platform::HostPlatform::Macos {
+            let mut arch_cmd = Command::new("arch");
+            arch_cmd.arg("-x86_64").arg(&mono_bin);
+            arch_cmd
+        } else {
+            Command::new(&mono_bin)
+        };
     let mono_path = format!("{}:{}", dir.to_string_lossy(), mono_profile.to_string_lossy());
     let log_path = fna_launch_log_path(appid);
     if let Some(parent) = log_path.parent() {
@@ -1075,17 +1073,18 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str), Box<dyn std::erro
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/Mono/XNA launch exited early with status {}. Log: {}", status, log_tail).into());
     }
-    Ok((child.id(), "xna_fna_arm64"))
+    let method = match appid {
+        105600 | 504230 => "xna_fna_x86",
+        _ => "xna_fna_arm64",
+    };
+    Ok((child.id(), method))
 }
 
 fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    if appid == 504230 {
-        let mono_x86 = crate::platform::metalsharp_home_dir_for(&home)
-            .join("runtime")
-            .join("mono-x86")
-            .join("bin")
-            .join("mono");
+    if matches!(appid, 504230 | 105600) {
+        let mono_x86 =
+            crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86").join("bin").join("mono");
         if mono_x86.exists() {
             return Ok(mono_x86);
         }
@@ -1482,7 +1481,7 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
     };
 
     let launcher = game_dir.join(launcher_name);
-    if launcher.exists() {
+    if launcher.exists() && appid != 105600 {
         return;
     }
 
@@ -1517,12 +1516,18 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
         None => return,
     };
 
-    let mono_bin =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64").join("bin").join("mono");
+    let mono_root = match appid {
+        105600 => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86"),
+        _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64"),
+    };
+    let mono_bin = mono_root.join("bin").join("mono");
     let mcs_exe = home
         .join(".metalsharp")
         .join("runtime")
-        .join("mono-arm64")
+        .join(match appid {
+            105600 => "mono-x86",
+            _ => "mono-arm64",
+        })
         .join("lib")
         .join("mono")
         .join("4.5")
@@ -1531,15 +1536,7 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
         return;
     }
 
-    let _ = Command::new(&mono_bin)
-        .arg(&mcs_exe)
-        .args(["-out"])
-        .arg(&launcher)
-        .args(["-target:winexe"])
-        .arg(&source)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let _ = compile_csharp_with_mono(&mono_bin, &mcs_exe, &source, &launcher, "winexe", &[]);
 }
 
 fn find_shims_dir() -> String {
@@ -1625,13 +1622,17 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         home.join("repos").join("metalsharp").join("src").join("fna").join("terraria").join("gdiplus_stub.c");
     if !game_dir.join("libgdiplus.dylib").exists() && gdiplus_src.exists() {
         let _ = Command::new("clang")
-            .args(["-shared", "-arch", "arm64", "-o"])
+            .args(["-shared", "-arch", "x86_64", "-o"])
             .arg(game_dir.join("libgdiplus.dylib"))
             .arg(&gdiplus_src)
             .args(["-install_name", "@loader_path/libgdiplus.dylib"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+    }
+
+    if appid == 105600 {
+        deploy_terraria_runtime(game_dir, &metalsharp_home);
     }
 
     let xna_assemblies = [
@@ -1658,6 +1659,83 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     deploy_offline_steamworks_net(game_dir, &metalsharp_home);
 }
 
+fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
+    if let Some(source) = find_repo_source(&["src", "fna", "terraria", "XactStub.cs"]) {
+        let output = game_dir.join("Microsoft.Xna.Framework.Xact.dll");
+        let _ = compile_repo_csharp_to_game(&source, &output, "library", &[]);
+    }
+
+    if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
+        let output = game_dir.join("libFAudio.0.dylib");
+        let _ = Command::new("clang")
+            .args(["-shared", "-arch", "x86_64", "-o"])
+            .arg(&output)
+            .arg(&source)
+            .args(["-install_name", "@loader_path/libFAudio.0.dylib"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
+    }
+
+    if let Some(source) = find_repo_source(&["src", "fna", "terraria", "TerrariaOfflinePatcher.cs"]) {
+        let patcher = game_dir.join("TerrariaOfflinePatcher.exe");
+        let cecil = metalsharp_home
+            .join("runtime")
+            .join("mono-x86")
+            .join("lib")
+            .join("mono")
+            .join("gac")
+            .join("Mono.Cecil")
+            .join("0.11.1.0__0738eb9f132ed756")
+            .join("Mono.Cecil.dll");
+        if compile_repo_csharp_to_game(&source, &patcher, "exe", &[format!("-r:{}", cecil.to_string_lossy())]) {
+            let mono = metalsharp_home.join("runtime").join("mono-x86").join("bin").join("mono");
+            let terraria = game_dir.join("Terraria.exe");
+            if mono.exists() && terraria.exists() {
+                let _ = Command::new(&mono)
+                    .current_dir(game_dir)
+                    .arg(&patcher)
+                    .arg(&terraria)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
+fn compile_repo_csharp_to_game(source: &PathBuf, output: &PathBuf, target: &str, extra_args: &[String]) -> bool {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return false,
+    };
+    let mono_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86");
+    let mono = mono_root.join("bin").join("mono");
+    let mcs = mono_root.join("lib").join("mono").join("4.5").join("mcs.exe");
+    compile_csharp_with_mono(&mono, &mcs, source, output, target, extra_args)
+}
+
+fn compile_csharp_with_mono(
+    mono: &PathBuf,
+    mcs: &PathBuf,
+    source: &PathBuf,
+    output: &PathBuf,
+    target: &str,
+    extra_args: &[String],
+) -> bool {
+    if !mono.exists() || !mcs.exists() || !source.exists() {
+        return false;
+    }
+    let mut cmd = Command::new(mono);
+    cmd.arg(mcs).arg(format!("-target:{}", target)).arg(format!("-out:{}", output.to_string_lossy()));
+    for arg in extra_args {
+        cmd.arg(arg);
+    }
+    cmd.arg(source).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
 fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symlink: Option<&str>) {
     let src = shims_dir.join(lib);
     if src.exists() && !game_dir.join(lib).exists() {
@@ -1675,6 +1753,9 @@ fn ensure_fna_symlink(game_dir: &PathBuf, lib: &str, sym: &str) {
     }
     #[cfg(unix)]
     {
+        if std::fs::symlink_metadata(&link).is_ok() {
+            let _ = std::fs::remove_file(&link);
+        }
         let _ = std::os::unix::fs::symlink(lib, link);
     }
 }
@@ -1694,10 +1775,8 @@ fn deploy_offline_steamworks_net(game_dir: &PathBuf, metalsharp_home: &PathBuf) 
         None => return,
     };
     let output = steamworks;
-    let mono_roots = [
-        metalsharp_home.join("runtime").join("mono-x86"),
-        metalsharp_home.join("runtime").join("mono-arm64"),
-    ];
+    let mono_roots =
+        [metalsharp_home.join("runtime").join("mono-x86"), metalsharp_home.join("runtime").join("mono-arm64")];
     for mono_root in &mono_roots {
         let mono = mono_root.join("bin").join("mono");
         let mcs = mono_root.join("lib").join("mono").join("4.5").join("mcs.exe");

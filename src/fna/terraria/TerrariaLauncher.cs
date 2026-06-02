@@ -76,19 +76,24 @@ class TerrariaLauncher {
             catch (Exception ex) { Console.Error.WriteLine("Bridge: " + ex.Message); }
         });
         
-        Type lt = _ta.GetType("Terraria.WindowsLaunch");
+        Type lt = _ta.GetType("Terraria.Program");
         MethodInfo mm = null;
         foreach (MethodInfo m in lt.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)) {
-            if (m.Name == "Main" && m.GetParameters().Length == 1) { mm = m; break; }
+            if (m.Name == "LaunchGame" && m.GetParameters().Length == 2) { mm = m; break; }
         }
         
-        try { mm.Invoke(null, new object[] { args }); }
+        try {
+            if (mm == null) throw new MissingMethodException("Terraria.Program", "LaunchGame");
+            Console.WriteLine("TerrariaLauncher: invoking LaunchGame with Steam/social disabled");
+            mm.Invoke(null, new object[] { args, false });
+            Console.WriteLine("TerrariaLauncher: LaunchGame returned");
+        }
         catch (TargetInvocationException tie) {
             var inner = tie.InnerException;
             if (inner is TypeInitializationException) {
                 Console.Error.WriteLine("Game: TypeInitialization suppressed: " + inner.InnerException?.Message);
             } else {
-                Console.Error.WriteLine("Game: " + inner?.Message + "\n" + inner?.StackTrace);
+                Console.Error.WriteLine("Game: " + inner);
             }
         }
         catch (Exception ex) {
@@ -166,6 +171,9 @@ class TerrariaLauncher {
     
     static Assembly OnResolve(object sender, ResolveEventArgs e) {
         string sn = new AssemblyName(e.Name).Name;
+        if (sn == "Steamworks.NET" && System.IO.File.Exists("Steamworks.NET.dll")) {
+            try { return Assembly.LoadFrom("Steamworks.NET.dll"); } catch {}
+        }
         foreach (string res in _ta.GetManifestResourceNames()) {
             if (res.EndsWith(sn + ".dll")) {
                 try { using (var s = _ta.GetManifestResourceStream(res)) { if (s != null) { byte[] d = new byte[s.Length]; s.Read(d, 0, d.Length); return Assembly.Load(d); } } } catch {}
