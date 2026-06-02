@@ -2332,8 +2332,12 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "dotnet48" => {
-            if windows.join("Microsoft.NET").join("Framework").join("v4.0.30319").exists() {
+            let framework = windows.join("Microsoft.NET").join("Framework").join("v4.0.30319");
+            let framework64 = windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319");
+            if framework.join("clr.dll").exists() || framework64.join("clr.dll").exists() {
                 ComponentState::Installed
+            } else if framework.exists() || framework64.exists() {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -4196,6 +4200,20 @@ mod tests {
         assert!(actions.iter().any(|a| a.id == "wine-mono"));
         assert!(actions.iter().any(|a| a.id == "dotnet48"));
         assert!(!components_ready(&inspected));
+    }
+
+    #[test]
+    fn dotnet48_requires_native_clr_not_only_framework_folder() {
+        let dir = test_dir("dotnet48-native-clr");
+        let framework = dir.join("drive_c/windows/Microsoft.NET/Framework/v4.0.30319");
+        fs::create_dir_all(&framework).expect("create framework dir");
+        fs::write(framework.join("mscorlib.dll"), b"mono-backed facade").expect("write mscorlib");
+
+        assert_eq!(inspect_component_state(&dir, "dotnet48", ComponentState::Unknown), ComponentState::NeedsRepair);
+
+        fs::write(framework.join("clr.dll"), b"native clr").expect("write clr");
+        assert_eq!(inspect_component_state(&dir, "dotnet48", ComponentState::Unknown), ComponentState::Installed);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

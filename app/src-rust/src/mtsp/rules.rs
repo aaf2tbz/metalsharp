@@ -57,10 +57,19 @@ fn load_game_recipes() -> &'static HashMap<u32, GameRecipe> {
 }
 
 fn rule_candidates(home: &Path, current_exe: Option<&Path>) -> Vec<PathBuf> {
-    let mut candidates = vec![
+    let mut candidates = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("configs").join("mtsp-rules.toml"));
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    candidates.push(manifest_dir.join("..").join("..").join("configs").join("mtsp-rules.toml"));
+
+    candidates.extend([
         home.join("repos").join("metalsharp").join("configs").join("mtsp-rules.toml"),
         PathBuf::from("configs/mtsp-rules.toml"),
-    ];
+    ]);
 
     if let Some(exe) = current_exe {
         if let Some(mut dir) = exe.parent() {
@@ -234,6 +243,10 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
         "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2010" => ["msvcr100.dll", "msvcp100.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
+        "dotnet48" => {
+            windows.join("Microsoft.NET").join("Framework").join("v4.0.30319").join("clr.dll").exists()
+                || windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("clr.dll").exists()
+        },
         "directx_jun2010" => {
             ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
         },
@@ -523,6 +536,13 @@ mod tests {
         assert!(!recipe_component_satisfied("vcrun2010", &root));
         std::fs::write(system32.join("msvcp100.dll"), b"dll").expect("write vcrun2010 dll");
         assert!(recipe_component_satisfied("vcrun2010", &root));
+
+        let framework = root.join("drive_c/windows/Microsoft.NET/Framework/v4.0.30319");
+        std::fs::create_dir_all(&framework).expect("create dotnet framework dir");
+        std::fs::write(framework.join("mscorlib.dll"), b"dll").expect("write dotnet facade");
+        assert!(!recipe_component_satisfied("dotnet48", &root));
+        std::fs::write(framework.join("clr.dll"), b"dll").expect("write native clr");
+        assert!(recipe_component_satisfied("dotnet48", &root));
 
         std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
         assert!(!recipe_component_satisfied("directx_jun2010", &root));
