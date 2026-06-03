@@ -1068,6 +1068,54 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::es_bridge::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/thread/snapshot") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_snapshot_threads(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/compute-delta") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_compute_delta(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/create-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_create_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/destroy-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_destroy_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/list-watchers") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_list_watchers(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/poll-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_poll_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/info") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_thread_info(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/list-deltas") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_list_deltas(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/configure-notifications") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_configure_notifications(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/mechanism-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_mechanism_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/watcher-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_watcher_status(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
