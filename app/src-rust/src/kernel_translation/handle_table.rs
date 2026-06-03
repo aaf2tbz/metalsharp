@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-static HANDLE_TABLES: LazyLock<Mutex<BTreeMap<u32, VirtualHandleTable>>> =
+pub static HANDLE_TABLES: LazyLock<Mutex<BTreeMap<u32, VirtualHandleTable>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0x00000100);

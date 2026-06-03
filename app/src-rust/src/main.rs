@@ -924,6 +924,22 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::handle_table::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/handle/enumerate-fds") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_enumerate_fds(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/enumerate-ports") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_enumerate_ports(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/unified-snapshot") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_unified_snapshot(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/snapshot-all") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_snapshot_all(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
