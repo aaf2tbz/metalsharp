@@ -892,6 +892,38 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::probe::handle_kernel_probe(&body))
         },
+        (Method::Post, "/kernel-translation/handle/create") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_create(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/close") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_close(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/duplicate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_duplicate(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/query") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_query(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/enumerate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_enumerate(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/system-info") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_system_handle_information(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/table-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_table_status(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

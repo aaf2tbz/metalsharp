@@ -1,3 +1,4 @@
+pub mod handle_table;
 mod nt_to_xnu;
 pub mod probe;
 pub mod types;
