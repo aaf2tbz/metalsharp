@@ -116,18 +116,34 @@ constexpr SyscallMapping SYSCALL_TABLE[] = {
     {"NtQuerySystemInformation", "sysctl + proc_info", "BSD 202, 336", PairQuality::Close, "sysctl() + proc_info()"},
     {"NtDebugActiveProcess", "ptrace(PT_ATTACH)", "BSD 26", PairQuality::Direct, "ptrace(PT_ATTACH)"},
     {"NtGetCachedSigningLevel", "csops", "BSD 169", PairQuality::Direct, "csops(CS_OPS_GETSIGNINGINFO)"},
-    {"NtQueueApcThread", "thread_set_state (trampoline)", "Mach IPC", PairQuality::Partial, "Suspend, modify ARM_CONTEXT pc, resume"},
+    {"NtQueueApcThread", "thread_set_state (trampoline)", "Mach IPC", PairQuality::Partial,
+     "Suspend, modify ARM_CONTEXT pc, resume"},
     {"NtSetCachedSigningLevel", "—", "—", PairQuality::Blocked, "SIP prevents; return ACCESS_DENIED"},
     {"NtLoadDriver", "kext_load", "IOKit", PairQuality::Blocked, "Cannot load Windows drivers"},
     {"NtQueryObject (handle enum)", "—", "—", PairQuality::Blocked, "No Mach port enumeration; return fake data"},
 };
 
 constexpr BlockerDetail CRITICAL_BLOCKERS[] = {
-    {"HANDLE_ENUM", "No API to enumerate another process's Mach ports/fds", {"EAC", "BattlEye", "Vanguard", nullptr}, "Return fake handle data from Wine virtual handle table"},
-    {"KERNEL_DRIVER", "Apple requires notarized kexts; anti-cheat drivers are proprietary", {"Vanguard", "EAC", "BattlEye", nullptr}, "Vendor ships macOS system extension or EndpointSecurity companion"},
-    {"THREAD_NOTIFY", "No per-thread creation callback on XNU", {"Vanguard", nullptr, nullptr, nullptr}, "EndpointSecurity could add this in future macOS"},
-    {"HANDLE_CALLBACK", "No Mach port access callback (ObRegisterCallbacks equiv)", {"Vanguard", nullptr, nullptr, nullptr}, "MACF mac_proc_check_get_task provides partial coverage"},
-    {"CODE_INTEGRITY", "SIP prevents customizing code signing levels", {"Vanguard", "EAC", nullptr, nullptr}, "Return fake signing results; csops for real queries"},
+    {"HANDLE_ENUM",
+     "No API to enumerate another process's Mach ports/fds",
+     {"EAC", "BattlEye", "Vanguard", nullptr},
+     "Return fake handle data from Wine virtual handle table"},
+    {"KERNEL_DRIVER",
+     "Apple requires notarized kexts; anti-cheat drivers are proprietary",
+     {"Vanguard", "EAC", "BattlEye", nullptr},
+     "Vendor ships macOS system extension or EndpointSecurity companion"},
+    {"THREAD_NOTIFY",
+     "No per-thread creation callback on XNU",
+     {"Vanguard", nullptr, nullptr, nullptr},
+     "EndpointSecurity could add this in future macOS"},
+    {"HANDLE_CALLBACK",
+     "No Mach port access callback (ObRegisterCallbacks equiv)",
+     {"Vanguard", nullptr, nullptr, nullptr},
+     "MACF mac_proc_check_get_task provides partial coverage"},
+    {"CODE_INTEGRITY",
+     "SIP prevents customizing code signing levels",
+     {"Vanguard", "EAC", nullptr, nullptr},
+     "Return fake signing results; csops for real queries"},
 };
 
 inline CoverageReport computeSyscallCoverage() {
@@ -135,16 +151,27 @@ inline CoverageReport computeSyscallCoverage() {
     for (const auto& e : SYSCALL_TABLE) {
         r.total++;
         switch (e.quality) {
-            case PairQuality::Direct: r.direct++; break;
-            case PairQuality::Close: r.close++; break;
-            case PairQuality::UserspaceEmulation: r.userspace++; break;
-            case PairQuality::Partial: r.partial++; break;
-            case PairQuality::Blocked: r.blocked++; break;
-            case PairQuality::NotNeeded: break;
+        case PairQuality::Direct:
+            r.direct++;
+            break;
+        case PairQuality::Close:
+            r.close++;
+            break;
+        case PairQuality::UserspaceEmulation:
+            r.userspace++;
+            break;
+        case PairQuality::Partial:
+            r.partial++;
+            break;
+        case PairQuality::Blocked:
+            r.blocked++;
+            break;
+        case PairQuality::NotNeeded:
+            break;
         }
     }
     return r;
 }
 
-}
-}
+} // namespace kernel_translation
+} // namespace metalsharp

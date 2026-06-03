@@ -55,6 +55,7 @@ fn probe_anonymous_exec() -> Value {
 fn probe_task_for_pid() -> Value {
     let pid = std::process::id() as i64;
     let mut task: u64 = 0;
+    #[allow(deprecated)]
     let kr = unsafe { libc::syscall(50, libc::mach_task_self(), pid, &mut task) };
     json!({
         "ok": kr >= 0,
