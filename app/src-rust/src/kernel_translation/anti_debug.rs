@@ -1,5 +1,7 @@
 use serde_json::{json, Map, Value};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 const STATUS_SUCCESS: u32 = 0x00000000;
 const STATUS_PORT_NOT_SET: u32 = 0xC0000353;
 const STATUS_DEBUGGER_INACTIVE: u32 = 0xC0000354;
@@ -324,7 +326,14 @@ pub fn handle_simulate_check(body: &Map<String, Value>) -> Value {
         },
     };
 
-    lock_results().push(result.clone());
+    {
+        let mut results = lock_results();
+        results.push(result.clone());
+        if results.len() > MAX_COLLECTION_LEN {
+            let excess = results.len() - MAX_COLLECTION_LEN;
+            results.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,
@@ -542,7 +551,14 @@ pub fn handle_add_sanitize_rule(body: &Map<String, Value>) -> Value {
         reason: body.get("reason").and_then(|v| v.as_str()).unwrap_or("custom_rule").to_string(),
     };
 
-    lock_sanitize_rules().push(entry.clone());
+    {
+        let mut rules = lock_sanitize_rules();
+        rules.push(entry.clone());
+        if rules.len() > MAX_COLLECTION_LEN {
+            let excess = rules.len() - MAX_COLLECTION_LEN;
+            rules.drain(0..excess);
+        }
+    }
 
     json!({"ok": true, "rule": entry})
 }

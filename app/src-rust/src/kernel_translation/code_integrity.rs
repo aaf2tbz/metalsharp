@@ -196,16 +196,27 @@ pub fn handle_register_pe_module(body: &Map<String, Value>) -> Value {
         Some(n) => n.to_string(),
         None => return json!({"ok": false, "error": "module_name required"}),
     };
-    let signing_level = body
-        .get("signing_level")
-        .and_then(|v| v.as_u64())
-        .map(|v| NtSigningLevel::from_u8(v as u8))
-        .unwrap_or(NtSigningLevel::Microsoft);
+    let signing_level = match body.get("signing_level").and_then(|v| v.as_u64()) {
+        Some(v) => NtSigningLevel::from_u8(v as u8),
+        None => NtSigningLevel::None,
+    };
     let hash_hex = body.get("hash_hex").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    if let Some(ref hex) = hash_hex {
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return json!({"ok": false, "error": "hash_hex must be valid hexadecimal"});
+        }
+    }
 
     let is_wine_builtin = module_name.to_lowercase().ends_with(".dll")
         || module_name.to_lowercase().ends_with(".exe")
         || module_name.to_lowercase().ends_with(".sys");
+
+    let (policy_flags, is_signed, is_trusted) = if is_wine_builtin {
+        (0x0E, true, true)
+    } else {
+        (0x02, signing_level != NtSigningLevel::None, signing_level != NtSigningLevel::None)
+    };
 
     let entry = ModuleSigningEntry {
         base_address,
@@ -213,9 +224,9 @@ pub fn handle_register_pe_module(body: &Map<String, Value>) -> Value {
         module_type: ModuleType::PE,
         signing_level,
         csops_flags: None,
-        policy_flags: if is_wine_builtin { 0x0E } else { 0x02 },
-        is_signed: true,
-        is_trusted: true,
+        policy_flags,
+        is_signed,
+        is_trusted,
         hash_algorithm: "SHA256",
         hash_hex,
     };

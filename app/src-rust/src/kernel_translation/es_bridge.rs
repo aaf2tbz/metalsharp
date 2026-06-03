@@ -2,6 +2,8 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 static NEXT_CALLBACK_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -361,7 +363,14 @@ pub fn handle_fire_process_event(body: &Map<String, Value>) -> Value {
         status.last_event = Some(event.timestamp);
     }
 
-    lock_process_events().push(event.clone());
+    {
+        let mut evts = lock_process_events();
+        evts.push(event.clone());
+        if evts.len() > MAX_COLLECTION_LEN {
+            let excess = evts.len() - MAX_COLLECTION_LEN;
+            evts.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,
@@ -416,7 +425,14 @@ pub fn handle_fire_thread_event(body: &Map<String, Value>) -> Value {
         status.last_event = Some(event.timestamp);
     }
 
-    lock_thread_events().push(event.clone());
+    {
+        let mut evts = lock_thread_events();
+        evts.push(event.clone());
+        if evts.len() > MAX_COLLECTION_LEN {
+            let excess = evts.len() - MAX_COLLECTION_LEN;
+            evts.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,
@@ -472,7 +488,14 @@ pub fn handle_fire_image_event(body: &Map<String, Value>) -> Value {
         status.last_event = Some(event.timestamp);
     }
 
-    lock_image_events().push(event.clone());
+    {
+        let mut evts = lock_image_events();
+        evts.push(event.clone());
+        if evts.len() > MAX_COLLECTION_LEN {
+            let excess = evts.len() - MAX_COLLECTION_LEN;
+            evts.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,

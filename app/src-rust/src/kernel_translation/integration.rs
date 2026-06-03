@@ -2,9 +2,10 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 static NEXT_PIPELINE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(1);
-static NEXT_CONFIG_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ExtensionState {
@@ -409,7 +410,14 @@ pub fn handle_simulate_pipeline(body: &Map<String, Value>) -> Value {
         timestamp: now_ms(),
     };
 
-    lock_pipelines().push(pipeline.clone());
+    {
+        let mut pipelines = lock_pipelines();
+        pipelines.push(pipeline.clone());
+        if pipelines.len() > MAX_COLLECTION_LEN {
+            let excess = pipelines.len() - MAX_COLLECTION_LEN;
+            pipelines.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,
@@ -525,7 +533,14 @@ pub fn handle_log_translation(body: &Map<String, Value>) -> Value {
         timestamp: now_ms(),
     };
 
-    lock_translation_logs().push(log.clone());
+    {
+        let mut logs = lock_translation_logs();
+        logs.push(log.clone());
+        if logs.len() > MAX_COLLECTION_LEN {
+            let excess = logs.len() - MAX_COLLECTION_LEN;
+            logs.drain(0..excess);
+        }
+    }
 
     json!({"ok": true, "log": log})
 }
@@ -562,7 +577,14 @@ pub fn handle_register_multi_ac(body: &Map<String, Value>) -> Value {
         registered_at: now_ms(),
     };
 
-    lock_multi_ac().push(reg.clone());
+    {
+        let mut ac = lock_multi_ac();
+        ac.push(reg.clone());
+        if ac.len() > MAX_COLLECTION_LEN {
+            let excess = ac.len() - MAX_COLLECTION_LEN;
+            ac.drain(0..excess);
+        }
+    }
 
     json!({"ok": true, "registration": reg})
 }

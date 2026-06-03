@@ -2,6 +2,8 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 static NEXT_REGISTRATION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -464,17 +466,24 @@ pub fn handle_simulate_operation(body: &Map<String, Value>) -> Value {
         }
     }
 
-    lock_access_logs().push(AccessMaskLog {
-        id: operation_id,
-        source_pid,
-        target_pid,
-        operation,
-        requested: requested_access,
-        granted: final_access,
-        stripped: stripped_bits,
-        blocked,
-        timestamp: now,
-    });
+    {
+        let mut logs = lock_access_logs();
+        logs.push(AccessMaskLog {
+            id: operation_id,
+            source_pid,
+            target_pid,
+            operation,
+            requested: requested_access,
+            granted: final_access,
+            stripped: stripped_bits,
+            blocked,
+            timestamp: now,
+        });
+        if logs.len() > MAX_COLLECTION_LEN {
+            let excess = logs.len() - MAX_COLLECTION_LEN;
+            logs.drain(0..excess);
+        }
+    }
 
     let post_status = if blocked { ObPostStatus::Denied } else { ObPostStatus::Success };
     let return_handle = if blocked { 0 } else { 0xFFFF0000 + operation_id };

@@ -349,7 +349,7 @@ fn enumerate_fds(pid: u32) -> Result<Vec<FdInfo>, String> {
         let buf_size: usize = 4096;
         let mut buffer: Vec<u8> = vec![0u8; buf_size];
 
-        let needed =
+        let mut needed =
             proc_pidinfo(pid as i32, PROC_PIDLISTFDS, 0u64, buffer.as_mut_ptr() as *mut c_void, buf_size as i32);
 
         if needed < 0 {
@@ -366,8 +366,8 @@ fn enumerate_fds(pid: u32) -> Result<Vec<FdInfo>, String> {
 
         if (needed as usize) > buf_size {
             buffer.resize(needed as usize, 0);
-            let r2 = proc_pidinfo(pid as i32, PROC_PIDLISTFDS, 0u64, buffer.as_mut_ptr() as *mut c_void, needed);
-            if r2 < 0 {
+            needed = proc_pidinfo(pid as i32, PROC_PIDLISTFDS, 0u64, buffer.as_mut_ptr() as *mut c_void, needed);
+            if needed < 0 {
                 return Err(format!("proc_pidinfo(PIDLISTFDS) retry failed for pid {}", pid));
             }
         }
@@ -415,7 +415,20 @@ fn enumerate_mach_ports(pid: u32) -> Result<Vec<PortInfo>, String> {
             ports.push(PortInfo { name, rights });
         }
 
-        let _ = names_ptr;
+        {
+            extern "C" {
+                fn vm_deallocate(target_task: u32, address: u64, size: u64) -> i32;
+            }
+            let names_size = name_count as u64 * std::mem::size_of::<u32>() as u64;
+            #[allow(deprecated)]
+            let task = libc::mach_task_self();
+            vm_deallocate(task, names_ptr as u64, names_size);
+            if !types_ptr.is_null() && types_count > 0 {
+                let types_size = types_count as u64 * std::mem::size_of::<u32>() as u64;
+                vm_deallocate(task, types_ptr as u64, types_size);
+            }
+        }
+
         Ok(ports)
     }
 }

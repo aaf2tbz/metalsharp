@@ -2,6 +2,8 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 static NEXT_WATCHER_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -382,7 +384,14 @@ pub fn handle_compute_delta(body: &Map<String, Value>) -> Value {
     let created_count = created.len();
     let exited_count = exited.len();
 
-    lock_deltas().push(delta.clone());
+    {
+        let mut deltas = lock_deltas();
+        deltas.push(delta.clone());
+        if deltas.len() > MAX_COLLECTION_LEN {
+            let excess = deltas.len() - MAX_COLLECTION_LEN;
+            deltas.drain(0..excess);
+        }
+    }
 
     {
         let mut watchers = lock_watchers();

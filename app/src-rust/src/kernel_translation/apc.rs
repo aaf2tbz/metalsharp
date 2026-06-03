@@ -239,7 +239,7 @@ pub fn handle_allocate_trampoline(body: &Map<String, Value>) -> Value {
             let ptr = libc::mmap(
                 std::ptr::null_mut(),
                 page_size,
-                libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+                libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANON,
                 -1,
                 0,
@@ -249,8 +249,8 @@ pub fn handle_allocate_trampoline(body: &Map<String, Value>) -> Value {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
                 return json!({
                     "ok": false,
-                    "error": format!("mmap RWX failed: errno {}", errno),
-                    "note": "May be blocked by hardened runtime or PAC",
+                    "error": format!("mmap RW failed: errno {}", errno),
+                    "note": "May be blocked by hardened runtime",
                 });
             }
 
@@ -264,6 +264,16 @@ pub fn handle_allocate_trampoline(body: &Map<String, Value>) -> Value {
                 (ptr as *mut u8).add(restore_offset),
                 restore_code.len(),
             );
+
+            let rwx = libc::mprotect(ptr, page_size, libc::PROT_READ | libc::PROT_EXEC);
+            if rwx != 0 {
+                let _ = libc::munmap(ptr, page_size);
+                return json!({
+                    "ok": false,
+                    "error": "mprotect RW→RX failed",
+                    "note": "W^X transition blocked by hardened runtime or PAC",
+                });
+            }
 
             let total_code = trampoline_code.len() + restore_code.len();
 

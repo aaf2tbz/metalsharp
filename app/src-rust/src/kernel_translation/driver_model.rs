@@ -2,6 +2,8 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const MAX_COLLECTION_LEN: usize = 4096;
+
 static NEXT_DRIVER_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_DEVICE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_IRP_ID: AtomicU64 = AtomicU64::new(1);
@@ -359,13 +361,6 @@ pub fn handle_create_device(body: &Map<String, Value>) -> Value {
         None => return json!({"ok": false, "error": "driver_id required"}),
     };
 
-    {
-        let drivers = lock_drivers();
-        if !drivers.contains_key(&driver_id) {
-            return json!({"ok": false, "error": format!("driver {} not found", driver_id)});
-        }
-    }
-
     let device_name = body.get("device_name").and_then(|v| v.as_str()).unwrap_or("AntiCheat0").to_string();
     let id = NEXT_DEVICE_ID.fetch_add(1, Ordering::Relaxed);
     let device = NtDevice {
@@ -381,7 +376,10 @@ pub fn handle_create_device(body: &Map<String, Value>) -> Value {
     };
 
     lock_devices().insert(id, device.clone());
-    lock_drivers().get_mut(&driver_id).unwrap().devices.push(id);
+    match lock_drivers().get_mut(&driver_id) {
+        Some(d) => d.devices.push(id),
+        None => return json!({"ok": false, "error": format!("driver {} not found during device creation", driver_id)}),
+    }
 
     json!({
         "ok": true,
@@ -439,7 +437,14 @@ pub fn handle_dispatch_irp(body: &Map<String, Value>) -> Value {
         timestamp: now_ms(),
     };
 
-    lock_irps().push(irp.clone());
+    {
+        let mut irps = lock_irps();
+        irps.push(irp.clone());
+        if irps.len() > MAX_COLLECTION_LEN {
+            let excess = irps.len() - MAX_COLLECTION_LEN;
+            irps.drain(0..excess);
+        }
+    }
 
     json!({
         "ok": true,
@@ -490,7 +495,14 @@ pub fn handle_register_ioctl(body: &Map<String, Value>) -> Value {
         description: body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
     };
 
-    lock_ioctl_map().push(mapping.clone());
+    {
+        let mut map = lock_ioctl_map();
+        map.push(mapping.clone());
+        if map.len() > MAX_COLLECTION_LEN {
+            let excess = map.len() - MAX_COLLECTION_LEN;
+            map.drain(0..excess);
+        }
+    }
 
     let method_name = match method {
         METHOD_BUFFERED => "METHOD_BUFFERED",

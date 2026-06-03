@@ -289,9 +289,8 @@ pub fn handle_create(body: &Map<String, Value>) -> Value {
         None => HandleBackend::Virtual("auto".to_string()),
     };
 
-    get_or_create_table(pid);
     let mut tables = HANDLE_TABLES.lock().unwrap();
-    let table = tables.get_mut(&pid).unwrap();
+    let table = tables.entry(pid).or_insert_with(|| VirtualHandleTable::new(pid));
     let handle = table.alloc_handle(object_type, access_mask, name, backend);
     let entry = table.query_object(handle).unwrap();
 
@@ -487,9 +486,8 @@ pub fn handle_seed_demo(body: &Map<String, Value>) -> Value {
         _ => return json!({"ok": false, "error": "pid (u32) required"}),
     };
 
-    get_or_create_table(pid);
     let mut tables = HANDLE_TABLES.lock().unwrap();
-    let table = tables.get_mut(&pid).unwrap();
+    let table = tables.entry(pid).or_insert_with(|| VirtualHandleTable::new(pid));
 
     let seed_count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(25) as usize;
 
