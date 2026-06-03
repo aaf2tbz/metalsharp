@@ -110,6 +110,14 @@
         ]
       },
       {
+        "from": "../src/fna/shims",
+        "to": "runtime/shim-sources/fna/shims",
+        "filter": [
+          "*.c",
+          "*.m"
+        ]
+      },
+      {
         "from": "updater",
         "to": "scripts/tools/updater"
       },

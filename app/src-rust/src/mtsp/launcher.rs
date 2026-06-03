@@ -7,10 +7,65 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
-const AGILITY_614_VERSION: &str = "1.614.1";
-const DXC_VERSION: &str = "v1.9.2602";
-const DXC_ARCHIVE: &str = "dxc_2026_02_20.zip";
-const DXC_SHA256: &str = "a1e89031421cf3c1fca6627766ab3020ca4f962ac7e2caa7fab2b33a8436151e";
+const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
+const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
+
+#[derive(Clone, Copy)]
+enum FnaShimSource {
+    RepoC { parts: &'static [&'static str] },
+    RepoObjC { parts: &'static [&'static str], frameworks: &'static [&'static str] },
+    BundledNative,
+}
+
+#[derive(Clone, Copy)]
+struct FnaNativeShimSpec {
+    output: &'static str,
+    source: FnaShimSource,
+    symlinks: &'static [&'static str],
+    required_for_launch: bool,
+}
+
+const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
+    FnaNativeShimSpec {
+        output: "libkernel32.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: "libuser32.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: FNA_CARBON_SHIM,
+        source: FnaShimSource::RepoObjC {
+            parts: &["src", "fna", "shims", "carbon_hiview_shim.m"],
+            frameworks: &["Cocoa", "Carbon"],
+        },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: FNA_CARBON_INTERPOSE_SHIM,
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: "xaudio2_9.dylib",
+        source: FnaShimSource::BundledNative,
+        symlinks: &["xaudio2_8.dylib", "xaudio2_7.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "xinput1_4.dylib",
+        source: FnaShimSource::BundledNative,
+        symlinks: &["xinput1_3.dylib", "xinput9_1_0.dylib"],
+        required_for_launch: false,
+    },
+];
 
 pub fn bridge_port() -> u16 {
     parse_bridge_port(std::env::var("METALSHARP_STEAM_BRIDGE_PORT").ok().as_deref()).unwrap_or(DEFAULT_BRIDGE_PORT)
@@ -615,6 +670,7 @@ fn launch_dxmt_metal_with_context(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
@@ -653,33 +709,7 @@ fn deploy_d3d12_agility_sidecars(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let source_dir = find_or_fetch_agility_614_dir(&home, &ms_root)?;
-    let dxil_dll = find_or_fetch_dxil_dll(&home, &source_dir)?;
-
-    let mut roots = vec![exe_dir.to_path_buf()];
-    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
-    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
-        roots.push(engine_bin);
-    }
-
-    let targets: Vec<PathBuf> =
-        roots.into_iter().flat_map(|root| [root.join("D3D12").join("x64"), root.join("D3D12")]).collect();
-
-    for target in targets {
-        std::fs::create_dir_all(&target)?;
-        for dll in ["D3D12Core.dll", "d3d12SDKLayers.dll", "D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
-            let src = source_dir.join(dll);
-            if src.is_file() {
-                std::fs::copy(&src, target.join(dll))?;
-            } else if dll == "D3D12StateObjectCompiler.dll" {
-                let _ = std::fs::remove_file(target.join(dll));
-            }
-        }
-        std::fs::copy(&dxil_dll, target.join("dxil.dll"))?;
-    }
-
-    Ok(())
+    crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)
 }
 
 fn skips_app_local_agility_sidecars(appid: u32) -> bool {
@@ -701,161 +731,6 @@ fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<
     }
 
     Ok(())
-}
-
-fn find_or_fetch_agility_614_dir(home: &Path, ms_root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = std::env::var_os("METALSHARP_AGILITY_BIN") {
-        let dir = PathBuf::from(path);
-        if agility_payload_present(&dir) {
-            return Ok(dir);
-        }
-    }
-
-    let redist_dir = agility_614_redist_dir(home);
-    let candidates = [ms_root.join("lib").join("dxmt").join("x86_64-windows").join("D3D12"), redist_dir.clone()];
-    if let Some(found) = candidates.iter().find(|dir| agility_payload_present(dir)) {
-        return Ok(found.clone());
-    }
-
-    fetch_agility_614_redist(home)?;
-    if agility_payload_present(&redist_dir) {
-        return Ok(redist_dir);
-    }
-
-    Err("D3D12 Agility 1.614.1 payload missing: D3D12Core.dll and d3d12SDKLayers.dll were not found or fetched".into())
-}
-
-fn agility_payload_present(dir: &Path) -> bool {
-    dir.join("D3D12Core.dll").is_file() && dir.join("d3d12SDKLayers.dll").is_file()
-}
-
-fn agility_614_redist_dir(home: &Path) -> PathBuf {
-    crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("agility")
-        .join(AGILITY_614_VERSION)
-        .join("build")
-        .join("native")
-        .join("bin")
-        .join("x64")
-}
-
-fn fetch_agility_614_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("agility")
-        .join(AGILITY_614_VERSION);
-    let cache_dir = package_root.join(".download");
-    let package_file = cache_dir.join("Microsoft.Direct3D.D3D12.nupkg");
-    std::fs::create_dir_all(&cache_dir)?;
-    if !package_file.is_file() {
-        run_command(
-            Command::new("curl")
-                .arg("-L")
-                .arg("--fail")
-                .arg("--retry")
-                .arg("3")
-                .arg("-o")
-                .arg(&package_file)
-                .arg(format!("https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/{}", AGILITY_614_VERSION)),
-            "download D3D12 Agility 1.614.1",
-        )?;
-    }
-    run_command(
-        Command::new("unzip").arg("-q").arg("-o").arg(&package_file).arg("-d").arg(&package_root),
-        "extract D3D12 Agility 1.614.1",
-    )?;
-    Ok(())
-}
-
-fn find_or_fetch_dxil_dll(home: &Path, agility_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = std::env::var_os("METALSHARP_DXIL_DLL") {
-        let dll = PathBuf::from(path);
-        if dll.is_file() {
-            return Ok(dll);
-        }
-    }
-
-    let redist_dll = dxc_redist_bin_dir(home).join("dxil.dll");
-    let candidates = [
-        agility_dir.join("dxil.dll"),
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxil.dll"),
-        redist_dll.clone(),
-    ];
-    if let Some(found) = candidates.iter().find(|path| path.is_file()) {
-        return Ok(found.clone());
-    }
-
-    fetch_dxc_redist(home)?;
-    if redist_dll.is_file() {
-        return Ok(redist_dll);
-    }
-
-    Err("DXIL validator/runtime DLL missing: dxil.dll was not found or fetched".into())
-}
-
-fn dxc_redist_bin_dir(home: &Path) -> PathBuf {
-    crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("dxc")
-        .join(DXC_VERSION)
-        .join("bin")
-        .join("x64")
-}
-
-fn fetch_dxc_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let redist_root =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxc").join(DXC_VERSION);
-    let download_dir = redist_root.join("downloads");
-    let archive_path = download_dir.join(DXC_ARCHIVE);
-    std::fs::create_dir_all(&download_dir)?;
-    if !archive_path.is_file() {
-        run_command(
-            Command::new("curl").arg("-L").arg("--fail").arg("--retry").arg("3").arg("-o").arg(&archive_path).arg(
-                format!(
-                    "https://github.com/microsoft/DirectXShaderCompiler/releases/download/{}/{}",
-                    DXC_VERSION, DXC_ARCHIVE
-                ),
-            ),
-            "download DirectXShaderCompiler",
-        )?;
-    }
-
-    let actual = command_output(
-        Command::new("shasum").arg("-a").arg("256").arg(&archive_path),
-        "hash DirectXShaderCompiler archive",
-    )?;
-    let actual_hash = actual.split_whitespace().next().unwrap_or_default();
-    if actual_hash != DXC_SHA256 {
-        return Err(format!("DXC archive checksum mismatch: expected {}, got {}", DXC_SHA256, actual_hash).into());
-    }
-
-    run_command(
-        Command::new("unzip").arg("-q").arg("-o").arg(&archive_path).arg("-d").arg(&redist_root),
-        "extract DirectXShaderCompiler",
-    )?;
-    Ok(())
-}
-
-fn run_command(cmd: &mut Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("{} failed: {}", label, stderr.trim()).into())
-}
-
-fn command_output(cmd: &mut Command, label: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("{} failed: {}", label, stderr.trim()).into());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -907,6 +782,10 @@ fn launch_wine_bare_with_context(
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
@@ -1060,6 +939,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         .env("MONO_PATH", mono_path)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    for (key, value) in fna_native_launch_env(dir) {
+        cmd.env(key, value);
+    }
 
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(
@@ -1302,6 +1184,16 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
 }
 
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    if pipeline_id == PipelineId::M9 && is_m9_stuck_loading_title(appid) {
+        return vec![
+            ("DXMT_ASYNC_PIPELINE_COMPILE".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
+            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
+            ("METALSHARP_M9_SYNC_LOADING".to_string(), "1".to_string()),
+        ];
+    }
+
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         let mut env = vec![
             ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
@@ -1361,6 +1253,21 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         return env;
     }
     Vec::new()
+}
+
+fn is_m9_stuck_loading_title(appid: u32) -> bool {
+    matches!(appid, 774361 | 17410 | 49520)
+}
+
+fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) {
+    for (key, value) in app_compat_env_pairs(appid, pipeline_id) {
+        cmd.env(key, value);
+    }
+    if let Some(recipe) = super::rules::get_game_recipe(appid) {
+        for (key, value) in recipe.env {
+            cmd.env(key, value);
+        }
+    }
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -1578,6 +1485,8 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     }
 
     let shims_dir = PathBuf::from(find_shims_dir());
+    let _ = std::fs::create_dir_all(&shims_dir);
+    deploy_fna_native_shims(game_dir, &shims_dir);
     let shared_native_libs = [
         ("libFNA3D.dylib", None),
         ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
@@ -1670,6 +1579,175 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
 
     let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     deploy_offline_steamworks_net(game_dir, &metalsharp_home);
+}
+
+fn deploy_fna_native_shims(game_dir: &PathBuf, shims_dir: &PathBuf) {
+    for spec in FNA_NATIVE_SHIMS {
+        ensure_fna_native_shim_in_cache(spec, shims_dir);
+        copy_fna_native_lib(game_dir, shims_dir, spec.output, None);
+        if game_dir.join(spec.output).exists() {
+            for symlink in spec.symlinks {
+                ensure_fna_symlink(game_dir, spec.output, symlink);
+            }
+        }
+    }
+}
+
+pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let shims_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims");
+    std::fs::create_dir_all(&shims_dir)?;
+
+    for spec in FNA_NATIVE_SHIMS {
+        ensure_fna_native_shim_in_cache(spec, &shims_dir);
+    }
+
+    let installed_required = FNA_NATIVE_SHIMS
+        .iter()
+        .filter(|spec| spec.required_for_launch)
+        .filter(|spec| shims_dir.join(spec.output).exists())
+        .count();
+    let required = FNA_NATIVE_SHIMS.iter().filter(|spec| spec.required_for_launch).count();
+    if installed_required != required {
+        return Err(format!(
+            "FNA native shim repair incomplete: {}/{} required macOS framework shims are staged",
+            installed_required, required
+        )
+        .into());
+    }
+    Ok(FNA_NATIVE_SHIMS.iter().filter(|spec| shims_dir.join(spec.output).exists()).count())
+}
+
+fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf) {
+    let dst = shims_dir.join(spec.output);
+    if dst.exists() {
+        return;
+    }
+
+    match spec.source {
+        FnaShimSource::RepoC { parts } => {
+            if let Some(source) = find_fna_shim_source(parts) {
+                let _ = build_fna_c_shim(&source, &dst, spec.output, &[]);
+            }
+        },
+        FnaShimSource::RepoObjC { parts, frameworks } => {
+            if let Some(source) = find_fna_shim_source(parts) {
+                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks);
+            }
+        },
+        FnaShimSource::BundledNative => {
+            if let Some(source) = find_bundled_native_shim(spec.output) {
+                let _ = std::fs::copy(source, &dst);
+                codesign_fna_shim(&dst);
+            }
+        },
+    }
+}
+
+fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str]) -> bool {
+    if let Some(parent) = output.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut cmd = Command::new("clang");
+    cmd.arg("-shared");
+    for arg in fna_native_arch_args() {
+        cmd.arg(arg);
+    }
+    if source.extension().and_then(|ext| ext.to_str()) == Some("m") {
+        cmd.arg("-fobjc-arc");
+    }
+    cmd.arg("-o").arg(output).arg(source).args(["-install_name", &format!("@loader_path/{}", install_name)]);
+    for framework in frameworks {
+        cmd.args(["-framework", framework]);
+    }
+    let success = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if success {
+        codesign_fna_shim(output);
+    }
+    success
+}
+
+fn fna_native_arch_args() -> Vec<&'static str> {
+    if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        vec!["-arch", "arm64", "-arch", "x86_64"]
+    } else {
+        Vec::new()
+    }
+}
+
+fn find_bundled_native_shim(name: &str) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        candidates.push(resources.join("scripts").join("tools").join("native").join(name));
+        candidates.push(resources.join("runtime").join("shims").join(name));
+    }
+    if let Some(source) = find_repo_source(&["app", "native", name]) {
+        candidates.push(source);
+    }
+    if let Some(source) = find_repo_source(&["build", name]) {
+        candidates.push(source);
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file() && file_has_payload(candidate))
+}
+
+fn find_fna_shim_source(parts: &[&str]) -> Option<PathBuf> {
+    if let Some(source) = find_repo_source(parts) {
+        return Some(source);
+    }
+    let filename = parts.last()?;
+    let resources = crate::platform::app_resources_dir()?;
+    let candidates = [
+        resources.join("runtime").join("shim-sources").join("fna").join("shims").join(filename),
+        resources.join("scripts").join("tools").join("fna").join("shims").join(filename),
+    ];
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn file_has_payload(path: &PathBuf) -> bool {
+    std::fs::metadata(path).map(|metadata| metadata.len() > 0).unwrap_or(false)
+}
+
+fn codesign_fna_shim(path: &PathBuf) {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos || !path.exists() {
+        return;
+    }
+    let _ = Command::new("codesign")
+        .args(["--force", "-s", "-"])
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+fn fna_native_launch_env(game_dir: &PathBuf) -> Vec<(String, String)> {
+    let carbon = game_dir.join(FNA_CARBON_SHIM);
+    let interpose = game_dir.join(FNA_CARBON_INTERPOSE_SHIM);
+    let mut env = Vec::new();
+    if carbon.exists() {
+        env.push(("METALSHARP_CARBON_SHIM".to_string(), carbon.to_string_lossy().to_string()));
+    }
+    if interpose.exists() {
+        let existing = std::env::var("DYLD_INSERT_LIBRARIES").ok();
+        env.push((
+            "DYLD_INSERT_LIBRARIES".to_string(),
+            append_path_env(existing.as_deref(), &interpose.to_string_lossy()),
+        ));
+    }
+    env
+}
+
+fn append_path_env(existing: Option<&str>, value: &str) -> String {
+    match existing.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(existing) if existing.split(':').any(|item| item == value) => existing.to_string(),
+        Some(existing) => format!("{}:{}", existing, value),
+        None => value.to_string(),
+    }
 }
 
 fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
@@ -2261,6 +2339,36 @@ mod tests {
     }
 
     #[test]
+    fn m9_stuck_loading_titles_disable_async_loading_features() {
+        for appid in [774361, 17410, 49520] {
+            let env = app_compat_env_pairs(appid, PipelineId::M9);
+
+            assert_eq!(env_value(&env, "DXMT_ASYNC_PIPELINE_COMPILE"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+            assert_eq!(env_value(&env, "METALSHARP_M9_SYNC_LOADING"), Some("1"));
+        }
+
+        assert!(app_compat_env_pairs(123456, PipelineId::M9).is_empty());
+        assert!(app_compat_env_pairs(774361, PipelineId::M10).is_empty());
+    }
+
+    #[test]
+    fn steam_pipeline_env_applies_m9_stuck_loading_overrides_after_defaults() {
+        let home = test_dir("m9-stuck-loading-env");
+        let node = get_pipeline(PipelineId::M9);
+
+        let env = steam_pipeline_env_pairs(&home, node, 774361);
+
+        assert_eq!(last_env_value(&env, "DXMT_ASYNC_PIPELINE_COMPILE"), Some("0"));
+        assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+        assert_eq!(last_env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+        assert_eq!(last_env_value(&env, "METALSHARP_M9_SYNC_LOADING"), Some("1"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn m32_env_keeps_wine_fallback_cache_without_dxmt_config() {
         let home = test_dir("m32-env");
         let node = get_pipeline(PipelineId::M32);
@@ -2343,6 +2451,53 @@ mod tests {
             let node = get_pipeline(pipeline_id);
             assert!(!node.uses_winedllpath_routing(), "{:?} should not use WINEDLLPATH routing", pipeline_id);
         }
+    }
+
+    #[test]
+    fn fna_native_shim_manifest_includes_macos_framework_routes() {
+        let outputs: std::collections::HashSet<_> = FNA_NATIVE_SHIMS.iter().map(|spec| spec.output).collect();
+
+        assert!(outputs.contains("libkernel32.dylib"));
+        assert!(outputs.contains("libuser32.dylib"));
+        assert!(outputs.contains(FNA_CARBON_SHIM));
+        assert!(outputs.contains(FNA_CARBON_INTERPOSE_SHIM));
+        assert!(outputs.contains("xaudio2_9.dylib"));
+        assert!(outputs.contains("xinput1_4.dylib"));
+        assert!(FNA_NATIVE_SHIMS
+            .iter()
+            .any(|spec| spec.output == "xaudio2_9.dylib" && spec.symlinks.contains(&"xaudio2_7.dylib")));
+        assert!(FNA_NATIVE_SHIMS
+            .iter()
+            .any(|spec| spec.output == "xinput1_4.dylib" && spec.symlinks.contains(&"xinput1_3.dylib")));
+    }
+
+    #[test]
+    fn fna_native_launch_env_enables_carbon_interpose_when_deployed() {
+        let game_dir = test_dir("fna-native-env");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+        std::fs::write(game_dir.join(FNA_CARBON_SHIM), b"carbon").expect("carbon shim");
+        std::fs::write(game_dir.join(FNA_CARBON_INTERPOSE_SHIM), b"interpose").expect("interpose shim");
+
+        let env = fna_native_launch_env(&game_dir);
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "METALSHARP_CARBON_SHIM").map(|(_, value)| value.as_str()),
+            Some(game_dir.join(FNA_CARBON_SHIM).to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DYLD_INSERT_LIBRARIES").map(|(_, value)| value.as_str()),
+            Some(game_dir.join(FNA_CARBON_INTERPOSE_SHIM).to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn append_path_env_preserves_existing_insert_libraries() {
+        assert_eq!(append_path_env(None, "/tmp/new.dylib"), "/tmp/new.dylib");
+        assert_eq!(append_path_env(Some("/tmp/old.dylib"), "/tmp/new.dylib"), "/tmp/old.dylib:/tmp/new.dylib");
+        assert_eq!(
+            append_path_env(Some("/tmp/old.dylib:/tmp/new.dylib"), "/tmp/new.dylib"),
+            "/tmp/old.dylib:/tmp/new.dylib"
+        );
     }
 
     #[test]
@@ -2492,6 +2647,14 @@ mod tests {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-launcher-{}-{}-{}", name, std::process::id(), unique_suffix()));
         dir
+    }
+
+    fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
+    }
+
+    fn last_env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().rev().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
     }
 
     fn unique_suffix() -> u128 {

@@ -1327,6 +1327,48 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "fna" {
+        if dry_run {
+            let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "runtime_repair_available"
+                } else {
+                    "asset_missing"
+                }
+                .to_string(),
+                detail: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "FNA native macOS shims can be rebuilt from MetalSharp runtime sources".to_string()
+                } else {
+                    "FNA runtime assemblies are not staged locally".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        let repaired = crate::mtsp::launcher::repair_fna_native_runtime_shims()?;
+        let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!("Repaired {} FNA native macOS shim(s) in MetalSharp runtime", repaired),
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if matches!(component_id, "gpu_vendor_stubs" | "gptk_amd_stub") {
         let home = dirs::home_dir().unwrap_or_default();
         let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
@@ -1389,6 +1431,49 @@ pub fn repair_component(
                 "GPU vendor stubs not found in DXMT/GPTK runtime dirs".to_string()
             },
             asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
+    if component_id == "d3d12_agility" {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
+        let game_dir = manifest
+            .game_install_path
+            .as_deref()
+            .map(PathBuf::from)
+            .ok_or("D3D12 Agility repair requires a game install path")?;
+        if dry_run {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if game_dir.is_dir() { "runtime_repair_available" } else { "asset_missing" }.to_string(),
+                detail: if game_dir.is_dir() {
+                    "D3D12 Agility SDK payload can be downloaded and staged for this game".to_string()
+                } else {
+                    "Game install path is missing, so the Agility SDK payload cannot be staged".to_string()
+                },
+                asset_path: Some(game_dir.to_string_lossy().to_string()),
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        crate::setup::stage_agility_sdk_for_game(appid, &game_dir, &home)?;
+        let state = inspect_component_state(&prefix, component_id, ComponentState::Unknown);
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: "Downloaded and staged the D3D12 Agility SDK payload for the M12 launch path".to_string(),
+            asset_path: Some(game_dir.to_string_lossy().to_string()),
             log_path: None,
             pid: None,
         });
@@ -1912,7 +1997,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
+            &["d3d12", "d3d12_agility", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
@@ -2377,6 +2462,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "mono-arm64" => inspect_host_mono_component("mono-arm64").unwrap_or(fallback),
         "mono-x86" => inspect_host_mono_component("mono-x86").unwrap_or(fallback),
         "fna" => inspect_fna_runtime_component().unwrap_or(fallback),
+        "d3d12_agility" => inspect_d3d12_agility_component().unwrap_or(fallback),
         "gecko" => {
             if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
                 ComponentState::Installed
@@ -2470,9 +2556,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "xna" => {
-            if windows.join("Microsoft.NET").join("assembly").join("GAC_32").join("Microsoft.Xna.Framework").exists()
-                || drive_c.join("Program Files (x86)").join("Microsoft XNA").exists()
-            {
+            if xna_framework_installed(prefix) {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -2539,12 +2623,34 @@ fn inspect_host_mono_component(runtime_id: &str) -> Option<ComponentState> {
 fn inspect_fna_runtime_component() -> Option<ComponentState> {
     let home = dirs::home_dir()?;
     let runtime = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
-    let candidates = [
+    let required = [
         runtime.join("fna").join("FNA.dll"),
         runtime.join("shims").join("libFNA3D.dylib"),
         runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("shims").join("libkernel32.dylib"),
+        runtime.join("shims").join("libuser32.dylib"),
+        runtime.join("shims").join("libCarbon.dylib"),
+        runtime.join("shims").join("libmetalsharp_carbon_interpose.dylib"),
     ];
-    Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
+    let present = required.iter().filter(|path| path.exists()).count();
+    Some(if present == required.len() {
+        ComponentState::Installed
+    } else if present > 0 {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
+}
+
+fn inspect_d3d12_agility_component() -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("agility");
+    let known_versions = ["1.614.1", "1.615.1", "1.619.3"];
+    let found = known_versions.iter().any(|version| {
+        let bin = root.join(version).join("build").join("native").join("bin").join("x64");
+        bin.join("D3D12Core.dll").exists() && bin.join("d3d12SDKLayers.dll").exists()
+    });
+    Some(if found { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
@@ -2568,6 +2674,38 @@ fn core_fonts_installed(fonts_dir: &Path) -> bool {
 
     let installed = CORE_FONT_FILES.iter().filter(|name| fonts_dir.join(name).is_file()).count();
     installed >= 4
+}
+
+fn xna_framework_installed(prefix: &Path) -> bool {
+    let drive_c = prefix.join("drive_c");
+    let windows = drive_c.join("windows");
+    if drive_c.join("Program Files (x86)").join("Microsoft XNA").exists()
+        || drive_c.join("Program Files").join("Microsoft XNA").exists()
+    {
+        return true;
+    }
+
+    let framework_roots = [
+        windows.join("Microsoft.NET").join("assembly").join("GAC_32").join("Microsoft.Xna.Framework"),
+        windows.join("Microsoft.NET").join("assembly").join("GAC_MSIL").join("Microsoft.Xna.Framework"),
+        windows.join("assembly").join("GAC_32").join("Microsoft.Xna.Framework"),
+        windows.join("assembly").join("GAC_MSIL").join("Microsoft.Xna.Framework"),
+        windows.join("mono").join("mono-2.0").join("lib").join("mono").join("gac").join("Microsoft.Xna.Framework"),
+    ];
+    framework_roots.iter().any(|root| xna_framework_dll_exists(root))
+}
+
+fn xna_framework_dll_exists(root: &Path) -> bool {
+    if !root.exists() {
+        return false;
+    }
+    if root.join("Microsoft.Xna.Framework.dll").is_file() {
+        return true;
+    }
+    WalkDir::new(root).max_depth(3).into_iter().flatten().any(|entry| {
+        entry.file_type().is_file()
+            && entry.file_name().to_string_lossy().eq_ignore_ascii_case("Microsoft.Xna.Framework.dll")
+    })
 }
 
 fn host_core_font_sources() -> Vec<(String, PathBuf)> {
@@ -2691,6 +2829,7 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
     let local_redist = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist");
 
     resolve_component_installer_from_roots(component_id, arch, &redist_root, &local_redist)
+        .or_else(|| resolve_sharp_library_component_installer(component_id))
 }
 
 fn resolve_component_installer_from_roots(
@@ -2784,7 +2923,12 @@ fn resolve_component_installer_from_roots(
         _ => None,
     }?;
 
-    let args = match component_id {
+    let args = component_installer_args(component_id, &executable);
+    Some(ComponentInstaller { path: executable, args })
+}
+
+fn component_installer_args(component_id: &str, executable: &Path) -> Vec<String> {
+    match component_id {
         "vcrun2019" | "vcrun2013" | "vcrun2010" => vec!["/quiet".to_string(), "/norestart".to_string()],
         "dotnet40" | "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
@@ -2798,8 +2942,62 @@ fn resolve_component_installer_from_roots(
             }
         },
         _ => Vec::new(),
-    };
-    Some(ComponentInstaller { path: executable, args })
+    }
+}
+
+fn resolve_sharp_library_component_installer(component_id: &str) -> Option<ComponentInstaller> {
+    resolve_sharp_library_component_installer_from_root(component_id, &bottles_root())
+}
+
+fn resolve_sharp_library_component_installer_from_root(component_id: &str, root: &Path) -> Option<ComponentInstaller> {
+    if !root.exists() {
+        return None;
+    }
+    let mut bottle_dirs = fs::read_dir(root).ok()?.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+    bottle_dirs.sort();
+    for bottle_dir in bottle_dirs {
+        let manifest_path = bottle_dir.join(MANIFEST_FILE);
+        let Ok(data) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<BottleManifest>(&data) else {
+            continue;
+        };
+        if manifest.bottle_type != BottleType::Installer {
+            continue;
+        }
+
+        if let Some(path) = manifest.source_installer_path.as_deref().map(PathBuf::from) {
+            if let Some(installer) = component_installer_from_local_path(component_id, &path) {
+                return Some(installer);
+            }
+        }
+
+        let payload_dir = bottle_dir.join("installers");
+        let Ok(read_dir) = fs::read_dir(payload_dir) else {
+            continue;
+        };
+        let mut payloads = read_dir.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+        payloads.sort();
+        for path in payloads {
+            if let Some(installer) = component_installer_from_local_path(component_id, &path) {
+                return Some(installer);
+            }
+        }
+    }
+    None
+}
+
+fn component_installer_from_local_path(component_id: &str, path: &Path) -> Option<ComponentInstaller> {
+    if !path.is_file() || component_kind_from_local_installer(path).as_deref() != Some(component_id) {
+        return None;
+    }
+    Some(ComponentInstaller { path: path.to_path_buf(), args: component_installer_args(component_id, path) })
+}
+
+fn component_kind_from_local_installer(path: &Path) -> Option<String> {
+    let lower_name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    classify_redist_asset(&lower_name)
 }
 
 fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
@@ -2826,7 +3024,8 @@ fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id:
             lower.ends_with(".bat") || lower.ends_with(".cmd")
         })
         .or_else(|| candidates.first())?;
-    Some(ComponentInstaller { path: PathBuf::from(&preferred.source_path), args: Vec::new() })
+    let path = PathBuf::from(&preferred.source_path);
+    Some(ComponentInstaller { args: component_installer_args(component_id, &path), path })
 }
 
 fn game_runtime_installer_candidates<'a>(
@@ -2842,6 +3041,7 @@ fn game_runtime_installer_candidates<'a>(
                 && match component_id {
                     "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
                     "battleye" => asset.kind == "battleye",
+                    "xna" => asset.kind == "xna",
                     _ => false,
                 }
         })
@@ -2868,6 +3068,7 @@ fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id:
                 || lower_name == "beservice.exe"
                 || lower_name == "beservice_x64.exe"
         },
+        "xna" => lower_name.contains("xnafx") || lower_name.contains("xna"),
         _ => false,
     }
 }
@@ -3341,11 +3542,12 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
-    if matches!(id, "mono-arm64" | "mono-x86" | "fna") {
+    if matches!(id, "mono-arm64" | "mono-x86" | "fna" | "d3d12_agility") {
         let state = match id {
             "mono-arm64" => inspect_host_mono_component("mono-arm64"),
             "mono-x86" => inspect_host_mono_component("mono-x86"),
             "fna" => inspect_fna_runtime_component(),
+            "d3d12_agility" => inspect_d3d12_agility_component(),
             _ => None,
         }
         .unwrap_or(ComponentState::Unknown);
@@ -3353,16 +3555,24 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "mono-arm64" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-arm64/bin/mono"),
             "mono-x86" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-x86/bin/mono"),
             "fna" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fna"),
+            "d3d12_agility" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/redist/agility"),
             _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime"),
         });
         return ComponentSourcePolicy {
             id: id.to_string(),
             source: "metalsharp_native_runtime".to_string(),
-            available: state == ComponentState::Installed,
+            available: if id == "d3d12_agility" {
+                true
+            } else if id == "fna" {
+                matches!(state, ComponentState::Installed | ComponentState::NeedsRepair)
+            } else {
+                state == ComponentState::Installed
+            },
             detail: match id {
                 "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
                 "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
                 "fna" => "FNA/XNA compatibility assemblies and native shims staged in MetalSharp runtime",
+                "d3d12_agility" => "D3D12 Agility SDK x64 runtime payload staged for M12/D3D12 games",
                 _ => "MetalSharp native runtime component",
             }
             .to_string(),
@@ -3370,9 +3580,13 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         };
     }
     let installer = resolve_component_installer(id, arch);
+    let source = installer
+        .as_ref()
+        .map(|installer| component_installer_source_label(&installer.path))
+        .unwrap_or("missing_local_asset");
     ComponentSourcePolicy {
         id: id.to_string(),
-        source: if installer.is_some() { "local_redist_asset" } else { "missing_local_asset" }.to_string(),
+        source: source.to_string(),
         available: installer.is_some(),
         detail: match id {
             "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
@@ -3385,8 +3599,11 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
+            "d3d12_agility" => "Uses NuGet Microsoft.Direct3D.D3D12 x64 runtime payload for the game-declared D3D12SDKVersion",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
-            "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
+            "xna" => {
+                "Uses Steam CommonRedist, Sharp Library installer bottles, or ~/.metalsharp/runtime/redist XNA 4.0 installer"
+            },
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
             "easyanticheat_eos" => "Uses game-local Easy Anti-Cheat EOS setup assets when present",
             "battleye" => "Uses game-local BattlEye setup/service assets when present",
@@ -3397,12 +3614,22 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
     }
 }
 
+fn component_installer_source_label(path: &Path) -> &'static str {
+    let normalized = path.to_string_lossy();
+    if normalized.contains("/bottles/") && normalized.contains("/installers/") {
+        "sharp_library_installer"
+    } else {
+        "local_redist_asset"
+    }
+}
+
 fn component_action_detail(id: &str) -> String {
     match id {
         "wine-mono" => "Install or repair Wine Mono inside this bottle prefix".to_string(),
         "mono-arm64" => "Install MetalSharp ARM64 Mono runtime".to_string(),
         "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
         "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
+        "d3d12_agility" => "Download and stage the D3D12 Agility SDK payload".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
@@ -3821,9 +4048,16 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
             local_targets: vec![
                 redist.join("XNA").join("4.0").join("xnafx40_redist.msi").to_string_lossy().to_string(),
                 redist.join("XNA").join("4.0").join("xnafx40_redist.exe").to_string_lossy().to_string(),
+                crate::platform::metalsharp_home_dir()
+                    .join("bottles")
+                    .join("*")
+                    .join("installers")
+                    .join("xnafx40_redist.msi")
+                    .to_string_lossy()
+                    .to_string(),
             ],
             policy: "official_download_or_steam_commonredist".to_string(),
-            notes: "Use local or Steam-provided XNA 4.0 redist assets; this stays receipt-driven per bottle.".to_string(),
+            notes: "Use local, Sharp Library staged, or Steam-provided XNA 4.0 redist assets; this stays receipt-driven per bottle.".to_string(),
         },
         RedistSourceGuide {
             id: "physx".to_string(),
@@ -4506,6 +4740,109 @@ mod tests {
     }
 
     #[test]
+    fn xna_installed_state_accepts_wine_mono_gac_layout() {
+        let prefix = test_dir("xna-mono-gac");
+        let gac = prefix
+            .join("drive_c")
+            .join("windows")
+            .join("mono")
+            .join("mono-2.0")
+            .join("lib")
+            .join("mono")
+            .join("gac")
+            .join("Microsoft.Xna.Framework")
+            .join("4.0.0.0__842cf8be1de50553");
+        fs::create_dir_all(&gac).expect("create xna mono gac");
+        fs::write(gac.join("Microsoft.Xna.Framework.dll"), b"xna").expect("write xna assembly");
+
+        assert_eq!(inspect_component_state(&prefix, "xna", ComponentState::Missing), ComponentState::Installed);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn resolver_uses_sharp_library_xna_installer_bottle_payload() {
+        let root = test_dir("sharp-xna-installer-source");
+        let bottle_id = "installer_xna_test";
+        let payload = root.join(bottle_id).join("installers").join("xnafx40_redist.msi");
+        fs::create_dir_all(payload.parent().expect("payload parent")).expect("create payload dir");
+        fs::write(&payload, b"xna").expect("write xna installer");
+        let manifest = BottleManifest {
+            id: bottle_id.into(),
+            name: "xnafx40_redist".into(),
+            custom_name: None,
+            bottle_type: BottleType::Installer,
+            steam_app_id: None,
+            prefix_path: root.join(bottle_id).join("prefix").to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::Plain,
+            preferred_pipeline: None,
+            installed_components: Vec::new(),
+            source_installer_path: None,
+            installer_kind: Some(InstallerKind::Msi),
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+        fs::write(
+            root.join(bottle_id).join(MANIFEST_FILE),
+            serde_json::to_vec_pretty(&manifest).expect("serialize bottle"),
+        )
+        .expect("write bottle manifest");
+
+        let installer =
+            resolve_sharp_library_component_installer_from_root("xna", &root).expect("resolve xna installer");
+
+        assert_eq!(installer.path, payload);
+        assert_eq!(installer.args, vec!["/quiet".to_string(), "/norestart".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn game_runtime_asset_xna_repair_preserves_msi_silent_args() {
+        let manifest = BottleManifest {
+            id: "steam_105600".into(),
+            name: "Terraria".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(105600),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::FnaX86,
+            preferred_pipeline: None,
+            installed_components: vec![RuntimeComponent { id: "xna".into(), state: ComponentState::Missing }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![BottleRuntimeAsset {
+                id: "xna:xnafx40_redist.msi".into(),
+                kind: "xna".into(),
+                source_path: "/tmp/_CommonRedist/XNA/4.0/xnafx40_redist.msi".into(),
+                present: true,
+            }],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let installer = resolve_game_runtime_asset_installer(&manifest, "xna").expect("resolve game xna installer");
+
+        assert_eq!(installer.path, PathBuf::from("/tmp/_CommonRedist/XNA/4.0/xnafx40_redist.msi"));
+        assert_eq!(installer.args, vec!["/quiet".to_string(), "/norestart".to_string()]);
+    }
+
+    #[test]
     fn windows_version_component_inspects_wine_registry() {
         let prefix = test_dir("windows-version-registry");
         fs::create_dir_all(&prefix).expect("create prefix");
@@ -5054,6 +5391,7 @@ mod tests {
         let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(m12_ids.contains(&"corefonts"));
+        assert!(m12_ids.contains(&"d3d12_agility"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);
@@ -5068,6 +5406,15 @@ mod tests {
         assert!(guides.iter().any(|g| g.id == "vcrun2010"));
         assert!(guides.iter().any(|g| g.id == "vcrun2013"));
         assert!(guides.iter().any(|g| g.id == "vcrun2019"));
+    }
+
+    #[test]
+    fn d3d12_agility_component_is_repairable_native_runtime_payload() {
+        let policy = component_source_policy("d3d12_agility", BottleArch::Win64);
+
+        assert_eq!(policy.source, "metalsharp_native_runtime");
+        assert!(policy.available);
+        assert!(policy.detail.contains("Agility SDK"));
     }
 
     #[test]

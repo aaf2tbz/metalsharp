@@ -52,7 +52,7 @@ Internal routes still exist for diagnostics and compatibility records:
 | Hollow Knight: Silksong | `steam_1030300` | Still working. Routes to M12 and runs correctly. | **M12** |
 | Ghostrunner | `steam_1139900` | Auto-routes to M11 and runs correctly. M12 saved config produced unexpected Wine Mono installer prompt behavior. | **M11**, M12 if possible |
 | Combat Master | `steam_2281730` | Auto-routed to DX12 but hit Agility error. Saved M11 bottle config ran gameplay with no issues. | **M11** |
-| Blasphemous | `steam_774361` | Auto-routed to M11, but the game is 32-bit. Saved to M9 bottle and ran perfectly. | **M9** |
+| Blasphemous | `steam_774361` | Auto-routed to M11, but the game is 32-bit. M9 reaches the menu and first text dialogue, then can hit an infinite blank loading transition. The M9 launch profile now uses a sync-loading mitigation for this title. | **M9**, sync-loading mitigation |
 | Dave the Diver | `steam_1868140` | Auto-routed to M11, but the game is 32-bit. Saved to M9 and ran beautifully after deploying D3D9, vcrun2019, and DirectX June 2010. | **M9** |
 | Peak | `steam_3527290` | DX12 game. With M12 applied to the bottle, it launched and played perfectly on medium settings. Should auto-route to M12 instead of M11. | **M12**, Medium settings |
 | Dark Deception | `steam_332950` | Routed to M12 and hit Agility SDK not found. Saved config to M11 launched with no input. A one-time internal Steam handoff installed needed runtime assets, then the saved route launched and worked normally. | **M11** after runtime bootstrap |
@@ -77,9 +77,9 @@ Internal routes still exist for diagnostics and compatibility records:
 | Minecraft Legends | `steam_1928870` | Only launches with M12 pipeline but does not render. | **M12**, render-path investigation |
 | Stardew Valley | `steam_413150` | Launches from Steam, then crashes with Wine debug output. Earlier testing was stuck on an old native-macOS handoff label that is no longer a public route option. | Needs fresh public-route test |
 | Palworld | `steam_1623730` | DX12/DX11 game. M11 and M12 both produce a black loading window with no visible output. | M11/M12 render-path investigation |
-| Mirror's Edge | `steam_17410` | Auto-routed to M11 and launched, but this is a DX9 game and the routing does not make sense. Loaded oddly. | Should route to **M9** |
+| Mirror's Edge | `steam_17410` | Auto-routed to M11 and launched, but this is a DX9 game and the routing does not make sense. M9 showed the same loading/setup clog pattern seen in other DX9 titles, so the M9 launch profile now disables async loading features for this title. | **M9**, sync-loading mitigation |
 | Resident Evil Village | `steam_1196590` | DX12 game. M12 stages DLLs but does not launch because Agility SDK x64 payload is not found for version `default`. With DLLs staged, it reached a black launch before Wine debug crash. | **M12**, Agility payload fix |
-| Borderlands 2 | `steam_49520` | Only launches on M9 without immediate crash, but never makes it past the loading screen. | **M9**, loading investigation |
+| Borderlands 2 | `steam_49520` | Only launches on M9 without immediate crash, but never makes it past the loading screen. The M9 launch profile now uses the same sync-loading mitigation as Blasphemous and Mirror's Edge. | **M9**, sync-loading mitigation |
 | InZOI | `steam_2456740` | DX12-exclusive game. Requires feature level 2. Auto-routes to M12 and launches with M12, but does not enter game or output color. Useful DX12-specific test target. | **M12**, feature/render investigation |
 | Black Myth Wukong | `steam_2358720` | DX12/DX11 game. Routed to M12 and hit Agility SDK not found. Changed to M11 bottle config with no error but no launch. Launched with Steam using `-d3d11` and compatibility mode. | Needs to launch through D3D11/D3D12 pipelines from the app |
 

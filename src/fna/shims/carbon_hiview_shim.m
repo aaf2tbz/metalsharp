@@ -7,11 +7,15 @@
 #pragma mark - View registry
 
 static CFMutableDictionaryRef s_viewMap = NULL;
+static CFMutableDictionaryRef s_refMap = NULL;
 static NSInteger s_nextTag = 1000;
 
 static void ensureViewMap(void) {
     if (!s_viewMap) {
         s_viewMap = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
+    }
+    if (!s_refMap) {
+        s_refMap = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
     }
 }
 
@@ -24,16 +28,17 @@ static NSView* viewForRef(HIViewRef ref) {
 static void associateView(HIViewRef ref, NSView* view) {
     ensureViewMap();
     CFDictionarySetValue(s_viewMap, (const void*)ref, (__bridge const void*)(view));
+    CFDictionarySetValue(s_refMap, (__bridge const void*)(view), (const void*)ref);
 }
 
 static HIViewRef refForView(NSView* view) {
     ensureViewMap();
-    NSInteger tag = [view tag];
-    if (tag < 1000) {
-        tag = s_nextTag++;
-        [view setTag:tag];
+    HIViewRef ref = (HIViewRef)CFDictionaryGetValue(s_refMap, (__bridge const void*)(view));
+    if (!ref) {
+        ref = (HIViewRef)(intptr_t)s_nextTag++;
+        associateView(ref, view);
     }
-    return (HIViewRef)(intptr_t)tag;
+    return ref;
 }
 
 #pragma mark - HIView shims (reimplemented for 64-bit via NSView)
@@ -141,11 +146,11 @@ OSStatus HIViewSetZOrder(HIViewRef inView, HIViewZOrderOp inOrder, HIViewRef inO
         NSView* sv = view.superview;
         [view removeFromSuperview];
         if (inOrder == kHIViewZOrderAbove && other) {
-            [sv insertSubview:view aboveSubview:other];
+            [sv addSubview:view positioned:NSWindowAbove relativeTo:other];
         } else if (inOrder == kHIViewZOrderBelow && other) {
-            [sv insertSubview:view belowSubview:other];
+            [sv addSubview:view positioned:NSWindowBelow relativeTo:other];
         } else if (inOrder == 1) {
-            [sv insertSubview:view atIndex:0];
+            [sv addSubview:view positioned:NSWindowBelow relativeTo:nil];
         } else {
             [sv addSubview:view];
         }
