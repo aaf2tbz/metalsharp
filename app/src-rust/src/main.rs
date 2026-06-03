@@ -1116,6 +1116,54 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::thread_notify::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/ob/register-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_register_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/unregister-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_unregister_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/list-registrations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_list_registrations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/protect-process") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_protect_process(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/unprotect-process") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_unprotect_process(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/list-protected") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_list_protected(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/simulate-operation") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_simulate_operation(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/pre-operations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_pre_operations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/post-operations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_post_operations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/access-log") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_access_log(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/capability-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_capability_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

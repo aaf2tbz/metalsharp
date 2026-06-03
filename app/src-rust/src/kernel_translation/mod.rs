@@ -3,6 +3,7 @@ pub mod code_integrity;
 pub mod es_bridge;
 #[cfg(target_os = "macos")]
 pub mod handle_bridge;
+pub mod handle_callbacks;
 pub mod handle_table;
 mod nt_to_xnu;
 pub mod probe;
