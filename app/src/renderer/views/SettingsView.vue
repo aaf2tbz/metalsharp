@@ -341,7 +341,7 @@ function toggleDeveloperMode(enabled: boolean) {
           <div class="settings-desc">Show launch routing, doctor controls, and advanced card tools</div>
         </div>
         <div class="settings-value">
-          <label class="settings-toggle">
+          <label class="settings-toggle toggle-label" aria-label="Developer Tools">
             <input
               type="checkbox"
               :checked="developerMode"
