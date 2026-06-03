@@ -593,7 +593,11 @@ struct AgilitySdkRequirement {
     sdk_path: String,
 }
 
-fn stage_agility_sdk_for_game(appid: u32, game_dir: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn stage_agility_sdk_for_game(
+    appid: u32,
+    game_dir: &Path,
+    home: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
     let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
     if appid == 1962700 {
@@ -804,7 +808,7 @@ fn fetch_agility_sdk_bin_native(
 }
 
 fn download_agility_package(package_version: &str, package_file: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/{}", package_version);
+    let url = agility_package_download_url(package_version);
     let config =
         ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION"))).build();
     let agent = ureq::Agent::new_with_config(config);
@@ -815,6 +819,13 @@ fn download_agility_package(package_version: &str, package_file: &Path) -> Resul
     std::io::copy(&mut input, &mut output)?;
     std::fs::rename(tmp_file, package_file)?;
     Ok(())
+}
+
+fn agility_package_download_url(package_version: &str) -> String {
+    format!(
+        "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/{0}/microsoft.direct3d.d3d12.{0}.nupkg",
+        package_version.to_ascii_lowercase()
+    )
 }
 
 fn extract_agility_package(package_file: &Path, package_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -926,6 +937,7 @@ fn agility_user_package_dir(home: &Path, package_version: &str) -> PathBuf {
 fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
     match sdk_version {
         614 => Some("1.614.1"),
+        615 => Some("1.615.1"),
         619 => Some("1.619.3"),
         _ => None,
     }
@@ -1628,7 +1640,16 @@ mod tests {
     fn agility_default_requirement_uses_fetchable_runtime_package() {
         assert_eq!(agility_package_version_for_requirement(None), "1.614.1");
         assert_eq!(agility_package_version_for_requirement(Some(614)), "1.614.1");
+        assert_eq!(agility_package_version_for_requirement(Some(615)), "1.615.1");
         assert_eq!(agility_package_version_for_requirement(Some(619)), "1.619.3");
+    }
+
+    #[test]
+    fn agility_package_download_uses_nuget_flat_container() {
+        assert_eq!(
+            agility_package_download_url("1.615.1"),
+            "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/1.615.1/microsoft.direct3d.d3d12.1.615.1.nupkg"
+        );
     }
 
     #[test]

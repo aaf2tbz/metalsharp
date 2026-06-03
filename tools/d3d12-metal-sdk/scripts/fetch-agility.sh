@@ -38,7 +38,9 @@ if [[ ! -f "$BIN_DIR/D3D12Core.dll" || ! -f "$BIN_DIR/d3d12SDKLayers.dll" ]]; th
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT
   PACKAGE_FILE="$TMP_DIR/agility.nupkg"
-  curl -L --fail -o "$PACKAGE_FILE" "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/$AGILITY_VERSION"
+  PACKAGE_VERSION_LOWER="$(printf '%s' "$AGILITY_VERSION" | tr '[:upper:]' '[:lower:]')"
+  curl -L --fail -o "$PACKAGE_FILE" \
+    "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/$PACKAGE_VERSION_LOWER/microsoft.direct3d.d3d12.$PACKAGE_VERSION_LOWER.nupkg"
   rm -rf "$PACKAGE_DIR"
   mkdir -p "$PACKAGE_DIR"
   unzip -q "$PACKAGE_FILE" -d "$PACKAGE_DIR"

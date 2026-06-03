@@ -1436,6 +1436,49 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "d3d12_agility" {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
+        let game_dir = manifest
+            .game_install_path
+            .as_deref()
+            .map(PathBuf::from)
+            .ok_or("D3D12 Agility repair requires a game install path")?;
+        if dry_run {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if game_dir.is_dir() { "runtime_repair_available" } else { "asset_missing" }.to_string(),
+                detail: if game_dir.is_dir() {
+                    "D3D12 Agility SDK payload can be downloaded and staged for this game".to_string()
+                } else {
+                    "Game install path is missing, so the Agility SDK payload cannot be staged".to_string()
+                },
+                asset_path: Some(game_dir.to_string_lossy().to_string()),
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        crate::setup::stage_agility_sdk_for_game(appid, &game_dir, &home)?;
+        let state = inspect_component_state(&prefix, component_id, ComponentState::Unknown);
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: "Downloaded and staged the D3D12 Agility SDK payload for the M12 launch path".to_string(),
+            asset_path: Some(game_dir.to_string_lossy().to_string()),
+            log_path: None,
+            pid: None,
+        });
+    }
+
     let Some(installer) = resolve_component_installer(component_id, manifest.arch)
         .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
     else {
@@ -1954,7 +1997,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
+            &["d3d12", "d3d12_agility", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
@@ -2419,6 +2462,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "mono-arm64" => inspect_host_mono_component("mono-arm64").unwrap_or(fallback),
         "mono-x86" => inspect_host_mono_component("mono-x86").unwrap_or(fallback),
         "fna" => inspect_fna_runtime_component().unwrap_or(fallback),
+        "d3d12_agility" => inspect_d3d12_agility_component().unwrap_or(fallback),
         "gecko" => {
             if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
                 ComponentState::Installed
@@ -2596,6 +2640,17 @@ fn inspect_fna_runtime_component() -> Option<ComponentState> {
     } else {
         ComponentState::Missing
     })
+}
+
+fn inspect_d3d12_agility_component() -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("agility");
+    let known_versions = ["1.614.1", "1.615.1", "1.619.3"];
+    let found = known_versions.iter().any(|version| {
+        let bin = root.join(version).join("build").join("native").join("bin").join("x64");
+        bin.join("D3D12Core.dll").exists() && bin.join("d3d12SDKLayers.dll").exists()
+    });
+    Some(if found { ComponentState::Installed } else { ComponentState::Missing })
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
@@ -3487,11 +3542,12 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
-    if matches!(id, "mono-arm64" | "mono-x86" | "fna") {
+    if matches!(id, "mono-arm64" | "mono-x86" | "fna" | "d3d12_agility") {
         let state = match id {
             "mono-arm64" => inspect_host_mono_component("mono-arm64"),
             "mono-x86" => inspect_host_mono_component("mono-x86"),
             "fna" => inspect_fna_runtime_component(),
+            "d3d12_agility" => inspect_d3d12_agility_component(),
             _ => None,
         }
         .unwrap_or(ComponentState::Unknown);
@@ -3499,12 +3555,15 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "mono-arm64" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-arm64/bin/mono"),
             "mono-x86" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-x86/bin/mono"),
             "fna" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fna"),
+            "d3d12_agility" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/redist/agility"),
             _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime"),
         });
         return ComponentSourcePolicy {
             id: id.to_string(),
             source: "metalsharp_native_runtime".to_string(),
-            available: if id == "fna" {
+            available: if id == "d3d12_agility" {
+                true
+            } else if id == "fna" {
                 matches!(state, ComponentState::Installed | ComponentState::NeedsRepair)
             } else {
                 state == ComponentState::Installed
@@ -3513,6 +3572,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
                 "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
                 "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
                 "fna" => "FNA/XNA compatibility assemblies and native shims staged in MetalSharp runtime",
+                "d3d12_agility" => "D3D12 Agility SDK x64 runtime payload staged for M12/D3D12 games",
                 _ => "MetalSharp native runtime component",
             }
             .to_string(),
@@ -3539,6 +3599,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
+            "d3d12_agility" => "Uses NuGet Microsoft.Direct3D.D3D12 x64 runtime payload for the game-declared D3D12SDKVersion",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
             "xna" => {
                 "Uses Steam CommonRedist, Sharp Library installer bottles, or ~/.metalsharp/runtime/redist XNA 4.0 installer"
@@ -3568,6 +3629,7 @@ fn component_action_detail(id: &str) -> String {
         "mono-arm64" => "Install MetalSharp ARM64 Mono runtime".to_string(),
         "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
         "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
+        "d3d12_agility" => "Download and stage the D3D12 Agility SDK payload".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
@@ -5329,6 +5391,7 @@ mod tests {
         let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(m12_ids.contains(&"corefonts"));
+        assert!(m12_ids.contains(&"d3d12_agility"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);
@@ -5343,6 +5406,15 @@ mod tests {
         assert!(guides.iter().any(|g| g.id == "vcrun2010"));
         assert!(guides.iter().any(|g| g.id == "vcrun2013"));
         assert!(guides.iter().any(|g| g.id == "vcrun2019"));
+    }
+
+    #[test]
+    fn d3d12_agility_component_is_repairable_native_runtime_payload() {
+        let policy = component_source_policy("d3d12_agility", BottleArch::Win64);
+
+        assert_eq!(policy.source, "metalsharp_native_runtime");
+        assert!(policy.available);
+        assert!(policy.detail.contains("Agility SDK"));
     }
 
     #[test]

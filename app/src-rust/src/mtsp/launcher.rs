@@ -7,10 +7,6 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
-const AGILITY_614_VERSION: &str = "1.614.1";
-const DXC_VERSION: &str = "v1.9.2602";
-const DXC_ARCHIVE: &str = "dxc_2026_02_20.zip";
-const DXC_SHA256: &str = "a1e89031421cf3c1fca6627766ab3020ca4f962ac7e2caa7fab2b33a8436151e";
 const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
 const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
 
@@ -712,33 +708,7 @@ fn deploy_d3d12_agility_sidecars(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let source_dir = find_or_fetch_agility_614_dir(&home, &ms_root)?;
-    let dxil_dll = find_or_fetch_dxil_dll(&home, &source_dir)?;
-
-    let mut roots = vec![exe_dir.to_path_buf()];
-    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
-    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
-        roots.push(engine_bin);
-    }
-
-    let targets: Vec<PathBuf> =
-        roots.into_iter().flat_map(|root| [root.join("D3D12").join("x64"), root.join("D3D12")]).collect();
-
-    for target in targets {
-        std::fs::create_dir_all(&target)?;
-        for dll in ["D3D12Core.dll", "d3d12SDKLayers.dll", "D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
-            let src = source_dir.join(dll);
-            if src.is_file() {
-                std::fs::copy(&src, target.join(dll))?;
-            } else if dll == "D3D12StateObjectCompiler.dll" {
-                let _ = std::fs::remove_file(target.join(dll));
-            }
-        }
-        std::fs::copy(&dxil_dll, target.join("dxil.dll"))?;
-    }
-
-    Ok(())
+    crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)
 }
 
 fn skips_app_local_agility_sidecars(appid: u32) -> bool {
@@ -760,161 +730,6 @@ fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<
     }
 
     Ok(())
-}
-
-fn find_or_fetch_agility_614_dir(home: &Path, ms_root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = std::env::var_os("METALSHARP_AGILITY_BIN") {
-        let dir = PathBuf::from(path);
-        if agility_payload_present(&dir) {
-            return Ok(dir);
-        }
-    }
-
-    let redist_dir = agility_614_redist_dir(home);
-    let candidates = [ms_root.join("lib").join("dxmt").join("x86_64-windows").join("D3D12"), redist_dir.clone()];
-    if let Some(found) = candidates.iter().find(|dir| agility_payload_present(dir)) {
-        return Ok(found.clone());
-    }
-
-    fetch_agility_614_redist(home)?;
-    if agility_payload_present(&redist_dir) {
-        return Ok(redist_dir);
-    }
-
-    Err("D3D12 Agility 1.614.1 payload missing: D3D12Core.dll and d3d12SDKLayers.dll were not found or fetched".into())
-}
-
-fn agility_payload_present(dir: &Path) -> bool {
-    dir.join("D3D12Core.dll").is_file() && dir.join("d3d12SDKLayers.dll").is_file()
-}
-
-fn agility_614_redist_dir(home: &Path) -> PathBuf {
-    crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("agility")
-        .join(AGILITY_614_VERSION)
-        .join("build")
-        .join("native")
-        .join("bin")
-        .join("x64")
-}
-
-fn fetch_agility_614_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("agility")
-        .join(AGILITY_614_VERSION);
-    let cache_dir = package_root.join(".download");
-    let package_file = cache_dir.join("Microsoft.Direct3D.D3D12.nupkg");
-    std::fs::create_dir_all(&cache_dir)?;
-    if !package_file.is_file() {
-        run_command(
-            Command::new("curl")
-                .arg("-L")
-                .arg("--fail")
-                .arg("--retry")
-                .arg("3")
-                .arg("-o")
-                .arg(&package_file)
-                .arg(format!("https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/{}", AGILITY_614_VERSION)),
-            "download D3D12 Agility 1.614.1",
-        )?;
-    }
-    run_command(
-        Command::new("unzip").arg("-q").arg("-o").arg(&package_file).arg("-d").arg(&package_root),
-        "extract D3D12 Agility 1.614.1",
-    )?;
-    Ok(())
-}
-
-fn find_or_fetch_dxil_dll(home: &Path, agility_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = std::env::var_os("METALSHARP_DXIL_DLL") {
-        let dll = PathBuf::from(path);
-        if dll.is_file() {
-            return Ok(dll);
-        }
-    }
-
-    let redist_dll = dxc_redist_bin_dir(home).join("dxil.dll");
-    let candidates = [
-        agility_dir.join("dxil.dll"),
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxil.dll"),
-        redist_dll.clone(),
-    ];
-    if let Some(found) = candidates.iter().find(|path| path.is_file()) {
-        return Ok(found.clone());
-    }
-
-    fetch_dxc_redist(home)?;
-    if redist_dll.is_file() {
-        return Ok(redist_dll);
-    }
-
-    Err("DXIL validator/runtime DLL missing: dxil.dll was not found or fetched".into())
-}
-
-fn dxc_redist_bin_dir(home: &Path) -> PathBuf {
-    crate::platform::metalsharp_home_dir_for(&home)
-        .join("runtime")
-        .join("redist")
-        .join("dxc")
-        .join(DXC_VERSION)
-        .join("bin")
-        .join("x64")
-}
-
-fn fetch_dxc_redist(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let redist_root =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist").join("dxc").join(DXC_VERSION);
-    let download_dir = redist_root.join("downloads");
-    let archive_path = download_dir.join(DXC_ARCHIVE);
-    std::fs::create_dir_all(&download_dir)?;
-    if !archive_path.is_file() {
-        run_command(
-            Command::new("curl").arg("-L").arg("--fail").arg("--retry").arg("3").arg("-o").arg(&archive_path).arg(
-                format!(
-                    "https://github.com/microsoft/DirectXShaderCompiler/releases/download/{}/{}",
-                    DXC_VERSION, DXC_ARCHIVE
-                ),
-            ),
-            "download DirectXShaderCompiler",
-        )?;
-    }
-
-    let actual = command_output(
-        Command::new("shasum").arg("-a").arg("256").arg(&archive_path),
-        "hash DirectXShaderCompiler archive",
-    )?;
-    let actual_hash = actual.split_whitespace().next().unwrap_or_default();
-    if actual_hash != DXC_SHA256 {
-        return Err(format!("DXC archive checksum mismatch: expected {}, got {}", DXC_SHA256, actual_hash).into());
-    }
-
-    run_command(
-        Command::new("unzip").arg("-q").arg("-o").arg(&archive_path).arg("-d").arg(&redist_root),
-        "extract DirectXShaderCompiler",
-    )?;
-    Ok(())
-}
-
-fn run_command(cmd: &mut Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("{} failed: {}", label, stderr.trim()).into())
-}
-
-fn command_output(cmd: &mut Command, label: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("{} failed: {}", label, stderr.trim()).into());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
