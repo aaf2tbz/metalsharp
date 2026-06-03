@@ -1,3 +1,4 @@
+pub mod apc;
 pub mod code_integrity;
 pub mod handle_bridge;
 pub mod handle_table;

@@ -968,6 +968,46 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::code_integrity::handle_seed_integrity_demo(&body))
         },
+        (Method::Post, "/kernel-translation/apc/queue") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_queue_apc(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/test-alert") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_test_alert(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/wait-alertable") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_wait_alertable(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/allocate-trampoline") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_allocate_trampoline(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/suspend-thread") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_suspend_thread(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/get-thread-context") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_get_thread_context(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/set-thread-context") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_set_thread_context(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/inject-sequence") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_inject_apc_sequence(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/queue-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_apc_queue_status(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/trampoline-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_trampoline_status(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
