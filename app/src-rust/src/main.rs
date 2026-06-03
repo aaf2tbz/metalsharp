@@ -1164,6 +1164,58 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::handle_callbacks::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/driver/load") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_load_driver(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/unload") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_unload_driver(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_drivers(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/create-device") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_create_device(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-devices") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_devices(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/dispatch-irp") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_dispatch_irp(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-irps") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_irps(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/register-ioctl") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_register_ioctl(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/decode-ioctl") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_decode_ioctl(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-ioctls") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_ioctls(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/type-mapping-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_type_mapping_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/extension-template") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_extension_template(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

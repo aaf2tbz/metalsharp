@@ -1,5 +1,6 @@
 pub mod apc;
 pub mod code_integrity;
+pub mod driver_model;
 pub mod es_bridge;
 #[cfg(target_os = "macos")]
 pub mod handle_bridge;
