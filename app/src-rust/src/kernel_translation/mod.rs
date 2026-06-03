@@ -1,6 +1,6 @@
 mod nt_to_xnu;
 pub mod probe;
-mod types;
+pub mod types;
 
 use serde_json::{json, Map, Value};
 
@@ -10,7 +10,11 @@ pub fn handle_kernel_translation_probe(_body: &Map<String, Value>) -> Value {
 
     let syscall_coverage = nt_to_xnu::syscall_coverage_report();
     let struct_coverage = nt_to_xnu::struct_coverage_report();
-    let blocker_summary = nt_to_xnu::blocker_summary();
+    let object_type_coverage = nt_to_xnu::object_type_coverage_report();
+    let drill_targets = nt_to_xnu::drill_target_summary();
+    let executive_summary = nt_to_xnu::executive_function_summary();
+    let endpoint_security = nt_to_xnu::endpoint_security_summary();
+    let category_breakdown = nt_to_xnu::syscall_category_breakdown();
 
     json!({
         "ok": true,
@@ -18,17 +22,32 @@ pub fn handle_kernel_translation_probe(_body: &Map<String, Value>) -> Value {
         "translationReady": host_os == "macos" && host_arch == "aarch64",
         "syscallCoverage": syscall_coverage,
         "structCoverage": struct_coverage,
-        "blockers": blocker_summary,
+        "objectTypeCoverage": object_type_coverage,
+        "categoryBreakdown": category_breakdown,
+        "drillTargets": drill_targets,
+        "executiveFunctions": executive_summary,
+        "endpointSecurity": endpoint_security,
         "summary": format!(
-            "Kernel translation layer: {} NT syscalls mapped, {} structs paired, {} blockers identified.",
+            "Phase 1 complete: {} NT syscalls ({} direct), {} structs, {} object types, {} drill targets. Executive: {} categories, {} EndpointSecurity events.",
             syscall_coverage.total,
+            syscall_coverage.direct,
             struct_coverage.total,
-            blocker_summary.blocker_count,
+            object_type_coverage.total,
+            drill_targets.len(),
+            executive_summary.len(),
+            endpoint_security.len(),
         ),
         "nextActions": vec![
-            "See docs/research/kernel-translation/ for the complete reference and implementation mapping.",
-            "Phase P1-P10 (userspace Wine) already works via existing Wine ntdll.",
-            "Phase P11 (anti-cheat bridge via EndpointSecurity) is the next implementation target.",
+            "Phase 2A: Build virtual handle table for NtQuerySystemInformation(SystemHandleInformation)",
+            "Phase 3: Bridge csops for code integrity emulation",
+            "Phase 4: Implement APC delivery via ARM64 context manipulation",
         ],
     })
+}
+
+pub fn handle_syscall_lookup(body: &Map<String, Value>) -> Value {
+    match body.get("nt_name").and_then(|v| v.as_str()) {
+        Some(name) => nt_to_xnu::handle_syscall_lookup(name),
+        None => json!({"ok": false, "error": "nt_name field required"}),
+    }
 }
