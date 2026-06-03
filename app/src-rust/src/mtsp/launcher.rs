@@ -11,6 +11,65 @@ const AGILITY_614_VERSION: &str = "1.614.1";
 const DXC_VERSION: &str = "v1.9.2602";
 const DXC_ARCHIVE: &str = "dxc_2026_02_20.zip";
 const DXC_SHA256: &str = "a1e89031421cf3c1fca6627766ab3020ca4f962ac7e2caa7fab2b33a8436151e";
+const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
+const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
+
+#[derive(Clone, Copy)]
+enum FnaShimSource {
+    RepoC { parts: &'static [&'static str] },
+    RepoObjC { parts: &'static [&'static str], frameworks: &'static [&'static str] },
+    BundledNative,
+}
+
+#[derive(Clone, Copy)]
+struct FnaNativeShimSpec {
+    output: &'static str,
+    source: FnaShimSource,
+    symlinks: &'static [&'static str],
+    required_for_launch: bool,
+}
+
+const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
+    FnaNativeShimSpec {
+        output: "libkernel32.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: "libuser32.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: FNA_CARBON_SHIM,
+        source: FnaShimSource::RepoObjC {
+            parts: &["src", "fna", "shims", "carbon_hiview_shim.m"],
+            frameworks: &["Cocoa", "Carbon"],
+        },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: FNA_CARBON_INTERPOSE_SHIM,
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"] },
+        symlinks: &[],
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: "xaudio2_9.dylib",
+        source: FnaShimSource::BundledNative,
+        symlinks: &["xaudio2_8.dylib", "xaudio2_7.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "xinput1_4.dylib",
+        source: FnaShimSource::BundledNative,
+        symlinks: &["xinput1_3.dylib", "xinput9_1_0.dylib"],
+        required_for_launch: false,
+    },
+];
 
 pub fn bridge_port() -> u16 {
     parse_bridge_port(std::env::var("METALSHARP_STEAM_BRIDGE_PORT").ok().as_deref()).unwrap_or(DEFAULT_BRIDGE_PORT)
@@ -1060,6 +1119,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         .env("MONO_PATH", mono_path)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    for (key, value) in fna_native_launch_env(dir) {
+        cmd.env(key, value);
+    }
 
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(
@@ -1578,6 +1640,8 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     }
 
     let shims_dir = PathBuf::from(find_shims_dir());
+    let _ = std::fs::create_dir_all(&shims_dir);
+    deploy_fna_native_shims(game_dir, &shims_dir);
     let shared_native_libs = [
         ("libFNA3D.dylib", None),
         ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
@@ -1670,6 +1734,175 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
 
     let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     deploy_offline_steamworks_net(game_dir, &metalsharp_home);
+}
+
+fn deploy_fna_native_shims(game_dir: &PathBuf, shims_dir: &PathBuf) {
+    for spec in FNA_NATIVE_SHIMS {
+        ensure_fna_native_shim_in_cache(spec, shims_dir);
+        copy_fna_native_lib(game_dir, shims_dir, spec.output, None);
+        if game_dir.join(spec.output).exists() {
+            for symlink in spec.symlinks {
+                ensure_fna_symlink(game_dir, spec.output, symlink);
+            }
+        }
+    }
+}
+
+pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let shims_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims");
+    std::fs::create_dir_all(&shims_dir)?;
+
+    for spec in FNA_NATIVE_SHIMS {
+        ensure_fna_native_shim_in_cache(spec, &shims_dir);
+    }
+
+    let installed_required = FNA_NATIVE_SHIMS
+        .iter()
+        .filter(|spec| spec.required_for_launch)
+        .filter(|spec| shims_dir.join(spec.output).exists())
+        .count();
+    let required = FNA_NATIVE_SHIMS.iter().filter(|spec| spec.required_for_launch).count();
+    if installed_required != required {
+        return Err(format!(
+            "FNA native shim repair incomplete: {}/{} required macOS framework shims are staged",
+            installed_required, required
+        )
+        .into());
+    }
+    Ok(FNA_NATIVE_SHIMS.iter().filter(|spec| shims_dir.join(spec.output).exists()).count())
+}
+
+fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf) {
+    let dst = shims_dir.join(spec.output);
+    if dst.exists() {
+        return;
+    }
+
+    match spec.source {
+        FnaShimSource::RepoC { parts } => {
+            if let Some(source) = find_fna_shim_source(parts) {
+                let _ = build_fna_c_shim(&source, &dst, spec.output, &[]);
+            }
+        },
+        FnaShimSource::RepoObjC { parts, frameworks } => {
+            if let Some(source) = find_fna_shim_source(parts) {
+                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks);
+            }
+        },
+        FnaShimSource::BundledNative => {
+            if let Some(source) = find_bundled_native_shim(spec.output) {
+                let _ = std::fs::copy(source, &dst);
+                codesign_fna_shim(&dst);
+            }
+        },
+    }
+}
+
+fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str]) -> bool {
+    if let Some(parent) = output.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut cmd = Command::new("clang");
+    cmd.arg("-shared");
+    for arg in fna_native_arch_args() {
+        cmd.arg(arg);
+    }
+    if source.extension().and_then(|ext| ext.to_str()) == Some("m") {
+        cmd.arg("-fobjc-arc");
+    }
+    cmd.arg("-o").arg(output).arg(source).args(["-install_name", &format!("@loader_path/{}", install_name)]);
+    for framework in frameworks {
+        cmd.args(["-framework", framework]);
+    }
+    let success = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if success {
+        codesign_fna_shim(output);
+    }
+    success
+}
+
+fn fna_native_arch_args() -> Vec<&'static str> {
+    if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        vec!["-arch", "arm64", "-arch", "x86_64"]
+    } else {
+        Vec::new()
+    }
+}
+
+fn find_bundled_native_shim(name: &str) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        candidates.push(resources.join("scripts").join("tools").join("native").join(name));
+        candidates.push(resources.join("runtime").join("shims").join(name));
+    }
+    if let Some(source) = find_repo_source(&["app", "native", name]) {
+        candidates.push(source);
+    }
+    if let Some(source) = find_repo_source(&["build", name]) {
+        candidates.push(source);
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file() && file_has_payload(candidate))
+}
+
+fn find_fna_shim_source(parts: &[&str]) -> Option<PathBuf> {
+    if let Some(source) = find_repo_source(parts) {
+        return Some(source);
+    }
+    let filename = parts.last()?;
+    let resources = crate::platform::app_resources_dir()?;
+    let candidates = [
+        resources.join("runtime").join("shim-sources").join("fna").join("shims").join(filename),
+        resources.join("scripts").join("tools").join("fna").join("shims").join(filename),
+    ];
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn file_has_payload(path: &PathBuf) -> bool {
+    std::fs::metadata(path).map(|metadata| metadata.len() > 0).unwrap_or(false)
+}
+
+fn codesign_fna_shim(path: &PathBuf) {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos || !path.exists() {
+        return;
+    }
+    let _ = Command::new("codesign")
+        .args(["--force", "-s", "-"])
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+fn fna_native_launch_env(game_dir: &PathBuf) -> Vec<(String, String)> {
+    let carbon = game_dir.join(FNA_CARBON_SHIM);
+    let interpose = game_dir.join(FNA_CARBON_INTERPOSE_SHIM);
+    let mut env = Vec::new();
+    if carbon.exists() {
+        env.push(("METALSHARP_CARBON_SHIM".to_string(), carbon.to_string_lossy().to_string()));
+    }
+    if interpose.exists() {
+        let existing = std::env::var("DYLD_INSERT_LIBRARIES").ok();
+        env.push((
+            "DYLD_INSERT_LIBRARIES".to_string(),
+            append_path_env(existing.as_deref(), &interpose.to_string_lossy()),
+        ));
+    }
+    env
+}
+
+fn append_path_env(existing: Option<&str>, value: &str) -> String {
+    match existing.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(existing) if existing.split(':').any(|item| item == value) => existing.to_string(),
+        Some(existing) => format!("{}:{}", existing, value),
+        None => value.to_string(),
+    }
 }
 
 fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
@@ -2343,6 +2576,53 @@ mod tests {
             let node = get_pipeline(pipeline_id);
             assert!(!node.uses_winedllpath_routing(), "{:?} should not use WINEDLLPATH routing", pipeline_id);
         }
+    }
+
+    #[test]
+    fn fna_native_shim_manifest_includes_macos_framework_routes() {
+        let outputs: std::collections::HashSet<_> = FNA_NATIVE_SHIMS.iter().map(|spec| spec.output).collect();
+
+        assert!(outputs.contains("libkernel32.dylib"));
+        assert!(outputs.contains("libuser32.dylib"));
+        assert!(outputs.contains(FNA_CARBON_SHIM));
+        assert!(outputs.contains(FNA_CARBON_INTERPOSE_SHIM));
+        assert!(outputs.contains("xaudio2_9.dylib"));
+        assert!(outputs.contains("xinput1_4.dylib"));
+        assert!(FNA_NATIVE_SHIMS
+            .iter()
+            .any(|spec| spec.output == "xaudio2_9.dylib" && spec.symlinks.contains(&"xaudio2_7.dylib")));
+        assert!(FNA_NATIVE_SHIMS
+            .iter()
+            .any(|spec| spec.output == "xinput1_4.dylib" && spec.symlinks.contains(&"xinput1_3.dylib")));
+    }
+
+    #[test]
+    fn fna_native_launch_env_enables_carbon_interpose_when_deployed() {
+        let game_dir = test_dir("fna-native-env");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+        std::fs::write(game_dir.join(FNA_CARBON_SHIM), b"carbon").expect("carbon shim");
+        std::fs::write(game_dir.join(FNA_CARBON_INTERPOSE_SHIM), b"interpose").expect("interpose shim");
+
+        let env = fna_native_launch_env(&game_dir);
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "METALSHARP_CARBON_SHIM").map(|(_, value)| value.as_str()),
+            Some(game_dir.join(FNA_CARBON_SHIM).to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "DYLD_INSERT_LIBRARIES").map(|(_, value)| value.as_str()),
+            Some(game_dir.join(FNA_CARBON_INTERPOSE_SHIM).to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn append_path_env_preserves_existing_insert_libraries() {
+        assert_eq!(append_path_env(None, "/tmp/new.dylib"), "/tmp/new.dylib");
+        assert_eq!(append_path_env(Some("/tmp/old.dylib"), "/tmp/new.dylib"), "/tmp/old.dylib:/tmp/new.dylib");
+        assert_eq!(
+            append_path_env(Some("/tmp/old.dylib:/tmp/new.dylib"), "/tmp/new.dylib"),
+            "/tmp/old.dylib:/tmp/new.dylib"
+        );
     }
 
     #[test]

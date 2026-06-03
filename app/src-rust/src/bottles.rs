@@ -1327,6 +1327,48 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "fna" {
+        if dry_run {
+            let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "runtime_repair_available"
+                } else {
+                    "asset_missing"
+                }
+                .to_string(),
+                detail: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "FNA native macOS shims can be rebuilt from MetalSharp runtime sources".to_string()
+                } else {
+                    "FNA runtime assemblies are not staged locally".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        let repaired = crate::mtsp::launcher::repair_fna_native_runtime_shims()?;
+        let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!("Repaired {} FNA native macOS shim(s) in MetalSharp runtime", repaired),
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if matches!(component_id, "gpu_vendor_stubs" | "gptk_amd_stub") {
         let home = dirs::home_dir().unwrap_or_default();
         let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
@@ -2537,12 +2579,23 @@ fn inspect_host_mono_component(runtime_id: &str) -> Option<ComponentState> {
 fn inspect_fna_runtime_component() -> Option<ComponentState> {
     let home = dirs::home_dir()?;
     let runtime = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
-    let candidates = [
+    let required = [
         runtime.join("fna").join("FNA.dll"),
         runtime.join("shims").join("libFNA3D.dylib"),
         runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("shims").join("libkernel32.dylib"),
+        runtime.join("shims").join("libuser32.dylib"),
+        runtime.join("shims").join("libCarbon.dylib"),
+        runtime.join("shims").join("libmetalsharp_carbon_interpose.dylib"),
     ];
-    Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
+    let present = required.iter().filter(|path| path.exists()).count();
+    Some(if present == required.len() {
+        ComponentState::Installed
+    } else if present > 0 {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
@@ -3451,7 +3504,11 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         return ComponentSourcePolicy {
             id: id.to_string(),
             source: "metalsharp_native_runtime".to_string(),
-            available: state == ComponentState::Installed,
+            available: if id == "fna" {
+                matches!(state, ComponentState::Installed | ComponentState::NeedsRepair)
+            } else {
+                state == ComponentState::Installed
+            },
             detail: match id {
                 "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
                 "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
