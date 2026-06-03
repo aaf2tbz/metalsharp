@@ -596,24 +596,34 @@ fn now_millis() -> u64 {
 mod tests {
     use super::*;
 
-    fn clear_queues() {
-        APC_QUEUES.lock().unwrap().clear();
-        SAVED_CONTEXTS.lock().unwrap().clear();
+    fn lock_queues() -> std::sync::MutexGuard<'static, BTreeMap<u64, Vec<ApcEntry>>> {
+        match APC_QUEUES.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn lock_contexts() -> std::sync::MutexGuard<'static, BTreeMap<u64, SavedContext>> {
+        match SAVED_CONTEXTS.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     #[test]
     fn test_queue_apc_creates_entry() {
-        clear_queues();
+        let tid: u64 = 100100;
+        lock_queues().remove(&tid);
         let body: Map<String, Value> = serde_json::from_str(
-            r#"{"thread_handle": 256, "target_thread_id": 100, "apc_routine": "0xDEADBEEF", "apc_context": "0x12345678"}"#,
+            &format!(r#"{{"thread_handle": 256, "target_thread_id": {}, "apc_routine": "0xDEADBEEF", "apc_context": "0x12345678"}}"#, tid),
         )
         .unwrap();
         let result = handle_queue_apc(&body);
         assert_eq!(result["ok"], true);
         assert_eq!(result["queueDepth"], 1);
 
-        let queues = APC_QUEUES.lock().unwrap();
-        let q = queues.get(&100).unwrap();
+        let queues = lock_queues();
+        let q = queues.get(&tid).unwrap();
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].apc_routine, "0xDEADBEEF");
         assert_eq!(q[0].status, ApcStatus::Pending);
@@ -621,45 +631,51 @@ mod tests {
 
     #[test]
     fn test_queue_multiple_apcs() {
-        clear_queues();
+        let tid: u64 = 100200;
+        lock_queues().remove(&tid);
         let body1: Map<String, Value> =
-            serde_json::from_str(r#"{"thread_handle": 256, "target_thread_id": 200}"#).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
         let body2: Map<String, Value> =
-            serde_json::from_str(r#"{"thread_handle": 256, "target_thread_id": 200}"#).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
         handle_queue_apc(&body1);
         handle_queue_apc(&body2);
 
-        let queues = APC_QUEUES.lock().unwrap();
-        assert_eq!(queues.get(&200).unwrap().len(), 2);
+        let queues = lock_queues();
+        assert_eq!(queues.get(&tid).unwrap().len(), 2);
     }
 
     #[test]
     fn test_test_alert_delivers_pending() {
-        clear_queues();
-        let body: Map<String, Value> =
-            serde_json::from_str(r#"{"thread_handle": 256, "target_thread_id": 300, "apc_routine": "0xAAAA"}"#)
-                .unwrap();
+        let tid: u64 = 100300;
+        lock_queues().remove(&tid);
+        let body: Map<String, Value> = serde_json::from_str(&format!(
+            r#"{{"thread_handle": 256, "target_thread_id": {}, "apc_routine": "0xAAAA"}}"#,
+            tid
+        ))
+        .unwrap();
         handle_queue_apc(&body);
 
-        let alert_body: Map<String, Value> = serde_json::from_str(r#"{"thread_id": 300}"#).unwrap();
+        let alert_body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
         let result = handle_test_alert(&alert_body);
         assert_eq!(result["ok"], true);
         assert_eq!(result["pendingCount"], 1);
 
-        let queues = APC_QUEUES.lock().unwrap();
-        let q = queues.get(&300).unwrap();
+        let queues = lock_queues();
+        let q = queues.get(&tid).unwrap();
         assert_eq!(q[0].status, ApcStatus::Delivered);
         assert!(q[0].delivered_at.is_some());
     }
 
     #[test]
     fn test_wait_alertable_delivers_pending() {
-        clear_queues();
+        let tid: u64 = 100400;
+        lock_queues().remove(&tid);
         let body: Map<String, Value> =
-            serde_json::from_str(r#"{"thread_handle": 256, "target_thread_id": 400}"#).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
         handle_queue_apc(&body);
 
-        let wait_body: Map<String, Value> = serde_json::from_str(r#"{"thread_id": 400, "handle": 512}"#).unwrap();
+        let wait_body: Map<String, Value> =
+            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).unwrap();
         let result = handle_wait_alertable(&wait_body);
         assert_eq!(result["status"], "STATUS_USER_APC");
         assert_eq!(result["pendingApcs"], 1);
@@ -667,8 +683,10 @@ mod tests {
 
     #[test]
     fn test_wait_alertable_no_pending_returns_wait() {
-        clear_queues();
-        let wait_body: Map<String, Value> = serde_json::from_str(r#"{"thread_id": 500, "handle": 512}"#).unwrap();
+        let tid: u64 = 100500;
+        lock_queues().remove(&tid);
+        let wait_body: Map<String, Value> =
+            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).unwrap();
         let result = handle_wait_alertable(&wait_body);
         assert_eq!(result["status"], "STATUS_WAIT_0");
         assert_eq!(result["pendingApcs"], 0);
@@ -689,15 +707,17 @@ mod tests {
 
     #[test]
     fn test_set_and_get_thread_context() {
-        SAVED_CONTEXTS.lock().unwrap().clear();
-        let set_body: Map<String, Value> = serde_json::from_str(
-            r#"{"thread_id": 700, "pc": "0xDEADBEEF", "sp": "0x12340000", "x0": "0xAAAAAAAA", "x1": "0xBBBBBBBB"}"#,
-        )
+        let tid: u64 = 100700;
+        lock_contexts().remove(&tid);
+        let set_body: Map<String, Value> = serde_json::from_str(&format!(
+            r#"{{"thread_id": {}, "pc": "0xDEADBEEF", "sp": "0x12340000", "x0": "0xAAAAAAAA", "x1": "0xBBBBBBBB"}}"#,
+            tid
+        ))
         .unwrap();
         let set_result = handle_set_thread_context(&set_body);
         assert_eq!(set_result["ok"], true);
 
-        let get_body: Map<String, Value> = serde_json::from_str(r#"{"thread_id": 700}"#).unwrap();
+        let get_body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
         let get_result = handle_get_thread_context(&get_body);
         assert_eq!(get_result["ok"], true);
         assert_eq!(get_result["source"], "saved");
@@ -716,8 +736,9 @@ mod tests {
 
     #[test]
     fn test_apc_queue_status_empty() {
-        clear_queues();
-        let body: Map<String, Value> = serde_json::from_str(r#"{"thread_id": 999}"#).unwrap();
+        let tid: u64 = 100999;
+        lock_queues().remove(&tid);
+        let body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
         let result = handle_apc_queue_status(&body);
         assert_eq!(result["totalInQueue"], 0);
     }

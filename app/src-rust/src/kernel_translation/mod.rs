@@ -1,10 +1,27 @@
 pub mod apc;
 pub mod code_integrity;
+#[cfg(target_os = "macos")]
 pub mod handle_bridge;
 pub mod handle_table;
 mod nt_to_xnu;
 pub mod probe;
 pub mod types;
+
+#[cfg(not(target_os = "macos"))]
+pub mod handle_bridge {
+    use serde_json::{json, Map, Value};
+    macro_rules! stub {
+        ($name:ident) => {
+            pub fn $name(_body: &Map<String, Value>) -> Value {
+                json!({"ok": false, "error": "handle enumeration bridge requires macOS"})
+            }
+        };
+    }
+    stub!(handle_enumerate_fds);
+    stub!(handle_enumerate_ports);
+    stub!(handle_unified_snapshot);
+    stub!(handle_snapshot_all);
+}
 
 use serde_json::{json, Map, Value};
 
