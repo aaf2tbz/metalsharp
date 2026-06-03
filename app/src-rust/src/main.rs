@@ -21,6 +21,7 @@ mod anticheat;
 mod bottles;
 mod d3d12_runtime_doctor;
 mod installer;
+mod kernel_translation;
 mod launch;
 mod launcher_evidence;
 mod migrate;
@@ -882,6 +883,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Post, "/kernel-translation/probe") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_kernel_translation_probe(&body))
+        },
+        (Method::Post, "/kernel-translation/host-probe") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::probe::handle_kernel_probe(&body))
         },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
