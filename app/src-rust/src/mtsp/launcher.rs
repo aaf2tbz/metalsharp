@@ -670,6 +670,7 @@ fn launch_dxmt_metal_with_context(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
@@ -781,6 +782,10 @@ fn launch_wine_bare_with_context(
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
@@ -1179,6 +1184,16 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
 }
 
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    if pipeline_id == PipelineId::M9 && is_m9_stuck_loading_title(appid) {
+        return vec![
+            ("DXMT_ASYNC_PIPELINE_COMPILE".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
+            ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
+            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
+            ("METALSHARP_M9_SYNC_LOADING".to_string(), "1".to_string()),
+        ];
+    }
+
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         let mut env = vec![
             ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
@@ -1238,6 +1253,21 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         return env;
     }
     Vec::new()
+}
+
+fn is_m9_stuck_loading_title(appid: u32) -> bool {
+    matches!(appid, 774361 | 17410 | 49520)
+}
+
+fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) {
+    for (key, value) in app_compat_env_pairs(appid, pipeline_id) {
+        cmd.env(key, value);
+    }
+    if let Some(recipe) = super::rules::get_game_recipe(appid) {
+        for (key, value) in recipe.env {
+            cmd.env(key, value);
+        }
+    }
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
@@ -2309,6 +2339,36 @@ mod tests {
     }
 
     #[test]
+    fn m9_stuck_loading_titles_disable_async_loading_features() {
+        for appid in [774361, 17410, 49520] {
+            let env = app_compat_env_pairs(appid, PipelineId::M9);
+
+            assert_eq!(env_value(&env, "DXMT_ASYNC_PIPELINE_COMPILE"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL"), Some("0"));
+            assert_eq!(env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+            assert_eq!(env_value(&env, "METALSHARP_M9_SYNC_LOADING"), Some("1"));
+        }
+
+        assert!(app_compat_env_pairs(123456, PipelineId::M9).is_empty());
+        assert!(app_compat_env_pairs(774361, PipelineId::M10).is_empty());
+    }
+
+    #[test]
+    fn steam_pipeline_env_applies_m9_stuck_loading_overrides_after_defaults() {
+        let home = test_dir("m9-stuck-loading-env");
+        let node = get_pipeline(PipelineId::M9);
+
+        let env = steam_pipeline_env_pairs(&home, node, 774361);
+
+        assert_eq!(last_env_value(&env, "DXMT_ASYNC_PIPELINE_COMPILE"), Some("0"));
+        assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+        assert_eq!(last_env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+        assert_eq!(last_env_value(&env, "METALSHARP_M9_SYNC_LOADING"), Some("1"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn m32_env_keeps_wine_fallback_cache_without_dxmt_config() {
         let home = test_dir("m32-env");
         let node = get_pipeline(PipelineId::M32);
@@ -2587,6 +2647,14 @@ mod tests {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-launcher-{}-{}-{}", name, std::process::id(), unique_suffix()));
         dir
+    }
+
+    fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
+    }
+
+    fn last_env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().rev().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
     }
 
     fn unique_suffix() -> u128 {
