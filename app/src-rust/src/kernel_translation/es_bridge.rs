@@ -236,14 +236,14 @@ fn dispatch_image_event(event: &ImageLoadNotifyEvent) -> Vec<u64> {
     dispatched
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "macos"))]
 fn detect_own_process_info() -> (u32, Option<String>) {
     let pid = std::process::id();
     let name = std::fs::read_to_string(format!("/proc/{}/comm", pid)).ok();
     (pid, name)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn detect_own_process_info() -> (u32, Option<String>) {
     let pid = std::process::id();
     (pid, None)

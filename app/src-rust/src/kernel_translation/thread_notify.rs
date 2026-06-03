@@ -391,7 +391,7 @@ pub fn handle_compute_delta(body: &Map<String, Value>) -> Value {
                 watcher.deltas_detected += 1;
                 watcher.threads_created += created_count as u64;
                 watcher.threads_exited += exited_count as u64;
-                watcher.last_snapshot = Some(to.timestamp);
+                watcher.last_snapshot = Some(to_id);
             }
         }
     }

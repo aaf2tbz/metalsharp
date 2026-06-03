@@ -538,7 +538,7 @@ fn build_trampoline_arm64(_base_addr: u64) -> Vec<u8> {
     code.extend_from_slice(&0xA9BF7BFDu32.to_le_bytes());
     code.extend_from_slice(&0xA9BF53F3u32.to_le_bytes());
     code.extend_from_slice(&0xA9BF4BF5u32.to_le_bytes());
-    code.extend_from_slice(&0x910003E0u32.to_le_bytes());
+    code.extend_from_slice(&0xAA1503E0u32.to_le_bytes());
     code.extend_from_slice(&0xD63F0060u32.to_le_bytes());
     code.extend_from_slice(&0x14000003u32.to_le_bytes());
     code.extend_from_slice(&0xA8C14BF5u32.to_le_bytes());
@@ -551,11 +551,14 @@ fn build_trampoline_arm64(_base_addr: u64) -> Vec<u8> {
 fn build_restore_handler_arm64() -> Vec<u8> {
     let mut code = Vec::new();
 
-    code.extend_from_slice(&0x58000040u32.to_le_bytes());
+    code.extend_from_slice(&0x58000060u32.to_le_bytes());
     code.extend_from_slice(&0xD51B0020u32.to_le_bytes());
+    code.extend_from_slice(&0x58000040u32.to_le_bytes());
     code.extend_from_slice(&0xD51B0040u32.to_le_bytes());
     code.extend_from_slice(&0xD69F03E0u32.to_le_bytes());
 
+    code.extend_from_slice(&0x00000000u32.to_le_bytes());
+    code.extend_from_slice(&0x00000000u32.to_le_bytes());
     code.extend_from_slice(&0x00000000u32.to_le_bytes());
     code.extend_from_slice(&0x00000000u32.to_le_bytes());
 
@@ -567,24 +570,25 @@ fn trampoline_asm() -> Value {
         "stp x29, x30, [sp, #-16]!   // save frame pointer and link register",
         "stp x19, x20, [sp, #-16]!   // save callee-saved registers",
         "stp x21, x22, [sp, #-16]!   // save more callee-saved",
-        "mov x0, x21                  // x0 = ApcContext (from x21 set by injector)",
-        "blr x1                       // call ApcRoutine(x0=ApcContext, ...)",
+        "mov x0, x21                  // x0 = ApcContext (passed in x21)",
+        "blr x1                       // call ApcRoutine(x0=ApcContext)",
         "b restore_handler            // jump to restore handler",
         "// --- restore handler ---",
         "ldp x21, x22, [sp], #16     // restore callee-saved",
         "ldp x19, x20, [sp], #16     // restore callee-saved",
         "ldp x29, x30, [sp], #16     // restore fp and lr",
-        "// then: thread_set_state with saved ARM_THREAD_STATE64",
     ])
 }
 
 fn restore_asm() -> Value {
     json!([
-        "ldr x0, [pc, #8]            // load saved context pointer",
+        "ldr x0, [pc, #12]           // load saved_sp from literal pool",
         "msr sp_el0, x0              // restore user stack pointer",
-        "msr elr_el1, x0             // restore return address (simplified)",
+        "ldr x0, [pc, #8]            // load saved_pc from literal pool",
+        "msr elr_el1, x0             // restore return address",
         "eret                         // return to original code",
-        ".quad saved_context_address  // embedded pointer to saved context",
+        ".quad saved_sp              // embedded saved stack pointer",
+        ".quad saved_pc              // embedded saved program counter",
     ])
 }
 

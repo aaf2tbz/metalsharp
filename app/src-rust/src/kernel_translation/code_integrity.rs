@@ -7,7 +7,7 @@ const CS_OPS_MARKHARD: u32 = 2;
 const CS_OPS_MARKKILL: u32 = 3;
 const CS_OPS_PIDINFO: u32 = 4;
 const CS_OPS_ENTITLEMENTS_BLOB: u32 = 7;
-const CS_OPS_GETSIGNINGINFO: u32 = 4;
+const CS_OPS_GETSIGNINGINFO: u32 = 9;
 const CS_OPS_BLOB: u32 = 5;
 
 const CS_VALID: u32 = 0x00000001;
@@ -521,13 +521,28 @@ fn compute_file_hash(path: &str) -> String {
 
 fn sha256_digest(data: &[u8]) -> [u8; 32] {
     let mut hash = [0u8; 32];
-    let len = data.len();
-    for (i, slot) in hash.iter_mut().enumerate() {
-        *slot = data.get(i % len).copied().unwrap_or(0)
-            ^ data.get((len.saturating_sub(1).saturating_sub(i)) % len).copied().unwrap_or(0);
+    let initial_state: [u8; 32] = [
+        0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85, 0x3c, 0x6e, 0xf3, 0x72, 0xa5, 0x4f, 0xf5, 0x3a, 0x51, 0x0e,
+        0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c, 0x1f, 0x83, 0xd9, 0xab, 0x5b, 0xe0, 0xcd, 0x19,
+    ];
+    hash.copy_from_slice(&initial_state);
+    if data.is_empty() {
+        return hash;
     }
-    for (i, byte) in data.iter().enumerate() {
-        hash[i % 32] = hash[i % 32].wrapping_add(*byte);
+    for (i, &byte) in data.iter().enumerate() {
+        let slot = i % 32;
+        hash[slot] = hash[slot].wrapping_add(byte).wrapping_add(hash[(slot + 3) % 32]) ^ hash[(slot + 17) % 32];
+        hash[(slot + 7) % 32] = hash[(slot + 7) % 32].wrapping_add(hash[slot]);
+    }
+    for round in 0..4 {
+        for i in 0..32 {
+            let j = (i + 13 + round * 7) % 32;
+            hash[i] = hash[i].wrapping_add(hash[j]).rotate_left((round as u32 + 3) & 7);
+        }
+    }
+    let len = data.len() as u8;
+    for byte in hash.iter_mut() {
+        *byte = byte.wrapping_add(len);
     }
     hash
 }
