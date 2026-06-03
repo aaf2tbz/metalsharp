@@ -940,6 +940,34 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::handle_bridge::handle_snapshot_all(&body))
         },
+        (Method::Post, "/kernel-translation/integrity/query-signing-level") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_query_signing_level(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/query-process-signing") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_query_process_signing(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/register-pe-module") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_register_pe_module(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/register-macho-module") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_register_macho_module(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/set-cached-signing-level") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_set_cached_signing_level(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/list-modules") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_list_signed_modules(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_seed_integrity_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

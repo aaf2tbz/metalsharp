@@ -1,3 +1,4 @@
+pub mod code_integrity;
 pub mod handle_bridge;
 pub mod handle_table;
 mod nt_to_xnu;
