@@ -9,6 +9,49 @@ const MIGRATE_SCHEMA_VERSION: u64 = 3;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
     &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
 const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
+const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
+    "steamapps",
+    "common",
+    "downloading",
+    "shadercache",
+    "compatdata",
+    "prefix",
+    "prefix-steam",
+    "drive_c",
+    "Program Files",
+    "Program Files (x86)",
+    "Steam",
+    "runtime",
+    "downloads",
+    "updates",
+    "updater-tools",
+    "tmp",
+    "Temp",
+    "cache",
+    "logs",
+    "crashes",
+];
+const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
+    "setup.json",
+    "steam_config.json",
+    "bottle.json",
+    "metalsharp-compatdata.json",
+    "library.json",
+    "apps.json",
+    "routes.json",
+    "settings.json",
+    "preferences.json",
+    "user.reg",
+    "userdef.reg",
+    "system.reg",
+    "libraryfolders.vdf",
+    "config.vdf",
+    "loginusers.vdf",
+    "localconfig.vdf",
+    "shortcuts.vdf",
+    "steam_autocloud.vdf",
+];
+const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -399,45 +442,44 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_selective(&cache, &cache_tmp, &["downloads", "updates", "updater-tools", "tmp"]);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (Steam prefix)...", None);
+    write_migrate_progress("running", 2, 5, "Preserving user settings (Steam prefix metadata)...", None);
     let prefix_steam_tmp = tmp.join("prefix-steam");
     let prefix_steam = ms_dir.join("prefix-steam");
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
-        let skip = ["dosdevices", "windows", "ProgramData"];
-        preserve_selective(&prefix_steam, &prefix_steam_tmp, &skip);
+        preserve_settings_only(&prefix_steam, &prefix_steam_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (games)...", None);
+    write_migrate_progress("running", 2, 5, "Preserving user settings (game metadata)...", None);
     let games_tmp = tmp.join("games");
     let games = ms_dir.join("games");
     if games.exists() {
         let _ = fs::create_dir_all(&games_tmp);
-        copy_dir_recursive(&games, &games_tmp);
+        preserve_settings_only(&games, &games_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (library)...", None);
+    write_migrate_progress("running", 2, 5, "Preserving user settings (library metadata)...", None);
     let sharp_library_tmp = tmp.join("sharp-library");
     let sharp_library = ms_dir.join("sharp-library");
     if sharp_library.exists() {
         let _ = fs::create_dir_all(&sharp_library_tmp);
-        copy_dir_recursive(&sharp_library, &sharp_library_tmp);
+        preserve_settings_only(&sharp_library, &sharp_library_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (bottles)...", None);
+    write_migrate_progress("running", 2, 5, "Preserving user settings (bottle metadata)...", None);
     let bottles_tmp = tmp.join("bottles");
     let bottles = ms_dir.join("bottles");
     if bottles.exists() {
         let _ = fs::create_dir_all(&bottles_tmp);
-        copy_dir_recursive(&bottles, &bottles_tmp);
+        preserve_settings_only(&bottles, &bottles_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (compatdata)...", None);
+    write_migrate_progress("running", 2, 5, "Preserving user settings (compatdata metadata)...", None);
     let compatdata_tmp = tmp.join("compatdata");
     let compatdata = ms_dir.join("compatdata");
     if compatdata.exists() {
         let _ = fs::create_dir_all(&compatdata_tmp);
-        copy_dir_recursive(&compatdata, &compatdata_tmp);
+        preserve_settings_only(&compatdata, &compatdata_tmp);
     }
 
     PreservedData {
@@ -487,6 +529,81 @@ fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
     }
 }
 
+fn preserve_settings_only(src: &PathBuf, dst: &PathBuf) {
+    if let Ok(entries) = fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy().to_string();
+            let src_path = entry.path();
+            let dst_path = dst.join(&name);
+
+            if migration_preserve_denies_name(&name_str) {
+                continue;
+            }
+
+            match fs::symlink_metadata(&src_path) {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        continue;
+                    } else if meta.is_dir() {
+                        let before = count_settings_files(&dst_path);
+                        preserve_settings_only(&src_path, &dst_path);
+                        if count_settings_files(&dst_path) == before
+                            && fs::read_dir(&dst_path).map(|mut e| e.next().is_none()).unwrap_or(false)
+                        {
+                            let _ = fs::remove_dir(&dst_path);
+                        }
+                    } else if migration_preserve_allows_file(&src_path) {
+                        if let Some(parent) = dst_path.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        let _ = fs::copy(&src_path, &dst_path);
+                    }
+                },
+                Err(_) => {},
+            }
+        }
+    }
+}
+
+fn count_settings_files(path: &Path) -> usize {
+    let mut count = 0usize;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                count += count_settings_files(&p);
+            } else {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn migration_preserve_denies_name(name: &str) -> bool {
+    MIGRATION_PAYLOAD_DENY_NAMES.iter().any(|denied| name.eq_ignore_ascii_case(denied))
+}
+
+fn migration_preserve_allows_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+
+    if migration_preserve_denies_name(name) {
+        return false;
+    }
+
+    if MIGRATION_SETTINGS_FILE_NAMES.iter().any(|allowed| name.eq_ignore_ascii_case(allowed)) {
+        return true;
+    }
+
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| MIGRATION_SETTINGS_EXTENSIONS.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed)))
+        .unwrap_or(false)
+}
+
 fn remove_old_runtime(ms_dir: &PathBuf) {
     let dirs_to_remove = [
         "runtime",
@@ -525,7 +642,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        copy_dir_recursive(&preserved.prefix_steam_tmp, &dst);
+        preserve_settings_only(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
         if !dosdevices.exists() {
@@ -546,15 +663,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        copy_dir_recursive(&preserved.games_tmp, &dst);
-    }
-
-    if preserved.cache_tmp.exists() {
-        let dst = ms_dir.join("cache");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        copy_dir_recursive(&preserved.cache_tmp, &dst);
+        preserve_settings_only(&preserved.games_tmp, &dst);
     }
 
     if preserved.sharp_library_tmp.exists() {
@@ -562,7 +671,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        copy_dir_recursive(&preserved.sharp_library_tmp, &dst);
+        preserve_settings_only(&preserved.sharp_library_tmp, &dst);
     }
 
     if preserved.bottles_tmp.exists() {
@@ -570,7 +679,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        copy_dir_recursive(&preserved.bottles_tmp, &dst);
+        preserve_settings_only(&preserved.bottles_tmp, &dst);
     }
 
     if preserved.compatdata_tmp.exists() {
@@ -578,7 +687,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        copy_dir_recursive(&preserved.compatdata_tmp, &dst);
+        preserve_settings_only(&preserved.compatdata_tmp, &dst);
     }
 
     if let Some(ref data) = preserved.setup_json {
@@ -764,6 +873,103 @@ mod tests {
     }
 
     #[test]
+    fn migration_does_not_preserve_steam_game_install_payloads() {
+        let home = test_dir("skip-steam-payloads");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let steamapps =
+            ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
+        fs::create_dir_all(steamapps.join("common").join("Portal 2")).expect("create steam game payload");
+        fs::create_dir_all(steamapps.join("downloading").join("620")).expect("create downloading payload");
+        fs::create_dir_all(steamapps.join("shadercache").join("620")).expect("create shadercache payload");
+        fs::write(steamapps.join("common").join("Portal 2").join("portal2.exe"), b"game").expect("write game payload");
+        fs::write(steamapps.join("appmanifest_620.acf"), b"manifest").expect("write app manifest");
+        fs::write(ms_dir.join("prefix-steam").join("user.reg"), b"settings").expect("write prefix settings");
+
+        let preserved = preserve_user_data(&ms_dir);
+        assert!(preserved.prefix_steam_tmp.join("user.reg").exists());
+        assert!(!preserved.prefix_steam_tmp.join("drive_c").exists());
+        assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "steamapps"));
+        assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "portal2.exe"));
+
+        let injected_steamapps =
+            preserved.prefix_steam_tmp.join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
+        fs::create_dir_all(injected_steamapps.join("common").join("Portal 2")).expect("inject preserved game payload");
+        fs::write(injected_steamapps.join("common").join("Portal 2").join("portal2.exe"), b"game")
+            .expect("write injected game payload");
+
+        fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove live prefix");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
+        assert!(!ms_dir.join("prefix-steam").join("drive_c").exists());
+        assert!(!find_descendant_named(&ms_dir.join("prefix-steam"), "portal2.exe"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_preserves_bottle_settings_without_prefix_payloads() {
+        let home = test_dir("skip-bottle-prefix-payloads");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let bottle = ms_dir.join("bottles").join("steam_620");
+        fs::create_dir_all(
+            bottle
+                .join("prefix")
+                .join("drive_c")
+                .join("Program Files (x86)")
+                .join("Steam")
+                .join("steamapps")
+                .join("common")
+                .join("Portal 2"),
+        )
+        .expect("create bottle prefix payload");
+        fs::write(bottle.join("bottle.json"), br#"{"id":"steam_620","profile":"m9"}"#).expect("write bottle settings");
+        fs::write(
+            bottle
+                .join("prefix")
+                .join("drive_c")
+                .join("Program Files (x86)")
+                .join("Steam")
+                .join("steamapps")
+                .join("common")
+                .join("Portal 2")
+                .join("portal2.exe"),
+            b"game",
+        )
+        .expect("write bottle game payload");
+
+        let preserved = preserve_user_data(&ms_dir);
+        assert!(preserved.bottles_tmp.join("steam_620").join("bottle.json").exists());
+        assert!(!preserved.bottles_tmp.join("steam_620").join("prefix").exists());
+        assert!(!find_descendant_named(&preserved.bottles_tmp, "portal2.exe"));
+
+        let injected_bottle_payload = preserved
+            .bottles_tmp
+            .join("steam_620")
+            .join("prefix")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steamapps")
+            .join("common")
+            .join("Portal 2");
+        fs::create_dir_all(&injected_bottle_payload).expect("inject preserved bottle payload");
+        fs::write(injected_bottle_payload.join("portal2.exe"), b"game").expect("write injected bottle payload");
+
+        fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
+            r#"{"id":"steam_620","profile":"m9"}"#
+        );
+        assert!(!ms_dir.join("bottles").join("steam_620").join("prefix").exists());
+        assert!(!find_descendant_named(&ms_dir.join("bottles"), "portal2.exe"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_cache_metadata_without_download_payloads() {
         let home = test_dir("preserve-cache");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -782,7 +988,7 @@ mod tests {
             fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).unwrap(),
             r#"{"api_key_set":true}"#
         );
-        assert_eq!(fs::read(ms_dir.join("cache").join("covers").join("620.png")).unwrap(), b"cover");
+        assert!(!ms_dir.join("cache").join("covers").join("620.png").exists());
         assert!(!ms_dir.join("cache").join("updates").join("MetalSharp.dmg").exists());
         let _ = fs::remove_dir_all(home);
     }
@@ -880,5 +1086,24 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    fn find_descendant_named(root: &Path, name: &str) -> bool {
+        if !root.exists() {
+            return false;
+        }
+        let Ok(entries) = fs::read_dir(root) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n == name) {
+                return true;
+            }
+            if fs::symlink_metadata(&path).map(|m| m.is_dir()).unwrap_or(false) && find_descendant_named(&path, name) {
+                return true;
+            }
+        }
+        false
     }
 }
