@@ -1216,6 +1216,50 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::driver_model::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/anti-debug/simulate-check") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_simulate_check(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/run-all-checks") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_run_all_checks(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/check-results") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_check_results(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/hw-breakpoint-map") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_hw_breakpoint_map(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/full-breakpoint-map") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_full_breakpoint_map(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/module-sanitize") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_module_sanitize(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/add-sanitize-rule") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_add_sanitize_rule(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/timing-analysis") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_timing_analysis(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/filesystem-check") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_filesystem_check(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/status-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_status_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

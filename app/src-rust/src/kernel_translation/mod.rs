@@ -1,3 +1,4 @@
+pub mod anti_debug;
 pub mod apc;
 pub mod code_integrity;
 pub mod driver_model;
