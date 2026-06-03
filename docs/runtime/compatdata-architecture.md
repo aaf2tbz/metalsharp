@@ -22,7 +22,7 @@ Existing Steam bottle manifests still live at:
 
 The current implementation records the shared Wine Steam prefix as the active prefix because Wine Steam must remain a stable, long-lived entity. The compatdata record is still authoritative for launch routing, dependency visibility, runtime assets, and diagnostics.
 
-Runtime migrations preserve `~/.metalsharp/compatdata/` alongside bottles, games, Steam prefix data, and Sharp Library records.
+Runtime migrations preserve compatdata metadata alongside bottle settings, game metadata, Steam prefix settings, and Sharp Library records. They do not stage full Wine prefixes, Steam `steamapps/` payloads, or downloaded game installations.
 
 ## Record Contents
 

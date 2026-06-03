@@ -81,7 +81,7 @@ Beta 6 runtime bottles, installer profiles, Linux package automation, and docume
 
 - **Sharp Library UI** - renamed "Install an EXE" to **Install Windows Program** and moved runtime bottles, compatibility matrix, redistributable sources, and logs into collapsible containers to keep the app drawer readable.
 - **Game cards** - added bottle-aware metadata and runtime doctor controls without requiring users to discover missing DLLs/assets manually.
-- **Migration wizard** - preserves Steam games, prefixes, settings, Sharp Library entries, and bottle state while installing the refreshed MetalSharp runtime cleanly.
+- **Migration wizard** - preserves user settings, Steam metadata, Sharp Library metadata, and bottle settings without copying Steam game install payloads or full Wine prefixes while installing the refreshed MetalSharp runtime cleanly.
 - **Runtime profile routing** - added explicit bottle profiles for M9/M10/M11/M12/M32/Steam/Wine/installer flows, including D3D10, D3D11, D3D12, VC runtime, DirectX, .NET, Gecko, Mono, WebView2, and core-font checks.
 
 ### Fixed
