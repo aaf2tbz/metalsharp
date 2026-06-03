@@ -1,5 +1,6 @@
 pub mod apc;
 pub mod code_integrity;
+pub mod es_bridge;
 #[cfg(target_os = "macos")]
 pub mod handle_bridge;
 pub mod handle_table;
@@ -59,9 +60,9 @@ pub fn handle_kernel_translation_probe(_body: &Map<String, Value>) -> Value {
             endpoint_security.len(),
         ),
         "nextActions": vec![
-            "Phase 2A: Build virtual handle table for NtQuerySystemInformation(SystemHandleInformation)",
-            "Phase 3: Bridge csops for code integrity emulation",
-            "Phase 4: Implement APC delivery via ARM64 context manipulation",
+            "Phase 5A: EndpointSecurity bridge for process/thread/image-load callbacks",
+            "Phase 5B: Thread notification via task_threads polling",
+            "Phase 6: ObRegisterCallbacks equivalent via MACF/Wine handle callback",
         ],
     })
 }

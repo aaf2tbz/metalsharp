@@ -1008,6 +1008,66 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::apc::handle_trampoline_status(&body))
         },
+        (Method::Post, "/kernel-translation/es/register-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_register_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/es/unregister-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_unregister_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/es/list-callbacks") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_list_callbacks(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-process-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_process_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-thread-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_thread_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-image-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_image_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/process-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_process_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/thread-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_thread_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/image-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_image_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/create-ipc-channel") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_create_ipc_channel(&body))
+        },
+        (Method::Post, "/kernel-translation/es/ipc-channels") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_ipc_channels(&body))
+        },
+        (Method::Post, "/kernel-translation/es/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_es_status(&body))
+        },
+        (Method::Post, "/kernel-translation/es/detect-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_detect_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/nt-callback-bridge") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_nt_callback_bridge(&body))
+        },
+        (Method::Post, "/kernel-translation/es/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
