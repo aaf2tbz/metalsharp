@@ -640,7 +640,7 @@ pub fn handle_seed_demo(_body: &Map<String, Value>) -> Value {
 
     let r1 = handle_register_callback(&serde_json::from_str(
         "{\"operations\": [\"open_process\", \"duplicate_object\"], \"pre_callback\": true, \"post_callback\": true, \"strip_access_mask\": 524320, \"altitude\": 1000}"
-    ).unwrap());
+    ).expect("seed demo json"));
     let reg_id = r1["registration_id"].as_u64().unwrap();
 
     let op1 = handle_simulate_operation(

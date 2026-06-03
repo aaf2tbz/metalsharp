@@ -453,7 +453,8 @@ pub fn handle_table_status(body: &Map<String, Value>) -> Value {
         })
         .collect();
 
-    let filter_pid = body.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32);
+    let filter_pid =
+        body.get("pid").and_then(|v| v.as_u64()).and_then(|p| if p <= u32::MAX as u64 { Some(p as u32) } else { None });
     match filter_pid {
         Some(pid) => match tables.get(&pid) {
             Some(table) => json!({

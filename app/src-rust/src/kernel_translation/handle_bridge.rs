@@ -2,7 +2,7 @@ use super::handle_table::{HandleBackend, NtObjectType, HANDLE_TABLES};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 use libc::c_void;
 
 const PROC_INFO_CALL_LISTPIDS: u32 = 1;
@@ -31,7 +31,7 @@ struct ProcFdInfo {
 const FD_INFO_SIZE: usize = 8;
 
 pub fn handle_enumerate_fds(body: &Map<String, Value>) -> Value {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     {
         let pid = match body.get("pid").and_then(|v| v.as_u64()) {
             Some(p) if p <= u32::MAX as u64 => p as u32,
@@ -88,7 +88,7 @@ pub fn handle_enumerate_fds(body: &Map<String, Value>) -> Value {
 }
 
 pub fn handle_enumerate_ports(body: &Map<String, Value>) -> Value {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     {
         let pid = match body.get("pid").and_then(|v| v.as_u64()) {
             Some(p) if p <= u32::MAX as u64 => p as u32,
@@ -143,7 +143,7 @@ pub fn handle_enumerate_ports(body: &Map<String, Value>) -> Value {
 }
 
 pub fn handle_unified_snapshot(body: &Map<String, Value>) -> Value {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     {
         let pid = match body.get("pid").and_then(|v| v.as_u64()) {
             Some(p) if p <= u32::MAX as u64 => p as u32,
@@ -204,7 +204,7 @@ pub fn handle_unified_snapshot(body: &Map<String, Value>) -> Value {
 }
 
 pub fn handle_snapshot_all(body: &Map<String, Value>) -> Value {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     {
         let fake_missing = body.get("fake_missing").and_then(|v| v.as_bool()).unwrap_or(true);
         let pids = list_all_pids();
@@ -340,7 +340,7 @@ impl PortInfo {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn enumerate_fds(pid: u32) -> Result<Vec<FdInfo>, String> {
     extern "C" {
         fn proc_pidinfo(pid: i32, flavor: u32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
@@ -383,7 +383,7 @@ fn enumerate_fds(pid: u32) -> Result<Vec<FdInfo>, String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn enumerate_mach_ports(pid: u32) -> Result<Vec<PortInfo>, String> {
     unsafe {
         let self_pid = std::process::id();
@@ -433,7 +433,7 @@ fn enumerate_mach_ports(pid: u32) -> Result<Vec<PortInfo>, String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn mach_port_names_call(
     task: u32,
     names: &mut *mut u32,
@@ -457,7 +457,7 @@ fn mach_port_names_call(
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn categorize_fds(fds: &[FdInfo]) -> BTreeMap<i32, FdInfo> {
     let mut map = BTreeMap::new();
     for fd in fds {
@@ -466,7 +466,7 @@ fn categorize_fds(fds: &[FdInfo]) -> BTreeMap<i32, FdInfo> {
     map
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn categorize_ports(ports: &[PortInfo]) -> BTreeMap<u32, PortInfo> {
     let mut map = BTreeMap::new();
     for p in ports {
@@ -475,7 +475,7 @@ fn categorize_ports(ports: &[PortInfo]) -> BTreeMap<u32, PortInfo> {
     map
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn merge_fds_into_table(pid: u32, fds: &BTreeMap<i32, FdInfo>, fake_missing: bool) -> usize {
     let mut tables = HANDLE_TABLES.lock().unwrap();
     let table = tables.entry(pid).or_insert_with(|| super::handle_table::VirtualHandleTable::new(pid));
@@ -508,7 +508,7 @@ fn merge_fds_into_table(pid: u32, fds: &BTreeMap<i32, FdInfo>, fake_missing: boo
     count
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn merge_ports_into_table(pid: u32, ports: &BTreeMap<u32, PortInfo>) -> usize {
     let mut tables = HANDLE_TABLES.lock().unwrap();
     let table = tables.entry(pid).or_insert_with(|| super::handle_table::VirtualHandleTable::new(pid));
@@ -547,7 +547,7 @@ fn fd_to_nt_name(fd: i32, info: &FdInfo) -> String {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn inject_missing_fd_types(
     _pid: u32,
     _table: &mut super::handle_table::VirtualHandleTable,
@@ -575,7 +575,7 @@ fn inject_missing_fd_types(
     count
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn inject_fake_wine_handles(pid: u32) -> usize {
     let mut tables = HANDLE_TABLES.lock().unwrap();
     let table = tables.entry(pid).or_insert_with(|| super::handle_table::VirtualHandleTable::new(pid));
@@ -633,7 +633,7 @@ fn inject_fake_wine_handles(pid: u32) -> usize {
     count
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn list_all_pids() -> Result<Vec<u32>, String> {
     extern "C" {
         fn proc_listpids(dtype: u32, typetype: u32, buffer: *mut c_void, buffersize: i32) -> i32;
@@ -665,7 +665,7 @@ fn list_all_pids() -> Result<Vec<u32>, String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn fd_summary(fds: &BTreeMap<i32, FdInfo>) -> Value {
     let mut type_counts: BTreeMap<String, usize> = BTreeMap::new();
     for info in fds.values() {
@@ -682,7 +682,7 @@ fn fd_summary(fds: &BTreeMap<i32, FdInfo>) -> Value {
     })
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn port_summary(ports: &BTreeMap<u32, PortInfo>) -> Value {
     let mut right_counts: BTreeMap<String, usize> = BTreeMap::new();
     for info in ports.values() {
