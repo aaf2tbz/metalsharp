@@ -2,7 +2,7 @@
 
 Status: Phase 4 foundation
 
-Redistributables are modeled as bottle components. MetalSharp looks for legal local assets in Steam Common Redistributables and in `~/.metalsharp/runtime/redist/`, then records missing, installed, or repair-needed state in the bottle.
+Redistributables are modeled as bottle components. MetalSharp looks for legal local assets in Steam Common Redistributables, Sharp Library installer bottles, and `~/.metalsharp/runtime/redist/`, then records missing, installed, or repair-needed state in the bottle.
 
 ## Component IDs
 
@@ -41,10 +41,11 @@ The repair resolver searches:
 
 ```text
 ~/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps/common/Steamworks Shared/_CommonRedist/
+~/.metalsharp/bottles/*/installers/
 ~/.metalsharp/runtime/redist/
 ```
 
-MSI redistributables are launched through `msiexec /i`; EXE redistributables are launched directly with silent arguments where known. Every repair writes a per-bottle component log.
+MSI redistributables are launched through `msiexec /i`; EXE redistributables are launched directly with silent arguments where known. XNA Framework 4.0 repairs also reuse a matching Sharp Library installer-bottle payload when the user has already installed or staged `xnafx40_redist.msi` through Sharp Library. Every repair writes a per-bottle component log.
 
 ## Remaining Work
 

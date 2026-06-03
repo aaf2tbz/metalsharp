@@ -2470,9 +2470,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "xna" => {
-            if windows.join("Microsoft.NET").join("assembly").join("GAC_32").join("Microsoft.Xna.Framework").exists()
-                || drive_c.join("Program Files (x86)").join("Microsoft XNA").exists()
-            {
+            if xna_framework_installed(prefix) {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -2568,6 +2566,38 @@ fn core_fonts_installed(fonts_dir: &Path) -> bool {
 
     let installed = CORE_FONT_FILES.iter().filter(|name| fonts_dir.join(name).is_file()).count();
     installed >= 4
+}
+
+fn xna_framework_installed(prefix: &Path) -> bool {
+    let drive_c = prefix.join("drive_c");
+    let windows = drive_c.join("windows");
+    if drive_c.join("Program Files (x86)").join("Microsoft XNA").exists()
+        || drive_c.join("Program Files").join("Microsoft XNA").exists()
+    {
+        return true;
+    }
+
+    let framework_roots = [
+        windows.join("Microsoft.NET").join("assembly").join("GAC_32").join("Microsoft.Xna.Framework"),
+        windows.join("Microsoft.NET").join("assembly").join("GAC_MSIL").join("Microsoft.Xna.Framework"),
+        windows.join("assembly").join("GAC_32").join("Microsoft.Xna.Framework"),
+        windows.join("assembly").join("GAC_MSIL").join("Microsoft.Xna.Framework"),
+        windows.join("mono").join("mono-2.0").join("lib").join("mono").join("gac").join("Microsoft.Xna.Framework"),
+    ];
+    framework_roots.iter().any(|root| xna_framework_dll_exists(root))
+}
+
+fn xna_framework_dll_exists(root: &Path) -> bool {
+    if !root.exists() {
+        return false;
+    }
+    if root.join("Microsoft.Xna.Framework.dll").is_file() {
+        return true;
+    }
+    WalkDir::new(root).max_depth(3).into_iter().flatten().any(|entry| {
+        entry.file_type().is_file()
+            && entry.file_name().to_string_lossy().eq_ignore_ascii_case("Microsoft.Xna.Framework.dll")
+    })
 }
 
 fn host_core_font_sources() -> Vec<(String, PathBuf)> {
@@ -2691,6 +2721,7 @@ fn resolve_component_installer(component_id: &str, arch: BottleArch) -> Option<C
     let local_redist = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("redist");
 
     resolve_component_installer_from_roots(component_id, arch, &redist_root, &local_redist)
+        .or_else(|| resolve_sharp_library_component_installer(component_id))
 }
 
 fn resolve_component_installer_from_roots(
@@ -2784,7 +2815,12 @@ fn resolve_component_installer_from_roots(
         _ => None,
     }?;
 
-    let args = match component_id {
+    let args = component_installer_args(component_id, &executable);
+    Some(ComponentInstaller { path: executable, args })
+}
+
+fn component_installer_args(component_id: &str, executable: &Path) -> Vec<String> {
+    match component_id {
         "vcrun2019" | "vcrun2013" | "vcrun2010" => vec!["/quiet".to_string(), "/norestart".to_string()],
         "dotnet40" | "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
@@ -2798,8 +2834,62 @@ fn resolve_component_installer_from_roots(
             }
         },
         _ => Vec::new(),
-    };
-    Some(ComponentInstaller { path: executable, args })
+    }
+}
+
+fn resolve_sharp_library_component_installer(component_id: &str) -> Option<ComponentInstaller> {
+    resolve_sharp_library_component_installer_from_root(component_id, &bottles_root())
+}
+
+fn resolve_sharp_library_component_installer_from_root(component_id: &str, root: &Path) -> Option<ComponentInstaller> {
+    if !root.exists() {
+        return None;
+    }
+    let mut bottle_dirs = fs::read_dir(root).ok()?.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+    bottle_dirs.sort();
+    for bottle_dir in bottle_dirs {
+        let manifest_path = bottle_dir.join(MANIFEST_FILE);
+        let Ok(data) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<BottleManifest>(&data) else {
+            continue;
+        };
+        if manifest.bottle_type != BottleType::Installer {
+            continue;
+        }
+
+        if let Some(path) = manifest.source_installer_path.as_deref().map(PathBuf::from) {
+            if let Some(installer) = component_installer_from_local_path(component_id, &path) {
+                return Some(installer);
+            }
+        }
+
+        let payload_dir = bottle_dir.join("installers");
+        let Ok(read_dir) = fs::read_dir(payload_dir) else {
+            continue;
+        };
+        let mut payloads = read_dir.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+        payloads.sort();
+        for path in payloads {
+            if let Some(installer) = component_installer_from_local_path(component_id, &path) {
+                return Some(installer);
+            }
+        }
+    }
+    None
+}
+
+fn component_installer_from_local_path(component_id: &str, path: &Path) -> Option<ComponentInstaller> {
+    if !path.is_file() || component_kind_from_local_installer(path).as_deref() != Some(component_id) {
+        return None;
+    }
+    Some(ComponentInstaller { path: path.to_path_buf(), args: component_installer_args(component_id, path) })
+}
+
+fn component_kind_from_local_installer(path: &Path) -> Option<String> {
+    let lower_name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    classify_redist_asset(&lower_name)
 }
 
 fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
@@ -2826,7 +2916,8 @@ fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id:
             lower.ends_with(".bat") || lower.ends_with(".cmd")
         })
         .or_else(|| candidates.first())?;
-    Some(ComponentInstaller { path: PathBuf::from(&preferred.source_path), args: Vec::new() })
+    let path = PathBuf::from(&preferred.source_path);
+    Some(ComponentInstaller { args: component_installer_args(component_id, &path), path })
 }
 
 fn game_runtime_installer_candidates<'a>(
@@ -2842,6 +2933,7 @@ fn game_runtime_installer_candidates<'a>(
                 && match component_id {
                     "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
                     "battleye" => asset.kind == "battleye",
+                    "xna" => asset.kind == "xna",
                     _ => false,
                 }
         })
@@ -2868,6 +2960,7 @@ fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id:
                 || lower_name == "beservice.exe"
                 || lower_name == "beservice_x64.exe"
         },
+        "xna" => lower_name.contains("xnafx") || lower_name.contains("xna"),
         _ => false,
     }
 }
@@ -3370,9 +3463,13 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         };
     }
     let installer = resolve_component_installer(id, arch);
+    let source = installer
+        .as_ref()
+        .map(|installer| component_installer_source_label(&installer.path))
+        .unwrap_or("missing_local_asset");
     ComponentSourcePolicy {
         id: id.to_string(),
-        source: if installer.is_some() { "local_redist_asset" } else { "missing_local_asset" }.to_string(),
+        source: source.to_string(),
         available: installer.is_some(),
         detail: match id {
             "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
@@ -3386,7 +3483,9 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
-            "xna" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist XNA 4.0 installer",
+            "xna" => {
+                "Uses Steam CommonRedist, Sharp Library installer bottles, or ~/.metalsharp/runtime/redist XNA 4.0 installer"
+            },
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
             "easyanticheat_eos" => "Uses game-local Easy Anti-Cheat EOS setup assets when present",
             "battleye" => "Uses game-local BattlEye setup/service assets when present",
@@ -3394,6 +3493,15 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         }
         .to_string(),
         path: installer.map(|installer| installer.path.to_string_lossy().to_string()),
+    }
+}
+
+fn component_installer_source_label(path: &Path) -> &'static str {
+    let normalized = path.to_string_lossy();
+    if normalized.contains("/bottles/") && normalized.contains("/installers/") {
+        "sharp_library_installer"
+    } else {
+        "local_redist_asset"
     }
 }
 
@@ -3821,9 +3929,16 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
             local_targets: vec![
                 redist.join("XNA").join("4.0").join("xnafx40_redist.msi").to_string_lossy().to_string(),
                 redist.join("XNA").join("4.0").join("xnafx40_redist.exe").to_string_lossy().to_string(),
+                crate::platform::metalsharp_home_dir()
+                    .join("bottles")
+                    .join("*")
+                    .join("installers")
+                    .join("xnafx40_redist.msi")
+                    .to_string_lossy()
+                    .to_string(),
             ],
             policy: "official_download_or_steam_commonredist".to_string(),
-            notes: "Use local or Steam-provided XNA 4.0 redist assets; this stays receipt-driven per bottle.".to_string(),
+            notes: "Use local, Sharp Library staged, or Steam-provided XNA 4.0 redist assets; this stays receipt-driven per bottle.".to_string(),
         },
         RedistSourceGuide {
             id: "physx".to_string(),
@@ -4503,6 +4618,109 @@ mod tests {
         assert_eq!(xna_installer.path, xna);
         assert_eq!(physx_installer.path, physx);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn xna_installed_state_accepts_wine_mono_gac_layout() {
+        let prefix = test_dir("xna-mono-gac");
+        let gac = prefix
+            .join("drive_c")
+            .join("windows")
+            .join("mono")
+            .join("mono-2.0")
+            .join("lib")
+            .join("mono")
+            .join("gac")
+            .join("Microsoft.Xna.Framework")
+            .join("4.0.0.0__842cf8be1de50553");
+        fs::create_dir_all(&gac).expect("create xna mono gac");
+        fs::write(gac.join("Microsoft.Xna.Framework.dll"), b"xna").expect("write xna assembly");
+
+        assert_eq!(inspect_component_state(&prefix, "xna", ComponentState::Missing), ComponentState::Installed);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn resolver_uses_sharp_library_xna_installer_bottle_payload() {
+        let root = test_dir("sharp-xna-installer-source");
+        let bottle_id = "installer_xna_test";
+        let payload = root.join(bottle_id).join("installers").join("xnafx40_redist.msi");
+        fs::create_dir_all(payload.parent().expect("payload parent")).expect("create payload dir");
+        fs::write(&payload, b"xna").expect("write xna installer");
+        let manifest = BottleManifest {
+            id: bottle_id.into(),
+            name: "xnafx40_redist".into(),
+            custom_name: None,
+            bottle_type: BottleType::Installer,
+            steam_app_id: None,
+            prefix_path: root.join(bottle_id).join("prefix").to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::Plain,
+            preferred_pipeline: None,
+            installed_components: Vec::new(),
+            source_installer_path: None,
+            installer_kind: Some(InstallerKind::Msi),
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+        fs::write(
+            root.join(bottle_id).join(MANIFEST_FILE),
+            serde_json::to_vec_pretty(&manifest).expect("serialize bottle"),
+        )
+        .expect("write bottle manifest");
+
+        let installer =
+            resolve_sharp_library_component_installer_from_root("xna", &root).expect("resolve xna installer");
+
+        assert_eq!(installer.path, payload);
+        assert_eq!(installer.args, vec!["/quiet".to_string(), "/norestart".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn game_runtime_asset_xna_repair_preserves_msi_silent_args() {
+        let manifest = BottleManifest {
+            id: "steam_105600".into(),
+            name: "Terraria".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(105600),
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::FnaX86,
+            preferred_pipeline: None,
+            installed_components: vec![RuntimeComponent { id: "xna".into(), state: ComponentState::Missing }],
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: vec![BottleRuntimeAsset {
+                id: "xna:xnafx40_redist.msi".into(),
+                kind: "xna".into(),
+                source_path: "/tmp/_CommonRedist/XNA/4.0/xnafx40_redist.msi".into(),
+                present: true,
+            }],
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let installer = resolve_game_runtime_asset_installer(&manifest, "xna").expect("resolve game xna installer");
+
+        assert_eq!(installer.path, PathBuf::from("/tmp/_CommonRedist/XNA/4.0/xnafx40_redist.msi"));
+        assert_eq!(installer.args, vec!["/quiet".to_string(), "/norestart".to_string()]);
     }
 
     #[test]
