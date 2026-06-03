@@ -502,7 +502,8 @@ pub fn handle_poll_watcher(body: &Map<String, Value>) -> Value {
     drop(watchers);
 
     let snap_body: Map<String, Value> =
-        serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"{}\"}}", pid, mechanism.id(),)).unwrap();
+        serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"{}\"}}", pid, mechanism.id(),))
+            .expect("seed demo json");
     let snap_result = handle_snapshot_threads(&snap_body);
     let new_snapshot_id = snap_result["snapshot_id"].as_u64().unwrap();
 
@@ -731,7 +732,8 @@ mod tests {
     fn test_snapshot_own_process() {
         let pid = std::process::id();
         let body: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid)).unwrap();
+            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid))
+                .expect("seed demo json");
         let result = handle_snapshot_threads(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["snapshot_id"].as_u64().unwrap() > 0);
@@ -740,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_missing_pid() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_snapshot_threads(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -749,17 +751,20 @@ mod tests {
     fn test_compute_delta_same_threads() {
         let pid = std::process::id();
         let s1: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid)).unwrap();
+            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid))
+                .expect("seed demo json");
         let r1 = handle_snapshot_threads(&s1);
         let id1 = r1["snapshot_id"].as_u64().unwrap();
 
         let s2: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid)).unwrap();
+            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid))
+                .expect("seed demo json");
         let r2 = handle_snapshot_threads(&s2);
         let id2 = r2["snapshot_id"].as_u64().unwrap();
 
         let delta: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"from_snapshot\": {}, \"to_snapshot\": {}}}", id1, id2)).unwrap();
+            serde_json::from_str(&format!("{{\"from_snapshot\": {}, \"to_snapshot\": {}}}", id1, id2))
+                .expect("seed demo json");
         let result = handle_compute_delta(&delta);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["created_count"].as_u64().is_some());
@@ -769,7 +774,7 @@ mod tests {
     #[test]
     fn test_compute_delta_invalid_snapshot() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"from_snapshot\": 999999, \"to_snapshot\": 999998}").unwrap();
+            serde_json::from_str("{\"from_snapshot\": 999999, \"to_snapshot\": 999998}").expect("seed demo json");
         let result = handle_compute_delta(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -792,11 +797,12 @@ mod tests {
     #[test]
     fn test_poll_watcher_second_has_delta() {
         let pid = std::process::id();
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let r = handle_create_watcher(&body);
         let id = r["watcher_id"].as_u64().unwrap();
 
-        let poll: Map<String, Value> = serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).unwrap();
+        let poll: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).expect("seed demo json");
         let first = handle_poll_watcher(&poll);
         assert!(first["ok"].as_bool().unwrap());
 
@@ -807,11 +813,12 @@ mod tests {
     #[test]
     fn test_destroy_watcher() {
         let pid = std::process::id();
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let r = handle_create_watcher(&body);
         let id = r["watcher_id"].as_u64().unwrap();
 
-        let destroy: Map<String, Value> = serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).unwrap();
+        let destroy: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).expect("seed demo json");
         let result = handle_destroy_watcher(&destroy);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["removed"].is_object());
@@ -819,7 +826,7 @@ mod tests {
 
     #[test]
     fn test_destroy_unknown_watcher() {
-        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").expect("seed demo json");
         let result = handle_destroy_watcher(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -834,11 +841,12 @@ mod tests {
     #[test]
     fn test_poll_watcher_first_snapshot() {
         let pid = std::process::id();
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let r = handle_create_watcher(&body);
         let id = r["watcher_id"].as_u64().unwrap();
 
-        let poll: Map<String, Value> = serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).unwrap();
+        let poll: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).expect("seed demo json");
         let result = handle_poll_watcher(&poll);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["delta"].is_null());
@@ -846,7 +854,7 @@ mod tests {
 
     #[test]
     fn test_poll_unknown_watcher() {
-        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").expect("seed demo json");
         let result = handle_poll_watcher(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -855,10 +863,11 @@ mod tests {
     fn test_thread_info_after_snapshot() {
         let pid = std::process::id();
         let snap: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid)).unwrap();
+            serde_json::from_str(&format!("{{\"pid\": {}, \"mechanism\": \"task_threads\"}}", pid))
+                .expect("seed demo json");
         handle_snapshot_threads(&snap);
 
-        let info: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let info: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let result = handle_thread_info(&info);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["count"].as_u64().unwrap() >= 1);
@@ -866,7 +875,7 @@ mod tests {
 
     #[test]
     fn test_thread_info_no_cache() {
-        let info: Map<String, Value> = serde_json::from_str("{\"pid\": 99999999}").unwrap();
+        let info: Map<String, Value> = serde_json::from_str("{\"pid\": 99999999}").expect("seed demo json");
         let result = handle_thread_info(&info);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -881,7 +890,7 @@ mod tests {
     #[test]
     fn test_configure_notifications() {
         let pid = std::process::id();
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let r = handle_create_watcher(&body);
         let id = r["watcher_id"].as_u64().unwrap();
 
@@ -899,7 +908,7 @@ mod tests {
     #[test]
     fn test_configure_notifications_unknown_watcher() {
         let config: Map<String, Value> =
-            serde_json::from_str("{\"watcher_id\": 99999999, \"notify_on_create\": true}").unwrap();
+            serde_json::from_str("{\"watcher_id\": 99999999, \"notify_on_create\": true}").expect("seed demo json");
         let result = handle_configure_notifications(&config);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -915,11 +924,12 @@ mod tests {
     #[test]
     fn test_watcher_status() {
         let pid = std::process::id();
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).unwrap();
+        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"pid\": {}}}", pid)).expect("seed demo json");
         let r = handle_create_watcher(&body);
         let id = r["watcher_id"].as_u64().unwrap();
 
-        let status: Map<String, Value> = serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).unwrap();
+        let status: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"watcher_id\": {}}}", id)).expect("seed demo json");
         let result = handle_watcher_status(&status);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["watcher"].is_object());
@@ -928,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_watcher_status_unknown() {
-        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"watcher_id\": 99999999}").expect("seed demo json");
         let result = handle_watcher_status(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }

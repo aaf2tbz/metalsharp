@@ -648,9 +648,11 @@ mod tests {
         let tid: u64 = 100200;
         lock_queues().remove(&tid);
         let body1: Map<String, Value> =
-            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid))
+                .expect("seed demo json");
         let body2: Map<String, Value> =
-            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid))
+                .expect("seed demo json");
         handle_queue_apc(&body1);
         handle_queue_apc(&body2);
 
@@ -669,7 +671,8 @@ mod tests {
         .unwrap();
         handle_queue_apc(&body);
 
-        let alert_body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
+        let alert_body: Map<String, Value> =
+            serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).expect("seed demo json");
         let result = handle_test_alert(&alert_body);
         assert_eq!(result["ok"], true);
         assert_eq!(result["pendingCount"], 1);
@@ -685,11 +688,12 @@ mod tests {
         let tid: u64 = 100400;
         lock_queues().remove(&tid);
         let body: Map<String, Value> =
-            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid)).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_handle": 256, "target_thread_id": {}}}"#, tid))
+                .expect("seed demo json");
         handle_queue_apc(&body);
 
         let wait_body: Map<String, Value> =
-            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).expect("seed demo json");
         let result = handle_wait_alertable(&wait_body);
         assert_eq!(result["status"], "STATUS_USER_APC");
         assert_eq!(result["pendingApcs"], 1);
@@ -700,7 +704,7 @@ mod tests {
         let tid: u64 = 100500;
         lock_queues().remove(&tid);
         let wait_body: Map<String, Value> =
-            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).unwrap();
+            serde_json::from_str(&format!(r#"{{"thread_id": {}, "handle": 512}}"#, tid)).expect("seed demo json");
         let result = handle_wait_alertable(&wait_body);
         assert_eq!(result["status"], "STATUS_WAIT_0");
         assert_eq!(result["pendingApcs"], 0);
@@ -731,7 +735,8 @@ mod tests {
         let set_result = handle_set_thread_context(&set_body);
         assert_eq!(set_result["ok"], true);
 
-        let get_body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
+        let get_body: Map<String, Value> =
+            serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).expect("seed demo json");
         let get_result = handle_get_thread_context(&get_body);
         assert_eq!(get_result["ok"], true);
         assert_eq!(get_result["source"], "saved");
@@ -752,7 +757,8 @@ mod tests {
     fn test_apc_queue_status_empty() {
         let tid: u64 = 100999;
         lock_queues().remove(&tid);
-        let body: Map<String, Value> = serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str(&format!(r#"{{"thread_id": {}}}"#, tid)).expect("seed demo json");
         let result = handle_apc_queue_status(&body);
         assert_eq!(result["totalInQueue"], 0);
     }

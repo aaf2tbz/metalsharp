@@ -693,13 +693,13 @@ pub fn handle_fallback_mode_status(_body: &Map<String, Value>) -> Value {
 }
 
 pub fn handle_full_stack_status(_body: &Map<String, Value>) -> Value {
-    let ext = lock_extension();
-    let crash = lock_crash_state();
-    let configs = lock_bottle_configs();
-    let pipelines = lock_pipelines();
-    let logs = lock_translation_logs();
-    let multi_ac = lock_multi_ac();
-    let perf = lock_perf();
+    let ext = lock_extension().clone();
+    let crash = lock_crash_state().clone();
+    let configs_len = lock_bottle_configs().len();
+    let pipelines_len = lock_pipelines().len();
+    let logs_len = lock_translation_logs().len();
+    let multi_ac_len = lock_multi_ac().len();
+    let perf_len = lock_perf().len();
 
     json!({
         "ok": true,
@@ -724,13 +724,13 @@ pub fn handle_full_stack_status(_body: &Map<String, Value>) -> Value {
             "tests": 361,
             "total_lines": 9500,
         },
-        "extension": *ext,
-        "crash_recovery": *crash,
-        "bottles_configured": configs.len(),
-        "pipelines_measured": pipelines.len(),
-        "translations_logged": logs.len(),
-        "anti_cheat_registered": multi_ac.len(),
-        "performance_profiles": perf.len(),
+        "extension": ext,
+        "crash_recovery": crash,
+        "bottles_configured": configs_len,
+        "pipelines_measured": pipelines_len,
+        "translations_logged": logs_len,
+        "anti_cheat_registered": multi_ac_len,
+        "performance_profiles": perf_len,
         "ready_for": "user-mode anti-cheat validation (Phase 9 — deferred until live integration)",
     })
 }
@@ -835,7 +835,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_process_create() {
-        let body: Map<String, Value> = serde_json::from_str("{\"event_source\": \"es_process_create\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"event_source\": \"es_process_create\"}").expect("seed demo json");
         let result = handle_simulate_pipeline(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["pipeline"]["stages"].as_array().unwrap().len() >= 4);
@@ -844,7 +845,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_image_load() {
-        let body: Map<String, Value> = serde_json::from_str("{\"event_source\": \"es_image_load\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"event_source\": \"es_image_load\"}").expect("seed demo json");
         let result = handle_simulate_pipeline(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["passes_budget"].as_bool().unwrap());
@@ -852,7 +854,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_handle_operation() {
-        let body: Map<String, Value> = serde_json::from_str("{\"event_source\": \"handle_operation\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"event_source\": \"handle_operation\"}").expect("seed demo json");
         let result = handle_simulate_pipeline(&body);
         assert!(result["ok"].as_bool().unwrap());
     }
@@ -901,7 +904,8 @@ mod tests {
     #[test]
     fn test_log_translation() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"pid\": 1234, \"nt_syscall\": \"NtCreateFile\", \"latency_us\": 25}").unwrap();
+            serde_json::from_str("{\"pid\": 1234, \"nt_syscall\": \"NtCreateFile\", \"latency_us\": 25}")
+                .expect("seed demo json");
         let result = handle_log_translation(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["log"]["pid"], 1234);
@@ -921,7 +925,8 @@ mod tests {
 
     #[test]
     fn test_register_multi_ac() {
-        let body: Map<String, Value> = serde_json::from_str("{\"ac_name\": \"TestAC\", \"altitude\": 500}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"ac_name\": \"TestAC\", \"altitude\": 500}").expect("seed demo json");
         let result = handle_register_multi_ac(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["registration"]["ac_name"], "TestAC");

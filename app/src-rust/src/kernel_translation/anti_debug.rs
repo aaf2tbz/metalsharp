@@ -355,6 +355,7 @@ pub fn handle_run_all_checks(_body: &Map<String, Value>) -> Value {
         "parent_process_check",
         "thread_hide_from_debugger",
         "debug_register_check",
+        "nt_query_virtual_memory",
     ];
 
     let mut results = Vec::new();
@@ -363,7 +364,8 @@ pub fn handle_run_all_checks(_body: &Map<String, Value>) -> Value {
     let mut drill_count = 0;
 
     for check in &checks {
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"check_type\": \"{}\"}}", check)).unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"check_type\": \"{}\"}}", check)).expect("seed demo json");
         let r = handle_simulate_check(&body);
         let check_result: DebugCheckResult = serde_json::from_value(r["check"].clone()).unwrap();
         if check_result.detected {
@@ -513,7 +515,7 @@ pub fn handle_module_sanitize(body: &Map<String, Value>) -> Value {
             } else {
                 module.clone()
             },
-            visible: !is_wine_internal,
+            visible: !is_wine_internal && !is_suspicious,
             reason: if is_wine_internal {
                 "wine_internal".to_string()
             } else if is_suspicious {
@@ -778,7 +780,8 @@ mod tests {
 
     #[test]
     fn test_peb_being_debugged() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"peb_being_debugged\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"peb_being_debugged\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -787,7 +790,8 @@ mod tests {
 
     #[test]
     fn test_process_debug_port() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"process_debug_port\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"process_debug_port\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -796,7 +800,7 @@ mod tests {
     #[test]
     fn test_process_debug_object_handle() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"check_type\": \"process_debug_object_handle\"}").unwrap();
+            serde_json::from_str("{\"check_type\": \"process_debug_object_handle\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(!result["check"]["detected"].as_bool().unwrap());
@@ -806,7 +810,8 @@ mod tests {
 
     #[test]
     fn test_hardware_breakpoints() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"hardware_breakpoints\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"hardware_breakpoints\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -815,7 +820,8 @@ mod tests {
 
     #[test]
     fn test_timing_check() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"timing_check\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"timing_check\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -823,7 +829,8 @@ mod tests {
 
     #[test]
     fn test_module_enumeration() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"module_enumeration\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"module_enumeration\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -831,7 +838,8 @@ mod tests {
 
     #[test]
     fn test_filesystem_check_type() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"filesystem_check\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"filesystem_check\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["check"]["detected"], false);
@@ -839,7 +847,7 @@ mod tests {
 
     #[test]
     fn test_invalid_check_type() {
-        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"invalid\"}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"check_type\": \"invalid\"}").expect("seed demo json");
         let result = handle_simulate_check(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -875,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_hw_breakpoint_map_invalid_index() {
-        let body: Map<String, Value> = serde_json::from_str("{\"dr_index\": 5}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"dr_index\": 5}").expect("seed demo json");
         let result = handle_hw_breakpoint_map(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -891,7 +899,8 @@ mod tests {
     #[test]
     fn test_module_sanitize() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"modules\": [\"ntdll.dll\", \"ntdll.so\", \"libwine.so\", \"game.exe\"]}").unwrap();
+            serde_json::from_str("{\"modules\": [\"ntdll.dll\", \"ntdll.so\", \"libwine.so\", \"game.exe\"]}")
+                .expect("seed demo json");
         let result = handle_module_sanitize(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["total"], 4);
@@ -901,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_module_sanitize_missing() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_module_sanitize(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }

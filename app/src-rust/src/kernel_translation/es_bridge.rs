@@ -28,7 +28,7 @@ impl CallbackType {
         match self {
             Self::ProcessNotify => &["ES_EVENT_TYPE_NOTIFY_EXEC", "ES_EVENT_TYPE_NOTIFY_EXIT"],
             Self::ThreadNotify => &["ES_EVENT_TYPE_NOTIFY_THREAD"],
-            Self::ImageLoadNotify => &["ES_EVENT_TYPE_NOTIFY_EXEC", "ES_EVENT_TYPE_NOTIFY_MMAP"],
+            Self::ImageLoadNotify => &["ES_EVENT_TYPE_NOTIFY_MMAP"],
         }
     }
 
@@ -806,7 +806,8 @@ mod tests {
 
     #[test]
     fn test_register_process_callback() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         let result = handle_register_callback(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["callback_id"].as_u64().unwrap() > 0);
@@ -823,18 +824,20 @@ mod tests {
 
     #[test]
     fn test_register_image_load_callback() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").expect("seed demo json");
         let result = handle_register_callback(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["registration"]["nt_routine"], "PsSetLoadImageNotifyRoutineEx");
         let es = result["registration"]["es_subscription"].as_array().unwrap();
-        assert!(es.iter().any(|e| e == "ES_EVENT_TYPE_NOTIFY_EXEC"));
         assert!(es.iter().any(|e| e == "ES_EVENT_TYPE_NOTIFY_MMAP"));
+        assert!(!es.iter().any(|e| e == "ES_EVENT_TYPE_NOTIFY_EXEC"));
     }
 
     #[test]
     fn test_register_thread_callback() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"thread_notify\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"thread_notify\"}").expect("seed demo json");
         let result = handle_register_callback(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["registration"]["nt_routine"], "PsSetCreateThreadNotifyRoutineEx");
@@ -842,18 +845,21 @@ mod tests {
 
     #[test]
     fn test_register_unknown_callback_fails() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"unknown\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"unknown\"}").expect("seed demo json");
         let result = handle_register_callback(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
 
     #[test]
     fn test_unregister_callback() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         let result = handle_register_callback(&body);
         let id = result["callback_id"].as_u64().unwrap();
 
-        let unreg: Map<String, Value> = serde_json::from_str(&format!("{{\"callback_id\": {}}}", id)).unwrap();
+        let unreg: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"callback_id\": {}}}", id)).expect("seed demo json");
         let unreg_result = handle_unregister_callback(&unreg);
         assert!(unreg_result["ok"].as_bool().unwrap());
         assert!(unreg_result["removed"].is_object());
@@ -864,14 +870,15 @@ mod tests {
 
     #[test]
     fn test_unregister_unknown_fails() {
-        let body: Map<String, Value> = serde_json::from_str("{\"callback_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"callback_id\": 99999999}").expect("seed demo json");
         let result = handle_unregister_callback(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
 
     #[test]
     fn test_fire_process_created_event() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         handle_register_callback(&reg);
 
         let fire: Map<String, Value> = serde_json::from_str(
@@ -889,7 +896,8 @@ mod tests {
     #[test]
     fn test_fire_process_exit_event() {
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"parent_pid\": 100, \"child_pid\": 200, \"action\": \"exited\"}").unwrap();
+            serde_json::from_str("{\"parent_pid\": 100, \"child_pid\": 200, \"action\": \"exited\"}")
+                .expect("seed demo json");
         let result = handle_fire_process_event(&fire);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["event"]["action"], "Exited");
@@ -897,7 +905,8 @@ mod tests {
 
     #[test]
     fn test_fire_thread_event() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"thread_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"thread_notify\"}").expect("seed demo json");
         handle_register_callback(&reg);
 
         let fire: Map<String, Value> = serde_json::from_str(
@@ -912,7 +921,8 @@ mod tests {
 
     #[test]
     fn test_fire_image_event() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").expect("seed demo json");
         handle_register_callback(&reg);
 
         let fire: Map<String, Value> = serde_json::from_str(
@@ -926,15 +936,18 @@ mod tests {
 
     #[test]
     fn test_dispatch_to_multiple_callbacks() {
-        let reg1: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
-        let reg2: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let reg1: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
+        let reg2: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         let r1 = handle_register_callback(&reg1);
         let r2 = handle_register_callback(&reg2);
         let id1 = r1["callback_id"].as_u64().unwrap();
         let id2 = r2["callback_id"].as_u64().unwrap();
 
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}").unwrap();
+            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}")
+                .expect("seed demo json");
         let result = handle_fire_process_event(&fire);
         let dispatched = result["dispatched_to"].as_array().unwrap();
         assert!(dispatched.iter().any(|d| d.as_u64() == Some(id1)));
@@ -943,12 +956,14 @@ mod tests {
 
     #[test]
     fn test_no_dispatch_to_wrong_callback_type() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"image_load_notify\"}").expect("seed demo json");
         let r = handle_register_callback(&reg);
         let id = r["callback_id"].as_u64().unwrap();
 
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}").unwrap();
+            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}")
+                .expect("seed demo json");
         let result = handle_fire_process_event(&fire);
         let dispatched = result["dispatched_to"].as_array().unwrap();
         assert!(!dispatched.iter().any(|d| d.as_u64() == Some(id)));
@@ -956,7 +971,8 @@ mod tests {
 
     #[test]
     fn test_callback_call_count_tracking() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         let reg_result = handle_register_callback(&reg);
         let cb_id = reg_result["callback_id"].as_u64().unwrap();
 
@@ -987,12 +1003,13 @@ mod tests {
 
     #[test]
     fn test_nt_callback_bridge() {
-        let reg: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
+        let reg: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
         let r = handle_register_callback(&reg);
         let id = r["callback_id"].as_u64().unwrap();
 
         let bridge: Map<String, Value> =
-            serde_json::from_str("{\"nt_routine\": \"PsSetCreateProcessNotifyRoutineEx2\"}").unwrap();
+            serde_json::from_str("{\"nt_routine\": \"PsSetCreateProcessNotifyRoutineEx2\"}").expect("seed demo json");
         let result = handle_nt_callback_bridge(&bridge);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["registered_callbacks"].as_u64().unwrap() >= 1);
@@ -1012,7 +1029,8 @@ mod tests {
         .unwrap();
         handle_fire_process_event(&fire);
 
-        let detect: Map<String, Value> = serde_json::from_str(&format!("{{\"watch_pid\": {}}}", unique_child)).unwrap();
+        let detect: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"watch_pid\": {}}}", unique_child)).expect("seed demo json");
         let result = handle_detect_events(&detect);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["detected_count"].as_u64().unwrap() >= 1);
@@ -1020,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_detect_events_no_match() {
-        let detect: Map<String, Value> = serde_json::from_str("{\"watch_pid\": 99999999}").unwrap();
+        let detect: Map<String, Value> = serde_json::from_str("{\"watch_pid\": 99999999}").expect("seed demo json");
         let result = handle_detect_events(&detect);
         assert_eq!(result["detected_count"], 0);
     }
@@ -1028,7 +1046,8 @@ mod tests {
     #[test]
     fn test_ipc_channel_create() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"direction\": \"bidirectional\", \"message_type\": \"es_event\"}").unwrap();
+            serde_json::from_str("{\"direction\": \"bidirectional\", \"message_type\": \"es_event\"}")
+                .expect("seed demo json");
         let result = handle_create_ipc_channel(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["channel"]["direction"], "bidirectional");
@@ -1038,7 +1057,8 @@ mod tests {
     #[test]
     fn test_list_ipc_channels() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"direction\": \"bidirectional\", \"message_type\": \"es_event\"}").unwrap();
+            serde_json::from_str("{\"direction\": \"bidirectional\", \"message_type\": \"es_event\"}")
+                .expect("seed demo json");
         handle_create_ipc_channel(&body);
 
         let result = handle_ipc_channels(&empty_body());
@@ -1067,8 +1087,10 @@ mod tests {
 
     #[test]
     fn test_list_callbacks() {
-        let reg1: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"process_notify\"}").unwrap();
-        let reg2: Map<String, Value> = serde_json::from_str("{\"callback_type\": \"thread_notify\"}").unwrap();
+        let reg1: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"process_notify\"}").expect("seed demo json");
+        let reg2: Map<String, Value> =
+            serde_json::from_str("{\"callback_type\": \"thread_notify\"}").expect("seed demo json");
         let r1 = handle_register_callback(&reg1);
         let r2 = handle_register_callback(&reg2);
         let id1 = r1["callback_id"].as_u64().unwrap();
@@ -1086,7 +1108,8 @@ mod tests {
     #[test]
     fn test_process_events_list() {
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}").unwrap();
+            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"created\"}")
+                .expect("seed demo json");
         let r = handle_fire_process_event(&fire);
         let eid = r["event_id"].as_u64().unwrap();
 
@@ -1102,7 +1125,8 @@ mod tests {
     #[test]
     fn test_thread_events_list() {
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"process_id\": 1, \"thread_id\": 2, \"action\": \"created\"}").unwrap();
+            serde_json::from_str("{\"process_id\": 1, \"thread_id\": 2, \"action\": \"created\"}")
+                .expect("seed demo json");
         let r = handle_fire_thread_event(&fire);
         let eid = r["event_id"].as_u64().unwrap();
 
@@ -1118,7 +1142,8 @@ mod tests {
     #[test]
     fn test_image_events_list() {
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"process_id\": 1, \"action\": \"loaded\", \"image_name\": \"test.dll\"}").unwrap();
+            serde_json::from_str("{\"process_id\": 1, \"action\": \"loaded\", \"image_name\": \"test.dll\"}")
+                .expect("seed demo json");
         let r = handle_fire_image_event(&fire);
         let eid = r["event_id"].as_u64().unwrap();
 
@@ -1134,14 +1159,15 @@ mod tests {
     #[test]
     fn test_fire_event_invalid_action() {
         let fire: Map<String, Value> =
-            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"invalid\"}").unwrap();
+            serde_json::from_str("{\"parent_pid\": 1, \"child_pid\": 2, \"action\": \"invalid\"}")
+                .expect("seed demo json");
         let result = handle_fire_process_event(&fire);
         assert!(!result["ok"].as_bool().unwrap());
     }
 
     #[test]
     fn test_fire_event_missing_pid() {
-        let fire: Map<String, Value> = serde_json::from_str("{\"action\": \"created\"}").unwrap();
+        let fire: Map<String, Value> = serde_json::from_str("{\"action\": \"created\"}").expect("seed demo json");
         let result = handle_fire_process_event(&fire);
         assert!(!result["ok"].as_bool().unwrap());
     }

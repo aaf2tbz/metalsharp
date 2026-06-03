@@ -335,10 +335,11 @@ pub fn handle_unload_driver(body: &Map<String, Value>) -> Value {
     };
 
     let mut drivers = lock_drivers();
-    match drivers.get_mut(&id) {
-        Some(d) => {
-            d.status = DriverStatus::Unloaded;
-            let removed = d.clone();
+    match drivers.remove(&id) {
+        Some(removed) => {
+            for device_id in &removed.devices {
+                lock_devices().remove(device_id);
+            }
             json!({"ok": true, "unloaded": removed})
         },
         None => json!({"ok": false, "error": format!("driver {} not found", id)}),
@@ -740,7 +741,8 @@ mod tests {
     #[test]
     fn test_load_driver() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"name\": \"TestDriver\", \"extension_type\": \"endpoint_security\"}").unwrap();
+            serde_json::from_str("{\"name\": \"TestDriver\", \"extension_type\": \"endpoint_security\"}")
+                .expect("seed demo json");
         let result = handle_load_driver(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["driver_id"].as_u64().unwrap() > 0);
@@ -750,26 +752,27 @@ mod tests {
 
     #[test]
     fn test_load_driver_missing_name() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_load_driver(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
 
     #[test]
     fn test_unload_driver() {
-        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"UnloadTest\"}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"UnloadTest\"}").expect("seed demo json");
         let r = handle_load_driver(&body);
         let id = r["driver_id"].as_u64().unwrap();
 
-        let unload: Map<String, Value> = serde_json::from_str(&format!("{{\"driver_id\": {}}}", id)).unwrap();
+        let unload: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"driver_id\": {}}}", id)).expect("seed demo json");
         let result = handle_unload_driver(&unload);
         assert!(result["ok"].as_bool().unwrap());
-        assert_eq!(result["unloaded"]["status"], "Unloaded");
+        assert!(result["unloaded"]["devices"].is_array());
     }
 
     #[test]
     fn test_unload_unknown_driver() {
-        let body: Map<String, Value> = serde_json::from_str("{\"driver_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"driver_id\": 99999999}").expect("seed demo json");
         let result = handle_unload_driver(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -783,12 +786,13 @@ mod tests {
 
     #[test]
     fn test_create_device() {
-        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"DevTest\"}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"DevTest\"}").expect("seed demo json");
         let r = handle_load_driver(&body);
         let driver_id = r["driver_id"].as_u64().unwrap();
 
         let dev: Map<String, Value> =
-            serde_json::from_str(&format!("{{\"driver_id\": {}, \"device_name\": \"TestDev0\"}}", driver_id)).unwrap();
+            serde_json::from_str(&format!("{{\"driver_id\": {}, \"device_name\": \"TestDev0\"}}", driver_id))
+                .expect("seed demo json");
         let result = handle_create_device(&dev);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["device_id"].as_u64().unwrap() > 0);
@@ -798,7 +802,7 @@ mod tests {
     #[test]
     fn test_create_device_unknown_driver() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"driver_id\": 99999999, \"device_name\": \"Bad\"}").unwrap();
+            serde_json::from_str("{\"driver_id\": 99999999, \"device_name\": \"Bad\"}").expect("seed demo json");
         let result = handle_create_device(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -811,11 +815,12 @@ mod tests {
 
     #[test]
     fn test_dispatch_irp() {
-        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"IRPTest\"}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"name\": \"IRPTest\"}").expect("seed demo json");
         let r = handle_load_driver(&body);
         let driver_id = r["driver_id"].as_u64().unwrap();
 
-        let dev: Map<String, Value> = serde_json::from_str(&format!("{{\"driver_id\": {}}}", driver_id)).unwrap();
+        let dev: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"driver_id\": {}}}", driver_id)).expect("seed demo json");
         let rd = handle_create_device(&dev);
         let device_id = rd["device_id"].as_u64().unwrap();
 
@@ -833,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_irp_missing_params() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_dispatch_irp(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -841,7 +846,8 @@ mod tests {
     #[test]
     fn test_dispatch_irp_invalid_function() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"driver_id\": 1, \"device_id\": 1, \"major_function\": \"invalid\"}").unwrap();
+            serde_json::from_str("{\"driver_id\": 1, \"device_id\": 1, \"major_function\": \"invalid\"}")
+                .expect("seed demo json");
         let result = handle_dispatch_irp(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -867,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_register_ioctl_missing_code() {
-        let body: Map<String, Value> = serde_json::from_str("{\"nt_name\": \"test\"}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"nt_name\": \"test\"}").expect("seed demo json");
         let result = handle_register_ioctl(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -875,7 +881,8 @@ mod tests {
     #[test]
     fn test_decode_ioctl() {
         let code = encode_ioctl(0x0022, 0x800, 3, METHOD_NEITHER);
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"ioctl_code\": {}}}", code)).unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"ioctl_code\": {}}}", code)).expect("seed demo json");
         let result = handle_decode_ioctl(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["decoded"]["device_type"], format!("0x{:04X}", 0x0022));
@@ -891,7 +898,8 @@ mod tests {
                 .unwrap(),
         );
 
-        let body: Map<String, Value> = serde_json::from_str(&format!("{{\"ioctl_code\": {}}}", code)).unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"ioctl_code\": {}}}", code)).expect("seed demo json");
         let result = handle_decode_ioctl(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["known_mapping"].is_object());

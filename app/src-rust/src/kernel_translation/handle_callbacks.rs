@@ -398,6 +398,14 @@ pub fn handle_simulate_operation(body: &Map<String, Value>) -> Value {
     let requested_access =
         body.get("requested_access").and_then(|v| v.as_u64()).unwrap_or(PROCESS_ALL_ACCESS as u64) as u32;
 
+    if operation == HandleOperation::CloseHandle {
+        return json!({
+            "ok": true,
+            "operation": "close_handle",
+            "note": "NT ObRegisterCallbacks does not fire for CloseHandle — no pre/post callback dispatched",
+        });
+    }
+
     let operation_id = NEXT_OPERATION_ID.fetch_add(1, Ordering::Relaxed);
     let now = now_ms();
 
@@ -698,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_register_default_ops() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_register_callback(&body);
         assert!(result["ok"].as_bool().unwrap());
         let ops = result["registration"]["operations"].as_array().unwrap();
@@ -707,18 +715,20 @@ mod tests {
 
     #[test]
     fn test_unregister_callback() {
-        let body: Map<String, Value> = serde_json::from_str("{\"operations\": [\"open_process\"]}").unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"operations\": [\"open_process\"]}").expect("seed demo json");
         let r = handle_register_callback(&body);
         let id = r["registration_id"].as_u64().unwrap();
 
-        let unreg: Map<String, Value> = serde_json::from_str(&format!("{{\"registration_id\": {}}}", id)).unwrap();
+        let unreg: Map<String, Value> =
+            serde_json::from_str(&format!("{{\"registration_id\": {}}}", id)).expect("seed demo json");
         let result = handle_unregister_callback(&unreg);
         assert!(result["ok"].as_bool().unwrap());
     }
 
     #[test]
     fn test_unregister_unknown() {
-        let body: Map<String, Value> = serde_json::from_str("{\"registration_id\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"registration_id\": 99999999}").expect("seed demo json");
         let result = handle_unregister_callback(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -770,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_unprotect_unknown() {
-        let body: Map<String, Value> = serde_json::from_str("{\"pid\": 99999999}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{\"pid\": 99999999}").expect("seed demo json");
         let result = handle_unprotect_process(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -824,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_simulate_missing_params() {
-        let body: Map<String, Value> = serde_json::from_str("{}").unwrap();
+        let body: Map<String, Value> = serde_json::from_str("{}").expect("seed demo json");
         let result = handle_simulate_operation(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
@@ -832,7 +842,8 @@ mod tests {
     #[test]
     fn test_simulate_invalid_operation() {
         let body: Map<String, Value> =
-            serde_json::from_str("{\"operation\": \"invalid\", \"source_pid\": 1, \"target_pid\": 2}").unwrap();
+            serde_json::from_str("{\"operation\": \"invalid\", \"source_pid\": 1, \"target_pid\": 2}")
+                .expect("seed demo json");
         let result = handle_simulate_operation(&body);
         assert!(!result["ok"].as_bool().unwrap());
     }
