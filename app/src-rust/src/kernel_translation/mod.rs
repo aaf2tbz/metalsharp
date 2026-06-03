@@ -7,6 +7,7 @@ pub mod es_bridge;
 pub mod handle_bridge;
 pub mod handle_callbacks;
 pub mod handle_table;
+pub mod integration;
 mod nt_to_xnu;
 pub mod probe;
 pub mod thread_notify;

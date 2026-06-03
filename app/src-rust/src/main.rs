@@ -1260,6 +1260,86 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::anti_debug::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/integration/extension-install") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_install(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-activate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_activate(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-deactivate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_deactivate(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-crash") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_simulate_crash(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/simulate-pipeline") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_simulate_pipeline(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-configure") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_configure(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-get-config") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_get_config(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-list-configs") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_list_configs(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_runtime_doctor(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/log-translation") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_log_translation(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/query-translation-log") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_query_translation_log(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/register-multi-ac") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_register_multi_ac(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/list-multi-ac") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_list_multi_ac(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/simulate-conflict") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_simulate_conflict(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/performance-profile") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_performance_profile(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/list-performance") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_list_performance(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/fallback-mode") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_fallback_mode_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/full-stack-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_full_stack_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_seed_demo(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

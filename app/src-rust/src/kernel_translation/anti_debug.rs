@@ -779,9 +779,8 @@ mod tests {
 
     #[test]
     fn test_process_debug_object_handle() {
-        let body: Map<String, Value> = serde_json::from_str(
-            "{\"check_type\": \"process_debug_object_handle\"}"
-        ).unwrap();
+        let body: Map<String, Value> =
+            serde_json::from_str("{\"check_type\": \"process_debug_object_handle\"}").unwrap();
         let result = handle_simulate_check(&body);
         assert!(result["ok"].as_bool().unwrap());
         assert!(!result["check"]["detected"].as_bool().unwrap());
