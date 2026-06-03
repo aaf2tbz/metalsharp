@@ -21,6 +21,7 @@ mod anticheat;
 mod bottles;
 mod d3d12_runtime_doctor;
 mod installer;
+mod kernel_translation;
 mod launch;
 mod launcher_evidence;
 mod migrate;
@@ -882,6 +883,462 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/anticheat-substrate-decision") => {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
+        },
+        (Method::Post, "/kernel-translation/probe") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_kernel_translation_probe(&body))
+        },
+        (Method::Post, "/kernel-translation/host-probe") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::probe::handle_kernel_probe(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/create") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_create(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/close") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_close(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/duplicate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_duplicate(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/query") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_query(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/enumerate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_enumerate(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/system-info") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_system_handle_information(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/table-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_table_status(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_table::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/enumerate-fds") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_enumerate_fds(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/enumerate-ports") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_enumerate_ports(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/unified-snapshot") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_unified_snapshot(&body))
+        },
+        (Method::Post, "/kernel-translation/handle/snapshot-all") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_bridge::handle_snapshot_all(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/query-signing-level") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_query_signing_level(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/query-process-signing") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_query_process_signing(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/register-pe-module") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_register_pe_module(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/register-macho-module") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_register_macho_module(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/set-cached-signing-level") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_set_cached_signing_level(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/list-modules") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_list_signed_modules(&body))
+        },
+        (Method::Post, "/kernel-translation/integrity/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::code_integrity::handle_seed_integrity_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/queue") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_queue_apc(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/test-alert") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_test_alert(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/wait-alertable") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_wait_alertable(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/allocate-trampoline") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_allocate_trampoline(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/suspend-thread") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_suspend_thread(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/get-thread-context") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_get_thread_context(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/set-thread-context") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_set_thread_context(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/inject-sequence") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_inject_apc_sequence(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/queue-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_apc_queue_status(&body))
+        },
+        (Method::Post, "/kernel-translation/apc/trampoline-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::apc::handle_trampoline_status(&body))
+        },
+        (Method::Post, "/kernel-translation/es/register-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_register_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/es/unregister-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_unregister_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/es/list-callbacks") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_list_callbacks(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-process-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_process_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-thread-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_thread_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/fire-image-event") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_fire_image_event(&body))
+        },
+        (Method::Post, "/kernel-translation/es/process-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_process_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/thread-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_thread_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/image-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_image_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/create-ipc-channel") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_create_ipc_channel(&body))
+        },
+        (Method::Post, "/kernel-translation/es/ipc-channels") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_ipc_channels(&body))
+        },
+        (Method::Post, "/kernel-translation/es/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_es_status(&body))
+        },
+        (Method::Post, "/kernel-translation/es/detect-events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_detect_events(&body))
+        },
+        (Method::Post, "/kernel-translation/es/nt-callback-bridge") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_nt_callback_bridge(&body))
+        },
+        (Method::Post, "/kernel-translation/es/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_bridge::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/snapshot") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_snapshot_threads(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/compute-delta") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_compute_delta(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/create-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_create_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/destroy-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_destroy_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/list-watchers") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_list_watchers(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/poll-watcher") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_poll_watcher(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/info") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_thread_info(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/list-deltas") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_list_deltas(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/configure-notifications") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_configure_notifications(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/mechanism-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_mechanism_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/watcher-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_watcher_status(&body))
+        },
+        (Method::Post, "/kernel-translation/thread/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::thread_notify::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/register-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_register_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/unregister-callback") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_unregister_callback(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/list-registrations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_list_registrations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/protect-process") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_protect_process(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/unprotect-process") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_unprotect_process(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/list-protected") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_list_protected(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/simulate-operation") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_simulate_operation(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/pre-operations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_pre_operations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/post-operations") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_post_operations(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/access-log") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_access_log(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/capability-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_capability_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/ob/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::handle_callbacks::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/load") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_load_driver(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/unload") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_unload_driver(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_drivers(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/create-device") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_create_device(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-devices") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_devices(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/dispatch-irp") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_dispatch_irp(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-irps") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_irps(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/register-ioctl") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_register_ioctl(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/decode-ioctl") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_decode_ioctl(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/list-ioctls") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_list_ioctls(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/type-mapping-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_type_mapping_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/extension-template") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_extension_template(&body))
+        },
+        (Method::Post, "/kernel-translation/driver/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::driver_model::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/simulate-check") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_simulate_check(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/run-all-checks") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_run_all_checks(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/check-results") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_check_results(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/hw-breakpoint-map") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_hw_breakpoint_map(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/full-breakpoint-map") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_full_breakpoint_map(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/module-sanitize") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_module_sanitize(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/add-sanitize-rule") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_add_sanitize_rule(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/timing-analysis") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_timing_analysis(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/filesystem-check") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_filesystem_check(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/status-survey") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_status_survey(&body))
+        },
+        (Method::Post, "/kernel-translation/anti-debug/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::anti_debug::handle_seed_demo(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-install") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_install(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-activate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_activate(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-deactivate") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_deactivate(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-crash") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_simulate_crash(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/extension-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_extension_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/simulate-pipeline") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_simulate_pipeline(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-configure") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_configure(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-get-config") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_get_config(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/bottle-list-configs") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_bottle_list_configs(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/runtime-doctor") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_runtime_doctor(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/log-translation") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_log_translation(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/query-translation-log") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_query_translation_log(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/register-multi-ac") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_register_multi_ac(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/list-multi-ac") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_list_multi_ac(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/simulate-conflict") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_simulate_conflict(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/performance-profile") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_performance_profile(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/list-performance") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_list_performance(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/fallback-mode") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_fallback_mode_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/full-stack-status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_full_stack_status(&body))
+        },
+        (Method::Post, "/kernel-translation/integration/seed-demo") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::integration::handle_seed_demo(&body))
         },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
