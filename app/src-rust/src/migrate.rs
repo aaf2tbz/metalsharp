@@ -590,20 +590,38 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut cmd, runtime_wine);
 
-    let mut child = cmd.spawn().map_err(|e| format!("spawn wineboot for {}: {}", prefix.display(), e))?;
-    for _ in 0..240 {
-        if let Some(status) = child.try_wait().map_err(|e| format!("wait wineboot for {}: {}", prefix.display(), e))? {
+    log_to_file(&format!("Starting wineboot -u for prefix: {}", prefix.display()));
+
+    let mut child = cmd.spawn().map_err(|e| {
+        log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
+        format!("spawn wineboot for {}: {}", prefix.display(), e)
+    })?;
+    
+    for attempt in 0..240 {
+        if let Some(status) = child.try_wait().map_err(|e| {
+            log_to_file(&format!("Failed to wait for wineboot for {}: {}", prefix.display(), e));
+            format!("wait wineboot for {}: {}", prefix.display(), e)
+        })? {
             if status.success() {
+                log_to_file(&format!("wineboot -u completed successfully for prefix: {}", prefix.display()));
                 return Ok(());
             }
-            return Err(format!("wineboot -u failed for {} with {}", prefix.display(), status));
+            let error_msg = format!("wineboot -u failed for {} with exit code: {:?}", prefix.display(), status.code());
+            log_to_file(&error_msg);
+            return Err(error_msg);
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
+        
+        if attempt == 120 {
+            log_to_file(&format!("wineboot -u still running after 60 seconds for prefix: {}", prefix.display()));
+        }
     }
 
+    let error_msg = format!("wineboot -u timed out (120 seconds) for {}", prefix.display());
+    log_to_file(&error_msg);
     let _ = child.kill();
     let _ = child.wait();
-    Err(format!("wineboot -u timed out for {}", prefix.display()))
+    Err(error_msg)
 }
 
 fn temp_suffix() -> u128 {

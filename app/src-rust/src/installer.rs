@@ -241,18 +241,30 @@ fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
 
     for asset in runtime_bundle_assets_for_host() {
         let had_local = bundled_file_valid_exists(asset);
-        match find_bundled_file(asset) {
-            Some(path) if file_nonempty(&path) => {
-                downloaded |= !had_local;
+        if had_local {
+            continue;
+        }
+
+        write_progress(2, 12, "Runtime Bundle Downloads", "downloading", &format!("Downloading {}...", asset), None);
+        match download_bundled_file(asset) {
+            Some(path) if file_nonempty(&path) && bundled_artifact_valid(asset, &path) => {
+                downloaded = true;
+                write_progress(2, 12, "Runtime Bundle Downloads", "done", &format!("Downloaded {}", asset), None);
             },
-            _ => missing.push(*asset),
+            _ => {
+                missing.push(*asset);
+                write_progress(2, 12, "Runtime Bundle Downloads", "error", &format!("Failed to download {}", asset), Some(&format!("Missing bundle: {}", asset)));
+            },
         }
     }
 
     if missing.is_empty() {
         Ok(downloaded)
     } else {
-        Err(format!("Missing required runtime bundle asset(s): {}", missing.join(", ")))
+        Err(format!(
+            "Missing required runtime bundle asset(s) that could not be downloaded: {}. Please check your internet connection and try again.",
+            missing.join(", ")
+        ))
     }
 }
 
@@ -1335,6 +1347,65 @@ fn find_bundled_archive(name: &str) -> Option<PathBuf> {
     download_from_github_release(&format!("{}.tar.zst", name))
 }
 
+fn download_bundled_file(name: &str) -> Option<PathBuf> {
+    let cache_dir = crate::platform::metalsharp_home_dir().join("cache").join("bundles");
+    let _ = fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join(name);
+    let tmp = cache_dir.join(format!("{}.download", name));
+
+    if file_nonempty(&cached) && bundled_artifact_valid(name, &cached) {
+        return Some(cached);
+    }
+
+    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", name);
+
+    let _ = fs::remove_file(&tmp);
+    
+    for retry in 0..3 {
+        let output = Command::new("curl")
+            .args([
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--retry", "2",
+                "--connect-timeout", "30",
+                "--max-time", "600",
+                "-o",
+            ])
+            .arg(&tmp)
+            .arg(&url)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() && file_nonempty(&tmp) => {
+                if bundled_artifact_valid(name, &tmp) {
+                    if fs::rename(&tmp, &cached).is_ok() {
+                        return Some(cached);
+                    }
+                } else {
+                    let _ = fs::remove_file(&tmp);
+                    return None;
+                }
+            },
+            Ok(_) => {
+                let _ = fs::remove_file(&tmp);
+                if retry < 2 {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            },
+            Err(_) => {
+                let _ = fs::remove_file(&tmp);
+                if retry < 2 {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            },
+        }
+    }
+
+    None
+}
+
 fn find_bundled_file(name: &str) -> Option<PathBuf> {
     if let Some(resources) = crate::platform::app_resources_dir() {
         let file = resources.join(format!("bundles/{}", name));
@@ -1348,45 +1419,11 @@ fn find_bundled_file(name: &str) -> Option<PathBuf> {
         return Some(dev);
     }
 
-    download_from_github_release(name)
+    download_bundled_file(name)
 }
 
 fn download_from_github_release(filename: &str) -> Option<PathBuf> {
-    let cache_dir = crate::platform::metalsharp_home_dir().join("cache").join("bundles");
-    let _ = fs::create_dir_all(&cache_dir);
-    let cached = cache_dir.join(filename);
-    let tmp = cache_dir.join(format!("{}.download", filename));
-
-    if file_nonempty(&cached) && bundled_artifact_valid(filename, &cached) {
-        return Some(cached);
-    }
-    if filename == "dxmt.tar.zst" {
-        let _ = fs::remove_file(&cached);
-    }
-
-    let url = format!("https://github.com/aaf2tbz/metalsharp/releases/download/bundles/{}", filename);
-
-    let _ = fs::remove_file(&tmp);
-    let output = Command::new("curl")
-        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "--connect-timeout", "20", "-o"])
-        .arg(&tmp)
-        .arg(&url)
-        .output()
-        .ok()?;
-
-    if output.status.success()
-        && file_nonempty(&tmp)
-        && bundled_artifact_valid(filename, &tmp)
-        && fs::rename(&tmp, &cached).or_else(|_| fs::copy(&tmp, &cached).map(|_| ())).is_ok()
-        && file_nonempty(&cached)
-    {
-        let _ = fs::remove_file(&tmp);
-        return Some(cached);
-    }
-
-    let _ = fs::remove_file(&tmp);
-    let _ = fs::remove_file(&cached);
-    None
+    download_bundled_file(filename)
 }
 
 fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
@@ -1724,6 +1761,53 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
         ))
+    }
+
+    #[test]
+    fn bundled_file_valid_exists_rejects_empty_files() {
+        let home = test_home("empty-file-validation");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let bundles_dir = ms_dir.join("cache").join("bundles");
+        fs::create_dir_all(&bundles_dir).expect("create bundles dir");
+        
+        let empty_file = bundles_dir.join("metalsharp-runtime.tar.zst");
+        fs::write(&empty_file, b"").expect("create empty file");
+        
+        assert!(!bundled_file_valid_exists("metalsharp-runtime.tar.zst"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn bundled_file_valid_exists_rejects_nonexistent_files() {
+        assert!(!bundled_file_valid_exists("metalsharp-runtime.tar.zst"));
+    }
+
+    #[test]
+    fn bundled_file_valid_exists_rejects_invalid_archives() {
+        let home = test_home("invalid-archive-validation");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let bundles_dir = ms_dir.join("cache").join("bundles");
+        fs::create_dir_all(&bundles_dir).expect("create bundles dir");
+        
+        let invalid_file = bundles_dir.join("metalsharp-runtime.tar.zst");
+        fs::write(&invalid_file, b"not a valid zst archive").expect("create invalid archive");
+        
+        assert!(!bundled_file_valid_exists("metalsharp-runtime.tar.zst"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn bundled_artifact_valid_accepts_non_bundle_files() {
+        let home = test_home("non-bundle-file");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let bundles_dir = ms_dir.join("cache").join("bundles");
+        fs::create_dir_all(&bundles_dir).expect("create bundles dir");
+        
+        let non_bundle = bundles_dir.join("other-file.bin");
+        fs::write(&non_bundle, b"some content").expect("create non-bundle file");
+        
+        assert!(bundled_artifact_valid("other-file.bin", &non_bundle));
+        let _ = fs::remove_dir_all(home);
     }
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {
