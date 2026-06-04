@@ -111,24 +111,15 @@ def check_workflows() -> None:
     for required in ["Shell CI", "Metal CI", "Vue CI", "Rust CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
         if required not in main:
             fail(f"main CI missing validation job: {required}")
-    for required in ["Verify Developer SDK Bundle", "Build DMG", "Verify DMG runtime assets"]:
-        if required not in main:
-            fail(f"main CI missing staging job: {required}")
-    for required in [
+    for forbidden in [
+        "Verify Developer SDK Bundle",
+        "Build DMG",
+        "Package DMG",
+        "Verify DMG runtime assets",
         "metalsharp-build-artifacts",
-        "Build C++ engine and host runtime ABI",
-        "cmake --build . --parallel",
-        "cp libd3d11.dylib libd3d12.dylib libdxgi.dylib",
-        "Download build artifacts",
-        "path: app",
-        "Verify downloaded build artifacts",
-        "app/src-rust/target/release/metalsharp-backend",
-        "app/native/libd3d12.dylib",
-        "app/native/metalsharp_launcher",
-        "app/native/host/libmetalsharp_host_runtime.dylib",
     ]:
-        if required not in main:
-            fail(f"main CI missing build artifact handoff contract: {required}")
+        if forbidden in main:
+            fail(f"main CI should not run the full DMG build path: {forbidden}")
     if "group: metalsharp-developer-sdk-bundles" in main:
         fail("main CI verifier must not share the release SDK publish concurrency group")
 
