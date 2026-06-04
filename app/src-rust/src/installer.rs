@@ -1480,16 +1480,43 @@ fn archive_required_files_valid(path: &Path, required_files: &[&str]) -> bool {
         return false;
     }
 
-    let status = Command::new("tar")
-        .args(["--use-compress-program=unzstd", "-xf"])
-        .arg(path)
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            let _ = fs::remove_dir_all(&tmp);
+            return false;
+        },
+    };
+    let mut decoder = match zstd::Decoder::new(file) {
+        Ok(d) => d,
+        Err(_) => {
+            let _ = fs::remove_dir_all(&tmp);
+            return false;
+        },
+    };
+
+    let mut tar_cmd = match Command::new("tar")
+        .args(["-xf", "-"])
         .arg("-C")
         .arg(&tmp)
         .args(required_files)
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status();
-    let ready = status.map(|s| s.success()).unwrap_or(false)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            let _ = fs::remove_dir_all(&tmp);
+            return false;
+        },
+    };
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        let _ = std::io::copy(&mut decoder, &mut stdin);
+    }
+
+    let ready = tar_cmd.wait().map(|s| s.success()).unwrap_or(false)
         && required_files.iter().all(|required| file_nonempty(&tmp.join(required)));
     let _ = fs::remove_dir_all(&tmp);
     ready
