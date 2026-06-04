@@ -22,6 +22,9 @@ typedef NTSTATUS(WINAPI* NtQueryInformationProcess_t)(HANDLE, ULONG, PVOID, ULON
 typedef NTSTATUS(WINAPI* NtClose_t)(HANDLE);
 typedef NTSTATUS(WINAPI* NtDeviceIoControlFile_t)(HANDLE, HANDLE, PVOID, PVOID, PIO_STATUS_BLOCK, ULONG, PVOID, ULONG,
                                                   PVOID, ULONG);
+typedef NTSTATUS(WINAPI* NtQueryVirtualMemory_t)(HANDLE, PVOID, ULONG, PVOID, ULONG, PULONG);
+typedef NTSTATUS(WINAPI* NtQueryObject_t)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+typedef NTSTATUS(WINAPI* NtSetInformationThread_t)(HANDLE, ULONG, PVOID, ULONG);
 
 static NtOpenProcess_t real_NtOpenProcess = NULL;
 static NtOpenThread_t real_NtOpenThread = NULL;
@@ -29,6 +32,9 @@ static NtQuerySystemInformation_t real_NtQuerySystemInformation = NULL;
 static NtQueryInformationProcess_t real_NtQueryInformationProcess = NULL;
 static NtClose_t real_NtClose = NULL;
 static NtDeviceIoControlFile_t real_NtDeviceIoControlFile = NULL;
+static NtQueryVirtualMemory_t real_NtQueryVirtualMemory = NULL;
+static NtQueryObject_t real_NtQueryObject = NULL;
+static NtSetInformationThread_t real_NtSetInformationThread = NULL;
 
 static HANDLE get_real_ntdll_fn(const char* name) {
     static HMODULE ntdll_base = NULL;
@@ -52,6 +58,9 @@ static void load_real_functions(void) {
     real_NtQueryInformationProcess = (NtQueryInformationProcess_t)get_real_ntdll_fn("NtQueryInformationProcess");
     real_NtClose = (NtClose_t)get_real_ntdll_fn("NtClose");
     real_NtDeviceIoControlFile = (NtDeviceIoControlFile_t)get_real_ntdll_fn("NtDeviceIoControlFile");
+    real_NtQueryVirtualMemory = (NtQueryVirtualMemory_t)get_real_ntdll_fn("NtQueryVirtualMemory");
+    real_NtQueryObject = (NtQueryObject_t)get_real_ntdll_fn("NtQueryObject");
+    real_NtSetInformationThread = (NtSetInformationThread_t)get_real_ntdll_fn("NtSetInformationThread");
 }
 
 static BOOL send_all(SOCKET s, const void* buf, int len) {
@@ -369,6 +378,86 @@ NTSTATUS ms_hook_nt_device_io_control_file(HANDLE FileHandle, HANDLE Event, PVOI
     if (real_NtDeviceIoControlFile)
         return real_NtDeviceIoControlFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode,
                                           InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength);
+
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS ms_hook_nt_query_virtual_memory(HANDLE ProcessHandle, PVOID BaseAddress, ULONG MemoryInformationClass,
+                                         PVOID MemoryInformation, ULONG MemoryInformationLength, PULONG ReturnLength) {
+    if (g_ctx.ipc_connected) {
+        MS_IPC_NT_QUERY_VIRTUAL_MEMORY_REQ req = {
+            .process_handle = (UINT64)(ULONG_PTR)ProcessHandle,
+            .base_address = (UINT64)(ULONG_PTR)BaseAddress,
+            .info_class = MemoryInformationClass,
+            .buffer_length = MemoryInformationLength,
+        };
+        MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP resp = {0};
+
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_VIRTUAL_MEMORY, &req, sizeof(req), &resp, sizeof(resp));
+
+        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
+            if (ReturnLength)
+                *ReturnLength = resp.return_length;
+            if (MemoryInformation && MemoryInformationLength >= sizeof(MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP)) {
+                memcpy(MemoryInformation, &resp, sizeof(resp));
+            }
+            return STATUS_SUCCESS;
+        }
+    }
+
+    if (real_NtQueryVirtualMemory)
+        return real_NtQueryVirtualMemory(ProcessHandle, BaseAddress, MemoryInformationClass, MemoryInformation,
+                                         MemoryInformationLength, ReturnLength);
+
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS ms_hook_nt_query_object(HANDLE Handle, ULONG ObjectInformationClass, PVOID ObjectInformation,
+                                 ULONG ObjectInformationLength, PULONG ReturnLength) {
+    if (g_ctx.ipc_connected) {
+        MS_IPC_NT_QUERY_OBJECT_REQ req = {
+            .handle = (UINT64)(ULONG_PTR)Handle,
+            .info_class = ObjectInformationClass,
+            .buffer_length = ObjectInformationLength,
+        };
+        MS_IPC_NT_QUERY_OBJECT_RESP resp = {0};
+
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_OBJECT, &req, sizeof(req), &resp, sizeof(resp));
+
+        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
+            if (ReturnLength)
+                *ReturnLength = resp.return_length;
+            return STATUS_SUCCESS;
+        }
+    }
+
+    if (real_NtQueryObject)
+        return real_NtQueryObject(Handle, ObjectInformationClass, ObjectInformation, ObjectInformationLength,
+                                  ReturnLength);
+
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS ms_hook_nt_set_information_thread(HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation,
+                                           ULONG ThreadInformationLength) {
+    if (g_ctx.ipc_connected) {
+        MS_IPC_NT_SET_INFORMATION_THREAD_REQ req = {
+            .thread_handle = (UINT64)(ULONG_PTR)ThreadHandle,
+            .info_class = ThreadInformationClass,
+            .buffer_length = ThreadInformationLength,
+        };
+        MS_IPC_NT_SET_INFORMATION_THREAD_RESP resp = {0};
+
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_SET_INFORMATION_THREAD, &req, sizeof(req), &resp, sizeof(resp));
+
+        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
+            return STATUS_SUCCESS;
+        }
+    }
+
+    if (real_NtSetInformationThread)
+        return real_NtSetInformationThread(ThreadHandle, ThreadInformationClass, ThreadInformation,
+                                           ThreadInformationLength);
 
     return STATUS_NOT_IMPLEMENTED;
 }

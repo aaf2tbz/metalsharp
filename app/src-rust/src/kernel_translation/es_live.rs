@@ -59,6 +59,28 @@ mod es_dylib {
     pub type FnEsSubscribe = unsafe extern "C" fn(es_client_t, *const u32, usize) -> u32;
     pub type FnEsUnsubscribeAll = unsafe extern "C" fn(es_client_t) -> u32;
 
+    #[repr(C)]
+    pub struct EsMessageHeader {
+        pub version: u32,
+        _reserve: u32,
+        pub time: u64,
+        pub mach_time: u64,
+        pub process: *mut EsProcess,
+        pub action_type: u32,
+        pub action: [u64; 1],
+        pub event_type: u32,
+    }
+
+    #[repr(C)]
+    pub struct EsProcess {
+        pub audit_token: [u8; 32],
+        pub ppid: u32,
+    }
+
+    pub fn pid_from_audit_token(token: &[u8; 32]) -> u32 {
+        u32::from_be_bytes([token[8], token[9], token[10], token[11]])
+    }
+
     pub struct EsFunctionTable {
         pub es_new_client: FnEsNewClient,
         pub es_delete_client: FnEsDeleteClient,
@@ -187,9 +209,50 @@ pub fn handle_es_live_start(_body: &serde_json::Map<String, Value>) -> Value {
 
         let mut client: es_client_t = std::ptr::null_mut();
 
-        extern "C" fn es_message_handler(_msg: *mut std::os::raw::c_void) {
-            // Real handler would parse the es_message_t struct and dispatch events.
-            // For now events are pushed by the subscribe loop polling approach.
+        extern "C" fn es_message_handler(msg: *mut std::os::raw::c_void) {
+            if msg.is_null() {
+                return;
+            }
+            let message = unsafe { &*(msg as *const EsMessageHeader) };
+            if message.process.is_null() {
+                return;
+            }
+            let proc_ref = unsafe { &*message.process };
+            let pid = pid_from_audit_token(&proc_ref.audit_token);
+            let ppid = proc_ref.ppid;
+            let event_type = if message.version >= 4 {
+                message.event_type
+            } else {
+                unsafe { *((msg as *const u8).add(40) as *const u32) }
+            };
+            let exe_path = read_exe_path(pid);
+            let seq = NEXT_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
+            let ts = now_us();
+            let type_name = match event_type {
+                1 => "EXEC",
+                2 => "EXIT",
+                3 => "FORK",
+                14 => "MMAP",
+                _ => "UNKNOWN",
+            };
+            push_event(LiveEsEvent {
+                seq,
+                event_type: type_name.to_string(),
+                pid,
+                ppid,
+                tid: 0,
+                executable_path: exe_path.clone(),
+                timestamp_us: ts,
+            });
+            match event_type {
+                1 | 3 => {
+                    record_process_created(pid, ppid, exe_path);
+                },
+                2 => {
+                    record_process_exited(pid);
+                },
+                _ => {},
+            }
         }
 
         let result = unsafe { (table.es_new_client)(&mut client, es_message_handler) };

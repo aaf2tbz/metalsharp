@@ -158,6 +158,46 @@ typedef struct _MS_IPC_GENERIC_RESP {
     INT32 nt_status;
     UINT32 data_length;
 } MS_IPC_GENERIC_RESP;
+
+typedef struct _MS_IPC_NT_QUERY_VIRTUAL_MEMORY_REQ {
+    UINT64 process_handle;
+    UINT64 base_address;
+    UINT32 info_class;
+    UINT32 buffer_length;
+} MS_IPC_NT_QUERY_VIRTUAL_MEMORY_REQ;
+
+typedef struct _MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP {
+    INT32 nt_status;
+    UINT32 return_length;
+    UINT32 buffer_length;
+    UINT64 allocation_base;
+    UINT64 allocation_size;
+    UINT32 state;
+    UINT32 protect;
+    UINT32 type;
+} MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP;
+
+typedef struct _MS_IPC_NT_QUERY_OBJECT_REQ {
+    UINT64 handle;
+    UINT32 info_class;
+    UINT32 buffer_length;
+} MS_IPC_NT_QUERY_OBJECT_REQ;
+
+typedef struct _MS_IPC_NT_QUERY_OBJECT_RESP {
+    INT32 nt_status;
+    UINT32 return_length;
+    UINT32 buffer_length;
+} MS_IPC_NT_QUERY_OBJECT_RESP;
+
+typedef struct _MS_IPC_NT_SET_INFORMATION_THREAD_REQ {
+    UINT64 thread_handle;
+    UINT32 info_class;
+    UINT32 buffer_length;
+} MS_IPC_NT_SET_INFORMATION_THREAD_REQ;
+
+typedef struct _MS_IPC_NT_SET_INFORMATION_THREAD_RESP {
+    INT32 nt_status;
+} MS_IPC_NT_SET_INFORMATION_THREAD_RESP;
 #pragma pack(pop)
 
 typedef struct _MS_HOOK_CONTEXT {
@@ -192,5 +232,14 @@ NTSTATUS ms_hook_nt_close(HANDLE Handle);
 NTSTATUS ms_hook_nt_device_io_control_file(HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext,
                                            PIO_STATUS_BLOCK IoStatusBlock, ULONG IoControlCode, PVOID InputBuffer,
                                            ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength);
+
+NTSTATUS ms_hook_nt_query_virtual_memory(HANDLE ProcessHandle, PVOID BaseAddress, ULONG MemoryInformationClass,
+                                         PVOID MemoryInformation, ULONG MemoryInformationLength, PULONG ReturnLength);
+
+NTSTATUS ms_hook_nt_query_object(HANDLE Handle, ULONG ObjectInformationClass, PVOID ObjectInformation,
+                                 ULONG ObjectInformationLength, PULONG ReturnLength);
+
+NTSTATUS ms_hook_nt_set_information_thread(HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation,
+                                           ULONG ThreadInformationLength);
 
 #endif

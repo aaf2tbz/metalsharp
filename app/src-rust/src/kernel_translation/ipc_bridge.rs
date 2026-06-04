@@ -15,7 +15,10 @@ const OP_NT_OPEN_PROCESS: u16 = 0x0001;
 const OP_NT_OPEN_THREAD: u16 = 0x0002;
 const OP_NT_QUERY_SYSTEM_INFO: u16 = 0x0003;
 const OP_NT_QUERY_INFORMATION_PROC: u16 = 0x0004;
+const OP_NT_QUERY_OBJECT: u16 = 0x0005;
+const OP_NT_SET_INFORMATION_THREAD: u16 = 0x0006;
 const OP_NT_CLOSE: u16 = 0x0007;
+const OP_NT_QUERY_VIRTUAL_MEMORY: u16 = 0x0009;
 const OP_NT_DEVICE_IO_CONTROL: u16 = 0x000D;
 
 const STATUS_SUCCESS: i32 = 0;
@@ -148,7 +151,10 @@ fn handle_ipc_request(operation: u16, body: &[u8]) -> Vec<u8> {
         OP_NT_OPEN_THREAD => handle_nt_open_thread(body),
         OP_NT_QUERY_SYSTEM_INFO => handle_nt_query_system_info(body),
         OP_NT_QUERY_INFORMATION_PROC => handle_nt_query_info_process(body),
+        OP_NT_QUERY_OBJECT => handle_nt_query_object(body),
+        OP_NT_SET_INFORMATION_THREAD => handle_nt_set_information_thread(body),
         OP_NT_CLOSE => handle_nt_close(body),
+        OP_NT_QUERY_VIRTUAL_MEMORY => handle_nt_query_virtual_memory(body),
         OP_NT_DEVICE_IO_CONTROL => handle_nt_device_io_control(body),
         _ => {
             let mut resp = Vec::with_capacity(8);
@@ -375,6 +381,109 @@ fn handle_nt_device_io_control(body: &[u8]) -> Vec<u8> {
             resp.extend_from_slice(&pack_u32(0));
             resp
         },
+    }
+}
+
+fn handle_nt_query_virtual_memory(body: &[u8]) -> Vec<u8> {
+    if body.len() < 20 {
+        let mut resp = Vec::with_capacity(32);
+        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
+        resp.extend_from_slice(&pack_u32(0));
+        resp.extend_from_slice(&pack_u32(0));
+        resp.extend_from_slice(&pack_u64(0));
+        resp.extend_from_slice(&pack_u64(0));
+        resp.extend_from_slice(&pack_u32(0));
+        resp.extend_from_slice(&pack_u32(0));
+        resp.extend_from_slice(&pack_u32(0));
+        return resp;
+    }
+    let _process_handle = unpack_u64(body, 0);
+    let base_address = unpack_u64(body, 8);
+    let info_class = unpack_u32(body, 16);
+    let _buf_len = unpack_u32(body, 20);
+
+    match info_class {
+        0x00 => {
+            let mut resp = Vec::with_capacity(32);
+            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
+            resp.extend_from_slice(&pack_u32(48));
+            resp.extend_from_slice(&pack_u32(48));
+            resp.extend_from_slice(&pack_u64(base_address));
+            resp.extend_from_slice(&pack_u64(0x10000));
+            resp.extend_from_slice(&pack_u32(0x1000));
+            resp.extend_from_slice(&pack_u32(0x04));
+            resp.extend_from_slice(&pack_u32(0x00020000));
+            resp
+        },
+        _ => {
+            let mut resp = Vec::with_capacity(32);
+            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u64(0));
+            resp.extend_from_slice(&pack_u64(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp
+        },
+    }
+}
+
+fn handle_nt_query_object(body: &[u8]) -> Vec<u8> {
+    if body.len() < 12 {
+        let mut resp = Vec::with_capacity(12);
+        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
+        resp.extend_from_slice(&pack_u32(0));
+        resp.extend_from_slice(&pack_u32(0));
+        return resp;
+    }
+    let _handle = unpack_u64(body, 0);
+    let info_class = unpack_u32(body, 8);
+    let _buf_len = unpack_u32(body, 12);
+
+    match info_class {
+        0x01 => {
+            let mut resp = Vec::with_capacity(28);
+            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
+            resp.extend_from_slice(&pack_u32(24));
+            resp.extend_from_slice(&pack_u32(24));
+            resp.extend_from_slice(&pack_u32(0x001A0001));
+            resp.extend_from_slice(&pack_u32(0x00000001));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp
+        },
+        0x02 => {
+            let mut resp = Vec::with_capacity(16);
+            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
+            resp.extend_from_slice(&pack_u32(8));
+            resp.extend_from_slice(&pack_u32(8));
+            resp.extend_from_slice(&pack_u32(0x000F001F));
+            resp.extend_from_slice(&pack_u32(0));
+            resp
+        },
+        _ => {
+            let mut resp = Vec::with_capacity(12);
+            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp
+        },
+    }
+}
+
+fn handle_nt_set_information_thread(body: &[u8]) -> Vec<u8> {
+    if body.len() < 12 {
+        return pack_i32(STATUS_INVALID_PARAMETER).to_vec();
+    }
+    let _thread_handle = unpack_u64(body, 0);
+    let info_class = unpack_u32(body, 8);
+
+    match info_class {
+        0x11 => pack_i32(STATUS_SUCCESS).to_vec(),
+        _ => pack_i32(STATUS_NOT_IMPLEMENTED).to_vec(),
     }
 }
 
@@ -616,7 +725,10 @@ mod tests {
         assert_eq!(IPC_HEADER_SIZE, 16usize);
         assert_eq!(OP_NT_OPEN_PROCESS, 0x0001u16);
         assert_eq!(OP_NT_OPEN_THREAD, 0x0002u16);
+        assert_eq!(OP_NT_QUERY_OBJECT, 0x0005u16);
+        assert_eq!(OP_NT_SET_INFORMATION_THREAD, 0x0006u16);
         assert_eq!(OP_NT_CLOSE, 0x0007u16);
+        assert_eq!(OP_NT_QUERY_VIRTUAL_MEMORY, 0x0009u16);
         assert_eq!(OP_NT_DEVICE_IO_CONTROL, 0x000Du16);
         assert_eq!(STATUS_SUCCESS, 0i32);
         assert_eq!(STATUS_NOT_IMPLEMENTED, 0xC0000002_u32 as i32);
@@ -644,5 +756,43 @@ mod tests {
         let resp = handle_nt_device_io_control(&req);
         let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
         assert_eq!(status, STATUS_NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn test_nt_query_virtual_memory_basic_returns_success() {
+        let mut req = Vec::new();
+        req.extend_from_slice(&0x0u64.to_le_bytes());
+        req.extend_from_slice(&0x10000u64.to_le_bytes());
+        req.extend_from_slice(&0x00u32.to_le_bytes());
+        req.extend_from_slice(&48u32.to_le_bytes());
+
+        let resp = handle_nt_query_virtual_memory(&req);
+        assert!(resp.len() >= 32);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_SUCCESS);
+    }
+
+    #[test]
+    fn test_nt_query_object_type_info_returns_success() {
+        let mut req = Vec::new();
+        req.extend_from_slice(&0x100u64.to_le_bytes());
+        req.extend_from_slice(&0x01u32.to_le_bytes());
+        req.extend_from_slice(&24u32.to_le_bytes());
+
+        let resp = handle_nt_query_object(&req);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_SUCCESS);
+    }
+
+    #[test]
+    fn test_nt_set_information_thread_hide_from_debugger() {
+        let mut req = Vec::new();
+        req.extend_from_slice(&0x100u64.to_le_bytes());
+        req.extend_from_slice(&0x11u32.to_le_bytes());
+        req.extend_from_slice(&4u32.to_le_bytes());
+
+        let resp = handle_nt_set_information_thread(&req);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_SUCCESS);
     }
 }
