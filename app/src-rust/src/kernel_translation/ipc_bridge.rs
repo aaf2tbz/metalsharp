@@ -87,6 +87,21 @@ fn unpack_u64(buf: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap_or([0; 8]))
 }
 
+fn ipc_ok(return_length: u32, data: &[u8]) -> Vec<u8> {
+    let mut resp = Vec::with_capacity(8 + data.len());
+    resp.extend_from_slice(&STATUS_SUCCESS.to_le_bytes());
+    resp.extend_from_slice(&return_length.to_le_bytes());
+    resp.extend_from_slice(data);
+    resp
+}
+
+fn ipc_err(status: i32) -> Vec<u8> {
+    let mut resp = Vec::with_capacity(8);
+    resp.extend_from_slice(&status.to_le_bytes());
+    resp.extend_from_slice(&0u32.to_le_bytes());
+    resp
+}
+
 #[cfg(target_os = "macos")]
 fn xnu_process_exists(pid: u32) -> bool {
     unsafe {
@@ -219,11 +234,7 @@ fn handle_nt_open_thread(body: &[u8]) -> Vec<u8> {
 
 fn handle_nt_query_system_info(body: &[u8]) -> Vec<u8> {
     if body.len() < 8 {
-        let mut resp = Vec::with_capacity(12);
-        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        return resp;
+        return ipc_err(STATUS_INVALID_PARAMETER);
     }
     let info_class = unpack_u32(body, 0);
     let buf_len = unpack_u32(body, 4);
@@ -235,11 +246,11 @@ fn handle_nt_query_system_info(body: &[u8]) -> Vec<u8> {
         0x10 => {
             let needed: usize = process_count as usize * 56 + 8;
             if (buf_len as usize) < needed {
-                let mut resp = Vec::with_capacity(12);
-                resp.extend_from_slice(&pack_i32(STATUS_INFO_LENGTH_MISMATCH));
-                resp.extend_from_slice(&pack_u32(needed as u32));
-                resp.extend_from_slice(&pack_u32(0));
-                return resp;
+                let mut meta = Vec::with_capacity(12);
+                meta.extend_from_slice(&STATUS_INFO_LENGTH_MISMATCH.to_le_bytes());
+                meta.extend_from_slice(&pack_u32(needed as u32));
+                meta.extend_from_slice(&pack_u32(0));
+                return meta;
             }
             let mut data = Vec::with_capacity(8 + process_count as usize * 56);
             data.extend_from_slice(&pack_u32(process_count));
@@ -250,19 +261,11 @@ fn handle_nt_query_system_info(body: &[u8]) -> Vec<u8> {
                 data.extend_from_slice(&[0u8; 48]);
                 data.extend_from_slice(&pack_u32(0));
             }
-            let mut resp = Vec::with_capacity(12 + data.len());
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(data.len() as u32));
-            resp.extend_from_slice(&pack_u32(data.len() as u32));
-            resp.extend_from_slice(&data);
-            resp
+            ipc_ok(data.len() as u32, &data)
         },
         _ => {
-            let mut resp = Vec::with_capacity(12);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(process_count * 8));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
+            let data = vec![0u8; 4];
+            ipc_ok(4, &data)
         },
     }
 }
@@ -278,59 +281,33 @@ fn next_handle_delta(handles: &BTreeMap<u64, VirtualHandleEntry>, pid: u32) -> u
 
 fn handle_nt_query_info_process(body: &[u8]) -> Vec<u8> {
     if body.len() < 12 {
-        let mut resp = Vec::with_capacity(12);
-        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        return resp;
+        return ipc_err(STATUS_INVALID_PARAMETER);
     }
     let _handle = unpack_u64(body, 0);
     let info_class = unpack_u32(body, 8);
-    let _buf_len = unpack_u32(body, 12);
 
     match info_class {
+        0x00 => {
+            let mut data = vec![0u8; 48];
+            data[0..4].copy_from_slice(&259i32.to_le_bytes());
+            let pid = getpid() as u64;
+            data[32..40].copy_from_slice(&pid.to_le_bytes());
+            ipc_ok(48, &data)
+        },
         0x07 => {
-            let mut resp = Vec::with_capacity(20);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(8));
-            resp.extend_from_slice(&pack_u32(8));
-            resp.extend_from_slice(&pack_u32(getpid() as u32));
-            resp.extend_from_slice(&pack_u32(getpid() as u32));
-            resp
+            let data = vec![0u8; 8];
+            ipc_ok(8, &data)
         },
         0x1e => {
-            let mut resp = Vec::with_capacity(16);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(4));
-            resp.extend_from_slice(&pack_u32(4));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
+            let data = vec![0u8; 8];
+            ipc_ok(8, &data)
         },
         0x1f => {
-            let mut resp = Vec::with_capacity(16);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(4));
-            resp.extend_from_slice(&pack_u32(4));
-            resp.extend_from_slice(&pack_u32(1));
-            resp
+            let mut data = vec![0u8; 4];
+            data[0..4].copy_from_slice(&1u32.to_le_bytes());
+            ipc_ok(4, &data)
         },
-        0x00 => {
-            let mut resp = Vec::with_capacity(28);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(16));
-            resp.extend_from_slice(&pack_u32(16));
-            resp.extend_from_slice(&pack_i32(259));
-            resp.extend_from_slice(&pack_u64(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
-        },
-        _ => {
-            let mut resp = Vec::with_capacity(12);
-            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
-        },
+        _ => ipc_err(STATUS_NOT_IMPLEMENTED),
     }
 }
 
@@ -386,91 +363,49 @@ fn handle_nt_device_io_control(body: &[u8]) -> Vec<u8> {
 
 fn handle_nt_query_virtual_memory(body: &[u8]) -> Vec<u8> {
     if body.len() < 20 {
-        let mut resp = Vec::with_capacity(32);
-        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u64(0));
-        resp.extend_from_slice(&pack_u64(0));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        return resp;
+        return ipc_err(STATUS_INVALID_PARAMETER);
     }
     let _process_handle = unpack_u64(body, 0);
     let base_address = unpack_u64(body, 8);
     let info_class = unpack_u32(body, 16);
-    let _buf_len = unpack_u32(body, 20);
 
     match info_class {
         0x00 => {
-            let mut resp = Vec::with_capacity(32);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(48));
-            resp.extend_from_slice(&pack_u32(48));
-            resp.extend_from_slice(&pack_u64(base_address));
-            resp.extend_from_slice(&pack_u64(0x10000));
-            resp.extend_from_slice(&pack_u32(0x1000));
-            resp.extend_from_slice(&pack_u32(0x04));
-            resp.extend_from_slice(&pack_u32(0x00020000));
-            resp
+            let mut data = vec![0u8; 48];
+            data[0..8].copy_from_slice(&base_address.to_le_bytes());
+            data[8..16].copy_from_slice(&base_address.to_le_bytes());
+            data[16..20].copy_from_slice(&0x04u32.to_le_bytes());
+            data[24..32].copy_from_slice(&0x10000u64.to_le_bytes());
+            data[32..36].copy_from_slice(&0x1000u32.to_le_bytes());
+            data[36..40].copy_from_slice(&0x04u32.to_le_bytes());
+            data[40..44].copy_from_slice(&0x20000u32.to_le_bytes());
+            ipc_ok(48, &data)
         },
-        _ => {
-            let mut resp = Vec::with_capacity(32);
-            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u64(0));
-            resp.extend_from_slice(&pack_u64(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
-        },
+        _ => ipc_err(STATUS_NOT_IMPLEMENTED),
     }
 }
 
 fn handle_nt_query_object(body: &[u8]) -> Vec<u8> {
     if body.len() < 12 {
-        let mut resp = Vec::with_capacity(12);
-        resp.extend_from_slice(&pack_i32(STATUS_INVALID_PARAMETER));
-        resp.extend_from_slice(&pack_u32(0));
-        resp.extend_from_slice(&pack_u32(0));
-        return resp;
+        return ipc_err(STATUS_INVALID_PARAMETER);
     }
     let _handle = unpack_u64(body, 0);
     let info_class = unpack_u32(body, 8);
-    let _buf_len = unpack_u32(body, 12);
 
     match info_class {
         0x01 => {
-            let mut resp = Vec::with_capacity(28);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(24));
-            resp.extend_from_slice(&pack_u32(24));
-            resp.extend_from_slice(&pack_u32(0x001A0001));
-            resp.extend_from_slice(&pack_u32(0x00000001));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
+            let type_name: Vec<u16> = "Process\0".encode_utf16().collect();
+            let mut data = Vec::with_capacity(type_name.len() * 2);
+            for c in &type_name {
+                data.extend_from_slice(&c.to_le_bytes());
+            }
+            ipc_ok(data.len() as u32, &data)
         },
         0x02 => {
-            let mut resp = Vec::with_capacity(16);
-            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-            resp.extend_from_slice(&pack_u32(8));
-            resp.extend_from_slice(&pack_u32(8));
-            resp.extend_from_slice(&pack_u32(0x000F001F));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
+            let data = vec![0u8, 0u8];
+            ipc_ok(2, &data)
         },
-        _ => {
-            let mut resp = Vec::with_capacity(12);
-            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
-            resp.extend_from_slice(&pack_u32(0));
-            resp.extend_from_slice(&pack_u32(0));
-            resp
-        },
+        _ => ipc_err(STATUS_NOT_IMPLEMENTED),
     }
 }
 
@@ -678,7 +613,9 @@ mod tests {
         let resp = handle_nt_query_info_process(&req);
         let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
         assert_eq!(status, STATUS_SUCCESS);
-        let flags = u32::from_le_bytes(resp[12..16].try_into().unwrap());
+        let return_len = u32::from_le_bytes(resp[4..8].try_into().unwrap());
+        assert_eq!(return_len, 4);
+        let flags = u32::from_le_bytes(resp[8..12].try_into().unwrap());
         assert_eq!(flags, 1);
     }
 
@@ -767,13 +704,17 @@ mod tests {
         req.extend_from_slice(&48u32.to_le_bytes());
 
         let resp = handle_nt_query_virtual_memory(&req);
-        assert!(resp.len() >= 32);
         let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
         assert_eq!(status, STATUS_SUCCESS);
+        let return_len = u32::from_le_bytes(resp[4..8].try_into().unwrap());
+        assert_eq!(return_len, 48);
+        assert_eq!(resp.len(), 8 + 48);
+        let base = u64::from_le_bytes(resp[8..16].try_into().unwrap());
+        assert_eq!(base, 0x10000);
     }
 
     #[test]
-    fn test_nt_query_object_type_info_returns_success() {
+    fn test_nt_query_object_type_info_returns_utf16() {
         let mut req = Vec::new();
         req.extend_from_slice(&0x100u64.to_le_bytes());
         req.extend_from_slice(&0x01u32.to_le_bytes());
@@ -782,6 +723,25 @@ mod tests {
         let resp = handle_nt_query_object(&req);
         let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
         assert_eq!(status, STATUS_SUCCESS);
+        assert!(resp.len() > 8);
+        let type_name: Vec<u16> = "Process\0".encode_utf16().collect();
+        let expected_bytes: Vec<u8> = type_name.iter().flat_map(|c| c.to_le_bytes()).collect();
+        assert_eq!(&resp[8..], expected_bytes.as_slice());
+    }
+
+    #[test]
+    fn test_nt_query_object_data_info_returns_two_bytes() {
+        let mut req = Vec::new();
+        req.extend_from_slice(&0x100u64.to_le_bytes());
+        req.extend_from_slice(&0x02u32.to_le_bytes());
+        req.extend_from_slice(&2u32.to_le_bytes());
+
+        let resp = handle_nt_query_object(&req);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_SUCCESS);
+        let return_len = u32::from_le_bytes(resp[4..8].try_into().unwrap());
+        assert_eq!(return_len, 2);
+        assert_eq!(resp.len(), 10);
     }
 
     #[test]

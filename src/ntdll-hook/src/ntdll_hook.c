@@ -46,7 +46,6 @@ static HANDLE get_real_ntdll_fn(const char* name) {
     return (HANDLE)GetProcAddress(ntdll_base, name);
 }
 
-static volatile LONG g_load_once = 0;
 static volatile LONG g_fns_loaded = 0;
 
 static void load_real_functions(void) {
@@ -61,6 +60,36 @@ static void load_real_functions(void) {
     real_NtQueryVirtualMemory = (NtQueryVirtualMemory_t)get_real_ntdll_fn("NtQueryVirtualMemory");
     real_NtQueryObject = (NtQueryObject_t)get_real_ntdll_fn("NtQueryObject");
     real_NtSetInformationThread = (NtSetInformationThread_t)get_real_ntdll_fn("NtSetInformationThread");
+}
+
+static NTSTATUS ipc_call(UINT16 op, const void* req, UINT32 req_size, void* out_data, UINT32 out_data_cap,
+                         PULONG out_return_length) {
+    UINT8 resp_buf[4096];
+    INT32 ipc_status;
+    UINT32 ipc_return_len;
+
+    NTSTATUS status = ms_ipc_transact(op, req, req_size, resp_buf, sizeof(resp_buf));
+    if (status != STATUS_SUCCESS)
+        return STATUS_NOT_IMPLEMENTED;
+
+    memcpy(&ipc_status, resp_buf, 4);
+    if (ipc_status != STATUS_SUCCESS)
+        return ipc_status;
+
+    memcpy(&ipc_return_len, resp_buf + 4, 4);
+    if (out_return_length)
+        *out_return_length = ipc_return_len;
+
+    if (out_data && ipc_return_len > 0 && out_data_cap > 0) {
+        UINT32 copy_len = ipc_return_len;
+        if (copy_len > out_data_cap)
+            copy_len = out_data_cap;
+        if (copy_len > sizeof(resp_buf) - 8)
+            copy_len = (UINT32)sizeof(resp_buf) - 8;
+        memcpy(out_data, resp_buf + 8, copy_len);
+    }
+
+    return STATUS_SUCCESS;
 }
 
 static BOOL send_all(SOCKET s, const void* buf, int len) {
@@ -267,15 +296,11 @@ NTSTATUS ms_hook_nt_query_system_information(ULONG SystemInformationClass, PVOID
             .info_class = SystemInformationClass,
             .buffer_length = SystemInformationLength,
         };
-        MS_IPC_NT_QUERY_SYSTEM_INFO_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_SYSTEM_INFO, &req, sizeof(req), &resp, sizeof(resp));
-
-        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength)
-                *ReturnLength = resp.return_length;
+        NTSTATUS status = ipc_call(MS_OP_NT_QUERY_SYSTEM_INFO, &req, sizeof(req), SystemInformation,
+                                   SystemInformationLength, ReturnLength);
+        if (status == STATUS_SUCCESS)
             return STATUS_SUCCESS;
-        }
     }
 
     if (real_NtQuerySystemInformation)
@@ -294,15 +319,11 @@ NTSTATUS ms_hook_nt_query_information_process(HANDLE ProcessHandle, ULONG Proces
             .info_class = ProcessInformationClass,
             .buffer_length = ProcessInformationLength,
         };
-        MS_IPC_NT_QUERY_INFORMATION_PROC_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_INFORMATION_PROC, &req, sizeof(req), &resp, sizeof(resp));
-
-        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength)
-                *ReturnLength = resp.return_length;
+        NTSTATUS status = ipc_call(MS_OP_NT_QUERY_INFORMATION_PROC, &req, sizeof(req), ProcessInformation,
+                                   ProcessInformationLength, ReturnLength);
+        if (status == STATUS_SUCCESS)
             return STATUS_SUCCESS;
-        }
     }
 
     if (real_NtQueryInformationProcess)
@@ -391,18 +412,11 @@ NTSTATUS ms_hook_nt_query_virtual_memory(HANDLE ProcessHandle, PVOID BaseAddress
             .info_class = MemoryInformationClass,
             .buffer_length = MemoryInformationLength,
         };
-        MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_VIRTUAL_MEMORY, &req, sizeof(req), &resp, sizeof(resp));
-
-        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength)
-                *ReturnLength = resp.return_length;
-            if (MemoryInformation && MemoryInformationLength >= sizeof(MS_IPC_NT_QUERY_VIRTUAL_MEMORY_RESP)) {
-                memcpy(MemoryInformation, &resp, sizeof(resp));
-            }
+        NTSTATUS status = ipc_call(MS_OP_NT_QUERY_VIRTUAL_MEMORY, &req, sizeof(req), MemoryInformation,
+                                   MemoryInformationLength, ReturnLength);
+        if (status == STATUS_SUCCESS)
             return STATUS_SUCCESS;
-        }
     }
 
     if (real_NtQueryVirtualMemory)
@@ -420,14 +434,41 @@ NTSTATUS ms_hook_nt_query_object(HANDLE Handle, ULONG ObjectInformationClass, PV
             .info_class = ObjectInformationClass,
             .buffer_length = ObjectInformationLength,
         };
-        MS_IPC_NT_QUERY_OBJECT_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_OBJECT, &req, sizeof(req), &resp, sizeof(resp));
-
-        if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength)
-                *ReturnLength = resp.return_length;
-            return STATUS_SUCCESS;
+        UINT8 resp_buf[4096];
+        NTSTATUS ipc_status = ms_ipc_transact(MS_OP_NT_QUERY_OBJECT, &req, sizeof(req), resp_buf, sizeof(resp_buf));
+        if (ipc_status == STATUS_SUCCESS) {
+            INT32 nt_status;
+            UINT32 ipc_return_len;
+            memcpy(&nt_status, resp_buf, 4);
+            memcpy(&ipc_return_len, resp_buf + 4, 4);
+            if (nt_status == STATUS_SUCCESS) {
+                if (ReturnLength)
+                    *ReturnLength = ipc_return_len;
+                if (ObjectInformation && ObjectInformationLength > 0) {
+                    if (ObjectInformationClass == 0x01 && ObjectInformationLength >= 24) {
+                        UNICODE_STRING* us = (UNICODE_STRING*)ObjectInformation;
+                        UINT8* str_src = resp_buf + 8;
+                        UINT32 str_bytes = ipc_return_len;
+                        if (str_bytes > ObjectInformationLength - 16)
+                            str_bytes = ObjectInformationLength - 16;
+                        us->Length = (USHORT)str_bytes;
+                        us->MaximumLength = (USHORT)(str_bytes + 2);
+                        us->Buffer = (PWCH)((UINT8*)ObjectInformation + 16);
+                        memcpy(us->Buffer, str_src, str_bytes);
+                        if (str_bytes + 2 <= ObjectInformationLength - 16)
+                            ((UINT8*)us->Buffer)[str_bytes] = 0;
+                    } else {
+                        UINT32 copy_len = ipc_return_len;
+                        if (copy_len > ObjectInformationLength)
+                            copy_len = ObjectInformationLength;
+                        if (copy_len > sizeof(resp_buf) - 8)
+                            copy_len = (UINT32)sizeof(resp_buf) - 8;
+                        memcpy(ObjectInformation, resp_buf + 8, copy_len);
+                    }
+                }
+                return STATUS_SUCCESS;
+            }
         }
     }
 
