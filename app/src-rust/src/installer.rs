@@ -7,6 +7,21 @@ use std::time::Duration;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
+fn mac_cmd(name: &str) -> Command {
+    let path = match name {
+        "curl" => "/usr/bin/curl",
+        "tar" => "/usr/bin/tar",
+        "which" => "/usr/bin/which",
+        "shasum" => "/usr/bin/shasum",
+        "pgrep" => "/usr/bin/pgrep",
+        "softwareupdate" => "/usr/sbin/softwareupdate",
+        "pkill" => "/usr/bin/pkill",
+        "clang" => "/usr/bin/clang",
+        _ => name,
+    };
+    Command::new(path)
+}
+
 pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
@@ -303,12 +318,12 @@ fn install_rosetta() -> Result<bool, String> {
     if plist.exists() {
         return Ok(false);
     }
-    let running = Command::new("pgrep").args(["-q", "oahd"]).status().map(|s| s.success()).unwrap_or(false);
+    let running = mac_cmd("pgrep").args(["-q", "oahd"]).status().map(|s| s.success()).unwrap_or(false);
     if running {
         return Ok(false);
     }
 
-    let output = Command::new("softwareupdate")
+    let output = mac_cmd("softwareupdate")
         .args(["--install-rosetta", "--agree-to-license"])
         .output()
         .map_err(|e| format!("failed to run softwareupdate: {}", e))?;
@@ -511,7 +526,7 @@ fn mark_split_bundle_installed(home: &Path, bundle: &str, archive: &Path) {
 }
 
 fn archive_sha256(path: &Path) -> Option<String> {
-    for (cmd, args) in [("shasum", vec!["-a", "256"]), ("sha256sum", Vec::new())] {
+    for (cmd, args) in [("/usr/bin/shasum", vec!["-a", "256"]), ("sha256sum", Vec::new())] {
         let Ok(output) = Command::new(cmd).args(args).arg(path).output() else {
             continue;
         };
@@ -1150,7 +1165,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
 
     let _ = fs::remove_file(&installer);
 
-    let output = Command::new("curl")
+    let output = mac_cmd("curl")
         .args(["-sL", "-o"])
         .arg(&installer)
         .arg("https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe")
@@ -1317,7 +1332,7 @@ fn find_brew() -> Result<PathBuf, String> {
             return Ok(c.clone());
         }
     }
-    let output = Command::new("which").arg("brew").output().ok();
+    let output = mac_cmd("which").arg("brew").output().ok();
     if let Some(o) = output {
         if o.status.success() {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -1369,7 +1384,7 @@ fn download_bundled_file(name: &str) -> Option<PathBuf> {
     let _ = fs::remove_file(&tmp);
 
     for retry in 0..3 {
-        let output = Command::new("curl")
+        let output = mac_cmd("curl")
             .args([
                 "--fail",
                 "--location",
@@ -1495,7 +1510,7 @@ fn archive_required_files_valid(path: &Path, required_files: &[&str]) -> bool {
         },
     };
 
-    let mut tar_cmd = match Command::new("tar")
+    let mut tar_cmd = match mac_cmd("tar")
         .args(["-xf", "-"])
         .arg("-C")
         .arg(&tmp)
@@ -1588,7 +1603,7 @@ fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), Stri
 
     let mut decoder = zstd::Decoder::new(file).map_err(|e| format!("zstd decode error: {}", e))?;
 
-    let mut tar_cmd = Command::new("tar")
+    let mut tar_cmd = mac_cmd("tar")
         .args(["-xf", "-"])
         .arg("-C")
         .arg(dest)

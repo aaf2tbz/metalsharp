@@ -4,6 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+fn mac_cmd(name: &str) -> Command {
+    let path = match name {
+        "pkill" => "/usr/bin/pkill",
+        _ => name,
+    };
+    Command::new(path)
+}
+
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 3;
 const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
@@ -412,7 +420,7 @@ fn kill_steam_wine() {
 }
 
 fn run_pkill(args: &[&str]) {
-    let Ok(mut child) = Command::new("pkill").args(args).spawn() else {
+    let Ok(mut child) = mac_cmd("pkill").args(args).spawn() else {
         return;
     };
 

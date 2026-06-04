@@ -1,6 +1,22 @@
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn mac_cmd(name: &str) -> Command {
+    let path = match name {
+        "curl" => "/usr/bin/curl",
+        "which" => "/usr/bin/which",
+        "clang" => "/usr/bin/clang",
+        "file" => "/usr/bin/file",
+        "install_name_tool" => "/usr/bin/install_name_tool",
+        "codesign" => "/usr/bin/codesign",
+        "bash" => "/bin/bash",
+        "pgrep" => "/usr/bin/pgrep",
+        _ => name,
+    };
+    Command::new(path)
+}
 
 const DEFAULT_AGILITY_PACKAGE_VERSION: &str = "1.614.1";
 
@@ -394,7 +410,7 @@ fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         let repo = home.join("metalsharp");
         let stub_src = repo.join("src/fna/terraria/gdiplus_stub.c");
         if stub_src.exists() {
-            let _ = std::process::Command::new("clang")
+            let _ = mac_cmd("clang")
                 .args(["-shared", "-arch", "arm64", "-o"])
                 .arg(&gdiplus)
                 .arg(&stub_src)
@@ -471,7 +487,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
         let shim_src = repo.join("src/fna/shims/csteamworks_shim.c");
         let alias_file = repo.join("src/fna/shims/csteamworks_aliases.txt");
         if shim_src.exists() {
-            let mut cmd = std::process::Command::new("clang");
+            let mut cmd = mac_cmd("clang");
             cmd.args(["-shared", "-arch", "x86_64"]).arg("-o").arg(&csteamworks).arg(&shim_src);
 
             if alias_file.exists() {
@@ -491,7 +507,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
                 .status();
 
             if result.is_err() || !result.unwrap().success() {
-                let _ = std::process::Command::new("clang")
+                let _ = mac_cmd("clang")
                     .args(["-shared", "-arch", "x86_64"])
                     .arg("-o")
                     .arg(&csteamworks)
@@ -513,7 +529,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
             let repo = home.join("metalsharp");
             let stub_src = repo.join("src/fna/shims").join(&stub_name);
             if stub_src.exists() {
-                let _ = std::process::Command::new("clang")
+                let _ = mac_cmd("clang")
                     .args(["-shared", "-arch", "x86_64"])
                     .arg("-o")
                     .arg(&dst)
@@ -776,7 +792,7 @@ fn fetch_agility_sdk_bin_with_script(
     required_version: Option<u32>,
 ) -> Option<PathBuf> {
     let script = find_agility_fetch_script(home)?;
-    let output = std::process::Command::new("bash").arg(&script).arg("--version").arg(package_version).output().ok()?;
+    let output = mac_cmd("bash").arg(&script).arg("--version").arg(package_version).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1032,7 +1048,7 @@ fn find_dxil_dll(home: &Path) -> Option<PathBuf> {
 
 fn fetch_dxil_dll(home: &Path) -> Option<PathBuf> {
     let script = find_dxc_fetch_script(home)?;
-    let output = std::process::Command::new("bash").arg(&script).output().ok()?;
+    let output = mac_cmd("bash").arg(&script).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1202,8 +1218,7 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     let _ = std::fs::create_dir_all(&tmpdir);
 
     let gbe_fork_url = "https://api.github.com/repos/Detanup01/gbe_fork/releases/latest";
-    let output =
-        std::process::Command::new("curl").args(["-sL", gbe_fork_url]).stdout(std::process::Stdio::piped()).output()?;
+    let output = mac_cmd("curl").args(["-sL", gbe_fork_url]).stdout(std::process::Stdio::piped()).output()?;
 
     let json_str = String::from_utf8_lossy(&output.stdout);
     let mut download_url: Option<String> = None;
@@ -1230,7 +1245,7 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     };
 
     let archive_path = tmpdir.join("goldberg.7z");
-    let dl_status = std::process::Command::new("curl")
+    let dl_status = mac_cmd("curl")
         .args(["-sL", "-o"])
         .arg(&archive_path)
         .arg(&url)
@@ -1245,9 +1260,8 @@ fn ensure_goldberg_downloaded(home: &PathBuf) -> Result<(), Box<dyn std::error::
     let extract_dir = tmpdir.join("extracted");
     let _ = std::fs::create_dir_all(&extract_dir);
 
-    let has_7z = std::process::Command::new("which").arg("7z").output().map(|o| o.status.success()).unwrap_or(false);
-    let has_bsdtar =
-        std::process::Command::new("which").arg("bsdtar").output().map(|o| o.status.success()).unwrap_or(false);
+    let has_7z = mac_cmd("which").arg("7z").output().map(|o| o.status.success()).unwrap_or(false);
+    let has_bsdtar = mac_cmd("which").arg("bsdtar").output().map(|o| o.status.success()).unwrap_or(false);
 
     if has_7z {
         let _ = std::process::Command::new("7z")
@@ -1432,7 +1446,7 @@ fn has_native_windows_dlls(game_dir: &PathBuf) -> bool {
                         || name_lower.contains("fmod")
                         || managed_extensions.iter().any(|e| name_lower.ends_with(e));
                     if !is_managed_wrapper {
-                        let output = std::process::Command::new("file").arg(&path).output();
+                        let output = mac_cmd("file").arg(&path).output();
                         if let Ok(o) = output {
                             let desc = String::from_utf8_lossy(&o.stdout);
                             if desc.contains("PE32") && !desc.contains(".Net") && !desc.contains("Mono/.Net") {
@@ -1508,14 +1522,11 @@ fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         if sdl3.exists() {
             let dst = game_dir.join("libSDL3.0.dylib");
             let _ = std::fs::copy(sdl3, &dst);
-            let _ = std::process::Command::new("install_name_tool")
-                .args(["-id", "@loader_path/libSDL3.0.dylib"])
-                .arg(&dst)
-                .output();
+            let _ = mac_cmd("install_name_tool").args(["-id", "@loader_path/libSDL3.0.dylib"]).arg(&dst).output();
 
             let fna3d = game_dir.join("libFNA3D.dylib");
             if fna3d.exists() {
-                let _ = std::process::Command::new("install_name_tool")
+                let _ = mac_cmd("install_name_tool")
                     .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
                     .arg(&fna3d)
                     .output();
@@ -1539,7 +1550,7 @@ fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
 
     let _ = std::fs::write(game_dir.join("steam_appid.txt"), "");
 
-    let _ = std::process::Command::new("codesign")
+    let _ = mac_cmd("codesign")
         .args(["--force", "-s", "-"])
         .arg(game_dir.join("libCSteamworks.dylib"))
         .arg(game_dir.join("libfmod.dylib"))
@@ -1562,7 +1573,7 @@ fn build_shim(src: &PathBuf, game_dir: &PathBuf) {
     };
 
     let output = game_dir.join(output_name);
-    let result = std::process::Command::new("clang")
+    let result = mac_cmd("clang")
         .args(["-shared", "-arch", "arm64"])
         .arg("-o")
         .arg(&output)
@@ -1573,13 +1584,13 @@ fn build_shim(src: &PathBuf, game_dir: &PathBuf) {
 
     if let Ok(o) = result {
         if o.status.success() {
-            let _ = std::process::Command::new("codesign").args(["--force", "-s", "-"]).arg(&output).output();
+            let _ = mac_cmd("codesign").args(["--force", "-s", "-"]).arg(&output).output();
         }
     }
 }
 
 fn check_command(cmd: &str) -> bool {
-    std::process::Command::new("which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
+    mac_cmd("which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn check_path(path: &PathBuf) -> bool {
@@ -1611,7 +1622,7 @@ fn check_brew(formula: &str) -> bool {
 
 fn check_rosetta() -> bool {
     PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
-        || std::process::Command::new("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
+        || mac_cmd("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
 }
 
 #[cfg(test)]
