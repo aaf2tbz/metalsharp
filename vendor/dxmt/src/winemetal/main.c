@@ -54,6 +54,10 @@ DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   status = load_unixlib_from_env();
   if ((DWORD)status == STATUS_DLL_NOT_FOUND)
     status = __wine_init_unix_call();
+  {
+    HMODULE hook = LoadLibraryA("metalsharp_ntdll_hook.dll");
+    (void)hook;
+  }
   if (winemetal_debug_enabled()) {
     log = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
     if (log) {

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <tlhelp32.h>
 
 #ifdef _WIN64
 
@@ -225,6 +226,173 @@ NTSTATUS ms_ipc_transact(UINT16 operation, const void* request_body, UINT32 requ
     LeaveCriticalSection(&g_ctx.lock);
 
     return STATUS_SUCCESS;
+}
+
+struct iat_hook_entry {
+    const char *name;
+    void *hook_fn;
+};
+
+static struct iat_hook_entry g_iat_hooks[] = {
+    {"NtOpenProcess", NULL},
+    {"NtOpenThread", NULL},
+    {"NtQuerySystemInformation", NULL},
+    {"NtQueryInformationProcess", NULL},
+    {"NtClose", NULL},
+    {"NtDeviceIoControlFile", NULL},
+    {"NtQueryVirtualMemory", NULL},
+    {"NtQueryObject", NULL},
+    {"NtSetInformationThread", NULL},
+    {NULL, NULL},
+};
+
+#define PE_SIG       0x4550
+#define MAX_MODULES  512
+
+static int str_eq_ci(const char *a, const char *b) {
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static void patch_iat_for_module(HMODULE mod) {
+    UINT8 *base = (UINT8 *)mod;
+    IMAGE_DOS_HEADER *dos;
+    IMAGE_NT_HEADERS *nt;
+    IMAGE_IMPORT_DESCRIPTOR *imports;
+    UINT32 import_size = 0;
+    UINT8 *import_end;
+
+    if (base == NULL)
+        return;
+
+    dos = (IMAGE_DOS_HEADER *)base;
+    if (dos->e_magic != 0x5A4D)
+        return;
+
+    nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+    if (nt->Signature != PE_SIG)
+        return;
+
+    if (nt->OptionalHeader.DataDirectory[1].VirtualAddress == 0)
+        return;
+
+    imports =
+        (IMAGE_IMPORT_DESCRIPTOR *)(base + nt->OptionalHeader.DataDirectory[1].VirtualAddress);
+    import_size = nt->OptionalHeader.DataDirectory[1].Size;
+    import_end = (UINT8 *)imports + import_size;
+
+    for (; (UINT8 *)imports < import_end && imports->Name != 0; imports++) {
+        char *dll_name = (char *)(base + imports->Name);
+        if (!str_eq_ci(dll_name, "ntdll.dll"))
+            continue;
+
+        IMAGE_THUNK_DATA64 *name_thunk = (IMAGE_THUNK_DATA64 *)(base + imports->OriginalFirstThunk);
+        IMAGE_THUNK_DATA64 *iat_thunk = (IMAGE_THUNK_DATA64 *)(base + imports->FirstThunk);
+
+        if (imports->OriginalFirstThunk == 0)
+            break;
+
+        for (; name_thunk->u1.AddressOfData != 0; name_thunk++, iat_thunk++) {
+            IMAGE_IMPORT_BY_NAME *hint;
+            const char *func_name;
+            DWORD old_protect;
+            int i;
+
+            if (name_thunk->u1.AddressOfData & (ULONG_PTR)0x8000000000000000ULL)
+                continue;
+
+            hint = (IMAGE_IMPORT_BY_NAME *)(base + (UINT32)name_thunk->u1.AddressOfData);
+            func_name = (const char *)hint->Name;
+
+            for (i = 0; g_iat_hooks[i].name != NULL; i++) {
+                if (strcmp(func_name, g_iat_hooks[i].name) == 0) {
+                    if (VirtualProtect(&iat_thunk->u1.Function, sizeof(ULONG_PTR), PAGE_READWRITE,
+                                       &old_protect)) {
+                        iat_thunk->u1.Function = (ULONG_PTR)g_iat_hooks[i].hook_fn;
+                        VirtualProtect(&iat_thunk->u1.Function, sizeof(ULONG_PTR), old_protect,
+                                       &old_protect);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+typedef NTSTATUS(WINAPI *LdrRegisterDllNotification_t)(ULONG, PVOID, PVOID *);
+typedef NTSTATUS(WINAPI *LdrUnregisterDllNotification_t)(PVOID);
+
+static PVOID g_notification_cookie = NULL;
+
+static void CALLBACK dll_notification_callback(ULONG reason, const void *data, void *ctx) {
+    (void)data;
+    (void)ctx;
+    if (reason == 1) {
+        struct {
+            ULONG reserved;
+            PUNICODE_STRING full_dll_name;
+            PUNICODE_STRING base_dll_name;
+            PVOID dll_base;
+            ULONG size_of_image;
+        } *info = (void *)data;
+        if (info && info->dll_base) {
+            patch_iat_for_module((HMODULE)info->dll_base);
+        }
+    }
+}
+
+static void patch_all_loaded_modules(void) {
+    HANDLE snap;
+    MODULEENTRY32 me;
+    UINT count = 0;
+
+    snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (snap == INVALID_HANDLE_VALUE)
+        return;
+
+    me.dwSize = sizeof(me);
+    if (Module32First(snap, &me)) {
+        do {
+            if (count >= MAX_MODULES)
+                break;
+            patch_iat_for_module(me.hModule);
+            count++;
+        } while (Module32Next(snap, &me));
+    }
+
+    CloseHandle(snap);
+}
+
+static void install_iat_hooks(void) {
+    g_iat_hooks[0].hook_fn = (void *)ms_hook_nt_open_process;
+    g_iat_hooks[1].hook_fn = (void *)ms_hook_nt_open_thread;
+    g_iat_hooks[2].hook_fn = (void *)ms_hook_nt_query_system_information;
+    g_iat_hooks[3].hook_fn = (void *)ms_hook_nt_query_information_process;
+    g_iat_hooks[4].hook_fn = (void *)ms_hook_nt_close;
+    g_iat_hooks[5].hook_fn = (void *)ms_hook_nt_device_io_control_file;
+    g_iat_hooks[6].hook_fn = (void *)ms_hook_nt_query_virtual_memory;
+    g_iat_hooks[7].hook_fn = (void *)ms_hook_nt_query_object;
+    g_iat_hooks[8].hook_fn = (void *)ms_hook_nt_set_information_thread;
+
+    patch_all_loaded_modules();
+
+    {
+        HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+        if (ntdll) {
+            LdrRegisterDllNotification_t reg = (LdrRegisterDllNotification_t)GetProcAddress(
+                ntdll, "LdrRegisterDllNotification");
+            if (reg) {
+                reg(0, (PVOID)dll_notification_callback, &g_notification_cookie);
+            }
+        }
+    }
 }
 
 NTSTATUS ms_hook_nt_open_process(PHANDLE ProcessHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
@@ -516,6 +684,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
             OutputDebugStringA("[metalsharp_ntdll_hook] IPC connect failed, falling back to real ntdll");
         } else {
             OutputDebugStringA("[metalsharp_ntdll_hook] IPC connected to MetalSharp backend");
+            install_iat_hooks();
         }
         break;
     case DLL_PROCESS_DETACH:
