@@ -17,9 +17,39 @@ const installLogs = ref<{ text: string; cls: string }[]>([]);
 const steamInstalled = ref(false);
 const steamInstalling = ref(false);
 const installingSteam = ref(false);
+const brewChecking = ref(true);
+const brewInstalled = ref(false);
+const brewInstalling = ref(false);
 
-const steps = ["Welcome", "Install Runtime", "Done"];
+const steps = ["Welcome", "Install Homebrew", "Install Runtime", "Done"];
 
+async function checkBrew() {
+  brewChecking.value = true;
+  const deps = await api<{ dependencies: { id: string; installed: boolean }[] }>("GET", "/setup/dependencies");
+  const brewDep = deps?.dependencies?.find((d) => d.id === "homebrew");
+  brewInstalled.value = brewDep?.installed ?? false;
+  brewChecking.value = false;
+}
+
+async function installHomebrew() {
+  brewInstalling.value = true;
+  const result = await getAPI().installHomebrew();
+  if (!result?.ok) {
+    toast.show(result?.error ?? "Failed to open Terminal", "error");
+    brewInstalling.value = false;
+    return;
+  }
+  toast.show("Terminal opened — complete the Homebrew install, then click Continue", "success");
+}
+
+async function goToRuntimeStep() {
+  await checkBrew();
+  if (!brewInstalled.value) {
+    toast.show("Homebrew not detected yet. Install it in Terminal first.", "error");
+    return;
+  }
+  step.value = 2;
+}
 async function startInstall() {
   installing.value = true;
   installLogs.value = [];
@@ -138,8 +168,8 @@ async function finish() {
   emit("done");
 }
 
-async function goToStep2() {
-  step.value = 2;
+async function goToDoneStep() {
+  step.value = 3;
   const gen = await api<{ name: string }>("GET", "/setup/device-name");
   if (gen?.name) deviceName.value = gen.name;
 }
@@ -194,11 +224,33 @@ async function goToStep2() {
           </div>
         </div>
         <div class="setup-actions">
-          <button class="btn btn-primary btn-lg" @click="step = 1">Get Started</button>
+          <button class="btn btn-primary btn-lg" @click="checkBrew().then(() => step = brewInstalled ? 2 : 1)">Get Started</button>
         </div>
       </div>
 
       <div v-if="step === 1" class="setup-body">
+        <div class="setup-section-header">
+          <h1>Install Homebrew</h1>
+          <p>MetalSharp needs Homebrew to install runtime dependencies. Click below to open Terminal.</p>
+        </div>
+
+        <div class="setup-brew-step">
+          <p class="setup-brew-instructions">
+            1. Click <strong>Open Terminal</strong> below<br />
+            2. Follow the prompts in Terminal to install Homebrew<br />
+            3. When finished, click <strong>Continue</strong>
+          </p>
+          <div class="setup-actions">
+            <button class="btn btn-secondary" @click="step = 0">Back</button>
+            <button class="btn btn-primary" :disabled="brewInstalling" @click="installHomebrew">
+              {{ brewInstalling ? "Opening..." : "Open Terminal" }}
+            </button>
+            <button class="btn btn-primary btn-lg" @click="goToRuntimeStep">Continue</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="step === 2" class="setup-body">
         <div class="setup-section-header">
           <h1>Install Runtime</h1>
           <p>MetalSharp needs the Wine runtime and game assets. One click installs everything.</p>
@@ -235,12 +287,12 @@ async function goToStep2() {
         </div>
 
         <div class="setup-actions">
-          <button class="btn btn-secondary" @click="step = 0">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="goToStep2">Finish Setup</button>
+          <button class="btn btn-secondary" @click="step = 1">Back</button>
+          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Finish Setup</button>
         </div>
       </div>
 
-      <div v-if="step === 2" class="setup-body">
+      <div v-if="step === 3" class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
@@ -478,6 +530,23 @@ async function goToStep2() {
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+
+.setup-brew-step {
+  text-align: center;
+}
+
+.setup-brew-instructions {
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
 .setup-steam-section h2 {
   font-size: 16px;
   margin-bottom: 4px;

@@ -1242,6 +1242,7 @@ fn check_command(cmd: &str) -> bool {
 fn find_system_command(cmd: &str) -> Option<PathBuf> {
     let candidates = match cmd {
         "which" => vec![PathBuf::from("/usr/bin/which")],
+        "brew" => vec![PathBuf::from("/opt/homebrew/bin/brew"), PathBuf::from("/usr/local/bin/brew")],
         "mono" => vec![
             PathBuf::from("/opt/homebrew/bin/mono"),
             PathBuf::from("/usr/local/bin/mono"),
