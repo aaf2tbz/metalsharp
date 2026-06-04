@@ -14,6 +14,7 @@ const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
 const GRAPHICS_DLL_BUNDLE: &str = "metalsharp-graphics-dll";
 const ASSETS_BUNDLE: &str = "metalsharp-assets";
 const SCRIPTS_TOOLS_BUNDLE: &str = "metalsharp-scripts-tools";
+const STEAM_BUNDLE: &str = "metalsharp-steam";
 const METALSHARP_NTDLL_HOOK_DLL: &str = "metalsharp_ntdll_hook.dll";
 const DXMT_REQUIRED_PE: &[&str] = &[
     "d3d10core.dll",
@@ -25,6 +26,45 @@ const DXMT_REQUIRED_PE: &[&str] = &[
     "nvapi64.dll",
     "nvngx.dll",
 ];
+const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
+    "runtime/wine/bin/metalsharp-wine",
+    "runtime/metalsharp-backend",
+    "runtime/host/manifest.json",
+    "runtime/host/HostRuntimeABI.h",
+    "runtime/host/libmetalsharp_host_runtime.dylib",
+    "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+];
+const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
+    "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
+    "Graphics/dll/dxmt/x86_64-windows/d3d10core.dll",
+    "Graphics/dll/dxmt/x86_64-windows/d3d11.dll",
+    "Graphics/dll/dxmt/x86_64-windows/d3d12.dll",
+    "Graphics/dll/dxmt/x86_64-windows/dxgi.dll",
+    "Graphics/dll/dxmt/x86_64-windows/dxgi_dxmt.dll",
+    "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
+    "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
+    "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
+];
+const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
+    "assets/eac-toggle/x86_64-windows/_winhttp.dll",
+    "assets/goldberg/x64/steam_api64.dll",
+    "assets/goldberg/x86/steam_api.dll",
+    "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
+    "assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib",
+    "assets/gptk/x86_64-windows/atidxx64.dll",
+    "assets/gptk/x86_64-windows/d3d10.dll",
+    "assets/gptk/x86_64-windows/d3d11.dll",
+    "assets/gptk/x86_64-windows/d3d12.dll",
+    "assets/gptk/x86_64-windows/dxgi.dll",
+    "assets/gptk/x86_64-windows/nvapi64.dll",
+    "assets/gptk/x86_64-windows/nvngx-on-metalfx.dll",
+    "assets/mono-arm64/bin/mono-sgen",
+    "assets/shims/libsteam_api.dylib",
+];
+const SCRIPTS_TOOLS_REQUIRED_ARCHIVE_FILES: &[&str] =
+    &["scripts/tools/configs/mtsp-rules.toml", "scripts/tools/updater/update.sh"];
+const STEAM_REQUIRED_ARCHIVE_FILES: &[&str] =
+    &["steam/SteamSetup.exe", "steam/steamwebhelper.exe", "steam/steamwebhelper-wrapper.c"];
 
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-runtime.tar.zst",
@@ -200,7 +240,7 @@ fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
     let mut missing = Vec::new();
 
     for asset in runtime_bundle_assets_for_host() {
-        let had_local = bundled_file_exists(asset);
+        let had_local = bundled_file_valid_exists(asset);
         match find_bundled_file(asset) {
             Some(path) if file_nonempty(&path) => {
                 downloaded |= !had_local;
@@ -216,20 +256,25 @@ fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
     }
 }
 
-fn bundled_file_exists(name: &str) -> bool {
+fn bundled_file_valid_exists(name: &str) -> bool {
     if let Some(resources) = crate::platform::app_resources_dir() {
-        if file_nonempty(&resources.join(format!("bundles/{}", name))) {
+        let file = resources.join(format!("bundles/{}", name));
+        if bundled_artifact_valid(name, &file) {
             return true;
         }
     }
 
-    if file_nonempty(&PathBuf::from(format!("app/bundles/{}", name))) {
+    let dev = PathBuf::from(format!("app/bundles/{}", name));
+    if bundled_artifact_valid(name, &dev) {
         return true;
     }
 
     dirs::home_dir()
         .map(|home| {
-            file_nonempty(&crate::platform::metalsharp_home_dir_for(&home).join("cache").join("bundles").join(name))
+            bundled_artifact_valid(
+                name,
+                &crate::platform::metalsharp_home_dir_for(&home).join("cache").join("bundles").join(name),
+            )
         })
         .unwrap_or(false)
 }
@@ -1350,15 +1395,31 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
     }
 
     if name == RUNTIME_BUNDLE || name == "metalsharp-runtime.tar.zst" {
-        return runtime_bundle_host_valid(path);
+        return archive_required_files_valid(path, RUNTIME_REQUIRED_ARCHIVE_FILES);
+    }
+
+    if name == GRAPHICS_DLL_BUNDLE || name == "metalsharp-graphics-dll.tar.zst" {
+        return archive_required_files_valid(path, GRAPHICS_REQUIRED_ARCHIVE_FILES);
+    }
+
+    if name == ASSETS_BUNDLE || name == "metalsharp-assets.tar.zst" {
+        return archive_required_files_valid(path, ASSETS_REQUIRED_ARCHIVE_FILES);
+    }
+
+    if name == SCRIPTS_TOOLS_BUNDLE || name == "metalsharp-scripts-tools.tar.zst" {
+        return archive_required_files_valid(path, SCRIPTS_TOOLS_REQUIRED_ARCHIVE_FILES);
+    }
+
+    if name == STEAM_BUNDLE || name == "metalsharp-steam.tar.zst" {
+        return archive_required_files_valid(path, STEAM_REQUIRED_ARCHIVE_FILES);
     }
 
     true
 }
 
-fn runtime_bundle_host_valid(path: &Path) -> bool {
+fn archive_required_files_valid(path: &Path, required_files: &[&str]) -> bool {
     let tmp = std::env::temp_dir().join(format!(
-        "metalsharp-runtime-validate-{}-{}",
+        "metalsharp-archive-validate-{}-{}",
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
     ));
@@ -1372,11 +1433,12 @@ fn runtime_bundle_host_valid(path: &Path) -> bool {
         .arg(path)
         .arg("-C")
         .arg(&tmp)
-        .arg("runtime/host")
+        .args(required_files)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
-    let ready = status.map(|s| s.success()).unwrap_or(false) && host_runtime_ready(&tmp.join("runtime").join("host"));
+    let ready = status.map(|s| s.success()).unwrap_or(false)
+        && required_files.iter().all(|required| file_nonempty(&tmp.join(required)));
     let _ = fs::remove_dir_all(&tmp);
     ready
 }
@@ -1547,6 +1609,14 @@ mod tests {
 
         assert!(!bundled_artifact_valid("metalsharp-runtime", &stale));
         assert!(!bundled_artifact_valid("metalsharp-runtime.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-graphics-dll", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-graphics-dll.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-assets", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-assets.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-scripts-tools", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-scripts-tools.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-steam", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-steam.tar.zst", &stale));
         assert!(bundled_artifact_valid("unmanaged-test-asset.bin", &stale));
 
         let _ = fs::remove_dir_all(home);

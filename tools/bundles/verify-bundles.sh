@@ -75,15 +75,23 @@ verify_local() {
       failed=1
       continue
     fi
-    if [ "$asset" = "metalsharp-runtime.tar.zst" ] && ! verify_runtime_host "$path"; then
+    if [ "$asset" = "metalsharp-runtime.tar.zst" ] && ! verify_runtime_core "$path"; then
       failed=1
       continue
     fi
-    if [ "$asset" = "metalsharp-runtime.tar.zst" ] && ! verify_runtime_metalsharp_lib "$path"; then
+    if [ "$asset" = "metalsharp-graphics-dll.tar.zst" ] && ! verify_graphics_core "$path"; then
       failed=1
       continue
     fi
-    if [ "$asset" = "metalsharp-scripts-tools.tar.zst" ] && ! verify_scripts_tools_configs "$path"; then
+    if [ "$asset" = "metalsharp-assets.tar.zst" ] && ! verify_assets_core "$path"; then
+      failed=1
+      continue
+    fi
+    if [ "$asset" = "metalsharp-scripts-tools.tar.zst" ] && ! verify_scripts_tools_core "$path"; then
+      failed=1
+      continue
+    fi
+    if [ "$asset" = "metalsharp-steam.tar.zst" ] && ! verify_steam_core "$path"; then
       failed=1
       continue
     fi
@@ -101,80 +109,84 @@ archive_contains_root() {
     <<< "$listing"
 }
 
-verify_runtime_host() {
+verify_required_files() {
   local path="$1"
+  local label="$2"
+  shift 2
   local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-runtime-host.XXXXXX")"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-bundle-core.XXXXXX")"
 
-  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" runtime/host && [ ! -d "$tmp/runtime/host" ]; then
-    echo "HOST RUNTIME MISSING: $path does not contain runtime/host/" >&2
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" "$@"; then
+    echo "$label INVALID: $path is missing one or more required files" >&2
     rm -rf "$tmp"
     return 1
   fi
 
-  local host="$tmp/runtime/host"
   local failed=0
-  for required in manifest.json HostRuntimeABI.h; do
-    if [ ! -s "$host/$required" ]; then
-      echo "HOST RUNTIME INVALID: $path has missing or empty runtime/host/$required" >&2
+  local required
+  for required in "$@"; do
+    if [ ! -s "$tmp/$required" ]; then
+      echo "$label INVALID: $path has missing or empty $required" >&2
       failed=1
     fi
   done
-
-  if [ ! -s "$host/libmetalsharp_host_runtime.dylib" ] \
-    && [ ! -s "$host/libmetalsharp_host_runtime.so" ] \
-    && [ ! -s "$host/metalsharp_host_runtime.dll" ]; then
-    echo "HOST RUNTIME INVALID: $path has no non-empty host runtime shared library" >&2
-    failed=1
-  fi
 
   rm -rf "$tmp"
   return "$failed"
 }
 
-verify_runtime_metalsharp_lib() {
-  local path="$1"
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-runtime-lib.XXXXXX")"
-
-  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" \
-    runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll \
-    && [ ! -e "$tmp/runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" ]; then
-    echo "METALSHARP RUNTIME INVALID: $path does not contain runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" >&2
-    rm -rf "$tmp"
-    return 1
-  fi
-
-  if [ ! -s "$tmp/runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" ]; then
-    echo "METALSHARP RUNTIME INVALID: $path has empty runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" >&2
-    rm -rf "$tmp"
-    return 1
-  fi
-
-  rm -rf "$tmp"
-  return 0
+verify_runtime_core() {
+  verify_required_files "$1" "RUNTIME" \
+    runtime/wine/bin/metalsharp-wine \
+    runtime/metalsharp-backend \
+    runtime/host/manifest.json \
+    runtime/host/HostRuntimeABI.h \
+    runtime/host/libmetalsharp_host_runtime.dylib \
+    runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll
 }
 
-verify_scripts_tools_configs() {
-  local path="$1"
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-scripts-tools.XXXXXX")"
+verify_graphics_core() {
+  verify_required_files "$1" "GRAPHICS" \
+    Graphics/dll/dxmt/x86_64-unix/winemetal.so \
+    Graphics/dll/dxmt/x86_64-windows/d3d10core.dll \
+    Graphics/dll/dxmt/x86_64-windows/d3d11.dll \
+    Graphics/dll/dxmt/x86_64-windows/d3d12.dll \
+    Graphics/dll/dxmt/x86_64-windows/dxgi.dll \
+    Graphics/dll/dxmt/x86_64-windows/dxgi_dxmt.dll \
+    Graphics/dll/dxmt/x86_64-windows/nvapi64.dll \
+    Graphics/dll/dxmt/x86_64-windows/nvngx.dll \
+    Graphics/dll/dxmt/x86_64-windows/winemetal.dll
+}
 
-  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" scripts/tools/configs/mtsp-rules.toml \
-    && [ ! -e "$tmp/scripts/tools/configs/mtsp-rules.toml" ]; then
-    echo "SCRIPTS TOOLS INVALID: $path does not contain scripts/tools/configs/mtsp-rules.toml" >&2
-    rm -rf "$tmp"
-    return 1
-  fi
+verify_assets_core() {
+  verify_required_files "$1" "ASSETS" \
+    assets/eac-toggle/x86_64-windows/_winhttp.dll \
+    assets/goldberg/x64/steam_api64.dll \
+    assets/goldberg/x86/steam_api.dll \
+    assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal \
+    assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib \
+    assets/gptk/x86_64-windows/atidxx64.dll \
+    assets/gptk/x86_64-windows/d3d10.dll \
+    assets/gptk/x86_64-windows/d3d11.dll \
+    assets/gptk/x86_64-windows/d3d12.dll \
+    assets/gptk/x86_64-windows/dxgi.dll \
+    assets/gptk/x86_64-windows/nvapi64.dll \
+    assets/gptk/x86_64-windows/nvngx-on-metalfx.dll \
+    assets/mono-arm64/bin/mono-sgen \
+    assets/shims/libsteam_api.dylib
+}
 
-  if [ ! -s "$tmp/scripts/tools/configs/mtsp-rules.toml" ]; then
-    echo "SCRIPTS TOOLS INVALID: $path has empty scripts/tools/configs/mtsp-rules.toml" >&2
-    rm -rf "$tmp"
-    return 1
-  fi
+verify_scripts_tools_core() {
+  verify_required_files "$1" "SCRIPTS TOOLS" \
+    scripts/tools/configs/mtsp-rules.toml \
+    scripts/tools/updater/update.sh
+}
 
-  rm -rf "$tmp"
-  return 0
+verify_steam_core() {
+  verify_required_files "$1" "STEAM" \
+    steam/SteamSetup.exe \
+    steam/steamwebhelper.exe \
+    steam/steamwebhelper-wrapper.c
 }
 
 verify_release() {
