@@ -40,8 +40,11 @@ static HANDLE get_real_ntdll_fn(const char* name) {
     return (HANDLE)GetProcAddress(ntdll_base, name);
 }
 
+static volatile LONG g_load_once = 0;
+static volatile LONG g_fns_loaded = 0;
+
 static void load_real_functions(void) {
-    if (real_NtOpenProcess)
+    if (InterlockedCompareExchange(&g_fns_loaded, 1, 0) != 0)
         return;
     real_NtOpenProcess = (NtOpenProcess_t)get_real_ntdll_fn("NtOpenProcess");
     real_NtOpenThread = (NtOpenThread_t)get_real_ntdll_fn("NtOpenThread");
@@ -379,6 +382,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         InitializeCriticalSection(&g_ctx.lock);
         load_real_functions();
         g_ctx.ipc_connected = ms_ipc_connect() ? 1 : 0;
+        if (!g_ctx.ipc_connected) {
+            OutputDebugStringA("[metalsharp_ntdll_hook] IPC connect failed, falling back to real ntdll");
+        } else {
+            OutputDebugStringA("[metalsharp_ntdll_hook] IPC connected to MetalSharp backend");
+        }
         break;
     case DLL_PROCESS_DETACH:
         ms_ipc_disconnect();

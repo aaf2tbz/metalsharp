@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 
 const MS_IPC_MAGIC: u32 = 0x4D534B54;
 const MS_IPC_VERSION: u16 = 1;
 const IPC_HEADER_SIZE: usize = 16;
+const MAX_CONCURRENT_CLIENTS: usize = 16;
 
 const OP_NT_OPEN_PROCESS: u16 = 0x0001;
 const OP_NT_OPEN_THREAD: u16 = 0x0002;
@@ -24,8 +26,11 @@ const STATUS_ACCESS_DENIED: i32 = 0xC0000022_u32 as i32;
 const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC0000004_u32 as i32;
 
 static IPC_LISTENER_RUNNING: AtomicBool = AtomicBool::new(false);
+static IPC_ACTIVE_CLIENTS: AtomicU32 = AtomicU32::new(0);
 static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 static NEXT_VIRTUAL_HANDLE: AtomicU64 = AtomicU64::new(0x00000100);
+
+static IPC_LISTENER: std::sync::LazyLock<Mutex<Option<TcpListener>>> = std::sync::LazyLock::new(|| Mutex::new(None));
 
 static VIRTUAL_HANDLES: std::sync::LazyLock<std::sync::Mutex<BTreeMap<u64, VirtualHandleEntry>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(BTreeMap::new()));
@@ -101,18 +106,24 @@ fn xnu_process_exists(_pid: u32) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+const PROC_PIDLISTTHREADS: i32 = 4;
+
+#[cfg(target_os = "macos")]
 fn xnu_thread_exists(tid: u32) -> bool {
     unsafe {
-        let mut info: [i32; 4096] = [0; 4096];
-        let size = std::mem::size_of::<i32>() * info.len();
-        let kr = libc::proc_pidinfo(
-            getpid(),
-            libc::PROC_PIDTASKALLINFO,
-            0,
-            info.as_mut_ptr() as *mut libc::c_void,
-            size as i32,
-        );
-        kr > 0
+        let pid = getpid();
+        let mut buf: [u8; 32768] = [0; 32768];
+        let count =
+            libc::proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as i32);
+        if count <= 0 {
+            return false;
+        }
+        let thread_count = (count as usize) / std::mem::size_of::<u64>();
+        if thread_count == 0 {
+            return false;
+        }
+        let thread_ids = std::slice::from_raw_parts(buf.as_ptr() as *const u64, thread_count);
+        thread_ids.iter().any(|&t| t as u32 == tid)
     }
 }
 
@@ -319,7 +330,7 @@ fn handle_nt_query_info_process(body: &[u8]) -> Vec<u8> {
 
 fn handle_nt_close(body: &[u8]) -> Vec<u8> {
     if body.len() < 8 {
-        return vec![0x08, 0x00, 0x00, 0xC0];
+        return pack_i32(STATUS_INVALID_HANDLE).to_vec();
     }
     let handle = unpack_u64(body, 0);
     let removed = lock_handles().remove(&handle).is_some();
@@ -346,26 +357,46 @@ fn handle_nt_device_io_control(body: &[u8]) -> Vec<u8> {
         &body[20..]
     };
 
-    let mut resp = Vec::with_capacity(12 + output_len as usize);
-    resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
-    resp.extend_from_slice(&pack_u32(0));
-    resp.extend_from_slice(&pack_u32(output_len));
-    if output_len > 0 {
-        resp.extend_from_slice(&vec![0u8; output_len as usize]);
+    match ioctl_code {
+        0x00090000..=0x0009FFFF => {
+            let mut resp = Vec::with_capacity(12 + output_len as usize);
+            resp.extend_from_slice(&pack_i32(STATUS_SUCCESS));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(output_len));
+            if output_len > 0 {
+                resp.extend_from_slice(&vec![0u8; output_len as usize]);
+            }
+            resp
+        },
+        _ => {
+            let mut resp = Vec::with_capacity(12);
+            resp.extend_from_slice(&pack_i32(STATUS_NOT_IMPLEMENTED));
+            resp.extend_from_slice(&pack_u32(0));
+            resp.extend_from_slice(&pack_u32(0));
+            resp
+        },
     }
-    let _ = ioctl_code;
-    resp
 }
 
 fn handle_client(mut stream: TcpStream) {
+    let active = IPC_ACTIVE_CLIENTS.fetch_add(1, Ordering::Relaxed);
+    if active >= MAX_CONCURRENT_CLIENTS as u32 {
+        IPC_ACTIVE_CLIENTS.fetch_sub(1, Ordering::Relaxed);
+        return;
+    }
+
+    let result = handle_client_inner(&mut stream);
+
+    IPC_ACTIVE_CLIENTS.fetch_sub(1, Ordering::Relaxed);
+    let _ = result;
+}
+
+fn handle_client_inner(stream: &mut TcpStream) -> Result<(), ()> {
     loop {
-        let header_buf = match read_exact_u8(&mut stream, IPC_HEADER_SIZE) {
-            Ok(b) => b,
-            Err(_) => return,
-        };
+        let header_buf = read_exact_u8(stream, IPC_HEADER_SIZE).map_err(|_| ())?;
 
         if header_buf.len() < IPC_HEADER_SIZE {
-            return;
+            return Err(());
         }
 
         let magic = u32::from_le_bytes(header_buf[0..4].try_into().unwrap_or([0; 4]));
@@ -376,14 +407,11 @@ fn handle_client(mut stream: TcpStream) {
 
         if magic != MS_IPC_MAGIC || version != MS_IPC_VERSION {
             let _ = stream.write_all(&0xC0000001u32.to_le_bytes());
-            return;
+            return Err(());
         }
 
         let body = if body_size > 0 && body_size <= 65536 {
-            match read_exact_u8(&mut stream, body_size as usize) {
-                Ok(b) => b,
-                Err(_) => return,
-            }
+            read_exact_u8(stream, body_size as usize).map_err(|_| ())?
         } else {
             Vec::new()
         };
@@ -401,9 +429,7 @@ fn handle_client(mut stream: TcpStream) {
         out.extend_from_slice(&resp_body_size.to_le_bytes());
         out.extend_from_slice(&response);
 
-        if stream.write_all(&out).is_err() {
-            return;
-        }
+        stream.write_all(&out).map_err(|_| ())?;
     }
 }
 
@@ -446,12 +472,18 @@ pub fn start_ipc_listener() -> Result<(), String> {
         TcpListener::bind(IPC_BIND_ADDR).map_err(|e| format!("IPC TCP bind failed at {}: {}", IPC_BIND_ADDR, e))?;
 
     IPC_LISTENER_RUNNING.store(true, Ordering::Relaxed);
+    *IPC_LISTENER.lock().unwrap() = Some(listener.try_clone().map_err(|e| format!("clone failed: {}", e))?);
 
     thread::spawn(move || {
         for stream in listener.incoming() {
+            if !IPC_LISTENER_RUNNING.load(Ordering::Relaxed) {
+                break;
+            }
             match stream {
                 Ok(stream) => {
-                    thread::spawn(|| handle_client(stream));
+                    if IPC_ACTIVE_CLIENTS.load(Ordering::Relaxed) < MAX_CONCURRENT_CLIENTS as u32 {
+                        thread::spawn(|| handle_client(stream));
+                    }
                 },
                 Err(_) => {
                     if !IPC_LISTENER_RUNNING.load(Ordering::Relaxed) {
@@ -467,7 +499,9 @@ pub fn start_ipc_listener() -> Result<(), String> {
 
 pub fn stop_ipc_listener() -> Value {
     IPC_LISTENER_RUNNING.store(false, Ordering::Relaxed);
-    json!({"ok": true, "stopped": true})
+    let listener = IPC_LISTENER.lock().unwrap().take();
+    drop(listener);
+    json!({"ok": true, "stopped": true, "active_clients": IPC_ACTIVE_CLIENTS.load(Ordering::Relaxed)})
 }
 
 pub const IPC_BIND_ADDR: &str = "127.0.0.1:19384";
@@ -540,10 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn test_nt_device_io_control_binary_response() {
+    fn test_nt_device_io_control_fsctl_ioctl_succeeds() {
         let mut req = Vec::new();
         req.extend_from_slice(&0x5678u64.to_le_bytes());
-        req.extend_from_slice(&0x00040000u32.to_le_bytes());
+        req.extend_from_slice(&0x00090000u32.to_le_bytes());
         req.extend_from_slice(&0u32.to_le_bytes());
         req.extend_from_slice(&64u32.to_le_bytes());
 
@@ -573,5 +607,42 @@ mod tests {
 
         let body_size = u32::from_le_bytes(req[12..16].try_into().unwrap());
         assert_eq!(body_size, 8);
+    }
+
+    #[test]
+    fn test_protocol_constants_match_dll() {
+        assert_eq!(MS_IPC_MAGIC, 0x4D534B54u32);
+        assert_eq!(MS_IPC_VERSION, 1u16);
+        assert_eq!(IPC_HEADER_SIZE, 16usize);
+        assert_eq!(OP_NT_OPEN_PROCESS, 0x0001u16);
+        assert_eq!(OP_NT_OPEN_THREAD, 0x0002u16);
+        assert_eq!(OP_NT_CLOSE, 0x0007u16);
+        assert_eq!(OP_NT_DEVICE_IO_CONTROL, 0x000Du16);
+        assert_eq!(STATUS_SUCCESS, 0i32);
+        assert_eq!(STATUS_NOT_IMPLEMENTED, 0xC0000002_u32 as i32);
+        assert_eq!(STATUS_INVALID_PARAMETER, 0xC000000D_u32 as i32);
+        assert_eq!(STATUS_INVALID_HANDLE, 0xC0000008_u32 as i32);
+        assert_eq!(STATUS_ACCESS_DENIED, 0xC0000022_u32 as i32);
+    }
+
+    #[test]
+    fn test_nt_close_error_path_uses_pack() {
+        let resp = handle_nt_close(&[0u8; 4]);
+        assert_eq!(resp.len(), 4);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_INVALID_HANDLE);
+    }
+
+    #[test]
+    fn test_nt_device_io_control_unknown_ioctl_returns_not_implemented() {
+        let mut req = Vec::new();
+        req.extend_from_slice(&0x5678u64.to_le_bytes());
+        req.extend_from_slice(&0xDEAD0000u32.to_le_bytes());
+        req.extend_from_slice(&0u32.to_le_bytes());
+        req.extend_from_slice(&0u32.to_le_bytes());
+
+        let resp = handle_nt_device_io_control(&req);
+        let status = i32::from_le_bytes(resp[0..4].try_into().unwrap());
+        assert_eq!(status, STATUS_NOT_IMPLEMENTED);
     }
 }

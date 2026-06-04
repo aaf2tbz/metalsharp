@@ -118,7 +118,6 @@ use es_dylib::*;
 #[cfg(target_os = "macos")]
 struct EsClientWrap {
     client: es_client_t,
-    _table: EsFunctionTable,
 }
 
 #[cfg(target_os = "macos")]
@@ -209,8 +208,7 @@ pub fn handle_es_live_start(_body: &serde_json::Map<String, Value>) -> Value {
                     return json!({"ok": false, "error": format!("es_subscribe failed: {}", sub_result)});
                 }
 
-                *ES_CLIENT.lock().unwrap() =
-                    Some(EsClientWrap { client, _table: unsafe { EsFunctionTable::load().unwrap() } });
+                *ES_CLIENT.lock().unwrap() = Some(EsClientWrap { client });
                 ES_CLIENT_ACTIVE.store(true, Ordering::Relaxed);
 
                 json!({"ok": true, "client": "active", "events": ["EXEC", "FORK", "EXIT"]})
@@ -236,11 +234,19 @@ pub fn handle_es_live_start(_body: &serde_json::Map<String, Value>) -> Value {
 pub fn handle_es_live_stop(_body: &serde_json::Map<String, Value>) -> Value {
     #[cfg(target_os = "macos")]
     {
+        let table = match ES_TABLE.as_ref() {
+            Ok(t) => t,
+            Err(_) => {
+                ES_CLIENT.lock().unwrap().take();
+                ES_CLIENT_ACTIVE.store(false, Ordering::Relaxed);
+                return json!({"ok": true, "stopped": true, "table_unavailable": true});
+            },
+        };
         let mut client_lock = ES_CLIENT.lock().unwrap();
         if let Some(wrap) = client_lock.take() {
             unsafe {
-                let _ = (wrap._table.es_unsubscribe_all)(wrap.client);
-                let _ = (wrap._table.es_delete_client)(wrap.client);
+                let _ = (table.es_unsubscribe_all)(wrap.client);
+                let _ = (table.es_delete_client)(wrap.client);
             }
         }
         ES_CLIENT_ACTIVE.store(false, Ordering::Relaxed);
