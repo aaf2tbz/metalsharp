@@ -596,7 +596,7 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
         log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
         format!("spawn wineboot for {}: {}", prefix.display(), e)
     })?;
-    
+
     for attempt in 0..240 {
         if let Some(status) = child.try_wait().map_err(|e| {
             log_to_file(&format!("Failed to wait for wineboot for {}: {}", prefix.display(), e));
@@ -611,7 +611,7 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
             return Err(error_msg);
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
-        
+
         if attempt == 120 {
             log_to_file(&format!("wineboot -u still running after 60 seconds for prefix: {}", prefix.display()));
         }
