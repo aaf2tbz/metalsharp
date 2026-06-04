@@ -502,8 +502,15 @@ NTSTATUS ms_hook_nt_query_information_process(HANDLE ProcessHandle, ULONG Proces
 }
 
 NTSTATUS ms_hook_nt_close(HANDLE Handle) {
+    UINT64 handle_val = (UINT64)(ULONG_PTR)Handle;
+    if (handle_val < 0x100 || (handle_val & 0x3) != 0) {
+        if (real_NtClose)
+            return real_NtClose(Handle);
+        return STATUS_INVALID_HANDLE;
+    }
+
     if (g_ctx.ipc_connected) {
-        MS_IPC_NT_CLOSE_REQ req = {.handle = (UINT64)(ULONG_PTR)Handle};
+        MS_IPC_NT_CLOSE_REQ req = {.handle = handle_val};
         MS_IPC_NT_CLOSE_RESP resp = {0};
 
         NTSTATUS status = ms_ipc_transact(MS_OP_NT_CLOSE, &req, sizeof(req), &resp, sizeof(resp));

@@ -279,7 +279,8 @@ mod xnu_vm {
     pub fn build_mbi_from_xnu(pid: u32, base_address: u64) -> Option<(u64, u64, u32, u32, u32, u32)> {
         let region = query_vm_region(pid, base_address)?;
         let (state, protect, vtype) = nt_protect_from_xnu(region.protection);
-        Some((region.address, region.size, state, protect, vtype, region.offset as u32))
+        let (_, alloc_protect, _) = nt_protect_from_xnu(region.max_protection);
+        Some((region.address, region.size, state, protect, vtype, alloc_protect))
     }
 }
 
@@ -367,7 +368,7 @@ fn handle_nt_query_system_info(body: &[u8]) -> Vec<u8> {
 
     match info_class {
         0x10 => {
-            let needed: usize = process_count as usize * 56 + 8;
+            let needed: usize = process_count as usize * 60 + 8;
             if (buf_len as usize) < needed {
                 let mut meta = Vec::with_capacity(12);
                 meta.extend_from_slice(&STATUS_INFO_LENGTH_MISMATCH.to_le_bytes());
@@ -375,7 +376,7 @@ fn handle_nt_query_system_info(body: &[u8]) -> Vec<u8> {
                 meta.extend_from_slice(&pack_u32(0));
                 return meta;
             }
-            let mut data = Vec::with_capacity(8 + process_count as usize * 56);
+            let mut data = Vec::with_capacity(8 + process_count as usize * 60);
             data.extend_from_slice(&pack_u32(process_count));
             data.extend_from_slice(&pack_u32(0));
             for h in handles.values().filter(|h| h.handle_type == "Process") {
@@ -510,11 +511,11 @@ fn handle_nt_query_virtual_memory(body: &[u8]) -> Vec<u8> {
             let mut data = vec![0u8; 48];
             data[0..8].copy_from_slice(&region_base.to_le_bytes());
             data[8..16].copy_from_slice(&region_base.to_le_bytes());
-            data[16..24].copy_from_slice(&region_size.to_le_bytes());
-            data[24..28].copy_from_slice(&state.to_le_bytes());
-            data[28..32].copy_from_slice(&protect.to_le_bytes());
-            data[32..36].copy_from_slice(&vtype.to_le_bytes());
-            data[36..40].copy_from_slice(&alloc_protect.to_le_bytes());
+            data[16..20].copy_from_slice(&alloc_protect.to_le_bytes());
+            data[24..32].copy_from_slice(&region_size.to_le_bytes());
+            data[32..36].copy_from_slice(&state.to_le_bytes());
+            data[36..40].copy_from_slice(&protect.to_le_bytes());
+            data[40..44].copy_from_slice(&vtype.to_le_bytes());
             ipc_ok(48, &data)
         },
         _ => ipc_err(STATUS_NOT_IMPLEMENTED),
@@ -572,6 +573,9 @@ fn handle_client(mut stream: TcpStream) {
         IPC_ACTIVE_CLIENTS.fetch_sub(1, Ordering::Relaxed);
         return;
     }
+
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
     let result = handle_client_inner(&mut stream);
 

@@ -14,7 +14,7 @@ OBJS = $(SRCS:.c=.o)
 all: $(TARGET)
 
 $(TARGET_RAW): $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lws2_32 -lntdll -lkernel32
+	$(CC) $(LDFLAGS) -o $@ $^ -lws2_32 -lkernel32
 
 $(TARGET): $(TARGET_RAW)
 	cp $< $@

@@ -54,7 +54,8 @@ mod es_dylib {
     pub const ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED: u32 = 4;
     pub const ES_NEW_CLIENT_RESULT_ERR_NOT_ENTITLED: u32 = 5;
 
-    pub type FnEsNewClient = unsafe extern "C" fn(*mut es_client_t, unsafe extern "C" fn(*mut c_void)) -> u32;
+    pub type FnEsNewClient =
+        unsafe extern "C" fn(*mut es_client_t, unsafe extern "C" fn(*mut c_void, *mut c_void)) -> u32;
     pub type FnEsDeleteClient = unsafe extern "C" fn(es_client_t) -> u32;
     pub type FnEsSubscribe = unsafe extern "C" fn(es_client_t, *const u32, usize) -> u32;
     pub type FnEsUnsubscribeAll = unsafe extern "C" fn(es_client_t) -> u32;
@@ -209,7 +210,7 @@ pub fn handle_es_live_start(_body: &serde_json::Map<String, Value>) -> Value {
 
         let mut client: es_client_t = std::ptr::null_mut();
 
-        extern "C" fn es_message_handler(msg: *mut std::os::raw::c_void) {
+        extern "C" fn es_message_handler(msg: *mut std::os::raw::c_void, _user_data: *mut std::os::raw::c_void) {
             if msg.is_null() {
                 return;
             }
