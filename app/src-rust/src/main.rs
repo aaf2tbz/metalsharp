@@ -1357,6 +1357,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::ipc_bridge::handle_ipc_handles(&body))
         },
+        (Method::Post, "/kernel-translation/es-live/start") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_start(&body))
+        },
+        (Method::Post, "/kernel-translation/es-live/stop") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_stop(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_status(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_events(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/processes") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
