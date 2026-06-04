@@ -90,7 +90,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
@@ -100,6 +100,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -129,7 +133,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("winemetal,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows"],
+                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll" },
@@ -138,6 +142,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -167,7 +175,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/dxmt/x86_64-windows"],
+                winedllpath_dirs: vec![
+                    "lib/wine/x86_64-windows",
+                    "lib/dxmt/x86_64-windows",
+                    "lib/metalsharp/x86_64-windows",
+                ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll" },
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll" },
@@ -178,6 +190,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll" },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -204,11 +220,20 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/wine/x86_64-windows", "lib/wine/i386-windows", "lib/dxmt/x86_64-windows"],
+                winedllpath_dirs: vec![
+                    "lib/wine/x86_64-windows",
+                    "lib/wine/i386-windows",
+                    "lib/dxmt/x86_64-windows",
+                    "lib/metalsharp/x86_64-windows",
+                ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll" },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll" },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -229,7 +254,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 requires_wine: true,
                 wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/gptk/x86_64-unix", "lib/external"],
-                winedllpath_dirs: vec!["lib/gptk/x86_64-windows"],
+                winedllpath_dirs: vec!["lib/gptk/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll" },
@@ -237,6 +262,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll" },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "nvapi64.dll" },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "atidxx64.dll" },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                    },
                 ],
                 env_vars: vec![],
                 launch_args: vec![],

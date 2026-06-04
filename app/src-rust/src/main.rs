@@ -1340,6 +1340,43 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::integration::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/ipc/start") => match kernel_translation::ipc_bridge::start_ipc_listener() {
+            Ok(()) => {
+                resp(200, serde_json::json!({"ok": true, "bind_addr": kernel_translation::ipc_bridge::IPC_BIND_ADDR}))
+            },
+            Err(e) => resp(500, serde_json::json!({"ok": false, "error": e})),
+        },
+        (Method::Post, "/kernel-translation/ipc/stop") => {
+            resp(200, kernel_translation::ipc_bridge::stop_ipc_listener())
+        },
+        (Method::Get, "/kernel-translation/ipc/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::ipc_bridge::handle_ipc_status(&body))
+        },
+        (Method::Get, "/kernel-translation/ipc/handles") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::ipc_bridge::handle_ipc_handles(&body))
+        },
+        (Method::Post, "/kernel-translation/es-live/start") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_start(&body))
+        },
+        (Method::Post, "/kernel-translation/es-live/stop") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_stop(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_status(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/events") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_events(&body))
+        },
+        (Method::Get, "/kernel-translation/es-live/processes") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();

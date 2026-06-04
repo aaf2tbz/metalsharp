@@ -4,10 +4,29 @@ pub mod code_integrity;
 pub mod driver_model;
 pub mod es_bridge;
 #[cfg(target_os = "macos")]
+pub mod es_live;
+#[cfg(not(target_os = "macos"))]
+pub mod es_live {
+    use serde_json::{json, Map, Value};
+    macro_rules! stub {
+        ($name:ident) => {
+            pub fn $name(_body: &Map<String, Value>) -> Value {
+                json!({"ok": false, "error": "EndpointSecurity live requires macOS"})
+            }
+        };
+    }
+    stub!(handle_es_live_start);
+    stub!(handle_es_live_stop);
+    stub!(handle_es_live_status);
+    stub!(handle_es_live_events);
+    stub!(handle_es_live_processes);
+}
+#[cfg(target_os = "macos")]
 pub mod handle_bridge;
 pub mod handle_callbacks;
 pub mod handle_table;
 pub mod integration;
+pub mod ipc_bridge;
 mod nt_to_xnu;
 pub mod probe;
 pub mod thread_notify;

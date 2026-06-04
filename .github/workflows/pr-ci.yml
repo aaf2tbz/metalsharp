@@ -94,6 +94,12 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Sign with EndpointSecurity entitlements
+        run: |
+          codesign --force --sign - \
+            --entitlements entitlements.plist \
+            target/release/metalsharp-backend
+
       - name: Test
         run: cargo test
 

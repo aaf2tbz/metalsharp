@@ -300,6 +300,8 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
 
     ensure_steam_launch_ready(&steam_dir);
 
+    let _ = crate::kernel_translation::ipc_bridge::start_ipc_listener();
+
     let pid = spawn_wine_steam_with_env(
         &["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"],
         extra_env,
@@ -428,6 +430,8 @@ pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     if !wine_steam_cleanup_pids().is_empty() {
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
+
+    let _ = crate::kernel_translation::ipc_bridge::stop_ipc_listener();
 
     Ok(json!({"ok": true, "running": is_wine_steam_running()}))
 }
