@@ -12,15 +12,16 @@ static SOCKET g_sock = INVALID_SOCKET;
 static WSADATA g_wsa = {0};
 
 static UINT32 get_next_request_id(void) {
-    return (UINT32)InterlockedIncrement((LONG *)&g_ctx.next_request_id);
+    return (UINT32)InterlockedIncrement((LONG*)&g_ctx.next_request_id);
 }
 
-typedef NTSTATUS (WINAPI *NtOpenProcess_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PCLIENT_ID);
-typedef NTSTATUS (WINAPI *NtOpenThread_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PCLIENT_ID);
-typedef NTSTATUS (WINAPI *NtQuerySystemInformation_t)(ULONG, PVOID, ULONG, PULONG);
-typedef NTSTATUS (WINAPI *NtQueryInformationProcess_t)(HANDLE, ULONG, PVOID, ULONG, PULONG);
-typedef NTSTATUS (WINAPI *NtClose_t)(HANDLE);
-typedef NTSTATUS (WINAPI *NtDeviceIoControlFile_t)(HANDLE, HANDLE, PVOID, PVOID, PIO_STATUS_BLOCK, ULONG, PVOID, ULONG, PVOID, ULONG);
+typedef NTSTATUS(WINAPI* NtOpenProcess_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PCLIENT_ID);
+typedef NTSTATUS(WINAPI* NtOpenThread_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PCLIENT_ID);
+typedef NTSTATUS(WINAPI* NtQuerySystemInformation_t)(ULONG, PVOID, ULONG, PULONG);
+typedef NTSTATUS(WINAPI* NtQueryInformationProcess_t)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+typedef NTSTATUS(WINAPI* NtClose_t)(HANDLE);
+typedef NTSTATUS(WINAPI* NtDeviceIoControlFile_t)(HANDLE, HANDLE, PVOID, PVOID, PIO_STATUS_BLOCK, ULONG, PVOID, ULONG,
+                                                  PVOID, ULONG);
 
 static NtOpenProcess_t real_NtOpenProcess = NULL;
 static NtOpenThread_t real_NtOpenThread = NULL;
@@ -29,17 +30,19 @@ static NtQueryInformationProcess_t real_NtQueryInformationProcess = NULL;
 static NtClose_t real_NtClose = NULL;
 static NtDeviceIoControlFile_t real_NtDeviceIoControlFile = NULL;
 
-static HANDLE get_real_ntdll_fn(const char *name) {
+static HANDLE get_real_ntdll_fn(const char* name) {
     static HMODULE ntdll_base = NULL;
     if (!ntdll_base) {
         ntdll_base = GetModuleHandleA("ntdll.dll");
     }
-    if (!ntdll_base) return NULL;
+    if (!ntdll_base)
+        return NULL;
     return (HANDLE)GetProcAddress(ntdll_base, name);
 }
 
 static void load_real_functions(void) {
-    if (real_NtOpenProcess) return;
+    if (real_NtOpenProcess)
+        return;
     real_NtOpenProcess = (NtOpenProcess_t)get_real_ntdll_fn("NtOpenProcess");
     real_NtOpenThread = (NtOpenThread_t)get_real_ntdll_fn("NtOpenThread");
     real_NtQuerySystemInformation = (NtQuerySystemInformation_t)get_real_ntdll_fn("NtQuerySystemInformation");
@@ -48,24 +51,26 @@ static void load_real_functions(void) {
     real_NtDeviceIoControlFile = (NtDeviceIoControlFile_t)get_real_ntdll_fn("NtDeviceIoControlFile");
 }
 
-static BOOL send_all(SOCKET s, const void *buf, int len) {
-    const char *p = (const char *)buf;
+static BOOL send_all(SOCKET s, const void* buf, int len) {
+    const char* p = (const char*)buf;
     int remaining = len;
     while (remaining > 0) {
         int sent = send(s, p, remaining, 0);
-        if (sent <= 0) return FALSE;
+        if (sent <= 0)
+            return FALSE;
         p += sent;
         remaining -= sent;
     }
     return TRUE;
 }
 
-static BOOL recv_all(SOCKET s, void *buf, int len) {
-    char *p = (char *)buf;
+static BOOL recv_all(SOCKET s, void* buf, int len) {
+    char* p = (char*)buf;
     int remaining = len;
     while (remaining > 0) {
         int recvd = recv(s, p, remaining, 0);
-        if (recvd <= 0) return FALSE;
+        if (recvd <= 0)
+            return FALSE;
         p += recvd;
         remaining -= recvd;
     }
@@ -90,7 +95,7 @@ BOOL ms_ipc_connect(void) {
     addr.sin_port = htons(MS_IPC_PORT);
     addr.sin_addr.s_addr = inet_addr(MS_IPC_HOST);
 
-    if (connect(g_sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    if (connect(g_sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(g_sock);
         g_sock = INVALID_SOCKET;
         WSACleanup();
@@ -99,7 +104,7 @@ BOOL ms_ipc_connect(void) {
 
     {
         BOOL nodelay = TRUE;
-        setsockopt(g_sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
+        setsockopt(g_sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay));
     }
 
     return TRUE;
@@ -113,16 +118,11 @@ void ms_ipc_disconnect(void) {
     WSACleanup();
 }
 
-NTSTATUS ms_ipc_transact(
-    UINT16 operation,
-    const void *request_body,
-    UINT32 request_size,
-    void *response_body,
-    UINT32 response_size
-) {
+NTSTATUS ms_ipc_transact(UINT16 operation, const void* request_body, UINT32 request_size, void* response_body,
+                         UINT32 response_size) {
     MS_IPC_HEADER req_hdr;
     MS_IPC_HEADER resp_hdr;
-    UINT8 *resp_json = NULL;
+    UINT8* resp_json = NULL;
 
     if (g_sock == INVALID_SOCKET) {
         return STATUS_NOT_IMPLEMENTED;
@@ -163,7 +163,7 @@ NTSTATUS ms_ipc_transact(
         return STATUS_NOT_IMPLEMENTED;
     }
 
-    resp_json = (UINT8 *)HeapAlloc(GetProcessHeap(), 0, resp_hdr.body_size);
+    resp_json = (UINT8*)HeapAlloc(GetProcessHeap(), 0, resp_hdr.body_size);
     if (!resp_json) {
         LeaveCriticalSection(&g_ctx.lock);
         return STATUS_NOT_IMPLEMENTED;
@@ -186,12 +186,8 @@ NTSTATUS ms_ipc_transact(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS ms_hook_nt_open_process(
-    PHANDLE ProcessHandle,
-    ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PCLIENT_ID ClientId
-) {
+NTSTATUS ms_hook_nt_open_process(PHANDLE ProcessHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
+                                 PCLIENT_ID ClientId) {
     if (!ClientId || !ProcessHandle) {
         if (real_NtOpenProcess)
             return real_NtOpenProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId);
@@ -208,11 +204,7 @@ NTSTATUS ms_hook_nt_open_process(
         };
         MS_IPC_NT_OPEN_PROCESS_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(
-            MS_OP_NT_OPEN_PROCESS,
-            &req, sizeof(req),
-            &resp, sizeof(resp)
-        );
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_OPEN_PROCESS, &req, sizeof(req), &resp, sizeof(resp));
 
         if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
             *ProcessHandle = (HANDLE)(ULONG_PTR)resp.handle;
@@ -226,12 +218,8 @@ NTSTATUS ms_hook_nt_open_process(
     return STATUS_ACCESS_DENIED;
 }
 
-NTSTATUS ms_hook_nt_open_thread(
-    PHANDLE ThreadHandle,
-    ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PCLIENT_ID ClientId
-) {
+NTSTATUS ms_hook_nt_open_thread(PHANDLE ThreadHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
+                                PCLIENT_ID ClientId) {
     if (!ClientId || !ThreadHandle) {
         if (real_NtOpenThread)
             return real_NtOpenThread(ThreadHandle, DesiredAccess, ObjectAttributes, ClientId);
@@ -246,11 +234,7 @@ NTSTATUS ms_hook_nt_open_thread(
         };
         MS_IPC_NT_OPEN_THREAD_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(
-            MS_OP_NT_OPEN_THREAD,
-            &req, sizeof(req),
-            &resp, sizeof(resp)
-        );
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_OPEN_THREAD, &req, sizeof(req), &resp, sizeof(resp));
 
         if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
             *ThreadHandle = (HANDLE)(ULONG_PTR)resp.handle;
@@ -264,12 +248,8 @@ NTSTATUS ms_hook_nt_open_thread(
     return STATUS_ACCESS_DENIED;
 }
 
-NTSTATUS ms_hook_nt_query_system_information(
-    ULONG SystemInformationClass,
-    PVOID SystemInformation,
-    ULONG SystemInformationLength,
-    PULONG ReturnLength
-) {
+NTSTATUS ms_hook_nt_query_system_information(ULONG SystemInformationClass, PVOID SystemInformation,
+                                             ULONG SystemInformationLength, PULONG ReturnLength) {
     if (g_ctx.ipc_connected) {
         MS_IPC_NT_QUERY_SYSTEM_INFO_REQ req = {
             .info_class = SystemInformationClass,
@@ -277,31 +257,25 @@ NTSTATUS ms_hook_nt_query_system_information(
         };
         MS_IPC_NT_QUERY_SYSTEM_INFO_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(
-            MS_OP_NT_QUERY_SYSTEM_INFO,
-            &req, sizeof(req),
-            &resp, sizeof(resp)
-        );
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_SYSTEM_INFO, &req, sizeof(req), &resp, sizeof(resp));
 
         if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength) *ReturnLength = resp.return_length;
+            if (ReturnLength)
+                *ReturnLength = resp.return_length;
             return STATUS_SUCCESS;
         }
     }
 
     if (real_NtQuerySystemInformation)
-        return real_NtQuerySystemInformation(SystemInformationClass, SystemInformation, SystemInformationLength, ReturnLength);
+        return real_NtQuerySystemInformation(SystemInformationClass, SystemInformation, SystemInformationLength,
+                                             ReturnLength);
 
     return STATUS_NOT_IMPLEMENTED;
 }
 
-NTSTATUS ms_hook_nt_query_information_process(
-    HANDLE ProcessHandle,
-    ULONG ProcessInformationClass,
-    PVOID ProcessInformation,
-    ULONG ProcessInformationLength,
-    PULONG ReturnLength
-) {
+NTSTATUS ms_hook_nt_query_information_process(HANDLE ProcessHandle, ULONG ProcessInformationClass,
+                                              PVOID ProcessInformation, ULONG ProcessInformationLength,
+                                              PULONG ReturnLength) {
     if (g_ctx.ipc_connected) {
         MS_IPC_NT_QUERY_INFORMATION_PROC_REQ req = {
             .handle = (UINT64)(ULONG_PTR)ProcessHandle,
@@ -310,34 +284,28 @@ NTSTATUS ms_hook_nt_query_information_process(
         };
         MS_IPC_NT_QUERY_INFORMATION_PROC_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(
-            MS_OP_NT_QUERY_INFORMATION_PROC,
-            &req, sizeof(req),
-            &resp, sizeof(resp)
-        );
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_QUERY_INFORMATION_PROC, &req, sizeof(req), &resp, sizeof(resp));
 
         if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
-            if (ReturnLength) *ReturnLength = resp.return_length;
+            if (ReturnLength)
+                *ReturnLength = resp.return_length;
             return STATUS_SUCCESS;
         }
     }
 
     if (real_NtQueryInformationProcess)
-        return real_NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation, ProcessInformationLength, ReturnLength);
+        return real_NtQueryInformationProcess(ProcessHandle, ProcessInformationClass, ProcessInformation,
+                                              ProcessInformationLength, ReturnLength);
 
     return STATUS_NOT_IMPLEMENTED;
 }
 
 NTSTATUS ms_hook_nt_close(HANDLE Handle) {
     if (g_ctx.ipc_connected) {
-        MS_IPC_NT_CLOSE_REQ req = { .handle = (UINT64)(ULONG_PTR)Handle };
+        MS_IPC_NT_CLOSE_REQ req = {.handle = (UINT64)(ULONG_PTR)Handle};
         MS_IPC_NT_CLOSE_RESP resp = {0};
 
-        NTSTATUS status = ms_ipc_transact(
-            MS_OP_NT_CLOSE,
-            &req, sizeof(req),
-            &resp, sizeof(resp)
-        );
+        NTSTATUS status = ms_ipc_transact(MS_OP_NT_CLOSE, &req, sizeof(req), &resp, sizeof(resp));
 
         if (status == STATUS_SUCCESS && resp.nt_status == STATUS_SUCCESS) {
             return STATUS_SUCCESS;
@@ -350,18 +318,9 @@ NTSTATUS ms_hook_nt_close(HANDLE Handle) {
     return STATUS_INVALID_HANDLE;
 }
 
-NTSTATUS ms_hook_nt_device_io_control_file(
-    HANDLE FileHandle,
-    HANDLE Event,
-    PVOID ApcRoutine,
-    PVOID ApcContext,
-    PIO_STATUS_BLOCK IoStatusBlock,
-    ULONG IoControlCode,
-    PVOID InputBuffer,
-    ULONG InputBufferLength,
-    PVOID OutputBuffer,
-    ULONG OutputBufferLength
-) {
+NTSTATUS ms_hook_nt_device_io_control_file(HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext,
+                                           PIO_STATUS_BLOCK IoStatusBlock, ULONG IoControlCode, PVOID InputBuffer,
+                                           ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength) {
     if (g_ctx.ipc_connected) {
         MS_IPC_NT_DEVICE_IO_CONTROL_REQ req = {
             .handle = (UINT64)(ULONG_PTR)FileHandle,
@@ -371,23 +330,19 @@ NTSTATUS ms_hook_nt_device_io_control_file(
         };
 
         UINT32 total_req = sizeof(req) + InputBufferLength;
-        UINT8 *req_buf = (UINT8 *)HeapAlloc(GetProcessHeap(), 0, total_req);
+        UINT8* req_buf = (UINT8*)HeapAlloc(GetProcessHeap(), 0, total_req);
         if (req_buf) {
             memcpy(req_buf, &req, sizeof(req));
             if (InputBuffer && InputBufferLength > 0)
                 memcpy(req_buf + sizeof(req), InputBuffer, InputBufferLength);
 
             UINT32 total_resp = sizeof(MS_IPC_NT_DEVICE_IO_CONTROL_RESP) + OutputBufferLength;
-            UINT8 *resp_buf = (UINT8 *)HeapAlloc(GetProcessHeap(), 0, total_resp);
+            UINT8* resp_buf = (UINT8*)HeapAlloc(GetProcessHeap(), 0, total_resp);
             if (resp_buf) {
-                NTSTATUS status = ms_ipc_transact(
-                    MS_OP_NT_DEVICE_IO_CONTROL,
-                    req_buf, total_req,
-                    resp_buf, total_resp
-                );
+                NTSTATUS status = ms_ipc_transact(MS_OP_NT_DEVICE_IO_CONTROL, req_buf, total_req, resp_buf, total_resp);
 
                 if (status == STATUS_SUCCESS) {
-                    MS_IPC_NT_DEVICE_IO_CONTROL_RESP *dev_resp = (MS_IPC_NT_DEVICE_IO_CONTROL_RESP *)resp_buf;
+                    MS_IPC_NT_DEVICE_IO_CONTROL_RESP* dev_resp = (MS_IPC_NT_DEVICE_IO_CONTROL_RESP*)resp_buf;
                     if (dev_resp->nt_status == STATUS_SUCCESS) {
                         if (IoStatusBlock) {
                             IoStatusBlock->Status = STATUS_SUCCESS;
@@ -409,7 +364,8 @@ NTSTATUS ms_hook_nt_device_io_control_file(
     }
 
     if (real_NtDeviceIoControlFile)
-        return real_NtDeviceIoControlFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode, InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength);
+        return real_NtDeviceIoControlFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode,
+                                          InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength);
 
     return STATUS_NOT_IMPLEMENTED;
 }
