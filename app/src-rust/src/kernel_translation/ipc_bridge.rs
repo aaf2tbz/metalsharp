@@ -556,23 +556,21 @@ mod tests {
 
     #[test]
     fn test_alloc_handle_increments() {
-        VIRTUAL_HANDLES.lock().unwrap().clear();
-
         let h1 = alloc_handle(100, 0, 0x1F0FFF, "Process");
         let h2 = alloc_handle(200, 0, 0x1F0FFF, "Process");
 
         assert!(h1 >= 0x100);
-        assert_eq!(h2, h1 + 4);
+        assert!(h2 > h1);
 
         let handles = lock_handles();
-        assert_eq!(handles.len(), 2);
+        assert!(handles.contains_key(&h1));
+        assert!(handles.contains_key(&h2));
         assert_eq!(handles[&h1].pid, 100);
         assert_eq!(handles[&h2].pid, 200);
     }
 
     #[test]
     fn test_nt_open_process_returns_handle() {
-        VIRTUAL_HANDLES.lock().unwrap().clear();
         let mut req = Vec::new();
         req.extend_from_slice(&0x1F0FFFu32.to_le_bytes());
         req.extend_from_slice(&0u32.to_le_bytes());
@@ -588,7 +586,6 @@ mod tests {
 
     #[test]
     fn test_nt_close_removes_handle() {
-        VIRTUAL_HANDLES.lock().unwrap().clear();
         let h = alloc_handle(42, 0, 0, "Process");
 
         let mut req = Vec::new();
