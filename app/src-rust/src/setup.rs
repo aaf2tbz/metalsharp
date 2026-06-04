@@ -9,6 +9,9 @@ pub fn state() -> Value {
     let config_path = crate::platform::metalsharp_home_dir_for(&home).join("setup.json");
     let dxmt_runtime = crate::installer::dxmt_runtime_status();
     let dxmt_current = dxmt_runtime.get("current").and_then(|v| v.as_bool()).unwrap_or(false);
+    let wine_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let metalsharp_runtime_lib_ready = crate::installer::metalsharp_runtime_lib_ready(&wine_dir);
+    let runtime_current = dxmt_current && metalsharp_runtime_lib_ready;
 
     if config_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&config_path) {
@@ -16,13 +19,14 @@ pub fn state() -> Value {
                 let saved_completed = cfg.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
                 return json!({
                     "ok": true,
-                    "completed": saved_completed && dxmt_current,
+                    "completed": saved_completed && runtime_current,
                     "savedCompleted": saved_completed,
                     "step": cfg.get("step").and_then(|v| v.as_u64()).unwrap_or(0),
                     "deviceName": cfg.get("deviceName").and_then(|v| v.as_str()).unwrap_or(""),
                     "steamApiKeySet": cfg.get("steamApiKeySet").and_then(|v| v.as_bool()).unwrap_or(false),
-                    "runtimeMigrationRequired": saved_completed && !dxmt_current,
+                    "runtimeMigrationRequired": saved_completed && !runtime_current,
                     "dxmtRuntime": dxmt_runtime,
+                    "metalsharpRuntimeLibReady": metalsharp_runtime_lib_ready,
                 });
             }
         }
@@ -37,6 +41,7 @@ pub fn state() -> Value {
         "steamApiKeySet": false,
         "runtimeMigrationRequired": false,
         "dxmtRuntime": dxmt_runtime,
+        "metalsharpRuntimeLibReady": metalsharp_runtime_lib_ready,
     })
 }
 

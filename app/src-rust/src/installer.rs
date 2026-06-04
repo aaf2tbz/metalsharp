@@ -14,6 +14,7 @@ const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
 const GRAPHICS_DLL_BUNDLE: &str = "metalsharp-graphics-dll";
 const ASSETS_BUNDLE: &str = "metalsharp-assets";
 const SCRIPTS_TOOLS_BUNDLE: &str = "metalsharp-scripts-tools";
+const METALSHARP_NTDLL_HOOK_DLL: &str = "metalsharp_ntdll_hook.dll";
 const DXMT_REQUIRED_PE: &[&str] = &[
     "d3d10core.dll",
     "d3d11.dll",
@@ -292,6 +293,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     if ms_wine.exists()
         && host_runtime_ready(&host_dir)
         && file_nonempty(&backend)
+        && metalsharp_runtime_lib_ready(&runtime_dir.join("wine"))
         && bundle.as_ref().is_some_and(|archive| split_bundle_current(home, RUNTIME_BUNDLE, archive))
     {
         return Ok(false);
@@ -330,6 +332,9 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
             }
             if !file_nonempty(&backend) {
                 return Err("MetalSharp runtime bundle installed but backend executable is missing".into());
+            }
+            if !metalsharp_runtime_lib_ready(&runtime_dir.join("wine")) {
+                return Err("MetalSharp runtime bundle installed but MetalSharp hook DLL is missing".into());
             }
 
             let wine_check = Command::new(&ms_wine).arg("--version").output();
@@ -410,6 +415,10 @@ fn host_runtime_ready(dir: &Path) -> bool {
 
 fn file_nonempty(path: &Path) -> bool {
     path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
+}
+
+pub(crate) fn metalsharp_runtime_lib_ready(wine_dir: &Path) -> bool {
+    file_nonempty(&wine_dir.join("lib").join("metalsharp").join("x86_64-windows").join(METALSHARP_NTDLL_HOOK_DLL))
 }
 
 fn split_bundle_marker_dir(home: &Path) -> PathBuf {

@@ -79,6 +79,10 @@ verify_local() {
       failed=1
       continue
     fi
+    if [ "$asset" = "metalsharp-runtime.tar.zst" ] && ! verify_runtime_metalsharp_lib "$path"; then
+      failed=1
+      continue
+    fi
     if [ "$asset" = "metalsharp-scripts-tools.tar.zst" ] && ! verify_scripts_tools_configs "$path"; then
       failed=1
       continue
@@ -126,6 +130,29 @@ verify_runtime_host() {
 
   rm -rf "$tmp"
   return "$failed"
+}
+
+verify_runtime_metalsharp_lib() {
+  local path="$1"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-runtime-lib.XXXXXX")"
+
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" \
+    runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll \
+    && [ ! -e "$tmp/runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" ]; then
+    echo "METALSHARP RUNTIME INVALID: $path does not contain runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if [ ! -s "$tmp/runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" ]; then
+    echo "METALSHARP RUNTIME INVALID: $path has empty runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  return 0
 }
 
 verify_scripts_tools_configs() {

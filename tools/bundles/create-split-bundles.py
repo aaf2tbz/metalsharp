@@ -223,6 +223,11 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     require_host_runtime(APP_DIR / "native" / "host")
     copy_tree(APP_DIR / "native" / "host", roots["runtime"] / "host")
     require_host_runtime(roots["runtime"] / "host")
+    require_file(
+        PROJECT_ROOT / "lib" / "metalsharp" / "x86_64-windows" / "metalsharp_ntdll_hook.dll",
+        "MetalSharp ntdll hook DLL",
+    )
+    copy_tree(PROJECT_ROOT / "lib" / "metalsharp", roots["runtime"] / "wine" / "lib" / "metalsharp")
 
     copy_tree(source_dxmt / "x86_64-unix", roots["graphics"] / "dxmt" / "x86_64-unix")
     copy_tree(source_dxmt / "x86_64-windows", roots["graphics"] / "dxmt" / "x86_64-windows")

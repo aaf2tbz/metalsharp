@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ARCHIVE = PROJECT_ROOT / "app" / "bundles" / "metalsharp-runtime.tar.zst"
 DEFAULT_HOST = PROJECT_ROOT / "app" / "native" / "host"
 DEFAULT_BACKEND = PROJECT_ROOT / "app" / "src-rust" / "target" / "release" / "metalsharp-backend"
+DEFAULT_METALSHARP_LIB = PROJECT_ROOT / "lib" / "metalsharp"
 
 
 def require_file(path: Path, description: str) -> None:
@@ -31,6 +32,13 @@ def require_host_runtime(host_dir: Path) -> None:
     if not any(path.is_file() and path.stat().st_size > 0 for path in libraries):
         names = ", ".join(str(path) for path in libraries)
         raise FileNotFoundError(f"missing required non-empty host runtime library; checked {names}")
+
+
+def require_metalsharp_lib(lib_dir: Path) -> None:
+    require_file(
+        lib_dir / "x86_64-windows" / "metalsharp_ntdll_hook.dll",
+        "MetalSharp ntdll hook DLL",
+    )
 
 
 def copy_tree(src: Path, dst: Path) -> None:
@@ -80,10 +88,11 @@ def write_archive(source_root: Path, output: Path) -> None:
         tar_path.unlink(missing_ok=True)
 
 
-def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path) -> None:
+def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsharp_lib: Path) -> None:
     require_file(archive, "runtime bundle archive")
     require_host_runtime(host_dir)
     require_file(backend, "runtime backend")
+    require_metalsharp_lib(metalsharp_lib)
 
     with tempfile.TemporaryDirectory(prefix="metalsharp-runtime-repair-") as tmp_name:
         tmp = Path(tmp_name)
@@ -97,8 +106,10 @@ def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path) -> None:
 
         copy_tree(host_dir, runtime_root / "host")
         shutil.copy2(backend, runtime_root / "metalsharp-backend")
+        copy_tree(metalsharp_lib, runtime_root / "wine" / "lib" / "metalsharp")
         require_host_runtime(runtime_root / "host")
         require_file(runtime_root / "metalsharp-backend", "runtime backend inside archive")
+        require_metalsharp_lib(runtime_root / "wine" / "lib" / "metalsharp")
 
         repaired = tmp / archive.name
         write_archive(extracted, repaired)
@@ -110,9 +121,10 @@ def main() -> None:
     parser.add_argument("--archive", type=Path, default=DEFAULT_ARCHIVE)
     parser.add_argument("--host-dir", type=Path, default=DEFAULT_HOST)
     parser.add_argument("--backend", type=Path, default=DEFAULT_BACKEND)
+    parser.add_argument("--metalsharp-lib", type=Path, default=DEFAULT_METALSHARP_LIB)
     args = parser.parse_args()
 
-    repair_runtime_bundle(args.archive, args.host_dir, args.backend)
+    repair_runtime_bundle(args.archive, args.host_dir, args.backend, args.metalsharp_lib)
     print(f"repaired runtime bundle: {args.archive}")
 
 

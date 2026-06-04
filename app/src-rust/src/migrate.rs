@@ -52,6 +52,7 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "steam_autocloud.vdf",
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
+const MIGRATION_TOTAL_STEPS: usize = 6;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -168,6 +169,10 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         return false;
     }
 
+    if !crate::installer::metalsharp_runtime_lib_ready(&runtime_wine) {
+        return false;
+    }
+
     [
         runtime_wine.join("lib").join("wine").join("x86_64-unix"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
@@ -272,7 +277,7 @@ fn run_migration() {
         return;
     }
 
-    let total_steps = 5usize;
+    let total_steps = MIGRATION_TOTAL_STEPS;
     let mut step = 0usize;
 
     step += 1;
@@ -323,6 +328,16 @@ fn run_migration() {
     step += 1;
     write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
     restore_user_data(&ms_dir, &preserved);
+
+    if install_ok {
+        step += 1;
+        write_migrate_progress("running", step, total_steps, "Updating Wine prefixes...", None);
+        if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
+            write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
+            log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
+            return;
+        }
+    }
 
     if install_ok {
         update_migration_metadata(&ms_dir);
@@ -434,7 +449,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     let steam_config_path = ms_dir.join("cache").join("steam_config.json");
     let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
 
-    write_migrate_progress("running", 2, 5, "Preserving user data (cache metadata)...", None);
+    write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user data (cache metadata)...", None);
     let cache_tmp = tmp.join("cache");
     let cache = ms_dir.join("cache");
     if cache.exists() {
@@ -442,7 +457,13 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_selective(&cache, &cache_tmp, &["downloads", "updates", "updater-tools", "tmp"]);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user settings (Steam prefix metadata)...", None);
+    write_migrate_progress(
+        "running",
+        2,
+        MIGRATION_TOTAL_STEPS,
+        "Preserving user settings (Steam prefix metadata)...",
+        None,
+    );
     let prefix_steam_tmp = tmp.join("prefix-steam");
     let prefix_steam = ms_dir.join("prefix-steam");
     if prefix_steam.exists() {
@@ -450,7 +471,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_settings_only(&prefix_steam, &prefix_steam_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user settings (game metadata)...", None);
+    write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (game metadata)...", None);
     let games_tmp = tmp.join("games");
     let games = ms_dir.join("games");
     if games.exists() {
@@ -458,7 +479,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_settings_only(&games, &games_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user settings (library metadata)...", None);
+    write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (library metadata)...", None);
     let sharp_library_tmp = tmp.join("sharp-library");
     let sharp_library = ms_dir.join("sharp-library");
     if sharp_library.exists() {
@@ -466,7 +487,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_settings_only(&sharp_library, &sharp_library_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user settings (bottle metadata)...", None);
+    write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (bottle metadata)...", None);
     let bottles_tmp = tmp.join("bottles");
     let bottles = ms_dir.join("bottles");
     if bottles.exists() {
@@ -474,7 +495,13 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_settings_only(&bottles, &bottles_tmp);
     }
 
-    write_migrate_progress("running", 2, 5, "Preserving user settings (compatdata metadata)...", None);
+    write_migrate_progress(
+        "running",
+        2,
+        MIGRATION_TOTAL_STEPS,
+        "Preserving user settings (compatdata metadata)...",
+        None,
+    );
     let compatdata_tmp = tmp.join("compatdata");
     let compatdata = ms_dir.join("compatdata");
     if compatdata.exists() {
@@ -492,6 +519,91 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         bottles_tmp,
         compatdata_tmp,
     }
+}
+
+fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, String> {
+    let runtime_wine = ms_dir.join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&runtime_wine);
+    if !wine.exists() {
+        return Err(format!("MetalSharp Wine not found at {}", wine.display()));
+    }
+
+    let mut updated = 0usize;
+    for prefix in collect_existing_wine_prefixes(ms_dir) {
+        write_migrate_progress(
+            "running",
+            step,
+            MIGRATION_TOTAL_STEPS,
+            &format!("Updating Wine prefix {}...", prefix.display()),
+            None,
+        );
+        run_wineboot_update(&wine, &runtime_wine, &prefix)?;
+        updated += 1;
+    }
+
+    Ok(updated)
+}
+
+fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
+    let mut prefixes = Vec::new();
+    push_existing_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
+
+    let bottles = ms_dir.join("bottles");
+    if let Ok(entries) = fs::read_dir(&bottles) {
+        for entry in entries.flatten() {
+            let bottle_dir = entry.path();
+            push_existing_prefix(&mut prefixes, bottle_dir.join("prefix"));
+
+            let manifest = bottle_dir.join("bottle.json");
+            let Some(prefix_path) = fs::read_to_string(&manifest)
+                .ok()
+                .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+                .and_then(|value| value.get("prefix_path").and_then(|v| v.as_str()).map(PathBuf::from))
+            else {
+                continue;
+            };
+            push_existing_prefix(&mut prefixes, prefix_path);
+        }
+    }
+
+    prefixes
+}
+
+fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
+    if !prefix.exists() {
+        return;
+    }
+    if prefixes.iter().any(|existing| existing == &prefix) {
+        return;
+    }
+    prefixes.push(prefix);
+}
+
+fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Result<(), String> {
+    let mut cmd = Command::new(wine);
+    cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .arg("wineboot")
+        .arg("-u")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, runtime_wine);
+
+    let mut child = cmd.spawn().map_err(|e| format!("spawn wineboot for {}: {}", prefix.display(), e))?;
+    for _ in 0..240 {
+        if let Some(status) = child.try_wait().map_err(|e| format!("wait wineboot for {}: {}", prefix.display(), e))? {
+            if status.success() {
+                return Ok(());
+            }
+            return Err(format!("wineboot -u failed for {} with {}", prefix.display(), status));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(format!("wineboot -u timed out for {}", prefix.display()))
 }
 
 fn temp_suffix() -> u128 {
@@ -833,6 +945,55 @@ mod tests {
     }
 
     #[test]
+    fn missing_metalsharp_hook_requests_runtime_repair() {
+        let home = test_dir("missing-metalsharp-hook");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+
+        fs::remove_file(
+            ms_dir
+                .join("runtime")
+                .join("wine")
+                .join("lib")
+                .join("metalsharp")
+                .join("x86_64-windows")
+                .join("metalsharp_ntdll_hook.dll"),
+        )
+        .expect("remove MetalSharp ntdll hook");
+
+        assert!(!runtime_core_ready(&ms_dir));
+        assert!(runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_collects_existing_wine_prefixes_for_update() {
+        let home = test_dir("prefix-update");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let steam_prefix = ms_dir.join("prefix-steam");
+        let bottle_dir = ms_dir.join("bottles").join("installer_demo");
+        let bottle_prefix = bottle_dir.join("prefix");
+        fs::create_dir_all(&steam_prefix).expect("create Steam prefix");
+        fs::create_dir_all(&bottle_prefix).expect("create bottle prefix");
+        fs::write(
+            bottle_dir.join("bottle.json"),
+            serde_json::to_vec(&json!({
+                "id": "installer_demo",
+                "prefix_path": bottle_prefix.to_string_lossy().to_string(),
+            }))
+            .expect("serialize bottle manifest"),
+        )
+        .expect("write bottle manifest");
+
+        let prefixes = collect_existing_wine_prefixes(&ms_dir);
+
+        assert!(prefixes.contains(&steam_prefix));
+        assert!(prefixes.contains(&bottle_prefix));
+        assert_eq!(prefixes.iter().filter(|prefix| *prefix == &bottle_prefix).count(), 1);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -1026,6 +1187,7 @@ mod tests {
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("winemetal.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvapi64.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
+            runtime_wine.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
