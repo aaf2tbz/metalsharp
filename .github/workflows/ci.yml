@@ -206,9 +206,6 @@ jobs:
     name: Verify Developer SDK Bundle
     needs: [shell, metal, vue, rust, electron, native, dmg-workflow]
     runs-on: macos-14
-    concurrency:
-      group: metalsharp-developer-sdk-bundles
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -218,11 +215,14 @@ jobs:
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
 
-      - name: Build host runtime ABI
+      - name: Build C++ engine and host runtime ABI
         run: |
           mkdir -p build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
-          cmake --build . --target metalsharp_host_runtime --parallel $(sysctl -n hw.ncpu)
+          cmake --build . --parallel $(sysctl -n hw.ncpu)
+          mkdir -p ../app/native
+          cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib ../app/native/ 2>/dev/null || true
+          cp metalsharp metalsharp_launcher MetalSharpMigrator ../app/native/ 2>/dev/null || true
           cd ..
           METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
 
@@ -259,7 +259,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: metalsharp-build-artifacts
-          path: .
+          path: app
+
+      - name: Verify downloaded build artifacts
+        run: |
+          test -s app/src-rust/target/release/metalsharp-backend
+          test -d app/native
+          test -s app/native/libd3d12.dylib
+          test -s app/native/metalsharp_launcher
+          test -s app/native/host/libmetalsharp_host_runtime.dylib
+          find app/native -maxdepth 2 -type f | sort
 
       - name: Setup Node
         uses: actions/setup-node@v4
