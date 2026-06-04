@@ -1342,7 +1342,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/kernel-translation/ipc/start") => match kernel_translation::ipc_bridge::start_ipc_listener() {
             Ok(()) => {
-                resp(200, serde_json::json!({"ok": true, "socket": kernel_translation::ipc_bridge::IPC_SOCKET_PATH}))
+                resp(200, serde_json::json!({"ok": true, "bind_addr": kernel_translation::ipc_bridge::IPC_BIND_ADDR}))
             },
             Err(e) => resp(500, serde_json::json!({"ok": false, "error": e})),
         },

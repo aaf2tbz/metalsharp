@@ -58,7 +58,8 @@ typedef struct _IO_STATUS_BLOCK {
 
 typedef ULONG SYSTEM_INFORMATION_CLASS;
 
-#define MS_IPC_SOCKET_PATH "/tmp/metalsharp-kernel-translation.sock"
+#define MS_IPC_HOST "127.0.0.1"
+#define MS_IPC_PORT 19384
 #define MS_IPC_MAGIC 0x4D534B54
 #define MS_IPC_VERSION 1
 

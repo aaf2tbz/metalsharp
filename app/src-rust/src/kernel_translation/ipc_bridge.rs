@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread;
 
@@ -55,7 +55,7 @@ struct IpcHeader {
     body_size: u32,
 }
 
-fn read_exact_u8(stream: &mut UnixStream, len: usize) -> std::io::Result<Vec<u8>> {
+fn read_exact_u8(stream: &mut TcpStream, len: usize) -> std::io::Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf)?;
     Ok(buf)
@@ -221,7 +221,7 @@ fn handle_nt_device_io_control(body: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&resp).unwrap_or_default()
 }
 
-fn handle_client(mut stream: UnixStream) {
+fn handle_client(mut stream: TcpStream) {
     loop {
         let header_buf = match read_exact_u8(&mut stream, IPC_HEADER_SIZE) {
             Ok(b) => b,
@@ -278,7 +278,7 @@ fn handle_client(mut stream: UnixStream) {
 pub fn handle_ipc_status(_body: &serde_json::Map<String, Value>) -> Value {
     json!({
         "ok": true,
-        "socket_path": crate::kernel_translation::ipc_bridge::IPC_SOCKET_PATH,
+        "bind_addr": crate::kernel_translation::ipc_bridge::IPC_BIND_ADDR,
         "running": IPC_LISTENER_RUNNING.load(Ordering::Relaxed),
         "virtual_handles": lock_handles().len(),
     })
@@ -310,11 +310,8 @@ pub fn start_ipc_listener() -> Result<(), String> {
         return Ok(());
     }
 
-    let socket_path = IPC_SOCKET_PATH.to_string();
-    let _ = std::fs::remove_file(&socket_path);
-
     let listener =
-        UnixListener::bind(&socket_path).map_err(|e| format!("IPC bind failed at {}: {}", socket_path, e))?;
+        TcpListener::bind(IPC_BIND_ADDR).map_err(|e| format!("IPC TCP bind failed at {}: {}", IPC_BIND_ADDR, e))?;
 
     IPC_LISTENER_RUNNING.store(true, Ordering::Relaxed);
 
@@ -331,7 +328,6 @@ pub fn start_ipc_listener() -> Result<(), String> {
                 },
             }
         }
-        let _ = std::fs::remove_file(&socket_path);
     });
 
     Ok(())
@@ -339,8 +335,7 @@ pub fn start_ipc_listener() -> Result<(), String> {
 
 pub fn stop_ipc_listener() -> Value {
     IPC_LISTENER_RUNNING.store(false, Ordering::Relaxed);
-    let _ = std::fs::remove_file(IPC_SOCKET_PATH);
     json!({"ok": true, "stopped": true})
 }
 
-pub const IPC_SOCKET_PATH: &str = "/tmp/metalsharp-kernel-translation.sock";
+pub const IPC_BIND_ADDR: &str = "127.0.0.1:19384";
