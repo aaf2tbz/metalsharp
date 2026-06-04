@@ -30,12 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: rust
           config-file: .github/codeql/codeql-rust.yml
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: '/language:rust'
 
@@ -55,12 +55,12 @@ jobs:
       - run: npm ci
         working-directory: app
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           config-file: .github/codeql/codeql-vue.yml
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: '/language:vue'
 
@@ -80,12 +80,12 @@ jobs:
       - run: npm ci
         working-directory: app
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           config-file: .github/codeql/codeql-js.yml
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript'
 
@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: c-cpp
           config-file: .github/codeql/codeql-cpp.yml
@@ -104,6 +104,6 @@ jobs:
       - name: Build native code
         run: cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release && cmake --build build-codeql --parallel $(sysctl -n hw.ncpu)
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: '/language:c-cpp'
