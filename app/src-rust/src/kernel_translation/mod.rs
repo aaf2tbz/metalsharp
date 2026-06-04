@@ -8,6 +8,7 @@ pub mod handle_bridge;
 pub mod handle_callbacks;
 pub mod handle_table;
 pub mod integration;
+pub mod ipc_bridge;
 mod nt_to_xnu;
 pub mod probe;
 pub mod thread_notify;

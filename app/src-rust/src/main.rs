@@ -1340,6 +1340,23 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::integration::handle_seed_demo(&body))
         },
+        (Method::Post, "/kernel-translation/ipc/start") => match kernel_translation::ipc_bridge::start_ipc_listener() {
+            Ok(()) => {
+                resp(200, serde_json::json!({"ok": true, "socket": kernel_translation::ipc_bridge::IPC_SOCKET_PATH}))
+            },
+            Err(e) => resp(500, serde_json::json!({"ok": false, "error": e})),
+        },
+        (Method::Post, "/kernel-translation/ipc/stop") => {
+            resp(200, kernel_translation::ipc_bridge::stop_ipc_listener())
+        },
+        (Method::Get, "/kernel-translation/ipc/status") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::ipc_bridge::handle_ipc_status(&body))
+        },
+        (Method::Get, "/kernel-translation/ipc/handles") => {
+            let body = read_body(req);
+            resp(200, kernel_translation::ipc_bridge::handle_ipc_handles(&body))
+        },
         (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
         (Method::Post, "/mscompatdb/generate") => {
             let home = dirs::home_dir().unwrap_or_default();
