@@ -160,6 +160,129 @@ fn getpid() -> i32 {
     0
 }
 
+#[cfg(target_os = "macos")]
+mod xnu_vm {
+    pub const VM_PROT_NONE: i32 = 0x00;
+    pub const VM_PROT_READ: i32 = 0x01;
+    pub const VM_PROT_WRITE: i32 = 0x02;
+    pub const VM_PROT_EXECUTE: i32 = 0x04;
+
+    pub const VM_REGION_BASIC_INFO_64: i32 = 9;
+
+    #[repr(C)]
+    #[derive(Default)]
+    pub struct VmRegionBasicInfo64 {
+        pub protection: i32,
+        pub max_protection: i32,
+        pub inheritance: u32,
+        pub shared: boolean_t,
+        pub reserved: boolean_t,
+        pub offset: u64,
+        pub behavior: i32,
+        pub user_wired_count: u16,
+    }
+
+    #[allow(non_camel_case_types)]
+    pub type boolean_t = i32;
+
+    extern "C" {
+        fn mach_vm_region(
+            target_task: u32,
+            address: *mut u64,
+            size: *mut u64,
+            flavor: i32,
+            info: *mut VmRegionBasicInfo64,
+            info_cnt: *mut u32,
+            object_name: *mut u32,
+        ) -> i32;
+
+        fn task_for_pid(target_tport: u32, pid: i32, t: *mut u32) -> i32;
+
+        fn mach_task_self() -> u32;
+        fn mach_port_deallocate(target_tport: u32, name: u32) -> i32;
+    }
+
+    const KERN_SUCCESS: i32 = 0;
+
+    pub struct VmRegion {
+        pub address: u64,
+        pub size: u64,
+        pub protection: i32,
+        pub max_protection: i32,
+        pub shared: bool,
+        pub offset: u64,
+    }
+
+    pub fn query_vm_region(pid: u32, base_address: u64) -> Option<VmRegion> {
+        unsafe {
+            let mut task: u32 = 0;
+            let kr = task_for_pid(mach_task_self(), pid as i32, &mut task);
+            if kr != KERN_SUCCESS {
+                return None;
+            }
+
+            let mut addr = if base_address == 0 { 0x1000 } else { base_address };
+            let mut size: u64 = 0;
+            let mut info = VmRegionBasicInfo64::default();
+            let mut info_cnt = std::mem::size_of::<VmRegionBasicInfo64>() as u32 / 4;
+            let mut object_name: u32 = 0;
+
+            let kr = mach_vm_region(
+                task,
+                &mut addr,
+                &mut size,
+                VM_REGION_BASIC_INFO_64,
+                &mut info,
+                &mut info_cnt,
+                &mut object_name,
+            );
+
+            let _ = mach_port_deallocate(mach_task_self(), task);
+
+            if kr != KERN_SUCCESS {
+                return None;
+            }
+
+            Some(VmRegion {
+                address: addr,
+                size,
+                protection: info.protection,
+                max_protection: info.max_protection,
+                shared: info.shared != 0,
+                offset: info.offset,
+            })
+        }
+    }
+
+    fn nt_protect_from_xnu(prot: i32) -> (u32, u32, u32) {
+        let (state, protect, vtype) = if prot == VM_PROT_NONE {
+            (0x10000u32, 0x01u32, 0x00020000u32)
+        } else {
+            let mut protect = 0u32;
+            let mut vtype = 0x00020000u32;
+            if prot & VM_PROT_READ != 0 {
+                protect |= 0x02;
+            }
+            if prot & VM_PROT_WRITE != 0 {
+                protect |= 0x04;
+            }
+            if prot & VM_PROT_EXECUTE != 0 {
+                protect |= 0x20;
+                vtype = 0x00040000;
+            }
+            (0x1000u32, protect, vtype)
+        };
+
+        (state, protect, vtype)
+    }
+
+    pub fn build_mbi_from_xnu(pid: u32, base_address: u64) -> Option<(u64, u64, u32, u32, u32, u32)> {
+        let region = query_vm_region(pid, base_address)?;
+        let (state, protect, vtype) = nt_protect_from_xnu(region.protection);
+        Some((region.address, region.size, state, protect, vtype, region.offset as u32))
+    }
+}
+
 fn handle_ipc_request(operation: u16, body: &[u8]) -> Vec<u8> {
     match operation {
         OP_NT_OPEN_PROCESS => handle_nt_open_process(body),
@@ -365,20 +488,33 @@ fn handle_nt_query_virtual_memory(body: &[u8]) -> Vec<u8> {
     if body.len() < 20 {
         return ipc_err(STATUS_INVALID_PARAMETER);
     }
-    let _process_handle = unpack_u64(body, 0);
+    let process_handle = unpack_u64(body, 0);
     let base_address = unpack_u64(body, 8);
     let info_class = unpack_u32(body, 16);
 
     match info_class {
         0x00 => {
+            let handles = lock_handles();
+            let pid = handles.get(&process_handle).map(|h| h.pid).unwrap_or(0);
+
+            let (region_base, region_size, state, protect, vtype, alloc_protect) =
+                if cfg!(target_os = "macos") && pid > 0 {
+                    match xnu_vm::build_mbi_from_xnu(pid, base_address) {
+                        Some(r) => r,
+                        None => return ipc_err(0xC0000018_u32 as i32),
+                    }
+                } else {
+                    (base_address, 0x10000u64, 0x1000u32, 0x04u32, 0x00020000u32, 0x04u32)
+                };
+
             let mut data = vec![0u8; 48];
-            data[0..8].copy_from_slice(&base_address.to_le_bytes());
-            data[8..16].copy_from_slice(&base_address.to_le_bytes());
-            data[16..20].copy_from_slice(&0x04u32.to_le_bytes());
-            data[24..32].copy_from_slice(&0x10000u64.to_le_bytes());
-            data[32..36].copy_from_slice(&0x1000u32.to_le_bytes());
-            data[36..40].copy_from_slice(&0x04u32.to_le_bytes());
-            data[40..44].copy_from_slice(&0x20000u32.to_le_bytes());
+            data[0..8].copy_from_slice(&region_base.to_le_bytes());
+            data[8..16].copy_from_slice(&region_base.to_le_bytes());
+            data[16..24].copy_from_slice(&region_size.to_le_bytes());
+            data[24..28].copy_from_slice(&state.to_le_bytes());
+            data[28..32].copy_from_slice(&protect.to_le_bytes());
+            data[32..36].copy_from_slice(&vtype.to_le_bytes());
+            data[36..40].copy_from_slice(&alloc_protect.to_le_bytes());
             ipc_ok(48, &data)
         },
         _ => ipc_err(STATUS_NOT_IMPLEMENTED),
@@ -389,14 +525,22 @@ fn handle_nt_query_object(body: &[u8]) -> Vec<u8> {
     if body.len() < 12 {
         return ipc_err(STATUS_INVALID_PARAMETER);
     }
-    let _handle = unpack_u64(body, 0);
+    let handle = unpack_u64(body, 0);
     let info_class = unpack_u32(body, 8);
 
     match info_class {
         0x01 => {
-            let type_name: Vec<u16> = "Process\0".encode_utf16().collect();
-            let mut data = Vec::with_capacity(type_name.len() * 2);
-            for c in &type_name {
+            let type_name = {
+                let handles = lock_handles();
+                match handles.get(&handle) {
+                    Some(entry) => entry.handle_type.clone(),
+                    None => "Unknown".to_string(),
+                }
+            };
+
+            let type_utf16: Vec<u16> = format!("{}\0", type_name).encode_utf16().collect();
+            let mut data = Vec::with_capacity(type_utf16.len() * 2);
+            for c in &type_utf16 {
                 data.extend_from_slice(&c.to_le_bytes());
             }
             ipc_ok(data.len() as u32, &data)
@@ -694,8 +838,10 @@ mod tests {
 
     #[test]
     fn test_nt_query_virtual_memory_basic_returns_success() {
+        let h = alloc_handle(getpid() as u32, 0, 0x1F0FFF, "Process");
+
         let mut req = Vec::new();
-        req.extend_from_slice(&0x0u64.to_le_bytes());
+        req.extend_from_slice(&h.to_le_bytes());
         req.extend_from_slice(&0x10000u64.to_le_bytes());
         req.extend_from_slice(&0x00u32.to_le_bytes());
         req.extend_from_slice(&48u32.to_le_bytes());
@@ -706,14 +852,16 @@ mod tests {
         let return_len = u32::from_le_bytes(resp[4..8].try_into().unwrap());
         assert_eq!(return_len, 48);
         assert_eq!(resp.len(), 8 + 48);
-        let base = u64::from_le_bytes(resp[8..16].try_into().unwrap());
-        assert_eq!(base, 0x10000);
+        let region_size = u64::from_le_bytes(resp[16..24].try_into().unwrap());
+        assert!(region_size > 0);
     }
 
     #[test]
     fn test_nt_query_object_type_info_returns_utf16() {
+        let h = alloc_handle(1, 0, 0, "Process");
+
         let mut req = Vec::new();
-        req.extend_from_slice(&0x100u64.to_le_bytes());
+        req.extend_from_slice(&h.to_le_bytes());
         req.extend_from_slice(&0x01u32.to_le_bytes());
         req.extend_from_slice(&24u32.to_le_bytes());
 

@@ -96,6 +96,12 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Sign with EndpointSecurity entitlements
+        run: |
+          codesign --force --sign - \
+            --entitlements entitlements.plist \
+            target/release/metalsharp-backend
+
       - name: Test
         run: cargo test
 
@@ -293,7 +299,9 @@ jobs:
 
       - name: Adhoc-sign backend binary
         run: |
-          codesign --force --sign - app/src-rust/target/release/metalsharp-backend || true
+          codesign --force --sign - \
+            --entitlements app/src-rust/entitlements.plist \
+            app/src-rust/target/release/metalsharp-backend || true
           for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
             codesign --force --sign - "$f" 2>/dev/null || true
           done
