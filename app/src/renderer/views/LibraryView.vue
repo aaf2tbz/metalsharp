@@ -315,6 +315,29 @@ watch([library, search, filter], applyFilter);
               }}
             </span>
           </button>
+          <button
+            class="btn btn-secondary library-control-button refresh-button"
+            title="Refresh"
+            @click="reloadLibrary()"
+          >
+            <svg
+              class="control-icon"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+              <path d="M3 12A9 9 0 0 1 18.5 5.8" />
+              <path d="M18 2v4h4" />
+              <path d="M6 22v-4H2" />
+            </svg>
+            <span class="control-label">Refresh</span>
+          </button>
         </div>
         <div class="library-controls-center">
           <input v-model="search" class="control-input" type="text" placeholder="Search games..." />
@@ -324,29 +347,6 @@ watch([library, search, filter], applyFilter);
             <option value="not_installed">Not Installed</option>
           </select>
         </div>
-        <button
-          class="btn btn-secondary library-control-button refresh-button"
-          title="Refresh"
-          @click="reloadLibrary()"
-        >
-          <svg
-            class="control-icon"
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-            <path d="M3 12A9 9 0 0 1 18.5 5.8" />
-            <path d="M18 2v4h4" />
-            <path d="M6 22v-4H2" />
-          </svg>
-          <span class="control-label">Refresh</span>
-        </button>
       </div>
     </div>
 
@@ -422,7 +422,7 @@ watch([library, search, filter], applyFilter);
 
 .library-controls {
   display: grid;
-  grid-template-columns: minmax(260px, auto) minmax(280px, 1fr) auto;
+  grid-template-columns: auto minmax(280px, 1fr);
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -431,6 +431,7 @@ watch([library, search, filter], applyFilter);
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 .library-controls-center {
@@ -461,9 +462,6 @@ watch([library, search, filter], applyFilter);
   .library-controls {
     grid-template-columns: 1fr;
   }
-  .refresh-button {
-    justify-self: start;
-  }
 }
 
 @media (max-width: 880px) {
@@ -483,7 +481,7 @@ watch([library, search, filter], applyFilter);
   }
   .library-launch-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
   }
   .library-controls-center {
     grid-template-columns: 1fr;

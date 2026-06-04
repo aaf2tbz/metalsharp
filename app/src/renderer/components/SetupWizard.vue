@@ -133,6 +133,8 @@ async function finish() {
     }
   }
 
+  await api("POST", "/steam/stop");
+
   emit("done");
 }
 
