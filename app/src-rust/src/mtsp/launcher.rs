@@ -1623,10 +1623,8 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
         }
     }
 
-    let sdl3_candidates = [
-        PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"),
-        PathBuf::from("/usr/local/lib/libSDL3.0.dylib"),
-    ];
+    let sdl3_candidates =
+        [PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"), PathBuf::from("/usr/local/lib/libSDL3.0.dylib")];
     for sdl3 in &sdl3_candidates {
         if sdl3.exists() {
             let dst = shims_dir.join("libSDL3.0.dylib");
@@ -1639,11 +1637,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
             let fna3d = shims_dir.join("libFNA3D.dylib");
             if fna3d.exists() {
                 let _ = Command::new("/usr/bin/install_name_tool")
-                    .args([
-                        "-change",
-                        "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib",
-                        "@loader_path/libSDL3.0.dylib",
-                    ])
+                    .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
                     .arg(&fna3d)
                     .output();
             }
