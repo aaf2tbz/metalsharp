@@ -792,28 +792,8 @@ mod tests {
         Map::new()
     }
 
-    fn reset_extension() {
-        let mut ext = lock_extension();
-        *ext = ExtensionLifecycle {
-            entitlement: "com.apple.developer.endpoint-security.client".to_string(),
-            state: ExtensionState::NotInstalled,
-            version: "0.1.0".to_string(),
-            installed_at: None,
-            activated_at: None,
-            last_heartbeat: None,
-            crash_count: 0,
-            fallback_active: true,
-        };
-        let mut crash = lock_crash_state();
-        crash.extension_active = false;
-        crash.fallback_mode = true;
-        crash.crash_count = 0;
-        crash.degraded_capabilities.clear();
-    }
-
     #[test]
     fn test_extension_install() {
-        reset_extension();
         let result = handle_extension_install(&empty_body());
         assert!(result["ok"].as_bool().unwrap());
         assert_eq!(result["extension"]["state"], "Installed");
@@ -821,33 +801,14 @@ mod tests {
 
     #[test]
     fn test_extension_activate() {
-        let mut ext = lock_extension();
-        *ext = ExtensionLifecycle {
-            entitlement: "com.apple.developer.endpoint-security.client".to_string(),
-            state: ExtensionState::Installed,
-            version: "1.0.0".to_string(),
-            installed_at: Some(now_ms()),
-            activated_at: None,
-            last_heartbeat: None,
-            crash_count: 0,
-            fallback_active: true,
-        };
-        ext.state = ExtensionState::Active;
-        ext.activated_at = Some(now_ms());
-        ext.last_heartbeat = Some(now_ms());
-        ext.fallback_active = false;
-        let mut crash = lock_crash_state();
-        crash.extension_active = true;
-        crash.fallback_mode = false;
-        crash.degraded_capabilities.clear();
-        drop(crash);
-        assert_eq!(ext.state, ExtensionState::Active);
-        assert!(!ext.fallback_active);
+        handle_extension_install(&empty_body());
+        let result = handle_extension_activate(&empty_body());
+        assert!(result["ok"].as_bool().unwrap());
+        assert_eq!(result["extension"]["state"], "Active");
     }
 
     #[test]
     fn test_extension_deactivate() {
-        reset_extension();
         handle_extension_install(&empty_body());
         handle_extension_activate(&empty_body());
         let result = handle_extension_deactivate(&empty_body());
@@ -858,7 +819,6 @@ mod tests {
 
     #[test]
     fn test_extension_crash_recovery() {
-        reset_extension();
         handle_extension_install(&empty_body());
         handle_extension_activate(&empty_body());
         let result = handle_extension_simulate_crash(&empty_body());
@@ -868,7 +828,6 @@ mod tests {
 
     #[test]
     fn test_extension_status() {
-        reset_extension();
         let result = handle_extension_status(&empty_body());
         assert!(result["ok"].as_bool().unwrap());
         assert!(result["crash_recovery"].is_object());
